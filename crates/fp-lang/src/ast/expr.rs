@@ -1039,13 +1039,17 @@ fn parse_kwarg_name(input: &mut &[Token]) -> ModalResult<String> {
 }
 
 pub(crate) fn parse_block_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    Ok(ExprKind::Block(parse_block(input, file)?).into())
+}
+
+pub(crate) fn parse_block(input: &mut &[Token], file: FileId) -> ModalResult<ExprBlock> {
     expect_symbol(input, "{")?;
     let mut stmts = Vec::new();
     while peek_symbol(input) != Some("}") {
         stmts.push(parse_block_stmt_entry(input, file)?);
     }
     expect_symbol(input, "}")?;
-    Ok(ExprKind::Block(ExprBlock::new_stmts(stmts)).into())
+    Ok(ExprBlock::new_stmts(stmts))
 }
 
 /// Parse one `BlockStmt` entry (item / let / defer / trailing expr), the

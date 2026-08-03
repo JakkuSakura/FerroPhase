@@ -444,13 +444,7 @@ impl GdscriptEmitter {
         let params = self.render_params(&def.sig.params)?;
         self.push_line(&format!("{keyword} {}({params}):", def.name.name));
         self.indent += 1;
-        match def.body.kind() {
-            ExprKind::Block(block) => self.emit_block(block)?,
-            _ => {
-                let rendered = self.render_expr(def.body.as_ref())?;
-                self.push_line(&format!("return {rendered}"));
-            }
-        }
+        self.emit_block(&def.body)?;
         self.indent -= 1;
         Ok(())
     }
@@ -510,13 +504,7 @@ impl GdscriptEmitter {
         self.push_line(&format!("func {}({params}):", def.name.name));
         self.indent += 1;
 
-        match def.body.kind() {
-            ExprKind::Block(block) => self.emit_block(block)?,
-            _ => {
-                let rendered = self.render_expr(def.body.as_ref())?;
-                self.push_line(&format!("return {rendered}"));
-            }
-        }
+        self.emit_block(&def.body)?;
 
         self.indent -= 1;
         self.push_blank_line();

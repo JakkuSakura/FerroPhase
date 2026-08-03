@@ -1,7 +1,7 @@
 use crate::ast::{
-    Attribute, BExpr, FunctionParam, FunctionParamReceiver, FunctionSignature, GenericParam, Ident,
-    ItemChunk, ReprOptions, StructuralField, Ty, TySlot, TypeBounds, TypeEnum, TypeFunction,
-    TypeStruct, TypeStructural, ValueFunction, Visibility,
+    Attribute, BExpr, Expr, ExprBlock, FunctionParam, FunctionParamReceiver, FunctionSignature,
+    GenericParam, Ident, ItemChunk, ReprOptions, StructuralField, Ty, TySlot, TypeBounds, TypeEnum,
+    TypeFunction, TypeStruct, TypeStructural, ValueFunction, Visibility,
 };
 use crate::common_struct;
 use crate::span::Span;
@@ -178,12 +178,14 @@ common_struct! {
         pub collected_items: ItemChunk,
         pub ty: Option<TypeFunction>,
         pub sig: FunctionSignature,
-        pub body: BExpr,
+        pub body: ExprBlock,
+        #[serde(default)]
+        pub is_async: bool,
         pub visibility: Visibility,
     }
 }
 impl ItemDefFunction {
-    pub fn new_simple(name: Ident, body: BExpr) -> Self {
+    pub fn new_simple(name: Ident, body: ExprBlock) -> Self {
         let mut sig = FunctionSignature::unit();
         sig.name = Some(name.clone());
         Self {
@@ -194,6 +196,7 @@ impl ItemDefFunction {
             ty: None,
             sig,
             body,
+            is_async: false,
             visibility: Visibility::Public,
         }
     }
@@ -215,7 +218,7 @@ impl ItemDefFunction {
     pub fn _to_value(&self) -> ValueFunction {
         ValueFunction {
             sig: self.sig.clone(),
-            body: self.body.clone(),
+            body: Box::new(Expr::block(self.body.clone())),
         }
     }
 

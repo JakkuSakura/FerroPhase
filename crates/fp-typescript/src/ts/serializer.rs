@@ -332,13 +332,7 @@ impl ScriptEmitter {
         };
 
         self.start_block(&header);
-        match func.body.as_ref().kind() {
-            ExprKind::Block(block) => self.emit_block(block, true)?,
-            _ => {
-                let rendered = self.render_expr(func.body.as_ref())?;
-                self.push_line(&format!("return {};", rendered));
-            }
-        }
+        self.emit_block(&func.body, true)?;
         self.end_block();
         Ok(())
     }

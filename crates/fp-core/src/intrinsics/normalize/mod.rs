@@ -49,7 +49,7 @@ fn normalize_item(item: &mut Item, strategy: &dyn IntrinsicNormalizer) -> Result
             if let Some(ret_ty) = function.sig.ret_ty.as_mut() {
                 normalize_ty(ret_ty, strategy)?;
             }
-            normalize_expr(function.body.as_mut(), strategy)?
+            normalize_block(&mut function.body, strategy)?
         }
         ItemKind::DefConst(def) => {
             if let Some(ty) = def.ty_annotation.as_mut() {

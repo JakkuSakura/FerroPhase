@@ -177,14 +177,7 @@ impl PythonEmitter {
             func.name.name, params, ret_annotation
         ));
 
-        if let ExprKind::Block(block) = func.body.as_ref().kind() {
-            self.emit_block(block)?;
-        } else if self.is_statement_expr(func.body.as_ref()) {
-            self.emit_expr_statement(func.body.as_ref(), false)?;
-        } else {
-            let rendered = self.render_expr(func.body.as_ref())?;
-            self.push_line(&format!("return {}", rendered));
-        }
+        self.emit_block(&func.body)?;
 
         self.end_block();
         Ok(())

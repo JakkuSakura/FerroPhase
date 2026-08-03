@@ -82,7 +82,7 @@ pub enum ItemKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub sig: FunctionSig,
-    pub body: Option<Body>,
+    pub body: Option<Block>,
     pub is_const: bool,
     pub is_extern: bool,
     pub attrs: Vec<crate::ast::Attribute>,
@@ -550,7 +550,7 @@ impl Program {
 }
 
 impl Function {
-    pub fn new(sig: FunctionSig, body: Option<Body>, is_const: bool, is_extern: bool) -> Self {
+    pub fn new(sig: FunctionSig, body: Option<Block>, is_const: bool, is_extern: bool) -> Self {
         Self {
             sig,
             body,
@@ -604,7 +604,7 @@ impl Function {
         Span::union(
             self.body
                 .as_ref()
-                .map(Body::span)
+                .map(Block::span)
                 .into_iter()
                 .chain([self.sig.span()]),
         )

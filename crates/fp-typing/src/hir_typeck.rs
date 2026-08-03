@@ -127,7 +127,7 @@ impl HirTypeChecker {
                 ))
             })?;
             if let Some(body) = &function.body {
-                scope.check_body(body).map_err(|error| {
+                scope.check_function_body(&function.sig.inputs, body).map_err(|error| {
                     Error::from(format!("in function `{}` body: {error}", function.sig.name))
                 })?;
             }
@@ -180,6 +180,21 @@ impl HirTypeChecker {
             self.bind_pattern(&param.pat, ty)?;
         }
         self.check_expr(&body.value)?;
+        self.locals.pop();
+        Ok(())
+    }
+
+    fn check_function_body(
+        &mut self,
+        params: &[hir::Param],
+        block: &hir::Block,
+    ) -> Result<()> {
+        self.locals.push(HashMap::new());
+        for param in params {
+            let ty = self.check_type_expr(&param.ty)?;
+            self.bind_pattern(&param.pat, ty)?;
+        }
+        self.check_block(block)?;
         self.locals.pop();
         Ok(())
     }

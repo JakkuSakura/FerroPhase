@@ -51,8 +51,8 @@ fn annotate_module(module: &mut Module, module_path: &QualifiedPath) {
 }
 
 fn annotate_function(function: &mut ItemDefFunction, module_path: &QualifiedPath) {
-    function.collected_items = direct_expr_items(function.body.as_ref());
-    annotate_expr(function.body.as_mut(), module_path);
+    function.collected_items = direct_block_items(&function.body);
+    annotate_block(&mut function.body, module_path);
 }
 
 fn annotate_trait(def: &mut ItemDefTrait, module_path: &QualifiedPath) {

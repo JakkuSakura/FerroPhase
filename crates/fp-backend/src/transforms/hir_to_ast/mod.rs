@@ -123,6 +123,7 @@ fn lift_function_item(item: &hir::Item, function: &hir::Function) -> Result<Item
         }))
         .with_span(item.span))
     } else {
+        let block = function.body.as_ref().expect("checked body presence");
         Ok(Item::from(ItemKind::DefFunction(ItemDefFunction {
             ty_annotation: None,
             attrs: function.attrs.clone(),
@@ -139,9 +140,8 @@ fn lift_function_item(item: &hir::Item, function: &hir::Function) -> Result<Item
                 ret_ty: Some(Box::new(lift_type(&function.sig.output))),
             }),
             sig,
-            body: Box::new(lift_body_value(
-                &function.body.as_ref().expect("checked body presence").value,
-            )?),
+            body: lift_block(block)?,
+            is_async: false,
             visibility: lift_visibility(&item.visibility),
         }))
         .with_span(item.span))

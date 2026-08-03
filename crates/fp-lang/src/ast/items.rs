@@ -347,6 +347,10 @@ fn parse_fn_item(
     parse_fn_item_core(input, file, visibility, attrs, quoted)
 }
 
+fn parse_function_block(input: &mut &[Token], file: FileId) -> ModalResult<ExprBlock> {
+    parse_block(input, file)
+}
+
 fn parse_fn_item_core(
     input: &mut &[Token],
     file: FileId,
@@ -374,16 +378,7 @@ fn parse_fn_item_core(
     if expect_keyword(input, Keyword::Where).is_ok() {
         skip_where_clause(input)?;
     }
-    let body = parse_block_expr(input, file)?;
-    let body = if is_async {
-        ExprKind::Async(fp_core::ast::ExprAsync {
-            span: body.span(),
-            expr: Box::new(body),
-        })
-        .into()
-    } else {
-        body
-    };
+    let body = parse_function_block(input, file)?;
     let mut sig = FunctionSignature {
         name: Some(name.clone()),
         receiver,
@@ -410,7 +405,8 @@ fn parse_fn_item_core(
         collected_items: Vec::new(),
         ty: None,
         sig,
-        body: Box::new(body),
+        body,
+        is_async,
         visibility,
     })))
 }
@@ -531,16 +527,7 @@ fn parse_trait_fn_member(
             sig,
         })));
     }
-    let body = parse_block_expr(input, file)?;
-    let body = if is_async {
-        ExprKind::Async(fp_core::ast::ExprAsync {
-            span: body.span(),
-            expr: Box::new(body),
-        })
-        .into()
-    } else {
-        body
-    };
+    let body = parse_function_block(input, file)?;
     Ok(Item::from(ItemKind::DefFunction(ItemDefFunction {
         ty_annotation: None,
         attrs,
@@ -548,7 +535,8 @@ fn parse_trait_fn_member(
         collected_items: Vec::new(),
         ty: None,
         sig,
-        body: Box::new(body),
+        body,
+        is_async,
         visibility,
     })))
 }
@@ -955,7 +943,7 @@ fn parse_extern_fn_item(
             sig,
         })));
     }
-    let body = parse_block_expr(input, file)?;
+    let body = parse_function_block(input, file)?;
     Ok(Item::from(ItemKind::DefFunction(ItemDefFunction {
         ty_annotation: None,
         attrs,
@@ -963,7 +951,8 @@ fn parse_extern_fn_item(
         collected_items: Vec::new(),
         ty: None,
         sig,
-        body: Box::new(body),
+        body,
+        is_async: false,
         visibility,
     })))
 }

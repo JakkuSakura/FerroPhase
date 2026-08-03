@@ -808,7 +808,7 @@ impl MirLowering {
                 }
                 Self::collect_def_ids_from_type(&func.sig.output, full_map, tail_map, work);
                 if let Some(body) = &func.body {
-                    Self::collect_def_ids_from_expr(&body.value, full_map, tail_map, work);
+                    Self::collect_def_ids_from_block(body, full_map, tail_map, work);
                 }
             }
             hir::ItemKind::Const(konst) => {
@@ -847,8 +847,8 @@ impl MirLowering {
                                 work,
                             );
                             if let Some(body) = &func.body {
-                                Self::collect_def_ids_from_expr(
-                                    &body.value,
+                                Self::collect_def_ids_from_block(
+                                    body,
                                     full_map,
                                     tail_map,
                                     work,
@@ -955,6 +955,32 @@ impl MirLowering {
                 Self::collect_def_ids_from_type(&fn_ptr.output, full_map, tail_map, work);
             }
             _ => {}
+        }
+    }
+
+    fn collect_def_ids_from_block(
+        block: &hir::Block,
+        full_map: &HashMap<String, hir::DefId>,
+        tail_map: &HashMap<String, hir::DefId>,
+        work: &mut VecDeque<hir::DefId>,
+    ) {
+        for stmt in &block.stmts {
+            match &stmt.kind {
+                hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
+                    Self::collect_def_ids_from_expr(expr, full_map, tail_map, work)
+                }
+                hir::StmtKind::Local(local) => {
+                    if let Some(init) = &local.init {
+                        Self::collect_def_ids_from_expr(init, full_map, tail_map, work);
+                    }
+                }
+                hir::StmtKind::Item(item) => {
+                    Self::collect_def_ids_from_item(item, full_map, tail_map, work)
+                }
+            }
+        }
+        if let Some(expr) = &block.expr {
+            Self::collect_def_ids_from_expr(expr, full_map, tail_map, work);
         }
     }
 
@@ -1198,7 +1224,7 @@ impl MirLowering {
         let span = function
             .body
             .as_ref()
-            .map(|body| body.value.span)
+            .map(|body| body.span())
             .unwrap_or(item.span);
         let mir_body = if function.body.is_none() {
             self.stub_body(&sig, span)
@@ -3602,10 +3628,10 @@ impl MirLowering {
                     },
                     abi: hir::Abi::Rust,
                 },
-                body: Some(hir::Body {
+                body: Some(hir::Block {
                     hir_id: konst.body.hir_id,
-                    params: Vec::new(),
-                    value: konst.body.value.clone(),
+                    stmts: Vec::new(),
+                    expr: Some(Box::new(konst.body.value.clone())),
                 }),
                 is_const: true,
                 is_extern: false,
@@ -8030,7 +8056,7 @@ impl<'a> BodyBuilder<'a> {
             .function
             .body
             .as_ref()
-            .map(|body| body.params.as_slice())
+            .map(|_| builder.function.sig.inputs.as_slice())
             .unwrap_or(&[]);
 
         for (idx, ty) in builder.sig.inputs.iter().enumerate() {
@@ -8512,14 +8538,7 @@ impl<'a> BodyBuilder<'a> {
 
     fn lower(mut self) -> Result<mir::Body> {
         if let Some(body) = &self.function.body {
-            match &body.value.kind {
-                hir::ExprKind::Block(block) => self.lower_block(block)?,
-                _ => {
-                    let return_ty = self.locals[0].ty.clone();
-                    let place = mir::Place::from_local(0);
-                    self.lower_expr_into_place(&body.value, place, &return_ty)?;
-                }
-            }
+            self.lower_block(body)?;
         }
 
         let expected_return_ty = self.sig.output.clone();

@@ -627,7 +627,7 @@ impl PrettyPrintable for ast::Item {
                 }
                 header.push_str(&suffix);
                 ctx.writeln(f, header)?;
-                ctx.with_indent(|ctx| def.body.fmt_pretty(f, ctx))
+                ctx.with_indent(|ctx| fmt_function_body(&def.body, f, ctx))
             }
             ast::ItemKind::DefTrait(def) => {
                 let bounds = render_type_bounds(&def.bounds);
@@ -1423,6 +1423,17 @@ fn fmt_block_stmt(
         ast::BlockStmt::Noop => ctx.writeln(f, "noop"),
         ast::BlockStmt::Any(_) => ctx.writeln(f, "stmt.any"),
     }
+}
+
+fn fmt_function_body(
+    body: &ast::ExprBlock,
+    f: &mut Formatter<'_>,
+    ctx: &mut PrettyCtx<'_>,
+) -> fmt::Result {
+    for stmt in &body.stmts {
+        fmt_block_stmt(stmt, f, ctx)?;
+    }
+    Ok(())
 }
 
 fn render_pattern(pattern: &Pattern) -> String {

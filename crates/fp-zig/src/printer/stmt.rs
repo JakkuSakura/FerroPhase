@@ -9,22 +9,7 @@ impl ZigEmitter {
         &mut self,
         def: &fp_core::ast::ItemDefFunction,
     ) -> Result<bool> {
-        let body_expr = def.body.as_ref();
-        match body_expr.kind() {
-            ExprKind::Block(block) => self.emit_block(block),
-            _ => {
-                if let Some(rendered) = self.render_expr(body_expr) {
-                    if rendered.is_empty() {
-                        self.push_line("return;");
-                    } else {
-                        self.push_line(&format!("return {};", rendered));
-                    }
-                    Ok(true)
-                } else {
-                    Ok(false)
-                }
-            }
-        }
+        self.emit_block(&def.body)
     }
 
     fn emit_block(&mut self, block: &ExprBlock) -> Result<bool> {

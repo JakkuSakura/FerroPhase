@@ -7,6 +7,7 @@
 use eyre::{Result, eyre};
 use fp_core::ast::{DecimalType, TypeInt};
 use fp_core::ast::{
+    ExprBlock,
     EnumTypeVariant, Expr, File, FunctionParam, Ident, Item, ItemDefConst, ItemDefEnum,
     ItemDefFunction, ItemDefStruct, ItemKind, StructuralField, Ty, TypePrimitive, TypeVec,
     Visibility,
@@ -217,7 +218,7 @@ fn parse_function(node: TsNode, source: &str) -> Result<Item> {
     let params = parse_parameters(params_node, source)?;
     let ret_ty = return_type_node.map(|ty_node| parse_type_node(ty_node, source));
 
-    let mut function = ItemDefFunction::new_simple(name.clone(), Expr::unit().into());
+    let mut function = ItemDefFunction::new_simple(name.clone(), ExprBlock::new());
     function.visibility = visibility;
     function.sig.params = params;
     function.sig.ret_ty = ret_ty;

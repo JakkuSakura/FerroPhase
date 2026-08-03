@@ -298,7 +298,8 @@ fn lower_function_def(
         collected_items: Vec::new(),
         ty: None,
         sig,
-        body: Expr::block(body).into(),
+        body,
+        is_async: false,
         visibility: fp_core::ast::Visibility::Public,
     })
 }

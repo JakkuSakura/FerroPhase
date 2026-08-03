@@ -67,7 +67,7 @@ fn item_has_unresolved_paths(item: &hir::Item) -> bool {
                 || function
                     .body
                     .as_ref()
-                    .is_some_and(|body| expr_has_unresolved_paths(&body.value))
+                    .is_some_and(block_has_unresolved_paths)
         }
         hir::ItemKind::Const(def) => {
             type_has_unresolved_paths(&def.ty) || expr_has_unresolved_paths(&def.body.value)
@@ -297,7 +297,7 @@ fn collect_item_refs(
             }
             collect_type_refs(&function.sig.output, full_map, tail_map, work);
             if let Some(body) = &function.body {
-                collect_expr_refs(&body.value, full_map, tail_map, work);
+                collect_block_refs(body, full_map, tail_map, work);
             }
         }
         hir::ItemKind::Const(def) => {
@@ -322,6 +322,44 @@ fn collect_item_refs(
         hir::ItemKind::Impl(_) => {}
         hir::ItemKind::Query(_) => {}
         hir::ItemKind::Expr(expr) => collect_expr_refs(expr, full_map, tail_map, work),
+    }
+}
+
+fn block_has_unresolved_paths(block: &hir::Block) -> bool {
+    block.stmts.iter().any(|stmt| match &stmt.kind {
+        hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => expr_has_unresolved_paths(expr),
+        hir::StmtKind::Local(local) => local
+            .init
+            .as_ref()
+            .is_some_and(expr_has_unresolved_paths),
+        hir::StmtKind::Item(item) => item_has_unresolved_paths(item),
+    }) || block
+        .expr
+        .as_deref()
+        .is_some_and(expr_has_unresolved_paths)
+}
+
+fn collect_block_refs(
+    block: &hir::Block,
+    full_map: &HashMap<String, hir::DefId>,
+    tail_map: &HashMap<String, hir::DefId>,
+    work: &mut VecDeque<hir::DefId>,
+) {
+    for stmt in &block.stmts {
+        match &stmt.kind {
+            hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
+                collect_expr_refs(expr, full_map, tail_map, work)
+            }
+            hir::StmtKind::Local(local) => {
+                if let Some(init) = &local.init {
+                    collect_expr_refs(init, full_map, tail_map, work);
+                }
+            }
+            hir::StmtKind::Item(item) => collect_item_refs(item, full_map, tail_map, work),
+        }
+    }
+    if let Some(expr) = &block.expr {
+        collect_expr_refs(expr, full_map, tail_map, work);
     }
 }
 

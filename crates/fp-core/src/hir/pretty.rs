@@ -125,7 +125,7 @@ fn write_function(
 
     if let Some(body) = &func.body {
         ctx.writeln(f, format!("{} {{", header))?;
-        ctx.with_indent(|ctx| write_body(body, f, ctx))?;
+        ctx.with_indent(|ctx| write_function_body(body, f, ctx))?;
         ctx.writeln(f, "}")
     } else {
         ctx.writeln(f, format!("{};", header))
@@ -270,18 +270,12 @@ fn write_impl(
     ctx.writeln(f, "}")
 }
 
-fn write_body(body: &Body, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
-    if ctx.options.show_types && !body.params.is_empty() {
-        let params = body
-            .params
-            .iter()
-            .map(|param| format_param(param, ctx))
-            .collect::<Vec<_>>()
-            .join(", ");
-        ctx.writeln(f, format!("// params: [{}]", params))?;
-    }
-
-    write_expr(&body.value, f, ctx)
+fn write_function_body(
+    block: &Block,
+    f: &mut Formatter<'_>,
+    ctx: &mut PrettyCtx<'_>,
+) -> fmt::Result {
+    write_block_contents(block, f, ctx)
 }
 
 fn write_const_expr(body: &Body, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
@@ -319,7 +313,7 @@ fn write_impl_method(
 
     if let Some(body) = &func.body {
         ctx.writeln(f, format!("{} {{", header))?;
-        ctx.with_indent(|ctx| write_body(body, f, ctx))?;
+        ctx.with_indent(|ctx| write_function_body(body, f, ctx))?;
         ctx.writeln(f, "}")
     } else {
         ctx.writeln(f, format!("{};", header))
@@ -339,16 +333,22 @@ fn write_impl_const(konst: &Const, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_
 
 fn write_block(block: &Block, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
     ctx.writeln(f, "{")?;
-    ctx.with_indent(|ctx| {
-        for stmt in &block.stmts {
-            write_stmt(stmt, f, ctx)?;
-        }
-        if let Some(expr) = &block.expr {
-            write_expr(expr, f, ctx)?;
-        }
-        Ok(())
-    })?;
+    ctx.with_indent(|ctx| write_block_contents(block, f, ctx))?;
     ctx.writeln(f, "}")
+}
+
+fn write_block_contents(
+    block: &Block,
+    f: &mut Formatter<'_>,
+    ctx: &mut PrettyCtx<'_>,
+) -> fmt::Result {
+    for stmt in &block.stmts {
+        write_stmt(stmt, f, ctx)?;
+    }
+    if let Some(expr) = &block.expr {
+        write_expr(expr, f, ctx)?;
+    }
+    Ok(())
 }
 
 fn write_stmt(stmt: &Stmt, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {

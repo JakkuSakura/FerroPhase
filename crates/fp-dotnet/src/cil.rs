@@ -336,8 +336,8 @@ impl<'a> MethodEmitter<'a> {
         }
 
         let expects_value = !is_void(self.method.function.sig.ret_ty.as_ref());
-        self.emit_expr(
-            self.method.function.body.as_ref(),
+        self.emit_block(
+            &self.method.function.body,
             if expects_value {
                 EmitMode::Value
             } else {
@@ -769,7 +769,7 @@ impl<'a> MethodEmitter<'a> {
 
 fn collect_locals(function: &ItemDefFunction) -> BTreeMap<String, LocalSlot> {
     let mut names = Vec::new();
-    collect_locals_expr(function.body.as_ref(), &mut names);
+    collect_locals_block(&function.body, &mut names);
     let mut locals = BTreeMap::new();
     for (index, (name, ty)) in names.into_iter().enumerate() {
         locals.entry(name).or_insert(LocalSlot { index, ty });
@@ -844,6 +844,28 @@ fn collect_locals_expr(expr: &Expr, locals: &mut Vec<(String, Ty)>) {
         ExprKind::Paren(paren) => collect_locals_expr(paren.expr.as_ref(), locals),
         ExprKind::Cast(cast) => collect_locals_expr(cast.expr.as_ref(), locals),
         _ => {}
+    }
+}
+
+fn collect_locals_block(block: &ExprBlock, locals: &mut Vec<(String, Ty)>) {
+    for stmt in &block.stmts {
+        match stmt {
+            BlockStmt::Let(stmt_let) => {
+                if let Some(name) = pattern_ident(&stmt_let.pat) {
+                    locals.push((
+                        name.to_string(),
+                        pattern_ty(&stmt_let.pat, stmt_let.init.as_ref()),
+                    ));
+                }
+                if let Some(init) = &stmt_let.init {
+                    collect_locals_expr(init, locals);
+                }
+            }
+            BlockStmt::Expr(stmt_expr) => collect_locals_expr(stmt_expr.expr.as_ref(), locals),
+            BlockStmt::Defer(stmt_defer) => collect_locals_expr(stmt_defer.expr.as_ref(), locals),
+            BlockStmt::Item(item) => collect_locals_item(item, locals),
+            BlockStmt::Noop | BlockStmt::Any(_) => {}
+        }
     }
 }
 

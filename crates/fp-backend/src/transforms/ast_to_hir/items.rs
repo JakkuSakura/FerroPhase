@@ -3,15 +3,9 @@ use super::*;
 impl HirGenerator {
     pub(super) fn create_main_function(
         &mut self,
-        body_expr: hir::Expr,
+        body: hir::Block,
         output: hir::TypeExpr,
     ) -> Result<hir::Function> {
-        let body = hir::Body {
-            hir_id: self.next_id(),
-            params: Vec::new(),
-            value: body_expr,
-        };
-
         let sig = hir::FunctionSig {
             name: hir::Symbol::new("main"),
             inputs: Vec::new(),
@@ -55,8 +49,7 @@ impl HirGenerator {
                 self.create_unit_type()
             };
             if let hir::TypeExprKind::FnPtr(_) | hir::TypeExprKind::Infer = output.kind {
-                if let ast::ExprKind::Block(block) = func.body.kind() {
-                    if let Some(last_expr) = block.last_expr() {
+                if let Some(last_expr) = func.body.last_expr() {
                         if let ast::ExprKind::Struct(struct_expr) = last_expr.kind() {
                             if let Ok(path) = self.ast_expr_to_hir_path(
                                 struct_expr.name.as_ref(),
@@ -76,7 +69,6 @@ impl HirGenerator {
                                 }
                             }
                         }
-                    }
                 }
             }
 
@@ -89,12 +81,7 @@ impl HirGenerator {
             };
 
             if lower_body {
-                let body_expr = self.transform_expr_to_hir(&func.body)?;
-                let body = hir::Body {
-                    hir_id: self.next_id(),
-                    params,
-                    value: body_expr,
-                };
+                let body = self.transform_block_node_to_hir(&func.body)?;
 
                 let mut function = hir::Function::new(sig, Some(body), func.sig.is_const, false);
                 function.attrs = func.attrs.clone();

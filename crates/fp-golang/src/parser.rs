@@ -361,7 +361,11 @@ fn parse_function(node: TsNode, source: &str) -> Result<Item> {
         collected_items: Vec::new(),
         ty: None,
         sig,
-        body: body.into(),
+        body: match body.kind {
+            fp_core::ast::ExprKind::Block(block) => block,
+            _ => unreachable!("parser block must lower to ExprBlock"),
+        },
+        is_async: false,
         visibility,
     };
 

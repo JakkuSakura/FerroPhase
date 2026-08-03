@@ -891,7 +891,12 @@ impl HirGenerator {
             Some(ty) => self.transform_type_to_hir(ty)?,
             None => self.create_unit_type(),
         };
-        let main_body = self.transform_expr_to_hir(&lowered_expr)?;
+        let main_body_expr = self.transform_expr_to_hir(&lowered_expr)?;
+        let hir::ExprKind::Block(main_body) = main_body_expr.kind else {
+            return Err(fp_core::error::Error::from(
+                "main function body lowering did not produce a block",
+            ));
+        };
         let main_fn = self.create_main_function(main_body, output)?;
 
         // Add main function to program
@@ -3038,7 +3043,9 @@ impl ClosureLowering {
         &mut self,
         func: &mut ast::ItemDefFunction,
     ) -> Result<Option<ClosureInfo>> {
-        if let Some(info) = self.transform_closure_expr(func.body.as_mut())? {
+        if let Some(last_expr) = func.body.last_expr_mut()
+            && let Some(info) = self.transform_closure_expr(last_expr)?
+        {
             let env_ret_ty = info.env_struct_ty.clone();
 
             if let Some(ty_fn) = func.ty.as_mut() {
@@ -3072,14 +3079,6 @@ impl ClosureLowering {
             }
 
             return Ok(Some(info));
-        }
-
-        if let ast::ExprKind::Block(block) = func.body.kind_mut() {
-            if let Some(last_expr) = block.last_expr_mut() {
-                if let Some(info) = self.transform_closure_expr(last_expr)? {
-                    return Ok(Some(info));
-                }
-            }
         }
 
         Ok(None)
@@ -3208,7 +3207,10 @@ impl ClosureLowering {
         self.rewrite_captured_usage(&mut rewritten_body, &captures, &env_param_ident);
 
         let mut fn_item_ast =
-            ast::ItemDefFunction::new_simple(call_ident.clone(), rewritten_body.into());
+            ast::ItemDefFunction::new_simple(
+                call_ident.clone(),
+                ast::ExprBlock::new_expr(rewritten_body),
+            );
         fn_item_ast.visibility = ast::Visibility::Private;
         fn_item_ast.sig.params = fn_params;
         fn_item_ast.sig.ret_ty = Some(call_ret_ty.clone());
@@ -3269,7 +3271,7 @@ impl ClosureLowering {
             match item.kind_mut() {
                 ast::ItemKind::Module(module) => self.rewrite_usage(&mut module.items)?,
                 ast::ItemKind::DefFunction(func) => {
-                    self.rewrite_in_expr(func.body.as_mut())?;
+                    self.rewrite_in_block(&mut func.body)?;
                 }
                 ast::ItemKind::DefConst(def) => self.rewrite_in_expr(def.value.as_mut())?,
                 ast::ItemKind::DefStatic(def) => self.rewrite_in_expr(def.value.as_mut())?,
@@ -3510,6 +3512,18 @@ impl ClosureLowering {
         Ok(())
     }
 
+    fn rewrite_in_block(&mut self, block: &mut ast::ExprBlock) -> Result<()> {
+        for stmt in &mut block.stmts {
+            self.rewrite_in_stmt(stmt)?;
+        }
+        while self.desugar_block_defer(block) {
+            for stmt in &mut block.stmts {
+                self.rewrite_in_stmt(stmt)?;
+            }
+        }
+        Ok(())
+    }
+
     fn rewrite_in_stmt(&mut self, stmt: &mut ast::BlockStmt) -> Result<()> {
         match stmt {
             ast::BlockStmt::Expr(expr_stmt) => self.rewrite_in_expr(expr_stmt.expr.as_mut())?,
@@ -3560,7 +3574,7 @@ impl ClosureLowering {
                     def.value.set_ty(info.env_struct_ty.clone());
                 }
             }
-            ast::ItemKind::DefFunction(func) => self.rewrite_in_expr(func.body.as_mut())?,
+            ast::ItemKind::DefFunction(func) => self.rewrite_in_block(&mut func.body)?,
             ast::ItemKind::Module(module) => self.rewrite_usage(&mut module.items)?,
             _ => {}
         }
@@ -3849,12 +3863,18 @@ impl CaptureCollector {
         }
     }
 
+    fn visit_block(&mut self, block: &ast::ExprBlock) {
+        for stmt in &block.stmts {
+            self.visit_stmt(stmt);
+        }
+    }
+
     fn visit_item(&mut self, item: &ast::Item) {
         match item.kind() {
             ast::ItemKind::Expr(expr) => self.visit(expr),
             ast::ItemKind::DefConst(def) => self.visit(def.value.as_ref()),
             ast::ItemKind::DefStatic(def) => self.visit(def.value.as_ref()),
-            ast::ItemKind::DefFunction(func) => self.visit(func.body.as_ref()),
+            ast::ItemKind::DefFunction(func) => self.visit_block(&func.body),
             ast::ItemKind::Module(module) => {
                 for item in &module.items {
                     self.visit_item(item);
@@ -4162,12 +4182,18 @@ impl CaptureReplacer {
         }
     }
 
+    fn visit_block(&mut self, block: &mut ast::ExprBlock) {
+        for stmt in &mut block.stmts {
+            self.visit_stmt(stmt);
+        }
+    }
+
     fn visit_item(&mut self, item: &mut ast::Item) {
         match item.kind_mut() {
             ast::ItemKind::Expr(expr) => self.visit(expr),
             ast::ItemKind::DefConst(def) => self.visit(def.value.as_mut()),
             ast::ItemKind::DefStatic(def) => self.visit(def.value.as_mut()),
-            ast::ItemKind::DefFunction(func) => self.visit(func.body.as_mut()),
+            ast::ItemKind::DefFunction(func) => self.visit_block(&mut func.body),
             ast::ItemKind::Module(module) => {
                 for item in &mut module.items {
                     self.visit_item(item);

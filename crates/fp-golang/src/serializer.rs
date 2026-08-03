@@ -212,13 +212,7 @@ impl GoEmitter {
 
         self.push_line(&format!("func {}({}){} {{", def.name.name, params, ret));
         self.indent += 1;
-        if let ExprKind::Block(block) = def.body.as_ref().kind() {
-            self.emit_block(block)?;
-        } else if let Some(rendered) = self.render_expr(def.body.as_ref())? {
-            self.push_line(&format!("return {}", rendered));
-        } else {
-            self.push_line("// unsupported function body");
-        }
+        self.emit_block(&def.body)?;
         self.indent -= 1;
         self.push_line("}");
         self.push_blank_line();
@@ -461,7 +455,7 @@ impl GoEmitter {
         for item in items {
             match item.kind() {
                 ItemKind::DefFunction(def) => {
-                    if self.expr_uses_fmt(def.body.as_ref()) {
+                    if self.block_uses_fmt(&def.body) {
                         self.needs_fmt = true;
                     }
                 }
@@ -498,6 +492,21 @@ impl GoEmitter {
             }),
             _ => false,
         }
+    }
+
+    fn block_uses_fmt(&self, block: &fp_core::ast::ExprBlock) -> bool {
+        block.stmts.iter().any(|stmt| match stmt {
+            BlockStmt::Expr(expr) => self.expr_uses_fmt(expr.expr.as_ref()),
+            BlockStmt::Let(stmt) => stmt
+                .init
+                .as_ref()
+                .is_some_and(|expr| self.expr_uses_fmt(expr)),
+            BlockStmt::Item(item) => match item.kind() {
+                ItemKind::Expr(expr) => self.expr_uses_fmt(expr),
+                _ => false,
+            },
+            _ => false,
+        })
     }
 
     fn push_line(&mut self, line: &str) {

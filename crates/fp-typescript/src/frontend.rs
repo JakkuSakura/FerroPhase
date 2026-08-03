@@ -1144,7 +1144,11 @@ fn build_function_item(
         collected_items: Vec::new(),
         ty: None,
         sig,
-        body: Box::new(body_expr),
+        body: match body_expr.kind {
+            fp_core::ast::ExprKind::Block(block) => block,
+            _ => unreachable!("lower_function_body must return a block expression"),
+        },
+        is_async: false,
         visibility,
     }
 }

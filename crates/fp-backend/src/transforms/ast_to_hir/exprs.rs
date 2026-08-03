@@ -64,7 +64,9 @@ impl HirGenerator {
             ExprKind::Invoke(invoke) => self.transform_invoke_to_hir(invoke)?,
             ExprKind::Select(select) => self.transform_select_to_hir(select)?,
             ExprKind::Struct(struct_expr) => self.transform_struct_to_hir(struct_expr)?,
-            ExprKind::Block(block) => self.transform_block_to_hir(block)?,
+            ExprKind::Block(block) => {
+                hir::ExprKind::Block(self.transform_block_node_to_hir(block)?)
+            }
             ExprKind::If(if_expr) => self.transform_if_to_hir(if_expr)?,
             ExprKind::Match(match_expr) => self.transform_match_to_hir(match_expr)?,
             ExprKind::Loop(loop_expr) => self.transform_loop_to_hir(loop_expr)?,
@@ -832,11 +834,18 @@ impl HirGenerator {
         }))
     }
 
-    /// Transform block expression to HIR
     pub(super) fn transform_block_to_hir(
         &mut self,
         block: &ast::ExprBlock,
     ) -> Result<hir::ExprKind> {
+        Ok(hir::ExprKind::Block(self.transform_block_node_to_hir(block)?))
+    }
+
+    /// Transform a block node to HIR without wrapping it in an expression.
+    pub(super) fn transform_block_node_to_hir(
+        &mut self,
+        block: &ast::ExprBlock,
+    ) -> Result<hir::Block> {
         self.push_type_scope();
         self.push_value_scope();
         let result = (|| {
@@ -867,11 +876,11 @@ impl HirGenerator {
                 .transpose()?
                 .map(Box::new);
 
-            Ok(hir::ExprKind::Block(hir::Block {
+            Ok(hir::Block {
                 hir_id: self.next_id(),
                 stmts,
                 expr,
-            }))
+            })
         })();
         self.pop_value_scope();
         self.pop_type_scope();
