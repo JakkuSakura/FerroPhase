@@ -1208,6 +1208,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fp-c"
+version = "0.1.0"
+dependencies = [
+ "fp-clang",
+ "tempfile",
+]
+
+[[package]]
 name = "fp-clang"
 version = "0.1.0"
 dependencies = [
@@ -1330,6 +1338,14 @@ dependencies = [
  "thiserror 2.0.19",
  "toml 0.8.23",
  "tracing",
+]
+
+[[package]]
+name = "fp-cpp"
+version = "0.1.0"
+dependencies = [
+ "fp-clang",
+ "tempfile",
 ]
 
 [[package]]
