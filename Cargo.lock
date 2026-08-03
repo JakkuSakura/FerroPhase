@@ -1212,6 +1212,7 @@ name = "fp-c"
 version = "0.1.0"
 dependencies = [
  "fp-clang",
+ "fp-core",
  "tempfile",
 ]
 
@@ -1245,6 +1246,7 @@ dependencies = [
  "eyre",
  "fp-backend",
  "fp-bytecode",
+ "fp-c",
  "fp-compiler",
  "fp-core",
  "fp-cranelift",

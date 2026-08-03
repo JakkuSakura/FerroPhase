@@ -4,9 +4,10 @@ use crate::commands::{setup_progress_bar, validate_paths_exist};
 use crate::compile_options::BackendKind;
 use crate::compiler::{
     self, BytecodeCompileOptions, CraneliftCompileOptions, EbpfCompileOptions, JvmCompileOptions,
-    LlvmCompileOptions, NativeCompileOptions, NativeEmitterKind, WasmCompileOptions,
+    LlvmCompileOptions, LossyCompileOptions, NativeCompileOptions, NativeEmitterKind,
+    WasmCompileOptions,
 };
-use crate::{cli::CliConfig, CliError, Result};
+use crate::{CliError, Result, cli::CliConfig};
 use console::style;
 use fp_core::ast::{AstSerializer, AstTarget, AstTargetOutput, File};
 use fp_core::config;
@@ -174,6 +175,10 @@ pub struct CompileArgs {
     /// Generate type definitions for TypeScript target.
     #[arg(long)]
     pub type_defs: bool,
+
+    /// Skip HIR typing before AST target emission.
+    #[arg(long)]
+    pub skip_typing: bool,
 
     /// Generate a single WIT world instead of per-package worlds.
     #[arg(long)]
@@ -902,7 +907,7 @@ async fn compile_ast_target(
         ));
     }
 
-    use crate::languages::frontend::{detect_language_source_by_path, LanguageSource};
+    use crate::languages::frontend::{LanguageSource, detect_language_source_by_path};
     let detected = detect_language_source_by_path(input);
     let is_wit_input = matches!(detected, Some(LanguageSource::Wit));
     let is_typescript_input = matches!(
@@ -916,6 +921,17 @@ async fn compile_ast_target(
             warn!("--const-eval is ignored: AST const evaluation has been removed");
         }
         compiler::prepare_ast_target(&mut ast, input, args.source_language.as_deref(), false)?;
+    }
+
+    if !args.skip_typing && !is_wit_input && !is_typescript_input {
+        ast = compiler::typecheck_ast_target(
+            ast,
+            &args.package,
+            input,
+            LossyCompileOptions {
+                enabled: args.lossy || fp_core::config::lossy_mode(),
+            },
+        )?;
     }
 
     let result = emit_ast_target(&ast, target, args.type_defs, input, args.single_world)?;
@@ -1680,17 +1696,9 @@ fn determine_output_path(
                     } else if native_asm_text_target {
                         "s"
                     } else if native_object_target {
-                        if native_link_requested {
-                            "out"
-                        } else {
-                            "o"
-                        }
+                        if native_link_requested { "out" } else { "o" }
                     } else if native_archive_target {
-                        if native_link_requested {
-                            "out"
-                        } else {
-                            "a"
-                        }
+                        if native_link_requested { "out" } else { "a" }
                     } else if urcl_object_target {
                         "o"
                     } else if goasm_object_target {
@@ -1896,12 +1904,11 @@ mod tests {
                     package_manifest.to_string_lossy(),
                     package_root.to_string_lossy(),
                 )
-                .with_modules(vec![WorkspaceModule::new(
-                    "demo",
-                    module_path.to_string_lossy(),
-                )
-                .with_module_path(Vec::new())
-                .with_language(Some("ferro".to_string()))]),
+                .with_modules(vec![
+                    WorkspaceModule::new("demo", module_path.to_string_lossy())
+                        .with_module_path(Vec::new())
+                        .with_language(Some("ferro".to_string())),
+                ]),
             ]);
 
         let graph_path = root.join("workspace-graph.json");

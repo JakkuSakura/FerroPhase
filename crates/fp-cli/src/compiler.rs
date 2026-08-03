@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
+use fp_c::CFrontend;
 use fp_compiler::{
     AstId, BytecodeId, CompilerDriver, CompilerModuleResolver, CompilerWork, ConstValueId,
     FullyQualifiedPath, LirId, MirId,
@@ -76,10 +77,12 @@ pub fn check_path(
             .map_err(|err| CliError::Compilation(err.to_string()))?;
     }
     driver.state.insert_ast(identity.ast_id.clone(), ast);
-    driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
-        ast: identity.ast_id.clone(),
-        path: identity.path.clone(),
-    });
+    driver
+        .scheduler
+        .submit(CompilerWork::CompileUnitCompileNative {
+            ast: identity.ast_id.clone(),
+            path: identity.path.clone(),
+        });
     drain_driver(&mut driver, lossy)
 }
 
@@ -826,10 +829,14 @@ fn lower_ast(
     // time anything in the compiled program actually references it (see
     // `CompilerDriver::load_package`), not eagerly here.
     let mut workspace = fp_core::workspace::WorkspaceContext::new();
-    workspace.register_provider("std", Arc::new(fp_lang::provider::EmbeddedStdPackageProvider));
-    driver.state.typing_ctx = std::rc::Rc::new(
-        fp_typing::TypingContext::new(data_layout(), std::rc::Rc::new(workspace))
+    workspace.register_provider(
+        "std",
+        Arc::new(fp_lang::provider::EmbeddedStdPackageProvider),
     );
+    driver.state.typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(
+        data_layout(),
+        std::rc::Rc::new(workspace),
+    ));
 
     if let Some(resolver) = resolver {
         driver.state.set_module_resolver(resolver);
@@ -839,10 +846,9 @@ fn lower_ast(
             .map_err(|err| CliError::Compilation(err.to_string()))?;
     }
     driver.state.insert_ast(ast_id.clone(), ast);
-    driver.scheduler.submit(CompilerWork::CompileUnitCompileNative {
-        ast: ast_id,
-        path,
-    });
+    driver
+        .scheduler
+        .submit(CompilerWork::CompileUnitCompileNative { ast: ast_id, path });
     Ok(driver)
 }
 
@@ -967,6 +973,28 @@ pub fn prepare_ast_target(
     Ok(())
 }
 
+/// Run the shared AST through HIR generation and typing, then lift the typed
+/// HIR back to AST for the existing target printers.
+pub fn typecheck_ast_target(
+    ast: File,
+    package: &str,
+    path: &Path,
+    lossy: LossyCompileOptions,
+) -> Result<File> {
+    let identity = CompilerIdentity::for_file(package, path);
+    let mut driver = lower_ast(ast, &identity, path, None, lossy)?;
+    drain_driver(&mut driver, lossy)?;
+    let hir = driver
+        .state
+        .hir(&fp_compiler::HirId::new(format!(
+            "hir:{}",
+            identity.path.to_key()
+        )))
+        .map_err(|err| CliError::Compilation(err.to_string()))?;
+    fp_backend::transforms::hir_to_ast::lift_program(hir, path.to_path_buf())
+        .map_err(|err| CliError::Compilation(err.to_string()))
+}
+
 fn parse_file_with_context(
     path: &Path,
     source_language: Option<&str>,
@@ -1014,6 +1042,9 @@ fn select_frontend(
         .unwrap_or_else(|| languages::FERROPHASE.to_string());
 
     match language.as_str() {
+        value if value == languages::C => Ok(Box::new(CFrontend::new().map_err(|err| {
+            CliError::Compilation(format!("failed to initialize C frontend: {err}"))
+        })?)),
         value if value == languages::FERROPHASE => Ok(Box::new(FerroFrontend::new())),
         #[cfg(feature = "lang-typescript")]
         value if value == languages::TYPESCRIPT || value == languages::JAVASCRIPT => {
