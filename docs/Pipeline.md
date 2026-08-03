@@ -45,13 +45,14 @@ flowchart LR
 ## Frontends
 
 Frontends parse language-specific input and preserve provenance, but the shared
-compiler consumes canonical AST. LAST-like frontend data may still be stored for
-tooling and target emission, but it is not a semantic checkpoint in the shared
-compiler design.
+compiler consumes canonical AST. Frontend-specific parse data may be retained
+for tooling and target emission, but it is not a semantic checkpoint in the
+shared compiler design.
 
 Shipped frontends include:
 
 - `FerroFrontend` for FerroPhase/Rust syntax (`.fp`, `.rs`);
+- `CFrontend` and `CppParser` for Clang-backed C/C++ declarations;
 - `TypeScriptFrontend` for TypeScript/JavaScript families;
 - `WitFrontend` for WebAssembly Interface Types;
 - `SqlFrontend` for `.sql` query documents;

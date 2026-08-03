@@ -187,9 +187,12 @@ crates/
   dependent scopes are lowered or emitted.
 - `static` items remain runtime initialized; execution records store their
   default expressions for targets that need deferred initialization.
-- Strict intrinsics are defined in `std::intrinsic` via `#[lang]` items; other
-  intrinsic helpers are normalized to canonical `std` symbols by the frontend
-  and resolved through the shared registry.
+- Compiler intrinsics are declared with `#[intrinsic = "..."]` under
+  `std::intrinsics::*`. High-level operations use `#[op = "..."]`; compile
+  mode may lower them to ordinary `std` wrappers while transpile mode keeps
+  the operation at the AST level.
+- C ABI declarations live in the provider-owned top-level `::libc` package.
+  The former `std::libc` compatibility module is retired.
 
 ## Stdlib Layering and Deprecation
 

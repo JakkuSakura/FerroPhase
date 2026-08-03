@@ -4,12 +4,16 @@ C/C++ frontend for the FerroPhase compiler using clang.
 
 ## Overview
 
-`fp-clang` provides integration with clang to parse C and C++ source files and convert them to LLVM IR that can be used with the FerroPhase LLVM backend. This allows FerroPhase to interoperate with C/C++ code and libraries.
+`fp-clang` owns the Clang parser, declaration AST, and direct LLVM integration
+for C and C++ source files. The public `fp-c` and `fp-cpp` crates build on this
+parser for the compiler-facing frontends: they lower C/C++ declarations into
+the shared FerroPhase AST so the normal HIR, typing, MIR, and LIR pipeline can
+consume them.
 
 ## Features
 
 - Parse C and C++ source files using clang
-- Generate LLVM IR from C/C++ code
+- Generate LLVM IR from C/C++ code for the direct LLVM integration path
 - Extract function declarations from header files
 - Support for various C/C++ standards (C89-C23, C++98-C++23)
 - Integration with fp-llvm backend
@@ -17,7 +21,7 @@ C/C++ frontend for the FerroPhase compiler using clang.
 
 ## Usage
 
-### Basic Compilation
+### Direct LLVM Compilation
 
 ```rust
 use fp_clang::{ClangParser, CompileOptions, Standard};
@@ -53,7 +57,7 @@ for sig in signatures {
 }
 ```
 
-### Linking with FerroPhase
+### Linking with FerroPhase LLVM
 
 ```rust
 use fp_clang::ClangCodegen;
@@ -82,7 +86,19 @@ let llvm_module = codegen.link_with_lir(&c_files, &lir_program, &options)?;
 
 ## Integration with FerroPhase
 
-The fp-clang crate supplements the LLVM backend by:
+The `fp-clang`, `fp-c`, and `fp-cpp` crates cover two related integration
+paths:
+
+1. **Shared-AST frontend**: use `fp-c::CFrontend` or `fp-cpp::CppParser` when
+   declarations must enter the common compiler pipeline.
+2. **Direct LLVM integration**: use `fp-clang::ClangCodegen` when C/C++ source
+   should be compiled directly to LLVM IR.
+
+The shared-AST path is the compiler default for generated libc bindings. The
+`scripts/codegen_libc.sh` script invokes the normal `fp compile` pipeline and
+emits the top-level `::libc` package.
+
+The direct integration path supplements the LLVM backend by:
 
 1. **FFI Support**: Parse C headers to generate foreign function interface bindings
 2. **Native Libraries**: Compile C/C++ libraries to link with FerroPhase code

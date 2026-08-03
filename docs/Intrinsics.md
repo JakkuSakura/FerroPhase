@@ -1,103 +1,99 @@
-# Intrinsics
+# Intrinsics And Operations
 
-This document defines how compiler-recognized capabilities flow through the
-dynamic scoped compiler.
+FerroPhase has two related call vocabularies. The distinction is deliberate:
+high-level operations are useful to source transpilers, while compiler
+intrinsics describe capabilities that must be understood by the compile
+pipeline.
 
-## Terminology
+## `#[op]`
 
-- **General intrinsics**: Framework-recognized helpers such as std functions,
-  helper macros, container helpers, and type utilities.
-- **Strict intrinsics**: Functions under `std::intrinsic::...` that carry
-  `#[lang]` items and require direct compiler support.
-- **Keywords**: Staging features such as `const`, `quote`, and `splice`.
-- **Builtins**: Parse-time sugar such as `emit!`; builtins lower during
-  normalization and do not define new semantics.
+An operation is a high-level standard-library-facing call:
 
-## Core Model
-
-Intrinsic resolution is shared by typing, execution, and emission. Frontends
-normalize surface spellings into canonical symbols or intrinsic tags. The
-compiler resolves those forms once, then each consumer checks the same
-`ResolvedIntrinsic` against its requested capability.
-
-```mermaid
-flowchart LR
-    AstNormalizer[AstNormalizer] -->|CanonicalCall| IntrinsicResolver[IntrinsicResolver]
-    IntrinsicResolver -->|ResolvedIntrinsic| TypeEngine[TypeEngine]
-    IntrinsicResolver -->|ResolvedIntrinsic| ExecutionEngine[ExecutionEngine]
-    IntrinsicResolver -->|ResolvedIntrinsic| TargetEmitter[TargetEmitter]
-    TypeEngine -->|CompileTimeNeed| CompilerWorkScheduler[CompilerWorkScheduler]
+```ferro
+#[op = "fs_read_to_string"]
+pub fn read_to_string(path: &Path) -> str {
+    std::intrinsics::fs::read_to_string(path)
+}
 ```
 
-## Canonical Forms
+In transpile mode, the operation remains an `Op` call in the normalized AST.
+This preserves a useful source-level abstraction for target printers and lets
+each target provide its own implementation or wrapper.
 
-- **Canonical symbols**: `std::...` paths resolved by the intrinsic registry.
-  Example: `std::type::size_of`.
-- **Intrinsic tags**: AST nodes that carry explicit intrinsic meaning for
-  method-style helpers or compile-time-only operations.
-- **Strict symbols**: `std::intrinsic::...` `#[lang]` items used by std wrappers,
-  not user code.
+In compile mode, the Ferro frontend maps supported operations to their ordinary
+`std` wrapper paths, for example `fs_read_to_string` becomes
+`std::fs::read_to_string`. The backend then sees a regular function call rather
+than a frontend-only operation.
 
-## Families
+## `#[intrinsic]`
 
-### Function-Style Intrinsics
+An intrinsic is a compiler-pipeline primitive:
 
-Examples include `std::io::print`, `std::alloc::realloc`, and
-`std::type::size_of`. They can lower to runtime calls, execute during comptime
-when capability rules allow, or produce unsupported diagnostics.
+```ferro
+#[intrinsic = "create_struct"]
+pub fn create_struct(name: &str) -> Type;
+```
 
-### Type Utilities
+Intrinsic declarations belong in `std::intrinsics::*` where possible. They are
+recognized by the shared AST and represented as `IntrinsicCallKind` values.
+They are not general-purpose high-level APIs and should not be added to
+ordinary `std` functions merely to make a backend recognize a call.
 
-Examples:
+Use an ordinary `std` wrapper when a public API can express the operation. The
+wrapper may call a low-level intrinsic, just as Rust standard-library wrappers
+delegate to compiler primitives.
 
-- `sizeof!` -> `std::type::size_of`
-- `clone_struct!` -> `IntrinsicCallKind::CloneStruct`
-- `std::intrinsic::create_struct` -> `IntrinsicCallKind::CreateStruct`
-- `std::intrinsic::addfield` -> `IntrinsicCallKind::AddField`
+## Normalization Modes
 
-Type utilities that need values or generated types may emit `CompileTimeNeed`
-through `TypeEngine` or execution work.
+The frontend receives an `IntrinsicNormalizationMode`:
 
-### Method-Style Helpers
+| Mode | `Op` calls | `Intrinsic` calls |
+| --- | --- | --- |
+| Transpile | Preserve high-level operation | Preserve compiler primitive identity |
+| Compile | Lower supported operations to `std` wrappers | Keep for compiler lowering |
 
-Examples:
+Normalization is performed before HIR lowering. It does not change the
+semantic contract; it changes which representation is most useful to the next
+stage.
 
-- `.len()` -> `IntrinsicCallKind::Len`
-- `.has_field(name)` -> `IntrinsicCallKind::HasField`
-- `.field_type(name)` -> `IntrinsicCallKind::FieldType`
-- `.method_count()` -> `IntrinsicCallKind::MethodCount`
+## Canonical Representation
 
-After required comptime answers are applied, these either become ordinary calls,
-constants, typed metadata queries, or target diagnostics.
+The shared AST represents calls as:
 
-## Scheduler Integration
+```text
+CallKind::Op(OpKind)
+CallKind::Intrinsic(IntrinsicKind)
+```
 
-1. Frontend parsing produces AST with surface spellings.
-2. `AstNormalizer` rewrites spellings into canonical forms.
-3. `IntrinsicResolver` produces `ResolvedIntrinsic`.
-4. `TypeEngine` uses it during constraints and may emit `CompileTimeNeed`.
-5. `ExecutionEngine` executes supported intrinsic behavior for comptime or
-   runtime interpretation.
-6. Emitters materialize remaining intrinsics for their target.
+`OpKind` includes printing, filesystem, environment, I/O, process, and task
+operations. `IntrinsicKind` includes type/layout queries, structural type
+construction, panic/control primitives, and low-level compiler hooks.
 
-Unsupported behavior must be reported as a capability diagnostic on the same
-resolved intrinsic identity. It must not silently switch to a separate
-interpreter-only behavior.
+The canonical low-level standard-library namespace is
+`std::intrinsics::*`. The C ABI declarations are separate, generated under the
+top-level `::libc` package; `std::libc` is retired.
 
-## Implementation Notes
+## Resolution Flow
 
-- Shared data should live under `crates/fp-core/src/intrinsics`.
-- Lang items are collected from std modules before intrinsic normalization.
-- `std::intrinsic` is the only home for `#[lang]` items.
-- Std wrappers should call strict intrinsics; user code should use wrappers or
-  general intrinsic spellings.
+1. A `LanguageFrontend` parses source into the shared AST.
+2. The frontend normalizes macros, operations, and intrinsic declarations for
+   the selected mode.
+3. Package and module resolution obtains provider-owned package identities.
+4. HIR lowering and typing consume the normalized AST.
+5. MIR/LIR lowering, interpretation, target emission, or AST printing consumes
+   the same semantic call identity.
 
-## Extension Checklist
+Unsupported intrinsic behavior must produce a capability or typing diagnostic.
+It must not silently fall back to unrelated interpreter-only behavior.
 
-1. Decide whether the intrinsic is general or strict.
-2. Add or update canonical forms in the intrinsic registry.
-3. Teach normalization how to rewrite surface spelling.
-4. Define typing behavior and possible `CompileTimeNeed`.
-5. Define execution behavior and target materialization.
-6. Add tests for comptime, runtime interpretation, bytecode, and native modes
-   where supported.
+## Adding A New Capability
+
+1. Decide whether the public surface is an `#[op]`, an `#[intrinsic]`, or an
+   ordinary wrapper.
+2. Put compiler primitives in the appropriate `std::intrinsics::*` module.
+3. Add the operation or intrinsic kind to `fp-core` only when shared compiler
+   handling is required.
+4. Teach the Ferro normalizer about compile-mode lowering if the operation has
+   a `std` wrapper.
+5. Add tests for transpile preservation, compile-mode normalization, typing,
+   and supported runtime/backends.

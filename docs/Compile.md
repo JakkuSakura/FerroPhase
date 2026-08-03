@@ -69,7 +69,7 @@ Highlights:
 To inspect scheduler-produced AST and typed artefacts, run:
 
 ```bash
-$ fp compile src/main.fp --emit ast --emit ast-typed --emit hir
+$ fp compile src/main.fp --package demo --emit ast --emit ast-typed --emit hir
 ```
 
 Artifacts (paths depend on your configuration):
@@ -77,22 +77,31 @@ Artifacts (paths depend on your configuration):
 - `target/ast/src_main.ast-typed` - typed AST annotations
 - `target/hir/src_main.hir` - HIR for requested lowered scopes
 
-## Building to Native (LLVM target)
+## Building To Backends
 
-> The native backend may be temporarily unavailable while the typed AST/HIR
-> refactor lands. The CLI currently stops after producing the typed AST and
-> HIR artefacts.
+The same compile command can emit native binaries, LLVM, bytecode, JVM bytecode,
+Wasm, eBPF, CIL, and .NET outputs. Select a backend with `--backend`; select a
+source printer with `--target`.
 
-Common flags (still accepted for future use):
-- `--opt {0|1|2|3}` – Optimisation level (default: 2)
+Common flags:
+- `--opt-level {0|1|2|3}` – Optimisation level (default: 2)
 - `--debug` – Include debug info
 - `--emit {ast,ast-typed,hir,mir,lir}` - Persist intermediates for inspection
 - `--save-intermediates` – Shortcut to emit all intermediates
+- `--skip-typing` – Skip HIR typing for AST targets that do not require it
+
+For example:
+
+```bash
+$ fp compile src/main.fp --package demo --backend binary --output main
+$ fp compile src/main.fp --package demo --backend bytecode --output main.fbc
+$ fp compile src/main.fp --package demo --target fp --output normalized.fp
+```
 
 ## Inspecting Intermediates
 
 ```bash
-$ fp compile src/main.fp --emit ast-typed --emit hir
+$ fp compile src/main.fp --package demo --emit ast-typed --emit hir
 $ cat target/ast/src_main.ast-typed
 $ cat target/hir/src_main.hir
 ```
@@ -128,9 +137,9 @@ Current scope:
 FerroPhase also supports text-oriented backend targets for inspection and experimentation:
 
 ```bash
-$ fp compile src/main.fp --backend ebpf -o main.ebpf
-$ fp compile src/main.fp --backend cil -o main.il
-$ fp compile src/main.fp --backend dotnet -o main.exe
+$ fp compile src/main.fp --package demo --backend ebpf -o main.ebpf
+$ fp compile src/main.fp --package demo --backend cil -o main.il
+$ fp compile src/main.fp --package demo --backend dotnet -o main.exe
 ```
 
 - `--backend ebpf` emits an experimental eBPF assembly sketch.
@@ -148,10 +157,10 @@ $ fp compile src/main.fp --backend dotnet -o main.exe
 Use `fp compile` with `--backend dotnet --exec` to compile and run immediately:
 
 ```bash
-$ fp compile src/main.fp --backend dotnet --exec
-$ fp compile src/main.fp --backend dotnet --exec --output app.exe
-$ fp compile src/main.fp --backend dotnet --exec --output app.dll
-$ fp compile src/main.fp --backend dotnet --exec --release -O3
+$ fp compile src/main.fp --package demo --backend dotnet --exec
+$ fp compile src/main.fp --package demo --backend dotnet --exec --output app.exe
+$ fp compile src/main.fp --package demo --backend dotnet --exec --output app.dll
+$ fp compile src/main.fp --package demo --backend dotnet --exec --release -O3
 ```
 
 - `--backend dotnet --exec` compiles to a .NET assembly and executes it immediately.
@@ -181,6 +190,6 @@ The release record is required for reproducibility audits.
 
 ## Next Steps
 
-- Explore bytecode mode: `fp bytecode src/main.fp --emit bytecode`
-- Generate Rust output when AST target emission is enabled
+- Explore bytecode mode: `fp compile src/main.fp --package demo --backend bytecode`
+- Generate Rust or FerroPhase output with `fp compile --target`
 - Extend the project with modules and custom targets; update `FerroPhase.toml` accordingly.
