@@ -9,9 +9,9 @@ use fp_core::ast::{
 use fp_core::hir::PackageId;
 use fp_core::lir::{
     BasicBlockId, CallingConvention, ComptimeOp, LirBasicBlock, LirCompileUnit,
-    LirConstantAggregate, LirConstantData, LirConstantKind, LirDataLayout, LirFloat, LirFunction,
-    LirFunctionRef, LirInstruction, LirInstructionKind, LirInteger, LirLocal, LirProgram,
-    LirTerminator, LirType, LirValue, LirValueKind, RegisterId,
+    LirConstantAggregate, LirConstantData, LirConstantExpr, LirConstantKind,
+    LirDataLayout, LirFloat, LirFunction, LirFunctionRef, LirInstruction, LirInstructionKind,
+    LirInteger, LirLocal, LirProgram, LirTerminator, LirType, LirValue, LirValueKind, RegisterId,
 };
 use fp_ffi::{FfiRuntime, FfiSignature, FfiType};
 
@@ -594,21 +594,8 @@ impl LirInterpreter {
     fn resolve_raw(&self, val: &LirValue) -> LirResult<u64> {
         match &val.kind {
             LirValueKind::Register(id) => Ok(self.read_register(*id)),
-            LirValueKind::Constant(LirConstantKind::GlobalAddress { global }) => self
-                .global_values
-                .get(global.as_str())
-                .copied()
-                .ok_or_else(|| VmError::Runtime(format!("missing global {global}"))),
-            LirValueKind::Constant(LirConstantKind::Data(data)) => match data {
-                LirConstantData::Integer(_) | LirConstantData::Float(_) => Ok(const_raw(val)),
-                LirConstantData::Bytes(_) => Err(VmError::Runtime(format!(
-                    "resolve_raw called on byte constant: {val:?}"
-                ))),
-            },
-            LirValueKind::Constant(LirConstantKind::Null)
-            | LirValueKind::Constant(LirConstantKind::Undef)
-            | LirValueKind::Constant(LirConstantKind::Poison)
-            | LirValueKind::Function(_) => Ok(0),
+            LirValueKind::Constant(kind) => self.resolve_constant_raw(&val.ty, kind),
+            LirValueKind::Function(_) => Ok(0),
             LirValueKind::Local(id) | LirValueKind::StackSlot(id) => {
                 self.state.mem.load_u64(self.state.local_addr(*id))
             }
@@ -617,11 +604,58 @@ impl LirInterpreter {
                 .get(name.as_str())
                 .copied()
                 .ok_or_else(|| VmError::Runtime(format!("missing global {name}"))),
-            LirValueKind::Constant(LirConstantKind::Aggregate(_))
-            | LirValueKind::Constant(LirConstantKind::FunctionAddress(_))
-            | LirValueKind::Constant(LirConstantKind::Expr(_)) => Err(VmError::Runtime(format!(
-                "resolve_raw called on non-scalar value: {val:?}"
-            ))),
+        }
+    }
+
+    fn resolve_constant_raw(&self, ty: &LirType, kind: &LirConstantKind) -> LirResult<u64> {
+        match kind {
+            LirConstantKind::GlobalAddress { global } => self
+                .global_values
+                .get(global.as_str())
+                .copied()
+                .ok_or_else(|| VmError::Runtime(format!("missing global {global}"))),
+            LirConstantKind::Data(LirConstantData::Integer(integer)) => {
+                Ok(integer_raw(integer))
+            }
+            LirConstantKind::Data(LirConstantData::Float(_)) => Err(VmError::Runtime(
+                format!("constant GEP index must be an integer, found {ty:?}"),
+            )),
+            LirConstantKind::Data(LirConstantData::Bytes(_)) => Err(VmError::Runtime(
+                "constant address cannot be formed from byte data".into(),
+            )),
+            LirConstantKind::Null | LirConstantKind::Undef | LirConstantKind::Poison => Ok(0),
+            LirConstantKind::Expr(LirConstantExpr::GetElementPtr {
+                base, indices, ..
+            }) => {
+                let base_raw = self.resolve_constant_raw(&base.ty, &base.kind)?;
+                let elem_size = match &base.ty {
+                    LirType::Ptr(pointee) => {
+                        let (bits, _) = lir_type_info(pointee);
+                        ((bits + 7) / 8) as u64
+                    }
+                    _ => 1,
+                }
+                .max(1);
+                let mut offset = 0u64;
+                for (index, index_constant) in indices.iter().enumerate() {
+                    let index_raw = match &index_constant.kind {
+                        LirConstantKind::Data(LirConstantData::Integer(integer)) => {
+                            integer_raw(integer)
+                        }
+                        _ => {
+                            return Err(VmError::Runtime(format!(
+                                "constant GEP index {index} is not an integer"
+                            )))
+                        }
+                    };
+                    let scale = if index == 0 { elem_size } else { 1 };
+                    offset = offset.wrapping_add(index_raw.wrapping_mul(scale));
+                }
+                Ok(base_raw.wrapping_add(offset))
+            }
+            LirConstantKind::Aggregate(_) | LirConstantKind::FunctionAddress(_) => Err(
+                VmError::Runtime("constant address requires a scalar or GEP constant".into()),
+            ),
         }
     }
 
@@ -1833,12 +1867,8 @@ impl LirInterpreter {
     }
 }
 
-fn const_raw(value: &LirValue) -> u64 {
-    let LirValueKind::Constant(LirConstantKind::Data(data)) = &value.kind else {
-        return 0;
-    };
-    match data {
-        LirConstantData::Integer(integer) => match integer {
+fn integer_raw(integer: &LirInteger) -> u64 {
+    match integer {
             LirInteger::I1(value) => u64::from(*value),
             LirInteger::I8(value) => u64::from(*value),
             LirInteger::I16(value) => u64::from(*value),
@@ -1848,12 +1878,6 @@ fn const_raw(value: &LirValue) -> u64 {
             LirInteger::Arbitrary(_) => {
                 todo!("interpreter conversion for arbitrary integer constants")
             }
-        },
-        LirConstantData::Float(float) => match float {
-            LirFloat::F32(value) => u64::from(*value),
-            LirFloat::F64(value) => *value,
-        },
-        LirConstantData::Bytes(_) => 0,
     }
 }
 
@@ -2094,9 +2118,14 @@ mod tests {
                                 is_variadic: false,
                             },
                         ),
-                        args: vec![LirValue::constant(LirConstant::global_address(
+                        args: vec![LirValue::constant(LirConstant::get_element_ptr(
                             LirType::Ptr(Box::new(LirType::I8)),
-                            Name::new("hello"),
+                            LirConstant::global_address(
+                                LirType::Ptr(Box::new(LirType::I8)),
+                                Name::new("hello"),
+                            ),
+                            vec![],
+                            true,
                         ))],
                         calling_convention: CallingConvention::C,
                         tail_call: false,

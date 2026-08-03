@@ -834,13 +834,6 @@ impl HirGenerator {
         }))
     }
 
-    pub(super) fn transform_block_to_hir(
-        &mut self,
-        block: &ast::ExprBlock,
-    ) -> Result<hir::ExprKind> {
-        Ok(hir::ExprKind::Block(self.transform_block_node_to_hir(block)?))
-    }
-
     /// Transform a block node to HIR without wrapping it in an expression.
     pub(super) fn transform_block_node_to_hir(
         &mut self,

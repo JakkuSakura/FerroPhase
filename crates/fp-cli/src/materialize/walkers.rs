@@ -40,7 +40,7 @@ pub fn materialize_item(
             ast::ItemKind::Impl(impl_block)
         }
         ast::ItemKind::DefFunction(mut func) => {
-            func.body = Box::new(materialize_expr(*func.body, strategy)?);
+            func.body = materialize_block(func.body, strategy)?;
             ast::ItemKind::DefFunction(func)
         }
         ast::ItemKind::DefConst(mut def) => {

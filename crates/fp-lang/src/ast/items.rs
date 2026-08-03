@@ -1029,7 +1029,7 @@ fn parse_abi_fn_item(
             sig,
         })));
     }
-    let body = parse_block_expr(input, file)?;
+    let body = parse_function_block(input, file)?;
     Ok(Item::from(ItemKind::DefFunction(ItemDefFunction {
         ty_annotation: None,
         attrs,
@@ -1037,7 +1037,8 @@ fn parse_abi_fn_item(
         collected_items: Vec::new(),
         ty: None,
         sig,
-        body: Box::new(body),
+        body,
+        is_async: false,
         visibility,
     })))
 }

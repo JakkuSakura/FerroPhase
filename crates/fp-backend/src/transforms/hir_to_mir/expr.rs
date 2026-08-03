@@ -1318,7 +1318,7 @@ impl MirLowering {
         let span = function
             .body
             .as_ref()
-            .map(|body| body.value.span)
+            .map(|body| body.span())
             .unwrap_or(item.span);
 
         let mir_body =
@@ -1785,7 +1785,7 @@ impl MirLowering {
             .function
             .body
             .as_ref()
-            .map(|body| body.value.span)
+            .map(|body| body.span())
             .unwrap_or(span);
         let mir_body = BodyBuilder::new(
             self,
@@ -1891,7 +1891,7 @@ impl MirLowering {
             .function
             .body
             .as_ref()
-            .map(|body| body.value.span)
+            .map(|body| body.span())
             .unwrap_or(span);
         let mir_body = BodyBuilder::new(
             self,
@@ -3542,7 +3542,7 @@ impl MirLowering {
         let span = function
             .body
             .as_ref()
-            .map(|body| body.value.span)
+            .map(|body| body.span())
             .unwrap_or(item.span);
 
         BodyBuilder::new(
@@ -5672,7 +5672,7 @@ impl MirLowering {
         let span = function
             .body
             .as_ref()
-            .map(|body| body.value.span)
+            .map(|body| body.span())
             .unwrap_or(parent_span);
         let mir_body = BodyBuilder::new(
             self,

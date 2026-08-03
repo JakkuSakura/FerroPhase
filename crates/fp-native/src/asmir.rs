@@ -18,9 +18,9 @@ use fp_core::asmir::{
 };
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
-    Linkage, LirConstant, LirConstantAggregate, LirConstantData, LirConstantKind, LirFloat,
-    LirInstructionKind, LirInteger, LirIntrinsicKind, LirProgram, LirTerminator, LirValue,
-    LirValueKind, Name, Visibility,
+    Linkage, LirConstant, LirConstantAggregate, LirConstantData, LirConstantExpr,
+    LirConstantKind, LirFloat, LirInstructionKind, LirInteger, LirIntrinsicKind, LirProgram,
+    LirTerminator, LirValue, LirValueKind, Name, Visibility,
 };
 use std::collections::HashMap;
 
@@ -4662,8 +4662,52 @@ fn map_constant_kind(kind: &LirConstantKind, ty: &fp_core::lir::LirType) -> AsmC
         }
         LirConstantKind::Null => AsmConstant::Null(ty.clone()),
         LirConstantKind::Undef | LirConstantKind::Poison => AsmConstant::Undef(ty.clone()),
-        LirConstantKind::Expr(_) => panic!("constant expression native lowering is unsupported"),
+        LirConstantKind::Expr(LirConstantExpr::GetElementPtr {
+            base, indices, ..
+        }) => {
+            let (global, mut base_indices) = global_ref_components(base)
+                .unwrap_or_else(|| panic!("constant GEP requires a global-address base"));
+            for index in indices {
+                let value = constant_integer(index)
+                    .unwrap_or_else(|| panic!("constant GEP index must be an integer"));
+                base_indices.push(value);
+            }
+            AsmConstant::GlobalRef(global, ty.clone(), base_indices)
+        }
     }
+}
+
+fn global_ref_components(constant: &LirConstant) -> Option<(Name, Vec<u64>)> {
+    match &constant.kind {
+        LirConstantKind::GlobalAddress { global } => Some((global.clone(), Vec::new())),
+        LirConstantKind::Expr(LirConstantExpr::GetElementPtr {
+            base, indices, ..
+        }) => {
+            let (global, mut base_indices) = global_ref_components(base)?;
+            for index in indices {
+                base_indices.push(constant_integer(index)?);
+            }
+            Some((global, base_indices))
+        }
+        _ => None,
+    }
+}
+
+fn constant_integer(constant: &LirConstant) -> Option<u64> {
+    let LirConstantKind::Data(LirConstantData::Integer(integer)) = &constant.kind else {
+        return None;
+    };
+    Some(match integer {
+        LirInteger::I1(value) => u64::from(*value),
+        LirInteger::I8(value) => u64::from(*value),
+        LirInteger::I16(value) => u64::from(*value),
+        LirInteger::I32(value) => u64::from(*value),
+        LirInteger::I64(value) => *value,
+        LirInteger::I128(value) => *value as u64,
+        LirInteger::Arbitrary(_) => {
+            return None;
+        }
+    })
 }
 
 fn map_global(global: &fp_core::lir::LirGlobal) -> AsmGlobal {
@@ -4740,7 +4784,8 @@ fn map_format(format: TargetFormat) -> AsmObjectFormat {
 #[cfg(test)]
 mod tests {
     use super::{
-        lift_from_aarch64, lift_from_x86_64, lower_to_aarch64, lower_to_x86_64, select_program,
+        lift_from_aarch64, lift_from_x86_64, lower_to_aarch64, lower_to_x86_64, map_constant_kind,
+        select_program,
     };
     use crate::asm::aarch64::{Aarch64CallTarget, Aarch64ConditionCode, Aarch64TerminatorOpcode};
     use crate::asm::aarch64::{
@@ -4774,6 +4819,24 @@ mod tests {
 
     fn i32_value(value: u32) -> LirValue {
         LirValue::constant(LirConstant::integer(LirType::I32, LirInteger::I32(value)).unwrap())
+    }
+
+    #[test]
+    fn maps_constant_global_gep_to_global_reference() {
+        let ptr_ty = LirType::Ptr(Box::new(LirType::I8));
+        let constant = LirConstant::get_element_ptr(
+            ptr_ty.clone(),
+            LirConstant::global_address(ptr_ty.clone(), Name::new("message")),
+            vec![LirConstant::integer(LirType::I64, LirInteger::I64(1)).unwrap()],
+            true,
+        );
+
+        let mapped = map_constant_kind(&constant.kind, &constant.ty);
+        assert!(matches!(
+            mapped,
+            fp_core::asmir::AsmConstant::GlobalRef(name, _, indices)
+                if name == Name::new("message") && indices == vec![1]
+        ));
     }
 
     fn reg(id: u32, ty: LirType) -> LirValue {

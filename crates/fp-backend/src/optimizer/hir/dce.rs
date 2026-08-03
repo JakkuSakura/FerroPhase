@@ -339,30 +339,6 @@ fn block_has_unresolved_paths(block: &hir::Block) -> bool {
         .is_some_and(expr_has_unresolved_paths)
 }
 
-fn collect_block_refs(
-    block: &hir::Block,
-    full_map: &HashMap<String, hir::DefId>,
-    tail_map: &HashMap<String, hir::DefId>,
-    work: &mut VecDeque<hir::DefId>,
-) {
-    for stmt in &block.stmts {
-        match &stmt.kind {
-            hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
-                collect_expr_refs(expr, full_map, tail_map, work)
-            }
-            hir::StmtKind::Local(local) => {
-                if let Some(init) = &local.init {
-                    collect_expr_refs(init, full_map, tail_map, work);
-                }
-            }
-            hir::StmtKind::Item(item) => collect_item_refs(item, full_map, tail_map, work),
-        }
-    }
-    if let Some(expr) = &block.expr {
-        collect_expr_refs(expr, full_map, tail_map, work);
-    }
-}
-
 fn collect_expr_refs(
     expr: &hir::Expr,
     full_map: &HashMap<String, hir::DefId>,

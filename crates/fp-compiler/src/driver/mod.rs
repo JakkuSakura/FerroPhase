@@ -370,7 +370,7 @@ impl CompilerDriver {
                 );
             }
             def.sig.generics_params.clear();
-            Self::substitute_in_body(
+            Self::substitute_in_block(
                 &mut def.body,
                 &monomorph.generic_params,
                 &monomorph.concrete_types,
@@ -1051,6 +1051,32 @@ impl CompilerDriver {
         }
     }
 
+    fn substitute_in_block(
+        block: &mut fp_core::ast::ExprBlock,
+        param_names: &[String],
+        concrete_types: &[Ty],
+    ) {
+        for stmt in &mut block.stmts {
+            match stmt {
+                BlockStmt::Expr(expr) => {
+                    Self::substitute_in_body(expr.expr.as_mut(), param_names, concrete_types)
+                }
+                BlockStmt::Let(stmt) => {
+                    if let Some(init) = stmt.init.as_mut() {
+                        Self::substitute_in_body(init, param_names, concrete_types);
+                    }
+                    if let Some(diverge) = stmt.diverge.as_mut() {
+                        Self::substitute_in_body(diverge, param_names, concrete_types);
+                    }
+                }
+                BlockStmt::Defer(stmt) => {
+                    Self::substitute_in_body(stmt.expr.as_mut(), param_names, concrete_types)
+                }
+                BlockStmt::Item(_) | BlockStmt::Noop | BlockStmt::Any(_) => {}
+            }
+        }
+    }
+
     fn generate_bytecode(
         &mut self,
         mir_id: &MirId,
@@ -1702,11 +1728,20 @@ mod tests {
         FullyQualifiedPath::from_segments(vec!["crate".to_string(), "main".to_string()])
     }
 
+    fn test_data_layout() -> fp_core::lir::LirDataLayout {
+        fp_core::lir::LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .expect("valid test data layout")
+    }
+
     #[test]
     fn compile_unit_native_runs_full_pipeline() {
         let path = path();
         let ast_id = AstId::new("ast:crate::main");
-        let mut driver = CompilerDriver::new();
+        let mut driver = CompilerDriver::new(test_data_layout());
         driver.state.insert_ast(
             ast_id.clone(),
             File {
@@ -1751,7 +1786,7 @@ mod tests {
         };
         let expr = Expr::from(fp_core::ast::ExprKind::ConstBlock(const_block));
 
-        let mut driver = CompilerDriver::new();
+        let mut driver = CompilerDriver::new(test_data_layout());
         driver.state.insert_ast(
             ast_id.clone(),
             File {
@@ -1791,7 +1826,7 @@ mod tests {
     fn driver_loop_resolves_full_comptime_chain_to_completion() {
         let path = path();
         let ast_id = AstId::new("ast:crate::const");
-        let mut driver = CompilerDriver::new();
+        let mut driver = CompilerDriver::new(test_data_layout());
         driver.state.insert_ast(
             ast_id.clone(),
             File {
@@ -1838,7 +1873,7 @@ mod tests {
             ..FunctionSignature::unit()
         };
 
-        let mut driver = CompilerDriver::new();
+        let mut driver = CompilerDriver::new(test_data_layout());
         let file = File {
             path: std::path::PathBuf::from("generic.fp"),
             attrs: Vec::new(),
@@ -1883,6 +1918,15 @@ mod comptime_source_tests {
         FullyQualifiedPath::from_segments(vec!["test".to_string(), "main".to_string()])
     }
 
+    fn test_data_layout() -> fp_core::lir::LirDataLayout {
+        fp_core::lir::LirDataLayout::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+        .expect("valid test data layout")
+    }
+
     #[test]
     fn parses_fp_source_and_runs_const_item_through_driver() {
         let source = r#"
@@ -1898,7 +1942,7 @@ fn main() {
             .expect("parse .fp source");
         let ast_node = result.ast;
 
-        let mut driver = CompilerDriver::new();
+        let mut driver = CompilerDriver::new(test_data_layout());
         let ast_id = AstId::new("ast:test::main");
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
@@ -1931,7 +1975,7 @@ fn main() {
             .expect("parse const source");
         let ast_node = result.ast;
 
-        let mut driver = CompilerDriver::new();
+        let mut driver = CompilerDriver::new(test_data_layout());
         let ast_id = AstId::new("ast:test::const");
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
@@ -1968,7 +2012,7 @@ const AREA: i64 = WIDTH * HEIGHT;
             .expect("parse multi-const source");
         let ast_node = result.ast;
 
-        let mut driver = CompilerDriver::new();
+        let mut driver = CompilerDriver::new(test_data_layout());
         let ast_id = AstId::new("ast:test::multi");
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
@@ -2000,7 +2044,7 @@ fn calculate() {
             .expect("parse const-block source");
         let ast_node = result.ast;
 
-        let mut driver = CompilerDriver::new();
+        let mut driver = CompilerDriver::new(test_data_layout());
         let ast_id = AstId::new("ast:test::block");
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
@@ -2047,9 +2091,12 @@ fn main() {
 
         let mut workspace = fp_core::workspace::WorkspaceContext::new();
         workspace.register_provider(std::sync::Arc::new(fp_lang::provider::FerroPhaseProvider));
-        let mut driver = CompilerDriver::new();
+        let mut driver = CompilerDriver::new(test_data_layout());
         driver.state.typing_ctx =
-            std::rc::Rc::new(fp_typing::TypingContext::new(std::rc::Rc::new(workspace)));
+            std::rc::Rc::new(fp_typing::TypingContext::new(
+                test_data_layout(),
+                std::rc::Rc::new(workspace),
+            ));
         let ast_id = AstId::new("ast:test::generic_call");
         driver.state.insert_ast(ast_id.clone(), ast_node);
         driver
@@ -2133,7 +2180,7 @@ fn main() {
             .expect("parse struct/enum-methods source");
         let ast_node = result.ast;
 
-        let mut driver = CompilerDriver::new();
+        let mut driver = CompilerDriver::new(test_data_layout());
         let ast_id = AstId::new("ast:test::struct_enum_methods");
         driver.state.insert_ast(ast_id.clone(), ast_node);
         driver
@@ -2168,8 +2215,11 @@ fn main() {
             .map_err(|e| format!("parse: {e}"))?;
         let ast_node = result.ast;
 
-        let mut driver = CompilerDriver::new();
-        driver.state.typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(workspace));
+        let mut driver = CompilerDriver::new(test_data_layout());
+        driver.state.typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(
+            test_data_layout(),
+            workspace,
+        ));
         let label = name.trim_end_matches(".fp");
         let ast_id = AstId::new(format!("ast:example::{label}"));
         driver.state.insert_ast(ast_id.clone(), ast_node);
@@ -2324,7 +2374,7 @@ fn main() {
     fn collect_impl_items_for_types_finds_inherent_impl_in_loaded_crate() {
         use fp_core::ast::{Ident, ItemImpl};
 
-        let driver = CompilerDriver::new();
+        let driver = CompilerDriver::new(test_data_layout());
         let krate = driver.state.typing_ctx.env_ctx.begin_crate(
             "somepkg",
             fp_core::package::graph::PackageGraph::new(vec![]),
@@ -2406,9 +2456,12 @@ fn main() {
         workspace.register_provider(Arc::new(CountingStdProvider {
             calls: calls.clone(),
         }));
-        let mut driver = CompilerDriver::new();
+        let mut driver = CompilerDriver::new(test_data_layout());
         driver.state.typing_ctx =
-            std::rc::Rc::new(fp_typing::TypingContext::new(std::rc::Rc::new(workspace)));
+            std::rc::Rc::new(fp_typing::TypingContext::new(
+                test_data_layout(),
+                std::rc::Rc::new(workspace),
+            ));
 
         // Simulates two different compile units each independently requesting
         // `std`: the scheduler would dispatch a `LoadPackage` work item per
@@ -2441,7 +2494,7 @@ fn main() {
             .unwrap_or_else(|e| panic!("parse inline: {e}"));
         let ast_node = result.ast;
 
-        let mut driver = CompilerDriver::new();
+        let mut driver = CompilerDriver::new(test_data_layout());
         let ast_id = AstId::new("ast:example::inline");
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
