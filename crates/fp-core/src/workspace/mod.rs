@@ -191,9 +191,9 @@ impl WorkspaceDependency {
 use crate::ast::{FunctionSignature, MethodSignature, TypeEnum, TypeStruct};
 use crate::hir::PackageId as HirPackageId;
 use crate::module::path::QualifiedPath;
+use crate::package::PackageCrate;
 use crate::package::graph::PackageGraph;
 use crate::package::provider::PackageProvider;
-use crate::package::PackageCrate;
 use std::cell::{Cell, Ref, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -213,7 +213,7 @@ use std::sync::Arc;
 #[derive(Default)]
 pub struct WorkspaceContext {
     crates: RefCell<HashMap<String, Rc<RefCell<PackageCrate>>>>,
-    providers: HashMap<String, Arc<dyn PackageProvider>>,
+    providers: Vec<Arc<dyn PackageProvider>>,
     next_package_id: Cell<u32>,
 }
 
@@ -225,8 +225,8 @@ impl WorkspaceContext {
     /// Register a package's loader. Registration itself isn't on-demand —
     /// it just declares "this package exists and can be loaded" — only the
     /// actual load (parsing + typing) is deferred until first reference.
-    pub fn register_provider(&mut self, name: impl Into<String>, provider: Arc<dyn PackageProvider>) {
-        self.providers.insert(name.into(), provider);
+    pub fn register_provider(&mut self, provider: Arc<dyn PackageProvider>) {
+        self.providers.push(provider);
     }
 
     /// Start a new crate/scope: creates an empty `PackageCrate`, inserts it
@@ -234,11 +234,19 @@ impl WorkspaceContext {
     /// (e.g. `AstTypeInferencer`, or `CompilerDriver::load_package`) can hold
     /// it directly and mutate it going forward — no re-lookup by name needed
     /// for every write.
-    pub fn begin_crate(&self, name: impl Into<String>, graph: PackageGraph) -> Rc<RefCell<PackageCrate>> {
+    pub fn begin_crate(
+        &self,
+        name: impl Into<String>,
+        graph: PackageGraph,
+    ) -> Rc<RefCell<PackageCrate>> {
         let name = name.into();
         let package_id = HirPackageId(self.next_package_id.get());
         self.next_package_id.set(package_id.0.saturating_add(1));
-        let krate = Rc::new(RefCell::new(PackageCrate::new(package_id, name.clone(), graph)));
+        let krate = Rc::new(RefCell::new(PackageCrate::new(
+            package_id,
+            name.clone(),
+            graph,
+        )));
         self.crates.borrow_mut().insert(name, krate.clone());
         krate
     }
@@ -248,18 +256,32 @@ impl WorkspaceContext {
     }
 
     pub fn is_registered(&self, name: &str) -> bool {
-        self.providers.contains_key(name)
+        self.providers.iter().any(|provider| provider.resolve_package(name).is_some())
     }
 
     pub fn provider(&self, name: &str) -> Option<Arc<dyn PackageProvider>> {
-        self.providers.get(name).cloned()
+        self.providers
+            .iter()
+            .find(|provider| provider.resolve_package(name).is_some())
+            .cloned()
+    }
+
+    pub fn resolve_package(&self, key: &str) -> Option<crate::package::PackageId> {
+        self.providers
+            .iter()
+            .find_map(|provider| provider.resolve_package(key))
     }
 
     /// Names of every registered package, whether or not it's been loaded
     /// yet — used to seed root-module recognition so `use std::...`-style
     /// paths resolve correctly even before `std` is actually loaded.
-    pub fn registered_names(&self) -> impl Iterator<Item = &str> {
-        self.providers.keys().map(|s| s.as_str())
+    pub fn registered_names(&self) -> Vec<String> {
+        self.providers
+            .iter()
+            .filter_map(|provider| provider.list_packages().ok())
+            .flatten()
+            .map(|id| id.as_str().to_owned())
+            .collect()
     }
 
     /// Search every crate for a struct at `path`, borrowing each crate just

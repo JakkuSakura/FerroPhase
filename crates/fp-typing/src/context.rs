@@ -1,13 +1,14 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::task::Waker;
+use std::task::Poll;
 
 use fp_core::ast::{ExprResolutionTable, TypeStruct, Value};
 use fp_core::lir::LirDataLayout;
 use fp_core::workspace::WorkspaceContext;
 
-use crate::types::GenericMonorph;
 use crate::TypingDiagnostic;
+use crate::types::GenericMonorph;
 
 /// Shared mutable state between the compiler driver and the type inferencer.
 ///
@@ -93,6 +94,33 @@ impl TypingContext {
                 waker.wake();
             }
         }
+    }
+
+    /// Await a provider-owned package key. Package discovery and loading stay
+    /// outside typing; the compiler driver observes the registered waker and
+    /// services the corresponding `LoadPackage` request.
+    pub async fn await_package(
+        &self,
+        key: &str,
+    ) -> fp_core::Result<fp_core::package::PackageId> {
+        let key = key.to_owned();
+        std::future::poll_fn(|cx| {
+            let Some(package_id) = self.env_ctx.resolve_package(&key) else {
+                return Poll::Ready(Err(fp_core::Error::from(format!(
+                    "unresolved package `{key}`"
+                ))));
+            };
+            if self.env_ctx.is_loaded(package_id.as_str()) {
+                return Poll::Ready(Ok(package_id));
+            }
+            self.package_wakers
+                .borrow_mut()
+                .entry(key.clone())
+                .or_default()
+                .push(cx.waker().clone());
+            Poll::Pending
+        })
+        .await
     }
 
     /// Wake every task parked on `name`'s comptime value — call this right

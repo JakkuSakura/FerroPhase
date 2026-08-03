@@ -28,6 +28,15 @@ impl ProviderError {
 }
 
 pub trait PackageProvider: Send + Sync {
+    /// Resolve a source-level package key owned by this provider.
+    /// Providers may accept aliases or qualified keys instead of only package
+    /// names returned by `list_packages`.
+    fn resolve_package(&self, key: &str) -> Option<PackageId> {
+        self.list_packages()
+            .ok()?
+            .into_iter()
+            .find(|id| id.as_str() == key)
+    }
     fn list_packages(&self) -> ProviderResult<Vec<PackageId>>;
     fn load_package(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>>;
     fn refresh(&self) -> ProviderResult<()>;

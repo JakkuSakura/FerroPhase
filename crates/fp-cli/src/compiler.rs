@@ -829,10 +829,7 @@ fn lower_ast(
     // time anything in the compiled program actually references it (see
     // `CompilerDriver::load_package`), not eagerly here.
     let mut workspace = fp_core::workspace::WorkspaceContext::new();
-    workspace.register_provider(
-        "std",
-        Arc::new(fp_lang::provider::EmbeddedStdPackageProvider),
-    );
+    workspace.register_provider(Arc::new(fp_lang::provider::FerroPhaseProvider));
     driver.state.typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(
         data_layout(),
         std::rc::Rc::new(workspace),

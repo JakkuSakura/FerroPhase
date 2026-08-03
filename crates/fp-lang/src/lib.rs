@@ -3,17 +3,18 @@ use std::sync::{Arc, RwLock};
 
 use crate::ast::FerroPhaseParser;
 mod macro_parser;
+pub mod embedded_libc;
 pub mod module_path;
 mod normalization;
 mod serializer;
 use crate::macro_parser::FerroMacroExpansionParser;
 use crate::normalization::FerroIntrinsicNormalizer;
+use fp_core::Result as CoreResult;
 use fp_core::ast::{AstSerializer, File, ScriptBlock};
 use fp_core::diagnostics::Diagnostic;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 use fp_core::intrinsics::{IntrinsicNormalizationMode, IntrinsicNormalizer};
 use fp_core::span::FileId;
-use fp_core::Result as CoreResult;
 pub use serializer::PrettyAstSerializer;
 
 /// Canonical identifier for the FerroPhase source language.
@@ -193,7 +194,9 @@ impl LanguageFrontend for FerroFrontend {
             path: std::path::PathBuf::from("<expr>"),
             attrs: Vec::new(),
             collected_items: Vec::new(),
-            items: vec![fp_core::ast::Item::new(fp_core::ast::ItemKind::Expr(expr.clone()))],
+            items: vec![fp_core::ast::Item::new(fp_core::ast::ItemKind::Expr(
+                expr.clone(),
+            ))],
         };
         let last = file;
         let mut ast = last.clone();
@@ -311,7 +314,8 @@ mod tests {
             );
             if source.contains("#[intrinsic") {
                 assert!(
-                    path.components().any(|component| component.as_os_str() == "intrinsics"),
+                    path.components()
+                        .any(|component| component.as_os_str() == "intrinsics"),
                     "intrinsic markers must live under std/intrinsics: {}",
                     path.display()
                 );
@@ -378,7 +382,10 @@ mod tests {
                 None,
             )
             .expect("parse");
-        assert!(matches!(result.ast.items.first().map(|i| i.kind()), Some(ItemKind::Expr(_))));
+        assert!(matches!(
+            result.ast.items.first().map(|i| i.kind()),
+            Some(ItemKind::Expr(_))
+        ));
     }
 
     #[test]

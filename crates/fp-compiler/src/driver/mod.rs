@@ -165,11 +165,6 @@ impl CompilerDriver {
         ast_id: &AstId,
         path: &FullyQualifiedPath,
     ) -> Result<CompileUnitCoreResult, CompilerDriverError> {
-        if !self.state.typing_ctx.env_ctx.is_loaded("std")
-            && self.state.typing_ctx.env_ctx.provider("std").is_some()
-        {
-            self.load_package("std")?;
-        }
         let key = format!("module:{}", ast_id.as_str());
         let package_id = self
             .state
@@ -424,7 +419,15 @@ impl CompilerDriver {
         let answer = CompilerAnswer::PackageLoaded {
             name: name.to_string(),
         };
-        if self.state.typing_ctx.env_ctx.is_loaded(name) {
+        let Some(package_id) = self.state.typing_ctx.env_ctx.resolve_package(name) else {
+            return Err(CompilerDriverError::UnresolvablePackage(name.to_string()));
+        };
+        if self
+            .state
+            .typing_ctx
+            .env_ctx
+            .is_loaded(package_id.as_str())
+        {
             // Already satisfied by an earlier `LoadPackage` request for the
             // same name (the scheduler doesn't dedupe submissions) — no-op.
             return Ok(answer);
@@ -433,14 +436,14 @@ impl CompilerDriver {
             return Err(CompilerDriverError::UnresolvablePackage(name.to_string()));
         };
         let raw = provider
-            .load_package_items(&fp_core::package::PackageId::new(name))
+            .load_package_items(&package_id)
             .map_err(|e| CompilerDriverError::UnresolvablePackage(format!("{name}: {e}")))?;
 
         let own_crate = self
             .state
             .typing_ctx
             .env_ctx
-            .begin_crate(name, raw.graph.clone());
+            .begin_crate(package_id.as_str(), raw.graph.clone());
         // Parsed items are the package's source-level module index. HIR
         // lowering and HIR type checking consume them when a module is
         // compiled; package loading itself does not run an AST type pass.
@@ -451,6 +454,9 @@ impl CompilerDriver {
         // comment for why this must be a real `.wake()`, not just clearing
         // the map entry, now that suspensions register real pool wakers.
         self.state.typing_ctx.wake_package(name);
+        if package_id.as_str() != name {
+            self.state.typing_ctx.wake_package(package_id.as_str());
+        }
 
         Ok(answer)
     }
@@ -2040,10 +2046,7 @@ fn main() {
         let ast_node = result.ast;
 
         let mut workspace = fp_core::workspace::WorkspaceContext::new();
-        workspace.register_provider(
-            "std",
-            std::sync::Arc::new(fp_lang::provider::EmbeddedStdPackageProvider),
-        );
+        workspace.register_provider(std::sync::Arc::new(fp_lang::provider::FerroPhaseProvider));
         let mut driver = CompilerDriver::new();
         driver.state.typing_ctx =
             std::rc::Rc::new(fp_typing::TypingContext::new(std::rc::Rc::new(workspace)));
@@ -2233,10 +2236,7 @@ fn main() {
         entries.sort();
 
         let mut workspace = fp_core::workspace::WorkspaceContext::new();
-        workspace.register_provider(
-            "std",
-            std::sync::Arc::new(fp_lang::provider::EmbeddedStdPackageProvider),
-        );
+        workspace.register_provider(std::sync::Arc::new(fp_lang::provider::FerroPhaseProvider));
         let workspace = std::rc::Rc::new(workspace);
 
         let mut completed = 0;
@@ -2358,8 +2358,8 @@ fn main() {
 
     #[test]
     fn duplicate_package_requests_load_std_exactly_once() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         struct CountingStdProvider {
             calls: Arc<AtomicUsize>,
@@ -2403,12 +2403,9 @@ fn main() {
 
         let calls = Arc::new(AtomicUsize::new(0));
         let mut workspace = fp_core::workspace::WorkspaceContext::new();
-        workspace.register_provider(
-            "std",
-            Arc::new(CountingStdProvider {
-                calls: calls.clone(),
-            }),
-        );
+        workspace.register_provider(Arc::new(CountingStdProvider {
+            calls: calls.clone(),
+        }));
         let mut driver = CompilerDriver::new();
         driver.state.typing_ctx =
             std::rc::Rc::new(fp_typing::TypingContext::new(std::rc::Rc::new(workspace)));
