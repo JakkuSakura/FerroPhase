@@ -97,7 +97,7 @@ impl CParser {
     }
 }
 
-/// Generates a standalone Ferro package from libc-facing C headers.
+/// Generates a standalone C package from libc-facing C headers.
 pub struct LibcCodegen {
     parser: CParser,
 }
