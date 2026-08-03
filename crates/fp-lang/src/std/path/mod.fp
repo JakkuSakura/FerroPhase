@@ -20,31 +20,31 @@ impl Path {
     }
 
     pub fn join(&self, child: &Path) -> PathBuf {
-        PathBuf::from(intrinsic_join(self.inner, child.as_str()))
+        PathBuf::from(std::intrinsics::path::join(self.inner, child.as_str()))
     }
 
     pub fn parent(&self) -> Option<PathBuf> {
-        option_path_buf(intrinsic_parent(self.inner))
+        option_path_buf(std::intrinsics::path::parent(self.inner))
     }
 
     pub fn file_name(&self) -> Option<str> {
-        option_str(intrinsic_file_name(self.inner))
+        option_str(std::intrinsics::path::file_name(self.inner))
     }
 
     pub fn extension(&self) -> Option<str> {
-        option_str(intrinsic_extension(self.inner))
+        option_str(std::intrinsics::path::extension(self.inner))
     }
 
     pub fn stem(&self) -> Option<str> {
-        option_str(intrinsic_stem(self.inner))
+        option_str(std::intrinsics::path::stem(self.inner))
     }
 
     pub fn is_absolute(&self) -> bool {
-        intrinsic_is_absolute(self.inner)
+        std::intrinsics::path::is_absolute(self.inner)
     }
 
     pub fn normalize(&self) -> PathBuf {
-        PathBuf::from(intrinsic_normalize(self.inner))
+        PathBuf::from(std::intrinsics::path::normalize(self.inner))
     }
 
     pub fn has_extension(&self, extension: &str) -> bool {
@@ -89,7 +89,7 @@ impl PathBuf {
     }
 
     pub fn push(&mut self, child: &Path) {
-        self.inner = intrinsic_join(self.inner, child.as_str());
+        self.inner = std::intrinsics::path::join(self.inner, child.as_str());
     }
 
     pub fn parent(&self) -> Option<PathBuf> {
@@ -136,24 +136,3 @@ fn option_path_buf(value: str) -> Option<PathBuf> {
         std::option::some(PathBuf::from(value))
     }
 }
-
-#[intrinsic = "path_join"]
-fn intrinsic_join(lhs: &str, rhs: &str) -> str { compile_error!("compiler intrinsic") }
-
-#[intrinsic = "path_parent"]
-fn intrinsic_parent(path: &str) -> str { compile_error!("compiler intrinsic") }
-
-#[intrinsic = "path_file_name"]
-fn intrinsic_file_name(path: &str) -> str { compile_error!("compiler intrinsic") }
-
-#[intrinsic = "path_extension"]
-fn intrinsic_extension(path: &str) -> str { compile_error!("compiler intrinsic") }
-
-#[intrinsic = "path_stem"]
-fn intrinsic_stem(path: &str) -> str { compile_error!("compiler intrinsic") }
-
-#[intrinsic = "path_is_absolute"]
-fn intrinsic_is_absolute(path: &str) -> bool { compile_error!("compiler intrinsic") }
-
-#[intrinsic = "path_normalize"]
-fn intrinsic_normalize(path: &str) -> str { compile_error!("compiler intrinsic") }

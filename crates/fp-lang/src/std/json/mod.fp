@@ -188,10 +188,7 @@ impl Value {
 }
 
 #[op = "json_parse"]
-pub fn parse(input: &str) -> Value { intrinsic_parse(input) }
-
-#[intrinsic = "json_parse"]
-fn intrinsic_parse(input: &str) -> Value { compile_error!("compiler intrinsic") }
+pub fn parse(input: &str) -> Value { std::intrinsics::json::parse(input) }
 
 pub fn is_null(value: Value) -> bool {
     value.is_null()

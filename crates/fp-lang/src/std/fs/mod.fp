@@ -242,73 +242,37 @@ fn io_error_other(message: &str) -> IoError {
 }
 
 #[op = "fs_read_dir"]
-pub fn read_dir(path: &Path) -> Vec<&str> { intrinsic_read_dir(path) }
-
-#[intrinsic = "fs_read_dir"]
-fn intrinsic_read_dir(path: &Path) -> Vec<&str> { compile_error!("compiler intrinsic") }
+pub fn read_dir(path: &Path) -> Vec<&str> { std::intrinsics::fs::read_dir(path) }
 
 #[op = "fs_walk_dir"]
-pub fn walk_dir(path: &Path) -> Vec<&str> { intrinsic_walk_dir(path) }
-
-#[intrinsic = "fs_walk_dir"]
-fn intrinsic_walk_dir(path: &Path) -> Vec<&str> { compile_error!("compiler intrinsic") }
+pub fn walk_dir(path: &Path) -> Vec<&str> { std::intrinsics::fs::walk_dir(path) }
 
 #[op = "fs_read_to_string"]
-pub fn read_to_string(path: &Path) -> str { intrinsic_read_to_string(path) }
-
-#[intrinsic = "fs_read_to_string"]
-fn intrinsic_read_to_string(path: &Path) -> str { compile_error!("compiler intrinsic") }
+pub fn read_to_string(path: &Path) -> str { std::intrinsics::fs::read_to_string(path) }
 
 #[op = "fs_write_string"]
-pub fn write_string(path: &Path, content: &str) { intrinsic_write_string(path, content) }
-
-#[intrinsic = "fs_write_string"]
-fn intrinsic_write_string(path: &Path, content: &str) { compile_error!("compiler intrinsic") }
+pub fn write_string(path: &Path, content: &str) { std::intrinsics::fs::write_string(path, content) }
 
 #[op = "fs_append_string"]
-pub fn append_string(path: &Path, content: &str) { intrinsic_append_string(path, content) }
-
-#[intrinsic = "fs_append_string"]
-fn intrinsic_append_string(path: &Path, content: &str) { compile_error!("compiler intrinsic") }
+pub fn append_string(path: &Path, content: &str) { std::intrinsics::fs::append_string(path, content) }
 
 #[op = "fs_exists"]
-pub fn exists(path: &Path) -> bool { intrinsic_exists(path) }
-
-#[intrinsic = "fs_exists"]
-fn intrinsic_exists(path: &Path) -> bool { compile_error!("compiler intrinsic") }
+pub fn exists(path: &Path) -> bool { std::intrinsics::fs::exists(path) }
 
 #[op = "fs_is_dir"]
-pub fn is_dir(path: &Path) -> bool { intrinsic_is_dir(path) }
-
-#[intrinsic = "fs_is_dir"]
-fn intrinsic_is_dir(path: &Path) -> bool { compile_error!("compiler intrinsic") }
+pub fn is_dir(path: &Path) -> bool { std::intrinsics::fs::is_dir(path) }
 
 #[op = "fs_is_file"]
-pub fn is_file(path: &Path) -> bool { intrinsic_is_file(path) }
-
-#[intrinsic = "fs_is_file"]
-fn intrinsic_is_file(path: &Path) -> bool { compile_error!("compiler intrinsic") }
+pub fn is_file(path: &Path) -> bool { std::intrinsics::fs::is_file(path) }
 
 #[op = "fs_create_dir_all"]
-pub fn create_dir_all(path: &Path) { intrinsic_create_dir_all(path) }
-
-#[intrinsic = "fs_create_dir_all"]
-fn intrinsic_create_dir_all(path: &Path) { compile_error!("compiler intrinsic") }
+pub fn create_dir_all(path: &Path) { std::intrinsics::fs::create_dir_all(path) }
 
 #[op = "fs_remove_file"]
-pub fn remove_file(path: &Path) { intrinsic_remove_file(path) }
-
-#[intrinsic = "fs_remove_file"]
-fn intrinsic_remove_file(path: &Path) { compile_error!("compiler intrinsic") }
+pub fn remove_file(path: &Path) { std::intrinsics::fs::remove_file(path) }
 
 #[op = "fs_remove_dir_all"]
-pub fn remove_dir_all(path: &Path) { intrinsic_remove_dir_all(path) }
-
-#[intrinsic = "fs_remove_dir_all"]
-fn intrinsic_remove_dir_all(path: &Path) { compile_error!("compiler intrinsic") }
+pub fn remove_dir_all(path: &Path) { std::intrinsics::fs::remove_dir_all(path) }
 
 #[op = "fs_glob"]
-pub fn glob(pattern: &str) -> Vec<&str> { intrinsic_glob(pattern) }
-
-#[intrinsic = "fs_glob"]
-fn intrinsic_glob(pattern: &str) -> Vec<&str> { compile_error!("compiler intrinsic") }
+pub fn glob(pattern: &str) -> Vec<&str> { std::intrinsics::fs::glob(pattern) }

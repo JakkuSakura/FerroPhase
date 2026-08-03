@@ -309,6 +309,13 @@ mod tests {
                 path.display(),
                 result.err()
             );
+            if source.contains("#[intrinsic") {
+                assert!(
+                    path.components().any(|component| component.as_os_str() == "intrinsics"),
+                    "intrinsic markers must live under std/intrinsics: {}",
+                    path.display()
+                );
+            }
         }
     }
 

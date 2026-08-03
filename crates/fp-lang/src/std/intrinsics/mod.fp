@@ -1,3 +1,12 @@
+pub mod env;
+pub mod fs;
+pub mod io;
+pub mod json;
+pub mod path;
+pub mod test;
+pub mod time;
+pub mod yaml;
+
 #[intrinsic = "create_struct"]
 pub const fn create_struct(name: &str) -> type {
     compile_error!("create_struct is a compiler intrinsic")

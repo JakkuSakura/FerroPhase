@@ -67,24 +67,8 @@ fn run() -> TestReport {
     run_tests()
 }
 
-#[intrinsic = "test_command_mock_reset"]
-fn intrinsic_command_mock_reset() { compile_error!("compiler intrinsic") }
-
-#[intrinsic = "test_command_mock_push"]
-fn intrinsic_command_mock_push(pattern: &str, stdout: &str, stderr: &str, status: i64) {
-    compile_error!("compiler intrinsic")
-}
-
-#[intrinsic = "test_command_mock_take_calls"]
-fn intrinsic_command_mock_take_calls() -> Vec<&str> { compile_error!("compiler intrinsic") }
-
-#[intrinsic = "test_command_mock_apply"]
-fn intrinsic_command_mock_apply(command: &str) -> Option<CommandMockMatch> {
-    compile_error!("compiler intrinsic")
-}
-
 pub fn reset_command_mocks() {
-    intrinsic_command_mock_reset();
+    std::intrinsics::test::command_mock_reset();
 }
 
 pub fn mock_command(
@@ -93,13 +77,13 @@ pub fn mock_command(
     stderr: &str = "",
     status: i64 = 0,
 ) {
-    intrinsic_command_mock_push(pattern, stdout, stderr, status);
+    std::intrinsics::test::command_mock_push(pattern, stdout, stderr, status);
 }
 
 pub fn take_command_calls() -> Vec<&str> {
-    intrinsic_command_mock_take_calls()
+    std::intrinsics::test::command_mock_take_calls()
 }
 
 pub fn apply_command_mock(command: &str) -> Option<CommandMockMatch> {
-    intrinsic_command_mock_apply(command)
+    std::intrinsics::test::command_mock_apply(command)
 }
