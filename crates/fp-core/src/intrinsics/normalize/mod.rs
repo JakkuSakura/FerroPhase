@@ -4,13 +4,7 @@ use crate::ast::{
 };
 use crate::error::Result;
 use crate::intrinsics::{IntrinsicNormalizer, NoopIntrinsicNormalizer, NormalizeOutcome};
-use std::cell::RefCell;
-use std::collections::HashMap;
 mod format;
-
-thread_local! {
-    static CONST_BOOLS: RefCell<HashMap<String, bool>> = RefCell::new(HashMap::new());
-}
 
 /// Normalize intrinsic expressions into a canonical AST form so that typing and
 /// downstream passes can assume consistent structures.
@@ -26,54 +20,10 @@ pub fn normalize_intrinsics_with(
 }
 
 fn normalize_file(file: &mut File, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
-    let mut const_bools = scan_const_bools(&file.items);
-    scan_items(&file.collected_items, &mut const_bools);
-    CONST_BOOLS.with(|cb| *cb.borrow_mut() = const_bools);
     for item in &mut file.items {
         normalize_item(item, strategy)?;
     }
     Ok(())
-}
-
-fn scan_const_bools(items: &[Item]) -> HashMap<String, bool> {
-    let mut map = HashMap::new();
-    scan_items(items, &mut map);
-    map
-}
-
-fn scan_items(items: &[Item], map: &mut HashMap<String, bool>) {
-    for item in items {
-        match item.kind() {
-            ItemKind::DefConst(def) => {
-                if let ExprKind::Value(v) = def.value.kind() {
-                    if let Value::Bool(b) = v.as_ref() {
-                        map.insert(def.name.as_str().to_string(), b.value);
-                    }
-                }
-            }
-            ItemKind::Module(m) => scan_items(&m.items, map),
-            ItemKind::DefFunction(f) => scan_block(&f.body, map),
-            _ => {}
-        }
-    }
-}
-
-fn scan_block(expr: &Expr, map: &mut HashMap<String, bool>) {
-    if let ExprKind::Block(block) = expr.kind() {
-        scan_items(&block.collected_items, map);
-        for stmt in &block.stmts {
-            match stmt {
-                BlockStmt::Item(item) => scan_items(std::slice::from_ref(item), map),
-                BlockStmt::Expr(e) => scan_block(&e.expr, map),
-                BlockStmt::Let(s) => {
-                    if let Some(init) = &s.init {
-                        scan_block(init, map);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
 }
 
 fn normalize_item(item: &mut Item, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
