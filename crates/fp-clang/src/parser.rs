@@ -1,6 +1,6 @@
 //! Clang parser for C/C++ source files
 
-use crate::{ast::TranslationUnit, clang_ast_lowering, ClangError, CompileOptions, Result};
+use crate::{ClangError, CompileOptions, Result, ast::TranslationUnit, clang_ast_lowering};
 use inkwell::context::Context;
 use inkwell::memory_buffer::MemoryBuffer;
 use inkwell::module::Module;
@@ -181,6 +181,19 @@ impl ClangParser {
         Self::ensure_valid_source_file(source_file)?;
         let json = self.dump_ast_json(source_file, options)?;
         clang_ast_lowering::lower_translation_unit_from_json(&json, source_file)
+    }
+
+    /// Parse a source file and retain declarations originating in included
+    /// headers. This is intended for binding generators, not normal source
+    /// analysis where included declarations should remain out of scope.
+    pub fn parse_translation_unit_with_includes(
+        &self,
+        source_file: &Path,
+        options: &CompileOptions,
+    ) -> Result<TranslationUnit> {
+        Self::ensure_valid_source_file(source_file)?;
+        let json = self.dump_ast_json(source_file, options)?;
+        clang_ast_lowering::lower_translation_unit_from_json_with_includes(&json, source_file, true)
     }
 
     fn dump_ast_json(&self, source_file: &Path, options: &CompileOptions) -> Result<String> {

@@ -15,6 +15,14 @@ pub(crate) fn lower_translation_unit_from_json(
     json: &str,
     source_file: &Path,
 ) -> Result<TranslationUnit> {
+    lower_translation_unit_from_json_with_includes(json, source_file, false)
+}
+
+pub(crate) fn lower_translation_unit_from_json_with_includes(
+    json: &str,
+    source_file: &Path,
+    include_external: bool,
+) -> Result<TranslationUnit> {
     let normalized_source = normalize_path(source_file);
 
     let root: Node<Clang> = serde_json::from_str(json)
@@ -24,7 +32,7 @@ pub(crate) fn lower_translation_unit_from_json(
     match kind {
         Clang::TranslationUnitDecl => {
             let mut decls = Vec::new();
-            let ctx = LoweringContext::new(normalized_source);
+            let ctx = LoweringContext::new(normalized_source, include_external);
             for child in inner {
                 ctx.collect_top_level(&child, &mut decls);
             }
@@ -43,10 +51,11 @@ pub(crate) fn lower_translation_unit_from_json(
 struct LoweringContext {
     main_file: PathBuf,
     main_file_name: Option<String>,
+    include_external: bool,
 }
 
 impl LoweringContext {
-    fn new(main_file: PathBuf) -> Self {
+    fn new(main_file: PathBuf, include_external: bool) -> Self {
         let main_file_name = main_file
             .file_name()
             .and_then(|name| name.to_str())
@@ -54,6 +63,7 @@ impl LoweringContext {
         Self {
             main_file,
             main_file_name,
+            include_external,
         }
     }
 
@@ -102,7 +112,7 @@ impl LoweringContext {
             return None;
         }
         let loc = func.loc.as_ref();
-        if !self.is_from_main_file(loc) {
+        if !self.include_external && !self.is_from_main_file(loc) {
             return None;
         }
 
@@ -156,7 +166,7 @@ impl LoweringContext {
         if var.is_implicit.unwrap_or(false) {
             return None;
         }
-        if !self.is_from_main_file(var.loc.as_ref()) {
+        if !self.include_external && !self.is_from_main_file(var.loc.as_ref()) {
             return None;
         }
         let name = var.name.as_ref()?.trim();
@@ -178,7 +188,7 @@ impl LoweringContext {
     }
 
     fn lower_enum(&self, node: &Node<Clang>, enum_decl: &EnumDecl) -> Option<FpEnumDecl> {
-        if !self.is_from_main_file(enum_decl.loc.as_ref()) {
+        if !self.include_external && !self.is_from_main_file(enum_decl.loc.as_ref()) {
             return None;
         }
 
@@ -218,7 +228,7 @@ impl LoweringContext {
         if !record.complete_definition.unwrap_or(false) {
             return None;
         }
-        if !self.is_from_main_file(record.loc.as_ref()) {
+        if !self.include_external && !self.is_from_main_file(record.loc.as_ref()) {
             return None;
         }
 
@@ -259,7 +269,7 @@ impl LoweringContext {
         if typedef.is_implicit.unwrap_or(false) {
             return None;
         }
-        if !self.is_from_main_file(typedef.loc.as_ref()) {
+        if !self.include_external && !self.is_from_main_file(typedef.loc.as_ref()) {
             return None;
         }
         let name = typedef.name.as_ref()?.trim();
