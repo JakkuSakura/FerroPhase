@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::task::Waker;
 use std::task::Poll;
 
@@ -8,7 +8,40 @@ use fp_core::lir::LirDataLayout;
 use fp_core::workspace::WorkspaceContext;
 
 use crate::TypingDiagnostic;
-use crate::types::GenericMonorph;
+use crate::types::{GenericMonorph, TypeckResults};
+
+pub struct ComptimeRequest {
+    pub program: fp_core::hir::Program,
+    pub typeck_results: TypeckResults,
+    pub target: fp_core::hir::DefId,
+    pub expected_ty: fp_core::hir::TypeExpr,
+}
+
+pub struct PendingComptimeRequest {
+    pub request: ComptimeRequest,
+    reply: std::rc::Rc<RefCell<ComptimeReply>>,
+}
+
+struct ComptimeReply {
+    result: Option<fp_core::Result<Value>>,
+    wakers: Vec<Waker>,
+}
+
+impl PendingComptimeRequest {
+    pub fn request(&self) -> &ComptimeRequest {
+        &self.request
+    }
+
+    pub fn complete(self, result: fp_core::Result<Value>) {
+        let mut reply = self.reply.borrow_mut();
+        reply.result = Some(result);
+        let wakers = std::mem::take(&mut reply.wakers);
+        drop(reply);
+        for waker in wakers {
+            waker.wake();
+        }
+    }
+}
 
 /// Shared mutable state between the compiler driver and the type inferencer.
 ///
@@ -63,6 +96,11 @@ pub struct TypingContext {
     /// by `CompilerDriver::handle_resolved_task` the moment that key
     /// resolves.
     pub ready_generics: RefCell<HashMap<String, GenericMonorph>>,
+
+    /// Requests made by HIR while checking compile-time constants. The
+    /// driver drains this queue and completes each request; the result is
+    /// delivered to the awaiting checker rather than read from a cache.
+    comptime_requests: RefCell<VecDeque<PendingComptimeRequest>>,
 }
 
 impl TypingContext {
@@ -77,6 +115,7 @@ impl TypingContext {
             package_wakers: RefCell::new(HashMap::new()),
             comptime_wakers: RefCell::new(HashMap::new()),
             ready_generics: RefCell::new(HashMap::new()),
+            comptime_requests: RefCell::new(VecDeque::new()),
         }
     }
 
@@ -140,5 +179,78 @@ impl TypingContext {
                 waker.wake();
             }
         }
+    }
+
+    /// Request a compile-time value. The first request for a key is exposed
+    /// to the compiler driver; subsequent awaiters share the driver's answer.
+    pub async fn request_comptime(&self, request: ComptimeRequest) -> fp_core::Result<Value> {
+        let reply = std::rc::Rc::new(RefCell::new(ComptimeReply {
+            result: None,
+            wakers: Vec::new(),
+        }));
+        let mut request = Some(request);
+        let reply_for_poll = reply.clone();
+        std::future::poll_fn(|cx| {
+            if let Some(result) = reply_for_poll.borrow_mut().result.take() {
+                return Poll::Ready(result);
+            }
+            if let Some(request) = request.take() {
+                self.comptime_requests.borrow_mut().push_back(PendingComptimeRequest {
+                    request,
+                    reply: reply_for_poll.clone(),
+                });
+            }
+            reply_for_poll.borrow_mut().wakers.push(cx.waker().clone());
+            Poll::Pending
+        })
+        .await
+    }
+
+    pub fn take_comptime_requests(&self) -> Vec<PendingComptimeRequest> {
+        self.comptime_requests.borrow_mut().drain(..).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fp_core::workspace::WorkspaceContext;
+    use std::future::Future;
+
+    #[test]
+    fn comptime_request_returns_driver_value_directly() {
+        let context = TypingContext::new(
+            LirDataLayout {
+                pointer_size_bits: 64,
+                pointer_alignment: 8,
+                integer_alignments: vec![(8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+            },
+            std::rc::Rc::new(WorkspaceContext::new()),
+        );
+        let request = ComptimeRequest {
+            program: fp_core::hir::Program::new(),
+            typeck_results: TypeckResults::default(),
+            target: fp_core::hir::DefId::local(0),
+            expected_ty: fp_core::hir::TypeExpr {
+                hir_id: 0,
+                kind: fp_core::hir::TypeExprKind::Tuple(Vec::new()),
+                span: fp_core::span::Span::null(),
+            },
+        };
+        let mut future = Box::pin(context.request_comptime(request));
+        let waker = std::task::Waker::noop();
+        let mut cx = std::task::Context::from_waker(waker);
+        assert!(matches!(future.as_mut().poll(&mut cx), Poll::Pending));
+        let pending = context
+            .take_comptime_requests()
+            .into_iter()
+            .next()
+            .expect("comptime request");
+        pending.complete(Ok(Value::unit()));
+        let value = match future.as_mut().poll(&mut cx) {
+            Poll::Ready(result) => result.expect("comptime value"),
+            Poll::Pending => panic!("completed comptime request remained pending"),
+        };
+        assert!(value.is_unit());
     }
 }

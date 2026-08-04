@@ -1,4 +1,4 @@
-use fp_core::ast::Ty;
+use fp_core::ast::{Ty, Value};
 use fp_core::hir;
 use fp_core::hir::HirId;
 use fp_core::hir::ty::Ty as HirTy;
@@ -17,6 +17,7 @@ pub struct TypeckResults {
     pub method_resolutions: HashMap<HirId, hir::DefId>,
     pub generic_call_args: HashMap<HirId, GenericCallResolution>,
     pub generic_method_args: HashMap<HirId, GenericCallResolution>,
+    pub const_values: HashMap<hir::DefId, Value>,
 }
 
 #[derive(Debug, Clone)]

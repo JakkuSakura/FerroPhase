@@ -1,9 +1,7 @@
 use thiserror::Error;
 
 use crate::module_resolution::ModuleResolutionError;
-use crate::scheduler::{
-    AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId, SchedulerError,
-};
+use crate::scheduler::{AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
 
 impl From<fp_interpret::VmError> for CompilerDriverError {
     fn from(e: fp_interpret::VmError) -> Self {
@@ -21,8 +19,6 @@ impl From<fp_bytecode::BytecodeError> for CompilerDriverError {
 pub enum CompilerDriverError {
     #[error("{0}")]
     Core(#[from] fp_core::Error),
-    #[error("scheduler error: {0}")]
-    Scheduler(#[from] SchedulerError),
     #[error("interpreter error: {0}")]
     Interpreter(String),
     #[error("missing AST {0}")]

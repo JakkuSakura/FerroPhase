@@ -16,19 +16,22 @@ use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
 use fp_interpret::LirInterpreter;
-use fp_typing::{HirTypeChecker, TypeckResults, TypingContext};
+use fp_typing::{ComptimeRequest, HirTypeChecker, TypeckResults, TypingContext};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
+use std::pin::Pin;
 use std::rc::Rc;
 
 use crate::scheduler::{
-    AstId, BytecodeId, CompilerAnswer, CompilerRequest, CompilerScheduler, CompilerWork,
-    ConstValueId, FullyQualifiedPath, HirId, LirId, MirId, RuntimeValueId, ScheduledAnswer,
+    AstId, BytecodeId, ConstValueId, FullyQualifiedPath, HirId, LirId, MirId, RuntimeValueId,
 };
+#[cfg(test)]
+use crate::scheduler::{CompilerAnswer, CompilerWork};
 
 pub struct CompilerDriver {
-    pub scheduler: CompilerScheduler,
+    #[cfg(test)]
+    pub scheduler: crate::scheduler::CompilerScheduler,
     pub state: CompilerState,
     interpreter: LirInterpreter,
 }
@@ -57,6 +60,7 @@ fn typing_future(
     package_id: hir::PackageId,
     items: Vec<Item>,
     extra_modules: Vec<(QualifiedPath, Vec<Item>)>,
+    typing_context: Rc<TypingContext>,
     output: Rc<RefCell<Option<TypingTaskOutput>>>,
 ) -> impl Future<Output = fp_core::error::Result<()>> {
     async move {
@@ -64,7 +68,10 @@ fn typing_future(
             .with_package_id(package_id)
             .transform_module_with_items(&module_path, &items, &extra_modules)
         {
-            Ok(program) => HirTypeChecker::new(program).check().await,
+            Ok(program) => HirTypeChecker::new(program)
+                .with_context(typing_context)
+                .check()
+                .await,
             Err(error) => Err(error),
         };
         *output.borrow_mut() = Some(TypingTaskOutput { result });
@@ -75,7 +82,8 @@ fn typing_future(
 impl CompilerDriver {
     pub fn new(data_layout: fp_core::lir::LirDataLayout) -> Self {
         Self {
-            scheduler: CompilerScheduler::new(),
+            #[cfg(test)]
+            scheduler: crate::scheduler::CompilerScheduler::new(),
             state: CompilerState::new(data_layout),
             interpreter: LirInterpreter::new(),
         }
@@ -83,21 +91,58 @@ impl CompilerDriver {
 
     pub fn with_state(state: CompilerState) -> Self {
         Self {
-            scheduler: CompilerScheduler::new(),
+            #[cfg(test)]
+            scheduler: crate::scheduler::CompilerScheduler::new(),
             state,
             interpreter: LirInterpreter::new(),
         }
     }
 
-    pub fn run_next(&mut self) -> Result<Option<ScheduledAnswer>, CompilerDriverError> {
+    #[cfg(test)]
+    pub fn run_next(
+        &mut self,
+    ) -> Result<Option<crate::scheduler::ScheduledAnswer>, CompilerDriverError> {
         let Some(request) = self.scheduler.next_request() else {
             return Ok(None);
         };
         self.scheduler.begin_processing(request.id);
-        let answer = self.handle_request(&request)?;
+        let answer = match &request.work {
+            crate::scheduler::CompilerWork::CompileUnitCompileNative { ast, path } => {
+                fp_core::executor::block_on(self.compile_unit_compile_native(ast, path))?;
+                crate::scheduler::CompilerAnswer::CompileUnitCompileNative
+            }
+            crate::scheduler::CompilerWork::CompileUnitCompileBytecode { ast, path } => {
+                fp_core::executor::block_on(self.compile_unit_compile_bytecode(ast, path))?;
+                crate::scheduler::CompilerAnswer::CompileUnitCompileBytecode
+            }
+            crate::scheduler::CompilerWork::CompileUnitAnswerComptime { ast, path } => {
+                let value = fp_core::executor::block_on(self.answer_comptime(ast, path))?;
+                let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
+                self.state.insert_const_value(value_id.clone(), value);
+                crate::scheduler::CompilerAnswer::CompileUnitAnswerComptime { value: value_id }
+            }
+            crate::scheduler::CompilerWork::LoadPackage { name } => {
+                self.load_package(name)?;
+                crate::scheduler::CompilerAnswer::PackageLoaded { name: name.clone() }
+            }
+            other => {
+                return Err(CompilerDriverError::UnsupportedWork(format!("{other:?}")));
+            }
+        };
         self.scheduler.end_processing();
-        let scheduled = self.scheduler.answer_and_schedule(request.id, answer)?;
-        Ok(Some(scheduled))
+        self.scheduler
+            .answer_and_schedule(request.id, answer)
+            .map(Some)
+            .map_err(|err| CompilerDriverError::UnsupportedWork(err.to_string()))
+    }
+
+    pub async fn compile_native(
+        &mut self,
+        ast_id: &AstId,
+        path: &FullyQualifiedPath,
+    ) -> Result<(), CompilerDriverError> {
+        self.compile_unit_compile_native(ast_id, path).await?;
+        self.compile_unit_compile_bytecode(ast_id, path).await
     }
 
     pub fn execute_runtime(
@@ -115,35 +160,18 @@ impl CompilerDriver {
         Ok(value)
     }
 
-    fn handle_request(
-        &mut self,
-        request: &CompilerRequest,
-    ) -> Result<CompilerAnswer, CompilerDriverError> {
-        match &request.work {
-            CompilerWork::CompileUnitCompileNative { ast, path } => {
-                self.compile_unit_compile_native(ast, path)
-            }
-            CompilerWork::CompileUnitAnswerComptime { ast, path } => {
-                self.compile_unit_answer_comptime(ast, path)
-            }
-            CompilerWork::CompileUnitCompileBytecode { ast, path } => {
-                self.compile_unit_compile_bytecode(ast, path)
-            }
-            CompilerWork::LoadPackage { name } => self.load_package(name),
-            _ => Err(CompilerDriverError::UnsupportedWork(format!("{request:?}"))),
-        }
-    }
-
     /// The real single-source-file entry point: fetches the stored `File`
     /// and delegates to `compile_module_core` with its items — the shared
     /// core itself never touches `ast::File`.
-    fn compile_unit_core(
+    async fn compile_unit_core(
         &mut self,
         ast_id: &AstId,
         path: &FullyQualifiedPath,
     ) -> Result<CompileUnitCoreResult, CompilerDriverError> {
         let ast = self.state.ast(ast_id)?.clone();
-        let result = self.compile_module_core(path.path().clone(), ast.items, ast_id, path)?;
+        let result = self
+            .compile_module_core(path.path().clone(), ast.items, ast_id, path)
+            .await?;
         if result.entrypoint.is_none() {
             return Err(CompilerDriverError::Core(fp_core::error::Error::from(
                 "program has no explicit main entrypoint",
@@ -158,7 +186,7 @@ impl CompilerDriver {
     /// stored `File` before calling in) and, more importantly, by
     /// `compile_items_to_lir_units`/generic monomorphization, which already
     /// have `(QualifiedPath, Vec<Item>)` in hand and no real file at all.
-    fn compile_module_core(
+    async fn compile_module_core(
         &mut self,
         module_path: QualifiedPath,
         items: Vec<Item>,
@@ -182,11 +210,12 @@ impl CompilerDriver {
                     package_id,
                     items,
                     extra_modules,
+                    self.state.typing_ctx.clone(),
                     output.clone(),
                 ),
             );
         }
-        self.run_pool_to_idle()?;
+        self.run_pool_to_idle().await?;
         let TypingTaskOutput { result } = output.borrow_mut().take().expect(
             "module task's key was included in a just-fully-drained pool, so it must have run",
         );
@@ -268,10 +297,18 @@ impl CompilerDriver {
     /// already reported with a specific error by `force`'s own cycle
     /// handling if it's *that* kind of cycle, or some other stuck state),
     /// reported immediately rather than retried on a heuristic bound.
-    fn run_pool_to_idle(&mut self) -> Result<(), CompilerDriverError> {
+    async fn run_pool_to_idle(&mut self) -> Result<(), CompilerDriverError> {
         loop {
+            let requests = self.state.typing_ctx.take_comptime_requests();
+            if !requests.is_empty() {
+                for pending in requests {
+                    let value = self.answer_hir_comptime(pending.request()).await?;
+                    pending.complete(Ok(value));
+                }
+                continue;
+            }
             if let Some((key, _result)) = self.state.tasks.tick() {
-                self.handle_resolved_task(&key)?;
+                self.handle_resolved_task(&key).await?;
                 continue;
             }
             if self.state.tasks.is_idle() {
@@ -325,7 +362,11 @@ impl CompilerDriver {
     /// (immediately — nothing here waits for the specialized compile to
     /// actually finish), the scheduler would resubmit that unrelated
     /// request as fresh follow-up work for no reason.
-    fn handle_resolved_task(&mut self, key: &str) -> Result<(), CompilerDriverError> {
+    fn handle_resolved_task<'a>(
+        &'a mut self,
+        key: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CompilerDriverError>> + 'a>> {
+        Box::pin(async move {
         let Some(monomorph) = self
             .state
             .typing_ctx
@@ -388,12 +429,10 @@ impl CompilerDriver {
         };
         self.state.insert_ast(specialized_ast_id.clone(), file);
 
-        self.scheduler
-            .submit_independent(CompilerWork::CompileUnitCompileNative {
-                ast: specialized_ast_id,
-                path: specialized_path,
-            });
+        self.compile_unit_compile_native(&specialized_ast_id, &specialized_path)
+            .await?;
         Ok(())
+        })
     }
 
     /// Load a registered package on demand (generalizes what used to be a
@@ -415,10 +454,7 @@ impl CompilerDriver {
     /// const/type-alias resolution task of its own (`predeclare_item`), it
     /// needs to land in the same shared pool `run_pool_to_idle` actually
     /// drives, not a throwaway one nothing will ever tick.
-    fn load_package(&mut self, name: &str) -> Result<CompilerAnswer, CompilerDriverError> {
-        let answer = CompilerAnswer::PackageLoaded {
-            name: name.to_string(),
-        };
+    fn load_package(&mut self, name: &str) -> Result<(), CompilerDriverError> {
         let Some(package_id) = self.state.typing_ctx.env_ctx.resolve_package(name) else {
             return Err(CompilerDriverError::UnresolvablePackage(name.to_string()));
         };
@@ -430,7 +466,7 @@ impl CompilerDriver {
         {
             // Already satisfied by an earlier `LoadPackage` request for the
             // same name (the scheduler doesn't dedupe submissions) — no-op.
-            return Ok(answer);
+            return Ok(());
         }
         let Some(provider) = self.state.typing_ctx.env_ctx.provider(name) else {
             return Err(CompilerDriverError::UnresolvablePackage(name.to_string()));
@@ -458,7 +494,75 @@ impl CompilerDriver {
             self.state.typing_ctx.wake_package(package_id.as_str());
         }
 
-        Ok(answer)
+        Ok(())
+    }
+
+    /// Evaluate a comptime request using the HIR unit supplied by typing.
+    /// The driver never looks up an AST expression or reconstructs source
+    /// from a string key here: the request is the complete evaluation input.
+    async fn answer_hir_comptime(
+        &mut self,
+        request: &ComptimeRequest,
+    ) -> Result<Value, CompilerDriverError> {
+        let target_name = request
+            .program
+            .def_map
+            .get(&request.target)
+            .and_then(|item| match &item.kind {
+                hir::ItemKind::Const(constant) => Some(constant.name.as_str().to_string()),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                CompilerDriverError::UnresolvableComptime(format!(
+                    "HIR comptime target {} is not a const",
+                    request.target
+                ))
+            })?;
+        let terminal = target_name.rsplit("::").next().unwrap_or(&target_name);
+
+        let mut lowering = MirLowering::new()
+            .with_typeck_results(&request.typeck_results)
+            .map_err(CompilerDriverError::Core)?;
+        let mir = lowering
+            .transform(request.program.clone())
+            .map_err(CompilerDriverError::Core)?;
+        let mut lir_generator = LirGenerator::new(self.state.typing_ctx.data_layout.clone());
+        let lir = lir_generator
+            .transform(mir)
+            .map_err(CompilerDriverError::Core)?;
+        let entry = lir
+            .comptime_entries
+            .iter()
+            .find(|entry| {
+                entry
+                    .function
+                    .as_str()
+                    .starts_with(&format!("__fp_comptime_const_{terminal}_"))
+            })
+            .ok_or_else(|| {
+                CompilerDriverError::UnresolvableComptime(format!(
+                    "HIR comptime target `{target_name}` was not lowered"
+                ))
+            })?;
+        let entry_function = entry.function.as_str().to_string();
+
+        let package_id = request.target.package_id;
+        let unit = fp_core::lir::LirCompileUnit {
+            package_id,
+            module_path: QualifiedPath::new(Vec::new()),
+            program: lir,
+        };
+        self.interpreter = LirInterpreter::new();
+        self.interpreter
+            .inject_globals(&self.collect_resolved_const_values());
+        let mut value = self
+            .interpreter
+            .run_function_named(&[unit], package_id, &entry_function)
+            .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
+        if let Some(resolved) = Self::resolve_comptime_value(&mut self.interpreter, &value) {
+            value = resolved;
+        }
+        Ok(value)
     }
 
     /// Try to resolve `expr` as a compile-time value right now, scoped to
@@ -488,7 +592,7 @@ impl CompilerDriver {
     /// this needs (resolved consts/types, the workspace's compiled crates)
     /// is reachable through it, and `ComptimeHook` only holds an
     /// `Rc<TypingContext>`, not a `&CompilerDriver`.
-    fn resolve_comptime_now(typing_ctx: &TypingContext, key: &str, expr: &Expr) -> bool {
+    fn resolve_comptime_now(typing_ctx: &TypingContext, key: &str, expr: &Expr) -> Option<Value> {
         let mut probe_expr = expr.clone();
         let resolved_names = Self::resolved_const_values_snapshot(typing_ctx);
         Self::inline_resolved_names(&mut probe_expr, &resolved_names);
@@ -537,7 +641,7 @@ impl CompilerDriver {
         })();
 
         let Ok(value) = resolved else {
-            return false;
+            return None;
         };
 
         if let Some(struct_ty) = Self::extract_struct_type(&value) {
@@ -562,9 +666,9 @@ impl CompilerDriver {
             typing_ctx
                 .expr_resolutions
                 .borrow_mut()
-                .insert_value(expr_id, value);
+                .insert_value(expr_id, value.clone());
         }
-        true
+        Some(value)
     }
 
     /// Replace any reference to an already-resolved const (matched by bare
@@ -816,24 +920,24 @@ impl CompilerDriver {
         }
     }
 
-    fn compile_unit_compile_native(
+    async fn compile_unit_compile_native(
         &mut self,
         ast_id: &AstId,
         path: &FullyQualifiedPath,
-    ) -> Result<CompilerAnswer, CompilerDriverError> {
-        let core = self.compile_unit_core(ast_id, path)?;
-        self.evaluate_comptime_lir(&core.lir_id, path)?;
-        Ok(CompilerAnswer::CompileUnitCompileNative)
+    ) -> Result<(), CompilerDriverError> {
+        let core = self.compile_unit_core(ast_id, path).await?;
+        self.evaluate_comptime_lir(&core.lir_id, path).await?;
+        Ok(())
     }
 
-    fn compile_unit_compile_bytecode(
+    async fn compile_unit_compile_bytecode(
         &mut self,
         ast_id: &AstId,
         path: &FullyQualifiedPath,
-    ) -> Result<CompilerAnswer, CompilerDriverError> {
-        let core = self.compile_unit_core(ast_id, path)?;
+    ) -> Result<(), CompilerDriverError> {
+        let core = self.compile_unit_core(ast_id, path).await?;
         self.generate_bytecode(&core.mir_id, path)?;
-        Ok(CompilerAnswer::CompileUnitCompileBytecode)
+        Ok(())
     }
 
     /// Nothing submits this work item anymore (see `drive_to_completion`
@@ -842,15 +946,15 @@ impl CompilerDriver {
     /// `CompilerWork`/`CompilerAnswer` case — `scheduler/stack.rs`'s own
     /// tests use it as a generic example payload to exercise dependency
     /// blocking, independent of the driver.
-    fn compile_unit_answer_comptime(
+    pub async fn answer_comptime(
         &mut self,
         ast_id: &AstId,
         path: &FullyQualifiedPath,
-    ) -> Result<CompilerAnswer, CompilerDriverError> {
+    ) -> Result<Value, CompilerDriverError> {
         let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
-        let core = self.compile_unit_core(ast_id, path)?;
-        self.evaluate_comptime_lir(&core.lir_id, path)?;
-        Ok(CompilerAnswer::CompileUnitAnswerComptime { value: value_id })
+        let core = self.compile_unit_core(ast_id, path).await?;
+        self.evaluate_comptime_lir(&core.lir_id, path).await?;
+        self.state.const_value(&value_id).cloned()
     }
 
     /// Canonical identity for a generic instantiation, matching the doc's
@@ -1092,7 +1196,7 @@ impl CompilerDriver {
     /// Compile all items in a workspace crate through the full pipeline
     /// (typer → HIR → MIR → LIR) and return the merged LirProgram.
     /// Used for on-demand compilation when a crate's lir_program is None.
-    fn compile_items_to_lir_units(
+    async fn compile_items_to_lir_units(
         &mut self,
         items_map: &HashMap<QualifiedPath, Vec<Item>>,
     ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
@@ -1117,7 +1221,10 @@ impl CompilerDriver {
             );
 
             let fqp = FullyQualifiedPath::new(path.clone());
-            let core = match self.compile_module_core(path.clone(), items.clone(), &ast_id, &fqp) {
+            let core = match self
+                .compile_module_core(path.clone(), items.clone(), &ast_id, &fqp)
+                .await
+            {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!(
@@ -1142,7 +1249,7 @@ impl CompilerDriver {
         Ok(units)
     }
 
-    fn evaluate_comptime_lir(
+    async fn evaluate_comptime_lir(
         &mut self,
         lir_id: &LirId,
         path: &FullyQualifiedPath,
@@ -1185,7 +1292,7 @@ impl CompilerDriver {
             .map(|c| c.items.clone())
             .collect();
         for items_map in &crates_to_compile {
-            match self.compile_items_to_lir_units(items_map) {
+            match self.compile_items_to_lir_units(items_map).await {
                 Ok(compiled_units) => all_units.extend(compiled_units),
                 Err(e) => return Err(e),
             }
@@ -1346,6 +1453,7 @@ impl CompilerDriver {
             .with_expr_resolution(expr_res)
             .transform_module_with_items(module_path, items, &extra_modules)?;
         let (hir_program, typeck_results) = HirTypeChecker::new(hir_program)
+            .with_context(self.state.typing_ctx.clone())
             .check()
             .await
             .map_err(|error| CompilerDriverError::Core(error))?;
@@ -1864,7 +1972,10 @@ mod tests {
         let path = path();
         let ast_id = AstId::new("ast:crate::generic");
         let mut generic_function =
-            ItemDefFunction::new_simple(Ident::new("id"), Expr::unit().into());
+            ItemDefFunction::new_simple(
+                Ident::new("id"),
+                fp_core::ast::ExprBlock::new_expr(Expr::unit()),
+            );
         generic_function.sig = FunctionSignature {
             generics_params: vec![GenericParam {
                 name: Ident::new("T"),
@@ -2473,8 +2584,8 @@ fn main() {
             .load_package("std")
             .expect("second load (already loaded)");
 
-        assert!(matches!(first, CompilerAnswer::PackageLoaded { .. }));
-        assert!(matches!(second, CompilerAnswer::PackageLoaded { .. }));
+        assert_eq!(first, ());
+        assert_eq!(second, ());
         assert_eq!(
             calls.load(Ordering::SeqCst),
             1,

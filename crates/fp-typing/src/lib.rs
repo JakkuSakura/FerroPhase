@@ -4,7 +4,7 @@ pub mod context;
 pub mod hir_typeck;
 pub mod types;
 
-pub use context::TypingContext;
+pub use context::{ComptimeRequest, PendingComptimeRequest, TypingContext};
 pub use hir_typeck::HirTypeChecker;
 pub use support::{BoxFuture, block_on, default_extern_prelude, impl_self_ty_name};
 pub use types::{

@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 
 use crate::types::{GenericCallResolution, TypeckResults};
+use crate::{ComptimeRequest, TypingContext};
+use std::rc::Rc;
 
 /// Type checks resolved HIR and records semantic types outside the source tree.
 /// This is deliberately a side-table pass: HIR nodes remain source-shaped and
@@ -16,6 +18,7 @@ pub struct HirTypeChecker {
     locals: Vec<HashMap<hir::Symbol, Ty>>,
     generic_scopes: Vec<HashMap<hir::DefId, Ty>>,
     self_types: Vec<Ty>,
+    typing_context: Option<Rc<TypingContext>>,
 }
 
 struct GenericScope<'a> {
@@ -50,29 +53,47 @@ impl HirTypeChecker {
             locals: vec![HashMap::new()],
             generic_scopes: Vec::new(),
             self_types: Vec::new(),
+            typing_context: None,
         }
     }
 
-    pub fn check(self) -> crate::BoxFuture<'static, Result<(hir::Program, TypeckResults)>> {
-        Box::pin(async move { self.check_sync() })
+    pub fn with_context(mut self, context: Rc<TypingContext>) -> Self {
+        self.typing_context = Some(context);
+        self
     }
 
-    fn check_sync(mut self) -> Result<(hir::Program, TypeckResults)> {
+    pub fn check(self) -> crate::BoxFuture<'static, Result<(hir::Program, TypeckResults)>> {
+        Box::pin(async move { self.check_async().await })
+    }
+
+    async fn check_async(mut self) -> Result<(hir::Program, TypeckResults)> {
         let items = self.program.items.clone();
         for item in &items {
-            self.check_item(item)?;
+            self.check_item(item).await?;
         }
         Ok((self.program, self.results))
     }
 
-    fn check_item(&mut self, item: &hir::Item) -> Result<()> {
+    fn check_item<'a>(&'a mut self, item: &'a hir::Item) -> crate::BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
         match &item.kind {
             hir::ItemKind::Function(function) => {
-                self.check_function(function)?;
+                self.check_function(function).await?;
             }
             hir::ItemKind::Const(constant) => {
                 self.check_type_expr(&constant.ty)?;
-                self.check_body(&constant.body)?;
+                self.check_body(&constant.body).await?;
+                if let Some(context) = self.typing_context.clone() {
+                    let value = context
+                        .request_comptime(ComptimeRequest {
+                            program: self.program.clone(),
+                            typeck_results: self.results.clone(),
+                            target: item.def_id,
+                            expected_ty: constant.ty.clone(),
+                        })
+                        .await?;
+                    self.results.const_values.insert(item.def_id, value);
+                }
             }
             hir::ItemKind::Impl(impl_item) => {
                 let mut scope = self.generic_scope(&impl_item.generics);
@@ -83,10 +104,10 @@ impl HirTypeChecker {
                 }
                 for item in &impl_item.items {
                     match &item.kind {
-                        hir::ImplItemKind::Method(function) => scope.check_function(function)?,
+                        hir::ImplItemKind::Method(function) => scope.check_function(function).await?,
                         hir::ImplItemKind::AssocConst(constant) => {
                             scope.check_type_expr(&constant.ty)?;
-                            scope.check_body(&constant.body)?;
+                            scope.check_body(&constant.body).await?;
                         }
                     }
                 }
@@ -105,34 +126,41 @@ impl HirTypeChecker {
                         scope.check_type_expr(payload)?;
                     }
                     if let Some(discriminant) = &variant.discriminant {
-                        scope.check_expr(discriminant)?;
+                        scope.check_expr(discriminant).await?;
                     }
                 }
             }
             hir::ItemKind::Query(_) => {}
             hir::ItemKind::Expr(expr) => {
-                self.check_expr(expr)?;
+                self.check_expr(expr).await?;
             }
         }
         Ok(())
+        })
     }
 
-    fn check_function(&mut self, function: &hir::Function) -> Result<()> {
-        let mut scope = self.generic_scope(&function.sig.generics);
-        (|| {
-            scope.check_signature(&function.sig).map_err(|error| {
-                Error::from(format!(
-                    "in function `{}` signature: {error}",
-                    function.sig.name
-                ))
-            })?;
-            if let Some(body) = &function.body {
-                scope.check_function_body(&function.sig.inputs, body).map_err(|error| {
+    fn check_function<'a>(
+        &'a mut self,
+        function: &'a hir::Function,
+    ) -> crate::BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+        self.push_generics(&function.sig.generics);
+        self.check_signature(&function.sig).map_err(|error| {
+            Error::from(format!(
+                "in function `{}` signature: {error}",
+                function.sig.name
+            ))
+        })?;
+        if let Some(body) = &function.body {
+            self.check_function_body(&function.sig.inputs, body)
+                .await
+                .map_err(|error| {
                     Error::from(format!("in function `{}` body: {error}", function.sig.name))
                 })?;
-            }
-            Ok(())
-        })()
+        }
+        self.generic_scopes.pop();
+        Ok(())
+        })
     }
 
     fn push_generics(&mut self, generics: &hir::Generics) {
@@ -173,18 +201,18 @@ impl HirTypeChecker {
         Ok(())
     }
 
-    fn check_body(&mut self, body: &hir::Body) -> Result<()> {
+    async fn check_body(&mut self, body: &hir::Body) -> Result<()> {
         self.locals.push(HashMap::new());
         for param in &body.params {
             let ty = self.check_type_expr(&param.ty)?;
             self.bind_pattern(&param.pat, ty)?;
         }
-        self.check_expr(&body.value)?;
+        self.check_expr(&body.value).await?;
         self.locals.pop();
         Ok(())
     }
 
-    fn check_function_body(
+    async fn check_function_body(
         &mut self,
         params: &[hir::Param],
         block: &hir::Block,
@@ -194,18 +222,19 @@ impl HirTypeChecker {
             let ty = self.check_type_expr(&param.ty)?;
             self.bind_pattern(&param.pat, ty)?;
         }
-        self.check_block(block)?;
+        self.check_block(block).await?;
         self.locals.pop();
         Ok(())
     }
 
-    fn check_expr(&mut self, expr: &hir::Expr) -> Result<Ty> {
+    fn check_expr<'a>(&'a mut self, expr: &'a hir::Expr) -> crate::BoxFuture<'a, Result<Ty>> {
+        Box::pin(async move {
         let ty = match &expr.kind {
             hir::ExprKind::Literal(lit) => self.literal_ty(lit),
             hir::ExprKind::Path(path) => self.expr_path_ty(path)?,
             hir::ExprKind::Binary(op, lhs, rhs) => {
-                let lhs = self.check_expr(lhs)?;
-                let rhs = self.check_expr(rhs)?;
+                let lhs = self.check_expr(lhs).await?;
+                let rhs = self.check_expr(rhs).await?;
                 match op {
                     hir::BinOp::And | hir::BinOp::Or => {
                         self.require_same(&lhs, &Ty::bool())?;
@@ -236,7 +265,7 @@ impl HirTypeChecker {
                 }
             }
             hir::ExprKind::Unary(op, value) => {
-                let value_ty = self.check_expr(value)?;
+                let value_ty = self.check_expr(value).await?;
                 if matches!(op, hir::UnOp::Not) {
                     self.require_same(&value_ty, &Ty::bool())?;
                 }
@@ -245,16 +274,16 @@ impl HirTypeChecker {
             hir::ExprKind::Reference(reference) => Ty {
                 kind: TyKind::Ref(
                     ty::Region::ReErased,
-                    Box::new(self.check_expr(&reference.expr)?),
+                    Box::new(self.check_expr(&reference.expr).await?),
                     reference.mutable,
                 ),
             },
             hir::ExprKind::Call(callee, args) => {
-                let callee_ty = self.check_expr(callee)?;
-                let arg_types = args
-                    .iter()
-                    .map(|arg| self.check_expr(&arg.value))
-                    .collect::<Result<Vec<_>>>()?;
+                let callee_ty = self.check_expr(callee).await?;
+                let mut arg_types = Vec::with_capacity(args.len());
+                for arg in args {
+                    arg_types.push(self.check_expr(&arg.value).await?);
+                }
                 let Some((substitutions, output)) =
                     self.instantiate_call(&callee_ty, &arg_types)?
                 else {
@@ -279,13 +308,11 @@ impl HirTypeChecker {
                 output
             }
             hir::ExprKind::MethodCall(receiver, method, args) => {
-                let receiver_ty = self.check_expr(receiver)?;
+                let receiver_ty = self.check_expr(receiver).await?;
                 let mut arg_types = vec![receiver_ty.clone()];
-                arg_types.extend(
-                    args.iter()
-                        .map(|arg| self.check_expr(&arg.value))
-                        .collect::<Result<Vec<_>>>()?,
-                );
+                for arg in args {
+                    arg_types.push(self.check_expr(&arg.value).await?);
+                }
                 let (method_def_id, generic_args, output) =
                     self.method_output(&receiver_ty, method, &arg_types)?;
                 self.results
@@ -303,12 +330,12 @@ impl HirTypeChecker {
                 output
             }
             hir::ExprKind::FieldAccess(receiver, field) => {
-                let receiver_ty = self.check_expr(receiver)?;
+                let receiver_ty = self.check_expr(receiver).await?;
                 self.field_ty(&receiver_ty, field)?
             }
             hir::ExprKind::Index(receiver, index) => {
-                let receiver_ty = self.check_expr(receiver)?;
-                let index_ty = self.check_expr(index)?;
+                let receiver_ty = self.check_expr(receiver).await?;
+                let index_ty = self.check_expr(index).await?;
                 self.require_same(&index_ty, &Ty::int(ty::IntTy::I64))?;
                 match receiver_ty.kind {
                     TyKind::Array(inner, _) | TyKind::Slice(inner) => *inner,
@@ -316,24 +343,24 @@ impl HirTypeChecker {
                 }
             }
             hir::ExprKind::Cast(value, target) => {
-                self.check_expr(value)?;
+                self.check_expr(value).await?;
                 self.check_type_expr(target)?
             }
             hir::ExprKind::Struct(path, fields) => {
                 let ty = self.path_ty(path)?;
                 for field in fields {
-                    let value_ty = self.check_expr(&field.expr)?;
+                    let value_ty = self.check_expr(&field.expr).await?;
                     let field_ty = self.field_ty(&ty, &field.name)?;
                     self.require_same(&value_ty, &field_ty)?;
                 }
                 ty
             }
             hir::ExprKind::If(condition, then_expr, else_expr) => {
-                let condition = self.check_expr(condition)?;
+                let condition = self.check_expr(condition).await?;
                 self.require_same(&condition, &Ty::bool())?;
-                let then_ty = self.check_expr(then_expr)?;
+                let then_ty = self.check_expr(then_expr).await?;
                 if let Some(else_expr) = else_expr {
-                    let else_ty = self.check_expr(else_expr)?;
+                    let else_ty = self.check_expr(else_expr).await?;
                     self.require_same(&then_ty, &else_ty)?;
                 }
                 match else_expr.as_ref() {
@@ -342,13 +369,13 @@ impl HirTypeChecker {
                 }
             }
             hir::ExprKind::Match(scrutinee, arms) => {
-                let scrutinee_ty = self.check_expr(scrutinee)?;
+                let scrutinee_ty = self.check_expr(scrutinee).await?;
                 if arms.is_empty() {
                     return Err(Error::from("match expression requires at least one arm"));
                 }
                 let mut result = None;
                 for arm in arms {
-                    let arm_ty = self.check_match_arm(arm, &scrutinee_ty)?;
+                    let arm_ty = self.check_match_arm(arm, &scrutinee_ty).await?;
                     if let Some(result_ty) = &result {
                         self.require_same(result_ty, &arm_ty)?;
                     } else {
@@ -357,19 +384,19 @@ impl HirTypeChecker {
                 }
                 result.ok_or_else(|| Error::from("match expression requires at least one arm"))?
             }
-            hir::ExprKind::Block(block) | hir::ExprKind::Loop(block) => self.check_block(block)?,
+            hir::ExprKind::Block(block) | hir::ExprKind::Loop(block) => self.check_block(block).await?,
             hir::ExprKind::While(condition, block) => {
-                let condition_ty = self.check_expr(condition)?;
+                let condition_ty = self.check_expr(condition).await?;
                 self.require_same(&condition_ty, &Ty::bool())?;
-                self.check_block(block)?
+                self.check_block(block).await?
             }
             hir::ExprKind::Array(values) => {
                 let Some(first) = values.first() else {
                     return Err(Error::from("empty array has no inferable element type"));
                 };
-                let element = self.check_expr(first)?;
+                let element = self.check_expr(first).await?;
                 for value in values.iter().skip(1) {
-                    let value_ty = self.check_expr(value)?;
+                    let value_ty = self.check_expr(value).await?;
                     self.require_same(&element, &value_ty)?;
                 }
                 Ty {
@@ -380,8 +407,8 @@ impl HirTypeChecker {
                 }
             }
             hir::ExprKind::ArrayRepeat { elem, len } => {
-                let element = self.check_expr(elem)?;
-                self.check_expr(len)?;
+                let element = self.check_expr(elem).await?;
+                self.check_expr(len).await?;
                 Ty {
                     kind: TyKind::Array(
                         Box::new(element),
@@ -390,27 +417,27 @@ impl HirTypeChecker {
                 }
             }
             hir::ExprKind::Assign(lhs, rhs) => {
-                let lhs = self.check_expr(lhs)?;
-                let rhs = self.check_expr(rhs)?;
+                let lhs = self.check_expr(lhs).await?;
+                let rhs = self.check_expr(rhs).await?;
                 self.require_same(&lhs, &rhs)?;
                 lhs
             }
             hir::ExprKind::Return(value) | hir::ExprKind::Break(value) => match value.as_ref() {
-                Some(value) => self.check_expr(value)?,
+                Some(value) => self.check_expr(value).await?,
                 None => self.unit_ty(),
             },
             hir::ExprKind::Continue => Ty::never(),
             hir::ExprKind::Let(pattern, target, value) => {
                 let ty = self.check_type_expr(target)?;
                 if let Some(value) = value {
-                    let value_ty = self.check_expr(value)?;
+                    let value_ty = self.check_expr(value).await?;
                     self.require_same(&ty, &value_ty)?;
                 }
                 self.bind_pattern(pattern, ty.clone())?;
                 ty
             }
             hir::ExprKind::Try(value) => {
-                let input_ty = self.check_expr(&value.expr)?;
+                let input_ty = self.check_expr(&value.expr).await?;
                 let result_ty = input_ty.clone();
                 for catch in &value.catches {
                     if let Some(pattern) = &catch.pat {
@@ -421,29 +448,29 @@ impl HirTypeChecker {
                             },
                         )?;
                     }
-                    let catch_ty = self.check_expr(&catch.body)?;
+                    let catch_ty = self.check_expr(&catch.body).await?;
                     self.require_same(&result_ty, &catch_ty)?;
                 }
                 if let Some(elze) = &value.elze {
-                    let elze_ty = self.check_expr(elze)?;
+                    let elze_ty = self.check_expr(elze).await?;
                     self.require_same(&result_ty, &elze_ty)?;
                 }
                 if let Some(finally) = &value.finally {
-                    self.check_expr(finally)?;
+                    self.check_expr(finally).await?;
                 }
                 result_ty
             }
             hir::ExprKind::With(context, body) => {
-                self.check_expr(context)?;
-                self.check_expr(body)?
+                self.check_expr(context).await?;
+                self.check_expr(body).await?
             }
             hir::ExprKind::Slice(slice) => {
-                let base_ty = self.check_expr(&slice.base)?;
+                let base_ty = self.check_expr(&slice.base).await?;
                 if let Some(start) = &slice.start {
-                    self.check_expr(start)?;
+                    self.check_expr(start).await?;
                 }
                 if let Some(end) = &slice.end {
-                    self.check_expr(end)?;
+                    self.check_expr(end).await?;
                 }
                 match base_ty.kind {
                     TyKind::Array(inner, _) => Ty {
@@ -456,7 +483,7 @@ impl HirTypeChecker {
                 }
             }
             hir::ExprKind::Query(_) => return Err(Error::from("query typing is not implemented")),
-            hir::ExprKind::IntrinsicCall(call) => self.check_intrinsic(call)?,
+            hir::ExprKind::IntrinsicCall(call) => self.check_intrinsic(call).await?,
             hir::ExprKind::FormatString(format) => {
                 for part in &format.parts {
                     if let hir::FormatTemplatePart::Placeholder(placeholder) = part {
@@ -470,9 +497,10 @@ impl HirTypeChecker {
         };
         self.results.record_expr_type(expr.hir_id, ty.clone());
         Ok(ty)
+        })
     }
 
-    fn check_block(&mut self, block: &hir::Block) -> Result<Ty> {
+    async fn check_block(&mut self, block: &hir::Block) -> Result<Ty> {
         self.locals.push(HashMap::new());
         for stmt in &block.stmts {
             match &stmt.kind {
@@ -480,7 +508,7 @@ impl HirTypeChecker {
                     let ty = match (&local.ty, &local.init) {
                         (Some(annotation), Some(init)) => {
                             let ty = self.check_type_expr(annotation)?;
-                            let init_ty = self.check_expr(init)?;
+                            let init_ty = self.check_expr(init).await?;
                             let mut substitutions = HashMap::new();
                             self.unify_call_types(&init_ty, &ty, &mut substitutions)?;
                             let resolved_init = self.substitute_param_map(&init_ty, &substitutions);
@@ -489,37 +517,35 @@ impl HirTypeChecker {
                             ty
                         }
                         (Some(annotation), None) => self.check_type_expr(annotation)?,
-                        (None, Some(init)) => self.check_expr(init)?,
+                        (None, Some(init)) => self.check_expr(init).await?,
                         (None, None) => {
                             return Err(Error::from("local binding needs a type or initializer"));
                         }
                     };
                     self.bind_pattern(&local.pat, ty)?;
                 }
-                hir::StmtKind::Item(item) => self.check_item(item)?,
+                hir::StmtKind::Item(item) => self.check_item(item).await?,
                 hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
-                    self.check_expr(expr)?;
+                    self.check_expr(expr).await?;
                 }
             }
         }
         let ty = match block.expr.as_ref() {
-            Some(expr) => self.check_expr(expr)?,
+            Some(expr) => self.check_expr(expr).await?,
             None => self.unit_ty(),
         };
         self.locals.pop();
         Ok(ty)
     }
 
-    fn check_match_arm(&mut self, arm: &hir::MatchArm, scrutinee_ty: &Ty) -> Result<Ty> {
+    async fn check_match_arm(&mut self, arm: &hir::MatchArm, scrutinee_ty: &Ty) -> Result<Ty> {
         self.locals.push(HashMap::new());
-        let result = (|| {
-            self.bind_pattern(&arm.pat, scrutinee_ty.clone())?;
-            if let Some(guard) = &arm.guard {
-                let guard_ty = self.check_expr(guard)?;
-                self.require_same(&guard_ty, &Ty::bool())?;
-            }
-            self.check_expr(&arm.body)
-        })();
+        self.bind_pattern(&arm.pat, scrutinee_ty.clone())?;
+        if let Some(guard) = &arm.guard {
+            let guard_ty = self.check_expr(guard).await?;
+            self.require_same(&guard_ty, &Ty::bool())?;
+        }
+        let result = self.check_expr(&arm.body).await;
         self.locals.pop();
         result
     }
@@ -1337,12 +1363,11 @@ impl HirTypeChecker {
         }
     }
 
-    fn check_intrinsic(&mut self, call: &hir::IntrinsicCallExpr) -> Result<Ty> {
-        let arg_types = call
-            .callargs
-            .iter()
-            .map(|arg| self.check_expr(&arg.value))
-            .collect::<Result<Vec<_>>>()?;
+    async fn check_intrinsic(&mut self, call: &hir::IntrinsicCallExpr) -> Result<Ty> {
+        let mut arg_types = Vec::with_capacity(call.callargs.len());
+        for arg in &call.callargs {
+            arg_types.push(self.check_expr(&arg.value).await?);
+        }
         use fp_core::intrinsics::IntrinsicKind;
         Ok(match call.kind {
             IntrinsicKind::Print | IntrinsicKind::Println | IntrinsicKind::Panic => Ty {

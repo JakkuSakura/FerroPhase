@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use fp_c::CFrontend;
 use fp_compiler::{
-    AstId, BytecodeId, CompilerDriver, CompilerModuleResolver, CompilerWork, ConstValueId,
+    block_on, AstId, BytecodeId, CompilerDriver, CompilerModuleResolver, ConstValueId,
     FullyQualifiedPath, LirId, MirId,
 };
 use fp_core::{
@@ -80,12 +80,8 @@ pub fn check_path(
             .map_err(|err| CliError::Compilation(err.to_string()))?;
     }
     driver.state.insert_ast(identity.ast_id.clone(), ast);
-    driver
-        .scheduler
-        .submit(CompilerWork::CompileUnitCompileNative {
-            ast: identity.ast_id.clone(),
-            path: identity.path.clone(),
-        });
+    block_on(driver.compile_native(&identity.ast_id, &identity.path))
+        .map_err(|err| CliError::Compilation(err.to_string()))?;
     drain_driver(&mut driver, lossy)
 }
 
@@ -857,22 +853,12 @@ fn lower_ast(
             .map_err(|err| CliError::Compilation(err.to_string()))?;
     }
     driver.state.insert_ast(ast_id.clone(), ast);
-    driver
-        .scheduler
-        .submit(CompilerWork::CompileUnitCompileNative { ast: ast_id, path });
+    block_on(driver.compile_native(&ast_id, &path))
+        .map_err(|err| CliError::Compilation(err.to_string()))?;
     Ok(driver)
 }
 
 fn drain_driver(driver: &mut CompilerDriver, lossy: LossyCompileOptions) -> Result<()> {
-    // Typing (`fp-typing`) can genuinely suspend on a not-yet-loaded package,
-    // but `CompilerDriver::drive_typing_to_completion` resolves that in place
-    // before `run_next` ever returns, so this stays a plain synchronous
-    // drain loop -- no executor/async needed at this level.
-    while driver
-        .run_next()
-        .map_err(|err| CliError::Compilation(err.to_string()))?
-        .is_some()
-    {}
     emit_typing_diagnostics(&driver.state.typing_ctx.diagnostics.borrow(), lossy)
 }
 
