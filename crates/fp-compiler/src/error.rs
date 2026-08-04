@@ -1,7 +1,7 @@
 use thiserror::Error;
 
-use crate::ids::{AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
-use crate::module_resolution::ModuleResolutionError;
+use crate::resolution::ModuleResolutionError;
+use crate::{AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
 
 impl From<fp_interpret::VmError> for CompilerDriverError {
     fn from(e: fp_interpret::VmError) -> Self {

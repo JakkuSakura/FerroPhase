@@ -9,10 +9,10 @@ use fp_core::{
 };
 use fp_typing::{TypeckResults, TypingContext};
 
-use super::executor::CompilerExecutor;
-use crate::driver::CompilerDriverError;
-use crate::ids::{AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
-use crate::module_resolution::CompilerModuleResolver;
+use crate::error::CompilerDriverError;
+use crate::executor::CompilerExecutor;
+use crate::resolution::CompilerModuleResolver;
+use crate::{AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
 
 pub struct CompilerState {
     ast: BTreeMap<AstId, File>,

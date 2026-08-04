@@ -1,10 +1,3 @@
-mod error;
-mod executor;
-mod state;
-
-pub use error::CompilerDriverError;
-pub use state::CompilerState;
-
 use fp_backend::transformations::{HirGenerator, HirLoweringConfig, LirGenerator, MirLowering};
 use fp_core::ast::{
     BlockStmt, Expr, ExprInvokeTarget, ExprKind, File, Item, ItemDefEnum, ItemDefStruct, ItemKind,
@@ -22,8 +15,9 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::ids::{
-    AstId, BytecodeId, ConstValueId, FullyQualifiedPath, HirId, LirId, MirId, RuntimeValueId,
+use crate::{
+    AstId, BytecodeId, CompilerDriverError, CompilerState, ConstValueId, FullyQualifiedPath, HirId,
+    LirId, MirId, RuntimeValueId,
 };
 
 pub struct CompilerDriver {
@@ -1615,7 +1609,7 @@ impl CompilerDriver {
 #[cfg(test)]
 mod comptime_source_tests {
     use super::*;
-    use crate::ids::{AstId, FullyQualifiedPath};
+    use crate::{AstId, FullyQualifiedPath};
     use fp_core::frontend::LanguageFrontend;
 
     fn path() -> FullyQualifiedPath {
@@ -2024,8 +2018,8 @@ fn main() {
 
     #[test]
     fn duplicate_package_requests_load_std_exactly_once() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         struct CountingStdProvider {
             calls: Arc<AtomicUsize>,

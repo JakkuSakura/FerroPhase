@@ -1,46 +1,6 @@
-use std::fmt::{self, Display};
-
-use fp_core::module::path::QualifiedPath;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-/// Resolved semantic identity for a work subject after identity-forming generic
-/// and comptime arguments are known.
-pub struct FullyQualifiedPath {
-    path: QualifiedPath,
-}
-
-impl FullyQualifiedPath {
-    pub fn new(path: QualifiedPath) -> Self {
-        Self { path }
-    }
-
-    pub fn from_segments(segments: Vec<String>) -> Self {
-        Self {
-            path: QualifiedPath::new(segments),
-        }
-    }
-
-    pub fn path(&self) -> &QualifiedPath {
-        &self.path
-    }
-
-    pub fn with_segment(&self, segment: impl Into<String>) -> Self {
-        Self {
-            path: self.path.with_segment(segment.into()),
-        }
-    }
-
-    pub fn to_key(&self) -> String {
-        self.path.to_key()
-    }
-}
-
-impl Display for FullyQualifiedPath {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.path.to_key().fmt(f)
-    }
-}
+use std::fmt::{self, Display};
 
 macro_rules! define_storage_id {
     ($name:ident, $doc:literal) => {
@@ -81,19 +41,3 @@ define_storage_id!(BytecodeId, "Storage identity for serialized bytecode.");
 define_storage_id!(NativeObjectId, "Storage identity for native object output.");
 define_storage_id!(JitObjectId, "Storage identity for JIT-ready native code.");
 define_storage_id!(SavedOutputId, "Storage identity for a saved output record.");
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn resolved_identity_uses_qualified_path() {
-        let identity = FullyQualifiedPath::from_segments(vec![
-            "std".to_string(),
-            "vec".to_string(),
-            "Vec#{type i32}".to_string(),
-        ]);
-
-        assert_eq!(identity.to_key(), "std::vec::Vec#{type i32}");
-    }
-}
