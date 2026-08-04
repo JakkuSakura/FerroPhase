@@ -3,25 +3,6 @@ use std::fmt::{self, Display};
 use fp_core::module::path::QualifiedPath;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct RequestId(u64);
-
-impl RequestId {
-    pub fn new(value: u64) -> Self {
-        Self(value)
-    }
-
-    pub fn as_u64(self) -> u64 {
-        self.0
-    }
-}
-
-impl Display for RequestId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "request#{}", self.0)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 /// Resolved semantic identity for a work subject after identity-forming generic
 /// and comptime arguments are known.

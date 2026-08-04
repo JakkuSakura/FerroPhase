@@ -11,8 +11,8 @@ use fp_typing::{TypeckResults, TypingContext};
 
 use super::executor::CompilerExecutor;
 use crate::driver::CompilerDriverError;
+use crate::ids::{AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
 use crate::module_resolution::CompilerModuleResolver;
-use crate::scheduler::{AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
 
 pub struct CompilerState {
     ast: BTreeMap<AstId, File>,

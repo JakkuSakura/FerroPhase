@@ -3,8 +3,6 @@ mod executor;
 mod state;
 
 pub use error::CompilerDriverError;
-#[cfg(test)]
-use executor::block_on;
 pub use state::CompilerState;
 
 use fp_backend::transformations::{HirGenerator, HirLoweringConfig, LirGenerator, MirLowering};
@@ -24,15 +22,11 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::scheduler::{
+use crate::ids::{
     AstId, BytecodeId, ConstValueId, FullyQualifiedPath, HirId, LirId, MirId, RuntimeValueId,
 };
-#[cfg(test)]
-use crate::scheduler::{CompilerAnswer, CompilerWork};
 
 pub struct CompilerDriver {
-    #[cfg(test)]
-    pub scheduler: crate::scheduler::CompilerScheduler,
     pub state: CompilerState,
     interpreter: LirInterpreter,
 }
@@ -84,8 +78,6 @@ impl CompilerDriver {
 
     pub fn new(data_layout: fp_core::lir::LirDataLayout) -> Self {
         Self {
-            #[cfg(test)]
-            scheduler: crate::scheduler::CompilerScheduler::new(),
             state: CompilerState::new(data_layout),
             interpreter: LirInterpreter::new(),
         }
@@ -93,49 +85,9 @@ impl CompilerDriver {
 
     pub fn with_state(state: CompilerState) -> Self {
         Self {
-            #[cfg(test)]
-            scheduler: crate::scheduler::CompilerScheduler::new(),
             state,
             interpreter: LirInterpreter::new(),
         }
-    }
-
-    #[cfg(test)]
-    pub fn run_next(
-        &mut self,
-    ) -> Result<Option<crate::scheduler::ScheduledAnswer>, CompilerDriverError> {
-        let Some(request) = self.scheduler.next_request() else {
-            return Ok(None);
-        };
-        self.scheduler.begin_processing(request.id);
-        let answer = match &request.work {
-            crate::scheduler::CompilerWork::CompileUnitCompileNative { ast, path } => {
-                block_on(self.compile_unit_compile_native(ast, path))?;
-                crate::scheduler::CompilerAnswer::CompileUnitCompileNative
-            }
-            crate::scheduler::CompilerWork::CompileUnitCompileBytecode { ast, path } => {
-                block_on(self.compile_unit_compile_bytecode(ast, path))?;
-                crate::scheduler::CompilerAnswer::CompileUnitCompileBytecode
-            }
-            crate::scheduler::CompilerWork::CompileUnitAnswerComptime { ast, path } => {
-                let value = block_on(self.answer_comptime(ast, path))?;
-                let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
-                self.state.insert_const_value(value_id.clone(), value);
-                crate::scheduler::CompilerAnswer::CompileUnitAnswerComptime { value: value_id }
-            }
-            crate::scheduler::CompilerWork::LoadPackage { name } => {
-                self.load_package(name)?;
-                crate::scheduler::CompilerAnswer::PackageLoaded { name: name.clone() }
-            }
-            other => {
-                return Err(CompilerDriverError::UnsupportedWork(format!("{other:?}")));
-            }
-        };
-        self.scheduler.end_processing();
-        self.scheduler
-            .answer_and_schedule(request.id, answer)
-            .map(Some)
-            .map_err(|err| CompilerDriverError::UnsupportedWork(err.to_string()))
     }
 
     pub async fn compile_native(
@@ -350,15 +302,8 @@ impl CompilerDriver {
     /// `Item` derives
     /// `Clone` including its `id`, so the pre-typing clone typing was
     /// working from carries the identical `ItemId`), substitutes the
-    /// concrete types into a clone of it, and submits its compile via
-    /// `CompilerScheduler::submit_independent` rather than `submit` — using
-    /// `submit` here would record the specialization as a dependency of
-    /// whatever compile unit request happens to be `current_processing`
-    /// right now (which may not even be the one that discovered this
-    /// generic call), and once that dependency's answer comes back
-    /// (immediately — nothing here waits for the specialized compile to
-    /// actually finish), the scheduler would resubmit that unrelated
-    /// request as fresh follow-up work for no reason.
+    /// concrete types into a clone, and compiles the specialization directly
+    /// through the shared compiler task pool.
     fn handle_resolved_task<'a>(
         &'a mut self,
         key: &'a str,
@@ -457,7 +402,7 @@ impl CompilerDriver {
         };
         if self.state.typing_ctx.env_ctx.is_loaded(package_id.as_str()) {
             // Already satisfied by an earlier `LoadPackage` request for the
-            // same name (the scheduler doesn't dedupe submissions) — no-op.
+            // same name — no-op because the package is already loaded.
             return Ok(());
         }
         let Some(provider) = self.state.typing_ctx.env_ctx.provider(name) else {
@@ -581,8 +526,7 @@ impl CompilerDriver {
     /// Returns `false` on any lowering/evaluation failure — e.g. the
     /// expression references another dependency this scoped lowering can't
     /// see (a sibling function, an as-yet-unresolved const) — leaving the
-    /// caller to fall back to deferred scheduler work (see
-    /// `compile_unit_compile_native`'s pending_comptime branch).
+    /// caller to resolve it through the compiler task pool.
     ///
     /// Takes `&TypingContext` rather than `&mut self`/`&self` — everything
     /// this needs (resolved consts/types, the workspace's compiled crates)
@@ -930,12 +874,8 @@ impl CompilerDriver {
         Ok(())
     }
 
-    /// Nothing submits this work item anymore (see `drive_to_completion`
-    /// — comptime needs are resolved in place, not by retrying the whole
-    /// unit as a separate scheduler request), but the variant stays a valid
-    /// `CompilerWork`/`CompilerAnswer` case — `scheduler/stack.rs`'s own
-    /// tests use it as a generic example payload to exercise dependency
-    /// blocking, independent of the driver.
+    /// Compile-time values are resolved in place through the compiler task
+    /// pool; this entry point remains for callers that need an explicit value.
     pub async fn answer_comptime(
         &mut self,
         ast_id: &AstId,
@@ -1138,8 +1078,8 @@ impl CompilerDriver {
                 Self::substitute_in_body(cb.expr.as_mut(), param_names, concrete_types);
             }
             ExprKind::SplicePending(_) | ExprKind::Splice(_) => {
-                // Splice resolution is not yet wired into the scheduler; these
-                // nodes are left as-is for a future staging work item.
+                // Splice resolution is not yet wired into the compiler task
+                // pool; these nodes are left as-is for a future staging step.
             }
             _ => {}
         }
@@ -1673,202 +1613,9 @@ impl CompilerDriver {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use fp_core::ast::{
-        Expr, File, FunctionSignature, GenericParam, Ident, Item, ItemDefFunction, TypeBounds,
-    };
-
-    fn path() -> FullyQualifiedPath {
-        FullyQualifiedPath::from_segments(vec!["crate".to_string(), "main".to_string()])
-    }
-
-    fn test_data_layout() -> fp_core::lir::LirDataLayout {
-        fp_core::lir::LirDataLayout::new(
-            64,
-            8,
-            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
-        )
-        .expect("valid test data layout")
-    }
-
-    #[test]
-    fn compile_unit_native_runs_full_pipeline() {
-        let path = path();
-        let ast_id = AstId::new("ast:crate::main");
-        let mut driver = CompilerDriver::new(test_data_layout());
-        driver.state.insert_ast(
-            ast_id.clone(),
-            File {
-                path: std::path::PathBuf::new(),
-                attrs: Vec::new(),
-                collected_items: Vec::new(),
-                items: vec![Item::new(ItemKind::Expr(Expr::unit()))],
-            },
-        );
-
-        driver
-            .scheduler
-            .submit(CompilerWork::CompileUnitCompileNative { ast: ast_id, path });
-
-        let scheduled = driver
-            .run_next()
-            .expect("compile unit")
-            .expect("compiled answer");
-        assert!(matches!(
-            scheduled.completed.answer,
-            CompilerAnswer::CompileUnitCompileNative
-        ));
-
-        // Drain bytecode followup
-        while let Ok(Some(_)) = driver.run_next() {}
-
-        assert_eq!(driver.state.hir_len(), 1);
-        assert_eq!(driver.state.mir_len(), 1);
-        assert_eq!(driver.state.lir_len(), 1);
-        assert!(driver.scheduler.is_idle());
-    }
-
-    #[test]
-    fn const_item_discovers_comptime_need_and_evaluates() {
-        let path = path();
-        let ast_id = AstId::new("ast:crate::answer");
-
-        let const_block = fp_core::ast::ExprConstBlock {
-            span: fp_core::span::Span::null(),
-            collected_items: Vec::new(),
-            expr: Box::new(Expr::value(fp_core::ast::Value::int(42))),
-        };
-        let expr = Expr::from(fp_core::ast::ExprKind::ConstBlock(const_block));
-
-        let mut driver = CompilerDriver::new(test_data_layout());
-        driver.state.insert_ast(
-            ast_id.clone(),
-            File {
-                path: std::path::PathBuf::new(),
-                attrs: Vec::new(),
-                collected_items: Vec::new(),
-                items: vec![Item::new(ItemKind::Expr(expr))],
-            },
-        );
-
-        driver
-            .scheduler
-            .submit(CompilerWork::CompileUnitCompileNative {
-                ast: ast_id,
-                path: path.clone(),
-            });
-
-        // Drain the scheduler — comptime is resolved through auto-block + retry
-        let mut steps = 0;
-        while let Ok(Some(_s)) = driver.run_next() {
-            steps += 1;
-            assert!(steps <= 20, "driver loop should not run forever");
-        }
-
-        assert_eq!(
-            driver.state.const_value_len(),
-            1,
-            "const block should produce const value"
-        );
-        assert!(
-            driver.scheduler.is_idle(),
-            "scheduler should be idle after compile + comptime resolves"
-        );
-    }
-
-    #[test]
-    fn driver_loop_resolves_full_comptime_chain_to_completion() {
-        let path = path();
-        let ast_id = AstId::new("ast:crate::const");
-        let mut driver = CompilerDriver::new(test_data_layout());
-        driver.state.insert_ast(
-            ast_id.clone(),
-            File {
-                path: std::path::PathBuf::new(),
-                attrs: Vec::new(),
-                collected_items: Vec::new(),
-                items: vec![Item::new(ItemKind::Expr(Expr::unit()))],
-            },
-        );
-
-        driver
-            .scheduler
-            .submit(CompilerWork::CompileUnitCompileNative { ast: ast_id, path });
-
-        let mut steps = 0;
-        while let Ok(Some(scheduled)) = driver.run_next() {
-            steps += 1;
-            assert!(steps <= 20, "driver loop should not run forever");
-            let _ = scheduled;
-        }
-
-        assert_eq!(
-            driver.state.const_value_len(),
-            1,
-            "compile unit should evaluate LIR comptime entries"
-        );
-        assert!(
-            driver.scheduler.is_idle(),
-            "scheduler should be idle after compile resolves"
-        );
-    }
-
-    #[test]
-    fn compile_unit_native_submits_enqueue_for_generic() {
-        let path = path();
-        let ast_id = AstId::new("ast:crate::generic");
-        let mut generic_function = ItemDefFunction::new_simple(
-            Ident::new("id"),
-            fp_core::ast::ExprBlock::new_expr(Expr::unit()),
-        );
-        generic_function.sig = FunctionSignature {
-            generics_params: vec![GenericParam {
-                name: Ident::new("T"),
-                bounds: TypeBounds::any(),
-            }],
-            ..FunctionSignature::unit()
-        };
-
-        let mut driver = CompilerDriver::new(test_data_layout());
-        let file = File {
-            path: std::path::PathBuf::from("generic.fp"),
-            attrs: Vec::new(),
-            collected_items: Vec::new(),
-            items: vec![Item::from(generic_function)],
-        };
-        driver.state.insert_ast(ast_id.clone(), file);
-
-        driver
-            .scheduler
-            .submit(CompilerWork::CompileUnitCompileNative { ast: ast_id, path });
-
-        let scheduled = driver
-            .run_next()
-            .expect("compile unit")
-            .expect("compiled answer");
-        assert!(matches!(
-            scheduled.completed.answer,
-            CompilerAnswer::CompileUnitCompileNative
-        ));
-
-        // Bytecode followup work enqueued
-        assert!(
-            !scheduled.followups.is_empty(),
-            "should have bytecode followup"
-        );
-        let next = driver.scheduler.next_request().expect("bytecode work");
-        assert!(matches!(
-            next.work,
-            CompilerWork::CompileUnitCompileBytecode { .. }
-        ));
-    }
-}
-
-#[cfg(test)]
 mod comptime_source_tests {
     use super::*;
-    use crate::scheduler::{AstId, CompilerWork, FullyQualifiedPath};
+    use crate::ids::{AstId, FullyQualifiedPath};
     use fp_core::frontend::LanguageFrontend;
 
     fn path() -> FullyQualifiedPath {
@@ -1904,23 +1651,8 @@ fn main() {
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
         driver
-            .scheduler
-            .submit(CompilerWork::CompileUnitCompileNative {
-                ast: ast_id,
-                path: path(),
-            });
-
-        let scheduled = driver
-            .run_next()
-            .expect("compile unit")
-            .expect("compiled answer");
-        assert!(
-            matches!(
-                scheduled.completed.answer,
-                CompilerAnswer::CompileUnitCompileNative
-            ),
-            "const item and const block should produce compile with comptime resolution"
-        );
+            .compile_native_sync(&ast_id, &path())
+            .expect("compile unit");
     }
 
     #[test]
@@ -1937,17 +1669,8 @@ fn main() {
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
         driver
-            .scheduler
-            .submit(CompilerWork::CompileUnitCompileNative {
-                ast: ast_id,
-                path: path(),
-            });
-
-        // Compile handles comptime evaluation inline
-        let _scheduled = driver.run_next().expect("compile unit").expect("compiled");
-
-        // Drain any remaining work (e.g., generic followup)
-        while let Ok(Some(_)) = driver.run_next() {}
+            .compile_native_sync(&ast_id, &path())
+            .expect("compile unit");
 
         assert_eq!(
             driver.state.const_value_len(),
@@ -1974,18 +1697,9 @@ const AREA: i64 = WIDTH * HEIGHT;
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
         driver
-            .scheduler
-            .submit(CompilerWork::CompileUnitCompileNative {
-                ast: ast_id,
-                path: path(),
-            });
-
-        let _scheduled = driver.run_next().expect("compile unit").expect("compiled");
-        // Should produce comptime work
-        assert!(
-            driver.scheduler.pending_len() > 0 || driver.scheduler.active_len() == 0,
-            "should have follow-up work or be done"
-        );
+            .compile_native_sync(&ast_id, &path())
+            .expect("compile unit");
+        assert_eq!(driver.state.const_value_len(), 1);
     }
 
     #[test]
@@ -2006,19 +1720,12 @@ fn calculate() {
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
         driver
-            .scheduler
-            .submit(CompilerWork::CompileUnitCompileNative {
-                ast: ast_id,
-                path: path(),
-            });
-
-        let _scheduled = driver.run_next().expect("compile unit").expect("compiled");
-        // Const block should trigger comptime work
+            .compile_native_sync(&ast_id, &path())
+            .expect("compile unit");
     }
 
     enum ExampleResult {
         Completed { lowered: usize, executed: usize },
-        TypedLooping { followups: usize },
     }
 
     /// Regression test for the generic-monomorphization identity fix: a
@@ -2055,21 +1762,11 @@ fn main() {
         ));
         let ast_id = AstId::new("ast:test::generic_call");
         driver.state.insert_ast(ast_id.clone(), ast_node);
+        let path =
+            FullyQualifiedPath::from_segments(vec!["test".to_string(), "generic_call".to_string()]);
         driver
-            .scheduler
-            .submit(CompilerWork::CompileUnitCompileNative {
-                ast: ast_id,
-                path: FullyQualifiedPath::from_segments(vec![
-                    "test".to_string(),
-                    "generic_call".to_string(),
-                ]),
-            });
-
-        let mut steps = 0;
-        while let Some(_) = driver.run_next().expect("driver should not error") {
-            steps += 1;
-            assert!(steps <= 50, "driver loop should not run forever");
-        }
+            .compile_native_sync(&ast_id, &path)
+            .expect("driver should not error");
 
         assert_eq!(
             driver.state.generic_instantiations.len(),
@@ -2139,21 +1836,13 @@ fn main() {
         let mut driver = CompilerDriver::new(test_data_layout());
         let ast_id = AstId::new("ast:test::struct_enum_methods");
         driver.state.insert_ast(ast_id.clone(), ast_node);
+        let path = FullyQualifiedPath::from_segments(vec![
+            "test".to_string(),
+            "struct_enum_methods".to_string(),
+        ]);
         driver
-            .scheduler
-            .submit(CompilerWork::CompileUnitCompileNative {
-                ast: ast_id,
-                path: FullyQualifiedPath::from_segments(vec![
-                    "test".to_string(),
-                    "struct_enum_methods".to_string(),
-                ]),
-            });
-
-        let mut steps = 0;
-        while let Some(_) = driver.run_next().expect("driver should not error") {
-            steps += 1;
-            assert!(steps <= 50, "driver loop should not run forever");
-        }
+            .compile_native_sync(&ast_id, &path)
+            .expect("driver should not error");
     }
 
     fn compile_example_file(
@@ -2178,37 +1867,15 @@ fn main() {
         let ast_id = AstId::new(format!("ast:example::{label}"));
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
+        let path = FullyQualifiedPath::from_segments(vec!["example".into(), label.to_string()]);
         driver
-            .scheduler
-            .submit(CompilerWork::CompileUnitCompileNative {
-                ast: ast_id,
-                path: FullyQualifiedPath::from_segments(vec!["example".into(), label.to_string()]),
-            });
+            .compile_native_sync(&ast_id, &path)
+            .map_err(|e| format!("compile: {e}"))?;
 
-        let scheduled = driver.run_next().map_err(|e| format!("run_next: {e}"))?;
-        let scheduled = scheduled.ok_or_else(|| "no work returned".to_string())?;
-        let followups = scheduled.followups.len();
-
-        let mut lowered = 0;
-        let mut executed = 0;
-        let mut step = 0;
-        while let Ok(Some(s)) = driver.run_next() {
-            step += 1;
-            if step > 500 {
-                return Ok(ExampleResult::TypedLooping { followups });
-            }
-            if matches!(s.completed.answer, CompilerAnswer::CompileUnitCompileNative) {
-                lowered += 1;
-            }
-            if matches!(
-                s.completed.answer,
-                CompilerAnswer::CompileUnitAnswerComptime { .. }
-            ) {
-                executed += 1;
-            }
-        }
-
-        Ok(ExampleResult::Completed { lowered, executed })
+        Ok(ExampleResult::Completed {
+            lowered: 1,
+            executed: driver.state.const_value_len(),
+        })
     }
 
     #[test]
@@ -2244,7 +1911,6 @@ fn main() {
         let workspace = std::rc::Rc::new(workspace);
 
         let mut completed = 0;
-        let mut typed = 0;
         let mut errors = 0;
 
         for name in &entries {
@@ -2254,10 +1920,6 @@ fn main() {
                     completed += 1;
                     println!("OK  (lowered={lowered}, executed={executed})");
                 }
-                Ok(ExampleResult::TypedLooping { followups }) => {
-                    typed += 1;
-                    println!("TYPED (followups={followups}, loops — comptime not resolved)");
-                }
                 Err(e) => {
                     errors += 1;
                     println!("ERROR: {e}");
@@ -2266,7 +1928,7 @@ fn main() {
         }
 
         println!(
-            "\n  Examples: {completed} completed, {typed} typed-but-looping, {errors} errors ({} total)",
+            "\n  Examples: {completed} completed, {errors} errors ({} total)",
             entries.len()
         );
     }
@@ -2416,11 +2078,9 @@ fn main() {
             std::rc::Rc::new(workspace),
         ));
 
-        // Simulates two different compile units each independently requesting
-        // `std`: the scheduler would dispatch a `LoadPackage` work item per
-        // request, so `load_package` runs once per request — the second call
-        // must see `is_loaded` and no-op instead of reloading via the
-        // provider (see `CompilerDriver::load_package`'s dedup guard).
+        // Simulate two compile units independently requesting `std`: the
+        // second load must see `is_loaded` and avoid invoking the provider
+        // again (see `CompilerDriver::load_package`'s dedup guard).
         let first = driver.load_package("std").expect("first load");
         let second = driver
             .load_package("std")
@@ -2451,25 +2111,10 @@ fn main() {
         let ast_id = AstId::new("ast:example::inline");
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
+        let path = FullyQualifiedPath::from_segments(vec!["example".into(), "inline".into()]);
         driver
-            .scheduler
-            .submit(CompilerWork::CompileUnitCompileNative {
-                ast: ast_id,
-                path: FullyQualifiedPath::from_segments(vec!["example".into(), "inline".into()]),
-            });
-
-        let scheduled = driver.run_next().expect("compile unit").expect("compiled");
-        assert!(matches!(
-            scheduled.completed.answer,
-            CompilerAnswer::CompileUnitCompileNative
-        ));
-
-        // Drain any comptime + retry work
-        let mut steps = 0;
-        while let Ok(Some(_s)) = driver.run_next() {
-            steps += 1;
-            assert!(steps <= 20, "driver loop should not run forever");
-        }
+            .compile_native_sync(&ast_id, &path)
+            .expect("compile unit");
 
         assert_eq!(
             driver.state.const_value_len(),

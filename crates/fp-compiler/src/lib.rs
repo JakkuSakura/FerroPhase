@@ -1,10 +1,10 @@
 pub mod driver;
+mod ids;
 pub mod module_resolution;
-pub mod scheduler;
 
 pub use driver::{CompilerDriver, CompilerDriverError, CompilerState};
-pub use module_resolution::{CompilerModuleResolver, ModuleResolutionError};
-pub use scheduler::{
+pub use ids::{
     AstId, BytecodeId, ConstValueId, FullyQualifiedPath, HirId, JitObjectId, LirId, MirId,
     NativeObjectId, RuntimeValueId, SavedOutputId,
 };
+pub use module_resolution::{CompilerModuleResolver, ModuleResolutionError};
