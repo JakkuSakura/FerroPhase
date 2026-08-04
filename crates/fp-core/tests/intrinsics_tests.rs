@@ -14,6 +14,7 @@ fn empty_file() -> File {
     File {
         path: PathBuf::from("test.fp"),
         attrs: Vec::new(),
+        collected_items: Vec::new(),
         items: Vec::new(),
     }
 }
@@ -97,7 +98,7 @@ fn ensure_function_decl_does_not_duplicate_decl() {
 #[test]
 fn ensure_function_decl_skips_existing_definition() {
     let mut file = empty_file();
-    let body = Box::new(Expr::unit());
+    let body = fp_core::ast::ExprBlock::new_expr(Expr::unit());
     let def = ItemDefFunction::new_simple(Ident::new("puts"), body);
     file.items.push(Item::from(def));
 
@@ -127,6 +128,7 @@ fn ensure_function_decl_preserves_file_path() {
     let mut file = File {
         path: PathBuf::from("sample.fp"),
         attrs: Vec::new(),
+        collected_items: Vec::new(),
         items: Vec::new(),
     };
     let decl = make_function_decl("noop", Vec::new(), Ty::unit());

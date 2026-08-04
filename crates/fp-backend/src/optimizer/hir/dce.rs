@@ -559,7 +559,7 @@ fn collect_path_refs(
 mod tests {
     use super::*;
     use fp_core::hir::{
-        self, Body, Expr, ExprKind, Function, FunctionSig, Item, ItemKind, Path, PathSegment,
+        self, Expr, ExprKind, Function, FunctionSig, Item, ItemKind, Path, PathSegment,
         Program, Symbol, TypeExpr, TypeExprKind, Visibility,
     };
     use fp_core::span::Span;
@@ -630,10 +630,10 @@ mod tests {
                     generics: Default::default(),
                     abi: hir::Abi::Rust,
                 },
-                body: Some(Body {
+                body: Some(hir::Block {
                     hir_id: index,
-                    params: Vec::new(),
-                    value: literal_expr(index, 0),
+                    stmts: Vec::new(),
+                    expr: Some(Box::new(literal_expr(index, 0))),
                 }),
                 is_const: false,
                 is_extern: false,

@@ -26,6 +26,11 @@ use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
 
 const DIAGNOSTIC_CONTEXT: &str = "ast_to_hir";
 
+#[derive(Clone, Debug, Default)]
+pub struct HirLoweringConfig {
+    pub allowed_dependencies: Vec<String>,
+}
+
 fn query_origin(document: &QueryDocument) -> QueryOrigin {
     document.origin.clone()
 }
@@ -63,6 +68,7 @@ pub struct HirGenerator {
     expr_resolution: ExprResolutionTable,
     target_env: TargetEnv,
     respect_cfg: bool,
+    lowering_config: HirLoweringConfig,
 }
 
 enum MaterializedTypeAlias {
@@ -309,11 +315,17 @@ impl HirGenerator {
             expr_resolution: ExprResolutionTable::default(),
             target_env: TargetEnv::host(),
             respect_cfg: true,
+            lowering_config: HirLoweringConfig::default(),
         }
     }
 
     pub fn with_package_id(mut self, package_id: hir::PackageId) -> Self {
         self.package_id = package_id;
+        self
+    }
+
+    pub fn with_lowering_config(mut self, config: HirLoweringConfig) -> Self {
+        self.lowering_config = config;
         self
     }
 
@@ -846,28 +858,12 @@ impl HirGenerator {
 
     /// Transform an AST expression tree to HIR
     pub fn transform_expr(&mut self, ast_expr: &ast::Expr) -> Result<hir::Program> {
-        self.transform_expr_with_items(ast_expr, &[])
-    }
-
-    /// Transform an AST expression tree to HIR, predeclaring `extra_items`
-    /// (e.g. nominal struct/enum definitions the expression's type
-    /// references) alongside whatever closure-lowering generates. Used by
-    /// comptime probes that lower a single expression in isolation and need
-    /// its referenced struct/enum types visible to `MirLowering`'s
-    /// registration pass, which only scans `program.items`.
-    pub fn transform_expr_with_items(
-        &mut self,
-        ast_expr: &ast::Expr,
-        extra_items: &[ast::Item],
-    ) -> Result<hir::Program> {
         let mut lowered_expr = ast_expr.clone();
-        let (mut generated_items, closure_diagnostics) = lower_closures_in_expr(&mut lowered_expr)?;
+        let (generated_items, closure_diagnostics) = lower_closures_in_expr(&mut lowered_expr)?;
         diagnostic_manager().add_diagnostics(closure_diagnostics);
         if let Some(query) = lower_fp_expr_to_query(&lowered_expr, None) {
             return self.transform_query_document(&query);
         }
-        generated_items.extend(extra_items.iter().cloned());
-
         self.reset_file_context("<expr>");
         self.prepare_lowering_state();
         self.predeclare_items(&generated_items)?;
@@ -924,19 +920,6 @@ impl HirGenerator {
 
     /// Transform a parsed AST file into HIR
     pub fn transform_file(&mut self, file: &ast::File) -> Result<hir::Program> {
-        self.transform_file_with_items(file, &[])
-    }
-
-    /// Transform a parsed AST file into HIR, predeclaring `extra_items`
-    /// alongside the file's own items. Used to make cross-crate impl blocks
-    /// that the file actually calls into (e.g. `TypeBuilder::new` from
-    /// `std::meta`) visible to `MirLowering`'s per-program `lower_impl`
-    /// pass, which otherwise only ever sees the current file's own impls.
-    pub fn transform_file_with_items(
-        &mut self,
-        file: &ast::File,
-        extra_items: &[ast::Item],
-    ) -> Result<hir::Program> {
         let mut lowered = file.clone();
         let closure_diagnostics = lower_closures_in_file(&mut lowered)?;
         diagnostic_manager().add_diagnostics(closure_diagnostics);
@@ -946,13 +929,7 @@ impl HirGenerator {
         }
         let path = lowered.path.clone();
         let root = fp_core::module::path::QualifiedPath::new(Vec::new());
-        let extra_modules: Vec<(fp_core::module::path::QualifiedPath, Vec<ast::Item>)> =
-            if extra_items.is_empty() {
-                Vec::new()
-            } else {
-                vec![(root.clone(), extra_items.to_vec())]
-            };
-        self.transform_module_inner(&root, path, &lowered.items, &extra_modules)
+        self.transform_module_inner(&root, path, &lowered.items)
     }
 
     /// Transform a module's items into HIR directly, without an `ast::File`
@@ -966,20 +943,25 @@ impl HirGenerator {
         module_path: &fp_core::module::path::QualifiedPath,
         items: &[ast::Item],
     ) -> Result<hir::Program> {
-        self.transform_module_with_items(module_path, items, &[])
+        self.transform_module_inner(module_path, module_path.to_key(), items)
     }
 
-    /// Like `transform_module`, but also predeclares `extra_modules` — each
-    /// `(QualifiedPath, Vec<Item>)` group is processed under its *own*
-    /// module path (e.g. a cross-crate struct/impl the module's own calls
-    /// reference), not the caller's — see `transform_module_inner`.
-    pub fn transform_module_with_items(
+    /// Resolve package roots before entering synchronous lowering. Package
+    /// discovery is asynchronous because the compiler driver owns provider
+    /// loading; the actual AST-to-HIR walk remains the same once those roots
+    /// are available.
+    pub async fn transform_module_async(
         &mut self,
         module_path: &fp_core::module::path::QualifiedPath,
         items: &[ast::Item],
-        extra_modules: &[(fp_core::module::path::QualifiedPath, Vec<ast::Item>)],
+        typing_context: std::rc::Rc<fp_typing::TypingContext>,
     ) -> Result<hir::Program> {
-        self.transform_module_inner(module_path, module_path.to_key(), items, extra_modules)
+        for package in &self.lowering_config.allowed_dependencies {
+            if package != "std" && package != "libc" {
+                typing_context.await_package(package).await?;
+            }
+        }
+        self.transform_module(module_path, items)
     }
 
     /// Transform a query document node into HIR.
@@ -1016,25 +998,10 @@ impl HirGenerator {
         module_path: &fp_core::module::path::QualifiedPath,
         file_label: P,
         items: &[ast::Item],
-        extra_modules: &[(fp_core::module::path::QualifiedPath, Vec<ast::Item>)],
     ) -> Result<hir::Program> {
         self.reset_file_context(file_label);
         self.prepare_lowering_state();
 
-        // Predeclare extra-module groups (each under its *own* origin module
-        // path, not the caller's — an injected cross-crate `impl` block's
-        // `self_ty`, e.g. `TypeBuilder`, resolves relative to whatever
-        // `module_path` is current, so processing it under the caller's
-        // module would qualify it as e.g. `example::foo::TypeBuilder`
-        // instead of `std::meta::TypeBuilder`, producing a symbol name that
-        // will never match what that module's own — separately compiled —
-        // LIR actually exports at runtime) *before* the caller's own items,
-        // so any call the caller's body makes into them resolves to a
-        // `Res::Def` right away instead of falling through unresolved.
-        for (extra_module_path, extra_items) in extra_modules {
-            self.module_path = extra_module_path.clone();
-            self.predeclare_items(extra_items)?;
-        }
         self.module_path = module_path.clone();
         self.predeclare_items(items)?;
         self.insert_default_prelude_aliases();
@@ -1050,12 +1017,6 @@ impl HirGenerator {
         // an `impl` block appearing after the function that calls into it
         // would still be unregistered (`struct_methods` empty) when that
         // call is lowered.
-        for (extra_module_path, extra_items) in extra_modules {
-            self.module_path = extra_module_path.clone();
-            for item in extra_items {
-                self.append_item(&mut program, item)?;
-            }
-        }
         self.module_path = module_path.clone();
         for item in items {
             self.append_item(&mut program, item)?;

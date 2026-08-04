@@ -45,12 +45,35 @@ pub fn block_on<F: Future>(fut: F) -> F::Output {
 /// Safety note: the `Waker`s this hands out wrap an `Rc`, not an `Arc` — they
 /// must never be sent to another thread or otherwise woken from outside the
 /// thread that owns this `Executor`.
-pub struct Executor<O> {
-    tasks: RefCell<HashMap<String, Pin<Box<dyn Future<Output = O>>>>>,
+pub struct TaskHandle<T> {
+    state: Rc<RefCell<TaskState<T>>>,
+}
+
+struct TaskState<T> {
+    result: Option<T>,
+    wakers: Vec<Waker>,
+}
+
+impl<T> Future for TaskHandle<T> {
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut state = self.state.borrow_mut();
+        if let Some(result) = state.result.take() {
+            Poll::Ready(result)
+        } else {
+            state.wakers.push(cx.waker().clone());
+            Poll::Pending
+        }
+    }
+}
+
+pub struct Executor {
+    tasks: RefCell<HashMap<String, Pin<Box<dyn Future<Output = ()>>>>>,
     ready: Rc<RefCell<VecDeque<String>>>,
 }
 
-impl<O> Executor<O> {
+impl Executor {
     pub fn new() -> Self {
         Self {
             tasks: RefCell::new(HashMap::new()),
@@ -71,12 +94,33 @@ impl<O> Executor<O> {
     /// into this same `Executor` while they themselves are being polled
     /// (e.g. one const/type-alias item's resolution task discovering it
     /// needs another) -- see `poll_one`'s doc comment for why that's sound.
-    pub fn spawn(&self, key: impl Into<String>, future: impl Future<Output = O> + 'static) {
+    pub fn spawn<T: 'static>(
+        &self,
+        key: impl Into<String>,
+        future: impl Future<Output = T> + 'static,
+    ) -> TaskHandle<T> {
         let key = key.into();
+        let state = Rc::new(RefCell::new(TaskState {
+            result: None,
+            wakers: Vec::new(),
+        }));
+        let task_state = state.clone();
+        let task = async move {
+            let result = future.await;
+            let wakers = {
+                let mut state = task_state.borrow_mut();
+                state.result = Some(result);
+                std::mem::take(&mut state.wakers)
+            };
+            for waker in wakers {
+                waker.wake();
+            }
+        };
         self.tasks
             .borrow_mut()
-            .insert(key.clone(), Box::pin(future));
+            .insert(key.clone(), Box::pin(task));
         self.ready.borrow_mut().push_back(key);
+        TaskHandle { state }
     }
 
     pub fn contains(&self, key: &str) -> bool {
@@ -92,7 +136,7 @@ impl<O> Executor<O> {
     /// the borrow across the inner `.poll()` call (the natural-looking
     /// `get_mut`-based implementation) would double-borrow and panic the
     /// moment a task did that.
-    fn poll_one(&self, key: &str) -> Option<Poll<O>> {
+    fn poll_one(&self, key: &str) -> Option<Poll<()>> {
         let mut task = self.tasks.borrow_mut().remove(key)?;
         let waker = {
             let wake_key = key.to_string();
@@ -116,10 +160,13 @@ impl<O> Executor<O> {
     /// indirection `tick()` uses for "poll whatever's next". Returns `None`
     /// if `key` isn't tracked at all (caller should `spawn` first) or the
     /// task is still pending.
-    pub fn poll_task(&self, key: &str) -> Option<O> {
-        match self.poll_one(key)? {
-            Poll::Ready(output) => Some(output),
-            Poll::Pending => None,
+    pub fn poll_task(&self, key: &str) -> bool {
+        let Some(poll) = self.poll_one(key) else {
+            return false;
+        };
+        match poll {
+            Poll::Ready(()) => true,
+            Poll::Pending => false,
         }
     }
 
@@ -127,7 +174,7 @@ impl<O> Executor<O> {
     /// `None` if nothing made progress this round — callers should then
     /// check `has_parked_tasks()` to distinguish "truly idle" from
     /// "everything left is waiting on something that hasn't happened yet".
-    pub fn tick(&self) -> Option<(String, O)> {
+    pub fn tick(&self) -> Option<String> {
         loop {
             let key = self.ready.borrow_mut().pop_front()?;
             if !self.tasks.borrow().contains_key(&key) {
@@ -136,7 +183,7 @@ impl<O> Executor<O> {
                 continue;
             }
             match self.poll_one(&key) {
-                Some(Poll::Ready(output)) => return Some((key, output)),
+                Some(Poll::Ready(())) => return Some(key),
                 Some(Poll::Pending) => continue,
                 None => continue,
             }
@@ -158,7 +205,7 @@ impl<O> Executor<O> {
     }
 }
 
-impl<O> Default for Executor<O> {
+impl Default for Executor {
     fn default() -> Self {
         Self::new()
     }
@@ -233,9 +280,10 @@ mod tests {
 
     #[test]
     fn resolves_immediately_when_never_pending() {
-        let mut exec: Executor<i32> = Executor::new();
-        exec.spawn("unit", async { 42 });
-        let (key, out) = exec.tick().expect("should resolve on first poll");
+        let exec = Executor::new();
+        let handle = exec.spawn("unit", async { 42 });
+        let key = exec.tick().expect("should resolve on first poll");
+        let out = block_on(handle);
         assert_eq!(key, "unit");
         assert_eq!(out, 42);
         assert!(exec.is_idle());
@@ -243,10 +291,10 @@ mod tests {
 
     #[test]
     fn parks_until_woken_then_resolves() {
-        let mut exec: Executor<&'static str> = Executor::new();
+        let exec = Executor::new();
         let flag = Rc::new(Cell::new(false));
         let wakers = Rc::new(RefCell::new(Vec::new()));
-        exec.spawn(
+        let handle = exec.spawn(
             "gated",
             FlagGate {
                 ready: flag.clone(),
@@ -265,7 +313,8 @@ mod tests {
             waker.wake();
         }
 
-        let (key, out) = exec.tick().expect("should resolve once woken");
+        let key = exec.tick().expect("should resolve once woken");
+        let out = block_on(handle);
         assert_eq!(key, "gated");
         assert_eq!(out, "done");
         assert!(exec.is_idle());
@@ -273,9 +322,10 @@ mod tests {
 
     #[test]
     fn respawning_under_same_key_replaces_the_stale_attempt() {
-        let mut exec: Executor<i32> = Executor::new();
-        exec.spawn("unit", async { 1 });
-        let (_, first) = exec.tick().unwrap();
+        let exec = Executor::new();
+        let first_handle = exec.spawn("unit", async { 1 });
+        exec.tick().unwrap();
+        let first = block_on(first_handle);
         assert_eq!(first, 1);
 
         // A second, never-resolving attempt gets parked...
@@ -293,8 +343,9 @@ mod tests {
 
         // ...and respawning under the same key drops it, without needing to
         // wake it first.
-        exec.spawn("unit", async { 3 });
-        let (key, out) = exec.tick().expect("fresh attempt should resolve");
+        let handle = exec.spawn("unit", async { 3 });
+        let key = exec.tick().expect("fresh attempt should resolve");
+        let out = block_on(handle);
         assert_eq!(key, "unit");
         assert_eq!(out, 3);
         assert!(

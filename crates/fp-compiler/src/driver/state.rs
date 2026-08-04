@@ -1,11 +1,10 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
 use fp_core::{
-    ast::{Expr, ExprId, File, Item, Value},
+    ast::{Expr, ExprId, File, Value},
     hir, lir, mir,
-    module::path::QualifiedPath,
     module::resolution::ModuleResolutionContext,
 };
 use fp_typing::{TypeckResults, TypingContext};
@@ -31,14 +30,6 @@ pub struct CompilerState {
     module_resolutions: BTreeMap<AstId, ModuleResolutionContext>,
     pub(crate) generic_instantiations: HashSet<String>,
     bytecode: BTreeMap<BytecodeId, fp_bytecode::BytecodeProgram>,
-    /// Memoized `(origin module path, matched items)` per cross-crate struct
-    /// path (e.g. `std::meta::TypeBuilder`), populated by
-    /// `CompilerDriver::collect_cross_crate_items`. Avoids re-scanning a
-    /// workspace crate's `PackageCrate::items` and re-deriving the same
-    /// group every time a different compile unit references the same
-    /// cross-crate struct — mirrors `generic_instantiations`' existing dedup
-    /// role for generic monomorphization.
-    pub(crate) cross_crate_items_cache: HashMap<QualifiedPath, (QualifiedPath, Vec<Item>)>,
     /// The one shared task pool every suspendable unit of driver work runs
     /// through: per-compile-unit HIR typing tasks and compiler-owned
     /// comptime work. Lives here, not on
@@ -48,7 +39,8 @@ pub struct CompilerState {
     /// interior-mutable (its own methods take `&self`, specifically so a
     /// task can reentrantly `spawn`/`contains`-check it from within its own
     /// poll).
-    pub tasks: std::rc::Rc<fp_core::executor::Executor<fp_core::error::Result<()>>>,
+    pub tasks: std::rc::Rc<fp_core::executor::Executor>,
+    pub allowed_dependencies: Vec<String>,
 }
 
 impl CompilerState {
@@ -72,9 +64,13 @@ impl CompilerState {
             module_resolutions: BTreeMap::new(),
             generic_instantiations: HashSet::new(),
             bytecode: BTreeMap::new(),
-            cross_crate_items_cache: HashMap::new(),
             tasks: std::rc::Rc::new(fp_core::executor::Executor::new()),
+            allowed_dependencies: vec!["std".to_string(), "libc".to_string()],
         }
+    }
+
+    pub fn set_allowed_dependencies(&mut self, dependencies: Vec<String>) {
+        self.allowed_dependencies = dependencies;
     }
 
     pub fn insert_ast(&mut self, ast_id: AstId, ast: File) {

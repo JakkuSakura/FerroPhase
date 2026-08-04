@@ -35,7 +35,10 @@ fn make_fn(
     ret: ast::Ty,
     body: ast::Expr,
 ) -> ast::Item {
-    let func = ast::ItemDefFunction::new_simple(ident(name), body.into())
+    let func = ast::ItemDefFunction::new_simple(
+        ident(name),
+        ast::ExprBlock::new_expr(body),
+    )
         .with_params(params)
         .with_ret_ty(ret);
     ast::Item::from(ast::ItemKind::DefFunction(func))
@@ -183,11 +186,8 @@ fn transform_index_expression_to_hir() -> Result<()> {
         })
         .expect("pick function present");
 
-    let body_expr = &pick.body.as_ref().expect("body present").value;
-    let target_expr = match &body_expr.kind {
-        hir::ExprKind::Block(block) => block.expr.as_deref().expect("expression present in block"),
-        _ => body_expr,
-    };
+    let body = pick.body.as_ref().expect("body present");
+    let target_expr = body.expr.as_deref().expect("expression present in block");
 
     assert!(matches!(target_expr.kind, hir::ExprKind::Index(_, _)));
 
@@ -496,15 +496,14 @@ fn transform_generic_function_and_method() -> Result<()> {
     let container = make_struct("Container", vec![("value", int_ty())]);
     let mut method = ast::ItemDefFunction::new_simple(
         ident("get"),
-        ast::Expr::block(ast::ExprBlock::new_expr(ast::Expr::from(
+        ast::ExprBlock::new_expr(ast::Expr::from(
             ast::ExprKind::Select(ast::ExprSelect {
                 span: Span::null(),
                 obj: Box::new(ast::Expr::ident(ident("self"))),
                 field: ident("value"),
                 select: ast::ExprSelectType::Field,
             }),
-        )))
-        .into(),
+        )),
     );
     method.sig.receiver = Some(ast::FunctionParamReceiver::Ref);
     method.sig.ret_ty = Some(int_ty());
@@ -515,7 +514,7 @@ fn transform_generic_function_and_method() -> Result<()> {
 
     let mut identity = ast::ItemDefFunction::new_simple(
         ident("identity"),
-        ast::Expr::block(ast::ExprBlock::new_expr(ast::Expr::ident(ident("x")))).into(),
+        ast::ExprBlock::new_expr(ast::Expr::ident(ident("x"))),
     );
     identity.sig.generics_params = vec![ast::GenericParam {
         name: ident("T"),
@@ -775,7 +774,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
         match &item.kind {
             hir::ItemKind::Function(func) => {
                 if let Some(body) = &func.body {
-                    collect_paths(&body.value, out);
+                    collect_paths_from_block(body, out);
                 }
             }
             hir::ItemKind::Const(const_item) => collect_paths(&const_item.body.value, out),
@@ -783,7 +782,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
                 for impl_item in &impl_block.items {
                     if let hir::ImplItemKind::Method(method) = &impl_item.kind {
                         if let Some(body) = &method.body {
-                            collect_paths(&body.value, out);
+                            collect_paths_from_block(body, out);
                         }
                     }
                 }
@@ -794,7 +793,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
         }
     }
 
-    collect_paths(&body.value, &mut collected_paths);
+    collect_paths_from_block(body, &mut collected_paths);
 
     let mut name_to_paths: HashMap<String, Vec<&hir::Path>> = HashMap::new();
 

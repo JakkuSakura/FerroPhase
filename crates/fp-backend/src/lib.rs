@@ -64,7 +64,7 @@ mod tests {
         Item::from(ItemKind::DefFunction(
             ast::ItemDefFunction::new_simple(
                 ident(name),
-                Expr::block(ast::ExprBlock::new_expr(Expr::value(ast::Value::unit()))).into(),
+                ast::ExprBlock::new_expr(Expr::value(ast::Value::unit())),
             )
             .with_ret_ty(Ty::unit()),
         ))

@@ -844,6 +844,12 @@ fn lower_ast(
         data_layout(),
         std::rc::Rc::new(workspace),
     ));
+    driver
+        .preload_package("std")
+        .map_err(|err| CliError::Compilation(err.to_string()))?;
+    driver
+        .preload_package("libc")
+        .map_err(|err| CliError::Compilation(err.to_string()))?;
 
     if let Some(resolver) = resolver {
         driver.state.set_module_resolver(resolver);
