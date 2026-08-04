@@ -5,7 +5,8 @@ use std::pin::Pin;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
-pub fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+#[cfg(test)]
+pub(crate) fn block_on<F: std::future::Future>(fut: F) -> F::Output {
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
     fn no_wake(_: *const ()) {}
@@ -20,10 +21,10 @@ pub fn block_on<F: std::future::Future>(fut: F) -> F::Output {
     match fut.as_mut().poll(&mut cx) {
         Poll::Ready(value) => value,
         Poll::Pending => panic!(
-            "fp_typing::block_on: future returned Poll::Pending -- this helper only supports \
+            "fp_typing test block_on: future returned Poll::Pending -- this helper only supports \
              futures that resolve on the very first poll (tests / synchronous callers with no \
              real package or comptime suspension); drive genuinely suspending futures through \
-             fp-compiler's Executor instead"
+             fp-compiler's CompilerExecutor instead"
         ),
     }
 }

@@ -9,10 +9,11 @@ use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 /// point) that just want a driver-level result right now and know up front
 /// that nothing in this call will genuinely suspend (no unloaded package, no
 /// pending comptime value). Real suspend/resume across an actual
-/// `Poll::Pending` belongs to `Executor`, which owns the ready-queue/waker
+/// `Poll::Pending` belongs to `CompilerExecutor`, which owns the ready-queue/waker
 /// machinery that makes resuming meaningful; this just polls once with a
 /// waker that panics if the future isn't ready on that first poll.
-pub fn block_on<F: Future>(fut: F) -> F::Output {
+#[cfg(test)]
+pub(crate) fn block_on<F: Future>(fut: F) -> F::Output {
     fn no_wake(_: *const ()) {}
     fn clone_noop_waker(_: *const ()) -> RawWaker {
         RawWaker::new(std::ptr::null(), &VTABLE)
@@ -25,10 +26,10 @@ pub fn block_on<F: Future>(fut: F) -> F::Output {
     match fut.as_mut().poll(&mut cx) {
         Poll::Ready(value) => value,
         Poll::Pending => panic!(
-            "fp_core::executor::block_on: future returned Poll::Pending -- this helper only \
+            "test block_on: future returned Poll::Pending -- this helper only \
              supports futures that resolve on the very first poll (tests / synchronous callers \
              with no real package or comptime suspension); drive genuinely suspending futures \
-             through Executor instead"
+             through CompilerExecutor instead"
         ),
     }
 }
@@ -44,8 +45,8 @@ pub fn block_on<F: Future>(fut: F) -> F::Output {
 ///
 /// Safety note: the `Waker`s this hands out wrap an `Rc`, not an `Arc` — they
 /// must never be sent to another thread or otherwise woken from outside the
-/// thread that owns this `Executor`.
-pub struct TaskHandle<T> {
+/// thread that owns this `CompilerExecutor`.
+pub(crate) struct TaskHandle<T> {
     state: Rc<RefCell<TaskState<T>>>,
 }
 
@@ -68,13 +69,13 @@ impl<T> Future for TaskHandle<T> {
     }
 }
 
-pub struct Executor {
+pub(crate) struct CompilerExecutor {
     tasks: RefCell<HashMap<String, Pin<Box<dyn Future<Output = ()>>>>>,
     ready: Rc<RefCell<VecDeque<String>>>,
 }
 
-impl Executor {
-    pub fn new() -> Self {
+impl CompilerExecutor {
+    pub(crate) fn new() -> Self {
         Self {
             tasks: RefCell::new(HashMap::new()),
             ready: Rc::new(RefCell::new(VecDeque::new())),
@@ -91,10 +92,10 @@ impl Executor {
     /// suspended on) -- only do that deliberately (e.g. a genuine restart).
     ///
     /// Takes `&self` (not `&mut self`): tasks routinely spawn *other* tasks
-    /// into this same `Executor` while they themselves are being polled
+    /// into this same `CompilerExecutor` while they themselves are being polled
     /// (e.g. one const/type-alias item's resolution task discovering it
     /// needs another) -- see `poll_one`'s doc comment for why that's sound.
-    pub fn spawn<T: 'static>(
+    pub(crate) fn spawn<T: 'static>(
         &self,
         key: impl Into<String>,
         future: impl Future<Output = T> + 'static,
@@ -116,14 +117,12 @@ impl Executor {
                 waker.wake();
             }
         };
-        self.tasks
-            .borrow_mut()
-            .insert(key.clone(), Box::pin(task));
+        self.tasks.borrow_mut().insert(key.clone(), Box::pin(task));
         self.ready.borrow_mut().push_back(key);
         TaskHandle { state }
     }
 
-    pub fn contains(&self, key: &str) -> bool {
+    pub(crate) fn contains(&self, key: &str) -> bool {
         self.tasks.borrow().contains_key(key)
     }
 
@@ -132,7 +131,7 @@ impl Executor {
     /// still `Pending` — so `self.tasks`'s `RefCell` is never borrowed while
     /// the inner future is actually running. This is what makes it sound
     /// for a task's own body to reentrantly call back into this same
-    /// `Executor` (`contains`/`spawn`) from within its own poll — holding
+    /// `CompilerExecutor` (`contains`/`spawn`) from within its own poll — holding
     /// the borrow across the inner `.poll()` call (the natural-looking
     /// `get_mut`-based implementation) would double-borrow and panic the
     /// moment a task did that.
@@ -160,7 +159,7 @@ impl Executor {
     /// indirection `tick()` uses for "poll whatever's next". Returns `None`
     /// if `key` isn't tracked at all (caller should `spawn` first) or the
     /// task is still pending.
-    pub fn poll_task(&self, key: &str) -> bool {
+    pub(crate) fn poll_task(&self, key: &str) -> bool {
         let Some(poll) = self.poll_one(key) else {
             return false;
         };
@@ -174,7 +173,7 @@ impl Executor {
     /// `None` if nothing made progress this round — callers should then
     /// check `has_parked_tasks()` to distinguish "truly idle" from
     /// "everything left is waiting on something that hasn't happened yet".
-    pub fn tick(&self) -> Option<String> {
+    pub(crate) fn tick(&self) -> Option<String> {
         loop {
             let key = self.ready.borrow_mut().pop_front()?;
             if !self.tasks.borrow().contains_key(&key) {
@@ -190,7 +189,7 @@ impl Executor {
         }
     }
 
-    pub fn is_idle(&self) -> bool {
+    pub(crate) fn is_idle(&self) -> bool {
         self.tasks.borrow().is_empty()
     }
 
@@ -200,12 +199,29 @@ impl Executor {
     /// woke a parked task by the time its waker was registered, nothing ever
     /// will unless driver-level code (e.g. finishing a package load) does so
     /// explicitly — callers use this to detect that condition.
-    pub fn has_parked_tasks(&self) -> bool {
+    pub(crate) fn has_parked_tasks(&self) -> bool {
         !self.tasks.borrow().is_empty() && self.ready.borrow().is_empty()
+    }
+
+    pub(crate) fn run<F: Future>(&self, future: F) -> F::Output {
+        let mut future = std::pin::pin!(future);
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+
+        loop {
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(output) => return output,
+                Poll::Pending => {
+                    if self.tick().is_none() {
+                        panic!("CompilerExecutor stalled while driving a future: no ready task");
+                    }
+                }
+            }
+        }
     }
 }
 
-impl Default for Executor {
+impl Default for CompilerExecutor {
     fn default() -> Self {
         Self::new()
     }
@@ -280,7 +296,7 @@ mod tests {
 
     #[test]
     fn resolves_immediately_when_never_pending() {
-        let exec = Executor::new();
+        let exec = CompilerExecutor::new();
         let handle = exec.spawn("unit", async { 42 });
         let key = exec.tick().expect("should resolve on first poll");
         let out = block_on(handle);
@@ -291,7 +307,7 @@ mod tests {
 
     #[test]
     fn parks_until_woken_then_resolves() {
-        let exec = Executor::new();
+        let exec = CompilerExecutor::new();
         let flag = Rc::new(Cell::new(false));
         let wakers = Rc::new(RefCell::new(Vec::new()));
         let handle = exec.spawn(
@@ -322,7 +338,7 @@ mod tests {
 
     #[test]
     fn respawning_under_same_key_replaces_the_stale_attempt() {
-        let exec = Executor::new();
+        let exec = CompilerExecutor::new();
         let first_handle = exec.spawn("unit", async { 1 });
         exec.tick().unwrap();
         let first = block_on(first_handle);

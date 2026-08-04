@@ -9,6 +9,7 @@ use fp_core::{
 };
 use fp_typing::{TypeckResults, TypingContext};
 
+use super::executor::CompilerExecutor;
 use crate::driver::CompilerDriverError;
 use crate::module_resolution::CompilerModuleResolver;
 use crate::scheduler::{AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
@@ -35,11 +36,11 @@ pub struct CompilerState {
     /// comptime work. Lives here, not on
     /// `TypingContext`, because scheduling ("what task runs next") is the
     /// driver's concern, not typing's — `TypingContext` only holds typing
-    /// data. `Rc`, not `Rc<RefCell<_>>`: `Executor` is already internally
+    /// data. `Rc`, not `Rc<RefCell<_>>`: `CompilerExecutor` is already internally
     /// interior-mutable (its own methods take `&self`, specifically so a
     /// task can reentrantly `spawn`/`contains`-check it from within its own
     /// poll).
-    pub tasks: std::rc::Rc<fp_core::executor::Executor>,
+    pub(crate) tasks: std::rc::Rc<CompilerExecutor>,
     pub allowed_dependencies: Vec<String>,
 }
 
@@ -64,7 +65,7 @@ impl CompilerState {
             module_resolutions: BTreeMap::new(),
             generic_instantiations: HashSet::new(),
             bytecode: BTreeMap::new(),
-            tasks: std::rc::Rc::new(fp_core::executor::Executor::new()),
+            tasks: std::rc::Rc::new(CompilerExecutor::new()),
             allowed_dependencies: vec!["std".to_string(), "libc".to_string()],
         }
     }

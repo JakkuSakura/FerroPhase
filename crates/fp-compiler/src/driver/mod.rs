@@ -1,7 +1,10 @@
 mod error;
+mod executor;
 mod state;
 
 pub use error::CompilerDriverError;
+#[cfg(test)]
+use executor::block_on;
 pub use state::CompilerState;
 
 use fp_backend::transformations::{HirGenerator, HirLoweringConfig, LirGenerator, MirLowering};
@@ -67,10 +70,12 @@ impl CompilerDriver {
                 )
                 .await
             {
-                Ok(program) => HirTypeChecker::new(program)
-                    .with_context(typing_context)
-                    .check()
-                    .await,
+                Ok(program) => {
+                    HirTypeChecker::new(program)
+                        .with_context(typing_context)
+                        .check()
+                        .await
+                }
                 Err(error) => Err(error),
             };
             result
@@ -105,15 +110,15 @@ impl CompilerDriver {
         self.scheduler.begin_processing(request.id);
         let answer = match &request.work {
             crate::scheduler::CompilerWork::CompileUnitCompileNative { ast, path } => {
-                fp_core::executor::block_on(self.compile_unit_compile_native(ast, path))?;
+                block_on(self.compile_unit_compile_native(ast, path))?;
                 crate::scheduler::CompilerAnswer::CompileUnitCompileNative
             }
             crate::scheduler::CompilerWork::CompileUnitCompileBytecode { ast, path } => {
-                fp_core::executor::block_on(self.compile_unit_compile_bytecode(ast, path))?;
+                block_on(self.compile_unit_compile_bytecode(ast, path))?;
                 crate::scheduler::CompilerAnswer::CompileUnitCompileBytecode
             }
             crate::scheduler::CompilerWork::CompileUnitAnswerComptime { ast, path } => {
-                let value = fp_core::executor::block_on(self.answer_comptime(ast, path))?;
+                let value = block_on(self.answer_comptime(ast, path))?;
                 let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
                 self.state.insert_const_value(value_id.clone(), value);
                 crate::scheduler::CompilerAnswer::CompileUnitAnswerComptime { value: value_id }
@@ -140,6 +145,15 @@ impl CompilerDriver {
     ) -> Result<(), CompilerDriverError> {
         self.compile_unit_compile_native(ast_id, path).await?;
         self.compile_unit_compile_bytecode(ast_id, path).await
+    }
+
+    pub fn compile_native_sync(
+        &mut self,
+        ast_id: &AstId,
+        path: &FullyQualifiedPath,
+    ) -> Result<(), CompilerDriverError> {
+        let executor = self.state.tasks.clone();
+        executor.run(self.compile_native(ast_id, path))
     }
 
     pub fn execute_runtime(
@@ -350,71 +364,71 @@ impl CompilerDriver {
         key: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<(), CompilerDriverError>> + 'a>> {
         Box::pin(async move {
-        let Some(monomorph) = self
-            .state
-            .typing_ctx
-            .ready_generics
-            .borrow_mut()
-            .remove(key)
-        else {
-            return Ok(());
-        };
-        let cannon_key = Self::generic_cannon_key(
-            &FullyQualifiedPath::new(monomorph.function_path.clone()),
-            &monomorph.concrete_types,
-        );
-        if self.state.generic_instantiations.contains(&cannon_key) {
-            return Ok(());
-        }
-        self.state.generic_instantiations.insert(cannon_key.clone());
-
-        let ast_id = AstId::new(monomorph.ast_key.clone());
-        let original = self.state.ast(&ast_id)?;
-        let mut func_item =
-            Self::find_item_by_id(&original.items, monomorph.item_id).ok_or_else(|| {
-                CompilerDriverError::UnsupportedWork(format!(
-                    "generic function not found: {}",
-                    monomorph.function_path.to_key()
-                ))
-            })?;
-
-        if let ItemKind::DefFunction(def) = func_item.kind_mut() {
-            for param in &mut def.sig.params {
-                Self::substitute_in_ty(
-                    &mut param.ty,
-                    &monomorph.generic_params,
-                    &monomorph.concrete_types,
-                );
-            }
-            if let Some(ret_ty) = &mut def.sig.ret_ty {
-                Self::substitute_in_ty(
-                    ret_ty,
-                    &monomorph.generic_params,
-                    &monomorph.concrete_types,
-                );
-            }
-            def.sig.generics_params.clear();
-            Self::substitute_in_block(
-                &mut def.body,
-                &monomorph.generic_params,
+            let Some(monomorph) = self
+                .state
+                .typing_ctx
+                .ready_generics
+                .borrow_mut()
+                .remove(key)
+            else {
+                return Ok(());
+            };
+            let cannon_key = Self::generic_cannon_key(
+                &FullyQualifiedPath::new(monomorph.function_path.clone()),
                 &monomorph.concrete_types,
             );
-        }
+            if self.state.generic_instantiations.contains(&cannon_key) {
+                return Ok(());
+            }
+            self.state.generic_instantiations.insert(cannon_key.clone());
 
-        let specialized_path =
-            FullyQualifiedPath::new(monomorph.function_path.with_segment(cannon_key.clone()));
-        let specialized_ast_id = AstId::new(format!("ast:{}", specialized_path.to_key()));
-        let file = File {
-            path: std::path::PathBuf::new(),
-            attrs: Vec::new(),
-            collected_items: Vec::new(),
-            items: vec![func_item],
-        };
-        self.state.insert_ast(specialized_ast_id.clone(), file);
+            let ast_id = AstId::new(monomorph.ast_key.clone());
+            let original = self.state.ast(&ast_id)?;
+            let mut func_item = Self::find_item_by_id(&original.items, monomorph.item_id)
+                .ok_or_else(|| {
+                    CompilerDriverError::UnsupportedWork(format!(
+                        "generic function not found: {}",
+                        monomorph.function_path.to_key()
+                    ))
+                })?;
 
-        self.compile_unit_compile_native(&specialized_ast_id, &specialized_path)
-            .await?;
-        Ok(())
+            if let ItemKind::DefFunction(def) = func_item.kind_mut() {
+                for param in &mut def.sig.params {
+                    Self::substitute_in_ty(
+                        &mut param.ty,
+                        &monomorph.generic_params,
+                        &monomorph.concrete_types,
+                    );
+                }
+                if let Some(ret_ty) = &mut def.sig.ret_ty {
+                    Self::substitute_in_ty(
+                        ret_ty,
+                        &monomorph.generic_params,
+                        &monomorph.concrete_types,
+                    );
+                }
+                def.sig.generics_params.clear();
+                Self::substitute_in_block(
+                    &mut def.body,
+                    &monomorph.generic_params,
+                    &monomorph.concrete_types,
+                );
+            }
+
+            let specialized_path =
+                FullyQualifiedPath::new(monomorph.function_path.with_segment(cannon_key.clone()));
+            let specialized_ast_id = AstId::new(format!("ast:{}", specialized_path.to_key()));
+            let file = File {
+                path: std::path::PathBuf::new(),
+                attrs: Vec::new(),
+                collected_items: Vec::new(),
+                items: vec![func_item],
+            };
+            self.state.insert_ast(specialized_ast_id.clone(), file);
+
+            self.compile_unit_compile_native(&specialized_ast_id, &specialized_path)
+                .await?;
+            Ok(())
         })
     }
 
@@ -426,7 +440,7 @@ impl CompilerDriver {
     /// same HIR module pipeline as any other module, just pointed at the
     /// crate slot `env_ctx.begin_crate` just reserved in the shared registry.
     ///
-    /// `inject_module` is driven with `fp_core::executor::block_on` (a single
+    /// `inject_module` is driven with the compiler's executor (a single
     /// poll, panicking on real `Poll::Pending`) rather than through
     /// `run_pool_to_idle` — a package whose own items reference *another*
     /// not-yet-loaded package would need that, but no registered provider in
@@ -441,12 +455,7 @@ impl CompilerDriver {
         let Some(package_id) = self.state.typing_ctx.env_ctx.resolve_package(name) else {
             return Err(CompilerDriverError::UnresolvablePackage(name.to_string()));
         };
-        if self
-            .state
-            .typing_ctx
-            .env_ctx
-            .is_loaded(package_id.as_str())
-        {
+        if self.state.typing_ctx.env_ctx.is_loaded(package_id.as_str()) {
             // Already satisfied by an earlier `LoadPackage` request for the
             // same name (the scheduler doesn't dedupe submissions) — no-op.
             return Ok(());
@@ -585,9 +594,7 @@ impl CompilerDriver {
         Self::inline_resolved_names(&mut probe_expr, &resolved_names);
 
         let resolved = (|| -> Result<Value, CompilerDriverError> {
-            let hir_program =
-                HirGenerator::new()
-                    .transform_expr(&probe_expr)?;
+            let hir_program = HirGenerator::new().transform_expr(&probe_expr)?;
             let mir_program = MirLowering::new().transform(hir_program)?;
             let lir_program =
                 LirGenerator::new(typing_ctx.data_layout.clone()).transform(mir_program)?;
@@ -1811,11 +1818,10 @@ mod tests {
     fn compile_unit_native_submits_enqueue_for_generic() {
         let path = path();
         let ast_id = AstId::new("ast:crate::generic");
-        let mut generic_function =
-            ItemDefFunction::new_simple(
-                Ident::new("id"),
-                fp_core::ast::ExprBlock::new_expr(Expr::unit()),
-            );
+        let mut generic_function = ItemDefFunction::new_simple(
+            Ident::new("id"),
+            fp_core::ast::ExprBlock::new_expr(Expr::unit()),
+        );
         generic_function.sig = FunctionSignature {
             generics_params: vec![GenericParam {
                 name: Ident::new("T"),
@@ -2043,11 +2049,10 @@ fn main() {
         let mut workspace = fp_core::workspace::WorkspaceContext::new();
         workspace.register_provider(std::sync::Arc::new(fp_lang::provider::FerroPhaseProvider));
         let mut driver = CompilerDriver::new(test_data_layout());
-        driver.state.typing_ctx =
-            std::rc::Rc::new(fp_typing::TypingContext::new(
-                test_data_layout(),
-                std::rc::Rc::new(workspace),
-            ));
+        driver.state.typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(
+            test_data_layout(),
+            std::rc::Rc::new(workspace),
+        ));
         let ast_id = AstId::new("ast:test::generic_call");
         driver.state.insert_ast(ast_id.clone(), ast_node);
         driver
@@ -2167,10 +2172,8 @@ fn main() {
         let ast_node = result.ast;
 
         let mut driver = CompilerDriver::new(test_data_layout());
-        driver.state.typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(
-            test_data_layout(),
-            workspace,
-        ));
+        driver.state.typing_ctx =
+            std::rc::Rc::new(fp_typing::TypingContext::new(test_data_layout(), workspace));
         let label = name.trim_end_matches(".fp");
         let ast_id = AstId::new(format!("ast:example::{label}"));
         driver.state.insert_ast(ast_id.clone(), ast_node);
@@ -2359,8 +2362,8 @@ fn main() {
 
     #[test]
     fn duplicate_package_requests_load_std_exactly_once() {
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
 
         struct CountingStdProvider {
             calls: Arc<AtomicUsize>,
@@ -2408,11 +2411,10 @@ fn main() {
             calls: calls.clone(),
         }));
         let mut driver = CompilerDriver::new(test_data_layout());
-        driver.state.typing_ctx =
-            std::rc::Rc::new(fp_typing::TypingContext::new(
-                test_data_layout(),
-                std::rc::Rc::new(workspace),
-            ));
+        driver.state.typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(
+            test_data_layout(),
+            std::rc::Rc::new(workspace),
+        ));
 
         // Simulates two different compile units each independently requesting
         // `std`: the scheduler would dispatch a `LoadPackage` work item per

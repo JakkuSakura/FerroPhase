@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use fp_c::CFrontend;
 use fp_compiler::{
-    block_on, AstId, BytecodeId, CompilerDriver, CompilerModuleResolver, ConstValueId,
-    FullyQualifiedPath, LirId, MirId,
+    AstId, BytecodeId, CompilerDriver, CompilerModuleResolver, ConstValueId, FullyQualifiedPath,
+    LirId, MirId,
 };
 use fp_core::{
     ast::register_threadlocal_serializer,
@@ -80,7 +80,8 @@ pub fn check_path(
             .map_err(|err| CliError::Compilation(err.to_string()))?;
     }
     driver.state.insert_ast(identity.ast_id.clone(), ast);
-    block_on(driver.compile_native(&identity.ast_id, &identity.path))
+    driver
+        .compile_native_sync(&identity.ast_id, &identity.path)
         .map_err(|err| CliError::Compilation(err.to_string()))?;
     drain_driver(&mut driver, lossy)
 }
@@ -859,7 +860,8 @@ fn lower_ast(
             .map_err(|err| CliError::Compilation(err.to_string()))?;
     }
     driver.state.insert_ast(ast_id.clone(), ast);
-    block_on(driver.compile_native(&ast_id, &path))
+    driver
+        .compile_native_sync(&ast_id, &path)
         .map_err(|err| CliError::Compilation(err.to_string()))?;
     Ok(driver)
 }
