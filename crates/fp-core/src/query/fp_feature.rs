@@ -1,5 +1,10 @@
 use std::path::Path;
 
+use crate::ast::sql as sql_ast;
+use crate::ast::sql::{
+    Assignment, BinaryOperator, Expr as SqlExpr, Ident, ObjectName, OrderByExpr, UnaryOperator,
+    Value as SqlValue,
+};
 use crate::ast::{
     Expr, ExprField, ExprInvoke, ExprInvokeTarget, ExprKind, ExprSelect, File, Name, Value,
 };
@@ -8,10 +13,6 @@ use crate::query::{
     QueryDelete, QueryDocument, QueryExpr, QueryFrom, QueryInsert, QueryInsertSource,
     QueryIrDocument, QueryIrStmt, QueryOrigin, QueryRelation, QuerySelect, QuerySelectItem,
     QuerySetExpr, QueryUpdate, QueryValues,
-};
-use crate::sql_ast::{
-    self, Assignment, BinaryOperator, Expr as SqlExpr, Ident, ObjectName, OrderByExpr,
-    UnaryOperator, Value as SqlValue,
 };
 
 pub fn lower_fp_expr_to_query(expr: &Expr, path: Option<&Path>) -> Option<QueryDocument> {

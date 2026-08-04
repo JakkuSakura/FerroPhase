@@ -1,4 +1,4 @@
-use crate::sql_ast;
+use crate::ast::sql as sql_ast;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Hash)]
 pub enum QueryOrigin {

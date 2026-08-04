@@ -9,7 +9,7 @@ use fp_core::ast::{
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::Result;
 use fp_core::hir;
-use fp_core::hir_place::{
+use fp_core::hir::place::{
     HirAssignTargetBase, HirAssignTargetProjection, project_hir_assign_target,
 };
 

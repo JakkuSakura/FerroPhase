@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::ast::{AttrMeta, Attribute, ExprKind, File, Ident, Item, ItemKind, Name, Path, Value};
-use crate::intrinsics::{CallKind, lang_instrinstic_call_kind, lang_instrinstic_for_lang_item};
+use crate::intrinsics::{CallKind, lang_intrinsic_call_kind, lang_intrinsic_for_lang_item};
 
 #[derive(Clone, Default)]
 pub struct LangItemRegistry {
@@ -60,15 +60,15 @@ pub fn collect_lang_items(file: &File) -> LangItemRegistry {
 
 pub fn lookup_intrinsic(name: &Name) -> Option<CallKind> {
     let name = lookup_intrinsic_name(name)?;
-    lang_instrinstic_for_lang_item(&name)
-        .and_then(lang_instrinstic_call_kind)
+    lang_intrinsic_for_lang_item(&name)
+        .and_then(lang_intrinsic_call_kind)
         .and_then(|kind| kind.intrinsic_kind().map(CallKind::from))
 }
 
 pub fn lookup_op_intrinsic(name: &Name) -> Option<CallKind> {
     let name = lookup_op_name(name)?;
-    lang_instrinstic_for_lang_item(&name)
-        .and_then(lang_instrinstic_call_kind)
+    lang_intrinsic_for_lang_item(&name)
+        .and_then(lang_intrinsic_call_kind)
         .and_then(|kind| kind.op_kind().map(CallKind::from))
 }
 

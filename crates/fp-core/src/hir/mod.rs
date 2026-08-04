@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 pub mod ident;
+pub mod place;
 pub mod pretty;
 pub mod ty;
 

@@ -17,7 +17,7 @@ pub use fp_feature::{lower_fp_expr_to_query, lower_fp_file_to_query};
 pub use semantic::*;
 
 use crate::ast::AstSerializer;
-use crate::sql_ast;
+use crate::ast::sql as sql_ast;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
 use sqlparser::dialect::GenericDialect;

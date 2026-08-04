@@ -22,6 +22,7 @@ mod pretty;
 mod schema;
 mod serialize;
 pub mod snapshot;
+pub mod sql;
 
 mod value;
 

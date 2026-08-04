@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use fp_core::sql_ast as ast;
+use fp_core::ast::sql as ast;
 use sqlparser::ast as sql;
 use sqlparser::dialect::ClickHouseDialect;
 use sqlparser::keywords::Keyword;

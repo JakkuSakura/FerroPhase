@@ -243,13 +243,13 @@ pub enum StdIntrinsic {
 }
 
 pub mod calls;
-mod lang_instrinstic;
+mod lang_intrinsic;
 pub mod normalize;
 
 pub use calls::{CallKind, IntrinsicKind, OpKind};
-pub use lang_instrinstic::{
-    LangInstrinstic, LangInstrinsticCapability, LangInstrinsticSpec, lang_instrinstic_call_kind,
-    lang_instrinstic_capability, lang_instrinstic_for_lang_item, lang_instrinstic_lang_item,
-    lang_instrinstic_spec,
+pub use lang_intrinsic::{
+    LangIntrinsic, LangIntrinsicCapability, LangIntrinsicSpec, lang_intrinsic_call_kind,
+    lang_intrinsic_capability, lang_intrinsic_for_lang_item, lang_intrinsic_lang_item,
+    lang_intrinsic_spec,
 };
 pub use normalize::{normalize_intrinsics, normalize_intrinsics_with};

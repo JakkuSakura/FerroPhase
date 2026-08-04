@@ -1,9 +1,9 @@
+use crate::ast::sql as sql_ast;
 use crate::query::semantic::{
     QueryDelete, QueryExpr, QueryFrom, QueryInsert, QueryInsertSource, QueryIrStmt, QueryJoin,
     QueryJoinKind, QueryRelation, QuerySelect, QuerySelectItem, QuerySetExpr, QuerySetOperator,
     QuerySetQuantifier, QueryUpdate, QueryValues,
 };
-use crate::sql_ast;
 
 pub fn query_ir_to_statement(stmt: &QueryIrStmt) -> Option<sql_ast::Statement> {
     match stmt {
