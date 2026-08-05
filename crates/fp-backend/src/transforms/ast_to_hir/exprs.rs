@@ -687,7 +687,8 @@ impl HirGenerator {
                     ),
                     span: self.create_span(1),
                 };
-                let args = self.transform_call_args_bound(&invoke.args, Some(&func_expr))?;
+                let args =
+                    self.transform_call_args_bound(&invoke.args, &invoke.kwargs, Some(&func_expr))?;
                 Ok(hir::ExprKind::Call(Box::new(func_expr), args))
             }
             ast::ExprInvokeTarget::Expr(expr) => {
@@ -2051,11 +2052,21 @@ impl HirGenerator {
     pub(super) fn transform_call_args_bound(
         &mut self,
         args: &[ast::Expr],
+        kwargs: &[ast::ExprKwArg],
         callee: Option<&hir::Expr>,
     ) -> Result<Vec<hir::CallArg>> {
-        let mut values = Vec::with_capacity(args.len());
+        let mut values = Vec::with_capacity(args.len() + kwargs.len());
         for arg in args {
-            values.push(self.transform_expr_to_hir(arg)?);
+            values.push((
+                hir::Symbol::new(format!("arg{}", values.len())),
+                self.transform_expr_to_hir(arg)?,
+            ));
+        }
+        for kwarg in kwargs {
+            values.push((
+                kwarg.name.clone().into(),
+                self.transform_expr_to_hir(&kwarg.value)?,
+            ));
         }
         let Some((param_names, is_variadic)) = callee
             .and_then(|expr| match &expr.kind {
@@ -2070,11 +2081,7 @@ impl HirGenerator {
         else {
             return Ok(values
                 .into_iter()
-                .enumerate()
-                .map(|(index, value)| hir::CallArg {
-                    name: hir::Symbol::new(format!("arg{}", index)),
-                    value,
-                })
+                .map(|(name, value)| hir::CallArg { name, value })
                 .collect());
         };
 
@@ -2084,11 +2091,7 @@ impl HirGenerator {
                 if values.len() >= required {
                     return Ok(values
                         .into_iter()
-                        .enumerate()
-                        .map(|(index, value)| hir::CallArg {
-                            name: hir::Symbol::new(format!("arg{}", index)),
-                            value,
-                        })
+                        .map(|(name, value)| hir::CallArg { name, value })
                         .collect());
                 }
             }
@@ -2105,20 +2108,56 @@ impl HirGenerator {
             );
             return Ok(values
                 .into_iter()
-                .enumerate()
-                .map(|(index, value)| hir::CallArg {
-                    name: hir::Symbol::new(format!("arg{}", index)),
-                    value,
-                })
+                .map(|(name, value)| hir::CallArg { name, value })
                 .collect());
         }
 
-        Ok(values
+        let mut ordered = vec![None; param_names.len()];
+        for (index, (name, value)) in values.into_iter().enumerate() {
+            let target = name
+                .as_str()
+                .strip_prefix("arg")
+                .and_then(|index| index.parse::<usize>().ok())
+                .filter(|target| *target == index)
+                .or_else(|| {
+                    param_names
+                        .iter()
+                        .position(|param| param.as_str() == name.as_str())
+                });
+
+            let Some(target) = target else {
+                self.add_error(
+                    Diagnostic::error(format!("unknown named argument `{name}` in call"))
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(
+                            args.first()
+                                .map(|arg| arg.span())
+                                .unwrap_or_else(Span::null),
+                        ),
+                );
+                return Ok(Vec::new());
+            };
+            if ordered[target].is_some() {
+                self.add_error(
+                    Diagnostic::error(format!("duplicate argument `{name}` in call"))
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(
+                            args.first()
+                                .map(|arg| arg.span())
+                                .unwrap_or_else(Span::null),
+                        ),
+                );
+                return Ok(Vec::new());
+            }
+            ordered[target] = Some(value);
+        }
+
+        Ok(ordered
             .into_iter()
             .enumerate()
             .map(|(index, value)| hir::CallArg {
                 name: param_names[index].clone(),
-                value,
+                value: value.expect("argument count was checked against the function signature"),
             })
             .collect())
     }
