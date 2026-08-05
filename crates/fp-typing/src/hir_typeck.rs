@@ -81,18 +81,12 @@ impl HirTypeChecker {
                     self.check_function(function).await?;
                 }
                 hir::ItemKind::Const(constant) => {
-                    let declared_ty = self.check_type_expr(&constant.ty)?;
+                    self.check_type_expr(&constant.ty)?;
                     let body_ty = self.check_body(&constant.body).await?;
-                    if !matches!(
-                        constant.body.value.kind,
-                        hir::ExprKind::Literal(hir::Lit::Integer(_))
-                    ) {
-                        self.require_same(&declared_ty, &body_ty)?;
-                    }
                     self.results
                         .type_expr_types
-                        .insert(constant.ty.hir_id, declared_ty.clone());
-                    self.results.const_types.insert(item.def_id, declared_ty);
+                        .insert(constant.ty.hir_id, body_ty.clone());
+                    self.results.const_types.insert(item.def_id, body_ty);
                 }
                 hir::ItemKind::Impl(impl_item) => {
                     let mut scope = self.generic_scope(&impl_item.generics);
@@ -959,13 +953,17 @@ impl HirTypeChecker {
         };
         match &item.kind {
             hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) => self.path_ty(path),
-            hir::ItemKind::Const(constant) => self
+            hir::ItemKind::Const(constant)
+                if matches!(
+                    constant.body.value.kind,
+                    hir::ExprKind::Literal(hir::Lit::Integer(_))
+                ) => self.check_type_expr(&constant.ty),
+            hir::ItemKind::Const(_) => self
                 .results
                 .const_types
                 .get(&def_id)
                 .cloned()
-                .map(Ok)
-                .unwrap_or_else(|| self.check_type_expr(&constant.ty)),
+                .ok_or_else(|| Error::from("constant type was not recorded")),
             hir::ItemKind::Function(function) => self.function_signature(function),
             _ => Err(Error::from("resolved path is not a value")),
         }
