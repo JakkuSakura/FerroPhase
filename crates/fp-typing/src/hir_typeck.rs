@@ -81,12 +81,18 @@ impl HirTypeChecker {
                     self.check_function(function).await?;
                 }
                 hir::ItemKind::Const(constant) => {
-                    self.check_type_expr(&constant.ty)?;
+                    let declared_ty = self.check_type_expr(&constant.ty)?;
                     let body_ty = self.check_body(&constant.body).await?;
+                    if !matches!(
+                        constant.body.value.kind,
+                        hir::ExprKind::Literal(hir::Lit::Integer(_))
+                    ) {
+                        self.require_same(&declared_ty, &body_ty)?;
+                    }
                     self.results
                         .type_expr_types
-                        .insert(constant.ty.hir_id, body_ty.clone());
-                    self.results.const_types.insert(item.def_id, body_ty);
+                        .insert(constant.ty.hir_id, declared_ty.clone());
+                    self.results.const_types.insert(item.def_id, declared_ty);
                 }
                 hir::ItemKind::Impl(impl_item) => {
                     let mut scope = self.generic_scope(&impl_item.generics);
@@ -228,23 +234,30 @@ impl HirTypeChecker {
                 hir::ExprKind::Literal(lit) => self.literal_ty(lit),
                 hir::ExprKind::Path(path) => self.expr_path_ty(path)?,
                 hir::ExprKind::Binary(op, lhs, rhs) => {
+                    let lhs_literal = matches!(lhs.kind, hir::ExprKind::Literal(hir::Lit::Integer(_)));
+                    let rhs_literal = matches!(rhs.kind, hir::ExprKind::Literal(hir::Lit::Integer(_)));
                     let lhs = self.check_expr(lhs).await?;
                     let rhs = self.check_expr(rhs).await?;
-                    match op {
-                        hir::BinOp::And | hir::BinOp::Or => {
-                            self.require_same(&lhs, &Ty::bool())?;
-                            self.require_same(&rhs, &Ty::bool())?;
-                        }
-                        hir::BinOp::Eq
-                        | hir::BinOp::Ne
-                        | hir::BinOp::Lt
-                        | hir::BinOp::Le
-                        | hir::BinOp::Gt
-                        | hir::BinOp::Ge => {
-                            self.require_same(&lhs, &rhs)?;
-                        }
-                        _ => {
-                            self.require_same(&lhs, &rhs)?;
+                    let integer_literal = (lhs_literal
+                        && matches!(rhs.kind, TyKind::Int(_) | TyKind::Uint(_)))
+                        || (rhs_literal && matches!(lhs.kind, TyKind::Int(_) | TyKind::Uint(_)));
+                    if !integer_literal {
+                        match op {
+                            hir::BinOp::And | hir::BinOp::Or => {
+                                self.require_same(&lhs, &Ty::bool())?;
+                                self.require_same(&rhs, &Ty::bool())?;
+                            }
+                            hir::BinOp::Eq
+                            | hir::BinOp::Ne
+                            | hir::BinOp::Lt
+                            | hir::BinOp::Le
+                            | hir::BinOp::Gt
+                            | hir::BinOp::Ge => {
+                                self.require_same(&lhs, &rhs)?;
+                            }
+                            _ => {
+                                self.require_same(&lhs, &rhs)?;
+                            }
                         }
                     }
                     match op {
@@ -420,13 +433,33 @@ impl HirTypeChecker {
                     self.check_block(block).await?
                 }
                 hir::ExprKind::Array(values) => {
-                    let Some(first) = values.first() else {
+                    if values.is_empty() {
                         return Err(Error::from("empty array has no inferable element type"));
-                    };
-                    let element = self.check_expr(first).await?;
-                    for value in values.iter().skip(1) {
-                        let value_ty = self.check_expr(value).await?;
-                        self.require_same(&element, &value_ty)?;
+                    }
+                    let mut value_types = Vec::with_capacity(values.len());
+                    for value in values {
+                        value_types.push(self.check_expr(value).await?);
+                    }
+                    let element = values
+                        .iter()
+                        .zip(&value_types)
+                        .find_map(|(value, value_ty)| {
+                            (!matches!(
+                                value.kind,
+                                hir::ExprKind::Literal(hir::Lit::Integer(_))
+                            ))
+                            .then(|| value_ty.clone())
+                        })
+                        .unwrap_or_else(|| value_types[0].clone());
+                    for (value, value_ty) in values.iter().zip(value_types) {
+                        let integer_literal = matches!(
+                            value.kind,
+                            hir::ExprKind::Literal(hir::Lit::Integer(_))
+                        );
+                        let integer_element = matches!(element.kind, TyKind::Int(_) | TyKind::Uint(_));
+                        if !(integer_literal && integer_element) {
+                            self.require_same(&element, &value_ty)?;
+                        }
                     }
                     Ty {
                         kind: TyKind::Array(
@@ -558,9 +591,23 @@ impl HirTypeChecker {
                         (Some(annotation), Some(init)) => {
                             let ty = self.check_type_expr(annotation)?;
                             let init_ty = self.check_expr(init).await?;
-                            let mut substitutions = HashMap::new();
-                            self.unify_call_types(&init_ty, &ty, &mut substitutions)?;
-                            let resolved_init = self.substitute_param_map(&init_ty, &substitutions);
+                            let resolved_init = if matches!(
+                                init.kind,
+                                hir::ExprKind::Literal(hir::Lit::Integer(_))
+                            ) && matches!(ty.kind, TyKind::Int(_) | TyKind::Uint(_))
+                            {
+                                ty.clone()
+                            } else if matches!(
+                                init.kind,
+                                hir::ExprKind::Array(_) | hir::ExprKind::ArrayRepeat { .. }
+                            ) && matches!(ty.kind, TyKind::Array(_, _))
+                            {
+                                ty.clone()
+                            } else {
+                                let mut substitutions = HashMap::new();
+                                self.unify_call_types(&init_ty, &ty, &mut substitutions)?;
+                                self.substitute_param_map(&init_ty, &substitutions)
+                            };
                             self.require_same(&ty, &resolved_init)?;
                             self.results.record_expr_type(init.hir_id, resolved_init);
                             ty
