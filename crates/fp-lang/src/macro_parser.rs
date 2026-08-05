@@ -1,42 +1,9 @@
-use fp_core::ast::{Expr, MacroExpansionParser, MacroTokenTree, Ty};
-use fp_core::error::Result;
+use fp_core::ast::MacroTokenTree;
 use fp_core::span::Span;
 
-use crate::ast::lower_common::{lex_span_from_span, lex_spans_for_group, macro_tokens_file_id};
+use crate::ast::lower_common::{lex_span_from_span, lex_spans_for_group};
+use crate::lexer::tokenizer::{classify_and_normalize_lexeme, Token, TokenKind};
 use crate::lexer::Span as TokSpan;
-use crate::lexer::tokenizer::{Token, TokenKind, classify_and_normalize_lexeme};
-
-#[derive(Clone)]
-pub struct FerroMacroExpansionParser {}
-
-impl FerroMacroExpansionParser {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-impl MacroExpansionParser for FerroMacroExpansionParser {
-    fn parse_items(&self, tokens: &[MacroTokenTree]) -> Result<Vec<fp_core::ast::Item>> {
-        let file_id = macro_tokens_file_id(tokens);
-        let tokens = macro_token_trees_to_tokens(tokens);
-        crate::ast::parse_items_tokens(&tokens, file_id)
-            .map_err(|err| fp_core::error::Error::from(err.to_string()))
-    }
-
-    fn parse_expr(&self, tokens: &[MacroTokenTree]) -> Result<Expr> {
-        let file_id = macro_tokens_file_id(tokens);
-        let tokens = macro_token_trees_to_tokens(tokens);
-        crate::ast::parse_expr_tokens(&tokens, file_id)
-            .map_err(|err| fp_core::error::Error::from(err.to_string()))
-    }
-
-    fn parse_type(&self, tokens: &[MacroTokenTree]) -> Result<Ty> {
-        let file_id = macro_tokens_file_id(tokens);
-        let tokens = macro_token_trees_to_tokens(tokens);
-        crate::ast::parse_type_tokens(&tokens, file_id)
-            .map_err(|err| fp_core::error::Error::from(err.to_string()))
-    }
-}
 
 pub(crate) fn macro_token_trees_to_tokens(tokens: &[MacroTokenTree]) -> Vec<Token> {
     let mut out = Vec::new();

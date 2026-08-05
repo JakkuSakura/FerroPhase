@@ -38,10 +38,6 @@ impl FerroIntrinsicNormalizer {
 
 impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
     fn normalize_call(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
-        if self.mode != IntrinsicNormalizationMode::Compile {
-            return Ok(NormalizeOutcome::Ignored(expr));
-        };
-
         let (id, ty_slot, span, kind) = expr.into_parts();
         let ExprKind::IntrinsicCall(call) = kind else {
             return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
@@ -56,26 +52,29 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 ExprKind::IntrinsicCall(call),
             )));
         };
-        let Some(path) = compile_mode_std_path(op) else {
-            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
-                id,
-                ty_slot,
-                span,
-                ExprKind::IntrinsicCall(call),
-            )));
-        };
-
-        Ok(NormalizeOutcome::Normalized(Expr::from_parts(
-            id,
-            ty_slot,
-            span,
-            ExprKind::Invoke(ExprInvoke {
-                span: call.span,
-                target: ExprInvokeTarget::Function(Name::path(Path::plain(path))),
-                args: call.args,
-                kwargs: call.kwargs,
-            }),
-        )))
+        match self.mode {
+            IntrinsicNormalizationMode::Compile => {
+                let replacement = match compile_mode_std_path(op) {
+                    Some(path) => ExprKind::Invoke(ExprInvoke {
+                        span: call.span,
+                        target: ExprInvokeTarget::Function(Name::path(Path::plain(path))),
+                        args: call.args,
+                        kwargs: call.kwargs,
+                    }),
+                    None => ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                        CallKind::Intrinsic(call.kind.intrinsic_kind().expect("operation mapping")),
+                        call.args,
+                        call.kwargs,
+                    )),
+                };
+                Ok(NormalizeOutcome::Normalized(Expr::from_parts(
+                    id, ty_slot, span, replacement,
+                )))
+            }
+            IntrinsicNormalizationMode::Transpile => Ok(NormalizeOutcome::Ignored(
+                Expr::from_parts(id, ty_slot, span, ExprKind::IntrinsicCall(call)),
+            )),
+        }
     }
 
     fn normalize_macro(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
@@ -295,26 +294,66 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             )));
         };
 
-        if let Some(intrinsic_kind) = resolve_lang_intrinsic(&invoke) {
-            let replacement = Expr::from_parts(
+        let Some(intrinsic_kind) = resolve_lang_intrinsic(&invoke) else {
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
                 id,
                 ty_slot,
                 span,
-                ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                    intrinsic_kind,
-                    invoke.args,
-                    Vec::new(),
-                )),
-            );
-            return Ok(NormalizeOutcome::Normalized(replacement));
-        }
+                ExprKind::Invoke(invoke),
+            )));
+        };
 
-        Ok(NormalizeOutcome::Ignored(Expr::from_parts(
-            id,
-            ty_slot,
-            span,
-            ExprKind::Invoke(invoke),
-        )))
+        match self.mode {
+            IntrinsicNormalizationMode::Compile => match intrinsic_kind {
+                CallKind::Op(op) => match compile_mode_std_path(op) {
+                    Some(path) => Ok(NormalizeOutcome::Normalized(Expr::from_parts(
+                        id,
+                        ty_slot,
+                        span,
+                        ExprKind::Invoke(ExprInvoke {
+                            span: invoke.span,
+                            target: ExprInvokeTarget::Function(Name::path(Path::plain(path))),
+                            args: invoke.args,
+                            kwargs: invoke.kwargs,
+                        }),
+                    ))),
+                    None => Ok(NormalizeOutcome::Normalized(Expr::from_parts(
+                        id,
+                        ty_slot,
+                        span,
+                        ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                            CallKind::Intrinsic(
+                                CallKind::Op(op).intrinsic_kind().expect("operation mapping"),
+                            ),
+                            invoke.args,
+                            invoke.kwargs,
+                        )),
+                    ))),
+                },
+                CallKind::Intrinsic(kind) => Ok(NormalizeOutcome::Normalized(Expr::from_parts(
+                    id,
+                    ty_slot,
+                    span,
+                    ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                        CallKind::Intrinsic(kind),
+                        invoke.args,
+                        invoke.kwargs,
+                    )),
+                ))),
+            },
+            IntrinsicNormalizationMode::Transpile => Ok(NormalizeOutcome::Normalized(
+                Expr::from_parts(
+                    id,
+                    ty_slot,
+                    span,
+                    ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                        intrinsic_kind,
+                        invoke.args,
+                        invoke.kwargs,
+                    )),
+                ),
+            )),
+        }
     }
 }
 
@@ -934,7 +973,7 @@ mod tests {
                 None,
             )
             .expect("parse marked declarations");
-        let registry = fp_core::lang::collect_lang_items(&result.last);
+            let registry = fp_core::lang::collect_lang_items(&result.ast);
 
         assert_eq!(
             registry

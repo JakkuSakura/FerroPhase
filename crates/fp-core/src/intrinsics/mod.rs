@@ -1,9 +1,8 @@
 //! Shared intrinsic and standard-library descriptors.
 //!
-//! Front-ends normalise language-specific helpers into symbolic intrinsics while
-//! back-ends materialise those symbols into concrete runtime calls. The goal of
-//! this module is to host the shared vocabulary so every consumer speaks the same
-//! language before we introduce backend-specific resolvers.
+//! Language-specific helpers are normalized at the AST-to-HIR boundary. This
+//! module hosts the shared vocabulary and the single-expression hook used by
+//! that lowering pass.
 
 use crate::ast::{
     Abi, Expr, ExprIntrinsicCall, ExprIntrinsicContainer, ExprStruct, ExprStructural, File,
@@ -51,6 +50,22 @@ pub struct NoopIntrinsicNormalizer;
 
 /// Strategy interface for language-specific intrinsic normalisation.
 pub trait IntrinsicNormalizer {
+    /// Normalize one expression root before a downstream lowering pass handles
+    /// it. Child expressions are owned by that lowering pass, so this method
+    /// deliberately does not walk the tree.
+    fn normalize_expr(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        let kind = expr.kind();
+        match kind {
+            crate::ast::ExprKind::Macro(_) => self.normalize_macro(expr),
+            crate::ast::ExprKind::IntrinsicCall(_) => self.normalize_call(expr),
+            crate::ast::ExprKind::IntrinsicContainer(_) => self.normalize_container(expr),
+            crate::ast::ExprKind::Struct(_) => self.normalize_struct(expr),
+            crate::ast::ExprKind::Structural(_) => self.normalize_structural(expr),
+            crate::ast::ExprKind::Invoke(_) => self.normalize_invoke(expr),
+            _ => Ok(NormalizeOutcome::Ignored(expr)),
+        }
+    }
+
     /// Strategy hook for intrinsic call expressions.
     ///
     /// The framework guarantees `expr.kind()` is `ExprKind::IntrinsicCall`.
@@ -244,12 +259,10 @@ pub enum StdIntrinsic {
 
 pub mod calls;
 mod lang_intrinsic;
-pub mod normalize;
 
 pub use calls::{CallKind, IntrinsicKind, OpKind};
 pub use lang_intrinsic::{
-    LangIntrinsic, LangIntrinsicCapability, LangIntrinsicSpec, lang_intrinsic_call_kind,
-    lang_intrinsic_capability, lang_intrinsic_for_lang_item, lang_intrinsic_lang_item,
-    lang_intrinsic_spec,
+    lang_intrinsic_call_kind, lang_intrinsic_capability, lang_intrinsic_for_lang_item,
+    lang_intrinsic_lang_item, lang_intrinsic_spec, LangIntrinsic, LangIntrinsicCapability,
+    LangIntrinsicSpec,
 };
-pub use normalize::{normalize_intrinsics, normalize_intrinsics_with};

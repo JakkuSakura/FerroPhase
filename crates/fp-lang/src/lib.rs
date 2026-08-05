@@ -1,19 +1,17 @@
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use crate::ast::FerroPhaseParser;
 mod macro_parser;
+pub use normalization::FerroIntrinsicNormalizer;
 pub mod embedded_libc;
 pub mod module_path;
 mod normalization;
 mod serializer;
-use crate::macro_parser::FerroMacroExpansionParser;
-use crate::normalization::FerroIntrinsicNormalizer;
 use fp_core::Result as CoreResult;
-use fp_core::ast::{AstSerializer, ExprBlock, ExprKind, File, Item, ItemKind, ScriptBlock};
+use fp_core::ast::{AstSerializer, File, ScriptBlock};
 use fp_core::diagnostics::Diagnostic;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
-use fp_core::intrinsics::{IntrinsicNormalizationMode, IntrinsicNormalizer};
 use fp_core::span::FileId;
 pub use serializer::PrettyAstSerializer;
 
@@ -23,7 +21,6 @@ pub const FERROPHASE: &str = "ferrophase";
 /// Frontend that parses FerroPhase sources using the existing Rust infrastructure.
 pub struct FerroFrontend {
     ferro: FerroPhaseParser,
-    intrinsic_mode: RwLock<IntrinsicNormalizationMode>,
 }
 
 fn register_source(path: PathBuf, source: &str) -> FileId {
@@ -34,7 +31,6 @@ impl FerroFrontend {
     pub fn new() -> Self {
         Self {
             ferro: FerroPhaseParser::new(),
-            intrinsic_mode: RwLock::new(IntrinsicNormalizationMode::Transpile),
         }
     }
 
@@ -83,22 +79,6 @@ impl FerroFrontend {
         .any(|prefix| trimmed.starts_with(prefix))
     }
 
-    fn setup(
-        &self,
-    ) -> (
-        Arc<dyn AstSerializer>,
-        Arc<dyn IntrinsicNormalizer>,
-        Arc<FerroMacroExpansionParser>,
-    ) {
-        (
-            Arc::new(PrettyAstSerializer::new()),
-            Arc::new(FerroIntrinsicNormalizer::new(
-                *self.intrinsic_mode.read().expect("intrinsic mode lock"),
-            )),
-            Arc::new(FerroMacroExpansionParser::new()),
-        )
-    }
-
     fn diagnostic_err(&self, message: String) -> fp_core::error::Error {
         let mut diagnostic = Diagnostic::error(message);
         if let Some(span) = self
@@ -117,7 +97,7 @@ impl FerroFrontend {
         let cleaned = self.clean_source(source);
         let source_path = PathBuf::from("<file>");
         let file_id = register_source(source_path.clone(), &cleaned);
-        let (serializer, intrinsic_normalizer, macro_parser) = self.setup();
+        let serializer: Arc<dyn AstSerializer> = Arc::new(PrettyAstSerializer::new());
 
         self.ferro.clear_diagnostics();
         let file = self
@@ -125,16 +105,9 @@ impl FerroFrontend {
             .parse_file_ast_with_file(&cleaned, file_id, None, source_path.clone())
             .map_err(|err| self.diagnostic_err(format!("failed to parse file: {err}")))?;
         let diagnostics = self.ferro.diagnostics();
-        let last = file;
-        let mut ast = last.clone();
-        fp_core::intrinsics::normalize_intrinsics_with(&mut ast, intrinsic_normalizer.as_ref())
-            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
         Ok(FrontendResult {
-            last,
-            ast,
+            ast: file,
             serializer,
-            intrinsic_normalizer: Some(intrinsic_normalizer),
-            macro_parser: Some(macro_parser),
             snapshot: None,
             diagnostics,
         })
@@ -151,38 +124,11 @@ impl FerroFrontend {
         let cleaned = self.clean_source(source);
         let file_id = register_source(PathBuf::from("<script>"), &cleaned);
         self.ferro.clear_diagnostics();
-        let mut script = self
+        let script = self
             .ferro
             .parse_script_ast_with_file(cleaned.as_str(), file_id)
             .map_err(|err| self.diagnostic_err(format!("failed to parse script: {err}")))?;
 
-        // Reuse the normal AST normalizer for script input. ScriptBlock is the
-        // public representation, but normalization already operates on File,
-        // so use a temporary expression item and return its block afterward.
-        let mut file = File {
-            path: PathBuf::from("<script>"),
-            attrs: Vec::new(),
-            collected_items: Vec::new(),
-            items: vec![Item::new(ItemKind::Expr(
-                ExprKind::Block(ExprBlock::new_stmts(std::mem::take(&mut script.stmts))).into(),
-            ))],
-        };
-        let (_, intrinsic_normalizer, _) = self.setup();
-        fp_core::intrinsics::normalize_intrinsics_with(
-            &mut file,
-            intrinsic_normalizer.as_ref(),
-        )
-        .map_err(|err| self.diagnostic_err(format!("failed to normalize script: {err}")))?;
-        let item = file.items.remove(0);
-        let ItemKind::Expr(expr) = item.kind().clone() else {
-            unreachable!("script normalization expression wrapper changed kind");
-        };
-        let ExprKind::Block(block) = expr.kind() else {
-            return Err(self.diagnostic_err(
-                "script normalization expression wrapper changed shape".to_string(),
-            ));
-        };
-        script.stmts = block.stmts.clone();
         Ok(script)
     }
 }
@@ -196,14 +142,10 @@ impl LanguageFrontend for FerroFrontend {
         &["fp", "ferro", "rs", "rust", "ferrophase"]
     }
 
-    fn set_intrinsic_normalization_mode(&self, mode: IntrinsicNormalizationMode) {
-        *self.intrinsic_mode.write().expect("intrinsic mode lock") = mode;
-    }
-
     fn parse_expr(&self, source: &str) -> CoreResult<FrontendResult> {
         let cleaned = self.clean_source(source);
         let file_id = register_source(PathBuf::from("<expr>"), &cleaned);
-        let (serializer, intrinsic_normalizer, macro_parser) = self.setup();
+        let serializer: Arc<dyn AstSerializer> = Arc::new(PrettyAstSerializer::new());
 
         self.ferro.clear_diagnostics();
         let expr_source = self.wrap_statement_like_expr_input(&cleaned);
@@ -228,16 +170,9 @@ impl LanguageFrontend for FerroFrontend {
                 expr.clone(),
             ))],
         };
-        let last = file;
-        let mut ast = last.clone();
-        fp_core::intrinsics::normalize_intrinsics_with(&mut ast, intrinsic_normalizer.as_ref())
-            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
         Ok(FrontendResult {
-            last,
-            ast,
+            ast: file,
             serializer,
-            intrinsic_normalizer: Some(intrinsic_normalizer),
-            macro_parser: Some(macro_parser),
             snapshot: None,
             diagnostics,
         })
@@ -247,7 +182,7 @@ impl LanguageFrontend for FerroFrontend {
         let cleaned = self.clean_source(source);
         let source_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let file_id = register_source(source_path.clone(), &cleaned);
-        let (serializer, intrinsic_normalizer, macro_parser) = self.setup();
+        let serializer: Arc<dyn AstSerializer> = Arc::new(PrettyAstSerializer::new());
 
         self.ferro.clear_diagnostics();
         let file = self
@@ -255,21 +190,14 @@ impl LanguageFrontend for FerroFrontend {
             .parse_file_ast_with_file(&cleaned, file_id, Some(&source_path), source_path.clone())
             .map_err(|err| self.diagnostic_err(format!("failed to parse file: {err}")))?;
         let diagnostics = self.ferro.diagnostics();
-        let last = file;
-        let mut ast = last.clone();
-        fp_core::intrinsics::normalize_intrinsics_with(&mut ast, intrinsic_normalizer.as_ref())
-            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
         let snapshot = FrontendSnapshot {
             language: self.language().to_string(),
             description: format!("FerroPhase LAST for {}", source_path.display()),
             serialized: None,
         };
         Ok(FrontendResult {
-            last,
-            ast,
+            ast: file,
             serializer,
-            intrinsic_normalizer: Some(intrinsic_normalizer),
-            macro_parser: Some(macro_parser),
             snapshot: Some(snapshot),
             diagnostics,
         })

@@ -1,7 +1,6 @@
-use crate::ast::{AstSerializer, File, MacroExpansionParser};
+use crate::ast::{AstSerializer, File};
 use crate::diagnostics::DiagnosticManager;
 use crate::error::Result;
-use crate::intrinsics::{IntrinsicNormalizationMode, IntrinsicNormalizer};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -31,14 +30,11 @@ pub struct FrontendSnapshot {
     pub serialized: Option<String>,
 }
 
-/// Result produced by a language frontend after normalising source code.
+/// Result produced by a language frontend after parsing.
 #[derive(Clone)]
 pub struct FrontendResult {
-    pub last: File,
     pub ast: File,
     pub serializer: Arc<dyn AstSerializer>,
-    pub intrinsic_normalizer: Option<Arc<dyn IntrinsicNormalizer>>,
-    pub macro_parser: Option<Arc<dyn MacroExpansionParser>>,
     pub snapshot: Option<FrontendSnapshot>,
     pub diagnostics: Arc<DiagnosticManager>,
 }
@@ -71,6 +67,4 @@ pub trait LanguageFrontend: Send + Sync {
     }
 
     fn set_parse_mode(&self, _mode: FrontendParseMode) {}
-
-    fn set_intrinsic_normalization_mode(&self, _mode: IntrinsicNormalizationMode) {}
 }

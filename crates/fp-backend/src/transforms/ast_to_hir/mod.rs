@@ -2,6 +2,7 @@ use fp_core::ast::Name;
 use fp_core::ast::Pattern;
 use fp_core::ast::{ExprResolution, ExprResolutionTable};
 use fp_core::error::Result;
+use fp_core::intrinsics::IntrinsicNormalizer;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::query::{
     QueryDocument, QueryIrDocument, QueryKind, QueryOrigin, lower_fp_expr_to_query,
@@ -69,6 +70,7 @@ pub struct HirGenerator {
     target_env: TargetEnv,
     respect_cfg: bool,
     lowering_config: HirLoweringConfig,
+    intrinsic_normalizer: Option<Box<dyn IntrinsicNormalizer>>,
 }
 
 enum MaterializedTypeAlias {
@@ -316,6 +318,7 @@ impl HirGenerator {
             target_env: TargetEnv::host(),
             respect_cfg: true,
             lowering_config: HirLoweringConfig::default(),
+            intrinsic_normalizer: None,
         }
     }
 
@@ -326,6 +329,14 @@ impl HirGenerator {
 
     pub fn with_lowering_config(mut self, config: HirLoweringConfig) -> Self {
         self.lowering_config = config;
+        self
+    }
+
+    pub fn with_intrinsic_normalizer<N>(mut self, normalizer: N) -> Self
+    where
+        N: IntrinsicNormalizer + 'static,
+    {
+        self.intrinsic_normalizer = Some(Box::new(normalizer));
         self
     }
 

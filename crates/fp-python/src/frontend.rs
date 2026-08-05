@@ -78,11 +78,8 @@ impl LanguageFrontend for PythonFrontend {
         };
 
         Ok(FrontendResult {
-            last: file.clone(),
             ast: file,
             serializer: self.serializer.clone(),
-            intrinsic_normalizer: None,
-            macro_parser: None,
             snapshot: None,
             diagnostics,
         })

@@ -61,11 +61,8 @@ impl LanguageFrontend for GoFrontend {
         };
 
         Ok(FrontendResult {
-            last: node.clone(),
             ast: node,
             serializer: self.serializer.clone() as Arc<dyn AstSerializer>,
-            intrinsic_normalizer: None,
-            macro_parser: None,
             snapshot: Some(snapshot),
             diagnostics,
         })

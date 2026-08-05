@@ -42,11 +42,8 @@ impl CFrontend {
         let serializer: Arc<dyn AstSerializer> = Arc::new(CSerializer);
         let diagnostics = Arc::new(DiagnosticManager::new());
         Ok(FrontendResult {
-            last: ast.clone(),
             ast,
             serializer,
-            intrinsic_normalizer: None,
-            macro_parser: None,
             snapshot: Some(FrontendSnapshot {
                 language: "c".to_string(),
                 description: "Clang C declarations lowered to the shared AST".to_string(),

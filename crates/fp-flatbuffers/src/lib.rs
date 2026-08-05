@@ -55,11 +55,8 @@ impl LanguageFrontend for FlatbuffersFrontend {
         };
 
         Ok(FrontendResult {
-            last: file.clone(),
             ast: file,
             serializer,
-            intrinsic_normalizer: None,
-            macro_parser: None,
             snapshot: Some(FrontendSnapshot {
                 language: self.language().to_string(),
                 description,

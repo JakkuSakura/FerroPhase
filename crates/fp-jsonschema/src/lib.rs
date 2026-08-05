@@ -68,14 +68,6 @@ impl LanguageFrontend for JsonSchemaFrontend {
 
         Ok(FrontendResult {
             serializer,
-            last: File {
-                path: path
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| std::path::PathBuf::from("<stdin>")),
-                attrs: Vec::new(),
-                collected_items: Vec::new(),
-                items: Vec::new(),
-            },
             ast: File {
                 path: path
                     .map(|p| p.to_path_buf())
@@ -84,8 +76,6 @@ impl LanguageFrontend for JsonSchemaFrontend {
                 collected_items: Vec::new(),
                 items: Vec::new(),
             },
-            intrinsic_normalizer: None,
-            macro_parser: None,
             snapshot: Some(snapshot),
             diagnostics,
         })

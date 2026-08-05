@@ -10,6 +10,7 @@ use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::module::path::QualifiedPath;
 use fp_core::span::Span;
 use fp_interpret::LirInterpreter;
+use fp_lang::FerroIntrinsicNormalizer;
 use fp_typing::{ComptimeRequest, HirTypeChecker, TypeckResults, TypingContext};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -49,6 +50,9 @@ impl CompilerDriver {
         let typing_context = self.state.typing_ctx.clone();
         Box::pin(async move {
             let result = match HirGenerator::new()
+                .with_intrinsic_normalizer(FerroIntrinsicNormalizer::new(
+                    fp_core::intrinsics::IntrinsicNormalizationMode::Compile,
+                ))
                 .with_package_id(unit.package_id)
                 .with_lowering_config(unit.lowering_config)
                 .transform_module_async(

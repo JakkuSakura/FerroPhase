@@ -3,7 +3,6 @@
 use crate::{CliError, Result, cli::CliConfig, commands::format_value_brief, compiler};
 use clap::Args;
 use fp_core::frontend::LanguageFrontend;
-use fp_core::intrinsics::IntrinsicNormalizationMode;
 use fp_lang::FerroFrontend;
 use tracing::info;
 
@@ -38,7 +37,6 @@ pub async fn eval_command(mut args: EvalArgs, _config: &CliConfig) -> Result<()>
 
     info!("Evaluating ScriptBlock");
     let frontend = FerroFrontend::new();
-    frontend.set_intrinsic_normalization_mode(IntrinsicNormalizationMode::Compile);
     let script = frontend
         .parse_script(&args.script)
         .map_err(|err| CliError::Compilation(err.to_string()))?;

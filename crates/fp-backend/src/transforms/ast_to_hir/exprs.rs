@@ -25,6 +25,33 @@ impl HirGenerator {
 
     /// Transform an AST expression to HIR expression
     pub(super) fn transform_expr_to_hir(&mut self, ast_expr: &ast::Expr) -> Result<hir::Expr> {
+        let Some(normalizer) = self.intrinsic_normalizer.as_ref() else {
+            return self.transform_expr_to_hir_inner(ast_expr);
+        };
+
+        let needs_normalization = matches!(
+            ast_expr.kind(),
+            ast::ExprKind::Macro(_)
+                | ast::ExprKind::IntrinsicCall(_)
+                | ast::ExprKind::IntrinsicContainer(_)
+                | ast::ExprKind::Struct(_)
+                | ast::ExprKind::Structural(_)
+                | ast::ExprKind::Invoke(_)
+        );
+        if !needs_normalization {
+            return self.transform_expr_to_hir_inner(ast_expr);
+        }
+
+        let mut normalized = normalizer.normalize_expr(ast_expr.clone())?.into_inner();
+        if matches!(ast_expr.kind(), ast::ExprKind::Macro(_))
+            && matches!(normalized.kind(), ast::ExprKind::IntrinsicCall(_))
+        {
+            normalized = normalizer.normalize_expr(normalized)?.into_inner();
+        }
+        self.transform_expr_to_hir_inner(&normalized)
+    }
+
+    fn transform_expr_to_hir_inner(&mut self, ast_expr: &ast::Expr) -> Result<hir::Expr> {
         use ast::ExprKind;
 
         let expr_span = ast_expr.span();
@@ -647,8 +674,10 @@ impl HirGenerator {
                         ));
                     }
                 }
-                if let Some(intrinsic_call) = ast::intrinsic_call_from_invoke(invoke) {
-                    return self.transform_intrinsic_call_to_hir(&intrinsic_call);
+                if self.intrinsic_normalizer.is_none() {
+                    if let Some(intrinsic_call) = ast::intrinsic_call_from_invoke(invoke) {
+                        return self.transform_intrinsic_call_to_hir(&intrinsic_call);
+                    }
                 }
 
                 let func_expr = hir::Expr {

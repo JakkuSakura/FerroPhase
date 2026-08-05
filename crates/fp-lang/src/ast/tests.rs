@@ -243,10 +243,6 @@ fn parse_items_ast_supports_quote_fn() {
                 other => panic!("expected quote item return type, got {:?}", other),
             }
             assert_eq!(func.sig.quote_kind, Some(QuoteFragmentKind::Item));
-            match func.body.kind() {
-                ExprKind::Block(_) => {}
-                other => panic!("expected block body, got {:?}", other),
-            }
         }
         other => panic!("expected quote fn item, got {:?}", other),
     }

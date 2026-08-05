@@ -1,5 +1,7 @@
 use super::*;
 use fp_core::ast;
+use fp_core::frontend::LanguageFrontend;
+use fp_core::intrinsics::IntrinsicNormalizationMode;
 use fp_core::module::path::QualifiedPath;
 use fp_core::ops::BinOpKind;
 use fp_core::span::Span;
@@ -68,6 +70,41 @@ fn transform_expr_uses_typing_resolved_name_table() -> Result<()> {
     assert_eq!(path.segments.len(), 2);
     assert_eq!(path.segments[0].name.as_str(), "module");
     assert_eq!(path.segments[1].name.as_str(), "VALUE");
+    Ok(())
+}
+
+#[test]
+fn compile_normalization_runs_during_ast_to_hir_lowering() -> Result<()> {
+    let frontend = fp_lang::FerroFrontend::new();
+    let parsed = frontend.parse_expr("println!(\"hello\")")?;
+    let ast::ItemKind::Expr(expr) = parsed.ast.items[0].kind() else {
+        return Err(crate::error::optimization_error(
+            "expected parsed expression item".to_string(),
+        ));
+    };
+    assert!(matches!(expr.kind(), ast::ExprKind::Macro(_)));
+
+    let mut generator = HirGenerator::new().with_intrinsic_normalizer(
+        fp_lang::FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile),
+    );
+    let lowered = generator.transform_expr_to_hir(expr)?;
+    let hir::ExprKind::Call(callee, _) = lowered.kind else {
+        return Err(crate::error::optimization_error(
+            "expected println! to lower to an ordinary std call".to_string(),
+        ));
+    };
+    let hir::ExprKind::Path(path) = callee.kind else {
+        return Err(crate::error::optimization_error(
+            "expected std call callee path".to_string(),
+        ));
+    };
+    assert_eq!(
+        path.segments
+            .iter()
+            .map(|segment| segment.name.as_str())
+            .collect::<Vec<_>>(),
+        ["std", "io", "println"]
+    );
     Ok(())
 }
 
