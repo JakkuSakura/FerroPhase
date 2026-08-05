@@ -814,7 +814,7 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
             },
             ast::TypePrimitive::Bool => "bool".into(),
             ast::TypePrimitive::Char => "char".into(),
-            ast::TypePrimitive::String => "string".into(),
+            ast::TypePrimitive::String => "str".into(),
             ast::TypePrimitive::List => "list".into(),
         },
         ast::Ty::TokenStream(_) => "TokenStream".into(),

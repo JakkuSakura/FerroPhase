@@ -17,6 +17,7 @@ pub mod path;
 pub mod process;
 pub mod proc_macro;
 pub mod result;
+pub mod string;
 pub mod task;
 pub mod test;
 pub mod time;

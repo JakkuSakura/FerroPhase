@@ -355,7 +355,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                     }));
                 }
                 "bool" => return Ok(Ty::Primitive(TypePrimitive::Bool)),
-                "str" | "string" => return Ok(Ty::Primitive(TypePrimitive::String)),
+                "str" => return Ok(Ty::Primitive(TypePrimitive::String)),
                 "i8" => return Ok(Ty::Primitive(TypePrimitive::Int(TypeInt::I8))),
                 "i16" => return Ok(Ty::Primitive(TypePrimitive::Int(TypeInt::I16))),
                 "i32" => return Ok(Ty::Primitive(TypePrimitive::Int(TypeInt::I32))),

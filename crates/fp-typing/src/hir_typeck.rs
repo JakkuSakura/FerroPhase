@@ -1248,27 +1248,36 @@ impl HirTypeChecker {
         method: &hir::Symbol,
         actuals: &[Ty],
     ) -> Result<(hir::DefId, Option<Vec<Ty>>, Ty)> {
+        let receiver_ty = match &receiver_ty.kind {
+            TyKind::Ref(_, inner, _) => inner.as_ref(),
+            _ => receiver_ty,
+        };
         let receiver_def = match &receiver_ty.kind {
-            TyKind::Adt(receiver, _) => receiver.did,
-            TyKind::Ref(_, inner, _) => match &inner.kind {
-                TyKind::Adt(receiver, _) => receiver.did,
-                _ => return Err(Error::from("method receiver is not a nominal type")),
-            },
-            _ => return Err(Error::from("method receiver is not a nominal type")),
+            TyKind::Adt(receiver, _) => Some(receiver.did),
+            _ => None,
         };
         for item in self.program.items.clone() {
             let hir::ItemKind::Impl(impl_item) = item.kind else {
                 continue;
             };
-            let hir::TypeExprKind::Path(path) = &impl_item.self_ty.kind else {
-                continue;
+            let mut scope = self.generic_scope(&impl_item.generics);
+            let checked_self_ty = scope.check_type_expr(&impl_item.self_ty)?;
+            let self_ty = match &checked_self_ty.kind {
+                TyKind::Ref(_, inner, _) => inner.as_ref(),
+                _ => &checked_self_ty,
             };
-            if !matches!(path.res, Some(hir::Res::Def(def_id)) if def_id == receiver_def) {
+            let matches_receiver = match (receiver_def, &receiver_ty.kind, &self_ty.kind) {
+                (Some(receiver_def), _, TyKind::Adt(impl_receiver, _)) => {
+                    impl_receiver.did == receiver_def
+                }
+                (None, TyKind::Adt(_, _), _) => false,
+                (None, _, _) => self_ty == receiver_ty,
+                (Some(_), _, _) => false,
+            };
+            if !matches_receiver {
                 continue;
             }
-            let mut scope = self.generic_scope(&impl_item.generics);
-            let self_ty = scope.check_type_expr(&impl_item.self_ty)?;
-            scope.self_types.push(self_ty);
+            scope.self_types.push(checked_self_ty);
             let impl_generics = impl_item.generics.clone();
             for impl_item in impl_item.items {
                 let hir::ImplItemKind::Method(function) = impl_item.kind else {
@@ -1709,7 +1718,7 @@ fn primitive_path_ty(name: &str) -> Option<Ty> {
         "usize" => Ty::uint(ty::UintTy::Usize),
         "f32" => Ty::float(ty::FloatTy::F32),
         "f64" => Ty::float(ty::FloatTy::F64),
-        "str" | "string" => Ty {
+        "str" => Ty {
             kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
         },
         _ => return None,
