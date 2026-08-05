@@ -261,10 +261,19 @@ impl HirTypeChecker {
                 }
                 hir::ExprKind::Unary(op, value) => {
                     let value_ty = self.check_expr(value).await?;
-                    if matches!(op, hir::UnOp::Not) {
-                        self.require_same(&value_ty, &Ty::bool())?;
+                    match op {
+                        hir::UnOp::Not => {
+                            self.require_same(&value_ty, &Ty::bool())?;
+                            Ty::bool()
+                        }
+                        hir::UnOp::Deref => match value_ty.kind {
+                            TyKind::Ref(_, inner, _) | TyKind::RawPtr(ty::TypeAndMut { ty: inner, .. }) => {
+                                *inner
+                            }
+                            _ => return Err(Error::from("cannot dereference a non-pointer value")),
+                        },
+                        hir::UnOp::Neg | hir::UnOp::Box => value_ty,
                     }
-                    value_ty
                 }
                 hir::ExprKind::Reference(reference) => Ty {
                     kind: TyKind::Ref(
@@ -1262,7 +1271,13 @@ impl HirTypeChecker {
                 scope.insert(name.clone(), ty);
             }
             hir::PatKind::Wild => {}
-            hir::PatKind::Lit(lit) => self.require_same(&ty, &self.literal_ty(lit))?,
+            hir::PatKind::Lit(lit) => {
+                let integer_literal = matches!(lit, hir::Lit::Integer(_));
+                let integer_ty = matches!(ty.kind, TyKind::Int(_) | TyKind::Uint(_));
+                if !(integer_literal && integer_ty) {
+                    self.require_same(&ty, &self.literal_ty(lit))?;
+                }
+            }
             hir::PatKind::Tuple(patterns) => {
                 let TyKind::Tuple(fields) = ty.kind else {
                     return Err(Error::from("tuple pattern requires a tuple scrutinee"));
