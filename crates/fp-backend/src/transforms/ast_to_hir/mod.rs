@@ -331,6 +331,15 @@ impl HirGenerator {
         self
     }
 
+    pub fn with_def_id_start(mut self, start: u32) -> Self {
+        self.next_def_id = start;
+        self
+    }
+
+    pub fn next_def_id_value(&self) -> u32 {
+        self.next_def_id
+    }
+
     pub fn with_lowering_config(mut self, config: HirLoweringConfig) -> Self {
         self.lowering_config = config;
         self
@@ -1116,7 +1125,7 @@ impl HirGenerator {
         self.seed_external_definitions(&mut program);
         self.predeclare_items(items)?;
         self.insert_default_prelude_aliases();
-        self.program_def_map = HashMap::new();
+        self.program_def_map = program.def_map.clone();
         for item in &self.synthetic_items {
             self.program_def_map.insert(item.def_id, item.clone());
         }

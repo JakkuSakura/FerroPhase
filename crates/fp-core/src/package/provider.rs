@@ -27,7 +27,7 @@ impl ProviderError {
     }
 }
 
-pub trait PackageProvider: Send + Sync {
+pub trait PackageProvider {
     /// Resolve a source-level package key owned by this provider.
     /// Providers may accept aliases or qualified keys instead of only package
     /// names returned by `list_packages`.

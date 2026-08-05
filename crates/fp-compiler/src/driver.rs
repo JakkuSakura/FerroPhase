@@ -8,7 +8,7 @@ use fp_core::hir;
 use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::module::path::QualifiedPath;
-use fp_core::package::PackageId;
+use fp_core::package::{PackageId, PackageSource};
 use fp_core::span::Span;
 use fp_interpret::LirInterpreter;
 use fp_lang::FerroIntrinsicNormalizer;
@@ -29,6 +29,7 @@ pub struct CompilerDriver {
     interpreter: LirInterpreter,
     building_packages: HashSet<PackageId>,
     compiled_packages: HashMap<PackageId, Rc<RefCell<fp_core::package::CompiledPackage>>>,
+    next_hir_def_id: u32,
 }
 
 struct CompileUnitCoreResult {
@@ -43,6 +44,7 @@ struct TypingUnit {
     source: File,
     lowering_config: HirLoweringConfig,
     external_definitions: Vec<(QualifiedPath, hir::Program, HashMap<String, hir::Res>)>,
+    def_id_start: u32,
 }
 
 impl CompilerDriver {
@@ -54,7 +56,7 @@ impl CompilerDriver {
         unit: TypingUnit,
     ) -> fp_typing::BoxFuture<
         'static,
-        fp_core::error::Result<(hir::Program, TypeckResults, HashMap<String, hir::Res>)>,
+        fp_core::error::Result<(hir::Program, TypeckResults, HashMap<String, hir::Res>, u32)>,
     > {
         let typing_context = self.state.typing_ctx.clone();
         Box::pin(async move {
@@ -63,6 +65,7 @@ impl CompilerDriver {
                     fp_core::intrinsics::IntrinsicNormalizationMode::Compile,
                 ))
                 .with_package_id(unit.package_id)
+                .with_def_id_start(unit.def_id_start)
                 .with_lowering_config(unit.lowering_config)
                 .with_external_definitions(unit.external_definitions);
             let result = match generator
@@ -75,11 +78,12 @@ impl CompilerDriver {
             {
                 Ok(program) => {
                     let exports = generator.exported_symbols();
+                    let next_def_id = generator.next_def_id_value();
                     HirTypeChecker::new(program)
                         .with_context(typing_context)
                         .check()
                         .await
-                        .map(|(program, results)| (program, results, exports))
+                        .map(|(program, results)| (program, results, exports, next_def_id))
                 }
                 Err(error) => Err(error),
             };
@@ -107,6 +111,7 @@ impl CompilerDriver {
             interpreter: LirInterpreter::new(),
             building_packages: HashSet::new(),
             compiled_packages: HashMap::new(),
+            next_hir_def_id: 0,
         }
     }
 
@@ -116,6 +121,7 @@ impl CompilerDriver {
             interpreter: LirInterpreter::new(),
             building_packages: HashSet::new(),
             compiled_packages: HashMap::new(),
+            next_hir_def_id: 0,
         }
     }
 
@@ -151,6 +157,42 @@ impl CompilerDriver {
     ) -> Result<(), CompilerDriverError> {
         let executor = self.state.tasks.clone();
         executor.run(self.compile_unit_compile_bytecode(ast_id, path))
+    }
+
+    /// Focus subsequent module work on an already compiled package. The
+    /// package itself and its imported dependencies remain shared through
+    /// `Rc`; only the lookup context becomes package-local.
+    pub fn focus_package(&mut self, package_id: PackageId) -> Result<(), CompilerDriverError> {
+        let parent_context = self.state.typing_ctx.clone();
+        let package_workspace = parent_context.env_ctx.for_package(package_id.clone());
+        for (dependency_id, package) in parent_context.env_ctx.crates().iter() {
+            if dependency_id != &package_id {
+                package_workspace.import_package(dependency_id.clone(), package.clone());
+            }
+        }
+        if let Some(std_package) = package_workspace.compiled_package(&PackageId::new("std")) {
+            package_workspace.install_prelude(std_package);
+        }
+        let source = parent_context
+            .env_ctx
+            .compiled_package(&package_id)
+            .map(|package| {
+                let package = package.borrow();
+                PackageSource {
+                    package_id: package_id.clone(),
+                    name: package.name.clone(),
+                    graph: package.graph.clone(),
+                    module_paths: package.module_paths.clone(),
+                    items: package.items.clone(),
+                }
+            })
+            .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
+        package_workspace.begin_package(package_id, source);
+        self.state.typing_ctx = Rc::new(TypingContext::new(
+            parent_context.data_layout.clone(),
+            Rc::new(package_workspace),
+        ));
+        Ok(())
     }
 
     pub fn execute_runtime(
@@ -323,10 +365,12 @@ impl CompilerDriver {
                 source,
                 lowering_config: HirLoweringConfig,
                 external_definitions: self.state.typing_ctx.env_ctx.hir_definitions(),
+                def_id_start: self.next_hir_def_id,
             }),
         );
         self.run_pool_to_idle().await?;
-        let (hir_program, typeck_results, hir_exports) = typing_handle.await?;
+        let (hir_program, typeck_results, hir_exports, next_def_id) = typing_handle.await?;
+        self.next_hir_def_id = self.next_hir_def_id.max(next_def_id);
         if let Some(package_id) = self.state.typing_ctx.env_ctx.current_package().cloned() {
             if let Some(package) = self.state.typing_ctx.env_ctx.compiled_package(&package_id) {
                 package.borrow_mut().hir_exports.extend(hir_exports);
@@ -1366,60 +1410,84 @@ impl CompilerDriver {
         strict: bool,
     ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
         let mut units = Vec::new();
-        let mut paths: Vec<_> = items_map.keys().cloned().collect();
-        paths.sort_by_key(|path| path.to_key());
-        for path in paths {
-            let items = &items_map[&path];
-            if items.is_empty() {
-                continue;
-            }
-
-            let ast_id = AstId::new(format!("on_demand:{}", path.to_key()));
-            // Stored purely so `compile_unit_core`'s thin `File`-based
-            // wrapper can find it if anything else looks this AST id up
-            // later — not something any generator sees directly.
-            self.state.insert_ast(
-                ast_id.clone(),
-                File {
-                    path: std::path::PathBuf::from(path.to_key()),
-                    items: items.clone(),
-                    collected_items: Vec::new(),
-                    attrs: Vec::new(),
-                },
-            );
-
-            let fqp = FullyQualifiedPath::new(path.clone());
-            let core = match self
-                .compile_module_core(path.clone(), items.clone(), &ast_id, &fqp)
-                .await
-            {
-                Ok(core) => core,
-                Err(error) if !strict => {
-                    eprintln!(
-                        "WARNING: compile_module_core failed for {}: {error}",
-                        path.to_key()
-                    );
+        let mut pending: Vec<_> = items_map.keys().cloned().collect();
+        pending.sort_by_key(|path| path.to_key());
+        while !pending.is_empty() {
+            let mut next_pending = Vec::new();
+            let mut first_error = None;
+            let mut progressed = false;
+            for path in pending {
+                let items = &items_map[&path];
+                if items.is_empty() {
                     continue;
                 }
-                Err(error) => return Err(error),
-            };
-            if let Some(package_id) = self.state.typing_ctx.env_ctx.current_package().cloned() {
-                if let Some(package) = self.state.typing_ctx.env_ctx.compiled_package(&package_id) {
-                    let hir = self.state.hir(&core.hir_id)?.clone();
-                    package.borrow_mut().hir_modules.insert(path.clone(), hir);
+
+                let ast_id = AstId::new(format!("on_demand:{}", path.to_key()));
+                // Stored purely so `compile_unit_core`'s thin `File`-based
+                // wrapper can find it if anything else looks this AST id up
+                // later — not something any generator sees directly.
+                self.state.insert_ast(
+                    ast_id.clone(),
+                    File {
+                        path: std::path::PathBuf::from(path.to_key()),
+                        items: items.clone(),
+                        collected_items: Vec::new(),
+                        attrs: Vec::new(),
+                    },
+                );
+
+                let fqp = FullyQualifiedPath::new(path.clone());
+                let core = match self
+                    .compile_module_core(path.clone(), items.clone(), &ast_id, &fqp)
+                    .await
+                {
+                    Ok(core) => {
+                        progressed = true;
+                        core
+                    }
+                    Err(error) if !strict => {
+                        eprintln!(
+                            "WARNING: compile_module_core failed for {}: {error}",
+                            path.to_key()
+                        );
+                        continue;
+                    }
+                    Err(error) => {
+                        first_error.get_or_insert((path.to_key(), error));
+                        next_pending.push(path);
+                        continue;
+                    }
+                };
+                if let Some(package_id) = self.state.typing_ctx.env_ctx.current_package().cloned() {
+                    if let Some(package) =
+                        self.state.typing_ctx.env_ctx.compiled_package(&package_id)
+                    {
+                        let hir = self.state.hir(&core.hir_id)?.clone();
+                        package.borrow_mut().hir_modules.insert(path.clone(), hir);
+                    }
                 }
+                let lir = self.state.lir(&core.lir_id)?.clone();
+                units.push(fp_core::lir::LirCompileUnit {
+                    package_id: self
+                        .state
+                        .typing_ctx
+                        .env_ctx
+                        .package_id_for_module(&path)
+                        .unwrap_or_default(),
+                    module_path: path.clone(),
+                    program: lir,
+                });
             }
-            let lir = self.state.lir(&core.lir_id)?.clone();
-            units.push(fp_core::lir::LirCompileUnit {
-                package_id: self
-                    .state
-                    .typing_ctx
-                    .env_ctx
-                    .package_id_for_module(&path)
-                    .unwrap_or_default(),
-                module_path: path.clone(),
-                program: lir,
-            });
+            if !strict || next_pending.is_empty() {
+                break;
+            }
+            if !progressed {
+                let (path, error) = first_error.expect("failed module compilation had an error");
+                return Err(CompilerDriverError::UnsupportedWork(format!(
+                    "module {path}: {error}"
+                )));
+            }
+            pending = next_pending;
         }
         Ok(units)
     }

@@ -7,6 +7,11 @@ use fp_compiler::{
     AstId, BytecodeId, CompilerDriver, CompilerExecutor, CompilerModuleResolver, CompilerSession,
     ConstValueId, FullyQualifiedPath, LirId, MirId,
 };
+use fp_core::module::path::QualifiedPath;
+use fp_core::package::graph::PackageGraph;
+use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
+use fp_core::package::{PackageDescriptor, PackageId, PackageSource};
+use fp_core::vfs::VirtualPath;
 use fp_core::{
     ast::register_threadlocal_serializer,
     ast::{
@@ -119,7 +124,7 @@ pub fn eval_script(script: ScriptBlock) -> Result<Value> {
     };
     let identity = CompilerIdentity::for_script();
     let executor = CompilerExecutor::new();
-    let mut driver = lower_ast(
+    let mut driver = compile_source_file(
         ast,
         &identity,
         Path::new("<eval>"),
@@ -811,7 +816,7 @@ fn execute_ast(
 ) -> Result<Value> {
     let value_key = identity.path.to_key();
     let executor = CompilerExecutor::new();
-    let mut driver = lower_ast(
+    let mut driver = compile_source_file(
         ast,
         &identity,
         source_path,
@@ -848,7 +853,7 @@ fn lower_file(
     let identity = CompilerIdentity::for_file(package, path);
     let path_key = identity.path.to_key();
     let executor = CompilerExecutor::new();
-    let mut driver = lower_ast(
+    let mut driver = compile_source_file(
         ast,
         &identity,
         path,
@@ -871,7 +876,63 @@ fn compiler_workspace() -> std::rc::Rc<fp_core::workspace::WorkspaceContext> {
     std::rc::Rc::new(workspace)
 }
 
-fn lower_ast(
+struct InputPackageProvider {
+    package_id: PackageId,
+    descriptor: Arc<PackageDescriptor>,
+    source: PackageSource,
+}
+
+impl InputPackageProvider {
+    fn new(package_id: PackageId, module_path: QualifiedPath, source: File) -> Self {
+        let descriptor = Arc::new(PackageDescriptor {
+            id: package_id.clone(),
+            name: package_id.as_str().to_owned(),
+            version: None,
+            manifest_path: VirtualPath::from_path(&source.path),
+            root: VirtualPath::from_path(source.path.parent().unwrap_or(Path::new("."))),
+            metadata: Default::default(),
+            modules: Vec::new(),
+        });
+        let mut package_source = PackageSource::new(
+            package_id.clone(),
+            package_id.as_str(),
+            PackageGraph::new(Vec::new()),
+        );
+        package_source.module_paths.insert(module_path.clone());
+        package_source.items.insert(module_path, source.items);
+        Self {
+            package_id,
+            descriptor,
+            source: package_source,
+        }
+    }
+}
+
+impl PackageProvider for InputPackageProvider {
+    fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        Ok(vec![self.package_id.clone()])
+    }
+
+    fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
+        if id != &self.package_id {
+            return Err(ProviderError::PackageNotFound(id.clone()));
+        }
+        Ok(self.descriptor.clone())
+    }
+
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
+        if id != &self.package_id {
+            return Err(ProviderError::PackageNotFound(id.clone()));
+        }
+        Ok(self.source.clone())
+    }
+
+    fn refresh(&self) -> ProviderResult<()> {
+        Ok(())
+    }
+}
+
+fn compile_source_file(
     ast: File,
     identity: &CompilerIdentity,
     source_path: &Path,
@@ -883,6 +944,15 @@ fn lower_ast(
     let ast_id = identity.ast_id.clone();
     let path = identity.path.clone();
     let mut session = CompilerSession::new(data_layout(), executor, workspace);
+    let package_id =
+        PackageId::new(identity.path.path().head().ok_or_else(|| {
+            CliError::Compilation("source file has no package identity".to_string())
+        })?);
+    session.register_provider(Arc::new(InputPackageProvider::new(
+        package_id.clone(),
+        identity.path.path().clone(),
+        ast.clone(),
+    )));
     session.driver().state.set_lossy(lossy.enabled);
 
     if let Some(resolver) = resolver {
@@ -894,6 +964,13 @@ fn lower_ast(
             .map_err(|err| CliError::Compilation(err.to_string()))?;
     }
     session.driver().state.insert_ast(ast_id.clone(), ast);
+    executor
+        .run(session.driver().compile_package(&package_id))
+        .map_err(|err| CliError::Compilation(err.to_string()))?;
+    session
+        .driver()
+        .focus_package(package_id)
+        .map_err(|err| CliError::Compilation(err.to_string()))?;
     executor
         .run(session.driver().compile_native(&ast_id, &path))
         .map_err(|err| CliError::Compilation(err.to_string()))?;
@@ -952,7 +1029,7 @@ pub fn compile_file_to_lir_bundle(
     let identity = CompilerIdentity::for_file(package, path);
     let path_key = identity.path.to_key();
     let executor = CompilerExecutor::new();
-    let mut driver = lower_ast(
+    let mut driver = compile_source_file(
         parsed.ast,
         &identity,
         path,
@@ -1011,7 +1088,7 @@ pub fn typecheck_ast_target(
 ) -> Result<File> {
     let identity = CompilerIdentity::for_file(package, path);
     let executor = CompilerExecutor::new();
-    let mut driver = lower_ast(
+    let mut driver = compile_source_file(
         ast,
         &identity,
         path,

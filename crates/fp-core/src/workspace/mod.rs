@@ -207,7 +207,7 @@ pub struct WorkspaceContext {
     providers: RefCell<Vec<Arc<dyn PackageProvider>>>,
     current_package: Option<PackageId>,
     prelude: RefCell<Option<Rc<RefCell<CompiledPackage>>>>,
-    next_package_id: Cell<u32>,
+    next_package_id: Rc<Cell<u32>>,
 }
 
 impl WorkspaceContext {
@@ -223,7 +223,7 @@ impl WorkspaceContext {
             providers: RefCell::new(self.providers.borrow().clone()),
             current_package: Some(package_id),
             prelude: RefCell::new(None),
-            next_package_id: Cell::new(self.next_package_id.get()),
+            next_package_id: self.next_package_id.clone(),
         }
     }
 
