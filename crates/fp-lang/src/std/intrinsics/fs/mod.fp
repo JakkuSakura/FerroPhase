@@ -1,3 +1,5 @@
+use std::alloc::Vec;
+
 #[intrinsic = "fs_read_dir"]
 pub fn read_dir(path: &std::fs::Path) -> Vec<&str> { compile_error!("compiler intrinsic") }
 

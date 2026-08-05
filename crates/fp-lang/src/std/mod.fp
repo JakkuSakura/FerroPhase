@@ -1,4 +1,5 @@
 pub mod assert;
+pub mod alloc;
 pub mod any;
 pub mod collections;
 pub mod env;

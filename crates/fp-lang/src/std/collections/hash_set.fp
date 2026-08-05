@@ -1,3 +1,5 @@
+use std::alloc::Vec;
+
 pub struct HashSet<T> {
     len: i64,
     values: Vec<T>,

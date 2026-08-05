@@ -1,4 +1,5 @@
 use super::path::Path;
+use std::alloc::Vec;
 
 pub enum ErrorKind {
     NotFound,

@@ -3,13 +3,15 @@ pub struct BTreeMapEntry<K, V> {
     value: V,
 }
 
+use std::alloc::Vec;
+
 pub struct BTreeMap<K, V> {
     len: i64,
     keys: Vec<K>,
     values: Vec<V>,
 }
 
-impl BTreeMap<K, V> {
+impl<K, V> BTreeMap<K, V> {
     fn new() -> BTreeMap<K, V> {
         BTreeMap {
             len: 0,

@@ -3,6 +3,8 @@ pub struct HashMapEntry<K, V> {
     value: V,
 }
 
+use std::alloc::Vec;
+
 pub struct HashMap<K, V> {
     len: i64,
     keys: Vec<K>,

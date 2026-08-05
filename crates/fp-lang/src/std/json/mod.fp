@@ -1,6 +1,7 @@
 //! Minimal JSON parser and printer for ASCII input.
 
 use std::option::Option;
+use std::alloc::Vec;
 
 pub struct Field {
     key: &str,

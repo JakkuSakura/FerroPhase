@@ -1,9 +1,11 @@
+use std::alloc::Vec;
+
 pub struct VecDeque<T> {
     values: Vec<T>,
     len: i64,
 }
 
-impl VecDeque<T> {
+impl<T> VecDeque<T> {
     fn new() -> VecDeque<T> {
         VecDeque {
             values: Vec::new(),

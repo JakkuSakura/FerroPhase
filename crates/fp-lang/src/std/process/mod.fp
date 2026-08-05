@@ -1,4 +1,5 @@
 use std::option::Option;
+use std::alloc::Vec;
 
 pub struct ProcessResult {
     stdout: str,

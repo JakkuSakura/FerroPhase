@@ -1,9 +1,11 @@
+use std::alloc::Vec;
+
 pub struct BinaryHeap<T> {
     values: Vec<T>,
     len: i64,
 }
 
-impl BinaryHeap<T> {
+impl<T> BinaryHeap<T> {
     fn new() -> BinaryHeap<T> {
         BinaryHeap {
             values: Vec::new(),

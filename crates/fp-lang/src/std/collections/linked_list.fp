@@ -13,12 +13,14 @@ pub struct LinkedNode<T> {
     next: Option<Box<LinkedNode<T> > >,
 }
 
+use std::alloc::Vec;
+
 pub struct LinkedList<T> {
     values: Vec<T>,
     len: i64,
 }
 
-impl LinkedList<T> {
+impl<T> LinkedList<T> {
     fn new() -> LinkedList<T> {
         LinkedList {
             values: Vec::new(),

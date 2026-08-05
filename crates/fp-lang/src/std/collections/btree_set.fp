@@ -1,9 +1,11 @@
+use std::alloc::Vec;
+
 pub struct BTreeSet<T> {
     len: i64,
     values: Vec<T>,
 }
 
-impl BTreeSet<T> {
+impl<T> BTreeSet<T> {
     fn new() -> BTreeSet<T> {
         BTreeSet {
             len: 0,

@@ -1,3 +1,5 @@
+use std::alloc::Vec;
+
 #[intrinsic = "test_command_mock_reset"]
 pub fn command_mock_reset() { compile_error!("compiler intrinsic") }
 

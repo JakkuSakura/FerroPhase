@@ -18,9 +18,9 @@ fn call_arg_values(args: &[hir::CallArg]) -> Vec<&hir::Expr> {
 }
 use fp_core::intrinsics::IntrinsicKind;
 use fp_core::mir::ty::{
-    AdtDef, AdtFlags, ConstKind, ConstValue, CtorKind, ErrorGuaranteed, FloatTy, IntTy, Mutability,
-    ReprFlags, ReprOptions, Scalar, ScalarInt, Ty, TyKind, TypeAndMut, UintTy, VariantDef,
-    VariantDiscr,
+    AdtDef, AdtFlags, ConstKind, ConstValue, CtorKind, ErrorGuaranteed, FloatTy, GenericArg, IntTy,
+    Mutability, ReprFlags, ReprOptions, Scalar, ScalarInt, Ty, TyKind, TypeAndMut, UintTy,
+    VariantDef, VariantDiscr,
 };
 use fp_core::mir::{self, Symbol};
 use fp_core::ops::format_value_with_spec;
@@ -19032,6 +19032,13 @@ impl<'a> BodyBuilder<'a> {
                 TyKind::Slice(inner) => Some(*inner.clone()),
                 _ => None,
             },
+            TyKind::Adt(_, args) if self.is_list_container(ty) => args.iter().find_map(|arg| {
+                if let GenericArg::Type(element) = arg {
+                    Some(element.clone())
+                } else {
+                    None
+                }
+            }),
             _ => None,
         }
     }

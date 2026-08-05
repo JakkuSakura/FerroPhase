@@ -1,4 +1,5 @@
 use std::option::Option;
+use std::alloc::Vec;
 
 struct TestCase {
     name: str,
