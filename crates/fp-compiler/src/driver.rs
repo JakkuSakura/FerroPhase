@@ -93,8 +93,7 @@ impl CompilerDriver {
         ast_id: &AstId,
         path: &FullyQualifiedPath,
     ) -> Result<(), CompilerDriverError> {
-        self.compile_unit_compile_native(ast_id, path).await?;
-        self.compile_unit_compile_bytecode(ast_id, path).await
+        self.compile_unit_compile_native(ast_id, path).await
     }
 
     pub fn compile_native_sync(
@@ -104,6 +103,15 @@ impl CompilerDriver {
     ) -> Result<(), CompilerDriverError> {
         let executor = self.state.tasks.clone();
         executor.run(self.compile_native(ast_id, path))
+    }
+
+    pub fn compile_bytecode_sync(
+        &mut self,
+        ast_id: &AstId,
+        path: &FullyQualifiedPath,
+    ) -> Result<(), CompilerDriverError> {
+        let executor = self.state.tasks.clone();
+        executor.run(self.compile_unit_compile_bytecode(ast_id, path))
     }
 
     pub fn execute_runtime(

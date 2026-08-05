@@ -312,7 +312,12 @@ pub fn compile_bytecode_file(
     lossy: LossyCompileOptions,
     options: &BytecodeCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, package, source_language, resolver, lossy)?;
+    let identity = CompilerIdentity::for_file(package, path);
+    let mut lowered = lower_file(path, package, source_language, resolver, lossy)?;
+    lowered
+        .driver
+        .compile_bytecode_sync(&identity.ast_id, &identity.path)
+        .map_err(|err| CliError::Compilation(err.to_string()))?;
     let bytecode = lowered.bytecode()?;
 
     if let Some(parent) = options.output.parent() {
