@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use fp_c::CFrontend;
 use fp_compiler::{
-    AstId, BytecodeId, CompilerDriver, CompilerExecutor, CompilerModuleResolver, ConstValueId,
-    FullyQualifiedPath, LirId, MirId,
+    AstId, BytecodeId, CompilerDriver, CompilerExecutor, CompilerModuleResolver, CompilerSession,
+    ConstValueId, FullyQualifiedPath, LirId, MirId,
 };
 use fp_core::{
     ast::register_threadlocal_serializer,
@@ -19,6 +19,7 @@ use fp_core::{
 };
 use fp_goasm::config::GoAsmTarget;
 use fp_lang::FerroFrontend;
+use fp_core::package::provider::PackageProvider;
 use fp_typing::{TypingDiagnostic, TypingDiagnosticLevel};
 
 #[cfg(feature = "lang-flatbuffers")]
@@ -118,6 +119,7 @@ pub fn eval_script(script: ScriptBlock) -> Result<Value> {
         &identity,
         Path::new("<eval>"),
         None,
+        std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new()),
         LossyCompileOptions::default(),
         &executor,
     )?;
@@ -805,6 +807,7 @@ fn execute_ast(
         &identity,
         source_path,
         resolver,
+        standard_workspace()?,
         lossy,
         &executor,
     )?;
@@ -841,6 +844,7 @@ fn lower_file(
         &identity,
         path,
         resolver,
+        standard_workspace()?,
         lossy,
         &executor,
     )?;
@@ -852,47 +856,46 @@ fn lower_file(
     })
 }
 
+fn standard_workspace() -> Result<std::rc::Rc<fp_core::workspace::WorkspaceContext>> {
+    let mut workspace = fp_core::workspace::WorkspaceContext::new();
+    let provider = Arc::new(fp_lang::provider::FerroPhaseProvider);
+    workspace.register_provider(provider.clone());
+    for package_id in ["std", "libc"].map(fp_core::package::PackageId::new) {
+        let source = provider
+            .load_package_source(&package_id)
+            .map_err(|err| CliError::Compilation(err.to_string()))?;
+        workspace.begin_package(package_id, source);
+    }
+    Ok(std::rc::Rc::new(workspace))
+}
+
 fn lower_ast(
     ast: File,
     identity: &CompilerIdentity,
     source_path: &Path,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
+    workspace: std::rc::Rc<fp_core::workspace::WorkspaceContext>,
     lossy: LossyCompileOptions,
     executor: &CompilerExecutor,
 ) -> Result<CompilerDriver> {
     let ast_id = identity.ast_id.clone();
     let path = identity.path.clone();
-    let mut driver = CompilerDriver::new(data_layout(), executor.handle());
-    driver.state.set_lossy(lossy.enabled);
-
-    // Register std's provider — its content loads on demand, the first
-    // time anything in the compiled program actually references it (see
-    // `CompilerDriver::load_package`), not eagerly here.
-    let mut workspace = fp_core::workspace::WorkspaceContext::new();
-    workspace.register_provider(Arc::new(fp_lang::provider::FerroPhaseProvider));
-    driver.state.typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(
-        data_layout(),
-        std::rc::Rc::new(workspace),
-    ));
-    driver
-        .preload_package("std")
-        .map_err(|err| CliError::Compilation(err.to_string()))?;
-    driver
-        .preload_package("libc")
-        .map_err(|err| CliError::Compilation(err.to_string()))?;
+    let mut session = CompilerSession::new(data_layout(), executor, workspace);
+    session.driver().state.set_lossy(lossy.enabled);
 
     if let Some(resolver) = resolver {
-        driver.state.set_module_resolver(resolver);
-        driver
+        session.driver().state.set_module_resolver(resolver);
+        session
+            .driver()
             .state
             .prepare_module_resolution(ast_id.clone(), source_path)
             .map_err(|err| CliError::Compilation(err.to_string()))?;
     }
-    driver.state.insert_ast(ast_id.clone(), ast);
+    session.driver().state.insert_ast(ast_id.clone(), ast);
     executor
-        .run(driver.compile_native(&ast_id, &path))
+        .run(session.driver().compile_native(&ast_id, &path))
         .map_err(|err| CliError::Compilation(err.to_string()))?;
-    Ok(driver)
+    Ok(session.into_driver())
 }
 
 fn drain_driver(driver: &mut CompilerDriver, lossy: LossyCompileOptions) -> Result<()> {
@@ -957,6 +960,7 @@ pub fn compile_file_to_lir_bundle(
         &identity,
         path,
         None,
+        standard_workspace()?,
         lossy,
         &executor,
     )?;
@@ -1021,6 +1025,7 @@ pub fn typecheck_ast_target(
         &identity,
         path,
         None,
+        standard_workspace()?,
         lossy,
         &executor,
     )?;

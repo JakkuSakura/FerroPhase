@@ -58,5 +58,14 @@ mod tests {
         let path = root_module_path();
         let source = read(&path).expect("embedded std root module should exist");
         assert!(source.contains("pub mod collections;"));
+        assert!(source.contains("pub mod prelude;"));
+    }
+
+    #[test]
+    fn embedded_std_exposes_prelude_module() {
+        let path = root_dir().join("prelude/mod.fp");
+        let source = read(&path).expect("embedded std prelude module should exist");
+        assert!(source.contains("pub use super::option::Option;"));
+        assert!(source.contains("pub use super::result::Result;"));
     }
 }

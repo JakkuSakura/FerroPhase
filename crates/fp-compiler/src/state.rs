@@ -41,7 +41,6 @@ pub struct CompilerState {
     /// task can reentrantly `spawn`/`contains`-check it from within its own
     /// poll).
     pub(crate) tasks: ExecutorHandle,
-    pub allowed_dependencies: Vec<String>,
 }
 
 impl CompilerState {
@@ -66,12 +65,7 @@ impl CompilerState {
             generic_instantiations: HashSet::new(),
             bytecode: BTreeMap::new(),
             tasks,
-            allowed_dependencies: vec!["std".to_string(), "libc".to_string()],
         }
-    }
-
-    pub fn set_allowed_dependencies(&mut self, dependencies: Vec<String>) {
-        self.allowed_dependencies = dependencies;
     }
 
     pub fn insert_ast(&mut self, ast_id: AstId, ast: File) {

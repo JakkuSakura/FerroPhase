@@ -8,26 +8,31 @@ use fp_core::hir;
 use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::module::path::QualifiedPath;
+use fp_core::package::PackageId;
 use fp_core::span::Span;
 use fp_interpret::LirInterpreter;
 use fp_lang::FerroIntrinsicNormalizer;
 use fp_typing::{ComptimeRequest, HirTypeChecker, TypeckResults, TypingContext};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
+use std::rc::Rc;
 
 use crate::{
     AstId, BytecodeId, CompilerDriverError, CompilerState, ConstValueId, ExecutorHandle,
-    FullyQualifiedPath, HirId,
-    LirId, MirId, RuntimeValueId,
+    FullyQualifiedPath, HirId, LirId, MirId, RuntimeValueId,
 };
 
 pub struct CompilerDriver {
     pub state: CompilerState,
     interpreter: LirInterpreter,
+    building_packages: HashSet<PackageId>,
+    compiled_packages: HashMap<PackageId, Rc<RefCell<fp_core::package::CompiledPackage>>>,
 }
 
 struct CompileUnitCoreResult {
+    hir_id: HirId,
     mir_id: MirId,
     lir_id: LirId,
 }
@@ -37,6 +42,7 @@ struct TypingUnit {
     package_id: hir::PackageId,
     source: File,
     lowering_config: HirLoweringConfig,
+    external_definitions: Vec<(QualifiedPath, hir::Program, HashMap<String, hir::Res>)>,
 }
 
 impl CompilerDriver {
@@ -46,15 +52,20 @@ impl CompilerDriver {
     fn typing_future(
         &self,
         unit: TypingUnit,
-    ) -> fp_typing::BoxFuture<'static, fp_core::error::Result<(hir::Program, TypeckResults)>> {
+    ) -> fp_typing::BoxFuture<
+        'static,
+        fp_core::error::Result<(hir::Program, TypeckResults, HashMap<String, hir::Res>)>,
+    > {
         let typing_context = self.state.typing_ctx.clone();
         Box::pin(async move {
-            let result = match HirGenerator::new()
+            let mut generator = HirGenerator::new()
                 .with_intrinsic_normalizer(FerroIntrinsicNormalizer::new(
                     fp_core::intrinsics::IntrinsicNormalizationMode::Compile,
                 ))
                 .with_package_id(unit.package_id)
                 .with_lowering_config(unit.lowering_config)
+                .with_external_definitions(unit.external_definitions);
+            let result = match generator
                 .transform_module_async(
                     &unit.module_path,
                     &unit.source.items,
@@ -63,10 +74,12 @@ impl CompilerDriver {
                 .await
             {
                 Ok(program) => {
+                    let exports = generator.exported_symbols();
                     HirTypeChecker::new(program)
                         .with_context(typing_context)
                         .check()
                         .await
+                        .map(|(program, results)| (program, results, exports))
                 }
                 Err(error) => Err(error),
             };
@@ -74,13 +87,26 @@ impl CompilerDriver {
         })
     }
 
-    pub fn new(
+    pub fn new(data_layout: fp_core::lir::LirDataLayout, tasks: ExecutorHandle) -> Self {
+        Self::with_workspace(
+            data_layout,
+            tasks,
+            Rc::new(fp_core::workspace::WorkspaceContext::new()),
+        )
+    }
+
+    pub fn with_workspace(
         data_layout: fp_core::lir::LirDataLayout,
         tasks: ExecutorHandle,
+        workspace: Rc<fp_core::workspace::WorkspaceContext>,
     ) -> Self {
+        let mut state = CompilerState::new(data_layout.clone(), tasks);
+        state.typing_ctx = Rc::new(TypingContext::new(data_layout, workspace));
         Self {
-            state: CompilerState::new(data_layout, tasks),
+            state,
             interpreter: LirInterpreter::new(),
+            building_packages: HashSet::new(),
+            compiled_packages: HashMap::new(),
         }
     }
 
@@ -88,6 +114,8 @@ impl CompilerDriver {
         Self {
             state,
             interpreter: LirInterpreter::new(),
+            building_packages: HashSet::new(),
+            compiled_packages: HashMap::new(),
         }
     }
 
@@ -138,6 +166,107 @@ impl CompilerDriver {
         let value_id = RuntimeValueId::new(format!("runtime_value:{}", lir_id.as_str()));
         self.state.insert_runtime_value(value_id, value.clone());
         Ok(value)
+    }
+
+    /// Compile a package after recursively compiling its declared
+    /// dependencies. Dependency resolution and version selection happen in
+    /// the provider; the driver only consumes the concrete package IDs it is
+    /// given by metadata.
+    pub async fn compile_package(
+        &mut self,
+        package_id: &PackageId,
+    ) -> Result<Rc<RefCell<fp_core::package::CompiledPackage>>, CompilerDriverError> {
+        let parent_context = self.state.typing_ctx.clone();
+        if let Some(package) = self.compiled_packages.get(package_id).cloned() {
+            parent_context
+                .env_ctx
+                .import_package(package_id.clone(), package.clone());
+            return Ok(package);
+        }
+        if let Some(package) = parent_context.env_ctx.compiled_package(package_id) {
+            return Ok(package);
+        }
+        if !self.building_packages.insert(package_id.clone()) {
+            return Err(CompilerDriverError::UnresolvablePackage(format!(
+                "dependency cycle involving {package_id}"
+            )));
+        }
+
+        let std_package = if matches!(package_id.as_str(), "std" | "libc") {
+            None
+        } else {
+            match Box::pin(self.compile_package(&PackageId::new("std"))).await {
+                Ok(package) => Some(package),
+                Err(error) => {
+                    self.building_packages.remove(package_id);
+                    return Err(error);
+                }
+            }
+        };
+
+        let package_workspace = parent_context.env_ctx.for_package(package_id.clone());
+        if let Some(std_package) = std_package {
+            package_workspace.import_package(PackageId::new("std"), std_package);
+            if let Some(std_package) = package_workspace.compiled_package(&PackageId::new("std")) {
+                package_workspace.install_prelude(std_package);
+            }
+        }
+        self.state.typing_ctx = Rc::new(TypingContext::new(
+            parent_context.data_layout.clone(),
+            Rc::new(package_workspace),
+        ));
+
+        let result: Result<Rc<RefCell<fp_core::package::CompiledPackage>>, CompilerDriverError> =
+            async {
+                let provider = self
+                    .state
+                    .typing_ctx
+                    .env_ctx
+                    .provider_for(package_id)
+                    .ok_or_else(|| {
+                        CompilerDriverError::UnresolvablePackage(package_id.to_string())
+                    })?;
+                let metadata = provider
+                    .load_package_metadata(package_id)
+                    .map_err(|error| {
+                        CompilerDriverError::UnresolvablePackage(format!("{package_id}: {error}"))
+                    })?;
+
+                for dependency in &metadata.metadata.dependencies {
+                    let dependency_id = PackageId::new(dependency.package.clone());
+                    let dependency_package = Box::pin(self.compile_package(&dependency_id)).await?;
+                    if dependency_id.as_str() == "std" {
+                        self.state
+                            .typing_ctx
+                            .env_ctx
+                            .install_prelude(dependency_package);
+                    }
+                }
+
+                let source = provider.load_package_source(package_id).map_err(|error| {
+                    CompilerDriverError::UnresolvablePackage(format!("{package_id}: {error}"))
+                })?;
+                let package = self
+                    .state
+                    .typing_ctx
+                    .env_ctx
+                    .begin_package(package_id.clone(), source);
+                let items = package.borrow().items.clone();
+                let units = self.compile_items_to_lir_units(&items, true).await?;
+                package.borrow_mut().lir_units = units;
+                Ok(package)
+            }
+            .await;
+
+        self.building_packages.remove(package_id);
+        self.state.typing_ctx = parent_context.clone();
+        let package = result?;
+        self.compiled_packages
+            .insert(package_id.clone(), package.clone());
+        parent_context
+            .env_ctx
+            .import_package(package_id.clone(), package.clone());
+        Ok(package)
     }
 
     /// The real single-source-file entry point: fetches the stored `File`
@@ -192,13 +321,17 @@ impl CompilerDriver {
                 module_path,
                 package_id,
                 source,
-                lowering_config: HirLoweringConfig {
-                    allowed_dependencies: self.state.allowed_dependencies.clone(),
-                },
+                lowering_config: HirLoweringConfig,
+                external_definitions: self.state.typing_ctx.env_ctx.hir_definitions(),
             }),
         );
         self.run_pool_to_idle().await?;
-        let (hir_program, typeck_results) = typing_handle.await?;
+        let (hir_program, typeck_results, hir_exports) = typing_handle.await?;
+        if let Some(package_id) = self.state.typing_ctx.env_ctx.current_package().cloned() {
+            if let Some(package) = self.state.typing_ctx.env_ctx.compiled_package(&package_id) {
+                package.borrow_mut().hir_exports.extend(hir_exports);
+            }
+        }
         let entrypoint = hir_program.items.iter().find_map(|item| match &item.kind {
             hir::ItemKind::Function(function) if function.sig.name.as_str() == "main" => {
                 Some(item.def_id)
@@ -220,6 +353,7 @@ impl CompilerDriver {
         }
 
         Ok(CompileUnitCoreResult {
+            hir_id,
             mir_id,
             lir_id,
         })
@@ -235,9 +369,9 @@ impl CompilerDriver {
     /// module-typing task (`compile_module_core`), and
     /// generic-monomorphization-ready signals (`infer_generic_function_call_body`).
     ///
-    /// A task suspends and resumes exactly where it needs an unloaded
-    /// package or compiler-owned comptime value — rather than the caller
-    /// retyping already-resolved items from scratch.
+    /// A task suspends and resumes exactly where it needs a compiler-owned
+    /// comptime value. Package dependencies are loaded before the module
+    /// task is scheduled.
     ///
     /// Safe to run all the way to full idle (not just until one specific
     /// task resolves): nothing in this pool ever suspends waiting on a task
@@ -248,15 +382,9 @@ impl CompilerDriver {
     ///
     /// Every key that resolves (not just the caller's own, if it has one in
     /// mind) is handed to `handle_resolved_task`, which is a no-op unless
-    /// that key is a pending generic-specialization signal. When `tick()`
-    /// reports nothing ready, whatever package name(s) are blocking the
-    /// still-parked tasks (`TypingContext::package_wakers`) are loaded —
-    /// the typer only *requests* a package and suspends; it never loads one
-    /// itself. If no package is outstanding either, nothing will ever wake
-    /// what's parked — a genuine deadlock (e.g. a same-pass comptime cycle,
-    /// already reported with a specific error by `force`'s own cycle
-    /// handling if it's *that* kind of cycle, or some other stuck state),
-    /// reported immediately rather than retried on a heuristic bound.
+    /// that key is a pending generic-specialization signal. Package loading
+    /// is deliberately absent from this loop: a parked task indicates a
+    /// compiler task deadlock or an invalid package build order.
     async fn run_pool_to_idle(&mut self) -> Result<(), CompilerDriverError> {
         loop {
             let requests = self.state.typing_ctx.take_comptime_requests();
@@ -277,22 +405,9 @@ impl CompilerDriver {
             if self.state.tasks.is_idle() {
                 return Ok(());
             }
-            let names: Vec<String> = self
-                .state
-                .typing_ctx
-                .package_wakers
-                .borrow()
-                .keys()
-                .cloned()
-                .collect();
-            if names.is_empty() {
-                return Err(CompilerDriverError::UnresolvableComptime(
-                    "no ready task and no package left to load".to_string(),
-                ));
-            }
-            for name in &names {
-                self.load_package(name)?;
-            }
+            return Err(CompilerDriverError::UnresolvableComptime(
+                "no ready task and no comptime request".to_string(),
+            ));
         }
     }
 
@@ -391,67 +506,6 @@ impl CompilerDriver {
         })
     }
 
-    /// Load a registered package on demand (generalizes what used to be a
-    /// hardcoded, eager `build_workspace_with_std` step run once in `fp-cli`
-    /// before the driver even started). Uniform for `std` or any other
-    /// package a `PackageProvider` is registered for: discovery/parsing is
-    /// the provider's job (`load_package_items`); typing it runs through the
-    /// same HIR module pipeline as any other module, just pointed at the
-    /// crate slot `env_ctx.begin_crate` just reserved in the shared registry.
-    ///
-    /// `inject_module` is driven with the compiler's executor (a single
-    /// poll, panicking on real `Poll::Pending`) rather than through
-    /// `run_pool_to_idle` — a package whose own items reference *another*
-    /// not-yet-loaded package would need that, but no registered provider in
-    /// this codebase has that shape today. If one ever does, this is the
-    /// spot to switch to the same pool-driving loop `compile_module_core`
-    /// uses. The inferencer still gets `.with_tasks(self.state.tasks.clone())`
-    /// (not just `.with_own_crate`): if any of `raw.items` spawns a
-    /// const/type-alias resolution task of its own (`predeclare_item`), it
-    /// needs to land in the same shared pool `run_pool_to_idle` actually
-    /// drives, not a throwaway one nothing will ever tick.
-    fn load_package(&mut self, name: &str) -> Result<(), CompilerDriverError> {
-        let Some(package_id) = self.state.typing_ctx.env_ctx.resolve_package(name) else {
-            return Err(CompilerDriverError::UnresolvablePackage(name.to_string()));
-        };
-        if self.state.typing_ctx.env_ctx.is_loaded(package_id.as_str()) {
-            // Already satisfied by an earlier `LoadPackage` request for the
-            // same name — no-op because the package is already loaded.
-            return Ok(());
-        }
-        let Some(provider) = self.state.typing_ctx.env_ctx.provider(name) else {
-            return Err(CompilerDriverError::UnresolvablePackage(name.to_string()));
-        };
-        let raw = provider
-            .load_package_items(&package_id)
-            .map_err(|e| CompilerDriverError::UnresolvablePackage(format!("{name}: {e}")))?;
-
-        let own_crate = self
-            .state
-            .typing_ctx
-            .env_ctx
-            .begin_crate(package_id.as_str(), raw.graph.clone());
-        // Parsed items are the package's source-level module index. HIR
-        // lowering and HIR type checking consume them when a module is
-        // compiled; package loading itself does not run an AST type pass.
-        own_crate.borrow_mut().items = raw.items;
-
-        // Wake every task (the module-typing task that requested `name`, or
-        // any nested one) parked on this package -- see `wake_package`'s doc
-        // comment for why this must be a real `.wake()`, not just clearing
-        // the map entry, now that suspensions register real pool wakers.
-        self.state.typing_ctx.wake_package(name);
-        if package_id.as_str() != name {
-            self.state.typing_ctx.wake_package(package_id.as_str());
-        }
-
-        Ok(())
-    }
-
-    pub fn preload_package(&mut self, name: &str) -> Result<(), CompilerDriverError> {
-        self.load_package(name)
-    }
-
     /// Evaluate a comptime request using the HIR unit supplied by typing.
     /// The driver never looks up an AST expression or reconstructs source
     /// from a string key here: the request is the complete evaluation input.
@@ -472,9 +526,7 @@ impl CompilerDriver {
 
         fn in_expr(expr: &hir::Expr, target: hir::DefId) -> Option<&hir::Item> {
             match &expr.kind {
-                hir::ExprKind::Block(block) | hir::ExprKind::Loop(block) => {
-                    in_block(block, target)
-                }
+                hir::ExprKind::Block(block) | hir::ExprKind::Loop(block) => in_block(block, target),
                 hir::ExprKind::While(condition, block) => {
                     in_expr(condition, target).or_else(|| in_block(block, target))
                 }
@@ -492,17 +544,21 @@ impl CompilerDriver {
                 | hir::ExprKind::Break(Some(value))
                 | hir::ExprKind::Cast(value, _) => in_expr(value, target),
                 hir::ExprKind::Call(callee, args) | hir::ExprKind::MethodCall(callee, _, args) => {
-                    in_expr(callee, target).or_else(|| {
-                        args.iter().find_map(|arg| in_expr(&arg.value, target))
-                    })
+                    in_expr(callee, target)
+                        .or_else(|| args.iter().find_map(|arg| in_expr(&arg.value, target)))
                 }
                 hir::ExprKind::FieldAccess(value, _) => in_expr(value, target),
                 hir::ExprKind::Slice(slice) => in_expr(&slice.base, target)
-                    .or_else(|| slice.start.as_deref().and_then(|expr| in_expr(expr, target)))
+                    .or_else(|| {
+                        slice
+                            .start
+                            .as_deref()
+                            .and_then(|expr| in_expr(expr, target))
+                    })
                     .or_else(|| slice.end.as_deref().and_then(|expr| in_expr(expr, target))),
-                hir::ExprKind::Struct(_, fields) => fields
-                    .iter()
-                    .find_map(|field| in_expr(&field.expr, target)),
+                hir::ExprKind::Struct(_, fields) => {
+                    fields.iter().find_map(|field| in_expr(&field.expr, target))
+                }
                 hir::ExprKind::Match(scrutinee, arms) => in_expr(scrutinee, target).or_else(|| {
                     arms.iter().find_map(|arm| {
                         arm.guard
@@ -513,10 +569,18 @@ impl CompilerDriver {
                 }),
                 hir::ExprKind::Try(value) => in_expr(&value.expr, target)
                     .or_else(|| {
-                        value.catches.iter().find_map(|catch| in_expr(&catch.body, target))
+                        value
+                            .catches
+                            .iter()
+                            .find_map(|catch| in_expr(&catch.body, target))
                     })
                     .or_else(|| value.elze.as_deref().and_then(|expr| in_expr(expr, target)))
-                    .or_else(|| value.finally.as_deref().and_then(|expr| in_expr(expr, target))),
+                    .or_else(|| {
+                        value
+                            .finally
+                            .as_deref()
+                            .and_then(|expr| in_expr(expr, target))
+                    }),
                 hir::ExprKind::With(context, body) => {
                     in_expr(context, target).or_else(|| in_expr(body, target))
                 }
@@ -530,9 +594,9 @@ impl CompilerDriver {
                     .callargs
                     .iter()
                     .find_map(|arg| in_expr(&arg.value, target)),
-                hir::ExprKind::Let(_, _, value) => value
-                    .as_deref()
-                    .and_then(|value| in_expr(value, target)),
+                hir::ExprKind::Let(_, _, value) => {
+                    value.as_deref().and_then(|value| in_expr(value, target))
+                }
                 hir::ExprKind::Literal(_)
                 | hir::ExprKind::Path(_)
                 | hir::ExprKind::Query(_)
@@ -569,29 +633,31 @@ impl CompilerDriver {
             }
         }
 
-        program
-            .items
-            .iter()
-            .find_map(|item| (item.def_id == target).then_some(item).or_else(|| in_item(item, target)))
+        program.items.iter().find_map(|item| {
+            (item.def_id == target)
+                .then_some(item)
+                .or_else(|| in_item(item, target))
+        })
     }
 
     async fn answer_hir_comptime(
         &mut self,
         request: &ComptimeRequest,
     ) -> Result<Value, CompilerDriverError> {
-        let target_item = Self::find_hir_item(&request.program, request.target).ok_or_else(|| {
-            CompilerDriverError::UnresolvableComptime(format!(
-                "HIR comptime target {} is not a const",
-                request.target
-            ))
-        })?;
+        let target_item =
+            Self::find_hir_item(&request.program, request.target).ok_or_else(|| {
+                CompilerDriverError::UnresolvableComptime(format!(
+                    "HIR comptime target {} is not a const",
+                    request.target
+                ))
+            })?;
         let target_const = match &target_item.kind {
             hir::ItemKind::Const(constant) => constant,
             _ => {
                 return Err(CompilerDriverError::UnresolvableComptime(format!(
                     "HIR comptime target {} is not a const",
                     request.target
-                )))
+                )));
             }
         };
 
@@ -1297,9 +1363,13 @@ impl CompilerDriver {
     async fn compile_items_to_lir_units(
         &mut self,
         items_map: &HashMap<QualifiedPath, Vec<Item>>,
+        strict: bool,
     ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
         let mut units = Vec::new();
-        for (path, items) in items_map {
+        let mut paths: Vec<_> = items_map.keys().cloned().collect();
+        paths.sort_by_key(|path| path.to_key());
+        for path in paths {
+            let items = &items_map[&path];
             if items.is_empty() {
                 continue;
             }
@@ -1323,22 +1393,29 @@ impl CompilerDriver {
                 .compile_module_core(path.clone(), items.clone(), &ast_id, &fqp)
                 .await
             {
-                Ok(c) => c,
-                Err(e) => {
+                Ok(core) => core,
+                Err(error) if !strict => {
                     eprintln!(
-                        "WARNING: compile_module_core failed for {}: {e}",
+                        "WARNING: compile_module_core failed for {}: {error}",
                         path.to_key()
                     );
                     continue;
                 }
+                Err(error) => return Err(error),
             };
+            if let Some(package_id) = self.state.typing_ctx.env_ctx.current_package().cloned() {
+                if let Some(package) = self.state.typing_ctx.env_ctx.compiled_package(&package_id) {
+                    let hir = self.state.hir(&core.hir_id)?.clone();
+                    package.borrow_mut().hir_modules.insert(path.clone(), hir);
+                }
+            }
             let lir = self.state.lir(&core.lir_id)?.clone();
             units.push(fp_core::lir::LirCompileUnit {
                 package_id: self
                     .state
                     .typing_ctx
                     .env_ctx
-                    .package_id_for_module(path)
+                    .package_id_for_module(&path)
                     .unwrap_or_default(),
                 module_path: path.clone(),
                 program: lir,
@@ -1378,24 +1455,6 @@ impl CompilerDriver {
             }
         }
 
-        // On-demand: compile workspace crate items that have no LIR
-        let crates_to_compile: Vec<_> = self
-            .state
-            .typing_ctx
-            .env_ctx
-            .crates()
-            .values()
-            .map(|c| c.borrow())
-            .filter(|c| c.lir_units.is_empty() && !c.items.is_empty())
-            .map(|c| c.items.clone())
-            .collect();
-        for items_map in &crates_to_compile {
-            match self.compile_items_to_lir_units(items_map).await {
-                Ok(compiled_units) => all_units.extend(compiled_units),
-                Err(e) => return Err(e),
-            }
-        }
-
         let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
 
         if comptime_entries.is_empty() {
@@ -1409,13 +1468,44 @@ impl CompilerDriver {
         self.interpreter = LirInterpreter::new();
         let resolved = self.collect_resolved_const_values();
         self.interpreter.inject_globals(&resolved);
+        let mut workspace_lir_loaded = false;
         for entry in &comptime_entries {
-            let mut value = match self.interpreter.run_function_named(
+            let mut result = self.interpreter.run_function_named(
                 &all_units,
                 package_id,
                 entry.function.as_str(),
-            ) {
-                Ok(v) => v,
+            );
+            if result.is_err() && !workspace_lir_loaded {
+                // Most comptime entries are self-contained. Materialize
+                // provider packages only when execution reaches an external
+                // function, avoiding an eager pass over every std module.
+                let crates_to_compile: Vec<_> = self
+                    .state
+                    .typing_ctx
+                    .env_ctx
+                    .crates()
+                    .values()
+                    .map(|crate_state| crate_state.borrow())
+                    .filter(|crate_state| {
+                        crate_state.lir_units.is_empty() && !crate_state.items.is_empty()
+                    })
+                    .map(|crate_state| crate_state.items.clone())
+                    .collect();
+                for items_map in &crates_to_compile {
+                    match self.compile_items_to_lir_units(items_map, false).await {
+                        Ok(compiled_units) => all_units.extend(compiled_units),
+                        Err(error) => return Err(error),
+                    }
+                }
+                workspace_lir_loaded = true;
+                result = self.interpreter.run_function_named(
+                    &all_units,
+                    package_id,
+                    entry.function.as_str(),
+                );
+            }
+            let mut value = match result {
+                Ok(value) => value,
                 Err(_) => continue,
             };
             // If the returned value is a raw handle (u64 from comptime
@@ -1814,7 +1904,8 @@ fn main() {
             .expect("parse .fp source");
         let ast_node = result.ast;
 
-        let mut driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
+        let executor = CompilerExecutor::new();
+        let mut driver = CompilerDriver::new(test_data_layout(), executor.handle());
         let ast_id = AstId::new("ast:test::main");
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
@@ -1936,11 +2027,21 @@ fn main() {
             .compile_native_sync(&ast_id, &path)
             .expect("driver should not error");
 
-        assert!(driver.state.hir(&HirId::new("hir:test::generic_call")).is_ok());
-        assert!(driver.state.mir(&MirId::new("mir:test::generic_call")).is_ok());
+        assert!(
+            driver
+                .state
+                .hir(&HirId::new("hir:test::generic_call"))
+                .is_ok()
+        );
+        assert!(
+            driver
+                .state
+                .mir(&MirId::new("mir:test::generic_call"))
+                .is_ok()
+        );
     }
 
-    /// Regression test for `PackageCrate::method_sigs`: inherent methods
+    /// Regression test for `CompiledPackage::method_sigs`: inherent methods
     /// (`impl SelfType { .. }`) now resolve through one shared, name-keyed
     /// registry regardless of whether `SelfType` is a struct or an enum --
     /// previously `TypeEnum` had no method storage at all (`TypeStruct` did),
@@ -2156,9 +2257,13 @@ fn main() {
         use fp_core::ast::{Ident, ItemImpl};
 
         let driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
-        let krate = driver.state.typing_ctx.env_ctx.begin_crate(
-            "somepkg",
-            fp_core::package::graph::PackageGraph::new(vec![]),
+        let krate = driver.state.typing_ctx.env_ctx.begin_package(
+            fp_core::package::PackageId::new("somepkg"),
+            fp_core::package::PackageSource::new(
+                fp_core::package::PackageId::new("somepkg"),
+                "somepkg",
+                fp_core::package::graph::PackageGraph::new(vec![]),
+            ),
         );
         let impl_item = Item::new(ItemKind::Impl(ItemImpl {
             attrs: Vec::new(),
@@ -2204,28 +2309,36 @@ fn main() {
                 Ok(vec![fp_core::package::PackageId::new("std")])
             }
 
-            fn load_package(
+            fn load_package_metadata(
                 &self,
-                _id: &fp_core::package::PackageId,
+                id: &fp_core::package::PackageId,
             ) -> fp_core::package::provider::ProviderResult<Arc<fp_core::package::PackageDescriptor>>
             {
-                Err(fp_core::package::provider::ProviderError::other(
-                    "unused in test",
-                ))
+                Ok(Arc::new(fp_core::package::PackageDescriptor {
+                    id: id.clone(),
+                    name: id.0.clone(),
+                    version: None,
+                    manifest_path: fp_core::vfs::VirtualPath::from_path(std::path::Path::new(
+                        "std/fp.toml",
+                    )),
+                    root: fp_core::vfs::VirtualPath::from_path(std::path::Path::new("std")),
+                    metadata: Default::default(),
+                    modules: Vec::new(),
+                }))
             }
 
             fn refresh(&self) -> fp_core::package::provider::ProviderResult<()> {
                 Ok(())
             }
 
-            fn load_package_items(
+            fn load_package_source(
                 &self,
                 id: &fp_core::package::PackageId,
-            ) -> fp_core::package::provider::ProviderResult<fp_core::package::PackageCrate>
+            ) -> fp_core::package::provider::ProviderResult<fp_core::package::PackageSource>
             {
                 self.calls.fetch_add(1, Ordering::SeqCst);
-                Ok(fp_core::package::PackageCrate::new(
-                    fp_core::hir::PackageId(0),
+                Ok(fp_core::package::PackageSource::new(
+                    id.clone(),
                     id.0.clone(),
                     fp_core::package::graph::PackageGraph::new(vec![]),
                 ))
@@ -2237,22 +2350,23 @@ fn main() {
         workspace.register_provider(Arc::new(CountingStdProvider {
             calls: calls.clone(),
         }));
-        let mut driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
+        let executor = CompilerExecutor::new();
+        let mut driver = CompilerDriver::new(test_data_layout(), executor.handle());
         driver.state.typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(
             test_data_layout(),
             std::rc::Rc::new(workspace),
         ));
 
-        // Simulate two compile units independently requesting `std`: the
-        // second load must see `is_loaded` and avoid invoking the provider
-        // again (see `CompilerDriver::load_package`'s dedup guard).
-        let first = driver.load_package("std").expect("first load");
-        let second = driver
-            .load_package("std")
+        let std = fp_core::package::PackageId::new("std");
+        let first = executor
+            .run(driver.compile_package(&std))
+            .expect("first load");
+        let second = executor
+            .run(driver.compile_package(&std))
             .expect("second load (already loaded)");
 
-        assert_eq!(first, ());
-        assert_eq!(second, ());
+        assert_eq!(first.borrow().name, "std");
+        assert!(std::rc::Rc::ptr_eq(&first, &second));
         assert_eq!(
             calls.load(Ordering::SeqCst),
             1,

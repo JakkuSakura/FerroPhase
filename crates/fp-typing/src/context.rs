@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
-use std::task::Poll;
 use std::task::Waker;
+use std::task::Poll;
 
 use fp_core::ast::{ExprResolutionTable, TypeStruct, Value};
 use fp_core::lir::LirDataLayout;
@@ -73,11 +73,6 @@ pub struct TypingContext {
     /// Typer appends during inference; driver reads after each pass.
     pub diagnostics: RefCell<Vec<TypingDiagnostic>>,
 
-    /// Wakers of typing tasks currently suspended on a package (keyed by
-    /// package name) not yet loaded by the compiler's HIR pipeline.
-    /// Drained by the driver once it finishes loading that package.
-    pub package_wakers: RefCell<HashMap<String, Vec<Waker>>>,
-
     /// Wakers of typing tasks currently suspended on a comptime value (keyed
     /// by const/type-alias name) not yet resolved — see
     /// comptime resolution. Precisely
@@ -112,51 +107,26 @@ impl TypingContext {
             env_ctx,
             expr_resolutions: RefCell::new(ExprResolutionTable::default()),
             diagnostics: RefCell::new(Vec::new()),
-            package_wakers: RefCell::new(HashMap::new()),
             comptime_wakers: RefCell::new(HashMap::new()),
             ready_generics: RefCell::new(HashMap::new()),
             comptime_requests: RefCell::new(VecDeque::new()),
         }
     }
 
-    /// Wake every task parked on `name`'s package load — call this right
-    /// after `name` finishes loading (`CompilerDriver::load_package`).
-    /// Mirrors `wake_comptime` exactly. Without this, any task whose
-    /// suspension registered a *real*
-    /// pool waker under this name — not just the top-level module task, any
-    /// nested one too — would never be re-enqueued onto the pool's ready
-    /// queue and would park forever.
-    pub fn wake_package(&self, name: &str) {
-        let wakers = self.package_wakers.borrow_mut().remove(name);
-        if let Some(wakers) = wakers {
-            for waker in wakers {
-                waker.wake();
-            }
-        }
-    }
-
-    /// Await a provider-owned package key. Package discovery and loading stay
-    /// outside typing; the compiler driver observes the registered waker and
-    /// services the corresponding `LoadPackage` request.
+    /// Validate that a provider-owned package is already available to this
+    /// compilation session. Package loading is performed by the driver before
+    /// dependent modules are typed.
     pub async fn await_package(&self, key: &str) -> fp_core::Result<fp_core::package::PackageId> {
-        let key = key.to_owned();
-        std::future::poll_fn(|cx| {
-            let Some(package_id) = self.env_ctx.resolve_package(&key) else {
-                return Poll::Ready(Err(fp_core::Error::from(format!(
-                    "unresolved package `{key}`"
-                ))));
-            };
-            if self.env_ctx.is_loaded(package_id.as_str()) {
-                return Poll::Ready(Ok(package_id));
-            }
-            self.package_wakers
-                .borrow_mut()
-                .entry(key.clone())
-                .or_default()
-                .push(cx.waker().clone());
-            Poll::Pending
-        })
-        .await
+        let Some(package_id) = self.env_ctx.resolve_package(key) else {
+            return Err(fp_core::Error::from(format!("unresolved package `{key}`")));
+        };
+        if self.env_ctx.is_loaded(&package_id) {
+            Ok(package_id)
+        } else {
+            Err(fp_core::Error::from(format!(
+                "package `{package_id}` was not compiled before use"
+            )))
+        }
     }
 
     /// Wake every task parked on `name`'s comptime value — call this right

@@ -155,7 +155,7 @@ impl PackageProvider for TypeScriptPackageProvider {
         Ok(guard.keys().cloned().collect())
     }
 
-    fn load_package(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
+    fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let guard = match self.packages.read() {
             Ok(g) => g,
             Err(poison) => poison.into_inner(),

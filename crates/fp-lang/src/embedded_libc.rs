@@ -28,14 +28,36 @@ pub fn read(path: &Path) -> Option<&'static str> {
 }
 
 pub fn module_paths() -> &'static [&'static str] {
-    &[
-        "mod.fp",
-        "linux.fp",
-        "macos.fp",
-        "ios.fp",
-        "freebsd.fp",
-        "windows.fp",
-    ]
+    #[cfg(target_os = "linux")]
+    {
+        &["mod.fp", "linux.fp"]
+    }
+    #[cfg(target_os = "macos")]
+    {
+        &["mod.fp", "macos.fp"]
+    }
+    #[cfg(target_os = "ios")]
+    {
+        &["mod.fp", "ios.fp"]
+    }
+    #[cfg(target_os = "freebsd")]
+    {
+        &["mod.fp", "freebsd.fp"]
+    }
+    #[cfg(target_os = "windows")]
+    {
+        &["mod.fp", "windows.fp"]
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "windows"
+    )))]
+    {
+        &["mod.fp"]
+    }
 }
 
 fn normalize_relative_path(path: &Path) -> Option<String> {

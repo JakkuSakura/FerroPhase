@@ -16,6 +16,7 @@ pub mod option;
 pub mod path;
 pub mod process;
 pub mod proc_macro;
+pub mod prelude;
 pub mod result;
 pub mod string;
 pub mod task;

@@ -3,12 +3,14 @@ use std::sync::Arc;
 
 use fp_core::ast::Item;
 use fp_core::frontend::LanguageFrontend;
-use fp_core::hir::PackageId as HirPackageId;
 use fp_core::module::path::QualifiedPath;
 use fp_core::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
 use fp_core::package::graph::PackageGraph;
 use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
-use fp_core::package::{PackageCrate, PackageDescriptor, PackageId};
+use fp_core::package::{
+    DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageMetadata,
+    PackageSource,
+};
 use fp_core::vfs::VirtualPath;
 
 use crate::FerroFrontend;
@@ -28,7 +30,7 @@ fn load_embedded_package(
     root: std::path::PathBuf,
     module_paths: &'static [&'static str],
     read: fn(&std::path::Path) -> Option<&'static str>,
-) -> ProviderResult<PackageCrate> {
+) -> ProviderResult<PackageSource> {
     let frontend = FerroFrontend::new();
     let package_id = PackageId::new(package_name);
     let mut descriptors = Vec::new();
@@ -75,7 +77,7 @@ fn load_embedded_package(
     for descriptor in descriptors {
         graph.insert_module(descriptor);
     }
-    let mut krate = PackageCrate::new(HirPackageId(0), package_name, graph);
+    let mut krate = PackageSource::new(PackageId::new(package_name), package_name, graph);
     krate.items = items_by_path;
     Ok(krate)
 }
@@ -85,19 +87,30 @@ impl PackageProvider for FerroPhaseProvider {
         Ok(vec![PackageId::new(STD_PACKAGE_NAME), PackageId::new(LIBC_PACKAGE_NAME)])
     }
 
-    fn load_package(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
+    fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let root = match id.as_str() {
             STD_PACKAGE_NAME => embedded_std::root_dir(),
             LIBC_PACKAGE_NAME => embedded_libc::root_dir(),
             _ => return Err(ProviderError::PackageNotFound(id.clone())),
         };
+        let mut metadata = PackageMetadata::default();
+        if id.as_str() == STD_PACKAGE_NAME {
+            metadata.dependencies.push(DependencyDescriptor {
+                package: LIBC_PACKAGE_NAME.to_string(),
+                constraint: None,
+                kind: DependencyKind::Normal,
+                features: Vec::new(),
+                optional: false,
+                target: Default::default(),
+            });
+        }
         Ok(Arc::new(PackageDescriptor {
             id: id.clone(),
             name: id.as_str().to_string(),
             version: None,
             manifest_path: VirtualPath::from_path(&root.join("fp.toml")),
             root: VirtualPath::from_path(&root),
-            metadata: Default::default(),
+            metadata,
             modules: Vec::new(),
         }))
     }
@@ -106,7 +119,7 @@ impl PackageProvider for FerroPhaseProvider {
         Ok(())
     }
 
-    fn load_package_items(&self, id: &PackageId) -> ProviderResult<PackageCrate> {
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
         match id.as_str() {
             STD_PACKAGE_NAME => load_embedded_package(
                 STD_PACKAGE_NAME,

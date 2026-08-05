@@ -372,7 +372,7 @@ impl PackageGraph {
             .map_err(|err| eyre::eyre!("Failed to list TypeScript packages: {err}"))?
         {
             let descriptor = provider
-                .load_package(&package_id)
+                .load_package_metadata(&package_id)
                 .map_err(|err| eyre::eyre!("Failed to load package {package_id}: {err}"))?;
             let _module_ids = provider
                 .modules_for_package(&package_id)

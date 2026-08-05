@@ -28,9 +28,7 @@ use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
 const DIAGNOSTIC_CONTEXT: &str = "ast_to_hir";
 
 #[derive(Clone, Debug, Default)]
-pub struct HirLoweringConfig {
-    pub allowed_dependencies: Vec<String>,
-}
+pub struct HirLoweringConfig;
 
 fn query_origin(document: &QueryDocument) -> QueryOrigin {
     document.origin.clone()
@@ -71,6 +69,11 @@ pub struct HirGenerator {
     respect_cfg: bool,
     lowering_config: HirLoweringConfig,
     intrinsic_normalizer: Option<Box<dyn IntrinsicNormalizer>>,
+    external_definitions: Vec<(
+        fp_core::module::path::QualifiedPath,
+        hir::Program,
+        HashMap<String, hir::Res>,
+    )>,
 }
 
 enum MaterializedTypeAlias {
@@ -319,6 +322,7 @@ impl HirGenerator {
             respect_cfg: true,
             lowering_config: HirLoweringConfig::default(),
             intrinsic_normalizer: None,
+            external_definitions: Vec::new(),
         }
     }
 
@@ -330,6 +334,26 @@ impl HirGenerator {
     pub fn with_lowering_config(mut self, config: HirLoweringConfig) -> Self {
         self.lowering_config = config;
         self
+    }
+
+    pub fn with_external_definitions(
+        mut self,
+        definitions: Vec<(
+            fp_core::module::path::QualifiedPath,
+            hir::Program,
+            HashMap<String, hir::Res>,
+        )>,
+    ) -> Self {
+        self.external_definitions = definitions;
+        self
+    }
+
+    pub fn exported_symbols(&self) -> HashMap<String, hir::Res> {
+        self.global_value_defs
+            .iter()
+            .chain(self.global_type_defs.iter())
+            .map(|(path, entry)| (path.clone(), entry.res.clone()))
+            .collect()
     }
 
     pub fn with_intrinsic_normalizer<N>(mut self, normalizer: N) -> Self
@@ -529,51 +553,141 @@ impl HirGenerator {
     }
 
     fn insert_default_prelude_aliases(&mut self) {
-        self.insert_prelude_type_alias("Result", &["std", "result", "Result"]);
-        self.insert_prelude_type_alias("Option", &["std", "option", "Option"]);
-        self.insert_prelude_value_alias("Ok", &["std", "result", "Result", "Ok"]);
-        self.insert_prelude_value_alias("Err", &["std", "result", "Result", "Err"]);
-        self.insert_prelude_value_alias("Some", &["std", "option", "Option", "Some"]);
-        self.insert_prelude_value_alias("None", &["std", "option", "Option", "None"]);
+        let prelude_prefix = "std::prelude::";
+        let type_aliases: Vec<_> = self
+            .global_type_defs
+            .iter()
+            .filter_map(|(key, entry)| {
+                key.strip_prefix(prelude_prefix)
+                    .filter(|name| !name.contains("::"))
+                    .map(|name| (name.to_owned(), entry.res.clone()))
+            })
+            .collect();
+        let value_aliases: Vec<_> = self
+            .global_value_defs
+            .iter()
+            .filter_map(|(key, entry)| {
+                key.strip_prefix(prelude_prefix)
+                    .filter(|name| !name.contains("::"))
+                    .map(|name| (name.to_owned(), entry.res.clone()))
+            })
+            .collect();
+        for (alias, res) in type_aliases {
+            self.type_scopes[0].entry(alias).or_insert(res);
+        }
+        for (alias, res) in value_aliases {
+            self.value_scopes[0].entry(alias).or_insert(res);
+        }
     }
 
-    fn insert_prelude_type_alias(&mut self, alias: &str, segments: &[&str]) {
-        if self
-            .type_scopes
-            .first()
-            .map(|scope| scope.contains_key(alias))
-            .unwrap_or(false)
-        {
-            return;
-        }
-        let path = fp_core::module::path::QualifiedPath::new(
-            segments.iter().map(|seg| (*seg).to_string()).collect(),
-        );
-        let key = path.to_key();
-        if let Some(res) = self.lookup_symbol(&key, &self.global_type_defs) {
-            if let Some(scope) = self.type_scopes.first_mut() {
-                scope.insert(alias.to_string(), res);
+    fn seed_external_definitions(&mut self, program: &mut hir::Program) {
+        let external_definitions = self.external_definitions.clone();
+        for (module_path, external, exports) in external_definitions {
+            program.def_map.extend(external.def_map);
+            for (path, res) in exports {
+                let entry = SymbolEntry {
+                    res,
+                    export: SymbolExport::Public,
+                };
+                self.global_value_defs.insert(path.clone(), entry.clone());
+                self.global_type_defs.insert(path, entry);
+            }
+            for item in &external.items {
+                self.seed_external_item(&module_path, item);
             }
         }
     }
 
-    fn insert_prelude_value_alias(&mut self, alias: &str, segments: &[&str]) {
-        if self
-            .value_scopes
-            .first()
-            .map(|scope| scope.contains_key(alias))
-            .unwrap_or(false)
-        {
-            return;
-        }
-        let path = fp_core::module::path::QualifiedPath::new(
-            segments.iter().map(|seg| (*seg).to_string()).collect(),
-        );
-        let key = path.to_key();
-        if let Some(res) = self.lookup_symbol(&key, &self.global_value_defs) {
-            if let Some(scope) = self.value_scopes.first_mut() {
-                scope.insert(alias.to_string(), res);
+    fn seed_external_item(
+        &mut self,
+        module_path: &fp_core::module::path::QualifiedPath,
+        item: &hir::Item,
+    ) {
+        let insert_value = |this: &mut Self, path: String, def_id: hir::DefId| {
+            this.global_value_defs.insert(
+                path,
+                SymbolEntry {
+                    res: hir::Res::Def(def_id),
+                    export: SymbolExport::Public,
+                },
+            );
+        };
+        let insert_type = |this: &mut Self, path: String, def_id: hir::DefId| {
+            this.global_type_defs.insert(
+                path,
+                SymbolEntry {
+                    res: hir::Res::Def(def_id),
+                    export: SymbolExport::Public,
+                },
+            );
+        };
+
+        match &item.kind {
+            hir::ItemKind::Function(function) => insert_value(
+                self,
+                module_path
+                    .with_segment(function.sig.name.as_str().to_owned())
+                    .to_key(),
+                item.def_id,
+            ),
+            hir::ItemKind::Const(konst) => insert_value(
+                self,
+                module_path
+                    .with_segment(konst.name.as_str().to_owned())
+                    .to_key(),
+                item.def_id,
+            ),
+            hir::ItemKind::Struct(struct_def) => insert_type(
+                self,
+                module_path
+                    .with_segment(struct_def.name.as_str().to_owned())
+                    .to_key(),
+                item.def_id,
+            ),
+            hir::ItemKind::Enum(enum_def) => {
+                insert_type(
+                    self,
+                    module_path
+                        .with_segment(enum_def.name.as_str().to_owned())
+                        .to_key(),
+                    item.def_id,
+                );
+                for variant in &enum_def.variants {
+                    insert_value(
+                        self,
+                        module_path
+                            .with_segment(enum_def.name.as_str().to_owned())
+                            .with_segment(variant.name.as_str().to_owned())
+                            .to_key(),
+                        variant.def_id,
+                    );
+                }
             }
+            hir::ItemKind::Impl(impl_def) => {
+                let hir::TypeExprKind::Path(self_path) = &impl_def.self_ty.kind else {
+                    return;
+                };
+                let mut method_path = module_path.clone();
+                method_path.segments.extend(
+                    self_path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.name.as_str().to_owned()),
+                );
+                for impl_item in &impl_def.items {
+                    if let hir::ImplItemKind::Method(_) = &impl_item.kind {
+                        insert_value(
+                            self,
+                            method_path
+                                .clone()
+                                .with_segment(impl_item.name.as_str().to_owned())
+                                .to_key(),
+                            impl_item.def_id,
+                        );
+                    }
+                }
+            }
+            hir::ItemKind::Query(_) | hir::ItemKind::Expr(_) => {}
         }
     }
 
@@ -812,16 +926,6 @@ impl HirGenerator {
     }
 
     fn resolve_value_symbol(&self, name: &str) -> Option<hir::Res> {
-        let prelude_override = match name {
-            "Ok" => self.lookup_symbol("std::result::Ok", &self.global_value_defs),
-            "Err" => self.lookup_symbol("std::result::Err", &self.global_value_defs),
-            "Some" => self.lookup_symbol("std::option::Some", &self.global_value_defs),
-            "None" => self.lookup_symbol("std::option::None", &self.global_value_defs),
-            _ => None,
-        };
-        if prelude_override.is_some() {
-            return prelude_override;
-        }
         self.value_scopes
             .iter()
             .rev()
@@ -957,21 +1061,15 @@ impl HirGenerator {
         self.transform_module_inner(module_path, module_path.to_key(), items)
     }
 
-    /// Resolve package roots before entering synchronous lowering. Package
-    /// discovery is asynchronous because the compiler driver owns provider
-    /// loading; the actual AST-to-HIR walk remains the same once those roots
-    /// are available.
+    /// Lower a module after the driver has made its package dependencies
+    /// available in the typing context.
     pub async fn transform_module_async(
         &mut self,
         module_path: &fp_core::module::path::QualifiedPath,
         items: &[ast::Item],
         typing_context: std::rc::Rc<fp_typing::TypingContext>,
     ) -> Result<hir::Program> {
-        for package in &self.lowering_config.allowed_dependencies {
-            if package != "std" && package != "libc" {
-                typing_context.await_package(package).await?;
-            }
-        }
+        let _ = typing_context;
         self.transform_module(module_path, items)
     }
 
@@ -1014,9 +1112,10 @@ impl HirGenerator {
         self.prepare_lowering_state();
 
         self.module_path = module_path.clone();
+        let mut program = hir::Program::new();
+        self.seed_external_definitions(&mut program);
         self.predeclare_items(items)?;
         self.insert_default_prelude_aliases();
-        let mut program = hir::Program::new();
         self.program_def_map = HashMap::new();
         for item in &self.synthetic_items {
             self.program_def_map.insert(item.def_id, item.clone());
@@ -3186,11 +3285,10 @@ impl ClosureLowering {
 
         self.rewrite_captured_usage(&mut rewritten_body, &captures, &env_param_ident);
 
-        let mut fn_item_ast =
-            ast::ItemDefFunction::new_simple(
-                call_ident.clone(),
-                ast::ExprBlock::new_expr(rewritten_body),
-            );
+        let mut fn_item_ast = ast::ItemDefFunction::new_simple(
+            call_ident.clone(),
+            ast::ExprBlock::new_expr(rewritten_body),
+        );
         fn_item_ast.visibility = ast::Visibility::Private;
         fn_item_ast.sig.params = fn_params;
         fn_item_ast.sig.ret_ty = Some(call_ret_ty.clone());

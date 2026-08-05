@@ -118,7 +118,7 @@ shared VFS.
 ```rust
 pub trait PackageProvider {
     fn list_packages(&self) -> Result<Vec<PackageId>, ProviderError>;
-    fn load_package(&self, id: &PackageId) -> Result<Arc<PackageDescriptor>, ProviderError>;
+    fn load_package_metadata(&self, id: &PackageId) -> Result<Arc<PackageDescriptor>, ProviderError>;
     fn refresh(&self) -> Result<(), ProviderError>;
 }
 

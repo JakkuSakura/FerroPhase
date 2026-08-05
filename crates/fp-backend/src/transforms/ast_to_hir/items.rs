@@ -50,25 +50,25 @@ impl HirGenerator {
             };
             if let hir::TypeExprKind::FnPtr(_) | hir::TypeExprKind::Infer = output.kind {
                 if let Some(last_expr) = func.body.last_expr() {
-                        if let ast::ExprKind::Struct(struct_expr) = last_expr.kind() {
-                            if let Ok(path) = self.ast_expr_to_hir_path(
-                                struct_expr.name.as_ref(),
-                                PathResolutionScope::Type,
-                            ) {
-                                if path
-                                    .segments
-                                    .last()
-                                    .map(|seg| seg.name.as_str().starts_with("__Closure"))
-                                    .unwrap_or(false)
-                                {
-                                    output = hir::TypeExpr::new(
-                                        self.next_id(),
-                                        hir::TypeExprKind::Path(path),
-                                        Span::new(self.current_file, 0, 0),
-                                    );
-                                }
+                    if let ast::ExprKind::Struct(struct_expr) = last_expr.kind() {
+                        if let Ok(path) = self.ast_expr_to_hir_path(
+                            struct_expr.name.as_ref(),
+                            PathResolutionScope::Type,
+                        ) {
+                            if path
+                                .segments
+                                .last()
+                                .map(|seg| seg.name.as_str().starts_with("__Closure"))
+                                .unwrap_or(false)
+                            {
+                                output = hir::TypeExpr::new(
+                                    self.next_id(),
+                                    hir::TypeExprKind::Path(path),
+                                    Span::new(self.current_file, 0, 0),
+                                );
                             }
                         }
+                    }
                 }
             }
 

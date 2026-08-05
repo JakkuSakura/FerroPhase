@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::module::{ModuleDescriptor, ModuleId};
-use crate::package::{PackageCrate, PackageDescriptor, PackageId};
+use crate::package::{PackageDescriptor, PackageId, PackageSource};
 
 pub type ProviderResult<T> = Result<T, ProviderError>;
 
@@ -38,17 +38,17 @@ pub trait PackageProvider: Send + Sync {
             .find(|id| id.as_str() == key)
     }
     fn list_packages(&self) -> ProviderResult<Vec<PackageId>>;
-    fn load_package(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>>;
+    fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>>;
     fn refresh(&self) -> ProviderResult<()>;
 
     /// Load a package's modules — discovery, parsing, and graph construction
-    /// are the implementor's job. The returned `PackageCrate`'s `items`,
+    /// are the implementor's job. The returned `PackageSource`'s `items`,
     /// `module_paths`, and `graph` are populated; typing tables (`struct_defs`
     /// etc.) are left empty for the typer to fill in afterward. Defaulted to
     /// unsupported so existing implementors don't need to change.
-    fn load_package_items(&self, id: &PackageId) -> ProviderResult<PackageCrate> {
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
         Err(ProviderError::other(format!(
-            "load_package_items not supported for {id}"
+            "load_package_source not supported for {id}"
         )))
     }
 }

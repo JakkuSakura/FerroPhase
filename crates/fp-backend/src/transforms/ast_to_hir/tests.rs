@@ -37,10 +37,7 @@ fn make_fn(
     ret: ast::Ty,
     body: ast::Expr,
 ) -> ast::Item {
-    let func = ast::ItemDefFunction::new_simple(
-        ident(name),
-        ast::ExprBlock::new_expr(body),
-    )
+    let func = ast::ItemDefFunction::new_simple(ident(name), ast::ExprBlock::new_expr(body))
         .with_params(params)
         .with_ret_ty(ret);
     ast::Item::from(ast::ItemKind::DefFunction(func))
@@ -533,14 +530,12 @@ fn transform_generic_function_and_method() -> Result<()> {
     let container = make_struct("Container", vec![("value", int_ty())]);
     let mut method = ast::ItemDefFunction::new_simple(
         ident("get"),
-        ast::ExprBlock::new_expr(ast::Expr::from(
-            ast::ExprKind::Select(ast::ExprSelect {
-                span: Span::null(),
-                obj: Box::new(ast::Expr::ident(ident("self"))),
-                field: ident("value"),
-                select: ast::ExprSelectType::Field,
-            }),
-        )),
+        ast::ExprBlock::new_expr(ast::Expr::from(ast::ExprKind::Select(ast::ExprSelect {
+            span: Span::null(),
+            obj: Box::new(ast::Expr::ident(ident("self"))),
+            field: ident("value"),
+            select: ast::ExprSelectType::Field,
+        }))),
     );
     method.sig.receiver = Some(ast::FunctionParamReceiver::Ref);
     method.sig.ret_ty = Some(int_ty());

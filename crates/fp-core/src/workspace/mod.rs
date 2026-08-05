@@ -191,29 +191,22 @@ impl WorkspaceDependency {
 use crate::ast::{FunctionSignature, MethodSignature, TypeEnum, TypeStruct};
 use crate::hir::PackageId as HirPackageId;
 use crate::module::path::QualifiedPath;
-use crate::package::PackageCrate;
-use crate::package::graph::PackageGraph;
 use crate::package::provider::PackageProvider;
+use crate::package::{CompiledPackage, PackageId, PackageSource};
 use std::cell::{Cell, Ref, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-/// The single root registry every crate/scope lives in — including the one
-/// currently being typed (see `CompilerDriver::load_package` and
-/// `AstTypeInferencer::own_crate`), plus a registry of providers that can
-/// load more crates on demand. The typer queries this for fully-qualified
-/// symbol lookups after checking local scopes; when a lookup misses because
-/// a *registered* package hasn't been loaded yet, the caller records a
-/// pending request instead of erroring, and the compiler driver loads it via
-/// the registered provider — uniformly for `std` or any other registered
-/// package, not eagerly up front. Each crate keeps and mutates its own
-/// storage (`Rc<RefCell<PackageCrate>>`); lookups across crates borrow that
-/// storage rather than cloning it wholesale.
+/// Shared registry of provider-owned packages and compiler-owned package
+/// results for one compilation session. Dependencies are published here by
+/// the compiler driver before their dependents are typed.
 #[derive(Default)]
 pub struct WorkspaceContext {
-    crates: RefCell<HashMap<String, Rc<RefCell<PackageCrate>>>>,
-    providers: Vec<Arc<dyn PackageProvider>>,
+    crates: RefCell<HashMap<PackageId, Rc<RefCell<CompiledPackage>>>>,
+    providers: RefCell<Vec<Arc<dyn PackageProvider>>>,
+    current_package: Option<PackageId>,
+    prelude: RefCell<Option<Rc<RefCell<CompiledPackage>>>>,
     next_package_id: Cell<u32>,
 }
 
@@ -222,54 +215,119 @@ impl WorkspaceContext {
         Self::default()
     }
 
-    /// Register a package's loader. Registration itself isn't on-demand —
-    /// it just declares "this package exists and can be loaded" — only the
-    /// actual load (parsing + typing) is deferred until first reference.
-    pub fn register_provider(&mut self, provider: Arc<dyn PackageProvider>) {
-        self.providers.push(provider);
+    /// Create an isolated package workspace. Provider registrations are
+    /// shared, while compiled package entries are imported explicitly.
+    pub fn for_package(&self, package_id: PackageId) -> Self {
+        Self {
+            crates: RefCell::new(HashMap::new()),
+            providers: RefCell::new(self.providers.borrow().clone()),
+            current_package: Some(package_id),
+            prelude: RefCell::new(None),
+            next_package_id: Cell::new(self.next_package_id.get()),
+        }
     }
 
-    /// Start a new crate/scope: creates an empty `PackageCrate`, inserts it
-    /// into the root under `name`, and returns the same `Rc` so the caller
-    /// (e.g. `AstTypeInferencer`, or `CompilerDriver::load_package`) can hold
-    /// it directly and mutate it going forward — no re-lookup by name needed
-    /// for every write.
-    pub fn begin_crate(
+    pub fn current_package(&self) -> Option<&PackageId> {
+        self.current_package.as_ref()
+    }
+
+    /// Register a provider capable of supplying package metadata and source.
+    pub fn register_provider(&self, provider: Arc<dyn PackageProvider>) {
+        self.providers.borrow_mut().push(provider);
+    }
+
+    /// Publish a package source slot and return its compiler-owned result.
+    pub fn begin_package(
         &self,
-        name: impl Into<String>,
-        graph: PackageGraph,
-    ) -> Rc<RefCell<PackageCrate>> {
-        let name = name.into();
-        let package_id = HirPackageId(self.next_package_id.get());
-        self.next_package_id.set(package_id.0.saturating_add(1));
-        let krate = Rc::new(RefCell::new(PackageCrate::new(
-            package_id,
-            name.clone(),
-            graph,
-        )));
-        self.crates.borrow_mut().insert(name, krate.clone());
+        package_id: PackageId,
+        source: PackageSource,
+    ) -> Rc<RefCell<CompiledPackage>> {
+        let source_package_id = package_id.clone();
+        let name = source.name.clone();
+        let hir_package_id = HirPackageId(self.next_package_id.get());
+        self.next_package_id.set(hir_package_id.0.saturating_add(1));
+        let mut krate = CompiledPackage::new(hir_package_id, name.clone(), source.graph.clone());
+        krate.module_paths = source.module_paths;
+        krate.items = source.items;
+        let krate = Rc::new(RefCell::new(krate));
+        self.crates
+            .borrow_mut()
+            .insert(source_package_id, krate.clone());
         krate
     }
 
-    pub fn is_loaded(&self, name: &str) -> bool {
-        self.crates.borrow().contains_key(name)
+    pub fn import_package(&self, package_id: PackageId, package: Rc<RefCell<CompiledPackage>>) {
+        self.crates.borrow_mut().insert(package_id, package);
+    }
+
+    /// Install `std`'s published package as the unqualified prelude lookup
+    /// source for ordinary packages. The standard and libc packages do not
+    /// import their own prelude.
+    pub fn install_prelude(&self, package: Rc<RefCell<CompiledPackage>>) {
+        let Some(current_package) = self.current_package.as_ref() else {
+            return;
+        };
+        if matches!(current_package.as_str(), "std" | "libc") {
+            return;
+        }
+        self.prelude.borrow_mut().replace(package);
+    }
+
+    pub fn prelude_package(&self) -> Option<Rc<RefCell<CompiledPackage>>> {
+        self.prelude.borrow().clone()
+    }
+
+    /// Return immutable HIR definitions published by imported packages.
+    /// Cloning here is deliberate: a package workspace must not borrow or
+    /// mutate another package's compiler state while lowering its modules.
+    pub fn hir_definitions(
+        &self,
+    ) -> Vec<(
+        QualifiedPath,
+        crate::hir::Program,
+        HashMap<String, crate::hir::Res>,
+    )> {
+        let mut definitions = Vec::new();
+        for package in self.crates.borrow().values() {
+            let package = package.borrow();
+            definitions.extend(package.hir_modules.iter().map(|(path, program)| {
+                (path.clone(), program.clone(), package.hir_exports.clone())
+            }));
+        }
+        definitions
+    }
+
+    pub fn is_loaded(&self, package_id: &PackageId) -> bool {
+        self.crates.borrow().contains_key(package_id)
+    }
+
+    pub fn compiled_package(&self, package_id: &PackageId) -> Option<Rc<RefCell<CompiledPackage>>> {
+        self.crates.borrow().get(package_id).cloned()
     }
 
     pub fn is_registered(&self, name: &str) -> bool {
         self.providers
+            .borrow()
             .iter()
             .any(|provider| provider.resolve_package(name).is_some())
     }
 
-    pub fn provider(&self, name: &str) -> Option<Arc<dyn PackageProvider>> {
+    pub fn provider_for(&self, package_id: &PackageId) -> Option<Arc<dyn PackageProvider>> {
         self.providers
+            .borrow()
             .iter()
-            .find(|provider| provider.resolve_package(name).is_some())
+            .find(|provider| {
+                provider
+                    .list_packages()
+                    .map(|packages| packages.iter().any(|id| id == package_id))
+                    .unwrap_or(false)
+            })
             .cloned()
     }
 
     pub fn resolve_package(&self, key: &str) -> Option<crate::package::PackageId> {
         self.providers
+            .borrow()
             .iter()
             .find_map(|provider| provider.resolve_package(key))
     }
@@ -279,6 +337,7 @@ impl WorkspaceContext {
     /// paths resolve correctly even before `std` is actually loaded.
     pub fn registered_names(&self) -> Vec<String> {
         self.providers
+            .borrow()
             .iter()
             .filter_map(|provider| provider.list_packages().ok())
             .flatten()
@@ -295,15 +354,25 @@ impl WorkspaceContext {
                 return Some(s.clone());
             }
         }
+        if let Some(prelude) = self.prelude.borrow().as_ref() {
+            if let Some(s) = prelude.borrow().struct_defs.get(path) {
+                return Some(s.clone());
+            }
+        }
         None
     }
 
     /// Cross-crate counterpart to `find_struct`, for enums (e.g.
     /// `std::option::Option`/`std::result::Result`, defined in `std`'s own
-    /// `PackageCrate`, not whatever crate is currently being typed).
+    /// `CompiledPackage`, not whatever crate is currently being typed).
     pub fn find_enum(&self, path: &QualifiedPath) -> Option<TypeEnum> {
         for krate in self.crates.borrow().values() {
             if let Some(e) = krate.borrow().enum_defs.get(path) {
+                return Some(e.clone());
+            }
+        }
+        if let Some(prelude) = self.prelude.borrow().as_ref() {
+            if let Some(e) = prelude.borrow().enum_defs.get(path) {
                 return Some(e.clone());
             }
         }
@@ -316,16 +385,26 @@ impl WorkspaceContext {
                 return Some(sig.clone());
             }
         }
+        if let Some(prelude) = self.prelude.borrow().as_ref() {
+            if let Some(sig) = prelude.borrow().function_sigs.get(path) {
+                return Some(sig.clone());
+            }
+        }
         None
     }
 
     /// Search every crate for `path`'s inherent methods (see
-    /// `PackageCrate::method_sigs`'s doc comment) -- the cross-crate
+    /// `CompiledPackage::method_sigs`'s doc comment) -- the cross-crate
     /// counterpart to `own_method_sigs` in `fp-typing`, mirroring
     /// `find_struct`/`find_function_sig` exactly.
     pub fn find_method_sigs(&self, path: &QualifiedPath) -> Option<Vec<(String, MethodSignature)>> {
         for krate in self.crates.borrow().values() {
             if let Some(sigs) = krate.borrow().method_sigs.get(path) {
+                return Some(sigs.clone());
+            }
+        }
+        if let Some(prelude) = self.prelude.borrow().as_ref() {
+            if let Some(sigs) = prelude.borrow().method_sigs.get(path) {
                 return Some(sigs.clone());
             }
         }
@@ -337,12 +416,17 @@ impl WorkspaceContext {
             .borrow()
             .values()
             .any(|krate| krate.borrow().module_paths.contains(path))
+            || self
+                .prelude
+                .borrow()
+                .as_ref()
+                .is_some_and(|prelude| prelude.borrow().module_paths.contains(path))
     }
 
     /// Borrow the root map directly. Used by callers that need to iterate
     /// every crate themselves (e.g. an early-return tail-name search, or
     /// gathering LIR units) rather than looking up one qualified path.
-    pub fn crates(&self) -> Ref<'_, HashMap<String, Rc<RefCell<PackageCrate>>>> {
+    pub fn crates(&self) -> Ref<'_, HashMap<PackageId, Rc<RefCell<CompiledPackage>>>> {
         self.crates.borrow()
     }
 

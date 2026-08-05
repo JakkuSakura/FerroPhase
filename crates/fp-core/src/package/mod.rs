@@ -3,7 +3,6 @@ use std::fmt::{self, Display};
 
 use semver::{Version, VersionReq};
 
-use crate::hir::PackageId as HirPackageId;
 use crate::module::{FeatureRef, ModuleId};
 use crate::vfs::VirtualPath;
 
@@ -93,17 +92,52 @@ pub mod graph;
 pub mod provider;
 
 use crate::ast::{FunctionSignature, Item, ItemId, MethodSignature, TypeEnum, TypeStruct};
+use crate::hir::PackageId as HirPackageId;
 use crate::lir::LirCompileUnit;
 use crate::module::path::QualifiedPath;
 use std::collections::{HashMap, HashSet};
 
-/// A compiled crate — the result of type-checking a package.
-/// The driver compiles dependency packages first (embedded std,
-/// workspace dependencies) and stores the results here so the
-/// typer can look up fully-qualified symbols without re-parsing
-/// or re-type-checking.
+/// Parsed source returned by a package provider.
+///
+/// This type intentionally contains no generated HIR identity or compiler
+/// registries. Providers describe source; the compiler owns compilation state.
+#[derive(Clone, Debug)]
+pub struct PackageSource {
+    pub package_id: PackageId,
+    pub name: String,
+    pub graph: graph::PackageGraph,
+
+    /// All known module paths within this package.
+    pub module_paths: HashSet<QualifiedPath>,
+
+    /// Parsed items indexed by their qualified module path.
+    pub items: HashMap<QualifiedPath, Vec<Item>>,
+}
+
+impl PackageSource {
+    pub fn new(package_id: PackageId, name: impl Into<String>, graph: graph::PackageGraph) -> Self {
+        let module_paths = graph
+            .modules()
+            .filter(|module| !module.module_path.is_empty())
+            .map(|module| QualifiedPath::new(module.module_path.clone()))
+            .collect();
+
+        Self {
+            package_id,
+            name: name.into(),
+            graph,
+            module_paths,
+            items: HashMap::new(),
+        }
+    }
+}
+
+/// Compiler-owned state produced by type-checking a package.
+///
+/// A compiled package is stored in the workspace so dependent packages can
+/// query its definitions without re-parsing or re-type-checking it.
 #[derive(Clone, Debug, Default)]
-pub struct PackageCrate {
+pub struct CompiledPackage {
     pub package_id: HirPackageId,
     pub name: String,
     pub graph: graph::PackageGraph,
@@ -143,13 +177,21 @@ pub struct PackageCrate {
     /// The interpreter searches across all units for function definitions.
     pub lir_units: Vec<LirCompileUnit>,
 
+    /// HIR definitions published by this package, keyed by module path.
+    /// Dependents use these definitions for path resolution without sharing
+    /// the package's mutable compiler workspace.
+    pub hir_modules: HashMap<QualifiedPath, crate::hir::Program>,
+
+    /// Fully-qualified HIR lookup entries exported by this package.
+    pub hir_exports: HashMap<String, crate::hir::Res>,
+
     /// Parsed items per module path, available for on-demand compilation
     /// when lir_units is empty. The CompilerDriver uses these to type-check
     /// and lower modules as needed during comptime evaluation.
     pub items: HashMap<QualifiedPath, Vec<Item>>,
 }
 
-impl PackageCrate {
+impl CompiledPackage {
     pub fn new(
         package_id: HirPackageId,
         name: impl Into<String>,
@@ -173,6 +215,8 @@ impl PackageCrate {
             method_sigs: HashMap::new(),
             module_paths,
             lir_units: Vec::new(),
+            hir_modules: HashMap::new(),
+            hir_exports: HashMap::new(),
             items: HashMap::new(),
         }
     }
