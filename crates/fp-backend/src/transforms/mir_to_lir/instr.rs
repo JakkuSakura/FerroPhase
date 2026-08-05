@@ -31,7 +31,7 @@ pub struct LirGenerator {
     entry_allocas: Vec<lir::LirInstruction>,
     queued_instructions: Vec<lir::LirInstruction>,
     name_counters: HashMap<String, usize>,
-    struct_layouts: HashMap<String, Vec<Option<lir::LirType>>>,
+    struct_layouts: HashMap<mir::DefId, Vec<Option<lir::LirType>>>,
     function_symbol_map: HashMap<String, String>,
     function_signatures: HashMap<String, lir::LirFunctionSignature>,
     function_call_conventions: HashMap<String, lir::CallingConvention>,
@@ -260,6 +260,10 @@ impl LirGenerator {
     ) -> Result<lir::LirFunction> {
         // Reset generator state for new function
         self.reset_for_new_function();
+
+        if let Some(mir_body) = bodies.get(&mir_func.body_id) {
+            self.collect_struct_layouts(mir_body);
+        }
 
         let function_name = self.mangle_function_name(&mir_func);
         let param_types: Vec<lir::LirType> = mir_func
@@ -2800,6 +2804,172 @@ impl LirGenerator {
         self.entry_allocas.clear();
         self.queued_instructions.clear();
         self.struct_layouts.clear();
+    }
+
+    fn collect_struct_layouts(&mut self, body: &mir::Body) {
+        for block in &body.basic_blocks {
+            for statement in &block.statements {
+                match &statement.kind {
+                    mir::StatementKind::Assign(place, value) => {
+                        self.collect_place_struct_layout(place, body);
+                        self.collect_rvalue_struct_layouts(value, body);
+                    }
+                    mir::StatementKind::IntrinsicCall { args, .. } => {
+                        for arg in args {
+                            self.collect_operand_struct_layout(arg, body);
+                        }
+                    }
+                    mir::StatementKind::SetDiscriminant { place, .. }
+                    | mir::StatementKind::Retag(_, place)
+                    | mir::StatementKind::AscribeUserType(place, _, _) => {
+                        self.collect_place_struct_layout(place, body);
+                    }
+                    mir::StatementKind::StorageLive(_)
+                    | mir::StatementKind::StorageDead(_)
+                    | mir::StatementKind::Nop => {}
+                }
+            }
+
+            let Some(terminator) = &block.terminator else {
+                continue;
+            };
+            match &terminator.kind {
+                mir::TerminatorKind::SwitchInt { discr, .. }
+                | mir::TerminatorKind::Assert { cond: discr, .. } => {
+                    self.collect_operand_struct_layout(discr, body);
+                }
+                mir::TerminatorKind::Drop { place, .. } => {
+                    self.collect_place_struct_layout(place, body);
+                }
+                mir::TerminatorKind::DropAndReplace { place, value, .. } => {
+                    self.collect_place_struct_layout(place, body);
+                    self.collect_operand_struct_layout(value, body);
+                }
+                mir::TerminatorKind::Call {
+                    func,
+                    args,
+                    destination,
+                    ..
+                } => {
+                    self.collect_operand_struct_layout(func, body);
+                    for arg in args {
+                        self.collect_operand_struct_layout(arg, body);
+                    }
+                    if let Some((place, _)) = destination {
+                        self.collect_place_struct_layout(place, body);
+                    }
+                }
+                mir::TerminatorKind::Yield {
+                    value,
+                    resume_arg,
+                    ..
+                } => {
+                    self.collect_operand_struct_layout(value, body);
+                    self.collect_place_struct_layout(resume_arg, body);
+                }
+                mir::TerminatorKind::Goto { .. }
+                | mir::TerminatorKind::Resume
+                | mir::TerminatorKind::Abort
+                | mir::TerminatorKind::Return
+                | mir::TerminatorKind::Unreachable
+                | mir::TerminatorKind::GeneratorDrop
+                | mir::TerminatorKind::FalseEdge { .. }
+                | mir::TerminatorKind::FalseUnwind { .. }
+                | mir::TerminatorKind::InlineAsm { .. } => {}
+            }
+        }
+    }
+
+    fn collect_rvalue_struct_layouts(&mut self, value: &mir::Rvalue, body: &mir::Body) {
+        match value {
+            mir::Rvalue::Use(operand)
+            | mir::Rvalue::Repeat(operand, _)
+            | mir::Rvalue::Cast(_, operand, _)
+            | mir::Rvalue::UnaryOp(_, operand)
+            | mir::Rvalue::ShallowInitBox(operand, _) => {
+                self.collect_operand_struct_layout(operand, body);
+            }
+            mir::Rvalue::IntrinsicCall { args, .. }
+            | mir::Rvalue::Aggregate(_, args)
+            | mir::Rvalue::ContainerLiteral { elements: args, .. } => {
+                for arg in args {
+                    self.collect_operand_struct_layout(arg, body);
+                }
+            }
+            mir::Rvalue::BinaryOp(_, left, right)
+            | mir::Rvalue::CheckedBinaryOp(_, left, right) => {
+                self.collect_operand_struct_layout(left, body);
+                self.collect_operand_struct_layout(right, body);
+            }
+            mir::Rvalue::ContainerMapLiteral { entries, .. } => {
+                for (key, value) in entries {
+                    self.collect_operand_struct_layout(key, body);
+                    self.collect_operand_struct_layout(value, body);
+                }
+            }
+            mir::Rvalue::ContainerLen { container, .. } => {
+                self.collect_operand_struct_layout(container, body);
+            }
+            mir::Rvalue::ContainerGet { container, key, .. } => {
+                self.collect_operand_struct_layout(container, body);
+                self.collect_operand_struct_layout(key, body);
+            }
+            mir::Rvalue::Ref(_, _, place)
+            | mir::Rvalue::AddressOf(_, place)
+            | mir::Rvalue::Len(place)
+            | mir::Rvalue::Discriminant(place) => {
+                self.collect_place_struct_layout(place, body);
+            }
+            mir::Rvalue::Query(_)
+            | mir::Rvalue::ThreadLocalRef(_)
+            | mir::Rvalue::NullaryOp(_, _) => {}
+        }
+    }
+
+    fn collect_operand_struct_layout(&mut self, operand: &mir::Operand, body: &mir::Body) {
+        match operand {
+            mir::Operand::Copy(place) | mir::Operand::Move(place) => {
+                self.collect_place_struct_layout(place, body);
+            }
+            mir::Operand::Constant(_) => {}
+        }
+    }
+
+    fn collect_place_struct_layout(&mut self, place: &mir::Place, body: &mir::Body) {
+        let Some(mut ty) = body.locals.get(place.local as usize).map(|local| local.ty.clone())
+        else {
+            return;
+        };
+        for projection in &place.projection {
+            match projection {
+                mir::PlaceElem::Field(index, field_ty) => {
+                    if let TyKind::Adt(adt, _) = &ty.kind {
+                        let field_lir_ty = self.lir_type_from_ty(field_ty);
+                        let fields = self.struct_layouts.entry(adt.did).or_default();
+                        if fields.len() <= *index {
+                            fields.resize(index + 1, None);
+                        }
+                        fields[*index] = Some(field_lir_ty);
+                    }
+                    ty = field_ty.clone();
+                }
+                mir::PlaceElem::Deref => match ty.kind {
+                    TyKind::Ref(_, inner, _) | TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
+                        ty = *inner;
+                    }
+                    _ => return,
+                },
+                mir::PlaceElem::Index(_index) => {
+                    ty = match ty.kind {
+                        TyKind::Array(element, _) | TyKind::Slice(element) => *element,
+                        _ => return,
+                    };
+                }
+                mir::PlaceElem::ConstantIndex { .. }
+                | mir::PlaceElem::Subslice { .. }
+                | mir::PlaceElem::Downcast(_, _) => {}
+            }
+        }
     }
 
     fn compute_mutable_locals(&self, mir_body: &mir::Body) -> HashSet<mir::LocalId> {
@@ -5541,6 +5711,22 @@ impl LirGenerator {
             TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
                 lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
             }
+            TyKind::Adt(adt, _)
+            if self.struct_layouts.contains_key(&adt.did) => lir::LirType::Struct {
+                fields: self
+                    .struct_layouts
+                    .get(&adt.did)
+                    .into_iter()
+                    .flat_map(|fields| fields.iter())
+                    .map(|field| {
+                        field
+                            .clone()
+                            .unwrap_or_else(|| lir::LirType::Ptr(Box::new(lir::LirType::I8)))
+                    })
+                    .collect(),
+                packed: false,
+                name: None,
+            },
             TyKind::Adt(_, _)
             | TyKind::FnDef(_, _)
             | TyKind::Dynamic(_, _)

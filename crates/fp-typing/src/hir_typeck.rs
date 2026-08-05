@@ -1152,6 +1152,8 @@ impl HirTypeChecker {
                 continue;
             }
             let mut scope = self.generic_scope(&impl_item.generics);
+            let self_ty = scope.check_type_expr(&impl_item.self_ty)?;
+            scope.self_types.push(self_ty);
             let impl_generics = impl_item.generics.clone();
             for impl_item in impl_item.items {
                 let hir::ImplItemKind::Method(function) = impl_item.kind else {
@@ -1169,9 +1171,11 @@ impl HirTypeChecker {
                         &function.sig.generics,
                         &substitutions,
                     )?;
+                    scope.self_types.pop();
                     return Ok((impl_item.def_id, args, result));
                 }
             }
+            scope.self_types.pop();
         }
         Err(Error::from(format!("method `{method}` was not found")))
     }
@@ -1275,6 +1279,10 @@ impl HirTypeChecker {
     }
 
     fn field_ty(&mut self, receiver: &Ty, field: &hir::Symbol) -> Result<Ty> {
+        let receiver = match &receiver.kind {
+            TyKind::Ref(_, inner, _) => inner.as_ref(),
+            _ => receiver,
+        };
         let TyKind::Adt(adt, args) = &receiver.kind else {
             return Err(Error::from("field access requires a struct"));
         };

@@ -3563,7 +3563,25 @@ impl MirLowering {
         def_id: hir::DefId,
         konst: &hir::Const,
     ) -> Result<mir::Item> {
-        let ty = self.lower_type_expr(&konst.ty);
+        let declared_ty = self.lower_type_expr(&konst.ty);
+        let ty = match declared_ty.clone() {
+            Ty {
+                kind: TyKind::Adt(adt, args),
+            } => {
+                let type_args = args
+                    .iter()
+                    .filter_map(|arg| match arg {
+                        mir::ty::GenericArg::Type(ty) => Some(ty.clone()),
+                        mir::ty::GenericArg::Lifetime(_)
+                        | mir::ty::GenericArg::Const(_) => None,
+                    })
+                    .collect::<Vec<_>>();
+                self.struct_layout_for_instance(adt.did, &type_args, konst.ty.span)
+                    .map(|layout| layout.ty)
+                    .unwrap_or(declared_ty)
+            }
+            ty => ty,
+        };
         let key = self.const_key(konst.name.as_str(), konst.body.value.span);
         let container_args = self.container_args_from_type_expr(&konst.ty);
         let Some(init_constant) = self.lower_const_expr(
@@ -5746,10 +5764,22 @@ impl MirLowering {
         let def = self.struct_defs.get(&def_id)?;
         let idx = *def.field_index.get(name)?;
         let layout = self.struct_layout_for_ty(struct_ty).or_else(|| {
-            if self.is_opaque_ty(struct_ty) {
-                self.struct_layout_for_instance(def_id, &[], span)
-            } else {
-                None
+            match &struct_ty.kind {
+                TyKind::Adt(_, args) => {
+                    let type_args = args
+                        .iter()
+                        .filter_map(|arg| match arg {
+                            mir::ty::GenericArg::Type(ty) => Some(ty.clone()),
+                            mir::ty::GenericArg::Lifetime(_)
+                            | mir::ty::GenericArg::Const(_) => None,
+                        })
+                        .collect::<Vec<_>>();
+                    self.struct_layout_for_instance(def_id, &type_args, span)
+                }
+                _ if self.is_opaque_ty(struct_ty) => {
+                    self.struct_layout_for_instance(def_id, &[], span)
+                }
+                _ => None,
             }
         })?;
         let ty = layout.field_tys.get(idx)?.clone();
@@ -5892,7 +5922,26 @@ impl MirLowering {
             }
             hir::ExprKind::Struct(_, _) => {
                 let value = self.lower_const_value(program, expr, expected_ty)?;
-                let ty = constant_ty.clone()?;
+                let ty = match constant_ty.clone()? {
+                    Ty {
+                        kind: TyKind::Adt(adt, args),
+                    } => {
+                        let type_args = args
+                            .iter()
+                            .filter_map(|arg| match arg {
+                                mir::ty::GenericArg::Type(ty) => Some(ty.clone()),
+                                mir::ty::GenericArg::Lifetime(_)
+                                | mir::ty::GenericArg::Const(_) => None,
+                            })
+                            .collect::<Vec<_>>();
+                        self.struct_layout_for_instance(adt.did, &type_args, expr.span)
+                            .map(|layout| layout.ty)
+                            .unwrap_or(Ty {
+                                kind: TyKind::Adt(adt, args),
+                            })
+                    }
+                    ty => ty,
+                };
                 Some(mir::Constant {
                     span: expr.span,
                     ty: ty.clone(),
