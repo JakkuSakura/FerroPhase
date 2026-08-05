@@ -19,7 +19,6 @@ use fp_core::{
 };
 use fp_goasm::config::GoAsmTarget;
 use fp_lang::FerroFrontend;
-use fp_core::package::provider::PackageProvider;
 use fp_typing::{TypingDiagnostic, TypingDiagnosticLevel};
 
 #[cfg(feature = "lang-flatbuffers")]
@@ -72,20 +71,29 @@ pub fn check_path(
 
     let identity = CompilerIdentity::for_file(package, path);
     let executor = CompilerExecutor::new();
-    let mut driver = CompilerDriver::new(data_layout(), executor.handle());
-    driver.state.set_lossy(lossy.enabled);
+    let workspace = compiler_workspace();
+    let mut session = CompilerSession::new(data_layout(), &executor, workspace);
+    session.driver().state.set_lossy(lossy.enabled);
     if let Some(resolver) = resolver {
-        driver.state.set_module_resolver(resolver);
-        driver
+        session.driver().state.set_module_resolver(resolver);
+        session
+            .driver()
             .state
             .prepare_module_resolution(identity.ast_id.clone(), path)
             .map_err(|err| CliError::Compilation(err.to_string()))?;
     }
-    driver.state.insert_ast(identity.ast_id.clone(), ast);
+    session
+        .driver()
+        .state
+        .insert_ast(identity.ast_id.clone(), ast);
     executor
-        .run(driver.compile_native(&identity.ast_id, &identity.path))
+        .run(
+            session
+                .driver()
+                .compile_native(&identity.ast_id, &identity.path),
+        )
         .map_err(|err| CliError::Compilation(err.to_string()))?;
-    drain_driver(&mut driver, lossy)
+    drain_driver(session.driver(), lossy)
 }
 
 pub fn eval_script(script: ScriptBlock) -> Result<Value> {
@@ -99,10 +107,7 @@ pub fn eval_script(script: ScriptBlock) -> Result<Value> {
         ty: None,
         value: Expr::block(body.clone()).into(),
     };
-    let main = ItemDefFunction::new_simple(
-        Ident::new("main"),
-        ExprBlock::new_expr(Expr::unit()),
-    );
+    let main = ItemDefFunction::new_simple(Ident::new("main"), ExprBlock::new_expr(Expr::unit()));
     let ast = File {
         path: PathBuf::from("<eval>"),
         attrs: Vec::new(),
@@ -119,7 +124,7 @@ pub fn eval_script(script: ScriptBlock) -> Result<Value> {
         &identity,
         Path::new("<eval>"),
         None,
-        std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new()),
+        compiler_workspace(),
         LossyCompileOptions::default(),
         &executor,
     )?;
@@ -321,7 +326,11 @@ pub fn compile_bytecode_file(
     let mut lowered = lower_file(path, package, source_language, resolver, lossy)?;
     lowered
         .executor
-        .run(lowered.driver.compile_bytecode(&identity.ast_id, &identity.path))
+        .run(
+            lowered
+                .driver
+                .compile_bytecode(&identity.ast_id, &identity.path),
+        )
         .map_err(|err| CliError::Compilation(err.to_string()))?;
     let bytecode = lowered.bytecode()?;
 
@@ -807,7 +816,7 @@ fn execute_ast(
         &identity,
         source_path,
         resolver,
-        standard_workspace()?,
+        compiler_workspace(),
         lossy,
         &executor,
     )?;
@@ -844,7 +853,7 @@ fn lower_file(
         &identity,
         path,
         resolver,
-        standard_workspace()?,
+        compiler_workspace(),
         lossy,
         &executor,
     )?;
@@ -856,17 +865,10 @@ fn lower_file(
     })
 }
 
-fn standard_workspace() -> Result<std::rc::Rc<fp_core::workspace::WorkspaceContext>> {
-    let mut workspace = fp_core::workspace::WorkspaceContext::new();
-    let provider = Arc::new(fp_lang::provider::FerroPhaseProvider);
-    workspace.register_provider(provider.clone());
-    for package_id in ["std", "libc"].map(fp_core::package::PackageId::new) {
-        let source = provider
-            .load_package_source(&package_id)
-            .map_err(|err| CliError::Compilation(err.to_string()))?;
-        workspace.begin_package(package_id, source);
-    }
-    Ok(std::rc::Rc::new(workspace))
+fn compiler_workspace() -> std::rc::Rc<fp_core::workspace::WorkspaceContext> {
+    let workspace = fp_core::workspace::WorkspaceContext::new();
+    workspace.register_provider(Arc::new(fp_lang::provider::FerroPhaseProvider));
+    std::rc::Rc::new(workspace)
 }
 
 fn lower_ast(
@@ -941,12 +943,7 @@ pub fn compile_file_to_lir_bundle(
     source_language: Option<&str>,
     lossy: LossyCompileOptions,
 ) -> Result<LirBundle> {
-    let parsed = parse_file_with_context(
-        path,
-        source_language,
-        FrontendParseMode::Strict,
-        lossy,
-    )?;
+    let parsed = parse_file_with_context(path, source_language, FrontendParseMode::Strict, lossy)?;
     let frontend = FrontendBundle {
         source_language: parsed.source_language.clone(),
         ast: parsed.ast.clone(),
@@ -960,7 +957,7 @@ pub fn compile_file_to_lir_bundle(
         &identity,
         path,
         None,
-        standard_workspace()?,
+        compiler_workspace(),
         lossy,
         &executor,
     )?;
@@ -984,13 +981,7 @@ pub fn parse_file_with_mode(
     parse_mode: FrontendParseMode,
     lossy: LossyCompileOptions,
 ) -> Result<File> {
-    parse_file_with_context(
-        path,
-        source_language,
-        parse_mode,
-        lossy,
-    )
-    .map(|parsed| parsed.ast)
+    parse_file_with_context(path, source_language, parse_mode, lossy).map(|parsed| parsed.ast)
 }
 
 pub fn prepare_ast_target(
@@ -1025,7 +1016,7 @@ pub fn typecheck_ast_target(
         &identity,
         path,
         None,
-        standard_workspace()?,
+        compiler_workspace(),
         lossy,
         &executor,
     )?;
