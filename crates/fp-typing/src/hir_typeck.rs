@@ -284,9 +284,27 @@ impl HirTypeChecker {
                 },
                 hir::ExprKind::Call(callee, args) => {
                     let callee_ty = self.check_expr(callee).await?;
+                    let expected_inputs = match &callee_ty.kind {
+                        TyKind::FnPtr(signature) => Some(signature.binder.value.inputs.clone()),
+                        _ => None,
+                    };
                     let mut arg_types = Vec::with_capacity(args.len());
-                    for arg in args {
-                        arg_types.push(self.check_expr(&arg.value).await?);
+                    for (index, arg) in args.iter().enumerate() {
+                        let actual = self.check_expr(&arg.value).await?;
+                        let actual = match expected_inputs
+                            .as_ref()
+                            .and_then(|inputs| inputs.get(index))
+                        {
+                            Some(expected)
+                                if matches!(arg.value.kind, hir::ExprKind::Literal(hir::Lit::Integer(_)))
+                                    && matches!(expected.kind, TyKind::Int(_) | TyKind::Uint(_)) =>
+                            {
+                                // Integer literals can take the type of their direct parameter.
+                                (**expected).clone()
+                            }
+                            _ => actual,
+                        };
+                        arg_types.push(actual);
                     }
                     let Some((substitutions, output)) =
                         self.instantiate_call(&callee_ty, &arg_types)?
@@ -867,11 +885,15 @@ impl HirTypeChecker {
                     let mut scope = self.generic_scope(&enum_def.generics);
                     let payload_result = scope.check_type_expr(payload);
                     let payload_ty = payload_result?;
+                    let inputs = match payload_ty.kind {
+                        TyKind::Tuple(fields) => fields,
+                        _ => vec![Box::new(payload_ty)],
+                    };
                     return Ok(Ty {
                         kind: TyKind::FnPtr(ty::PolyFnSig {
                             binder: ty::Binder {
                                 value: ty::FnSig {
-                                    inputs: vec![Box::new(payload_ty)],
+                                    inputs,
                                     output: Box::new(enum_ty),
                                     c_variadic: false,
                                     unsafety: ty::Unsafety::Normal,
@@ -1006,9 +1028,7 @@ impl HirTypeChecker {
             return Ok(None);
         };
         if signature.binder.value.inputs.len() != actuals.len() {
-            return Err(Error::from(
-                "call argument count does not match function signature",
-            ));
+            return Err(Error::from("call argument count does not match function signature"));
         }
         let mut substitutions: HashMap<ty::ParamTy, Ty> = HashMap::new();
         for (expected, actual) in signature.binder.value.inputs.iter().zip(actuals) {
@@ -1061,6 +1081,14 @@ impl HirTypeChecker {
                     self.require_same(previous, actual)?;
                 } else {
                     substitutions.insert(param.clone(), actual.clone());
+                }
+                Ok(())
+            }
+            (_, TyKind::Param(param)) => {
+                if let Some(previous) = substitutions.get(param) {
+                    self.require_same(previous, expected)?;
+                } else {
+                    substitutions.insert(param.clone(), expected.clone());
                 }
                 Ok(())
             }
@@ -1302,8 +1330,7 @@ impl HirTypeChecker {
                 }
             }
             hir::PatKind::TupleStruct(path, patterns) => {
-                let (enum_ty, payloads) = self.variant_payload_types(path)?;
-                self.require_same_adt(&ty, &enum_ty, "tuple struct pattern")?;
+                let (_, payloads) = self.variant_payload_types(path, &ty)?;
                 if patterns.len() != payloads.len() {
                     return Err(Error::from(
                         "tuple struct pattern arity does not match variant",
@@ -1314,8 +1341,7 @@ impl HirTypeChecker {
                 }
             }
             hir::PatKind::Variant(path) => {
-                let (enum_ty, payloads) = self.variant_payload_types(path)?;
-                self.require_same_adt(&ty, &enum_ty, "variant pattern")?;
+                let (_, payloads) = self.variant_payload_types(path, &ty)?;
                 if !payloads.is_empty() {
                     return Err(Error::from(
                         "payload variant requires a tuple or struct pattern",
@@ -1351,7 +1377,7 @@ impl HirTypeChecker {
         Ok(substituted)
     }
 
-    fn variant_payload_types(&mut self, path: &hir::Path) -> Result<(Ty, Vec<Ty>)> {
+    fn variant_payload_types(&mut self, path: &hir::Path, scrutinee: &Ty) -> Result<(Ty, Vec<Ty>)> {
         let Some(hir::Res::Def(variant_id)) = path.res else {
             return Err(Error::from("variant pattern is unresolved"));
         };
@@ -1367,9 +1393,10 @@ impl HirTypeChecker {
                 continue;
             };
             let enum_ty = self.enum_item_ty(&item, path)?;
-            let args = match &enum_ty.kind {
-                TyKind::Adt(_, args) => args.clone(),
-                _ => Vec::new(),
+            self.require_same_adt(scrutinee, &enum_ty, "variant pattern")?;
+            let scrutinee_args = match &scrutinee.kind {
+                TyKind::Adt(_, args) => args,
+                _ => unreachable!("variant pattern ADT was checked above"),
             };
             let Some(payload) = &variant.payload else {
                 return Ok((enum_ty, Vec::new()));
@@ -1377,7 +1404,7 @@ impl HirTypeChecker {
             let mut scope = self.generic_scope(&def.generics);
             let payload_result = scope.check_type_expr(payload);
             let payload = payload_result?;
-            let payload = scope.substitute_params(payload, &args);
+            let payload = scope.substitute_params(payload, scrutinee_args);
             drop(scope);
             let payloads = match payload.kind {
                 TyKind::Tuple(fields) => fields.into_iter().map(|field| *field).collect(),
