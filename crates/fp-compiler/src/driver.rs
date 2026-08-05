@@ -258,6 +258,9 @@ impl CompilerDriver {
                 self.handle_resolved_task(&key).await?;
                 continue;
             }
+            if self.state.typing_ctx.has_comptime_requests() {
+                continue;
+            }
             if self.state.tasks.is_idle() {
                 return Ok(());
             }
@@ -439,51 +442,205 @@ impl CompilerDriver {
     /// Evaluate a comptime request using the HIR unit supplied by typing.
     /// The driver never looks up an AST expression or reconstructs source
     /// from a string key here: the request is the complete evaluation input.
+    fn find_hir_item(program: &hir::Program, target: hir::DefId) -> Option<&hir::Item> {
+        fn in_block(block: &hir::Block, target: hir::DefId) -> Option<&hir::Item> {
+            for stmt in &block.stmts {
+                if let hir::StmtKind::Item(item) = &stmt.kind {
+                    if item.def_id == target {
+                        return Some(item);
+                    }
+                    if let Some(found) = in_item(item, target) {
+                        return Some(found);
+                    }
+                }
+            }
+            block.expr.as_deref().and_then(|expr| in_expr(expr, target))
+        }
+
+        fn in_expr(expr: &hir::Expr, target: hir::DefId) -> Option<&hir::Item> {
+            match &expr.kind {
+                hir::ExprKind::Block(block) | hir::ExprKind::Loop(block) => {
+                    in_block(block, target)
+                }
+                hir::ExprKind::While(condition, block) => {
+                    in_expr(condition, target).or_else(|| in_block(block, target))
+                }
+                hir::ExprKind::If(condition, then_expr, else_expr) => in_expr(condition, target)
+                    .or_else(|| in_expr(then_expr, target))
+                    .or_else(|| else_expr.as_deref().and_then(|expr| in_expr(expr, target))),
+                hir::ExprKind::Binary(_, left, right)
+                | hir::ExprKind::Assign(left, right)
+                | hir::ExprKind::Index(left, right) => {
+                    in_expr(left, target).or_else(|| in_expr(right, target))
+                }
+                hir::ExprKind::Unary(_, value)
+                | hir::ExprKind::Reference(hir::ExprReference { expr: value, .. })
+                | hir::ExprKind::Return(Some(value))
+                | hir::ExprKind::Break(Some(value))
+                | hir::ExprKind::Cast(value, _) => in_expr(value, target),
+                hir::ExprKind::Call(callee, args) | hir::ExprKind::MethodCall(callee, _, args) => {
+                    in_expr(callee, target).or_else(|| {
+                        args.iter().find_map(|arg| in_expr(&arg.value, target))
+                    })
+                }
+                hir::ExprKind::FieldAccess(value, _) => in_expr(value, target),
+                hir::ExprKind::Slice(slice) => in_expr(&slice.base, target)
+                    .or_else(|| slice.start.as_deref().and_then(|expr| in_expr(expr, target)))
+                    .or_else(|| slice.end.as_deref().and_then(|expr| in_expr(expr, target))),
+                hir::ExprKind::Struct(_, fields) => fields
+                    .iter()
+                    .find_map(|field| in_expr(&field.expr, target)),
+                hir::ExprKind::Match(scrutinee, arms) => in_expr(scrutinee, target).or_else(|| {
+                    arms.iter().find_map(|arm| {
+                        arm.guard
+                            .as_ref()
+                            .and_then(|guard| in_expr(guard, target))
+                            .or_else(|| in_expr(&arm.body, target))
+                    })
+                }),
+                hir::ExprKind::Try(value) => in_expr(&value.expr, target)
+                    .or_else(|| {
+                        value.catches.iter().find_map(|catch| in_expr(&catch.body, target))
+                    })
+                    .or_else(|| value.elze.as_deref().and_then(|expr| in_expr(expr, target)))
+                    .or_else(|| value.finally.as_deref().and_then(|expr| in_expr(expr, target))),
+                hir::ExprKind::With(context, body) => {
+                    in_expr(context, target).or_else(|| in_expr(body, target))
+                }
+                hir::ExprKind::Array(values) => {
+                    values.iter().find_map(|value| in_expr(value, target))
+                }
+                hir::ExprKind::ArrayRepeat { elem, len } => {
+                    in_expr(elem, target).or_else(|| in_expr(len, target))
+                }
+                hir::ExprKind::IntrinsicCall(call) => call
+                    .callargs
+                    .iter()
+                    .find_map(|arg| in_expr(&arg.value, target)),
+                hir::ExprKind::Let(_, _, value) => value
+                    .as_deref()
+                    .and_then(|value| in_expr(value, target)),
+                hir::ExprKind::Literal(_)
+                | hir::ExprKind::Path(_)
+                | hir::ExprKind::Query(_)
+                | hir::ExprKind::Continue
+                | hir::ExprKind::FormatString(_)
+                | hir::ExprKind::Return(None)
+                | hir::ExprKind::Break(None) => None,
+            }
+        }
+
+        fn in_item(item: &hir::Item, target: hir::DefId) -> Option<&hir::Item> {
+            match &item.kind {
+                hir::ItemKind::Function(function) => function
+                    .body
+                    .as_ref()
+                    .and_then(|body| in_block(body, target)),
+                hir::ItemKind::Const(constant) => in_expr(&constant.body.value, target),
+                hir::ItemKind::Impl(impl_item) => impl_item.items.iter().find_map(|item| {
+                    if item.def_id == target {
+                        None
+                    } else {
+                        match &item.kind {
+                            hir::ImplItemKind::Method(function) => function
+                                .body
+                                .as_ref()
+                                .and_then(|body| in_block(body, target)),
+                            hir::ImplItemKind::AssocConst(constant) => {
+                                in_expr(&constant.body.value, target)
+                            }
+                        }
+                    }
+                }),
+                _ => None,
+            }
+        }
+
+        program
+            .items
+            .iter()
+            .find_map(|item| (item.def_id == target).then_some(item).or_else(|| in_item(item, target)))
+    }
+
     async fn answer_hir_comptime(
         &mut self,
         request: &ComptimeRequest,
     ) -> Result<Value, CompilerDriverError> {
-        let target_name = request
-            .program
-            .def_map
-            .get(&request.target)
-            .and_then(|item| match &item.kind {
-                hir::ItemKind::Const(constant) => Some(constant.name.as_str().to_string()),
-                _ => None,
-            })
-            .ok_or_else(|| {
-                CompilerDriverError::UnresolvableComptime(format!(
+        let target_item = Self::find_hir_item(&request.program, request.target).ok_or_else(|| {
+            CompilerDriverError::UnresolvableComptime(format!(
+                "HIR comptime target {} is not a const",
+                request.target
+            ))
+        })?;
+        let target_const = match &target_item.kind {
+            hir::ItemKind::Const(constant) => constant,
+            _ => {
+                return Err(CompilerDriverError::UnresolvableComptime(format!(
                     "HIR comptime target {} is not a const",
                     request.target
-                ))
-            })?;
-        let terminal = target_name.rsplit("::").next().unwrap_or(&target_name);
+                )))
+            }
+        };
+
+        // A comptime request is emitted while the enclosing function is still
+        // being type-checked. Lower a zero-argument probe for only the
+        // requested const; lowering the whole function would require types
+        // for later runtime locals that the checker has not reached yet.
+        let probe_name = format!(
+            "__fp_comptime_probe_{}_{}",
+            request.target.package_id.0, request.target.index
+        );
+        let probe = hir::Item {
+            hir_id: target_item.hir_id,
+            def_id: request.target.saturating_add(1),
+            visibility: hir::Visibility::Private,
+            kind: hir::ItemKind::Function(hir::Function {
+                sig: hir::FunctionSig {
+                    name: hir::Symbol::new(probe_name.clone()),
+                    inputs: Vec::new(),
+                    output: target_const.ty.clone(),
+                    generics: hir::Generics::default(),
+                    abi: hir::Abi::Rust,
+                },
+                body: Some(hir::Block {
+                    hir_id: target_const.body.hir_id,
+                    stmts: Vec::new(),
+                    expr: Some(Box::new(target_const.body.value.clone())),
+                }),
+                is_const: true,
+                is_extern: false,
+                attrs: Vec::new(),
+            }),
+            span: target_item.span,
+        };
+        let mut comptime_program = request.program.clone();
+        let mut probe_items = vec![probe.clone()];
+        probe_items.extend(
+            request
+                .program
+                .def_map
+                .values()
+                .filter(|item| {
+                    matches!(
+                        item.kind,
+                        hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) | hir::ItemKind::Impl(_)
+                    )
+                })
+                .cloned(),
+        );
+        comptime_program.items = probe_items;
+        comptime_program.def_map.insert(probe.def_id, probe);
 
         let mut lowering = MirLowering::new()
             .with_typeck_results(&request.typeck_results)
             .map_err(CompilerDriverError::Core)?;
         let mir = lowering
-            .transform(request.program.clone())
+            .transform(comptime_program)
             .map_err(CompilerDriverError::Core)?;
         let mut lir_generator = LirGenerator::new(self.state.typing_ctx.data_layout.clone());
         let lir = lir_generator
             .transform(mir)
             .map_err(CompilerDriverError::Core)?;
-        let entry = lir
-            .comptime_entries
-            .iter()
-            .find(|entry| {
-                entry
-                    .function
-                    .as_str()
-                    .starts_with(&format!("__fp_comptime_const_{terminal}_"))
-            })
-            .ok_or_else(|| {
-                CompilerDriverError::UnresolvableComptime(format!(
-                    "HIR comptime target `{target_name}` was not lowered"
-                ))
-            })?;
-        let entry_function = entry.function.as_str().to_string();
 
         let package_id = request.target.package_id;
         let unit = fp_core::lir::LirCompileUnit {
@@ -496,7 +653,7 @@ impl CompilerDriver {
             .inject_globals(&self.collect_resolved_const_values());
         let mut value = self
             .interpreter
-            .run_function_named(&[unit], package_id, &entry_function)
+            .run_function_named(&[unit], package_id, &probe_name)
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         if let Some(resolved) = Self::resolve_comptime_value(&mut self.interpreter, &value) {
             value = resolved;

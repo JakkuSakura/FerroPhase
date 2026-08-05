@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 
 use crate::types::{GenericCallResolution, TypeckResults};
-use crate::{ComptimeRequest, TypingContext};
+use crate::TypingContext;
 use std::rc::Rc;
 
 /// Type checks resolved HIR and records semantic types outside the source tree.
@@ -76,66 +76,61 @@ impl HirTypeChecker {
 
     fn check_item<'a>(&'a mut self, item: &'a hir::Item) -> crate::BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-        match &item.kind {
-            hir::ItemKind::Function(function) => {
-                self.check_function(function).await?;
-            }
-            hir::ItemKind::Const(constant) => {
-                self.check_type_expr(&constant.ty)?;
-                self.check_body(&constant.body).await?;
-                if let Some(context) = self.typing_context.clone() {
-                    let value = context
-                        .request_comptime(ComptimeRequest {
-                            program: self.program.clone(),
-                            typeck_results: self.results.clone(),
-                            target: item.def_id,
-                            expected_ty: constant.ty.clone(),
-                        })
-                        .await?;
-                    self.results.const_values.insert(item.def_id, value);
+            match &item.kind {
+                hir::ItemKind::Function(function) => {
+                    self.check_function(function).await?;
                 }
-            }
-            hir::ItemKind::Impl(impl_item) => {
-                let mut scope = self.generic_scope(&impl_item.generics);
-                let self_ty = scope.check_type_expr(&impl_item.self_ty)?;
-                scope.self_types.push(self_ty);
-                if let Some(trait_ty) = &impl_item.trait_ty {
-                    scope.check_type_expr(trait_ty)?;
+                hir::ItemKind::Const(constant) => {
+                    self.check_type_expr(&constant.ty)?;
+                    let body_ty = self.check_body(&constant.body).await?;
+                    self.results
+                        .type_expr_types
+                        .insert(constant.ty.hir_id, body_ty.clone());
+                    self.results.const_types.insert(item.def_id, body_ty);
                 }
-                for item in &impl_item.items {
-                    match &item.kind {
-                        hir::ImplItemKind::Method(function) => scope.check_function(function).await?,
-                        hir::ImplItemKind::AssocConst(constant) => {
-                            scope.check_type_expr(&constant.ty)?;
-                            scope.check_body(&constant.body).await?;
+                hir::ItemKind::Impl(impl_item) => {
+                    let mut scope = self.generic_scope(&impl_item.generics);
+                    let self_ty = scope.check_type_expr(&impl_item.self_ty)?;
+                    scope.self_types.push(self_ty);
+                    if let Some(trait_ty) = &impl_item.trait_ty {
+                        scope.check_type_expr(trait_ty)?;
+                    }
+                    for item in &impl_item.items {
+                        match &item.kind {
+                            hir::ImplItemKind::Method(function) => {
+                                scope.check_function(function).await?
+                            }
+                            hir::ImplItemKind::AssocConst(constant) => {
+                                scope.check_type_expr(&constant.ty)?;
+                                scope.check_body(&constant.body).await?;
+                            }
+                        }
+                    }
+                    scope.self_types.pop();
+                }
+                hir::ItemKind::Struct(def) => {
+                    let mut scope = self.generic_scope(&def.generics);
+                    for field in &def.fields {
+                        scope.check_type_expr(&field.ty)?;
+                    }
+                }
+                hir::ItemKind::Enum(def) => {
+                    let mut scope = self.generic_scope(&def.generics);
+                    for variant in &def.variants {
+                        if let Some(payload) = &variant.payload {
+                            scope.check_type_expr(payload)?;
+                        }
+                        if let Some(discriminant) = &variant.discriminant {
+                            scope.check_expr(discriminant).await?;
                         }
                     }
                 }
-                scope.self_types.pop();
-            }
-            hir::ItemKind::Struct(def) => {
-                let mut scope = self.generic_scope(&def.generics);
-                for field in &def.fields {
-                    scope.check_type_expr(&field.ty)?;
+                hir::ItemKind::Query(_) => {}
+                hir::ItemKind::Expr(expr) => {
+                    self.check_expr(expr).await?;
                 }
             }
-            hir::ItemKind::Enum(def) => {
-                let mut scope = self.generic_scope(&def.generics);
-                for variant in &def.variants {
-                    if let Some(payload) = &variant.payload {
-                        scope.check_type_expr(payload)?;
-                    }
-                    if let Some(discriminant) = &variant.discriminant {
-                        scope.check_expr(discriminant).await?;
-                    }
-                }
-            }
-            hir::ItemKind::Query(_) => {}
-            hir::ItemKind::Expr(expr) => {
-                self.check_expr(expr).await?;
-            }
-        }
-        Ok(())
+            Ok(())
         })
     }
 
@@ -144,22 +139,22 @@ impl HirTypeChecker {
         function: &'a hir::Function,
     ) -> crate::BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-        self.push_generics(&function.sig.generics);
-        self.check_signature(&function.sig).map_err(|error| {
-            Error::from(format!(
-                "in function `{}` signature: {error}",
-                function.sig.name
-            ))
-        })?;
-        if let Some(body) = &function.body {
-            self.check_function_body(&function.sig.inputs, body)
-                .await
-                .map_err(|error| {
-                    Error::from(format!("in function `{}` body: {error}", function.sig.name))
-                })?;
-        }
-        self.generic_scopes.pop();
-        Ok(())
+            self.push_generics(&function.sig.generics);
+            self.check_signature(&function.sig).map_err(|error| {
+                Error::from(format!(
+                    "in function `{}` signature: {error}",
+                    function.sig.name
+                ))
+            })?;
+            if let Some(body) = &function.body {
+                self.check_function_body(&function.sig.inputs, body)
+                    .await
+                    .map_err(|error| {
+                        Error::from(format!("in function `{}` body: {error}", function.sig.name))
+                    })?;
+            }
+            self.generic_scopes.pop();
+            Ok(())
         })
     }
 
@@ -201,15 +196,15 @@ impl HirTypeChecker {
         Ok(())
     }
 
-    async fn check_body(&mut self, body: &hir::Body) -> Result<()> {
+    async fn check_body(&mut self, body: &hir::Body) -> Result<Ty> {
         self.locals.push(HashMap::new());
         for param in &body.params {
             let ty = self.check_type_expr(&param.ty)?;
             self.bind_pattern(&param.pat, ty)?;
         }
-        self.check_expr(&body.value).await?;
+        let value_ty = self.check_expr(&body.value).await?;
         self.locals.pop();
-        Ok(())
+        Ok(value_ty)
     }
 
     async fn check_function_body(
@@ -229,274 +224,281 @@ impl HirTypeChecker {
 
     fn check_expr<'a>(&'a mut self, expr: &'a hir::Expr) -> crate::BoxFuture<'a, Result<Ty>> {
         Box::pin(async move {
-        let ty = match &expr.kind {
-            hir::ExprKind::Literal(lit) => self.literal_ty(lit),
-            hir::ExprKind::Path(path) => self.expr_path_ty(path)?,
-            hir::ExprKind::Binary(op, lhs, rhs) => {
-                let lhs = self.check_expr(lhs).await?;
-                let rhs = self.check_expr(rhs).await?;
-                match op {
-                    hir::BinOp::And | hir::BinOp::Or => {
-                        self.require_same(&lhs, &Ty::bool())?;
-                        self.require_same(&rhs, &Ty::bool())?;
-                    }
-                    hir::BinOp::Eq
-                    | hir::BinOp::Ne
-                    | hir::BinOp::Lt
-                    | hir::BinOp::Le
-                    | hir::BinOp::Gt
-                    | hir::BinOp::Ge => {
-                        self.require_same(&lhs, &rhs)?;
-                    }
-                    _ => {
-                        self.require_same(&lhs, &rhs)?;
-                    }
-                }
-                match op {
-                    hir::BinOp::Eq
-                    | hir::BinOp::Ne
-                    | hir::BinOp::Lt
-                    | hir::BinOp::Le
-                    | hir::BinOp::Gt
-                    | hir::BinOp::Ge
-                    | hir::BinOp::And
-                    | hir::BinOp::Or => Ty::bool(),
-                    _ => lhs,
-                }
-            }
-            hir::ExprKind::Unary(op, value) => {
-                let value_ty = self.check_expr(value).await?;
-                if matches!(op, hir::UnOp::Not) {
-                    self.require_same(&value_ty, &Ty::bool())?;
-                }
-                value_ty
-            }
-            hir::ExprKind::Reference(reference) => Ty {
-                kind: TyKind::Ref(
-                    ty::Region::ReErased,
-                    Box::new(self.check_expr(&reference.expr).await?),
-                    reference.mutable,
-                ),
-            },
-            hir::ExprKind::Call(callee, args) => {
-                let callee_ty = self.check_expr(callee).await?;
-                let mut arg_types = Vec::with_capacity(args.len());
-                for arg in args {
-                    arg_types.push(self.check_expr(&arg.value).await?);
-                }
-                let Some((substitutions, output)) =
-                    self.instantiate_call(&callee_ty, &arg_types)?
-                else {
-                    return Err(Error::from("called expression is not a function"));
-                };
-                if let hir::ExprKind::Path(path) = &callee.kind {
-                    if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
-                        let args = self
-                            .generic_call_args(*def_id, &substitutions)?
-                            .or_else(|| self.callable_output_args(&callee_ty, &substitutions));
-                        if let Some(args) = args {
-                            self.results.generic_call_args.insert(
-                                expr.hir_id,
-                                GenericCallResolution {
-                                    def_id: *def_id,
-                                    args,
-                                },
-                            );
+            let ty = match &expr.kind {
+                hir::ExprKind::Literal(lit) => self.literal_ty(lit),
+                hir::ExprKind::Path(path) => self.expr_path_ty(path)?,
+                hir::ExprKind::Binary(op, lhs, rhs) => {
+                    let lhs = self.check_expr(lhs).await?;
+                    let rhs = self.check_expr(rhs).await?;
+                    match op {
+                        hir::BinOp::And | hir::BinOp::Or => {
+                            self.require_same(&lhs, &Ty::bool())?;
+                            self.require_same(&rhs, &Ty::bool())?;
+                        }
+                        hir::BinOp::Eq
+                        | hir::BinOp::Ne
+                        | hir::BinOp::Lt
+                        | hir::BinOp::Le
+                        | hir::BinOp::Gt
+                        | hir::BinOp::Ge => {
+                            self.require_same(&lhs, &rhs)?;
+                        }
+                        _ => {
+                            self.require_same(&lhs, &rhs)?;
                         }
                     }
-                }
-                output
-            }
-            hir::ExprKind::MethodCall(receiver, method, args) => {
-                let receiver_ty = self.check_expr(receiver).await?;
-                let mut arg_types = vec![receiver_ty.clone()];
-                for arg in args {
-                    arg_types.push(self.check_expr(&arg.value).await?);
-                }
-                let (method_def_id, generic_args, output) =
-                    self.method_output(&receiver_ty, method, &arg_types)?;
-                self.results
-                    .method_resolutions
-                    .insert(expr.hir_id, method_def_id);
-                if let Some(args) = generic_args {
-                    self.results.generic_method_args.insert(
-                        expr.hir_id,
-                        GenericCallResolution {
-                            def_id: method_def_id,
-                            args,
-                        },
-                    );
-                }
-                output
-            }
-            hir::ExprKind::FieldAccess(receiver, field) => {
-                let receiver_ty = self.check_expr(receiver).await?;
-                self.field_ty(&receiver_ty, field)?
-            }
-            hir::ExprKind::Index(receiver, index) => {
-                let receiver_ty = self.check_expr(receiver).await?;
-                let index_ty = self.check_expr(index).await?;
-                self.require_same(&index_ty, &Ty::int(ty::IntTy::I64))?;
-                match receiver_ty.kind {
-                    TyKind::Array(inner, _) | TyKind::Slice(inner) => *inner,
-                    _ => return Err(Error::from("indexing requires an array or slice")),
-                }
-            }
-            hir::ExprKind::Cast(value, target) => {
-                self.check_expr(value).await?;
-                self.check_type_expr(target)?
-            }
-            hir::ExprKind::Struct(path, fields) => {
-                let ty = self.path_ty(path)?;
-                for field in fields {
-                    let value_ty = self.check_expr(&field.expr).await?;
-                    let field_ty = self.field_ty(&ty, &field.name)?;
-                    self.require_same(&value_ty, &field_ty)?;
-                }
-                ty
-            }
-            hir::ExprKind::If(condition, then_expr, else_expr) => {
-                let condition = self.check_expr(condition).await?;
-                self.require_same(&condition, &Ty::bool())?;
-                let then_ty = self.check_expr(then_expr).await?;
-                if let Some(else_expr) = else_expr {
-                    let else_ty = self.check_expr(else_expr).await?;
-                    self.require_same(&then_ty, &else_ty)?;
-                }
-                match else_expr.as_ref() {
-                    Some(_) => then_ty,
-                    None => self.unit_ty(),
-                }
-            }
-            hir::ExprKind::Match(scrutinee, arms) => {
-                let scrutinee_ty = self.check_expr(scrutinee).await?;
-                if arms.is_empty() {
-                    return Err(Error::from("match expression requires at least one arm"));
-                }
-                let mut result = None;
-                for arm in arms {
-                    let arm_ty = self.check_match_arm(arm, &scrutinee_ty).await?;
-                    if let Some(result_ty) = &result {
-                        self.require_same(result_ty, &arm_ty)?;
-                    } else {
-                        result = Some(arm_ty);
+                    match op {
+                        hir::BinOp::Eq
+                        | hir::BinOp::Ne
+                        | hir::BinOp::Lt
+                        | hir::BinOp::Le
+                        | hir::BinOp::Gt
+                        | hir::BinOp::Ge
+                        | hir::BinOp::And
+                        | hir::BinOp::Or => Ty::bool(),
+                        _ => lhs,
                     }
                 }
-                result.ok_or_else(|| Error::from("match expression requires at least one arm"))?
-            }
-            hir::ExprKind::Block(block) | hir::ExprKind::Loop(block) => self.check_block(block).await?,
-            hir::ExprKind::While(condition, block) => {
-                let condition_ty = self.check_expr(condition).await?;
-                self.require_same(&condition_ty, &Ty::bool())?;
-                self.check_block(block).await?
-            }
-            hir::ExprKind::Array(values) => {
-                let Some(first) = values.first() else {
-                    return Err(Error::from("empty array has no inferable element type"));
-                };
-                let element = self.check_expr(first).await?;
-                for value in values.iter().skip(1) {
+                hir::ExprKind::Unary(op, value) => {
                     let value_ty = self.check_expr(value).await?;
-                    self.require_same(&element, &value_ty)?;
+                    if matches!(op, hir::UnOp::Not) {
+                        self.require_same(&value_ty, &Ty::bool())?;
+                    }
+                    value_ty
                 }
-                Ty {
-                    kind: TyKind::Array(
-                        Box::new(element),
-                        ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id)),
+                hir::ExprKind::Reference(reference) => Ty {
+                    kind: TyKind::Ref(
+                        ty::Region::ReErased,
+                        Box::new(self.check_expr(&reference.expr).await?),
+                        reference.mutable,
                     ),
+                },
+                hir::ExprKind::Call(callee, args) => {
+                    let callee_ty = self.check_expr(callee).await?;
+                    let mut arg_types = Vec::with_capacity(args.len());
+                    for arg in args {
+                        arg_types.push(self.check_expr(&arg.value).await?);
+                    }
+                    let Some((substitutions, output)) =
+                        self.instantiate_call(&callee_ty, &arg_types)?
+                    else {
+                        return Err(Error::from("called expression is not a function"));
+                    };
+                    if let hir::ExprKind::Path(path) = &callee.kind {
+                        if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
+                            let args = self
+                                .generic_call_args(*def_id, &substitutions)?
+                                .or_else(|| self.callable_output_args(&callee_ty, &substitutions));
+                            if let Some(args) = args {
+                                self.results.generic_call_args.insert(
+                                    expr.hir_id,
+                                    GenericCallResolution {
+                                        def_id: *def_id,
+                                        args,
+                                    },
+                                );
+                            }
+                        }
+                    }
+                    output
                 }
-            }
-            hir::ExprKind::ArrayRepeat { elem, len } => {
-                let element = self.check_expr(elem).await?;
-                self.check_expr(len).await?;
-                Ty {
-                    kind: TyKind::Array(
-                        Box::new(element),
-                        ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id)),
-                    ),
-                }
-            }
-            hir::ExprKind::Assign(lhs, rhs) => {
-                let lhs = self.check_expr(lhs).await?;
-                let rhs = self.check_expr(rhs).await?;
-                self.require_same(&lhs, &rhs)?;
-                lhs
-            }
-            hir::ExprKind::Return(value) | hir::ExprKind::Break(value) => match value.as_ref() {
-                Some(value) => self.check_expr(value).await?,
-                None => self.unit_ty(),
-            },
-            hir::ExprKind::Continue => Ty::never(),
-            hir::ExprKind::Let(pattern, target, value) => {
-                let ty = self.check_type_expr(target)?;
-                if let Some(value) = value {
-                    let value_ty = self.check_expr(value).await?;
-                    self.require_same(&ty, &value_ty)?;
-                }
-                self.bind_pattern(pattern, ty.clone())?;
-                ty
-            }
-            hir::ExprKind::Try(value) => {
-                let input_ty = self.check_expr(&value.expr).await?;
-                let result_ty = input_ty.clone();
-                for catch in &value.catches {
-                    if let Some(pattern) = &catch.pat {
-                        self.bind_pattern(
-                            pattern,
-                            Ty {
-                                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+                hir::ExprKind::MethodCall(receiver, method, args) => {
+                    let receiver_ty = self.check_expr(receiver).await?;
+                    let mut arg_types = vec![receiver_ty.clone()];
+                    for arg in args {
+                        arg_types.push(self.check_expr(&arg.value).await?);
+                    }
+                    let (method_def_id, generic_args, output) =
+                        self.method_output(&receiver_ty, method, &arg_types)?;
+                    self.results
+                        .method_resolutions
+                        .insert(expr.hir_id, method_def_id);
+                    if let Some(args) = generic_args {
+                        self.results.generic_method_args.insert(
+                            expr.hir_id,
+                            GenericCallResolution {
+                                def_id: method_def_id,
+                                args,
                             },
-                        )?;
+                        );
                     }
-                    let catch_ty = self.check_expr(&catch.body).await?;
-                    self.require_same(&result_ty, &catch_ty)?;
+                    output
                 }
-                if let Some(elze) = &value.elze {
-                    let elze_ty = self.check_expr(elze).await?;
-                    self.require_same(&result_ty, &elze_ty)?;
+                hir::ExprKind::FieldAccess(receiver, field) => {
+                    let receiver_ty = self.check_expr(receiver).await?;
+                    self.field_ty(&receiver_ty, field)?
                 }
-                if let Some(finally) = &value.finally {
-                    self.check_expr(finally).await?;
-                }
-                result_ty
-            }
-            hir::ExprKind::With(context, body) => {
-                self.check_expr(context).await?;
-                self.check_expr(body).await?
-            }
-            hir::ExprKind::Slice(slice) => {
-                let base_ty = self.check_expr(&slice.base).await?;
-                if let Some(start) = &slice.start {
-                    self.check_expr(start).await?;
-                }
-                if let Some(end) = &slice.end {
-                    self.check_expr(end).await?;
-                }
-                match base_ty.kind {
-                    TyKind::Array(inner, _) => Ty {
-                        kind: TyKind::Slice(inner),
-                    },
-                    TyKind::Slice(inner) => Ty {
-                        kind: TyKind::Slice(inner),
-                    },
-                    _ => return Err(Error::from("slicing requires an array or slice")),
-                }
-            }
-            hir::ExprKind::Query(_) => return Err(Error::from("query typing is not implemented")),
-            hir::ExprKind::IntrinsicCall(call) => self.check_intrinsic(call).await?,
-            hir::ExprKind::FormatString(format) => {
-                for part in &format.parts {
-                    if let hir::FormatTemplatePart::Placeholder(placeholder) = part {
-                        let _ = placeholder;
+                hir::ExprKind::Index(receiver, index) => {
+                    let receiver_ty = self.check_expr(receiver).await?;
+                    let index_ty = self.check_expr(index).await?;
+                    self.require_same(&index_ty, &Ty::int(ty::IntTy::I64))?;
+                    match receiver_ty.kind {
+                        TyKind::Array(inner, _) | TyKind::Slice(inner) => *inner,
+                        _ => return Err(Error::from("indexing requires an array or slice")),
                     }
                 }
-                Ty {
-                    kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+                hir::ExprKind::Cast(value, target) => {
+                    self.check_expr(value).await?;
+                    self.check_type_expr(target)?
                 }
-            }
-        };
-        self.results.record_expr_type(expr.hir_id, ty.clone());
-        Ok(ty)
+                hir::ExprKind::Struct(path, fields) => {
+                    let ty = self.path_ty(path)?;
+                    for field in fields {
+                        let value_ty = self.check_expr(&field.expr).await?;
+                        let field_ty = self.field_ty(&ty, &field.name)?;
+                        self.require_same(&value_ty, &field_ty)?;
+                    }
+                    ty
+                }
+                hir::ExprKind::If(condition, then_expr, else_expr) => {
+                    let condition = self.check_expr(condition).await?;
+                    self.require_same(&condition, &Ty::bool())?;
+                    let then_ty = self.check_expr(then_expr).await?;
+                    if let Some(else_expr) = else_expr {
+                        let else_ty = self.check_expr(else_expr).await?;
+                        self.require_same(&then_ty, &else_ty)?;
+                    }
+                    match else_expr.as_ref() {
+                        Some(_) => then_ty,
+                        None => self.unit_ty(),
+                    }
+                }
+                hir::ExprKind::Match(scrutinee, arms) => {
+                    let scrutinee_ty = self.check_expr(scrutinee).await?;
+                    if arms.is_empty() {
+                        return Err(Error::from("match expression requires at least one arm"));
+                    }
+                    let mut result = None;
+                    for arm in arms {
+                        let arm_ty = self.check_match_arm(arm, &scrutinee_ty).await?;
+                        if let Some(result_ty) = &result {
+                            self.require_same(result_ty, &arm_ty)?;
+                        } else {
+                            result = Some(arm_ty);
+                        }
+                    }
+                    result
+                        .ok_or_else(|| Error::from("match expression requires at least one arm"))?
+                }
+                hir::ExprKind::Block(block) | hir::ExprKind::Loop(block) => {
+                    self.check_block(block).await?
+                }
+                hir::ExprKind::While(condition, block) => {
+                    let condition_ty = self.check_expr(condition).await?;
+                    self.require_same(&condition_ty, &Ty::bool())?;
+                    self.check_block(block).await?
+                }
+                hir::ExprKind::Array(values) => {
+                    let Some(first) = values.first() else {
+                        return Err(Error::from("empty array has no inferable element type"));
+                    };
+                    let element = self.check_expr(first).await?;
+                    for value in values.iter().skip(1) {
+                        let value_ty = self.check_expr(value).await?;
+                        self.require_same(&element, &value_ty)?;
+                    }
+                    Ty {
+                        kind: TyKind::Array(
+                            Box::new(element),
+                            ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id)),
+                        ),
+                    }
+                }
+                hir::ExprKind::ArrayRepeat { elem, len } => {
+                    let element = self.check_expr(elem).await?;
+                    self.check_expr(len).await?;
+                    Ty {
+                        kind: TyKind::Array(
+                            Box::new(element),
+                            ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id)),
+                        ),
+                    }
+                }
+                hir::ExprKind::Assign(lhs, rhs) => {
+                    let lhs = self.check_expr(lhs).await?;
+                    let rhs = self.check_expr(rhs).await?;
+                    self.require_same(&lhs, &rhs)?;
+                    lhs
+                }
+                hir::ExprKind::Return(value) | hir::ExprKind::Break(value) => {
+                    match value.as_ref() {
+                        Some(value) => self.check_expr(value).await?,
+                        None => self.unit_ty(),
+                    }
+                }
+                hir::ExprKind::Continue => Ty::never(),
+                hir::ExprKind::Let(pattern, target, value) => {
+                    let ty = self.check_type_expr(target)?;
+                    if let Some(value) = value {
+                        let value_ty = self.check_expr(value).await?;
+                        self.require_same(&ty, &value_ty)?;
+                    }
+                    self.bind_pattern(pattern, ty.clone())?;
+                    ty
+                }
+                hir::ExprKind::Try(value) => {
+                    let input_ty = self.check_expr(&value.expr).await?;
+                    let result_ty = input_ty.clone();
+                    for catch in &value.catches {
+                        if let Some(pattern) = &catch.pat {
+                            self.bind_pattern(
+                                pattern,
+                                Ty {
+                                    kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+                                },
+                            )?;
+                        }
+                        let catch_ty = self.check_expr(&catch.body).await?;
+                        self.require_same(&result_ty, &catch_ty)?;
+                    }
+                    if let Some(elze) = &value.elze {
+                        let elze_ty = self.check_expr(elze).await?;
+                        self.require_same(&result_ty, &elze_ty)?;
+                    }
+                    if let Some(finally) = &value.finally {
+                        self.check_expr(finally).await?;
+                    }
+                    result_ty
+                }
+                hir::ExprKind::With(context, body) => {
+                    self.check_expr(context).await?;
+                    self.check_expr(body).await?
+                }
+                hir::ExprKind::Slice(slice) => {
+                    let base_ty = self.check_expr(&slice.base).await?;
+                    if let Some(start) = &slice.start {
+                        self.check_expr(start).await?;
+                    }
+                    if let Some(end) = &slice.end {
+                        self.check_expr(end).await?;
+                    }
+                    match base_ty.kind {
+                        TyKind::Array(inner, _) => Ty {
+                            kind: TyKind::Slice(inner),
+                        },
+                        TyKind::Slice(inner) => Ty {
+                            kind: TyKind::Slice(inner),
+                        },
+                        _ => return Err(Error::from("slicing requires an array or slice")),
+                    }
+                }
+                hir::ExprKind::Query(_) => {
+                    return Err(Error::from("query typing is not implemented"));
+                }
+                hir::ExprKind::IntrinsicCall(call) => self.check_intrinsic(call).await?,
+                hir::ExprKind::FormatString(format) => {
+                    for part in &format.parts {
+                        if let hir::FormatTemplatePart::Placeholder(placeholder) = part {
+                            let _ = placeholder;
+                        }
+                    }
+                    Ty {
+                        kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+                    }
+                }
+            };
+            self.results.record_expr_type(expr.hir_id, ty.clone());
+            Ok(ty)
         })
     }
 
@@ -846,7 +848,13 @@ impl HirTypeChecker {
         };
         match &item.kind {
             hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) => self.path_ty(path),
-            hir::ItemKind::Const(constant) => self.check_type_expr(&constant.ty),
+            hir::ItemKind::Const(constant) => self
+                .results
+                .const_types
+                .get(&def_id)
+                .cloned()
+                .map(Ok)
+                .unwrap_or_else(|| self.check_type_expr(&constant.ty)),
             hir::ItemKind::Function(function) => self.function_signature(function),
             _ => Err(Error::from("resolved path is not a value")),
         }

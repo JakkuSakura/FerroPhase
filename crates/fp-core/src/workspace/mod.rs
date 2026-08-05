@@ -256,7 +256,9 @@ impl WorkspaceContext {
     }
 
     pub fn is_registered(&self, name: &str) -> bool {
-        self.providers.iter().any(|provider| provider.resolve_package(name).is_some())
+        self.providers
+            .iter()
+            .any(|provider| provider.resolve_package(name).is_some())
     }
 
     pub fn provider(&self, name: &str) -> Option<Arc<dyn PackageProvider>> {

@@ -6312,13 +6312,11 @@ impl MirLowering {
         span: Span,
     ) -> Option<mir::Constant> {
         if let Some(constant) = self.lower_const_expr(program, base, None, None) {
-            return Some(
+            if let Some(field_value) =
                 self.lower_const_struct_field_from_constant(&constant, field, span)
-                    .unwrap_or_else(|| {
-                        self.emit_error(span, format!("unsupported const field access `{field}`"));
-                        self.error_constant(span)
-                    }),
-            );
+            {
+                return Some(field_value);
+            }
         }
 
         let hir::ExprKind::IntrinsicCall(call) = &base.kind else {

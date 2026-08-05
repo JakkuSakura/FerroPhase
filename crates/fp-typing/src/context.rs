@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
-use std::task::Waker;
 use std::task::Poll;
+use std::task::Waker;
 
 use fp_core::ast::{ExprResolutionTable, TypeStruct, Value};
 use fp_core::lir::LirDataLayout;
@@ -138,10 +138,7 @@ impl TypingContext {
     /// Await a provider-owned package key. Package discovery and loading stay
     /// outside typing; the compiler driver observes the registered waker and
     /// services the corresponding `LoadPackage` request.
-    pub async fn await_package(
-        &self,
-        key: &str,
-    ) -> fp_core::Result<fp_core::package::PackageId> {
+    pub async fn await_package(&self, key: &str) -> fp_core::Result<fp_core::package::PackageId> {
         let key = key.to_owned();
         std::future::poll_fn(|cx| {
             let Some(package_id) = self.env_ctx.resolve_package(&key) else {
@@ -195,10 +192,12 @@ impl TypingContext {
                 return Poll::Ready(result);
             }
             if let Some(request) = request.take() {
-                self.comptime_requests.borrow_mut().push_back(PendingComptimeRequest {
-                    request,
-                    reply: reply_for_poll.clone(),
-                });
+                self.comptime_requests
+                    .borrow_mut()
+                    .push_back(PendingComptimeRequest {
+                        request,
+                        reply: reply_for_poll.clone(),
+                    });
             }
             reply_for_poll.borrow_mut().wakers.push(cx.waker().clone());
             Poll::Pending
@@ -209,6 +208,11 @@ impl TypingContext {
     pub fn take_comptime_requests(&self) -> Vec<PendingComptimeRequest> {
         self.comptime_requests.borrow_mut().drain(..).collect()
     }
+
+    pub fn has_comptime_requests(&self) -> bool {
+        !self.comptime_requests.borrow().is_empty()
+    }
+
 }
 
 #[cfg(test)]

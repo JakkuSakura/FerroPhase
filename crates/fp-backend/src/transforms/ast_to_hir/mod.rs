@@ -1042,6 +1042,12 @@ impl HirGenerator {
             program.items.extend(synthetic.drain(..));
         }
 
+        // Nested const items generated for const blocks are referenced by
+        // their DefId when the type checker requests comptime evaluation.
+        // Keep them in the program index even though they are not top-level
+        // program items.
+        program.def_map = self.program_def_map.clone();
+
         Ok(program)
     }
 
@@ -1257,6 +1263,8 @@ impl HirGenerator {
             }
             _ => {
                 let hir_item = self.transform_item_to_hir(item.as_ref())?;
+                self.program_def_map
+                    .insert(hir_item.def_id, hir_item.clone());
                 Ok(hir::StmtKind::Item(hir_item))
             }
         }
