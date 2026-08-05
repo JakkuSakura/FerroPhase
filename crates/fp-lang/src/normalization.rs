@@ -68,7 +68,10 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     )),
                 };
                 Ok(NormalizeOutcome::Normalized(Expr::from_parts(
-                    id, ty_slot, span, replacement,
+                    id,
+                    ty_slot,
+                    span,
+                    replacement,
                 )))
             }
             IntrinsicNormalizationMode::Transpile => Ok(NormalizeOutcome::Ignored(
@@ -294,6 +297,18 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             )));
         };
 
+        // Keep the exact language-item registry as the source of truth for
+        // operations exposed by loaded std modules. This also preserves the
+        // call-specific argument shaping used by print and filesystem ops.
+        if let Some(call) = fp_core::ast::intrinsic_call_from_invoke(&invoke) {
+            return self.normalize_call(Expr::from_parts(
+                id,
+                ty_slot,
+                span,
+                ExprKind::IntrinsicCall(call),
+            ));
+        }
+
         let Some(intrinsic_kind) = resolve_lang_intrinsic(&invoke) else {
             return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
                 id,
@@ -323,7 +338,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                         span,
                         ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
                             CallKind::Intrinsic(
-                                CallKind::Op(op).intrinsic_kind().expect("operation mapping"),
+                                CallKind::Op(op)
+                                    .intrinsic_kind()
+                                    .expect("operation mapping"),
                             ),
                             invoke.args,
                             invoke.kwargs,
@@ -341,8 +358,8 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     )),
                 ))),
             },
-            IntrinsicNormalizationMode::Transpile => Ok(NormalizeOutcome::Normalized(
-                Expr::from_parts(
+            IntrinsicNormalizationMode::Transpile => {
+                Ok(NormalizeOutcome::Normalized(Expr::from_parts(
                     id,
                     ty_slot,
                     span,
@@ -351,15 +368,17 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                         invoke.args,
                         invoke.kwargs,
                     )),
-                ),
-            )),
+                )))
+            }
         }
     }
 }
 
 fn compile_mode_std_path(kind: OpKind) -> Option<Vec<Ident>> {
     let path = match kind {
-        OpKind::Format => return None,
+        // Printing and formatting are compiler intrinsics; the embedded std
+        // surface only exposes their lower-level IO building blocks.
+        OpKind::Format | OpKind::Print | OpKind::Println => return None,
         OpKind::TimeNow => &["std", "time", "now"][..],
         OpKind::Sleep => &["std", "time", "sleep"][..],
         OpKind::Spawn => &["std", "task", "spawn"][..],
@@ -387,8 +406,6 @@ fn compile_mode_std_path(kind: OpKind) -> Option<Vec<Ident>> {
         OpKind::IoWriteStderr => &["std", "io", "write_stderr"][..],
         OpKind::YamlToJson => &["std", "yaml", "to_json"][..],
         OpKind::JsonParse => &["std", "json", "parse"][..],
-        OpKind::Print => &["std", "io", "print"][..],
-        OpKind::Println => &["std", "io", "println"][..],
         OpKind::Input => &["std", "io", "input"][..],
         OpKind::ShellExec => &["std", "shell", "exec"][..],
         OpKind::ShellFileCopy => &["std", "shell", "file_copy"][..],
@@ -405,7 +422,52 @@ fn resolve_lang_intrinsic(invoke: &ExprInvoke) -> Option<CallKind> {
     };
     // Check both qualified (std::intrinsics::create_struct) and bare names
     let fn_name = name.rsplit("::").next().unwrap_or(&name);
-    intrinsic_macro_kind(fn_name)
+    intrinsic_macro_kind(fn_name).or_else(|| {
+        matches!(fn_name, "format" | "print" | "println")
+            .then(|| operation_kind(fn_name))
+            .flatten()
+            .map(CallKind::Op)
+    })
+}
+
+fn operation_kind(name: &str) -> Option<OpKind> {
+    match name {
+        "format" => Some(OpKind::Format),
+        "print" => Some(OpKind::Print),
+        "println" => Some(OpKind::Println),
+        "input" => Some(OpKind::Input),
+        "now" => Some(OpKind::TimeNow),
+        "sleep" => Some(OpKind::Sleep),
+        "spawn" => Some(OpKind::Spawn),
+        "join" => Some(OpKind::Join),
+        "select" => Some(OpKind::Select),
+        "read_dir" => Some(OpKind::FsReadDir),
+        "walk_dir" => Some(OpKind::FsWalkDir),
+        "read_to_string" => Some(OpKind::FsReadToString),
+        "write_string" => Some(OpKind::FsWriteString),
+        "append_string" => Some(OpKind::FsAppendString),
+        "exists" => Some(OpKind::FsExists),
+        "is_dir" => Some(OpKind::FsIsDir),
+        "is_file" => Some(OpKind::FsIsFile),
+        "create_dir_all" => Some(OpKind::FsCreateDirAll),
+        "remove_file" => Some(OpKind::FsRemoveFile),
+        "remove_dir_all" => Some(OpKind::FsRemoveDirAll),
+        "glob" => Some(OpKind::FsGlob),
+        "current_dir" => Some(OpKind::EnvCurrentDir),
+        "temp_dir" => Some(OpKind::EnvTempDir),
+        "home_dir" => Some(OpKind::EnvHomeDir),
+        "var" => Some(OpKind::EnvVar),
+        "read_stdin_to_string" => Some(OpKind::IoReadStdinToString),
+        "write_stdout" => Some(OpKind::IoWriteStdout),
+        "write_stderr" => Some(OpKind::IoWriteStderr),
+        "to_json" => Some(OpKind::YamlToJson),
+        "parse" => Some(OpKind::JsonParse),
+        "exec" => Some(OpKind::ShellExec),
+        "file_copy" => Some(OpKind::ShellFileCopy),
+        "file_template" => Some(OpKind::ShellFileTemplate),
+        "file_rsync" => Some(OpKind::ShellFileRsync),
+        _ => None,
+    }
 }
 
 fn intrinsic_macro_kind(name: &str) -> Option<CallKind> {
@@ -973,7 +1035,7 @@ mod tests {
                 None,
             )
             .expect("parse marked declarations");
-            let registry = fp_core::lang::collect_lang_items(&result.ast);
+        let registry = fp_core::lang::collect_lang_items(&result.ast);
 
         assert_eq!(
             registry
