@@ -345,6 +345,21 @@ impl WorkspaceContext {
             .collect()
     }
 
+    pub fn module_paths(&self) -> Vec<QualifiedPath> {
+        self.crates
+            .borrow()
+            .values()
+            .flat_map(|package| {
+                package
+                    .borrow()
+                    .module_paths
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
     /// Search every crate for a struct at `path`, borrowing each crate just
     /// long enough to check — the one clone that remains is the matched
     /// item itself, needed regardless to build an owned `Ty::Struct(..)`.

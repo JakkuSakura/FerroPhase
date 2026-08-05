@@ -45,6 +45,7 @@ struct TypingUnit {
     lowering_config: HirLoweringConfig,
     external_definitions: Vec<(QualifiedPath, hir::Program, HashMap<String, hir::Res>)>,
     def_id_start: u32,
+    external_modules: Vec<QualifiedPath>,
 }
 
 impl CompilerDriver {
@@ -67,7 +68,8 @@ impl CompilerDriver {
                 .with_package_id(unit.package_id)
                 .with_def_id_start(unit.def_id_start)
                 .with_lowering_config(unit.lowering_config)
-                .with_external_definitions(unit.external_definitions);
+                .with_external_definitions(unit.external_definitions)
+                .with_external_modules(unit.external_modules);
             let result = match generator
                 .transform_module_async(
                     &unit.module_path,
@@ -366,6 +368,7 @@ impl CompilerDriver {
                 lowering_config: HirLoweringConfig,
                 external_definitions: self.state.typing_ctx.env_ctx.hir_definitions(),
                 def_id_start: self.next_hir_def_id,
+                external_modules: self.state.typing_ctx.env_ctx.module_paths(),
             }),
         );
         self.run_pool_to_idle().await?;

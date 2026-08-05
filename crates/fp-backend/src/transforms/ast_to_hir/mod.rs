@@ -74,6 +74,7 @@ pub struct HirGenerator {
         hir::Program,
         HashMap<String, hir::Res>,
     )>,
+    external_modules: Vec<fp_core::module::path::QualifiedPath>,
 }
 
 enum MaterializedTypeAlias {
@@ -323,6 +324,7 @@ impl HirGenerator {
             lowering_config: HirLoweringConfig::default(),
             intrinsic_normalizer: None,
             external_definitions: Vec::new(),
+            external_modules: Vec::new(),
         }
     }
 
@@ -354,6 +356,14 @@ impl HirGenerator {
         )>,
     ) -> Self {
         self.external_definitions = definitions;
+        self
+    }
+
+    pub fn with_external_modules(
+        mut self,
+        modules: Vec<fp_core::module::path::QualifiedPath>,
+    ) -> Self {
+        self.external_modules = modules;
         self
     }
 
@@ -1123,6 +1133,8 @@ impl HirGenerator {
         self.module_path = module_path.clone();
         let mut program = hir::Program::new();
         self.seed_external_definitions(&mut program);
+        self.module_defs
+            .extend(self.external_modules.iter().cloned());
         self.predeclare_items(items)?;
         self.insert_default_prelude_aliases();
         self.program_def_map = program.def_map.clone();
