@@ -174,10 +174,7 @@ mod libc {
 "#;
 
     let parsed = fe.parse(source, None);
-    assert!(
-        parsed.is_ok(),
-        "expected libc rust syntax surface to parse"
-    );
+    assert!(parsed.is_ok(), "expected libc rust syntax surface to parse");
 }
 
 #[test]

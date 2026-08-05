@@ -8,7 +8,7 @@ pub use context::{ComptimeRequest, PendingComptimeRequest, TypingContext};
 pub use hir_typeck::HirTypeChecker;
 #[cfg(test)]
 pub(crate) use support::block_on;
-pub use support::{default_extern_prelude, impl_self_ty_name, BoxFuture};
+pub use support::{BoxFuture, default_extern_prelude, impl_self_ty_name};
 pub use types::{
     ExprId, GenericMonorph, ResolvedName, ResolvedNameNamespace, ResolvedNameTable, TypeckResults,
     TypingDiagnostic, TypingDiagnosticLevel, TypingOutcome,

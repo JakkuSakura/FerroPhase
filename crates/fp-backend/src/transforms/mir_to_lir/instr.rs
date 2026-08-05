@@ -2860,9 +2860,7 @@ impl LirGenerator {
                     }
                 }
                 mir::TerminatorKind::Yield {
-                    value,
-                    resume_arg,
-                    ..
+                    value, resume_arg, ..
                 } => {
                     self.collect_operand_struct_layout(value, body);
                     self.collect_place_struct_layout(resume_arg, body);
@@ -2936,7 +2934,10 @@ impl LirGenerator {
     }
 
     fn collect_place_struct_layout(&mut self, place: &mir::Place, body: &mir::Body) {
-        let Some(mut ty) = body.locals.get(place.local as usize).map(|local| local.ty.clone())
+        let Some(mut ty) = body
+            .locals
+            .get(place.local as usize)
+            .map(|local| local.ty.clone())
         else {
             return;
         };
@@ -5711,22 +5712,23 @@ impl LirGenerator {
             TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
                 lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
             }
-            TyKind::Adt(adt, _)
-            if self.struct_layouts.contains_key(&adt.did) => lir::LirType::Struct {
-                fields: self
-                    .struct_layouts
-                    .get(&adt.did)
-                    .into_iter()
-                    .flat_map(|fields| fields.iter())
-                    .map(|field| {
-                        field
-                            .clone()
-                            .unwrap_or_else(|| lir::LirType::Ptr(Box::new(lir::LirType::I8)))
-                    })
-                    .collect(),
-                packed: false,
-                name: None,
-            },
+            TyKind::Adt(adt, _) if self.struct_layouts.contains_key(&adt.did) => {
+                lir::LirType::Struct {
+                    fields: self
+                        .struct_layouts
+                        .get(&adt.did)
+                        .into_iter()
+                        .flat_map(|fields| fields.iter())
+                        .map(|field| {
+                            field
+                                .clone()
+                                .unwrap_or_else(|| lir::LirType::Ptr(Box::new(lir::LirType::I8)))
+                        })
+                        .collect(),
+                    packed: false,
+                    name: None,
+                }
+            }
             TyKind::Adt(_, _)
             | TyKind::FnDef(_, _)
             | TyKind::Dynamic(_, _)

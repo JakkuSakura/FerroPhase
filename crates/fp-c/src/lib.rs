@@ -145,14 +145,19 @@ impl CParser {
 
 fn append_environment_flags(options: &mut CompileOptions) {
     if let Ok(flags) = std::env::var("FP_CLANG_FLAGS") {
-        options.flags.extend(flags.split_whitespace().map(str::to_owned));
+        options
+            .flags
+            .extend(flags.split_whitespace().map(str::to_owned));
     }
 }
 
 fn shared_ast_from_translation_unit(unit: &TranslationUnit, path: &Path) -> File {
     let mut items = Vec::new();
     let mut aliases = std::collections::HashSet::new();
-    for (name, value) in [("void", Ty::unit()), ("char", Ty::Primitive(TypePrimitive::Int(TypeInt::U8)))] {
+    for (name, value) in [
+        ("void", Ty::unit()),
+        ("char", Ty::Primitive(TypePrimitive::Int(TypeInt::U8))),
+    ] {
         aliases.insert(name.to_string());
         items.push(Item::new(ItemKind::DefType(ItemDefType {
             attrs: Vec::new(),
@@ -254,9 +259,7 @@ fn shared_type(ty: &ast::Type, _parameter: bool) -> Option<Ty> {
             shared_pointer_target(inner)?,
             Some(!is_const_qualified(inner)),
         )),
-        ast::Type::Qualified {
-            base, is_const, ..
-        } => {
+        ast::Type::Qualified { base, is_const, .. } => {
             let ty = shared_type(base, _parameter)?;
             if *is_const {
                 if let Ty::RawPtr(mut pointer) = ty {
@@ -356,7 +359,11 @@ impl AstSerializer for CSerializer {
             Ty::Reference(reference) => Ok(format!("&{}", self.serialize_type(&reference.ty)?)),
             Ty::RawPtr(pointer) => Ok(format!(
                 "*{} {}",
-                if pointer.mutability == Some(true) { "mut" } else { "const" },
+                if pointer.mutability == Some(true) {
+                    "mut"
+                } else {
+                    "const"
+                },
                 self.serialize_type(&pointer.ty)?
             )),
             Ty::Expr(expr) => match &expr.kind {
@@ -422,10 +429,7 @@ mod tests {
     fn lowers_void_and_const_char_pointers_to_ffi_types() {
         let frontend = CFrontend::new().expect("clang is required for the C frontend test");
         let result = frontend
-            .parse_file(
-                "void consume(const char *name);",
-                Path::new("ffi.c"),
-            )
+            .parse_file("void consume(const char *name);", Path::new("ffi.c"))
             .expect("C declarations should enter the normal frontend pipeline");
         let output = result
             .serializer

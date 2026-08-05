@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
-use std::task::Waker;
 use std::task::Poll;
+use std::task::Waker;
 
 use fp_core::ast::{ExprResolutionTable, TypeStruct, Value};
 use fp_core::lir::LirDataLayout;
@@ -182,7 +182,6 @@ impl TypingContext {
     pub fn has_comptime_requests(&self) -> bool {
         !self.comptime_requests.borrow().is_empty()
     }
-
 }
 
 #[cfg(test)]

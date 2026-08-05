@@ -847,12 +847,7 @@ impl MirLowering {
                                 work,
                             );
                             if let Some(body) = &func.body {
-                                Self::collect_def_ids_from_block(
-                                    body,
-                                    full_map,
-                                    tail_map,
-                                    work,
-                                );
+                                Self::collect_def_ids_from_block(body, full_map, tail_map, work);
                             }
                         }
                         hir::ImplItemKind::AssocConst(konst) => {
@@ -3572,8 +3567,7 @@ impl MirLowering {
                     .iter()
                     .filter_map(|arg| match arg {
                         mir::ty::GenericArg::Type(ty) => Some(ty.clone()),
-                        mir::ty::GenericArg::Lifetime(_)
-                        | mir::ty::GenericArg::Const(_) => None,
+                        mir::ty::GenericArg::Lifetime(_) | mir::ty::GenericArg::Const(_) => None,
                     })
                     .collect::<Vec<_>>();
                 self.struct_layout_for_instance(adt.did, &type_args, konst.ty.span)
@@ -5763,25 +5757,25 @@ impl MirLowering {
     ) -> Option<(usize, StructFieldInfo)> {
         let def = self.struct_defs.get(&def_id)?;
         let idx = *def.field_index.get(name)?;
-        let layout = self.struct_layout_for_ty(struct_ty).or_else(|| {
-            match &struct_ty.kind {
+        let layout = self
+            .struct_layout_for_ty(struct_ty)
+            .or_else(|| match &struct_ty.kind {
                 TyKind::Adt(_, args) => {
-                    let type_args = args
-                        .iter()
-                        .filter_map(|arg| match arg {
-                            mir::ty::GenericArg::Type(ty) => Some(ty.clone()),
-                            mir::ty::GenericArg::Lifetime(_)
-                            | mir::ty::GenericArg::Const(_) => None,
-                        })
-                        .collect::<Vec<_>>();
+                    let type_args =
+                        args.iter()
+                            .filter_map(|arg| match arg {
+                                mir::ty::GenericArg::Type(ty) => Some(ty.clone()),
+                                mir::ty::GenericArg::Lifetime(_)
+                                | mir::ty::GenericArg::Const(_) => None,
+                            })
+                            .collect::<Vec<_>>();
                     self.struct_layout_for_instance(def_id, &type_args, span)
                 }
                 _ if self.is_opaque_ty(struct_ty) => {
                     self.struct_layout_for_instance(def_id, &[], span)
                 }
                 _ => None,
-            }
-        })?;
+            })?;
         let ty = layout.field_tys.get(idx)?.clone();
         Some((
             idx,

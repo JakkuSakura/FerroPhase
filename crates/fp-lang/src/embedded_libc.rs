@@ -4,8 +4,10 @@ const MOD_SOURCE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/
 const LINUX_SOURCE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/libc/linux.fp"));
 const MACOS_SOURCE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/libc/macos.fp"));
 const IOS_SOURCE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/libc/ios.fp"));
-const FREEBSD_SOURCE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/libc/freebsd.fp"));
-const WINDOWS_SOURCE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/libc/windows.fp"));
+const FREEBSD_SOURCE: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/libc/freebsd.fp"));
+const WINDOWS_SOURCE: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/libc/windows.fp"));
 
 const VIRTUAL_ROOT: &str = "<fp-lang-libc>";
 

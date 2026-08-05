@@ -7,8 +7,7 @@
 use eyre::{Result, eyre};
 use fp_core::ast::{DecimalType, TypeInt};
 use fp_core::ast::{
-    ExprBlock,
-    EnumTypeVariant, Expr, File, FunctionParam, Ident, Item, ItemDefConst, ItemDefEnum,
+    EnumTypeVariant, Expr, ExprBlock, File, FunctionParam, Ident, Item, ItemDefConst, ItemDefEnum,
     ItemDefFunction, ItemDefStruct, ItemKind, StructuralField, Ty, TypePrimitive, TypeVec,
     Visibility,
 };

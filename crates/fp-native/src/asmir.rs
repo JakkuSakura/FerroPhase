@@ -18,9 +18,9 @@ use fp_core::asmir::{
 };
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
-    Linkage, LirConstant, LirConstantAggregate, LirConstantData, LirConstantExpr,
-    LirConstantKind, LirFloat, LirInstructionKind, LirInteger, LirIntrinsicKind, LirProgram,
-    LirTerminator, LirValue, LirValueKind, Name, Visibility,
+    Linkage, LirConstant, LirConstantAggregate, LirConstantData, LirConstantExpr, LirConstantKind,
+    LirFloat, LirInstructionKind, LirInteger, LirIntrinsicKind, LirProgram, LirTerminator,
+    LirValue, LirValueKind, Name, Visibility,
 };
 use std::collections::HashMap;
 
@@ -4662,9 +4662,7 @@ fn map_constant_kind(kind: &LirConstantKind, ty: &fp_core::lir::LirType) -> AsmC
         }
         LirConstantKind::Null => AsmConstant::Null(ty.clone()),
         LirConstantKind::Undef | LirConstantKind::Poison => AsmConstant::Undef(ty.clone()),
-        LirConstantKind::Expr(LirConstantExpr::GetElementPtr {
-            base, indices, ..
-        }) => {
+        LirConstantKind::Expr(LirConstantExpr::GetElementPtr { base, indices, .. }) => {
             let (global, mut base_indices) = global_ref_components(base)
                 .unwrap_or_else(|| panic!("constant GEP requires a global-address base"));
             for index in indices {
@@ -4680,9 +4678,7 @@ fn map_constant_kind(kind: &LirConstantKind, ty: &fp_core::lir::LirType) -> AsmC
 fn global_ref_components(constant: &LirConstant) -> Option<(Name, Vec<u64>)> {
     match &constant.kind {
         LirConstantKind::GlobalAddress { global } => Some((global.clone(), Vec::new())),
-        LirConstantKind::Expr(LirConstantExpr::GetElementPtr {
-            base, indices, ..
-        }) => {
+        LirConstantKind::Expr(LirConstantExpr::GetElementPtr { base, indices, .. }) => {
             let (global, mut base_indices) = global_ref_components(base)?;
             for index in indices {
                 base_indices.push(constant_integer(index)?);

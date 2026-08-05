@@ -328,15 +328,9 @@ fn collect_item_refs(
 fn block_has_unresolved_paths(block: &hir::Block) -> bool {
     block.stmts.iter().any(|stmt| match &stmt.kind {
         hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => expr_has_unresolved_paths(expr),
-        hir::StmtKind::Local(local) => local
-            .init
-            .as_ref()
-            .is_some_and(expr_has_unresolved_paths),
+        hir::StmtKind::Local(local) => local.init.as_ref().is_some_and(expr_has_unresolved_paths),
         hir::StmtKind::Item(item) => item_has_unresolved_paths(item),
-    }) || block
-        .expr
-        .as_deref()
-        .is_some_and(expr_has_unresolved_paths)
+    }) || block.expr.as_deref().is_some_and(expr_has_unresolved_paths)
 }
 
 fn collect_expr_refs(
@@ -559,8 +553,8 @@ fn collect_path_refs(
 mod tests {
     use super::*;
     use fp_core::hir::{
-        self, Expr, ExprKind, Function, FunctionSig, Item, ItemKind, Path, PathSegment,
-        Program, Symbol, TypeExpr, TypeExprKind, Visibility,
+        self, Expr, ExprKind, Function, FunctionSig, Item, ItemKind, Path, PathSegment, Program,
+        Symbol, TypeExpr, TypeExprKind, Visibility,
     };
     use fp_core::span::Span;
 

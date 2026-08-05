@@ -5,8 +5,8 @@ use fp_core::hir::ty::{self, AdtDef, AdtFlags, GenericArg, ReprFlags, ReprOption
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 
-use crate::types::{GenericCallResolution, TypeckResults};
 use crate::TypingContext;
+use crate::types::{GenericCallResolution, TypeckResults};
 use std::rc::Rc;
 
 /// Type checks resolved HIR and records semantic types outside the source tree.
@@ -228,8 +228,10 @@ impl HirTypeChecker {
                 hir::ExprKind::Literal(lit) => self.literal_ty(lit),
                 hir::ExprKind::Path(path) => self.expr_path_ty(path)?,
                 hir::ExprKind::Binary(op, lhs, rhs) => {
-                    let lhs_literal = matches!(lhs.kind, hir::ExprKind::Literal(hir::Lit::Integer(_)));
-                    let rhs_literal = matches!(rhs.kind, hir::ExprKind::Literal(hir::Lit::Integer(_)));
+                    let lhs_literal =
+                        matches!(lhs.kind, hir::ExprKind::Literal(hir::Lit::Integer(_)));
+                    let rhs_literal =
+                        matches!(rhs.kind, hir::ExprKind::Literal(hir::Lit::Integer(_)));
                     let lhs = self.check_expr(lhs).await?;
                     let rhs = self.check_expr(rhs).await?;
                     let integer_literal = (lhs_literal
@@ -274,9 +276,8 @@ impl HirTypeChecker {
                             Ty::bool()
                         }
                         hir::UnOp::Deref => match value_ty.kind {
-                            TyKind::Ref(_, inner, _) | TyKind::RawPtr(ty::TypeAndMut { ty: inner, .. }) => {
-                                *inner
-                            }
+                            TyKind::Ref(_, inner, _)
+                            | TyKind::RawPtr(ty::TypeAndMut { ty: inner, .. }) => *inner,
                             _ => return Err(Error::from("cannot dereference a non-pointer value")),
                         },
                         hir::UnOp::Neg | hir::UnOp::Box => value_ty,
@@ -303,8 +304,13 @@ impl HirTypeChecker {
                             .and_then(|inputs| inputs.get(index))
                         {
                             Some(expected)
-                                if matches!(arg.value.kind, hir::ExprKind::Literal(hir::Lit::Integer(_)))
-                                    && matches!(expected.kind, TyKind::Int(_) | TyKind::Uint(_)) =>
+                                if matches!(
+                                    arg.value.kind,
+                                    hir::ExprKind::Literal(hir::Lit::Integer(_))
+                                ) && matches!(
+                                    expected.kind,
+                                    TyKind::Int(_) | TyKind::Uint(_)
+                                ) =>
                             {
                                 // Integer literals can take the type of their direct parameter.
                                 (**expected).clone()
@@ -438,19 +444,15 @@ impl HirTypeChecker {
                         .iter()
                         .zip(&value_types)
                         .find_map(|(value, value_ty)| {
-                            (!matches!(
-                                value.kind,
-                                hir::ExprKind::Literal(hir::Lit::Integer(_))
-                            ))
-                            .then(|| value_ty.clone())
+                            (!matches!(value.kind, hir::ExprKind::Literal(hir::Lit::Integer(_))))
+                                .then(|| value_ty.clone())
                         })
                         .unwrap_or_else(|| value_types[0].clone());
                     for (value, value_ty) in values.iter().zip(value_types) {
-                        let integer_literal = matches!(
-                            value.kind,
-                            hir::ExprKind::Literal(hir::Lit::Integer(_))
-                        );
-                        let integer_element = matches!(element.kind, TyKind::Int(_) | TyKind::Uint(_));
+                        let integer_literal =
+                            matches!(value.kind, hir::ExprKind::Literal(hir::Lit::Integer(_)));
+                        let integer_element =
+                            matches!(element.kind, TyKind::Int(_) | TyKind::Uint(_));
                         if !(integer_literal && integer_element) {
                             self.require_same(&element, &value_ty)?;
                         }
@@ -482,10 +484,7 @@ impl HirTypeChecker {
                         _ => ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id)),
                     };
                     Ty {
-                        kind: TyKind::Array(
-                            Box::new(element),
-                            length,
-                        ),
+                        kind: TyKind::Array(Box::new(element), length),
                     }
                 }
                 hir::ExprKind::Assign(lhs, rhs) => {
@@ -588,8 +587,10 @@ impl HirTypeChecker {
                             let resolved_init = if matches!(
                                 init.kind,
                                 hir::ExprKind::Literal(hir::Lit::Integer(_))
-                            ) && matches!(ty.kind, TyKind::Int(_) | TyKind::Uint(_))
-                            {
+                            ) && matches!(
+                                ty.kind,
+                                TyKind::Int(_) | TyKind::Uint(_)
+                            ) {
                                 ty.clone()
                             } else if matches!(
                                 init.kind,
@@ -716,14 +717,12 @@ impl HirTypeChecker {
                         Some(hir::Expr {
                             kind: hir::ExprKind::Literal(hir::Lit::Integer(value)),
                             ..
-                        }) if *value >= 0 => {
-                            ty::ConstKind::Value(ty::ConstValue::Scalar(ty::Scalar::Int(
-                                ty::ScalarInt {
-                                    data: *value as u128,
-                                    size: 8,
-                                },
-                            )))
-                        }
+                        }) if *value >= 0 => ty::ConstKind::Value(ty::ConstValue::Scalar(
+                            ty::Scalar::Int(ty::ScalarInt {
+                                data: *value as u128,
+                                size: 8,
+                            }),
+                        )),
                         _ => ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id)),
                     },
                 ),
@@ -957,7 +956,10 @@ impl HirTypeChecker {
                 if matches!(
                     constant.body.value.kind,
                     hir::ExprKind::Literal(hir::Lit::Integer(_))
-                ) => self.check_type_expr(&constant.ty),
+                ) =>
+            {
+                self.check_type_expr(&constant.ty)
+            }
             hir::ItemKind::Const(_) => self
                 .results
                 .const_types
@@ -1073,7 +1075,9 @@ impl HirTypeChecker {
             return Ok(None);
         };
         if signature.binder.value.inputs.len() != actuals.len() {
-            return Err(Error::from("call argument count does not match function signature"));
+            return Err(Error::from(
+                "call argument count does not match function signature",
+            ));
         }
         let mut substitutions: HashMap<ty::ParamTy, Ty> = HashMap::new();
         for (expected, actual) in signature.binder.value.inputs.iter().zip(actuals) {

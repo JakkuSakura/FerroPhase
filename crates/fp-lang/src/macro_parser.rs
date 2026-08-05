@@ -2,8 +2,8 @@ use fp_core::ast::MacroTokenTree;
 use fp_core::span::Span;
 
 use crate::ast::lower_common::{lex_span_from_span, lex_spans_for_group};
-use crate::lexer::tokenizer::{classify_and_normalize_lexeme, Token, TokenKind};
 use crate::lexer::Span as TokSpan;
+use crate::lexer::tokenizer::{Token, TokenKind, classify_and_normalize_lexeme};
 
 pub(crate) fn macro_token_trees_to_tokens(tokens: &[MacroTokenTree]) -> Vec<Token> {
     let mut out = Vec::new();

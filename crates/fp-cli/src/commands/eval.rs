@@ -115,5 +115,4 @@ mod tests {
 
         eval_command(args, &config).await.unwrap();
     }
-
 }

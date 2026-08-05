@@ -9,9 +9,9 @@ use fp_core::ast::{
 use fp_core::hir::PackageId;
 use fp_core::lir::{
     BasicBlockId, CallingConvention, ComptimeOp, LirBasicBlock, LirCompileUnit,
-    LirConstantAggregate, LirConstantData, LirConstantExpr, LirConstantKind,
-    LirDataLayout, LirFloat, LirFunction, LirFunctionRef, LirInstruction, LirInstructionKind,
-    LirInteger, LirLocal, LirProgram, LirTerminator, LirType, LirValue, LirValueKind, RegisterId,
+    LirConstantAggregate, LirConstantData, LirConstantExpr, LirConstantKind, LirDataLayout,
+    LirFloat, LirFunction, LirFunctionRef, LirInstruction, LirInstructionKind, LirInteger,
+    LirLocal, LirProgram, LirTerminator, LirType, LirValue, LirValueKind, RegisterId,
 };
 use fp_ffi::{FfiRuntime, FfiSignature, FfiType};
 
@@ -444,78 +444,80 @@ impl LirInterpreter {
                 self.wr(dst, 0);
                 Ok(())
             }
-            LirInstructionKind::ComptimeOp(op) => match op {
-                ComptimeOp::CreateStruct { name } => {
-                    let struct_name = self.resolve_string_value(name);
-                    let fields: Vec<fp_core::ast::StructuralField> = vec![];
-                    let struct_ty = Ty::Struct(TypeStruct {
-                        name: fp_core::ast::Ident::new(struct_name),
-                        generics_params: vec![],
-                        repr: fp_core::ast::ReprOptions::default(),
-                        fields,
-                    });
-                    let obj = Value::Type(struct_ty);
-                    let handle = self.state.objects.len() as u64;
-                    self.state.objects.push(obj);
-                    self.wr(dst, handle);
-                    Ok(())
-                }
-                ComptimeOp::AddField {
-                    struct_handle,
-                    field_name,
-                    field_type,
-                } => {
-                    let handle = self.resolve_raw(struct_handle)? as usize;
-                    let struct_val = self
-                        .state
-                        .objects
-                        .get(handle)
-                        .ok_or_else(|| VmError::Runtime("struct handle out of range".into()))?;
-                    let field_name_str = self.resolve_string_value(field_name);
-                    let field_ty = match self
-                        .resolve_runtime_value(field_type, &LirType::Ptr(Box::new(LirType::I8)))
-                    {
-                        Ok(Value::Type(ty)) => ty,
-                        _ => Ty::Unknown(TypeUnknown),
-                    };
-                    let mut new_val = struct_val.clone();
-                    if let Value::Type(ref mut ty) = new_val {
-                        if let Ty::Struct(s) = ty {
-                            if !s.fields.iter().any(|f| f.name.as_str() == &field_name_str) {
-                                s.fields.push(fp_core::ast::StructuralField::new(
-                                    fp_core::ast::Ident::new(field_name_str),
-                                    field_ty,
-                                ));
+            LirInstructionKind::ComptimeOp(op) => {
+                match op {
+                    ComptimeOp::CreateStruct { name } => {
+                        let struct_name = self.resolve_string_value(name);
+                        let fields: Vec<fp_core::ast::StructuralField> = vec![];
+                        let struct_ty = Ty::Struct(TypeStruct {
+                            name: fp_core::ast::Ident::new(struct_name),
+                            generics_params: vec![],
+                            repr: fp_core::ast::ReprOptions::default(),
+                            fields,
+                        });
+                        let obj = Value::Type(struct_ty);
+                        let handle = self.state.objects.len() as u64;
+                        self.state.objects.push(obj);
+                        self.wr(dst, handle);
+                        Ok(())
+                    }
+                    ComptimeOp::AddField {
+                        struct_handle,
+                        field_name,
+                        field_type,
+                    } => {
+                        let handle = self.resolve_raw(struct_handle)? as usize;
+                        let struct_val =
+                            self.state.objects.get(handle).ok_or_else(|| {
+                                VmError::Runtime("struct handle out of range".into())
+                            })?;
+                        let field_name_str = self.resolve_string_value(field_name);
+                        let field_ty = match self
+                            .resolve_runtime_value(field_type, &LirType::Ptr(Box::new(LirType::I8)))
+                        {
+                            Ok(Value::Type(ty)) => ty,
+                            _ => Ty::Unknown(TypeUnknown),
+                        };
+                        let mut new_val = struct_val.clone();
+                        if let Value::Type(ref mut ty) = new_val {
+                            if let Ty::Struct(s) = ty {
+                                if !s.fields.iter().any(|f| f.name.as_str() == &field_name_str) {
+                                    s.fields.push(fp_core::ast::StructuralField::new(
+                                        fp_core::ast::Ident::new(field_name_str),
+                                        field_ty,
+                                    ));
+                                }
                             }
                         }
+                        self.state.objects[handle] = new_val;
+                        self.wr(dst, handle as u64);
+                        Ok(())
                     }
-                    self.state.objects[handle] = new_val;
-                    self.wr(dst, handle as u64);
-                    Ok(())
+                    ComptimeOp::IntoType { value } => {
+                        let handle = self.resolve_raw(value)? as usize;
+                        let struct_val =
+                            self.state.objects.get(handle).ok_or_else(|| {
+                                VmError::Runtime("type handle out of range".into())
+                            })?;
+                        let struct_ty = match struct_val {
+                            Value::Type(Ty::Struct(s)) => s.clone(),
+                            _ => {
+                                return Err(VmError::Runtime(
+                                    "expected struct type in IntoType".into(),
+                                ));
+                            }
+                        };
+                        let wrapped = Value::Type(Ty::Type(TypeType {
+                            span: fp_core::span::Span::null(),
+                            inner: Some(Box::new(Ty::Struct(struct_ty))),
+                        }));
+                        let new_handle = self.state.objects.len() as u64;
+                        self.state.objects.push(wrapped);
+                        self.wr(dst, new_handle);
+                        Ok(())
+                    }
                 }
-                ComptimeOp::IntoType { value } => {
-                    let handle = self.resolve_raw(value)? as usize;
-                    let struct_val = self
-                        .state
-                        .objects
-                        .get(handle)
-                        .ok_or_else(|| VmError::Runtime("type handle out of range".into()))?;
-                    let struct_ty = match struct_val {
-                        Value::Type(Ty::Struct(s)) => s.clone(),
-                        _ => {
-                            return Err(VmError::Runtime("expected struct type in IntoType".into()));
-                        }
-                    };
-                    let wrapped = Value::Type(Ty::Type(TypeType {
-                        span: fp_core::span::Span::null(),
-                        inner: Some(Box::new(Ty::Struct(struct_ty))),
-                    }));
-                    let new_handle = self.state.objects.len() as u64;
-                    self.state.objects.push(wrapped);
-                    self.wr(dst, new_handle);
-                    Ok(())
-                }
-            },
+            }
             LirInstructionKind::InlineAsm { .. }
             | LirInstructionKind::LandingPad { .. }
             | LirInstructionKind::Freeze(_)
@@ -614,19 +616,15 @@ impl LirInterpreter {
                 .get(global.as_str())
                 .copied()
                 .ok_or_else(|| VmError::Runtime(format!("missing global {global}"))),
-            LirConstantKind::Data(LirConstantData::Integer(integer)) => {
-                Ok(integer_raw(integer))
-            }
-            LirConstantKind::Data(LirConstantData::Float(_)) => Err(VmError::Runtime(
-                format!("constant GEP index must be an integer, found {ty:?}"),
-            )),
+            LirConstantKind::Data(LirConstantData::Integer(integer)) => Ok(integer_raw(integer)),
+            LirConstantKind::Data(LirConstantData::Float(_)) => Err(VmError::Runtime(format!(
+                "constant GEP index must be an integer, found {ty:?}"
+            ))),
             LirConstantKind::Data(LirConstantData::Bytes(_)) => Err(VmError::Runtime(
                 "constant address cannot be formed from byte data".into(),
             )),
             LirConstantKind::Null | LirConstantKind::Undef | LirConstantKind::Poison => Ok(0),
-            LirConstantKind::Expr(LirConstantExpr::GetElementPtr {
-                base, indices, ..
-            }) => {
+            LirConstantKind::Expr(LirConstantExpr::GetElementPtr { base, indices, .. }) => {
                 let base_raw = self.resolve_constant_raw(&base.ty, &base.kind)?;
                 let elem_size = match &base.ty {
                     LirType::Ptr(pointee) => {
@@ -645,7 +643,7 @@ impl LirInterpreter {
                         _ => {
                             return Err(VmError::Runtime(format!(
                                 "constant GEP index {index} is not an integer"
-                            )))
+                            )));
                         }
                     };
                     let scale = if index == 0 { elem_size } else { 1 };
@@ -1869,15 +1867,15 @@ impl LirInterpreter {
 
 fn integer_raw(integer: &LirInteger) -> u64 {
     match integer {
-            LirInteger::I1(value) => u64::from(*value),
-            LirInteger::I8(value) => u64::from(*value),
-            LirInteger::I16(value) => u64::from(*value),
-            LirInteger::I32(value) => u64::from(*value),
-            LirInteger::I64(value) => *value,
-            LirInteger::I128(value) => *value as u64,
-            LirInteger::Arbitrary(_) => {
-                todo!("interpreter conversion for arbitrary integer constants")
-            }
+        LirInteger::I1(value) => u64::from(*value),
+        LirInteger::I8(value) => u64::from(*value),
+        LirInteger::I16(value) => u64::from(*value),
+        LirInteger::I32(value) => u64::from(*value),
+        LirInteger::I64(value) => *value,
+        LirInteger::I128(value) => *value as u64,
+        LirInteger::Arbitrary(_) => {
+            todo!("interpreter conversion for arbitrary integer constants")
+        }
     }
 }
 

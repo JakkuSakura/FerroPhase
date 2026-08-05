@@ -45,9 +45,9 @@ fn load_embedded_package(
         if module_path.is_empty() {
             continue;
         }
-        let result = frontend.parse_file(source, &path).map_err(|e| {
-            ProviderError::other(format!("failed to parse {relative_str}: {e}"))
-        })?;
+        let result = frontend
+            .parse_file(source, &path)
+            .map_err(|e| ProviderError::other(format!("failed to parse {relative_str}: {e}")))?;
         let items = result.ast.items;
         if !items.is_empty() {
             items_by_path.insert(QualifiedPath::new(module_path.clone()), items);
@@ -84,7 +84,10 @@ fn load_embedded_package(
 
 impl PackageProvider for FerroPhaseProvider {
     fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
-        Ok(vec![PackageId::new(STD_PACKAGE_NAME), PackageId::new(LIBC_PACKAGE_NAME)])
+        Ok(vec![
+            PackageId::new(STD_PACKAGE_NAME),
+            PackageId::new(LIBC_PACKAGE_NAME),
+        ])
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
