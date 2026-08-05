@@ -332,8 +332,12 @@ impl HirTypeChecker {
                     let receiver_ty = self.check_expr(receiver).await?;
                     let index_ty = self.check_expr(index).await?;
                     self.require_same(&index_ty, &Ty::int(ty::IntTy::I64))?;
-                    match receiver_ty.kind {
-                        TyKind::Array(inner, _) | TyKind::Slice(inner) => *inner,
+                    let receiver_ty = match &receiver_ty.kind {
+                        TyKind::Ref(_, inner, _) => inner.as_ref(),
+                        _ => &receiver_ty,
+                    };
+                    match &receiver_ty.kind {
+                        TyKind::Array(inner, _) | TyKind::Slice(inner) => (**inner).clone(),
                         _ => return Err(Error::from("indexing requires an array or slice")),
                     }
                 }
@@ -400,17 +404,33 @@ impl HirTypeChecker {
                     Ty {
                         kind: TyKind::Array(
                             Box::new(element),
-                            ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id)),
+                            ty::ConstKind::Value(ty::ConstValue::Scalar(ty::Scalar::Int(
+                                ty::ScalarInt {
+                                    data: values.len() as u128,
+                                    size: 8,
+                                },
+                            ))),
                         ),
                     }
                 }
                 hir::ExprKind::ArrayRepeat { elem, len } => {
                     let element = self.check_expr(elem).await?;
                     self.check_expr(len).await?;
+                    let length = match &len.kind {
+                        hir::ExprKind::Literal(hir::Lit::Integer(value)) if *value >= 0 => {
+                            ty::ConstKind::Value(ty::ConstValue::Scalar(ty::Scalar::Int(
+                                ty::ScalarInt {
+                                    data: *value as u128,
+                                    size: 8,
+                                },
+                            )))
+                        }
+                        _ => ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id)),
+                    };
                     Ty {
                         kind: TyKind::Array(
                             Box::new(element),
-                            ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id)),
+                            length,
                         ),
                     }
                 }
@@ -621,10 +641,23 @@ impl HirTypeChecker {
                 }),
             },
             hir::TypeExprKind::Never => Ty::never(),
-            hir::TypeExprKind::Array(item, _) => Ty {
+            hir::TypeExprKind::Array(item, length) => Ty {
                 kind: TyKind::Array(
                     Box::new(self.check_type_expr(item)?),
-                    ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id)),
+                    match length.as_deref() {
+                        Some(hir::Expr {
+                            kind: hir::ExprKind::Literal(hir::Lit::Integer(value)),
+                            ..
+                        }) if *value >= 0 => {
+                            ty::ConstKind::Value(ty::ConstValue::Scalar(ty::Scalar::Int(
+                                ty::ScalarInt {
+                                    data: *value as u128,
+                                    size: 8,
+                                },
+                            )))
+                        }
+                        _ => ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id)),
+                    },
                 ),
             },
             hir::TypeExprKind::Infer => Ty {
