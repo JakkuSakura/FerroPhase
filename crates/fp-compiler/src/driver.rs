@@ -17,7 +17,8 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::{
-    AstId, BytecodeId, CompilerDriverError, CompilerState, ConstValueId, FullyQualifiedPath, HirId,
+    AstId, BytecodeId, CompilerDriverError, CompilerState, ConstValueId, ExecutorHandle,
+    FullyQualifiedPath, HirId,
     LirId, MirId, RuntimeValueId,
 };
 
@@ -74,9 +75,12 @@ impl CompilerDriver {
         })
     }
 
-    pub fn new(data_layout: fp_core::lir::LirDataLayout) -> Self {
+    pub fn new(
+        data_layout: fp_core::lir::LirDataLayout,
+        tasks: ExecutorHandle,
+    ) -> Self {
         Self {
-            state: CompilerState::new(data_layout),
+            state: CompilerState::new(data_layout, tasks),
             interpreter: LirInterpreter::new(),
         }
     }
@@ -94,6 +98,14 @@ impl CompilerDriver {
         path: &FullyQualifiedPath,
     ) -> Result<(), CompilerDriverError> {
         self.compile_unit_compile_native(ast_id, path).await
+    }
+
+    pub async fn compile_bytecode(
+        &mut self,
+        ast_id: &AstId,
+        path: &FullyQualifiedPath,
+    ) -> Result<(), CompilerDriverError> {
+        self.compile_unit_compile_bytecode(ast_id, path).await
     }
 
     pub fn compile_native_sync(
@@ -1778,7 +1790,7 @@ impl CompilerDriver {
 #[cfg(test)]
 mod comptime_source_tests {
     use super::*;
-    use crate::{AstId, FullyQualifiedPath};
+    use crate::{AstId, CompilerExecutor, FullyQualifiedPath};
     use fp_core::frontend::LanguageFrontend;
 
     fn path() -> FullyQualifiedPath {
@@ -1809,7 +1821,7 @@ fn main() {
             .expect("parse .fp source");
         let ast_node = result.ast;
 
-        let mut driver = CompilerDriver::new(test_data_layout());
+        let mut driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
         let ast_id = AstId::new("ast:test::main");
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
@@ -1827,7 +1839,7 @@ fn main() {
             .expect("parse const source");
         let ast_node = result.ast;
 
-        let mut driver = CompilerDriver::new(test_data_layout());
+        let mut driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
         let ast_id = AstId::new("ast:test::const");
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
@@ -1855,7 +1867,7 @@ const AREA: i64 = WIDTH * HEIGHT;
             .expect("parse multi-const source");
         let ast_node = result.ast;
 
-        let mut driver = CompilerDriver::new(test_data_layout());
+        let mut driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
         let ast_id = AstId::new("ast:test::multi");
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
@@ -1878,7 +1890,7 @@ fn calculate() {
             .expect("parse const-block source");
         let ast_node = result.ast;
 
-        let mut driver = CompilerDriver::new(test_data_layout());
+        let mut driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
         let ast_id = AstId::new("ast:test::block");
         driver.state.insert_ast(ast_id.clone(), ast_node);
 
@@ -1918,7 +1930,7 @@ fn main() {
 
         let mut workspace = fp_core::workspace::WorkspaceContext::new();
         workspace.register_provider(std::sync::Arc::new(fp_lang::provider::FerroPhaseProvider));
-        let mut driver = CompilerDriver::new(test_data_layout());
+        let mut driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
         driver.state.typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(
             test_data_layout(),
             std::rc::Rc::new(workspace),
@@ -1996,7 +2008,7 @@ fn main() {
             .expect("parse struct/enum-methods source");
         let ast_node = result.ast;
 
-        let mut driver = CompilerDriver::new(test_data_layout());
+        let mut driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
         let ast_id = AstId::new("ast:test::struct_enum_methods");
         driver.state.insert_ast(ast_id.clone(), ast_node);
         let path = FullyQualifiedPath::from_segments(vec![
@@ -2023,7 +2035,7 @@ fn main() {
             .map_err(|e| format!("parse: {e}"))?;
         let ast_node = result.ast;
 
-        let mut driver = CompilerDriver::new(test_data_layout());
+        let mut driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
         driver.state.typing_ctx =
             std::rc::Rc::new(fp_typing::TypingContext::new(test_data_layout(), workspace));
         let label = name.trim_end_matches(".fp");
@@ -2153,7 +2165,7 @@ fn main() {
     fn collect_impl_items_for_types_finds_inherent_impl_in_loaded_crate() {
         use fp_core::ast::{Ident, ItemImpl};
 
-        let driver = CompilerDriver::new(test_data_layout());
+        let driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
         let krate = driver.state.typing_ctx.env_ctx.begin_crate(
             "somepkg",
             fp_core::package::graph::PackageGraph::new(vec![]),
@@ -2235,7 +2247,7 @@ fn main() {
         workspace.register_provider(Arc::new(CountingStdProvider {
             calls: calls.clone(),
         }));
-        let mut driver = CompilerDriver::new(test_data_layout());
+        let mut driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
         driver.state.typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(
             test_data_layout(),
             std::rc::Rc::new(workspace),
@@ -2270,7 +2282,7 @@ fn main() {
             .unwrap_or_else(|e| panic!("parse inline: {e}"));
         let ast_node = result.ast;
 
-        let mut driver = CompilerDriver::new(test_data_layout());
+        let mut driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
         let ast_id = AstId::new("ast:example::inline");
         driver.state.insert_ast(ast_id.clone(), ast_node);
 

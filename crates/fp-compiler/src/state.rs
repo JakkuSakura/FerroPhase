@@ -10,7 +10,7 @@ use fp_core::{
 use fp_typing::{TypeckResults, TypingContext};
 
 use crate::error::CompilerDriverError;
-use crate::executor::CompilerExecutor;
+use crate::executor::ExecutorHandle;
 use crate::resolution::CompilerModuleResolver;
 use crate::{AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
 
@@ -40,12 +40,12 @@ pub struct CompilerState {
     /// interior-mutable (its own methods take `&self`, specifically so a
     /// task can reentrantly `spawn`/`contains`-check it from within its own
     /// poll).
-    pub(crate) tasks: std::rc::Rc<CompilerExecutor>,
+    pub(crate) tasks: ExecutorHandle,
     pub allowed_dependencies: Vec<String>,
 }
 
 impl CompilerState {
-    pub fn new(data_layout: lir::LirDataLayout) -> Self {
+    pub fn new(data_layout: lir::LirDataLayout, tasks: ExecutorHandle) -> Self {
         Self {
             ast: BTreeMap::new(),
             hir: BTreeMap::new(),
@@ -65,7 +65,7 @@ impl CompilerState {
             module_resolutions: BTreeMap::new(),
             generic_instantiations: HashSet::new(),
             bytecode: BTreeMap::new(),
-            tasks: std::rc::Rc::new(CompilerExecutor::new()),
+            tasks,
             allowed_dependencies: vec!["std".to_string(), "libc".to_string()],
         }
     }

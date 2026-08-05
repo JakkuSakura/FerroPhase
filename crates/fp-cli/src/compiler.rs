@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use fp_c::CFrontend;
 use fp_compiler::{
-    AstId, BytecodeId, CompilerDriver, CompilerModuleResolver, ConstValueId, FullyQualifiedPath,
-    LirId, MirId,
+    AstId, BytecodeId, CompilerDriver, CompilerExecutor, CompilerModuleResolver, ConstValueId,
+    FullyQualifiedPath, LirId, MirId,
 };
 use fp_core::{
     ast::register_threadlocal_serializer,
@@ -70,7 +70,8 @@ pub fn check_path(
     }
 
     let identity = CompilerIdentity::for_file(package, path);
-    let mut driver = CompilerDriver::new(data_layout());
+    let executor = CompilerExecutor::new();
+    let mut driver = CompilerDriver::new(data_layout(), executor.handle());
     driver.state.set_lossy(lossy.enabled);
     if let Some(resolver) = resolver {
         driver.state.set_module_resolver(resolver);
@@ -80,8 +81,8 @@ pub fn check_path(
             .map_err(|err| CliError::Compilation(err.to_string()))?;
     }
     driver.state.insert_ast(identity.ast_id.clone(), ast);
-    driver
-        .compile_native_sync(&identity.ast_id, &identity.path)
+    executor
+        .run(driver.compile_native(&identity.ast_id, &identity.path))
         .map_err(|err| CliError::Compilation(err.to_string()))?;
     drain_driver(&mut driver, lossy)
 }
@@ -111,12 +112,14 @@ pub fn eval_script(script: ScriptBlock) -> Result<Value> {
         ],
     };
     let identity = CompilerIdentity::for_script();
+    let executor = CompilerExecutor::new();
     let mut driver = lower_ast(
         ast,
         &identity,
         Path::new("<eval>"),
         None,
         LossyCompileOptions::default(),
+        &executor,
     )?;
     drain_driver(&mut driver, LossyCompileOptions::default())?;
     driver
@@ -315,8 +318,8 @@ pub fn compile_bytecode_file(
     let identity = CompilerIdentity::for_file(package, path);
     let mut lowered = lower_file(path, package, source_language, resolver, lossy)?;
     lowered
-        .driver
-        .compile_bytecode_sync(&identity.ast_id, &identity.path)
+        .executor
+        .run(lowered.driver.compile_bytecode(&identity.ast_id, &identity.path))
         .map_err(|err| CliError::Compilation(err.to_string()))?;
     let bytecode = lowered.bytecode()?;
 
@@ -796,7 +799,15 @@ fn execute_ast(
     lossy: LossyCompileOptions,
 ) -> Result<Value> {
     let value_key = identity.path.to_key();
-    let mut driver = lower_ast(ast, &identity, source_path, resolver, lossy)?;
+    let executor = CompilerExecutor::new();
+    let mut driver = lower_ast(
+        ast,
+        &identity,
+        source_path,
+        resolver,
+        lossy,
+        &executor,
+    )?;
     drain_driver(&mut driver, lossy)?;
 
     match mode {
@@ -824,9 +835,21 @@ fn lower_file(
     let ast = parse_file(path, source_language, lossy)?;
     let identity = CompilerIdentity::for_file(package, path);
     let path_key = identity.path.to_key();
-    let mut driver = lower_ast(ast, &identity, path, resolver, lossy)?;
+    let executor = CompilerExecutor::new();
+    let mut driver = lower_ast(
+        ast,
+        &identity,
+        path,
+        resolver,
+        lossy,
+        &executor,
+    )?;
     drain_driver(&mut driver, lossy)?;
-    Ok(LoweredProgram { driver, path_key })
+    Ok(LoweredProgram {
+        driver,
+        path_key,
+        executor,
+    })
 }
 
 fn lower_ast(
@@ -835,10 +858,11 @@ fn lower_ast(
     source_path: &Path,
     resolver: Option<Arc<dyn CompilerModuleResolver>>,
     lossy: LossyCompileOptions,
+    executor: &CompilerExecutor,
 ) -> Result<CompilerDriver> {
     let ast_id = identity.ast_id.clone();
     let path = identity.path.clone();
-    let mut driver = CompilerDriver::new(data_layout());
+    let mut driver = CompilerDriver::new(data_layout(), executor.handle());
     driver.state.set_lossy(lossy.enabled);
 
     // Register std's provider — its content loads on demand, the first
@@ -865,8 +889,8 @@ fn lower_ast(
             .map_err(|err| CliError::Compilation(err.to_string()))?;
     }
     driver.state.insert_ast(ast_id.clone(), ast);
-    driver
-        .compile_native_sync(&ast_id, &path)
+    executor
+        .run(driver.compile_native(&ast_id, &path))
         .map_err(|err| CliError::Compilation(err.to_string()))?;
     Ok(driver)
 }
@@ -927,9 +951,21 @@ pub fn compile_file_to_lir_bundle(
     };
     let identity = CompilerIdentity::for_file(package, path);
     let path_key = identity.path.to_key();
-    let mut driver = lower_ast(parsed.ast, &identity, path, None, lossy)?;
+    let executor = CompilerExecutor::new();
+    let mut driver = lower_ast(
+        parsed.ast,
+        &identity,
+        path,
+        None,
+        lossy,
+        &executor,
+    )?;
     drain_driver(&mut driver, lossy)?;
-    let lowered = LoweredProgram { driver, path_key };
+    let lowered = LoweredProgram {
+        driver,
+        path_key,
+        executor,
+    };
     Ok(LirBundle {
         frontend,
         hir_program: lowered.hir()?,
@@ -979,7 +1015,15 @@ pub fn typecheck_ast_target(
     lossy: LossyCompileOptions,
 ) -> Result<File> {
     let identity = CompilerIdentity::for_file(package, path);
-    let mut driver = lower_ast(ast, &identity, path, None, lossy)?;
+    let executor = CompilerExecutor::new();
+    let mut driver = lower_ast(
+        ast,
+        &identity,
+        path,
+        None,
+        lossy,
+        &executor,
+    )?;
     drain_driver(&mut driver, lossy)?;
     let hir = driver
         .state
@@ -1133,6 +1177,7 @@ struct CompilerIdentity {
 struct LoweredProgram {
     driver: CompilerDriver,
     path_key: String,
+    executor: CompilerExecutor,
 }
 
 struct ParsedAst {

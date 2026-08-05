@@ -69,13 +69,97 @@ impl<T> Future for TaskHandle<T> {
     }
 }
 
-pub(crate) struct CompilerExecutor {
+pub struct CompilerExecutor {
+    inner: Rc<ExecutorState>,
+}
+
+#[derive(Clone)]
+pub struct ExecutorHandle {
+    inner: Rc<ExecutorState>,
+}
+
+struct ExecutorState {
     tasks: RefCell<HashMap<String, Pin<Box<dyn Future<Output = ()>>>>>,
     ready: Rc<RefCell<VecDeque<String>>>,
 }
 
 impl CompilerExecutor {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
+        Self {
+            inner: Rc::new(ExecutorState {
+                tasks: RefCell::new(HashMap::new()),
+                ready: Rc::new(RefCell::new(VecDeque::new())),
+            }),
+        }
+    }
+
+    pub fn handle(&self) -> ExecutorHandle {
+        ExecutorHandle {
+            inner: self.inner.clone(),
+        }
+    }
+
+    pub fn run<F: Future>(&self, future: F) -> F::Output {
+        self.inner.run(future)
+    }
+
+    pub(crate) fn spawn<T: 'static>(
+        &self,
+        key: impl Into<String>,
+        future: impl Future<Output = T> + 'static,
+    ) -> TaskHandle<T> {
+        self.inner.spawn(key, future)
+    }
+
+    pub(crate) fn contains(&self, key: &str) -> bool {
+        self.inner.contains(key)
+    }
+
+    pub(crate) fn tick(&self) -> Option<String> {
+        self.inner.tick()
+    }
+
+    pub(crate) fn is_idle(&self) -> bool {
+        self.inner.is_idle()
+    }
+
+    pub(crate) fn has_parked_tasks(&self) -> bool {
+        self.inner.has_parked_tasks()
+    }
+}
+
+impl ExecutorHandle {
+    pub(crate) fn spawn<T: 'static>(
+        &self,
+        key: impl Into<String>,
+        future: impl Future<Output = T> + 'static,
+    ) -> TaskHandle<T> {
+        self.inner.spawn(key, future)
+    }
+
+    pub(crate) fn contains(&self, key: &str) -> bool {
+        self.inner.contains(key)
+    }
+
+    pub(crate) fn tick(&self) -> Option<String> {
+        self.inner.tick()
+    }
+
+    pub(crate) fn is_idle(&self) -> bool {
+        self.inner.is_idle()
+    }
+
+    pub(crate) fn has_parked_tasks(&self) -> bool {
+        self.inner.has_parked_tasks()
+    }
+
+    pub(crate) fn run<F: Future>(&self, future: F) -> F::Output {
+        self.inner.run(future)
+    }
+}
+
+impl ExecutorState {
+    fn new() -> Self {
         Self {
             tasks: RefCell::new(HashMap::new()),
             ready: Rc::new(RefCell::new(VecDeque::new())),
@@ -203,7 +287,7 @@ impl CompilerExecutor {
         !self.tasks.borrow().is_empty() && self.ready.borrow().is_empty()
     }
 
-    pub(crate) fn run<F: Future>(&self, future: F) -> F::Output {
+    fn run<F: Future>(&self, future: F) -> F::Output {
         let mut future = std::pin::pin!(future);
         let waker = Waker::noop();
         let mut context = Context::from_waker(waker);
