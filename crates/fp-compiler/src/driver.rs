@@ -48,6 +48,30 @@ struct TypingUnit {
     external_modules: Vec<QualifiedPath>,
 }
 
+fn item_is_unimplemented(item: &Item) -> bool {
+    let attrs = match item.kind() {
+        ItemKind::Module(module) => &module.attrs,
+        ItemKind::DefStruct(def) => &def.attrs,
+        ItemKind::DefStructural(def) => &def.attrs,
+        ItemKind::DefEnum(def) => &def.attrs,
+        ItemKind::DefType(def) => &def.attrs,
+        ItemKind::DefConst(def) => &def.attrs,
+        ItemKind::DefStatic(def) => &def.attrs,
+        ItemKind::DefFunction(def) => &def.attrs,
+        ItemKind::DefTrait(def) => &def.attrs,
+        ItemKind::Import(import) => &import.attrs,
+        ItemKind::Impl(impl_block) => &impl_block.attrs,
+        _ => return false,
+    };
+    attrs.iter().any(|attr| match &attr.meta {
+        fp_core::ast::AttrMeta::Path(path) => path.last().as_str() == "unimplemented",
+        fp_core::ast::AttrMeta::List(list) => list.name.last().as_str() == "unimplemented",
+        fp_core::ast::AttrMeta::NameValue(name_value) => {
+            name_value.name.last().as_str() == "unimplemented"
+        }
+    })
+}
+
 impl CompilerDriver {
     /// Build (but do not spawn or drive) the HIR typing task for one source
     /// module. The future is owned by the driver's task pool, while the unit
@@ -1424,6 +1448,9 @@ impl CompilerDriver {
                 if items.is_empty() {
                     continue;
                 }
+                if items.iter().any(item_is_unimplemented) {
+                    continue;
+                }
 
                 let ast_id = AstId::new(format!("on_demand:{}", path.to_key()));
                 // Stored purely so `compile_unit_core`'s thin `File`-based
@@ -1664,7 +1691,15 @@ impl CompilerDriver {
         path: &FullyQualifiedPath,
         allow_errors: bool,
     ) -> Result<MirId, CompilerDriverError> {
-        let hir = self.state.hir(hir_id)?.clone();
+        let mut hir = self.state.hir(hir_id)?.clone();
+        for (_, external, _) in self.state.typing_ctx.env_ctx.hir_definitions() {
+            for item in external.items {
+                if matches!(item.kind, hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_)) {
+                    hir.def_map.insert(item.def_id, item.clone());
+                    hir.items.push(item);
+                }
+            }
+        }
         let typeck_results = self.state.hir_typeck(hir_id)?.clone();
         let mut lowering = MirLowering::new().with_typeck_results(&typeck_results)?;
         lowering.set_lossy(self.state.lossy() || allow_errors);

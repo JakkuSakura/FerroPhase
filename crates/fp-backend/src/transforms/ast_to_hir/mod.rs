@@ -2809,36 +2809,8 @@ fn should_drop_quote_item(item: &ast::Item) -> bool {
 }
 
 fn should_drop_const_type_item(item: &ast::Item) -> bool {
-    match item.kind() {
-        ItemKind::DefStruct(def) => def
-            .value
-            .fields
-            .iter()
-            .any(|field| ty_contains_type_type(&field.value)),
-        ItemKind::DefStructural(def) => def
-            .value
-            .fields
-            .iter()
-            .any(|field| ty_contains_type_type(&field.value)),
-        ItemKind::DefFunction(func) => {
-            if !func.sig.is_const {
-                return false;
-            }
-            signature_contains_type_type(&func.sig)
-                || func
-                    .ty_annotation
-                    .as_ref()
-                    .is_some_and(ty_contains_type_type)
-                || func
-                    .ty
-                    .as_ref()
-                    .is_some_and(type_function_contains_type_type)
-        }
-        ItemKind::DeclFunction(func) => {
-            func.sig.is_const && signature_contains_type_type(&func.sig)
-        }
-        _ => false,
-    }
+    let _ = item;
+    false
 }
 
 fn signature_contains_quote(sig: &ast::FunctionSignature) -> bool {

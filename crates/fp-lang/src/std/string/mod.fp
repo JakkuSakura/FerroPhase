@@ -2,6 +2,8 @@ pub struct String {
     value: str,
 }
 
+pub struct Utf8Error {}
+
 impl str {
     pub fn len(&self) -> usize { compile_error!("compiler intrinsic") }
 

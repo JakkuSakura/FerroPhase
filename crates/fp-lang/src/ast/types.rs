@@ -304,6 +304,9 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         (_, Some(ppath)) if ppath.prefix == PathPrefix::Plain && ppath.segments.len() == 1 => {
             ppath.segments[0].ident.as_str().to_string()
         }
+        (None, None) if matches!(&name, Name::Ident(ident) if ident.as_str() == "type") => {
+            "type".to_string()
+        }
         _ => String::new(),
     };
     if type_name == "type" {
@@ -355,6 +358,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                     }));
                 }
                 "bool" => return Ok(Ty::Primitive(TypePrimitive::Bool)),
+                "any" => return Ok(Ty::any()),
                 "str" => return Ok(Ty::Primitive(TypePrimitive::String)),
                 "i8" => return Ok(Ty::Primitive(TypePrimitive::Int(TypeInt::I8))),
                 "i16" => return Ok(Ty::Primitive(TypePrimitive::Int(TypeInt::I16))),
@@ -384,6 +388,9 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             );
         }
         return Ok(ty);
+    }
+    if matches!(&name, Name::Ident(ident) if ident.as_str() == "any") {
+        return Ok(Ty::any());
     }
     Ok(Ty::name(name))
 }

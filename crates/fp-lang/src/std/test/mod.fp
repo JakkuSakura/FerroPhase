@@ -13,13 +13,7 @@ pub struct CommandMock {
     status: i64,
 }
 
-pub struct CommandMockMatch {
-    stdout: str,
-    stderr: str,
-    status: i64,
-}
-
-const mut REGISTRY: Vec<TestCase> = Vec::new();
+const mut REGISTRY: Vec<TestCase> = std::alloc::Vec::new();
 // TODO: use quote<fn> instead
 const fn test(item: quote<item>) -> quote<item> {
     let name = item.name;
@@ -85,6 +79,8 @@ pub fn take_command_calls() -> Vec<&str> {
     std::intrinsics::test::command_mock_take_calls()
 }
 
-pub fn apply_command_mock(command: &str) -> Option<CommandMockMatch> {
+pub fn apply_command_mock(
+    command: &str,
+) -> Option<std::intrinsics::test::CommandMockMatch> {
     std::intrinsics::test::command_mock_apply(command)
 }

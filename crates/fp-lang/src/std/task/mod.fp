@@ -1,7 +1,7 @@
 // Future placeholder helpers for the runtime scheduler.
 
-struct Future<T> {
-    handle: any,
+pub struct Future<T> {
+    pub handle: any,
 }
 
 // Accept any Future-like value (async block, std::future::sleep, etc.).

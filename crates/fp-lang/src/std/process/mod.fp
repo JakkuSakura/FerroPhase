@@ -122,7 +122,7 @@ impl Process {
 
     pub fn output_result(self) -> ProcessResult {
         let rendered_command = render_process_command(self);
-        let mocked: Option<std::test::CommandMockMatch> =
+        let mocked: Option<std::intrinsics::test::CommandMockMatch> =
             std::test::apply_command_mock(&rendered_command);
         match mocked {
             Option::Some(mocked) => ProcessResult {

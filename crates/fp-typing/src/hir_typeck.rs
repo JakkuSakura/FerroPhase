@@ -764,7 +764,14 @@ impl HirTypeChecker {
             return Ok(self_ty);
         }
         let Some(hir::Res::Def(def_id)) = path.res else {
-            return Err(Error::from("unresolved type path"));
+            return Err(Error::from(format!(
+                "unresolved type path `{}`",
+                path.segments
+                    .iter()
+                    .map(|segment| segment.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join("::")
+            )));
         };
         if let Some(generic) = self.generic_ty(def_id) {
             return Ok(generic);
@@ -880,7 +887,14 @@ impl HirTypeChecker {
             // A value path can refer to a definition supplied by a loaded
             // crate. It is resolved by HIR lowering, while this pass only
             // needs a semantic value type for subsequent expression checks.
-            return Err(Error::from("unresolved value path"));
+            return Err(Error::from(format!(
+                "unresolved value path `{}`",
+                path.segments
+                    .iter()
+                    .map(|segment| segment.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join("::")
+            )));
         };
         let Some(item) = self.program.def_map.get(&def_id).cloned() else {
             let associated = self.program.items.iter().find_map(|item| {
