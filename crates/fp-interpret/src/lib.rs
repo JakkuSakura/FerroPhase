@@ -447,7 +447,7 @@ impl LirInterpreter {
             LirInstructionKind::ComptimeOp(op) => {
                 match op {
                     ComptimeOp::CreateStruct { name } => {
-                        let struct_name = self.resolve_string_value(name);
+                        let struct_name = self.resolve_string_value(name)?;
                         let fields: Vec<fp_core::ast::StructuralField> = vec![];
                         let struct_ty = Ty::Struct(TypeStruct {
                             name: fp_core::ast::Ident::new(struct_name),
@@ -471,7 +471,7 @@ impl LirInterpreter {
                             self.state.objects.get(handle).ok_or_else(|| {
                                 VmError::Runtime("struct handle out of range".into())
                             })?;
-                        let field_name_str = self.resolve_string_value(field_name);
+                        let field_name_str = self.resolve_string_value(field_name)?;
                         let field_ty = match self
                             .resolve_runtime_value(field_type, &LirType::Ptr(Box::new(LirType::I8)))
                         {
@@ -574,23 +574,26 @@ impl LirInterpreter {
         Ok(())
     }
 
-    fn resolve_string_value(&self, val: &LirValue) -> String {
-        // Try as ptr type resolution
-        let ptr_ty = LirType::Ptr(Box::new(LirType::I8));
-        if let Ok(v) = self.resolve_runtime_value(val, &ptr_ty) {
-            if let Value::String(s) = v {
-                return s.value.clone();
+    fn resolve_string_value(&self, val: &LirValue) -> LirResult<String> {
+        let handle = self.resolve_raw(val)? as usize;
+        let value =
+            self.state.objects.get(handle).ok_or_else(|| {
+                VmError::Runtime(format!("string handle {handle} is out of range"))
+            })?;
+        let bytes = match value {
+            Value::String(string) => return Ok(string.value.clone()),
+            Value::Bytes(bytes) => bytes.value.as_ref(),
+            other => {
+                return Err(VmError::Runtime(format!(
+                    "expected string backing object, found {other:?}"
+                )));
             }
-        }
-        // Fallback: resolve raw handle, look up in objects
-        if let Ok(handle) = self.resolve_raw(val) {
-            if let Some(v) = self.state.objects.get(handle as usize) {
-                if let Value::String(s) = v {
-                    return s.value.clone();
-                }
-            }
-        }
-        "unnamed".to_string()
+        };
+        let bytes = bytes.strip_suffix(&[0]).ok_or_else(|| {
+            VmError::Runtime("string backing object is not NUL-terminated".into())
+        })?;
+        String::from_utf8(bytes.to_vec())
+            .map_err(|error| VmError::Runtime(format!("invalid UTF-8 string constant: {error}")))
     }
 
     fn resolve_raw(&self, val: &LirValue) -> LirResult<u64> {
@@ -697,9 +700,6 @@ impl LirInterpreter {
     }
 
     fn resolve_typed(&self, val: &LirValue, ty: &LirType) -> LirResult<Value> {
-        if let Some(value) = self.try_resolve_i8_slice(val, ty)? {
-            return Ok(value);
-        }
         let raw = self.resolve_raw(val)?;
         if is_object_type(ty) {
             let idx = raw as usize;
@@ -777,9 +777,6 @@ impl LirInterpreter {
     }
 
     fn resolve_runtime_value(&self, val: &LirValue, ty: &LirType) -> LirResult<Value> {
-        if let Some(value) = self.try_resolve_i8_slice(val, ty)? {
-            return Ok(value);
-        }
         if let LirValueKind::Register(register) = &val.kind {
             if let Some(value) = self.register_values.get(register) {
                 if Self::is_aggregate_runtime_type(ty) || matches!(ty, LirType::Ptr(_)) {
@@ -800,7 +797,9 @@ impl LirInterpreter {
                         .objects
                         .get(raw as usize)
                         .cloned()
-                        .unwrap_or_else(|| Value::uint(raw)))
+                        .unwrap_or_else(|| {
+                            Value::Pointer(fp_core::ast::ValuePointer::new(raw as i64))
+                        }))
                 }
             };
         }
@@ -887,69 +886,13 @@ impl LirInterpreter {
                     .copied()
                     .ok_or_else(|| VmError::Runtime(format!("missing global {global}")))?,
             ),
+            LirValueKind::Constant(LirConstantKind::Expr(LirConstantExpr::GetElementPtr {
+                ..
+            })) => Value::uint(self.resolve_raw(constant)?),
             LirValueKind::Constant(LirConstantKind::FunctionAddress(_)) => Value::uint(0),
             _ => return Err(VmError::Runtime(format!("not a constant: {constant:?}"))),
         };
         Ok(value)
-    }
-
-    fn try_resolve_i8_slice(&self, val: &LirValue, ty: &LirType) -> LirResult<Option<Value>> {
-        let LirType::Struct { fields, name, .. } = ty else {
-            return Ok(None);
-        };
-        if name.as_deref() != Some("__slice") || fields.len() != 2 {
-            return Ok(None);
-        }
-        let LirType::Ptr(elem) = &fields[0] else {
-            return Ok(None);
-        };
-        if **elem != LirType::I8 || fields[1] != LirType::I64 {
-            return Ok(None);
-        }
-
-        let aggregate = self.resolve_aggregate_value(val, ty)?;
-        let Value::Tuple(tuple) = aggregate else {
-            return Ok(None);
-        };
-        if tuple.values.len() != 2 {
-            return Ok(None);
-        }
-
-        let ptr_handle = match &tuple.values[0] {
-            Value::UInt(value) => value.value as usize,
-            Value::Int(value) if value.value >= 0 => value.value as usize,
-            Value::Null(_) => {
-                return Ok(Some(Value::Bytes(fp_core::ast::ValueBytes::from(
-                    &b"\0"[..],
-                ))));
-            }
-            _ => return Ok(None),
-        };
-        let len = match &tuple.values[1] {
-            Value::UInt(value) => value.value as usize,
-            Value::Int(value) if value.value >= 0 => value.value as usize,
-            _ => return Ok(None),
-        };
-
-        let Some(backing) = self.state.objects.get(ptr_handle) else {
-            return Err(VmError::Runtime(format!(
-                "dangling object handle {ptr_handle}"
-            )));
-        };
-        let bytes = match backing {
-            Value::Bytes(bytes) => bytes.value.as_ref(),
-            Value::String(text) => text.value.as_bytes(),
-            _ => return Ok(None),
-        };
-        let clipped_len = len.min(bytes.len());
-        let mut out = Vec::with_capacity(clipped_len.saturating_add(1));
-        out.extend_from_slice(&bytes[..clipped_len]);
-        if !out.ends_with(&[0]) {
-            out.push(0);
-        }
-        Ok(Some(Value::Bytes(fp_core::ast::ValueBytes::from(
-            out.as_slice(),
-        ))))
     }
 
     fn value_to_slot_raw(&mut self, value: Value, ty: &LirType) -> u64 {
@@ -1421,25 +1364,6 @@ impl LirInterpreter {
         match value {
             Value::String(value) => Some(value.value.as_bytes().to_vec()),
             Value::Bytes(value) => Some(value.value.to_vec()),
-            Value::Tuple(tuple) if tuple.values.len() == 2 => {
-                let ptr_handle = match &tuple.values[0] {
-                    Value::UInt(value) => value.value,
-                    Value::Int(value) if value.value >= 0 => value.value as u64,
-                    _ => return None,
-                };
-                let len = match &tuple.values[1] {
-                    Value::UInt(value) => value.value as usize,
-                    Value::Int(value) if value.value >= 0 => value.value as usize,
-                    _ => return None,
-                };
-                let backing = self.state.objects.get(ptr_handle as usize)?;
-                let bytes = match backing {
-                    Value::String(value) => value.value.as_bytes(),
-                    Value::Bytes(value) => value.value.as_ref(),
-                    _ => return None,
-                };
-                Some(bytes[..len.min(bytes.len())].to_vec())
-            }
             _ => None,
         }
     }
@@ -1534,12 +1458,9 @@ impl LirInterpreter {
     fn call_bc_intrinsic(&mut self, name: &str, args: &[u64]) -> LirResult<u64> {
         match name {
             "make_tuple" | "make_array" | "make_list" => {
-                let count = args.first().copied().unwrap_or(0) as usize;
-                let elements: Vec<Value> = args[1..]
-                    .iter()
-                    .take(count)
-                    .map(|&raw| Value::uint(raw))
-                    .collect();
+                let count = Self::bc_arg(name, args, 0)? as usize;
+                Self::require_bc_arity(name, args, count + 1)?;
+                let elements: Vec<Value> = args[1..].iter().map(|&raw| Value::uint(raw)).collect();
                 let obj = match name {
                     "make_tuple" => Value::Tuple(ValueTuple::new(elements)),
                     _ => Value::List(ValueList::new(elements)),
@@ -1549,12 +1470,13 @@ impl LirInterpreter {
                 Ok(handle)
             }
             "make_map" => {
-                let count = args.first().copied().unwrap_or(0) as usize;
+                let count = Self::bc_arg(name, args, 0)? as usize;
+                Self::require_bc_arity(name, args, count * 2 + 1)?;
                 let mut entries = Vec::with_capacity(count);
                 let mut i = 1;
                 for _ in 0..count {
-                    let key_raw = args.get(i).copied().unwrap_or(0);
-                    let val_raw = args.get(i + 1).copied().unwrap_or(0);
+                    let key_raw = Self::bc_arg(name, args, i)?;
+                    let val_raw = Self::bc_arg(name, args, i + 1)?;
                     entries.push(ValueMapEntry::new(
                         Value::uint(key_raw),
                         Value::uint(val_raw),
@@ -1567,8 +1489,9 @@ impl LirInterpreter {
                 Ok(handle)
             }
             "tuple_get" | "array_get" => {
-                let handle = args.first().copied().unwrap_or(0) as usize;
-                let index = args.get(1).copied().unwrap_or(0) as usize;
+                Self::require_bc_arity(name, args, 2)?;
+                let handle = Self::bc_arg(name, args, 0)? as usize;
+                let index = Self::bc_arg(name, args, 1)? as usize;
                 let obj = self
                     .state
                     .objects
@@ -1584,9 +1507,10 @@ impl LirInterpreter {
                 Ok(self.value_to_handle_or_raw(&element))
             }
             "tuple_set" => {
-                let handle = args.first().copied().unwrap_or(0) as usize;
-                let index = args.get(1).copied().unwrap_or(0) as usize;
-                let raw_value = args.get(2).copied().unwrap_or(0);
+                Self::require_bc_arity(name, args, 3)?;
+                let handle = Self::bc_arg(name, args, 0)? as usize;
+                let index = Self::bc_arg(name, args, 1)? as usize;
+                let raw_value = Self::bc_arg(name, args, 2)?;
                 let obj = self
                     .state
                     .objects
@@ -1608,7 +1532,8 @@ impl LirInterpreter {
                 Ok(new_handle)
             }
             "container_len" => {
-                let handle = args.first().copied().unwrap_or(0) as usize;
+                Self::require_bc_arity(name, args, 1)?;
+                let handle = Self::bc_arg(name, args, 0)? as usize;
                 let obj = self
                     .state
                     .objects
@@ -1625,7 +1550,8 @@ impl LirInterpreter {
                 Ok(len)
             }
             "str_alloc" => {
-                let len = args.first().copied().unwrap_or(0) as usize;
+                Self::require_bc_arity(name, args, 1)?;
+                let len = Self::bc_arg(name, args, 0)? as usize;
                 let s = " ".repeat(len);
                 let handle = self.state.objects.len() as u64;
                 self.state.objects.push(Value::string(s));
@@ -1665,6 +1591,24 @@ impl LirInterpreter {
             }
             _ => Err(VmError::Runtime(format!("unknown bc intrinsic: {name}"))),
         }
+    }
+
+    fn bc_arg(name: &str, args: &[u64], index: usize) -> LirResult<u64> {
+        args.get(index).copied().ok_or_else(|| {
+            VmError::Runtime(format!(
+                "bytecode intrinsic `{name}` is missing argument {index}"
+            ))
+        })
+    }
+
+    fn require_bc_arity(name: &str, args: &[u64], expected: usize) -> LirResult<()> {
+        if args.len() == expected {
+            return Ok(());
+        }
+        Err(VmError::Runtime(format!(
+            "bytecode intrinsic `{name}` expects {expected} arguments, got {}",
+            args.len()
+        )))
     }
 
     fn raw_to_value(&self, raw: u64) -> Value {
@@ -1947,6 +1891,25 @@ mod tests {
             LirConstant::integer(LirType::I64, LirInteger::I64(v as u64))
                 .expect("valid i64 constant"),
         )
+    }
+
+    #[test]
+    fn materializes_constant_gep_as_an_address() {
+        let mut interpreter = LirInterpreter::new();
+        interpreter.global_values.insert("bytes".into(), 17);
+        let address = LirValue::constant(LirConstant::get_element_ptr(
+            LirType::Ptr(Box::new(LirType::I8)),
+            LirConstant::global_address(LirType::Ptr(Box::new(LirType::I8)), Name::new("bytes")),
+            Vec::new(),
+            true,
+        ));
+
+        assert_eq!(
+            interpreter
+                .constant_to_value(&address)
+                .expect("resolve GEP"),
+            Value::uint(17)
+        );
     }
 
     fn reg(id: u32) -> LirValue {
