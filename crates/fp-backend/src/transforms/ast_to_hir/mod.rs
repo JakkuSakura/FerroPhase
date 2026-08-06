@@ -1013,7 +1013,7 @@ impl HirGenerator {
         // Transform the root expression into a main function. The
         // synthesized `main`'s return type must match the expression's own
         // type — callers that lower this program all the way through MIR
-        // (e.g. a comptime probe that needs the expression's value) rely on
+        // (e.g. a comptime block that needs the expression's value) rely on
         // the declared output type matching the body, which HIR→MIR lowering
         // checks; a hardcoded `()` output would then be a mismatch for any
         // non-unit expression.

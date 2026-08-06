@@ -497,7 +497,7 @@ impl CompilerDriver {
             let requests = self.state.typing_ctx.take_comptime_requests();
             if !requests.is_empty() {
                 for pending in requests {
-                    let value = self.answer_hir_comptime(pending.request()).await?;
+                    let value = self.evaluate_comptime_block(pending.request()).await?;
                     pending.complete(Ok(value));
                 }
                 continue;
@@ -613,7 +613,7 @@ impl CompilerDriver {
         })
     }
 
-    async fn answer_hir_comptime(
+    async fn evaluate_comptime_block(
         &mut self,
         request: &ComptimeRequest,
     ) -> Result<Value, CompilerDriverError> {

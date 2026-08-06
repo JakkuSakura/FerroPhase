@@ -56,7 +56,7 @@ impl PendingComptimeRequest {
 /// driver and the typer to read/write without threading state through function
 /// parameters.
 pub struct TypingContext {
-    /// Target ABI data shared by typing-triggered comptime probes and normal
+    /// Target ABI data shared by typing-triggered comptime blocks and normal
     /// MIR-to-LIR lowering for this compilation session.
     pub data_layout: LirDataLayout,
     /// Comptime-evaluated const values, keyed by const name.
