@@ -119,22 +119,6 @@ impl TypingContext {
         }
     }
 
-    /// Validate that a provider-owned package is already available to this
-    /// compilation session. Package loading is performed by the driver before
-    /// dependent modules are typed.
-    pub async fn await_package(&self, key: &str) -> fp_core::Result<fp_core::package::PackageId> {
-        let Some(package_id) = self.env_ctx.resolve_package(key) else {
-            return Err(fp_core::Error::from(format!("unresolved package `{key}`")));
-        };
-        if self.env_ctx.is_loaded(&package_id) {
-            Ok(package_id)
-        } else {
-            Err(fp_core::Error::from(format!(
-                "package `{package_id}` was not compiled before use"
-            )))
-        }
-    }
-
     /// Wake every task parked on `name`'s comptime value — call this right
     /// after writing `name`'s resolution into `resolved_consts`/
     /// `resolved_types` (the three write sites are all in `fp-compiler`'s

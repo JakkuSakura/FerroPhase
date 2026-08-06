@@ -7,21 +7,60 @@ use crate::module::{FeatureRef, ModuleId};
 use crate::vfs::VirtualPath;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct PackageId(pub String);
+pub struct PackageId {
+    name: String,
+    version: Option<Version>,
+    source: Option<String>,
+}
 
 impl PackageId {
     pub fn new<S: Into<String>>(name: S) -> Self {
-        Self(name.into())
+        Self {
+            name: name.into(),
+            version: None,
+            source: None,
+        }
+    }
+
+    pub fn resolved(name: impl Into<String>, version: Version, source: impl Into<String>) -> Self {
+        Self::with_source(name, Some(version), source)
+    }
+
+    pub fn with_source(
+        name: impl Into<String>,
+        version: Option<Version>,
+        source: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            version,
+            source: Some(source.into()),
+        }
     }
 
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.name
+    }
+
+    pub fn version(&self) -> Option<&Version> {
+        self.version.as_ref()
+    }
+
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
     }
 }
 
 impl Display for PackageId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        self.name.fmt(f)?;
+        if let Some(version) = &self.version {
+            write!(f, "@{version}")?;
+        }
+        if let Some(source) = &self.source {
+            write!(f, " [{source}]")?;
+        }
+        Ok(())
     }
 }
 
@@ -42,7 +81,11 @@ pub enum DependencyKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DependencyDescriptor {
+    /// Source-level dependency name, retained for diagnostics and aliases.
     pub package: String,
+    /// The concrete package selected by Magnet or the provider. Raw manifest
+    /// metadata leaves this unset until dependency resolution has completed.
+    pub resolved_package_id: Option<PackageId>,
     pub constraint: Option<VersionReq>,
     pub kind: DependencyKind,
     pub features: Vec<FeatureRef>,
@@ -219,5 +262,22 @@ impl CompiledPackage {
             hir_exports: HashMap::new(),
             items: HashMap::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PackageId;
+    use semver::Version;
+
+    #[test]
+    fn resolved_package_ids_distinguish_selected_versions_and_sources() {
+        let first = PackageId::resolved("serde", Version::new(1, 0, 0), "registry+crates.io");
+        let second = PackageId::resolved("serde", Version::new(1, 1, 0), "registry+crates.io");
+        let third = PackageId::resolved("serde", Version::new(1, 0, 0), "git+https://example.test");
+
+        assert_ne!(first, second);
+        assert_ne!(first, third);
+        assert_eq!(first.as_str(), "serde");
     }
 }

@@ -8,7 +8,6 @@ use crate::package::{PackageDescriptor, PackageId};
 pub struct PackageGraph {
     packages: HashMap<PackageId, PackageDescriptor>,
     modules: HashMap<ModuleId, ModuleDescriptor>,
-    package_by_name: HashMap<String, PackageId>,
     modules_by_package: HashMap<PackageId, Vec<ModuleId>>,
 }
 
@@ -17,7 +16,6 @@ impl PackageGraph {
         let mut graph = Self {
             packages: HashMap::new(),
             modules: HashMap::new(),
-            package_by_name: HashMap::new(),
             modules_by_package: HashMap::new(),
         };
         for package in packages {
@@ -28,8 +26,6 @@ impl PackageGraph {
 
     pub fn insert_package(&mut self, package: PackageDescriptor) {
         let package_id = package.id.clone();
-        self.package_by_name
-            .insert(package.name.clone(), package_id.clone());
         let module_ids: Vec<ModuleId> = package.modules.clone();
         self.modules_by_package
             .insert(package_id.clone(), module_ids);
@@ -42,10 +38,6 @@ impl PackageGraph {
 
     pub fn package(&self, id: &PackageId) -> Option<&PackageDescriptor> {
         self.packages.get(id)
-    }
-
-    pub fn package_by_name(&self, name: &str) -> Option<&PackageId> {
-        self.package_by_name.get(name)
     }
 
     pub fn module(&self, id: &ModuleId) -> Option<&ModuleDescriptor> {

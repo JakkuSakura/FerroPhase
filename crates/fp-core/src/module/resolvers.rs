@@ -149,15 +149,13 @@ impl FerroResolver {
             return None;
         };
         let package = graph.package(&from.package)?;
-        let has_dependency = package
+        let package_id = package
             .metadata
             .dependencies
             .iter()
-            .any(|dep| dep.package == *first);
-        if !has_dependency {
-            return None;
-        }
-        let package_id = graph.package_by_name(first)?.clone();
+            .find(|dep| dep.package == *first)?
+            .resolved_package_id
+            .clone()?;
         let remaining = segments.iter().skip(1).cloned().collect();
         Some((package_id, remaining))
     }

@@ -78,6 +78,7 @@ impl TypeScriptPackageProvider {
                 });
                 let constraint = constraint_raw.and_then(|raw| VersionReq::parse(raw).ok());
                 DependencyDescriptor {
+                    resolved_package_id: None,
                     package: name,
                     constraint,
                     kind: kind.clone(),
@@ -168,12 +169,16 @@ impl PackageProvider for TypeScriptPackageProvider {
 
     fn refresh(&self) -> ProviderResult<()> {
         let manifest = self.read_manifest()?;
-        let package_id = PackageId::new(manifest.name.clone());
         let manifest_path = self.package_manifest();
         let version = manifest
             .version
             .as_ref()
             .and_then(|raw| Version::parse(raw).ok());
+        let package_id = PackageId::with_source(
+            manifest.name.clone(),
+            version.clone(),
+            format!("npm:{}", manifest_path.display()),
+        );
 
         let mut dependencies = Vec::new();
         dependencies.extend(Self::convert_dependencies(

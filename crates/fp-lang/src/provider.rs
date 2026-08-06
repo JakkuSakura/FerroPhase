@@ -100,6 +100,7 @@ impl PackageProvider for FerroPhaseProvider {
         if id.as_str() == STD_PACKAGE_NAME {
             metadata.dependencies.push(DependencyDescriptor {
                 package: LIBC_PACKAGE_NAME.to_string(),
+                resolved_package_id: Some(PackageId::new(LIBC_PACKAGE_NAME)),
                 constraint: None,
                 kind: DependencyKind::Normal,
                 features: Vec::new(),

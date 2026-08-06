@@ -1325,7 +1325,17 @@ impl HirTypeChecker {
             TyKind::Adt(receiver, _) => Some(receiver.did),
             _ => None,
         };
-        for item in self.program.items.clone() {
+        let mut impl_items = self.program.items.clone();
+        if let Some(context) = &self.typing_context {
+            impl_items.extend(
+                context
+                    .env_ctx
+                    .hir_definitions()
+                    .into_iter()
+                    .flat_map(|(_, program, _)| program.items),
+            );
+        }
+        for item in impl_items {
             let hir::ItemKind::Impl(impl_item) = item.kind else {
                 continue;
             };

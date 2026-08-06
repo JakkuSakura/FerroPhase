@@ -812,11 +812,20 @@ fn dependency_to_edge_with_lock_loader(
 fn dependency_descriptor_to_edge(dep: &DependencyDescriptor) -> DependencyEdge {
     DependencyEdge {
         name: dep.package.clone(),
-        package: None,
+        package: dep
+            .resolved_package_id
+            .as_ref()
+            .map(|package_id| package_id.as_str().to_owned()),
         version: dep.constraint.as_ref().map(|v| v.to_string()),
-        resolved_version: None,
+        resolved_version: dep
+            .resolved_package_id
+            .as_ref()
+            .and_then(|package_id| package_id.version().map(ToString::to_string)),
         checksum: None,
-        source: None,
+        source: dep
+            .resolved_package_id
+            .as_ref()
+            .and_then(|package_id| package_id.source().map(str::to_owned)),
         path: None,
         git: None,
         rev: None,

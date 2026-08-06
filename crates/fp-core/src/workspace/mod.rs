@@ -215,6 +215,17 @@ impl WorkspaceContext {
         Self::default()
     }
 
+    fn sorted_packages(&self) -> Vec<Rc<RefCell<CompiledPackage>>> {
+        let mut packages: Vec<_> = self
+            .crates
+            .borrow()
+            .iter()
+            .map(|(package_id, package)| (package_id.to_string(), package.clone()))
+            .collect();
+        packages.sort_by(|(left, _), (right, _)| left.cmp(right));
+        packages.into_iter().map(|(_, package)| package).collect()
+    }
+
     /// Create an isolated package workspace. Provider registrations are
     /// shared, while compiled package entries are imported explicitly.
     pub fn for_package(&self, package_id: PackageId) -> Self {
@@ -288,9 +299,11 @@ impl WorkspaceContext {
         HashMap<String, crate::hir::Res>,
     )> {
         let mut definitions = Vec::new();
-        for package in self.crates.borrow().values() {
+        for package in self.sorted_packages() {
             let package = package.borrow();
-            definitions.extend(package.hir_modules.iter().map(|(path, program)| {
+            let mut modules: Vec<_> = package.hir_modules.iter().collect();
+            modules.sort_by_key(|(path, _)| path.to_key());
+            definitions.extend(modules.into_iter().map(|(path, program)| {
                 (path.clone(), program.clone(), package.hir_exports.clone())
             }));
         }
@@ -305,13 +318,6 @@ impl WorkspaceContext {
         self.crates.borrow().get(package_id).cloned()
     }
 
-    pub fn is_registered(&self, name: &str) -> bool {
-        self.providers
-            .borrow()
-            .iter()
-            .any(|provider| provider.resolve_package(name).is_some())
-    }
-
     pub fn provider_for(&self, package_id: &PackageId) -> Option<Arc<dyn PackageProvider>> {
         self.providers
             .borrow()
@@ -323,13 +329,6 @@ impl WorkspaceContext {
                     .unwrap_or(false)
             })
             .cloned()
-    }
-
-    pub fn resolve_package(&self, key: &str) -> Option<crate::package::PackageId> {
-        self.providers
-            .borrow()
-            .iter()
-            .find_map(|provider| provider.resolve_package(key))
     }
 
     /// Names of every registered package, whether or not it's been loaded
@@ -346,9 +345,9 @@ impl WorkspaceContext {
     }
 
     pub fn module_paths(&self) -> Vec<QualifiedPath> {
-        self.crates
-            .borrow()
-            .values()
+        let mut paths: Vec<_> = self
+            .sorted_packages()
+            .into_iter()
             .flat_map(|package| {
                 package
                     .borrow()
@@ -357,14 +356,16 @@ impl WorkspaceContext {
                     .cloned()
                     .collect::<Vec<_>>()
             })
-            .collect()
+            .collect();
+        paths.sort_by_key(|path| path.to_key());
+        paths
     }
 
     /// Search every crate for a struct at `path`, borrowing each crate just
     /// long enough to check — the one clone that remains is the matched
     /// item itself, needed regardless to build an owned `Ty::Struct(..)`.
     pub fn find_struct(&self, path: &QualifiedPath) -> Option<TypeStruct> {
-        for krate in self.crates.borrow().values() {
+        for krate in self.sorted_packages() {
             if let Some(s) = krate.borrow().struct_defs.get(path) {
                 return Some(s.clone());
             }
@@ -381,7 +382,7 @@ impl WorkspaceContext {
     /// `std::option::Option`/`std::result::Result`, defined in `std`'s own
     /// `CompiledPackage`, not whatever crate is currently being typed).
     pub fn find_enum(&self, path: &QualifiedPath) -> Option<TypeEnum> {
-        for krate in self.crates.borrow().values() {
+        for krate in self.sorted_packages() {
             if let Some(e) = krate.borrow().enum_defs.get(path) {
                 return Some(e.clone());
             }
@@ -395,7 +396,7 @@ impl WorkspaceContext {
     }
 
     pub fn find_function_sig(&self, path: &QualifiedPath) -> Option<FunctionSignature> {
-        for krate in self.crates.borrow().values() {
+        for krate in self.sorted_packages() {
             if let Some(sig) = krate.borrow().function_sigs.get(path) {
                 return Some(sig.clone());
             }
@@ -413,7 +414,7 @@ impl WorkspaceContext {
     /// counterpart to `own_method_sigs` in `fp-typing`, mirroring
     /// `find_struct`/`find_function_sig` exactly.
     pub fn find_method_sigs(&self, path: &QualifiedPath) -> Option<Vec<(String, MethodSignature)>> {
-        for krate in self.crates.borrow().values() {
+        for krate in self.sorted_packages() {
             if let Some(sigs) = krate.borrow().method_sigs.get(path) {
                 return Some(sigs.clone());
             }
@@ -446,12 +447,18 @@ impl WorkspaceContext {
     }
 
     pub fn package_id_for_module(&self, path: &QualifiedPath) -> Option<HirPackageId> {
-        self.crates.borrow().values().find_map(|krate| {
+        if let Some(current_package) = &self.current_package {
+            if let Some(package) = self.crates.borrow().get(current_package) {
+                let package = package.borrow();
+                if package.module_paths.contains(path) || package.items.contains_key(path) {
+                    return Some(package.package_id);
+                }
+            }
+        }
+        self.sorted_packages().into_iter().find_map(|krate| {
             let krate = krate.borrow();
-            (krate.name == path.head().unwrap_or_default()
-                || krate.module_paths.contains(path)
-                || krate.items.contains_key(path))
-            .then_some(krate.package_id)
+            (krate.module_paths.contains(path) || krate.items.contains_key(path))
+                .then_some(krate.package_id)
         })
     }
 }

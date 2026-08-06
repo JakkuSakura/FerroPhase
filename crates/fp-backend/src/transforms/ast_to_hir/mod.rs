@@ -50,7 +50,7 @@ pub struct HirGenerator {
     module_visibility: Vec<bool>,
     global_value_defs: HashMap<String, SymbolEntry>,
     global_type_defs: HashMap<String, SymbolEntry>,
-    preassigned_def_ids: HashMap<usize, hir::DefId>,
+    preassigned_def_ids: HashMap<u64, hir::DefId>,
     enum_variant_def_ids: HashMap<String, hir::DefId>,
     type_aliases: HashMap<String, ast::Ty>,
     struct_field_defs: HashMap<hir::DefId, Vec<ast::StructuralField>>,
@@ -367,10 +367,20 @@ impl HirGenerator {
         self
     }
 
+    pub fn with_preassigned_def_ids(mut self, ids: HashMap<u64, hir::DefId>) -> Self {
+        self.preassigned_def_ids = ids;
+        self
+    }
+
+    pub fn preassigned_def_ids(&self) -> HashMap<u64, hir::DefId> {
+        self.preassigned_def_ids.clone()
+    }
+
     pub fn exported_symbols(&self) -> HashMap<String, hir::Res> {
         self.global_value_defs
             .iter()
             .chain(self.global_type_defs.iter())
+            .filter(|(_, entry)| matches!(entry.export, SymbolExport::Public))
             .map(|(path, entry)| (path.clone(), entry.res.clone()))
             .collect()
     }
@@ -423,7 +433,6 @@ impl HirGenerator {
         self.module_visibility.push(true);
         self.global_value_defs.clear();
         self.global_type_defs.clear();
-        self.preassigned_def_ids.clear();
         self.enum_variant_def_ids.clear();
         self.struct_field_defs.clear();
         self.module_defs.clear();
@@ -527,8 +536,8 @@ impl HirGenerator {
         }
     }
 
-    fn item_key(item: &ast::Item) -> usize {
-        item as *const _ as usize
+    fn item_key(item: &ast::Item) -> u64 {
+        item.id()
     }
 
     fn allocate_def_id_for_item(&mut self, item: &ast::Item) -> hir::DefId {
@@ -601,7 +610,7 @@ impl HirGenerator {
 
     fn seed_external_definitions(&mut self, program: &mut hir::Program) {
         let external_definitions = self.external_definitions.clone();
-        for (module_path, external, exports) in external_definitions {
+        for (_module_path, external, exports) in external_definitions {
             program.def_map.extend(external.def_map);
             for (path, res) in exports {
                 let entry = SymbolEntry {
@@ -611,102 +620,6 @@ impl HirGenerator {
                 self.global_value_defs.insert(path.clone(), entry.clone());
                 self.global_type_defs.insert(path, entry);
             }
-            for item in &external.items {
-                self.seed_external_item(&module_path, item);
-            }
-        }
-    }
-
-    fn seed_external_item(
-        &mut self,
-        module_path: &fp_core::module::path::QualifiedPath,
-        item: &hir::Item,
-    ) {
-        let insert_value = |this: &mut Self, path: String, def_id: hir::DefId| {
-            this.global_value_defs.insert(
-                path,
-                SymbolEntry {
-                    res: hir::Res::Def(def_id),
-                    export: SymbolExport::Public,
-                },
-            );
-        };
-        let insert_type = |this: &mut Self, path: String, def_id: hir::DefId| {
-            this.global_type_defs.insert(
-                path,
-                SymbolEntry {
-                    res: hir::Res::Def(def_id),
-                    export: SymbolExport::Public,
-                },
-            );
-        };
-
-        match &item.kind {
-            hir::ItemKind::Function(function) => insert_value(
-                self,
-                module_path
-                    .with_segment(function.sig.name.as_str().to_owned())
-                    .to_key(),
-                item.def_id,
-            ),
-            hir::ItemKind::Const(konst) => insert_value(
-                self,
-                module_path
-                    .with_segment(konst.name.as_str().to_owned())
-                    .to_key(),
-                item.def_id,
-            ),
-            hir::ItemKind::Struct(struct_def) => insert_type(
-                self,
-                module_path
-                    .with_segment(struct_def.name.as_str().to_owned())
-                    .to_key(),
-                item.def_id,
-            ),
-            hir::ItemKind::Enum(enum_def) => {
-                insert_type(
-                    self,
-                    module_path
-                        .with_segment(enum_def.name.as_str().to_owned())
-                        .to_key(),
-                    item.def_id,
-                );
-                for variant in &enum_def.variants {
-                    insert_value(
-                        self,
-                        module_path
-                            .with_segment(enum_def.name.as_str().to_owned())
-                            .with_segment(variant.name.as_str().to_owned())
-                            .to_key(),
-                        variant.def_id,
-                    );
-                }
-            }
-            hir::ItemKind::Impl(impl_def) => {
-                let hir::TypeExprKind::Path(self_path) = &impl_def.self_ty.kind else {
-                    return;
-                };
-                let mut method_path = module_path.clone();
-                method_path.segments.extend(
-                    self_path
-                        .segments
-                        .iter()
-                        .map(|segment| segment.name.as_str().to_owned()),
-                );
-                for impl_item in &impl_def.items {
-                    if let hir::ImplItemKind::Method(_) = &impl_item.kind {
-                        insert_value(
-                            self,
-                            method_path
-                                .clone()
-                                .with_segment(impl_item.name.as_str().to_owned())
-                                .to_key(),
-                            impl_item.def_id,
-                        );
-                    }
-                }
-            }
-            hir::ItemKind::Query(_) | hir::ItemKind::Expr(_) => {}
         }
     }
 
@@ -1092,6 +1005,56 @@ impl HirGenerator {
         self.transform_module(module_path, items)
     }
 
+    /// Lower every module in one package after collecting declarations for
+    /// the complete package. Module bodies remain separate programs, but all
+    /// of them resolve against the same package-level declaration graph.
+    pub fn transform_package_modules(
+        &mut self,
+        modules: &[(fp_core::module::path::QualifiedPath, Vec<ast::Item>)],
+    ) -> Result<Vec<(fp_core::module::path::QualifiedPath, hir::Program)>> {
+        self.reset_file_context("<package>");
+        self.prepare_lowering_state();
+
+        let mut external = hir::Program::new();
+        self.seed_external_definitions(&mut external);
+        self.module_defs
+            .extend(self.external_modules.iter().cloned());
+
+        // This is the package's reduced graph phase. Every declaration is
+        // assigned before imports or bodies are lowered, so module cycles do
+        // not depend on a compilation order.
+        for (module_path, items) in modules {
+            self.with_module_scope(module_path, |this| this.predeclare_items(items))?;
+        }
+        self.insert_default_prelude_aliases();
+        self.program_def_map = external.def_map.clone();
+
+        let mut programs = Vec::with_capacity(modules.len());
+        for (module_path, items) in modules {
+            let mut program = hir::Program::new();
+            self.with_module_scope(module_path, |this| {
+                for item in items {
+                    this.append_item(&mut program, item)?;
+                }
+                Ok(())
+            })?;
+            if !self.synthetic_items.is_empty() {
+                let mut synthetic = std::mem::take(&mut self.synthetic_items);
+                for item in &synthetic {
+                    program.def_map.insert(item.def_id, item.clone());
+                    self.program_def_map.insert(item.def_id, item.clone());
+                }
+                program.items.extend(synthetic.drain(..));
+            }
+            programs.push((module_path.clone(), program));
+        }
+
+        for (_, program) in &mut programs {
+            program.def_map = self.program_def_map.clone();
+        }
+        Ok(programs)
+    }
+
     /// Transform a query document node into HIR.
     pub fn transform_query_document(&mut self, query: &QueryDocument) -> Result<hir::Program> {
         let file_name = query.name.as_deref().unwrap_or("<query>");
@@ -1169,6 +1132,22 @@ impl HirGenerator {
         program.def_map = self.program_def_map.clone();
 
         Ok(program)
+    }
+
+    fn with_module_scope<T>(
+        &mut self,
+        module_path: &fp_core::module::path::QualifiedPath,
+        action: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        let depth = module_path.segments.len();
+        for segment in &module_path.segments {
+            self.push_module_scope(segment, &ast::Visibility::Public);
+        }
+        let result = action(self);
+        for _ in 0..depth {
+            self.pop_module_scope();
+        }
+        result
     }
 
     fn resolve_query_ir(&mut self, query: &QueryDocument) -> Result<QueryIrDocument> {

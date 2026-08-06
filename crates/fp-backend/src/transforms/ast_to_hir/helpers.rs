@@ -238,6 +238,53 @@ impl HirGenerator {
                 });
             }
             if let Some(first) = segments.first() {
+                if scope == PathResolutionScope::Value {
+                    if let Some(hir::Res::Def(type_def_id)) =
+                        self.resolve_type_symbol(first.name.as_str())
+                    {
+                        let mut type_paths: Vec<_> = self
+                            .global_type_defs
+                            .iter()
+                            .filter(|(_, entry)| entry.res == hir::Res::Def(type_def_id))
+                            .map(|(path, _)| path)
+                            .filter(|path| path.ends_with(&format!("::{}", first.name)))
+                            .cloned()
+                            .collect();
+                        type_paths.sort();
+                        for type_path in type_paths {
+                            let mut associated_path = parse_path(&type_path)
+                                .map_err(|error| fp_core::Error::from(format!("{error:?}")))?
+                                .segments;
+                            associated_path.extend(
+                                segments
+                                    .iter()
+                                    .skip(1)
+                                    .map(|segment| segment.name.as_str().to_string()),
+                            );
+                            let associated_path = QualifiedPath::new(associated_path);
+                            if let Some(res) = self.lookup_global_res(&associated_path, scope) {
+                                return Ok(hir::Path {
+                                    segments: associated_path
+                                        .segments
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(index, name)| {
+                                            let offset = associated_path
+                                                .segments
+                                                .len()
+                                                .saturating_sub(segments.len());
+                                            let args = (index >= offset)
+                                                .then(|| segments[index - offset].args.clone())
+                                                .flatten();
+                                            self.make_path_segment(name, args)
+                                        })
+                                        .collect(),
+                                    res: Some(res),
+                                });
+                            }
+                        }
+                    }
+                }
                 if let Some(hir::Res::Module(module_path)) =
                     self.resolve_value_symbol(first.name.as_str())
                 {

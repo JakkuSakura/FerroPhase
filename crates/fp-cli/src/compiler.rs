@@ -74,31 +74,18 @@ pub fn check_path(
         return Ok(());
     }
 
-    let identity = CompilerIdentity::for_file(package, path);
     let executor = CompilerExecutor::new();
-    let workspace = compiler_workspace();
-    let mut session = CompilerSession::new(data_layout(), &executor, workspace);
-    session.driver().state.set_lossy(lossy.enabled);
-    if let Some(resolver) = resolver {
-        session.driver().state.set_module_resolver(resolver);
-        session
-            .driver()
-            .state
-            .prepare_module_resolution(identity.ast_id.clone(), path)
-            .map_err(|err| CliError::Compilation(err.to_string()))?;
-    }
-    session
-        .driver()
-        .state
-        .insert_ast(identity.ast_id.clone(), ast);
-    executor
-        .run(
-            session
-                .driver()
-                .compile_native(&identity.ast_id, &identity.path),
-        )
-        .map_err(|err| CliError::Compilation(err.to_string()))?;
-    drain_driver(session.driver(), lossy)
+    let identity = CompilerIdentity::for_file(package, path);
+    let mut driver = compile_source_file(
+        ast,
+        &identity,
+        path,
+        resolver,
+        compiler_workspace(),
+        lossy,
+        &executor,
+    )?;
+    drain_driver(&mut driver, lossy)
 }
 
 pub fn eval_script(script: ScriptBlock) -> Result<Value> {
@@ -950,8 +937,6 @@ fn compile_source_file(
     lossy: LossyCompileOptions,
     executor: &CompilerExecutor,
 ) -> Result<CompilerDriver> {
-    let ast_id = identity.ast_id.clone();
-    let path = identity.path.clone();
     let mut session = CompilerSession::new(data_layout(), executor, workspace);
     let package_id =
         PackageId::new(identity.path.path().head().ok_or_else(|| {
@@ -969,19 +954,22 @@ fn compile_source_file(
         session
             .driver()
             .state
-            .prepare_module_resolution(ast_id.clone(), source_path)
+            .prepare_module_resolution(identity.ast_id.clone(), source_path)
             .map_err(|err| CliError::Compilation(err.to_string()))?;
     }
-    session.driver().state.insert_ast(ast_id.clone(), ast);
     executor
         .run(session.driver().compile_package(&package_id))
         .map_err(|err| CliError::Compilation(err.to_string()))?;
     session
         .driver()
-        .focus_package(package_id)
+        .focus_package(package_id.clone())
         .map_err(|err| CliError::Compilation(err.to_string()))?;
     executor
-        .run(session.driver().compile_native(&ast_id, &path))
+        .run(session.driver().compile_package_module_native(
+            &package_id,
+            identity.path.path(),
+            "main",
+        ))
         .map_err(|err| CliError::Compilation(err.to_string()))?;
     Ok(session.into_driver())
 }

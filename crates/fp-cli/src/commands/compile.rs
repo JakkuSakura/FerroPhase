@@ -44,7 +44,7 @@ use fp_wit::{WitOptions, WitSerializer, WorldMode};
 use fp_zig::ZigSerializer;
 use object::Object as _;
 use semver::Version;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1513,9 +1513,35 @@ fn build_package_graph_from_workspace(
     let mut graph = PackageGraph::new(Vec::new());
     let mut module_paths = Vec::new();
     let mut languages = HashSet::new();
+    let mut package_ids = HashMap::new();
 
     for package in &workspace.packages {
-        let package_id = PackageId::new(package.name.clone());
+        let version = package
+            .version
+            .as_deref()
+            .map(Version::parse)
+            .transpose()
+            .map_err(|err| {
+                CliError::InvalidInput(format!(
+                    "Invalid version for workspace package '{}': {err}",
+                    package.name
+                ))
+            })?;
+        let package_manifest = resolve_workspace_path(workspace_root, &package.manifest_path);
+        package_ids.insert(
+            package.name.clone(),
+            PackageId::with_source(
+                package.name.clone(),
+                version,
+                format!("workspace:{}", package_manifest.display()),
+            ),
+        );
+    }
+
+    for package in &workspace.packages {
+        let package_id = package_ids.get(&package.name).cloned().ok_or_else(|| {
+            CliError::InvalidInput(format!("missing package ID for {}", package.name))
+        })?;
         let package_root = resolve_workspace_path(workspace_root, &package.root);
         let package_manifest = resolve_workspace_path(workspace_root, &package.manifest_path);
         let version = match package.version.as_deref() {
@@ -1561,6 +1587,14 @@ fn build_package_graph_from_workspace(
             let kind = parse_dependency_kind(dep.kind.as_deref())?;
             dependencies.push(DependencyDescriptor {
                 package: dep.name.clone(),
+                resolved_package_id: Some(package_ids.get(&dep.name).cloned().ok_or_else(
+                    || {
+                        CliError::InvalidInput(format!(
+                            "workspace package '{}' depends on unknown package '{}'",
+                            package.name, dep.name
+                        ))
+                    },
+                )?),
                 constraint: None,
                 kind,
                 features: Vec::new(),
