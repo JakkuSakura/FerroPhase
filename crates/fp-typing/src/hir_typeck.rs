@@ -19,6 +19,7 @@ pub struct HirTypeChecker {
     generic_scopes: Vec<HashMap<hir::DefId, Ty>>,
     self_types: Vec<Ty>,
     typing_context: Option<Rc<TypingContext>>,
+    expected_expr_types: Vec<Ty>,
 }
 
 struct GenericScope<'a> {
@@ -54,6 +55,7 @@ impl HirTypeChecker {
             generic_scopes: Vec::new(),
             self_types: Vec::new(),
             typing_context: None,
+            expected_expr_types: Vec::new(),
         }
     }
 
@@ -81,8 +83,11 @@ impl HirTypeChecker {
                     self.check_function(function).await?;
                 }
                 hir::ItemKind::Const(constant) => {
-                    self.check_type_expr(&constant.ty)?;
-                    let body_ty = self.check_body(&constant.body).await?;
+                    let declared_ty = self.check_type_expr(&constant.ty)?;
+                    self.expected_expr_types.push(declared_ty.clone());
+                    let body_result = self.check_body(&constant.body).await;
+                    self.expected_expr_types.pop();
+                    let body_ty = body_result?;
                     self.results
                         .type_expr_types
                         .insert(constant.ty.hir_id, body_ty.clone());
@@ -319,10 +324,26 @@ impl HirTypeChecker {
                         };
                         arg_types.push(actual);
                     }
-                    let Some((substitutions, output)) =
+                    let Some((mut substitutions, _)) =
                         self.instantiate_call(&callee_ty, &arg_types)?
                     else {
                         return Err(Error::from("called expression is not a function"));
+                    };
+                    if substitutions.is_empty() {
+                        if let Some(expected) = self.expected_expr_types.last() {
+                            if let TyKind::FnPtr(signature) = &callee_ty.kind {
+                                self.unify_call_types(
+                                    &signature.binder.value.output,
+                                    expected,
+                                    &mut substitutions,
+                                )?;
+                            }
+                        }
+                    }
+                    let output = match &callee_ty.kind {
+                        TyKind::FnPtr(signature) => self
+                            .substitute_param_map(&signature.binder.value.output, &substitutions),
+                        _ => unreachable!(),
                     };
                     if let hir::ExprKind::Path(path) = &callee.kind {
                         if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
@@ -922,6 +943,36 @@ impl HirTypeChecker {
                 let result = scope.function_signature(&function);
                 scope.self_types.pop();
                 return result;
+            }
+            if let Some(context) = &self.typing_context {
+                for (_, external, _) in context.env_ctx.hir_definitions() {
+                    let associated = external.items.iter().find_map(|item| {
+                        let hir::ItemKind::Impl(impl_item) = &item.kind else {
+                            return None;
+                        };
+                        impl_item.items.iter().find_map(|impl_member| {
+                            if impl_member.def_id != def_id {
+                                return None;
+                            }
+                            let hir::ImplItemKind::Method(function) = &impl_member.kind else {
+                                return None;
+                            };
+                            Some((
+                                impl_item.generics.clone(),
+                                impl_item.self_ty.clone(),
+                                function.clone(),
+                            ))
+                        })
+                    });
+                    if let Some((generics, self_ty, function)) = associated {
+                        let mut scope = self.generic_scope(&generics);
+                        let self_ty = scope.check_type_expr(&self_ty)?;
+                        scope.self_types.push(self_ty);
+                        let result = scope.function_signature(&function);
+                        scope.self_types.pop();
+                        return result;
+                    }
+                }
             }
             for enum_item in self.program.items.clone() {
                 let hir::ItemKind::Enum(enum_def) = &enum_item.kind else {

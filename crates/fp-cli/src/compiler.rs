@@ -15,8 +15,8 @@ use fp_core::vfs::VirtualPath;
 use fp_core::{
     ast::register_threadlocal_serializer,
     ast::{
-        BExpr, Expr, ExprBlock, File, Ident, Item, ItemDefConst, ItemDefFunction, ItemKind,
-        ScriptBlock, Value, Visibility,
+        Expr, ExprBlock, File, Ident, Item, ItemDefConst, ItemDefFunction, ItemKind, ScriptBlock,
+        Value, Visibility,
     },
     diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager},
     frontend::{FrontendParseMode, FrontendResult, FrontendSnapshot, LanguageFrontend},
@@ -134,15 +134,24 @@ pub fn eval_script(script: ScriptBlock) -> Result<Value> {
         &executor,
     )?;
     drain_driver(&mut driver, LossyCompileOptions::default())?;
-    driver
+    if let Some((_, value)) = driver
         .state
         .typing_ctx
         .resolved_consts
         .borrow()
         .iter()
-        .find(|(key, _)| key.ends_with("::__eval_result") || key.as_str() == "__eval_result")
-        .map(|(_, value)| value.clone())
-        .ok_or_else(|| CliError::Compilation("eval script did not produce a value".to_string()))
+        .find(|(key, _)| key.contains("__eval_result"))
+    {
+        return Ok(value.clone());
+    }
+    driver
+        .state
+        .const_value(&ConstValueId::new(format!(
+            "const_value:{}",
+            identity.path.to_key()
+        )))
+        .map(|value| value.clone())
+        .map_err(|error| CliError::Compilation(error.to_string()))
 }
 
 pub fn interpret_file(

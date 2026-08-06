@@ -2,7 +2,6 @@
 
 use crate::{CliError, Result, cli::CliConfig, commands::format_value_brief, compiler};
 use clap::Args;
-use fp_core::frontend::LanguageFrontend;
 use fp_lang::FerroFrontend;
 use tracing::info;
 

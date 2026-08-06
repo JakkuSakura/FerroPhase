@@ -13,7 +13,13 @@ use crate::types::{GenericMonorph, TypeckResults};
 pub struct ComptimeRequest {
     pub program: fp_core::hir::Program,
     pub typeck_results: TypeckResults,
-    pub target: fp_core::hir::DefId,
+    /// The exact HIR block encountered by the type checker. The driver may
+    /// provide a backend entrypoint for it, but must not reconstruct the
+    /// block through a synthetic const or a definition lookup.
+    pub block: fp_core::hir::Block,
+    /// HIR identity of the original const-block expression. Results are
+    /// associated with this identity by the caller that requested evaluation.
+    pub expression_id: fp_core::hir::HirId,
     pub expected_ty: fp_core::hir::TypeExpr,
 }
 
@@ -203,7 +209,12 @@ mod tests {
         let request = ComptimeRequest {
             program: fp_core::hir::Program::new(),
             typeck_results: TypeckResults::default(),
-            target: fp_core::hir::DefId::local(0),
+            block: fp_core::hir::Block {
+                hir_id: 0,
+                stmts: Vec::new(),
+                expr: None,
+            },
+            expression_id: 0,
             expected_ty: fp_core::hir::TypeExpr {
                 hir_id: 0,
                 kind: fp_core::hir::TypeExprKind::Tuple(Vec::new()),
