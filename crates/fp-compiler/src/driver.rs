@@ -1,7 +1,6 @@
 use fp_backend::transformations::{HirGenerator, HirLoweringConfig, LirGenerator, MirLowering};
 use fp_core::ast::{
-    BlockStmt, Expr, ExprInvokeTarget, ExprKind, File, Item, ItemDefEnum, ItemDefStruct, ItemKind,
-    Name, Ty, TypeStruct, TypeType, Value, Visibility,
+    BlockStmt, Expr, ExprKind, File, Item, ItemKind, Name, Ty, TypeStruct, TypeType, Value,
 };
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::hir;
@@ -693,354 +692,6 @@ impl CompilerDriver {
         Ok(value)
     }
 
-    /// Try to resolve `expr` as a compile-time value right now, scoped to
-    /// just this expression — no synthetic file/item, no re-typing. `expr`
-    /// arrives already fully typed (the caller in fp-typing only invokes
-    /// this after its own `infer_expr_inner` pass, which stamps a concrete
-    /// `Ty` on every node). Before lowering, any reference to an
-    /// already-resolved const (by name) is inlined as a literal value —
-    /// MIR lowering only resolves free identifiers against items actually
-    /// declared in the same program, and this probe deliberately declares
-    /// none, so a bare cross-reference would otherwise be unresolvable.
-    /// The inlined expression then goes through `HirGenerator::transform_expr`
-    /// (lowers one expression into a minimal HIR program with a
-    /// synthesized `main`), non-lossy `MirLowering`, and `LirGenerator`,
-    /// then runs through the interpreter. On success the value is stored
-    /// under `key` (and, if `key` is a `__fp_expr_<id>` key, also into
-    /// `expr_resolutions` so the originating `ConstBlock` expression sees
-    /// it). This is the compiler's comptime probe implementation.
-    ///
-    /// Returns `false` on any lowering/evaluation failure — e.g. the
-    /// expression references another dependency this scoped lowering can't
-    /// see (a sibling function, an as-yet-unresolved const) — leaving the
-    /// caller to resolve it through the compiler task pool.
-    ///
-    /// Takes `&TypingContext` rather than `&mut self`/`&self` — everything
-    /// this needs (resolved consts/types, the workspace's compiled crates)
-    /// is reachable through it, and `ComptimeHook` only holds an
-    /// `Rc<TypingContext>`, not a `&CompilerDriver`.
-    fn resolve_comptime_now(typing_ctx: &TypingContext, key: &str, expr: &Expr) -> Option<Value> {
-        let mut probe_expr = expr.clone();
-        let resolved_names = Self::resolved_const_values_snapshot(typing_ctx);
-        Self::inline_resolved_names(&mut probe_expr, &resolved_names);
-
-        let resolved = (|| -> Result<Value, CompilerDriverError> {
-            let hir_program = HirGenerator::new().transform_expr(&probe_expr)?;
-            let mir_program = MirLowering::new().transform(hir_program)?;
-            let lir_program =
-                LirGenerator::new(typing_ctx.data_layout.clone()).transform(mir_program)?;
-
-            let mut units = vec![fp_core::lir::LirCompileUnit {
-                package_id: fp_core::hir::PackageId(0),
-                module_path: QualifiedPath::new(Vec::new()),
-                program: lir_program,
-            }];
-            // Struct construction (and any other intrinsic-backed runtime
-            // support) may depend on workspace crates' compiled LIR, exactly
-            // as `evaluate_comptime_lir` includes for the whole-file path —
-            // a bare single-expression unit alone doesn't carry that support.
-            for krate in typing_ctx.env_ctx.crates().values() {
-                units.extend(krate.borrow().lir_units.iter().cloned());
-            }
-            let mut interpreter = LirInterpreter::new();
-            interpreter.inject_globals(&Self::resolved_const_values_snapshot(typing_ctx));
-            let mut value =
-                interpreter.run_function_named(&units, fp_core::hir::PackageId(0), "main")?;
-            // Only int/uint results that are *actually* comptime struct
-            // construction (per the expression's own type) are raw object
-            // handles needing resolution — treating every plain integer as a
-            // possible handle risks coincidentally resolving to an unrelated
-            // object in this probe's otherwise-mostly-empty object table.
-            let is_struct_construction =
-                matches!(expr.ty(), Some(Ty::Type(_)) | Some(Ty::Struct(_)));
-            if is_struct_construction {
-                if let Some(resolved) = Self::resolve_comptime_value(&mut interpreter, &value) {
-                    value = resolved;
-                }
-            }
-            Ok(value)
-        })();
-
-        let Ok(value) = resolved else {
-            return None;
-        };
-
-        if let Some(struct_ty) = Self::extract_struct_type(&value) {
-            let name = struct_ty.name.as_str().to_string();
-            typing_ctx
-                .resolved_types
-                .borrow_mut()
-                .insert(name.clone(), struct_ty);
-            typing_ctx.wake_comptime(&name);
-        }
-
-        // Store under `typing_ctx.resolved_consts` (checked by name for
-        // `DefConst`) and, if this is a `ConstBlock`'s key, also into
-        // `expr_resolutions` (checked by expr id) — the two lookups the
-        // fp-typing call sites use to recognize an already-resolved value.
-        typing_ctx
-            .resolved_consts
-            .borrow_mut()
-            .insert(key.to_string(), value.clone());
-        typing_ctx.wake_comptime(key);
-        if let Some(expr_id) = Self::expr_id_from_const_key(key) {
-            typing_ctx
-                .expr_resolutions
-                .borrow_mut()
-                .insert_value(expr_id, value.clone());
-        }
-        Some(value)
-    }
-
-    /// Replace any reference to an already-resolved const (matched by bare
-    /// name against `resolved`) with its literal value. Used by
-    /// `resolve_comptime_now` to make a probed expression self-contained
-    /// before lowering, since the probe declares no sibling items for
-    /// cross-references to resolve against. Not exhaustive over every
-    /// `ExprKind` — only the shapes const initializers actually use.
-    fn inline_resolved_names(expr: &mut Expr, resolved: &HashMap<String, Value>) {
-        if let ExprKind::Name(name) = expr.kind() {
-            if let Some(name) = Self::simple_name_key(name) {
-                if let Some(value) = resolved.get(&name) {
-                    let ty = expr.ty().cloned();
-                    let mut literal = Expr::value(value.clone());
-                    if let Some(ty) = ty {
-                        literal.set_ty(ty);
-                    }
-                    *expr = literal;
-                    return;
-                }
-            }
-        }
-        match expr.kind_mut() {
-            ExprKind::Struct(s) => {
-                for field in &mut s.fields {
-                    if let Some(value) = field.value.as_mut() {
-                        Self::inline_resolved_names(value, resolved);
-                    }
-                }
-            }
-            ExprKind::Tuple(t) => {
-                for value in &mut t.values {
-                    Self::inline_resolved_names(value, resolved);
-                }
-            }
-            ExprKind::Array(a) => {
-                for value in &mut a.values {
-                    Self::inline_resolved_names(value, resolved);
-                }
-            }
-            ExprKind::BinOp(b) => {
-                Self::inline_resolved_names(b.lhs.as_mut(), resolved);
-                Self::inline_resolved_names(b.rhs.as_mut(), resolved);
-            }
-            ExprKind::UnOp(u) => Self::inline_resolved_names(u.val.as_mut(), resolved),
-            ExprKind::Cast(c) => Self::inline_resolved_names(c.expr.as_mut(), resolved),
-            ExprKind::Invoke(invoke) => {
-                for arg in &mut invoke.args {
-                    Self::inline_resolved_names(arg, resolved);
-                }
-            }
-            ExprKind::If(if_expr) => {
-                Self::inline_resolved_names(if_expr.cond.as_mut(), resolved);
-                Self::inline_resolved_names(if_expr.then.as_mut(), resolved);
-                if let Some(elze) = if_expr.elze.as_mut() {
-                    Self::inline_resolved_names(elze, resolved);
-                }
-            }
-            ExprKind::Block(block) => {
-                for stmt in &mut block.stmts {
-                    match stmt {
-                        BlockStmt::Expr(e) => Self::inline_resolved_names(&mut e.expr, resolved),
-                        BlockStmt::Let(s) => {
-                            if let Some(init) = s.init.as_mut() {
-                                Self::inline_resolved_names(init, resolved);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn simple_name_key(name: &Name) -> Option<String> {
-        match name {
-            Name::Ident(ident) => Some(ident.as_str().to_string()),
-            Name::Path(path) => path.segments.last().map(|seg| seg.as_str().to_string()),
-            Name::ParameterPath(_) => None,
-        }
-    }
-
-    /// Collect nominal struct/enum declarations referenced by `expr`'s type
-    /// (and the types of its sub-expressions), synthesizing an
-    /// `ItemKind::DefStruct`/`DefEnum` for each so `resolve_comptime_now`'s
-    /// isolated probe can predeclare them — `MirLowering`'s struct/enum
-    /// registration pass only scans a program's own items, so a struct type
-    /// that exists only in the AST's type annotations (never as a sibling
-    /// item in the probe) would otherwise be invisible to it. `seen` dedupes
-    /// by name across the whole walk. Not exhaustive over every `ExprKind` —
-    /// only the shapes const initializers actually use (mirrors
-    /// `inline_resolved_names`'s scope).
-    fn collect_referenced_struct_enum_items(
-        expr: &Expr,
-        out: &mut Vec<Item>,
-        seen: &mut HashSet<String>,
-    ) {
-        if let Some(ty) = expr.ty() {
-            Self::collect_struct_enum_from_ty(ty, out, seen);
-        }
-        match expr.kind() {
-            ExprKind::Struct(s) => {
-                for field in &s.fields {
-                    if let Some(value) = field.value.as_ref() {
-                        Self::collect_referenced_struct_enum_items(value, out, seen);
-                    }
-                }
-            }
-            ExprKind::Tuple(t) => {
-                for value in &t.values {
-                    Self::collect_referenced_struct_enum_items(value, out, seen);
-                }
-            }
-            ExprKind::Array(a) => {
-                for value in &a.values {
-                    Self::collect_referenced_struct_enum_items(value, out, seen);
-                }
-            }
-            ExprKind::BinOp(b) => {
-                Self::collect_referenced_struct_enum_items(&b.lhs, out, seen);
-                Self::collect_referenced_struct_enum_items(&b.rhs, out, seen);
-            }
-            ExprKind::UnOp(u) => Self::collect_referenced_struct_enum_items(&u.val, out, seen),
-            ExprKind::Cast(c) => Self::collect_referenced_struct_enum_items(&c.expr, out, seen),
-            ExprKind::Invoke(invoke) => {
-                // The receiver of a chained method call (`.with_field(...)`)
-                // lives in `target`, not `args` — without walking into it,
-                // a receiver type several calls deep (e.g. the `TypeBuilder`
-                // in `TypeBuilder::new(...).with_field(...).build()`) is
-                // never discovered, so its impl block never makes it into
-                // `extra_items` and method-call lowering falls back to an
-                // opaque stub that doesn't thread values between calls.
-                match &invoke.target {
-                    ExprInvokeTarget::Method(select) => {
-                        Self::collect_referenced_struct_enum_items(&select.obj, out, seen);
-                    }
-                    ExprInvokeTarget::Expr(target_expr) => {
-                        Self::collect_referenced_struct_enum_items(target_expr, out, seen);
-                    }
-                    _ => {}
-                }
-                for arg in &invoke.args {
-                    Self::collect_referenced_struct_enum_items(arg, out, seen);
-                }
-            }
-            ExprKind::If(if_expr) => {
-                Self::collect_referenced_struct_enum_items(&if_expr.cond, out, seen);
-                Self::collect_referenced_struct_enum_items(&if_expr.then, out, seen);
-                if let Some(elze) = if_expr.elze.as_ref() {
-                    Self::collect_referenced_struct_enum_items(elze, out, seen);
-                }
-            }
-            ExprKind::Block(block) => {
-                for stmt in &block.stmts {
-                    match stmt {
-                        BlockStmt::Expr(e) => {
-                            Self::collect_referenced_struct_enum_items(&e.expr, out, seen)
-                        }
-                        BlockStmt::Let(s) => {
-                            if let Some(init) = s.init.as_ref() {
-                                Self::collect_referenced_struct_enum_items(init, out, seen);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn collect_struct_enum_from_ty(ty: &Ty, out: &mut Vec<Item>, seen: &mut HashSet<String>) {
-        match ty {
-            Ty::Struct(struct_ty) => {
-                if seen.insert(struct_ty.name.as_str().to_string()) {
-                    for field in &struct_ty.fields {
-                        Self::collect_struct_enum_from_ty(&field.value, out, seen);
-                    }
-                    out.push(Item::new(ItemKind::DefStruct(ItemDefStruct {
-                        attrs: Vec::new(),
-                        visibility: Visibility::Public,
-                        name: struct_ty.name.clone(),
-                        value: struct_ty.clone(),
-                    })));
-                }
-            }
-            Ty::Enum(enum_ty) => {
-                if seen.insert(enum_ty.name.as_str().to_string()) {
-                    for variant in &enum_ty.variants {
-                        Self::collect_struct_enum_from_ty(&variant.value, out, seen);
-                    }
-                    out.push(Item::new(ItemKind::DefEnum(ItemDefEnum {
-                        attrs: Vec::new(),
-                        visibility: Visibility::Public,
-                        name: enum_ty.name.clone(),
-                        value: enum_ty.clone(),
-                    })));
-                }
-            }
-            Ty::Reference(r) => Self::collect_struct_enum_from_ty(&r.ty, out, seen),
-            Ty::Slice(s) => Self::collect_struct_enum_from_ty(&s.elem, out, seen),
-            Ty::Array(a) => Self::collect_struct_enum_from_ty(&a.elem, out, seen),
-            Ty::Vec(v) => Self::collect_struct_enum_from_ty(&v.ty, out, seen),
-            Ty::Tuple(t) => {
-                for elem in &t.types {
-                    Self::collect_struct_enum_from_ty(elem, out, seen);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Find each referenced struct/enum's inherent `impl` block across every
-    /// loaded workspace crate and append it to `out`. Without this, HIR
-    /// generation for the probe only ever sees the bare struct/enum shape
-    /// (from `collect_referenced_struct_enum_items`), never its methods —
-    /// so a chained method call like `TypeBuilder::new(...).with_field(...)`
-    /// can't resolve `with_field` to the real function and falls back to a
-    /// synthetic "opaque" stub that doesn't thread values between calls.
-    ///
-    /// Takes a bare `&TypingContext` rather than `&self` — usable from
-    /// `resolve_comptime_now`, which only holds `Rc<TypingContext>`, not a
-    /// `&CompilerDriver` (see `ComptimeHook`'s doc comment for why).
-    fn impl_items_for_types(
-        typing_ctx: &TypingContext,
-        names: &HashSet<String>,
-        out: &mut Vec<Item>,
-    ) {
-        if names.is_empty() {
-            return;
-        }
-        for krate in typing_ctx.env_ctx.crates().values() {
-            for items in krate.borrow().items.values() {
-                for item in items {
-                    let ItemKind::Impl(impl_block) = item.kind() else {
-                        continue;
-                    };
-                    if impl_block.trait_ty.is_some() {
-                        continue;
-                    }
-                    if let Some(name) = fp_typing::impl_self_ty_name(&impl_block.self_ty) {
-                        if names.contains(&name) {
-                            out.push(item.clone());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     async fn compile_unit_compile_native(
         &mut self,
         ast_id: &AstId,
@@ -1133,7 +784,7 @@ impl CompilerDriver {
             }
             Ty::Expr(expr) => {
                 if let ExprKind::Name(name) = expr.kind() {
-                    if let Some(name) = Self::simple_name_key(name) {
+                    if let Some(name) = Self::name_last_segment(name) {
                         if let Some(idx) = param_names.iter().position(|p| *p == name) {
                             if let Some(concrete) = concrete_types.get(idx) {
                                 *ty = concrete.clone();
@@ -1168,6 +819,17 @@ impl CompilerDriver {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn name_last_segment(name: &Name) -> Option<String> {
+        match name {
+            Name::Ident(ident) => Some(ident.as_str().to_string()),
+            Name::Path(path) => path
+                .segments
+                .last()
+                .map(|segment| segment.as_str().to_string()),
+            Name::ParameterPath(_) => None,
         }
     }
 
@@ -1641,8 +1303,7 @@ impl CompilerDriver {
     }
 
     /// Same as `collect_resolved_const_values`, but against a bare
-    /// `Rc<TypingContext>` — usable from `resolve_comptime_now`, which no
-    /// longer holds a `&CompilerDriver`.
+    /// `Rc<TypingContext>` for compiler hooks that do not hold a driver.
     fn resolved_const_values_snapshot(typing_ctx: &TypingContext) -> HashMap<String, Value> {
         typing_ctx.resolved_consts.borrow().clone()
     }
@@ -2185,99 +1846,6 @@ fn main() {
             "\n  Examples: {completed} completed, {errors} errors ({} total)",
             entries.len()
         );
-    }
-
-    /// `TypeBuilder::new(...).with_field(...)` — a chained instance method
-    /// call whose receiver's struct is only discoverable via `.ty()`
-    /// annotations several calls deep. Before this fix,
-    /// `collect_referenced_struct_enum_items` only walked `invoke.args`, so
-    /// a receiver buried in `invoke.target` (an `ExprInvokeTarget::Method`)
-    /// was never found — the referenced struct's impl block never made it
-    /// into the comptime probe, and method-call lowering fell back to a
-    /// synthetic stub with no real body.
-    #[test]
-    fn collect_referenced_struct_enum_items_walks_method_call_receiver() {
-        use fp_core::ast::{ExprSelect, ExprSelectType, Ident, ReprOptions, TypeStruct};
-
-        let mut receiver = Expr::ident(Ident::new("builder"));
-        receiver.set_ty(Ty::Struct(TypeStruct {
-            name: Ident::new("Foo"),
-            generics_params: Vec::new(),
-            repr: ReprOptions::default(),
-            fields: Vec::new(),
-        }));
-
-        let call = Expr::from(fp_core::ast::ExprKind::Invoke(fp_core::ast::ExprInvoke {
-            span: Span::default(),
-            target: ExprInvokeTarget::Method(ExprSelect {
-                span: Span::default(),
-                obj: Box::new(receiver),
-                field: Ident::new("with_field"),
-                select: ExprSelectType::Method,
-            }),
-            args: Vec::new(),
-            kwargs: Vec::new(),
-        }));
-
-        let mut extra_items = Vec::new();
-        let mut seen = HashSet::new();
-        CompilerDriver::collect_referenced_struct_enum_items(&call, &mut extra_items, &mut seen);
-
-        assert!(
-            seen.contains("Foo"),
-            "expected the method call's receiver type to be discovered, got {seen:?}"
-        );
-        assert!(
-            extra_items.iter().any(
-                |item| matches!(item.kind(), ItemKind::DefStruct(d) if d.name.as_str() == "Foo")
-            ),
-            "expected a DefStruct item for the discovered receiver type"
-        );
-    }
-
-    /// Once the receiver type is discovered, `impl_items_for_types` must
-    /// pull in its *inherent* impl block from wherever it's actually defined
-    /// (a loaded workspace crate) — that's what lets the real `with_field`
-    /// method resolve instead of falling back to an opaque stub with no
-    /// body.
-    #[test]
-    fn collect_impl_items_for_types_finds_inherent_impl_in_loaded_crate() {
-        use fp_core::ast::{Ident, ItemImpl};
-
-        let driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
-        let krate = driver.state.typing_ctx.env_ctx.begin_package(
-            fp_core::package::PackageId::new("somepkg"),
-            fp_core::package::PackageSource::new(
-                fp_core::package::PackageId::new("somepkg"),
-                "somepkg",
-                fp_core::package::graph::PackageGraph::new(vec![]),
-            ),
-        );
-        let impl_item = Item::new(ItemKind::Impl(ItemImpl {
-            attrs: Vec::new(),
-            is_negative: false,
-            trait_ty: None,
-            self_ty: Expr::ident(Ident::new("Foo")),
-            generics_params: Vec::new(),
-            collected_items: Vec::new(),
-            items: Vec::new(),
-        }));
-        krate.borrow_mut().items.insert(
-            QualifiedPath::new(vec!["somepkg".to_string()]),
-            vec![impl_item],
-        );
-
-        let mut names = HashSet::new();
-        names.insert("Foo".to_string());
-        let mut extra_items = Vec::new();
-        CompilerDriver::impl_items_for_types(&driver.state.typing_ctx, &names, &mut extra_items);
-
-        assert_eq!(
-            extra_items.len(),
-            1,
-            "expected exactly the one matching impl block"
-        );
-        assert!(matches!(extra_items[0].kind(), ItemKind::Impl(_)));
     }
 
     #[test]
