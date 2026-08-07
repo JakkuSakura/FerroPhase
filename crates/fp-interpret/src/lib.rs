@@ -129,6 +129,38 @@ impl LirInterpreter {
         self.state.objects.get(handle as usize).cloned()
     }
 
+    pub fn resolve_string_slice(&self, value: &Value) -> LirResult<Option<Value>> {
+        let Value::Tuple(tuple) = value else {
+            return Ok(None);
+        };
+        let [Value::Pointer(pointer), length] = tuple.values.as_slice() else {
+            return Ok(None);
+        };
+        let length = match length {
+            Value::UInt(length) => usize::try_from(length.value),
+            Value::Int(length) => usize::try_from(length.value),
+            _ => return Ok(None),
+        }
+        .map_err(|_| VmError::Runtime("invalid string slice length".into()))?;
+        let handle = usize::try_from(pointer.value)
+            .map_err(|_| VmError::Runtime("negative string slice pointer".into()))?;
+        let backing =
+            self.state.objects.get(handle).ok_or_else(|| {
+                VmError::Runtime(format!("string handle {handle} is out of range"))
+            })?;
+        let text = match backing {
+            Value::String(string) => string.value.as_bytes(),
+            Value::Bytes(bytes) => bytes.value.as_ref(),
+            _ => return Ok(None),
+        };
+        let text = text
+            .get(..length)
+            .ok_or_else(|| VmError::Runtime("string slice length exceeds backing value".into()))?;
+        let text = String::from_utf8(text.to_vec())
+            .map_err(|error| VmError::Runtime(format!("invalid UTF-8 string slice: {error}")))?;
+        Ok(Some(Value::string(text)))
+    }
+
     fn populate_functions_from_units(&mut self, units: &[LirCompileUnit]) {
         for unit in units {
             for function in &unit.program.functions {
@@ -1041,6 +1073,46 @@ impl LirInterpreter {
             }
             LirValueKind::Constant(LirConstantKind::Undef)
             | LirValueKind::Constant(LirConstantKind::Null) => Ok(Self::default_value_for_type(ty)),
+            LirValueKind::Global(name)
+            | LirValueKind::Constant(LirConstantKind::GlobalAddress { global: name }) => {
+                let handle = self
+                    .global_values
+                    .get(name.as_str())
+                    .copied()
+                    .ok_or_else(|| VmError::Runtime(format!("missing global {name}")))?;
+                let value = self
+                    .state
+                    .objects
+                    .get(handle as usize)
+                    .cloned()
+                    .ok_or_else(|| {
+                        VmError::Runtime(format!("global object {handle} is dangling"))
+                    })?;
+                if let Value::String(string) = &value {
+                    if let LirType::Struct {
+                        name: Some(type_name),
+                        fields,
+                        ..
+                    } = ty
+                    {
+                        if type_name == "__slice" && fields.len() == 2 {
+                            return Ok(Value::Tuple(ValueTuple::new(vec![
+                                Value::Pointer(fp_core::ast::ValuePointer::managed(handle as i64)),
+                                Value::UInt(
+                                    fp_core::ast::ValueUInt::new(string.value.len() as u64),
+                                ),
+                            ])));
+                        }
+                    }
+                }
+                if Self::is_aggregate_runtime_type(ty) {
+                    return Ok(value);
+                }
+                Err(VmError::TypeMismatch {
+                    expected: format!("aggregate {ty:?}"),
+                    found: format!("{value:?}"),
+                })
+            }
             LirValueKind::Constant(_) => self.constant_to_value(val),
             _ => Err(VmError::Runtime(format!(
                 "expected aggregate value for {ty:?}, found {val:?}"

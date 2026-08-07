@@ -1296,6 +1296,15 @@ impl CompilerDriver {
             if let Some(resolved) = Self::resolve_comptime_value(&mut self.interpreter, &value) {
                 value = resolved;
             }
+            if matches!(entry.ty.kind, TyKind::Slice(_)) {
+                if let Some(resolved) = self
+                    .interpreter
+                    .resolve_string_slice(&value)
+                    .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?
+                {
+                    value = resolved;
+                }
+            }
             // Store struct types from ALL entries, not just the last one.
             // Each const-block type alias produces its own struct.
             let entry_struct = Self::extract_struct_type(&value);
