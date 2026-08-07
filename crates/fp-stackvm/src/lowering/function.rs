@@ -9,6 +9,7 @@ use fp_core::lir::{
     BasicBlockId, CallingConvention, LirBasicBlock, LirFunction, LirInstruction,
     LirInstructionKind, LirTerminator, LirType, LirValue, RegisterId,
 };
+use std::collections::HashMap;
 
 use super::LowerError;
 use super::LowerResult;
@@ -24,6 +25,10 @@ pub(crate) struct FunctionLowering<'a> {
     /// Simulated operand stack.  Each entry is the register holding the
     /// value at that stack position.
     pub stack: Vec<RegisterId>,
+    /// Types assigned by the bytecode lowering, used for every later
+    /// register operand construction.
+    pub register_types: HashMap<RegisterId, LirType>,
+    pub local_types: Vec<LirType>,
 }
 
 impl<'a> FunctionLowering<'a> {
@@ -31,12 +36,15 @@ impl<'a> FunctionLowering<'a> {
         bytecode: &'a fp_bytecode::BytecodeProgram,
         func: &'a mut LirFunction,
         _entry_block_id: BasicBlockId,
+        local_types: Vec<LirType>,
     ) -> Self {
         Self {
             bytecode,
             func,
             next_reg: 10,
             stack: Vec::new(),
+            register_types: HashMap::new(),
+            local_types,
         }
     }
 
@@ -45,9 +53,10 @@ impl<'a> FunctionLowering<'a> {
     // ---------------------------------------------------------------
 
     /// Allocate and return the next available virtual register.
-    pub fn alloc_reg(&mut self) -> RegisterId {
+    pub fn alloc_reg(&mut self, ty: LirType) -> RegisterId {
         let reg = self.next_reg;
         self.next_reg += 1;
+        self.register_types.insert(reg, ty);
         reg
     }
 
@@ -64,8 +73,31 @@ impl<'a> FunctionLowering<'a> {
     }
 
     /// Convenience: wrap a register in a typed LIR value.
-    pub fn reg_val(reg: RegisterId) -> LirValue {
-        LirValue::register(reg, LirType::I64)
+    pub fn reg_val(&self, reg: RegisterId) -> LowerResult<LirValue> {
+        let ty =
+            self.register_types.get(&reg).cloned().ok_or_else(|| {
+                LowerError::Internal(format!("register %{reg} has no lowered type"))
+            })?;
+        Ok(LirValue::register(reg, ty))
+    }
+
+    pub fn local_type(&self, local: u32) -> LowerResult<LirType> {
+        self.local_types
+            .get(local as usize)
+            .cloned()
+            .ok_or_else(|| LowerError::Internal(format!("local {local} is out of bounds")))
+    }
+
+    pub fn set_local_type(&mut self, local: u32, ty: LirType) -> LowerResult<()> {
+        let slot = self
+            .local_types
+            .get_mut(local as usize)
+            .ok_or_else(|| LowerError::Internal(format!("local {local} is out of bounds")))?;
+        *slot = ty.clone();
+        if let Some(local_info) = self.func.locals.iter_mut().find(|entry| entry.id == local) {
+            local_info.ty = ty;
+        }
+        Ok(())
     }
 
     // ---------------------------------------------------------------
@@ -97,11 +129,72 @@ impl<'a> FunctionLowering<'a> {
         block_id: BasicBlockId,
         kind: LirInstructionKind,
     ) -> LowerResult<RegisterId> {
-        let reg = self.alloc_reg();
-        let instr = LirInstruction::new(reg, kind);
+        let result_type = Self::result_type(&kind);
+        let reg = self.alloc_reg(result_type.clone().unwrap_or(LirType::I64));
+        let instr = match result_type {
+            Some(ty) => LirInstruction::new(reg, kind).with_result(ty),
+            None => LirInstruction::new(reg, kind),
+        };
         let block = self.current_block_mut(block_id);
         block.add_instruction(instr);
         Ok(reg)
+    }
+
+    pub fn emit_typed_in_block(
+        &mut self,
+        block_id: BasicBlockId,
+        kind: LirInstructionKind,
+        result_type: LirType,
+    ) -> LowerResult<RegisterId> {
+        let reg = self.alloc_reg(result_type.clone());
+        let instr = LirInstruction::new(reg, kind).with_result(result_type);
+        self.current_block_mut(block_id).add_instruction(instr);
+        Ok(reg)
+    }
+
+    fn result_type(kind: &LirInstructionKind) -> Option<LirType> {
+        use LirInstructionKind::*;
+        match kind {
+            Store { .. } | Unreachable => None,
+            Eq(..) | Ne(..) | Lt(..) | Le(..) | Gt(..) | Ge(..) => Some(LirType::I1),
+            Load { address, .. } => Some(address.ty.clone()),
+            Add(a, _)
+            | Sub(a, _)
+            | Mul(a, _)
+            | Div(a, _)
+            | Rem(a, _)
+            | And(a, _)
+            | Or(a, _)
+            | Xor(a, _)
+            | Shl(a, _)
+            | Shr(a, _)
+            | Not(a) => Some(a.ty.clone()),
+            PtrToInt(_) => Some(LirType::I64),
+            IntToPtr(_) => Some(LirType::Ptr(Box::new(LirType::I8))),
+            Trunc(_, ty)
+            | ZExt(_, ty)
+            | SExt(_, ty)
+            | FPTrunc(_, ty)
+            | FPExt(_, ty)
+            | FPToUI(_, ty)
+            | FPToSI(_, ty)
+            | UIToFP(_, ty)
+            | SIToFP(_, ty)
+            | Bitcast(_, ty)
+            | SextOrTrunc(_, ty) => Some(ty.clone()),
+            ExtractValue { aggregate, .. } => Some(aggregate.ty.clone()),
+            InsertValue { aggregate, .. } => Some(aggregate.ty.clone()),
+            Call { .. } | IntrinsicCall { .. } | ExecQuery(_) | ComptimeOp(_) => Some(LirType::I64),
+            Alloca { .. } | GetElementPtr { .. } => Some(LirType::Ptr(Box::new(LirType::I8))),
+            Phi { incoming } => incoming.first().map(|(value, _)| value.ty.clone()),
+            Select { if_true, .. } => Some(if_true.ty.clone()),
+            InlineAsm { output_type, .. }
+            | LandingPad {
+                result_type: output_type,
+                ..
+            } => Some(output_type.clone()),
+            Freeze(value) => Some(value.ty.clone()),
+        }
     }
 
     // ---------------------------------------------------------------
@@ -131,10 +224,11 @@ impl<'a> FunctionLowering<'a> {
                     self.push_reg(reg);
                 }
                 BytecodeInstr::LoadLocal(local) => {
+                    let local_type = self.local_type(*local)?;
                     let val_reg = self.emit_in_block(
                         block_id,
                         LirInstructionKind::Load {
-                            address: LirValue::local(*local, LirType::I64),
+                            address: LirValue::local(*local, local_type),
                             alignment: Some(8),
                             volatile: false,
                         },
@@ -143,11 +237,16 @@ impl<'a> FunctionLowering<'a> {
                 }
                 BytecodeInstr::StoreLocal(local) => {
                     let val_reg = self.pop_reg()?;
+                    let value_type =
+                        self.register_types.get(&val_reg).cloned().ok_or_else(|| {
+                            LowerError::Internal(format!("register %{val_reg} has no lowered type"))
+                        })?;
+                    self.set_local_type(*local, value_type.clone())?;
                     self.emit_in_block(
                         block_id,
                         LirInstructionKind::Store {
-                            value: Self::reg_val(val_reg),
-                            address: LirValue::local(*local, LirType::I64),
+                            value: self.reg_val(val_reg)?,
+                            address: LirValue::local(*local, value_type),
                             alignment: Some(8),
                             volatile: false,
                         },
@@ -176,10 +275,12 @@ impl<'a> FunctionLowering<'a> {
                     kind,
                     arg_count,
                     format,
+                    result_type,
                 } => {
                     let mut args = Vec::with_capacity(*arg_count as usize);
                     for _ in 0..*arg_count {
-                        args.push(Self::reg_val(self.pop_reg()?));
+                        let arg_reg = self.pop_reg()?;
+                        args.push(self.reg_val(arg_reg)?);
                     }
                     args.reverse();
                     let result_reg = super::ops::lower_intrinsic(
@@ -188,6 +289,7 @@ impl<'a> FunctionLowering<'a> {
                         *kind,
                         format.as_deref(),
                         args,
+                        result_type.clone(),
                     )?;
                     if let Some(reg) = result_reg {
                         self.push_reg(reg);
@@ -235,7 +337,7 @@ impl<'a> FunctionLowering<'a> {
                         self,
                         block_id,
                         super::constants::INTRINSIC_CONTAINER_LEN,
-                        &[Self::reg_val(container)],
+                        &[self.reg_val(container)?],
                     )?;
                     self.push_reg(reg);
                 }
@@ -258,13 +360,14 @@ impl<'a> FunctionLowering<'a> {
                 let val_reg = self.emit_in_block(
                     block_id,
                     LirInstructionKind::Load {
-                        address: LirValue::local(0, LirType::I64),
+                        address: LirValue::local(0, self.local_type(0)?),
                         alignment: Some(8),
                         volatile: false,
                     },
                 )?;
+                let return_value = self.reg_val(val_reg)?;
                 let block = self.current_block_mut(block_id);
-                block.set_terminator(LirTerminator::Return(Some(Self::reg_val(val_reg))));
+                block.set_terminator(LirTerminator::Return(Some(return_value)));
             }
             BytecodeTerminator::Jump { target } => {
                 let block = self.current_block_mut(block_id);
@@ -272,18 +375,20 @@ impl<'a> FunctionLowering<'a> {
             }
             BytecodeTerminator::JumpIfTrue { target, otherwise } => {
                 let cond = self.pop_reg()?;
+                let condition = self.reg_val(cond)?;
                 let block = self.current_block_mut(block_id);
                 block.set_terminator(LirTerminator::CondBr {
-                    condition: Self::reg_val(cond),
+                    condition,
                     if_true: *target,
                     if_false: *otherwise,
                 });
             }
             BytecodeTerminator::JumpIfFalse { target, otherwise } => {
                 let cond = self.pop_reg()?;
+                let condition = self.reg_val(cond)?;
                 let block = self.current_block_mut(block_id);
                 block.set_terminator(LirTerminator::CondBr {
-                    condition: Self::reg_val(cond),
+                    condition,
                     if_true: *otherwise,
                     if_false: *target,
                 });
@@ -294,14 +399,15 @@ impl<'a> FunctionLowering<'a> {
                 otherwise,
             } => {
                 let discr = self.pop_reg()?;
-                let block = self.current_block_mut(block_id);
                 let cases: Vec<(u64, BasicBlockId)> = values
                     .iter()
                     .zip(targets.iter())
                     .map(|(v, t)| (*v as u64, *t))
                     .collect();
+                let value = self.reg_val(discr)?;
+                let block = self.current_block_mut(block_id);
                 block.set_terminator(LirTerminator::Switch {
-                    value: Self::reg_val(discr),
+                    value,
                     default: *otherwise,
                     cases,
                 });
@@ -311,10 +417,12 @@ impl<'a> FunctionLowering<'a> {
                 arg_count,
                 destination,
                 target,
+                result_type,
             } => {
                 let mut args = Vec::with_capacity(*arg_count as usize);
                 for _ in 0..*arg_count {
-                    args.push(Self::reg_val(self.pop_reg()?));
+                    let arg_reg = self.pop_reg()?;
+                    args.push(self.reg_val(arg_reg)?);
                 }
                 args.reverse();
 
@@ -325,11 +433,11 @@ impl<'a> FunctionLowering<'a> {
                     ),
                     BytecodeCallee::Local(place) => {
                         let reg = super::ops::lower_load_place(self, block_id, place)?;
-                        Self::reg_val(reg)
+                        self.reg_val(reg)?
                     }
                 };
 
-                let result_reg = self.emit_in_block(
+                let result_reg = self.emit_typed_in_block(
                     block_id,
                     LirInstructionKind::Call {
                         function: callee_val,
@@ -337,6 +445,7 @@ impl<'a> FunctionLowering<'a> {
                         calling_convention: CallingConvention::C,
                         tail_call: false,
                     },
+                    result_type.clone(),
                 )?;
 
                 if let Some(place) = destination {

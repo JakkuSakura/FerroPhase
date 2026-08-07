@@ -16,8 +16,9 @@ mod tests {
             const_pool: vec![BytecodeConst::Int(40), BytecodeConst::Int(2)],
             functions: vec![BytecodeFunction {
                 name: "main".to_string(),
-                params: 0,
-                locals: 1,
+                param_types: vec![],
+                return_type: fp_core::lir::LirType::I64,
+                local_types: vec![fp_core::lir::LirType::I64],
                 blocks: vec![BytecodeBlock {
                     id: 0,
                     code: vec![
@@ -48,8 +49,9 @@ mod tests {
             const_pool: vec![BytecodeConst::Bool(true)],
             functions: vec![BytecodeFunction {
                 name: "main".to_string(),
-                params: 0,
-                locals: 1,
+                param_types: vec![],
+                return_type: fp_core::lir::LirType::I64,
+                local_types: vec![fp_core::lir::LirType::I1],
                 blocks: vec![
                     BytecodeBlock {
                         id: 0,
@@ -94,8 +96,9 @@ mod tests {
             functions: vec![
                 BytecodeFunction {
                     name: "helper".to_string(),
-                    params: 0,
-                    locals: 1,
+                    param_types: vec![],
+                    return_type: fp_core::lir::LirType::I64,
+                    local_types: vec![fp_core::lir::LirType::I64],
                     blocks: vec![BytecodeBlock {
                         id: 0,
                         code: vec![],
@@ -104,8 +107,9 @@ mod tests {
                 },
                 BytecodeFunction {
                     name: "main".to_string(),
-                    params: 0,
-                    locals: 1,
+                    param_types: vec![],
+                    return_type: fp_core::lir::LirType::I64,
+                    local_types: vec![fp_core::lir::LirType::I64],
                     blocks: vec![BytecodeBlock {
                         id: 0,
                         code: vec![],
@@ -116,6 +120,7 @@ mod tests {
                                 local: 0,
                                 projection: vec![],
                             }),
+                            result_type: fp_core::lir::LirType::I64,
                             target: 1,
                         },
                     }],
@@ -134,8 +139,9 @@ mod tests {
             const_pool: vec![BytecodeConst::Int(40), BytecodeConst::Int(2)],
             functions: vec![BytecodeFunction {
                 name: "main".to_string(),
-                params: 0,
-                locals: 1,
+                param_types: vec![],
+                return_type: fp_core::lir::LirType::I64,
+                local_types: vec![fp_core::lir::LirType::I64],
                 blocks: vec![BytecodeBlock {
                     id: 0,
                     code: vec![
@@ -164,8 +170,9 @@ mod tests {
             const_pool: vec![BytecodeConst::Bool(true)],
             functions: vec![BytecodeFunction {
                 name: "main".to_string(),
-                params: 0,
-                locals: 1,
+                param_types: vec![],
+                return_type: fp_core::lir::LirType::I64,
+                local_types: vec![fp_core::lir::LirType::I64],
                 blocks: vec![
                     BytecodeBlock {
                         id: 0,

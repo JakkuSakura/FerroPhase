@@ -9,7 +9,7 @@ use winnow::error::{ContextError, ErrMode};
 use winnow::token::{literal, take_till, take_while};
 
 pub const BYTECODE_MAGIC: [u8; 4] = *b"FPBC";
-pub const BYTECODE_VERSION: u32 = 1;
+pub const BYTECODE_VERSION: u32 = 2;
 const BYTECODE_LOWERING_CONTEXT: &str = "mir→bytecode";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,8 +28,9 @@ pub struct BytecodeProgram {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BytecodeFunction {
     pub name: String,
-    pub params: u32,
-    pub locals: u32,
+    pub param_types: Vec<fp_core::lir::LirType>,
+    pub return_type: fp_core::lir::LirType,
+    pub local_types: Vec<fp_core::lir::LirType>,
     pub blocks: Vec<BytecodeBlock>,
 }
 
@@ -53,6 +54,7 @@ pub enum BytecodeInstr {
         kind: IntrinsicKind,
         arg_count: u32,
         format: Option<String>,
+        result_type: fp_core::lir::LirType,
     },
     MakeTuple(u32),
     MakeArray(u32),
@@ -86,6 +88,7 @@ pub enum BytecodeTerminator {
         callee: BytecodeCallee,
         arg_count: u32,
         destination: Option<BytecodePlace>,
+        result_type: fp_core::lir::LirType,
         target: u32,
     },
     Abort,
@@ -241,11 +244,13 @@ fn validate_function(
     function: &BytecodeFunction,
     const_pool_len: usize,
 ) -> Result<(), BytecodeError> {
-    if function.params > function.locals {
+    if function.param_types.len() > function.local_types.len() {
         return Err(BytecodeError::Format {
             message: format!(
                 "function {} has {} params but only {} locals",
-                function.name, function.params, function.locals
+                function.name,
+                function.param_types.len(),
+                function.local_types.len()
             ),
         });
     }
@@ -275,7 +280,7 @@ fn validate_function(
     }
 
     for block in &function.blocks {
-        validate_block(block, function.locals as usize, const_pool_len, &ids)?;
+        validate_block(block, function.local_types.len(), const_pool_len, &ids)?;
     }
     Ok(())
 }
@@ -411,8 +416,21 @@ pub fn format_program(program: &BytecodeProgram) -> String {
     output.push_str("  functions:\n");
     for function in &program.functions {
         output.push_str(&format!(
-            "    fn {}(params: {}, locals: {})\n",
-            function.name, function.params, function.locals
+            "    fn {}(params: [{}], return: {}, locals: [{}])\n",
+            function.name,
+            function
+                .param_types
+                .iter()
+                .map(format_lir_type)
+                .collect::<Vec<_>>()
+                .join(", "),
+            format_lir_type(&function.return_type),
+            function
+                .local_types
+                .iter()
+                .map(format_lir_type)
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
         for block in &function.blocks {
             output.push_str(&format!("      bb{}:\n", block.id));
@@ -486,17 +504,6 @@ pub fn lower_program(program: &mir::Program) -> Result<BytecodeProgram, Bytecode
     })
 }
 
-fn emit_lowering_warning(message: impl Into<String>) {
-    diagnostic_manager().add_diagnostic(
-        Diagnostic::warning(message.into()).with_source_context(BYTECODE_LOWERING_CONTEXT),
-    );
-}
-
-fn push_dummy_unit(code: &mut Vec<BytecodeInstr>, const_pool: &mut Vec<BytecodeConst>) {
-    let id = push_const(const_pool, BytecodeConst::Unit);
-    code.push(BytecodeInstr::LoadConst(id));
-}
-
 fn parse_program_winnow(input: &mut &str) -> ModalResult<BytecodeProgram> {
     ws0.parse_next(input)?;
     literal("fp-bytecode").parse_next(input)?;
@@ -546,7 +553,7 @@ fn parse_program_winnow(input: &mut &str) -> ModalResult<BytecodeProgram> {
             continue;
         }
         if line.starts_with("fn ") {
-            let (name, params, locals) =
+            let (name, param_types, return_type, local_types) =
                 parse_function_header_line(line).map_err(|_| ErrMode::Cut(ContextError::new()))?;
             let mut blocks = Vec::new();
             loop {
@@ -568,8 +575,9 @@ fn parse_program_winnow(input: &mut &str) -> ModalResult<BytecodeProgram> {
 
             functions.push(BytecodeFunction {
                 name,
-                params,
-                locals,
+                param_types,
+                return_type,
+                local_types,
                 blocks,
             });
             continue;
@@ -604,7 +612,17 @@ fn parse_const_pool_entry_line(line: &str) -> Result<(u32, BytecodeConst), Bytec
     Ok((index, value))
 }
 
-fn parse_function_header_line(line: &str) -> Result<(String, u32, u32), BytecodeError> {
+fn parse_function_header_line(
+    line: &str,
+) -> Result<
+    (
+        String,
+        Vec<fp_core::lir::LirType>,
+        fp_core::lir::LirType,
+        Vec<fp_core::lir::LirType>,
+    ),
+    BytecodeError,
+> {
     let trimmed = line.trim();
     let Some(rest) = trimmed.strip_prefix("fn ") else {
         return Err(BytecodeError::Format {
@@ -630,37 +648,95 @@ fn parse_function_header_line(line: &str) -> Result<(String, u32, u32), Bytecode
         });
     }
     let tail = tail.trim();
-    let mut params = None;
-    let mut locals = None;
-    for part in tail.split(',') {
-        let part = part.trim();
-        if let Some(value) = part.strip_prefix("params:") {
-            params = Some(
-                value
-                    .trim()
-                    .parse::<u32>()
-                    .map_err(|_| BytecodeError::Format {
-                        message: format!("invalid params count: {}", line),
-                    })?,
-            );
-        } else if let Some(value) = part.strip_prefix("locals:") {
-            locals = Some(
-                value
-                    .trim()
-                    .parse::<u32>()
-                    .map_err(|_| BytecodeError::Format {
-                        message: format!("invalid locals count: {}", line),
-                    })?,
-            );
-        }
+    let (params_part, tail) =
+        tail.split_once("], return:")
+            .ok_or_else(|| BytecodeError::Format {
+                message: format!("invalid typed function header: {}", line),
+            })?;
+    let params = params_part
+        .strip_prefix("params: [")
+        .ok_or_else(|| BytecodeError::Format {
+            message: format!("invalid typed function parameters: {}", line),
+        })?;
+    let (return_part, locals_part) =
+        tail.split_once(", locals: [")
+            .ok_or_else(|| BytecodeError::Format {
+                message: format!("invalid typed function locals: {}", line),
+            })?;
+    let locals = locals_part
+        .strip_suffix(']')
+        .ok_or_else(|| BytecodeError::Format {
+            message: format!("invalid typed function locals: {}", line),
+        })?;
+    Ok((
+        name.to_string(),
+        parse_lir_type_list(params)?,
+        parse_lir_type(return_part.trim())?,
+        parse_lir_type_list(locals)?,
+    ))
+}
+
+fn format_lir_type(ty: &fp_core::lir::LirType) -> String {
+    use fp_core::lir::LirType;
+    match ty {
+        LirType::Integer(bits) => format!("i{bits}"),
+        LirType::I1 => "i1".to_string(),
+        LirType::I8 => "i8".to_string(),
+        LirType::I16 => "i16".to_string(),
+        LirType::I32 => "i32".to_string(),
+        LirType::I64 => "i64".to_string(),
+        LirType::I128 => "i128".to_string(),
+        LirType::F32 => "f32".to_string(),
+        LirType::F64 => "f64".to_string(),
+        LirType::Ptr(pointee) => format!("ptr<{}>", format_lir_type(pointee)),
+        LirType::Array(element, count) => format!("array<{},{}>", format_lir_type(element), count),
+        LirType::Void => "void".to_string(),
+        unsupported => format!("unsupported<{unsupported:?}>"),
     }
-    let params = params.ok_or_else(|| BytecodeError::Format {
-        message: format!("invalid function header: {}", line),
-    })?;
-    let locals = locals.ok_or_else(|| BytecodeError::Format {
-        message: format!("invalid function header: {}", line),
-    })?;
-    Ok((name.to_string(), params, locals))
+}
+
+fn parse_lir_type_list(input: &str) -> Result<Vec<fp_core::lir::LirType>, BytecodeError> {
+    if input.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    input
+        .split(',')
+        .map(|part| parse_lir_type(part.trim()))
+        .collect()
+}
+
+fn parse_lir_type(input: &str) -> Result<fp_core::lir::LirType, BytecodeError> {
+    use fp_core::lir::LirType;
+    let primitive = match input {
+        "i1" => Some(LirType::I1),
+        "i8" => Some(LirType::I8),
+        "i16" => Some(LirType::I16),
+        "i32" => Some(LirType::I32),
+        "i64" => Some(LirType::I64),
+        "i128" => Some(LirType::I128),
+        "f32" => Some(LirType::F32),
+        "f64" => Some(LirType::F64),
+        "void" => Some(LirType::Void),
+        _ => None,
+    };
+    if let Some(ty) = primitive {
+        return Ok(ty);
+    }
+    if let Some(bits) = input
+        .strip_prefix('i')
+        .and_then(|bits| bits.parse::<u32>().ok())
+    {
+        return Ok(LirType::Integer(bits));
+    }
+    if let Some(inner) = input
+        .strip_prefix("ptr<")
+        .and_then(|value| value.strip_suffix('>'))
+    {
+        return Ok(LirType::Ptr(Box::new(parse_lir_type(inner)?)));
+    }
+    Err(BytecodeError::Format {
+        message: format!("unsupported bytecode type: {input}"),
+    })
 }
 
 fn parse_block_header_line(line: &str) -> Result<u32, BytecodeError> {
@@ -899,8 +975,15 @@ fn parse_call(rest: &str) -> Result<BytecodeTerminator, BytecodeError> {
             .ok_or_else(|| BytecodeError::Format {
                 message: format!("invalid call format: {}", rest),
             })?;
-    let (callee_part, arg_count_part) =
+    let (before_type, type_part) =
         before_arrow
+            .rsplit_once(" : ")
+            .ok_or_else(|| BytecodeError::Format {
+                message: format!("call is missing result type: {}", rest),
+            })?;
+    let result_type = parse_lir_type(type_part.trim())?;
+    let (callee_part, arg_count_part) =
+        before_type
             .rsplit_once(' ')
             .ok_or_else(|| BytecodeError::Format {
                 message: format!("invalid call format: {}", rest),
@@ -917,24 +1000,34 @@ fn parse_call(rest: &str) -> Result<BytecodeTerminator, BytecodeError> {
         callee,
         arg_count,
         destination,
+        result_type,
         target,
     })
 }
 
 fn parse_intrinsic(rest: &str) -> Result<BytecodeInstr, BytecodeError> {
-    let mut parts = rest.splitn(3, ' ');
+    let (signature, result_type, format_part) = match rest.split_once(" : ") {
+        Some((signature, result)) => {
+            let (type_part, format_part) = result.split_once(' ').unwrap_or((result, ""));
+            (signature, parse_lir_type(type_part)?, format_part.trim())
+        }
+        None => {
+            return Err(BytecodeError::Format {
+                message: format!("intrinsic is missing result type: {}", rest),
+            });
+        }
+    };
+    let mut parts = signature.splitn(3, ' ');
     let kind_part = parts.next().ok_or_else(|| BytecodeError::Format {
         message: format!("invalid intrinsic: {}", rest),
     })?;
     let count_part = parts.next().ok_or_else(|| BytecodeError::Format {
         message: format!("invalid intrinsic: {}", rest),
     })?;
-    let format_part = parts.next().map(str::trim);
-
     let kind = parse_intrinsic_kind(kind_part)?;
     let arg_count = parse_u32(count_part)?;
     let format = match format_part {
-        Some(raw) if !raw.is_empty() => {
+        raw if !raw.is_empty() => {
             let (value, rest) = parse_debug_string(raw)?;
             if !rest.trim().is_empty() {
                 return Err(BytecodeError::Format {
@@ -950,6 +1043,7 @@ fn parse_intrinsic(rest: &str) -> Result<BytecodeInstr, BytecodeError> {
         kind,
         arg_count,
         format,
+        result_type,
     })
 }
 
@@ -1469,18 +1563,23 @@ fn lower_function(
     body: &mir::Body,
     const_pool: &mut Vec<BytecodeConst>,
 ) -> Result<BytecodeFunction, BytecodeError> {
+    let local_types = body
+        .locals
+        .iter()
+        .map(|local| lower_type(&local.ty))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut blocks = Vec::new();
     for (block_id, block) in body.basic_blocks.iter().enumerate() {
         let mut code = Vec::new();
         for stmt in &block.statements {
-            lower_statement(stmt, &mut code, const_pool)?;
+            lower_statement(stmt, &local_types, &mut code, const_pool)?;
         }
         let lowered_term = match block.terminator.as_ref() {
-            Some(terminator) => lower_terminator(terminator, &mut code, const_pool)?,
+            Some(terminator) => lower_terminator(terminator, &local_types, &mut code, const_pool)?,
             None => {
-                // Treat missing terminators as implicit returns to avoid executing
-                // incomplete control flow graphs.
-                BytecodeTerminator::Return
+                return Err(BytecodeError::Lowering {
+                    message: format!("function {} has a block without a terminator", func.name),
+                });
             }
         };
         blocks.push(BytecodeBlock {
@@ -1492,26 +1591,118 @@ fn lower_function(
 
     Ok(BytecodeFunction {
         name: func.name.as_str().to_string(),
-        params: func.sig.inputs.len() as u32,
-        locals: body.locals.len() as u32,
+        param_types: func
+            .sig
+            .inputs
+            .iter()
+            .map(lower_type)
+            .collect::<Result<Vec<_>, _>>()?,
+        return_type: lower_type(&func.sig.output)?,
+        local_types,
         blocks,
     })
 }
 
+fn lower_type(ty: &mir::Ty) -> Result<fp_core::lir::LirType, BytecodeError> {
+    use fp_core::lir::LirType;
+    use mir::ty::{FloatTy, IntTy, TyKind, UintTy};
+    match &ty.kind {
+        TyKind::Bool => Ok(LirType::I1),
+        TyKind::Char => Ok(LirType::I32),
+        TyKind::Int(IntTy::I8) => Ok(LirType::I8),
+        TyKind::Int(IntTy::I16) => Ok(LirType::I16),
+        TyKind::Int(IntTy::I32) => Ok(LirType::I32),
+        TyKind::Int(IntTy::I64) | TyKind::Int(IntTy::Isize) => Ok(LirType::I64),
+        TyKind::Int(IntTy::I128) => Ok(LirType::I128),
+        TyKind::Uint(UintTy::U8) => Ok(LirType::I8),
+        TyKind::Uint(UintTy::U16) => Ok(LirType::I16),
+        TyKind::Uint(UintTy::U32) => Ok(LirType::I32),
+        TyKind::Uint(UintTy::U64) | TyKind::Uint(UintTy::Usize) => Ok(LirType::I64),
+        TyKind::Uint(UintTy::U128) => Ok(LirType::I128),
+        TyKind::Float(FloatTy::F32) => Ok(LirType::F32),
+        TyKind::Float(FloatTy::F64) => Ok(LirType::F64),
+        TyKind::RawPtr(_) | TyKind::Ref(..) | TyKind::Slice(_) => {
+            Ok(LirType::Ptr(Box::new(LirType::I8)))
+        }
+        TyKind::Tuple(elements) => Ok(LirType::Struct {
+            fields: elements
+                .iter()
+                .map(|element| lower_type(element))
+                .collect::<Result<Vec<_>, _>>()?,
+            packed: false,
+            name: None,
+        }),
+        TyKind::Array(element, mir::ty::ConstKind::Value(mir::ty::ConstValue::Scalar(scalar))) => {
+            let mir::ty::Scalar::Int(value) = scalar else {
+                return Err(BytecodeError::Lowering {
+                    message: "array length is not an integer constant".into(),
+                });
+            };
+            let count = value.data as u64;
+            Ok(LirType::Array(Box::new(lower_type(element)?), count))
+        }
+        TyKind::Never => Ok(LirType::Void),
+        other => Err(BytecodeError::Lowering {
+            message: format!("unsupported MIR type in bytecode: {other:?}"),
+        }),
+    }
+}
+
+fn place_type(
+    place: &mir::Place,
+    local_types: &[fp_core::lir::LirType],
+) -> Result<fp_core::lir::LirType, BytecodeError> {
+    let mut ty = local_types
+        .get(place.local as usize)
+        .cloned()
+        .ok_or_else(|| BytecodeError::Lowering {
+            message: format!("place local {} is out of bounds", place.local),
+        })?;
+    for projection in &place.projection {
+        match projection {
+            mir::PlaceElem::Field(_, field_ty) => ty = lower_type(field_ty)?,
+            mir::PlaceElem::Index(_) => match ty {
+                fp_core::lir::LirType::Array(element, _) => ty = *element,
+                _ => {
+                    return Err(BytecodeError::Lowering {
+                        message: format!("index projection on non-array type {ty:?}"),
+                    });
+                }
+            },
+            mir::PlaceElem::Deref => match ty {
+                fp_core::lir::LirType::Ptr(inner) => ty = *inner,
+                _ => {
+                    return Err(BytecodeError::Lowering {
+                        message: format!("deref projection on non-pointer type {ty:?}"),
+                    });
+                }
+            },
+            unsupported => {
+                return Err(BytecodeError::Lowering {
+                    message: format!("unsupported place projection: {unsupported:?}"),
+                });
+            }
+        }
+    }
+    Ok(ty)
+}
+
 fn lower_statement(
     stmt: &mir::Statement,
+    local_types: &[fp_core::lir::LirType],
     code: &mut Vec<BytecodeInstr>,
     const_pool: &mut Vec<BytecodeConst>,
 ) -> Result<(), BytecodeError> {
     match &stmt.kind {
         mir::StatementKind::Assign(place, rvalue) => {
-            lower_rvalue(rvalue, code, const_pool)?;
+            let result_type = place_type(place, local_types)?;
+            lower_rvalue(rvalue, &result_type, local_types, code, const_pool)?;
             code.push(BytecodeInstr::StorePlace(lower_place(place)?));
             Ok(())
         }
         mir::StatementKind::IntrinsicCall { kind, format, args } => {
             for arg in args {
-                lower_operand(arg, code, const_pool)?;
+                lower_operand(arg, local_types, code, const_pool)?;
             }
             code.push(BytecodeInstr::IntrinsicCall {
                 kind: *kind,
@@ -1521,6 +1712,7 @@ fn lower_statement(
                 } else {
                     Some(format.clone())
                 },
+                result_type: fp_core::lir::LirType::Void,
             });
             Ok(())
         }
@@ -1535,6 +1727,7 @@ fn lower_statement(
 
 fn lower_terminator(
     term: &mir::Terminator,
+    local_types: &[fp_core::lir::LirType],
     code: &mut Vec<BytecodeInstr>,
     const_pool: &mut Vec<BytecodeConst>,
 ) -> Result<BytecodeTerminator, BytecodeError> {
@@ -1547,11 +1740,11 @@ fn lower_terminator(
             target,
             ..
         } => {
-            lower_operand(cond, code, const_pool)?;
-            let otherwise = terminator_otherwise(term).unwrap_or_else(|error| {
-                emit_lowering_warning(error.to_string());
-                *target
-            });
+            lower_operand(cond, local_types, code, const_pool)?;
+            let otherwise =
+                terminator_otherwise(term).map_err(|error| BytecodeError::Lowering {
+                    message: error.to_string(),
+                })?;
             let terminator = if *expected {
                 BytecodeTerminator::JumpIfTrue {
                     target: *target,
@@ -1566,7 +1759,7 @@ fn lower_terminator(
             Ok(terminator)
         }
         mir::TerminatorKind::SwitchInt { discr, targets, .. } => {
-            lower_operand(discr, code, const_pool)?;
+            lower_operand(discr, local_types, code, const_pool)?;
             Ok(BytecodeTerminator::SwitchInt {
                 values: targets.values.clone(),
                 targets: targets.targets.clone(),
@@ -1580,22 +1773,25 @@ fn lower_terminator(
             ..
         } => {
             for arg in args {
-                lower_operand(arg, code, const_pool)?;
+                lower_operand(arg, local_types, code, const_pool)?;
             }
             let callee = lower_callee(func)?;
             let dest = destination
                 .as_ref()
                 .map(|(place, _)| lower_place(place))
                 .transpose()?;
-            let target = destination.as_ref().map(|(_, bb)| *bb).unwrap_or_else(|| {
-                emit_lowering_warning("call terminator missing destination; falling back to bb0");
-                0
-            });
+            let (_, target) = destination
+                .as_ref()
+                .ok_or_else(|| BytecodeError::Lowering {
+                    message: "call terminator without a destination is unsupported".into(),
+                })?;
+            let result_type = place_type(&destination.as_ref().unwrap().0, local_types)?;
             Ok(BytecodeTerminator::Call {
                 callee,
                 arg_count: args.len() as u32,
                 destination: dest,
-                target,
+                result_type,
+                target: *target,
             })
         }
         mir::TerminatorKind::FalseEdge {
@@ -1605,21 +1801,17 @@ fn lower_terminator(
             target: *real_target,
             otherwise: *imaginary_target,
         }),
-        mir::TerminatorKind::FalseUnwind { real_target, .. } => {
-            Ok(BytecodeTerminator::JumpIfTrue {
-                target: *real_target,
-                otherwise: *real_target,
-            })
-        }
+        mir::TerminatorKind::FalseUnwind { real_target, .. } => Err(BytecodeError::Lowering {
+            message: format!(
+                "false-unwind terminator at target {} is not representable in bytecode",
+                real_target
+            ),
+        }),
         mir::TerminatorKind::Abort => Ok(BytecodeTerminator::Abort),
         mir::TerminatorKind::Unreachable => Ok(BytecodeTerminator::Unreachable),
-        _ => {
-            emit_lowering_warning(format!(
-                "unsupported terminator: {:?}; lowering to unreachable",
-                term.kind
-            ));
-            Ok(BytecodeTerminator::Unreachable)
-        }
+        _ => Err(BytecodeError::Lowering {
+            message: format!("unsupported terminator: {:?}", term.kind),
+        }),
     }
 }
 
@@ -1637,42 +1829,44 @@ fn terminator_otherwise(term: &mir::Terminator) -> Result<u32, LoweringFallbackE
 
 fn lower_rvalue(
     rvalue: &mir::Rvalue,
+    result_type: &fp_core::lir::LirType,
+    local_types: &[fp_core::lir::LirType],
     code: &mut Vec<BytecodeInstr>,
     const_pool: &mut Vec<BytecodeConst>,
 ) -> Result<(), BytecodeError> {
     match rvalue {
-        mir::Rvalue::Use(op) => lower_operand(op, code, const_pool),
-        mir::Rvalue::Query(_) => {
-            emit_lowering_warning(
-                "MIR query rvalue is not supported by fp-bytecode; using unit dummy".to_string(),
-            );
-            push_dummy_unit(code, const_pool);
-            Ok(())
-        }
-        mir::Rvalue::Ref(_, _, place) => {
-            lower_operand(&mir::Operand::Copy(place.clone()), code, const_pool)
-        }
+        mir::Rvalue::Use(op) => lower_operand(op, local_types, code, const_pool),
+        mir::Rvalue::Query(_) => Err(BytecodeError::Lowering {
+            message: "MIR query rvalue is not supported by fp-bytecode".into(),
+        }),
+        mir::Rvalue::Ref(_, _, place) => lower_operand(
+            &mir::Operand::Copy(place.clone()),
+            local_types,
+            code,
+            const_pool,
+        ),
         mir::Rvalue::BinaryOp(op, lhs, rhs) => {
-            lower_operand(lhs, code, const_pool)?;
-            lower_operand(rhs, code, const_pool)?;
+            lower_operand(lhs, local_types, code, const_pool)?;
+            lower_operand(rhs, local_types, code, const_pool)?;
             match lower_binop(op) {
                 Ok(bin_op) => code.push(BytecodeInstr::BinaryOp(bin_op)),
                 Err(error) => {
-                    emit_lowering_warning(error.to_string());
-                    push_dummy_unit(code, const_pool);
+                    return Err(BytecodeError::Lowering {
+                        message: error.to_string(),
+                    });
                 }
             }
             Ok(())
         }
         mir::Rvalue::UnaryOp(op, value) => {
-            lower_operand(value, code, const_pool)?;
+            lower_operand(value, local_types, code, const_pool)?;
             code.push(BytecodeInstr::UnaryOp(lower_unop(op)?));
             Ok(())
         }
-        mir::Rvalue::Cast(_, operand, _) => lower_operand(operand, code, const_pool),
+        mir::Rvalue::Cast(_, operand, _) => lower_operand(operand, local_types, code, const_pool),
         mir::Rvalue::IntrinsicCall { kind, format, args } => {
             for arg in args {
-                lower_operand(arg, code, const_pool)?;
+                lower_operand(arg, local_types, code, const_pool)?;
             }
             code.push(BytecodeInstr::IntrinsicCall {
                 kind: *kind,
@@ -1682,27 +1876,25 @@ fn lower_rvalue(
                 } else {
                     Some(format.clone())
                 },
+                result_type: result_type.clone(),
             });
             Ok(())
         }
         mir::Rvalue::Repeat(operand, len) => {
             if *len > u32::MAX as u64 {
-                emit_lowering_warning(format!(
-                    "repeat length {} exceeds bytecode limits; using unit dummy",
-                    len
-                ));
-                push_dummy_unit(code, const_pool);
-                return Ok(());
+                return Err(BytecodeError::Lowering {
+                    message: format!("repeat length {} exceeds bytecode limits", len),
+                });
             }
             for _ in 0..*len {
-                lower_operand(operand, code, const_pool)?;
+                lower_operand(operand, local_types, code, const_pool)?;
             }
             code.push(BytecodeInstr::MakeArray(*len as u32));
             Ok(())
         }
         mir::Rvalue::Aggregate(kind, operands) => {
             for op in operands {
-                lower_operand(op, code, const_pool)?;
+                lower_operand(op, local_types, code, const_pool)?;
             }
             match kind {
                 mir::AggregateKind::Tuple => {
@@ -1713,92 +1905,71 @@ fn lower_rvalue(
                     code.push(BytecodeInstr::MakeArray(operands.len() as u32));
                     Ok(())
                 }
-                _ => {
-                    emit_lowering_warning(format!(
-                        "unsupported aggregate: {:?}; using unit dummy",
-                        kind
-                    ));
-                    push_dummy_unit(code, const_pool);
-                    Ok(())
-                }
+                _ => Err(BytecodeError::Lowering {
+                    message: format!("unsupported aggregate: {:?}", kind),
+                }),
             }
         }
         mir::Rvalue::ContainerLiteral { kind, elements } => {
             for op in elements {
-                lower_operand(op, code, const_pool)?;
+                lower_operand(op, local_types, code, const_pool)?;
             }
             match kind {
                 mir::ContainerKind::List { .. } => {
                     code.push(BytecodeInstr::MakeList(elements.len() as u32));
                     Ok(())
                 }
-                _ => {
-                    emit_lowering_warning(format!(
-                        "unsupported container literal: {:?}; using unit dummy",
-                        kind
-                    ));
-                    push_dummy_unit(code, const_pool);
-                    Ok(())
-                }
+                _ => Err(BytecodeError::Lowering {
+                    message: format!("unsupported container literal: {:?}", kind),
+                }),
             }
         }
         mir::Rvalue::ContainerMapLiteral { kind, entries } => {
             for (key, value) in entries {
-                lower_operand(key, code, const_pool)?;
-                lower_operand(value, code, const_pool)?;
+                lower_operand(key, local_types, code, const_pool)?;
+                lower_operand(value, local_types, code, const_pool)?;
             }
             match kind {
                 mir::ContainerKind::Map { .. } => {
                     code.push(BytecodeInstr::MakeMap(entries.len() as u32));
                     Ok(())
                 }
-                _ => {
-                    emit_lowering_warning(format!(
-                        "unsupported container map literal: {:?}; using unit dummy",
-                        kind
-                    ));
-                    push_dummy_unit(code, const_pool);
-                    Ok(())
-                }
+                _ => Err(BytecodeError::Lowering {
+                    message: format!("unsupported container map literal: {:?}", kind),
+                }),
             }
         }
         mir::Rvalue::ContainerLen { container, .. } => {
-            lower_operand(container, code, const_pool)?;
+            lower_operand(container, local_types, code, const_pool)?;
             code.push(BytecodeInstr::ContainerLen);
             Ok(())
         }
         mir::Rvalue::ContainerGet { container, key, .. } => {
-            lower_operand(container, code, const_pool)?;
-            lower_operand(key, code, const_pool)?;
+            lower_operand(container, local_types, code, const_pool)?;
+            lower_operand(key, local_types, code, const_pool)?;
             code.push(BytecodeInstr::ContainerGet);
             Ok(())
         }
-        _ => {
-            emit_lowering_warning(format!(
-                "unsupported rvalue: {:?}; using unit dummy",
-                rvalue
-            ));
-            push_dummy_unit(code, const_pool);
-            Ok(())
-        }
+        _ => Err(BytecodeError::Lowering {
+            message: format!("unsupported rvalue: {:?}", rvalue),
+        }),
     }
 }
 
 fn lower_operand(
     operand: &mir::Operand,
+    local_types: &[fp_core::lir::LirType],
     code: &mut Vec<BytecodeInstr>,
     const_pool: &mut Vec<BytecodeConst>,
 ) -> Result<(), BytecodeError> {
     match operand {
         mir::Operand::Copy(place) | mir::Operand::Move(place) => {
+            place_type(place, local_types)?;
             code.push(BytecodeInstr::LoadPlace(lower_place(place)?));
             Ok(())
         }
         mir::Operand::Constant(constant) => {
-            let value = lower_constant(constant).unwrap_or_else(|error| {
-                emit_lowering_warning(error.to_string());
-                BytecodeConst::Unit
-            });
+            let value = lower_constant(constant)?;
             let id = push_const(const_pool, value);
             code.push(BytecodeInstr::LoadConst(id));
             Ok(())
@@ -1826,13 +1997,12 @@ fn lower_constant(constant: &mir::Constant) -> Result<BytecodeConst, BytecodeErr
             Ok(BytecodeConst::Function(symbol.as_str().to_string()))
         }
         mir::ConstantKind::Val(value) => lower_const_value(value),
-        mir::ConstantKind::Ty(_) => {
-            emit_lowering_warning(format!(
-                "unsupported constant: {:?}; using unit dummy",
+        mir::ConstantKind::Ty(_) => Err(BytecodeError::Lowering {
+            message: format!(
+                "type constant is not representable in bytecode: {:?}",
                 constant.literal
-            ));
-            Ok(BytecodeConst::Unit)
-        }
+            ),
+        }),
         mir::ConstantKind::TokenStream { kind, .. } => {
             diagnostic_manager().add_diagnostic(
                 Diagnostic::error(format!(
@@ -1879,13 +2049,9 @@ fn lower_const_value(value: &mir::ConstValue) -> Result<BytecodeConst, BytecodeE
             }
             Ok(BytecodeConst::Map(lowered))
         }
-        _ => {
-            emit_lowering_warning(format!(
-                "unsupported const value: {:?}; using unit dummy",
-                value
-            ));
-            Ok(BytecodeConst::Unit)
-        }
+        _ => Err(BytecodeError::Lowering {
+            message: format!("unsupported const value: {:?}", value),
+        }),
     }
 }
 
@@ -1901,10 +2067,9 @@ fn lower_place(place: &mir::Place) -> Result<BytecodePlace, BytecodeError> {
             }
             mir::PlaceElem::Deref => {}
             _ => {
-                emit_lowering_warning(format!(
-                    "unsupported place projection: {:?}; projection element dropped",
-                    elem
-                ));
+                return Err(BytecodeError::Lowering {
+                    message: format!("unsupported place projection: {:?}", elem),
+                });
             }
         }
     }
@@ -1930,15 +2095,9 @@ fn lower_callee(operand: &mir::Operand) -> Result<BytecodeCallee, BytecodeError>
             mir::ConstantKind::Global(symbol) => {
                 Ok(BytecodeCallee::Function(symbol.as_str().to_string()))
             }
-            _ => {
-                emit_lowering_warning(format!(
-                    "unsupported call operand: {:?}; using dummy callee",
-                    constant.literal
-                ));
-                Ok(BytecodeCallee::Function(
-                    "__fp_unsupported_callee__".to_string(),
-                ))
-            }
+            _ => Err(BytecodeError::Lowering {
+                message: format!("unsupported call operand: {:?}", constant.literal),
+            }),
         },
         mir::Operand::Copy(place) | mir::Operand::Move(place) => {
             Ok(BytecodeCallee::Local(lower_place(place)?))
@@ -2032,12 +2191,24 @@ fn format_instr(instr: &BytecodeInstr) -> String {
             kind,
             arg_count,
             format,
+            result_type,
         } => {
             let format_label = format.as_deref().unwrap_or("");
             if format_label.is_empty() {
-                format!("intrinsic {:?} {}", kind, arg_count)
+                format!(
+                    "intrinsic {:?} {} : {}",
+                    kind,
+                    arg_count,
+                    format_lir_type(result_type)
+                )
             } else {
-                format!("intrinsic {:?} {} {:?}", kind, arg_count, format_label)
+                format!(
+                    "intrinsic {:?} {} : {} {:?}",
+                    kind,
+                    arg_count,
+                    format_lir_type(result_type),
+                    format_label
+                )
             }
         }
         BytecodeInstr::MakeTuple(count) => format!("make.tuple {}", count),
@@ -2075,6 +2246,7 @@ fn format_terminator(term: &BytecodeTerminator) -> String {
             callee,
             arg_count,
             destination,
+            result_type,
             target,
         } => {
             let dest = destination
@@ -2082,9 +2254,10 @@ fn format_terminator(term: &BytecodeTerminator) -> String {
                 .map(format_place)
                 .unwrap_or_else(|| "_".to_string());
             format!(
-                "call {} {} -> {} then bb{}",
+                "call {} {} : {} -> {} then bb{}",
                 format_callee(callee),
                 arg_count,
+                format_lir_type(result_type),
                 dest,
                 target
             )

@@ -1326,8 +1326,8 @@ fn render_bytecode_binary(
         println!(
             "function {} params={} locals={} blocks={}",
             function.name,
-            function.params,
-            function.locals,
+            function.param_types.len(),
+            function.local_types.len(),
             function.blocks.len()
         );
     }
@@ -1362,8 +1362,8 @@ fn render_bytecode_text(
         println!(
             "function {} params={} locals={} blocks={}",
             function.name,
-            function.params,
-            function.locals,
+            function.param_types.len(),
+            function.local_types.len(),
             function.blocks.len()
         );
     }

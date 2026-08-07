@@ -57,27 +57,29 @@ impl Vm {
                 message: format!("missing function {}", name),
             })?;
 
-        if args.len() != function.params as usize {
+        if args.len() != function.param_types.len() {
             return Err(VmError::Runtime {
                 message: format!(
                     "function {} expects {} args but got {}",
                     function.name,
-                    function.params,
+                    function.param_types.len(),
                     args.len()
                 ),
             });
         }
-        let required_locals = function.params.saturating_add(1);
-        if function.locals < required_locals {
+        let required_locals = function.param_types.len().saturating_add(1);
+        if function.local_types.len() < required_locals {
             return Err(VmError::Runtime {
                 message: format!(
                     "function {} expects {} params but only {} locals",
-                    function.name, function.params, function.locals
+                    function.name,
+                    function.param_types.len(),
+                    function.local_types.len()
                 ),
             });
         }
 
-        let mut locals = vec![Value::Unit; function.locals as usize];
+        let mut locals = vec![Value::Unit; function.local_types.len()];
         for (index, value) in args.into_iter().enumerate() {
             let slot = 1 + index;
             locals[slot] = value;
@@ -144,6 +146,7 @@ impl Vm {
                     arg_count,
                     destination,
                     target,
+                    ..
                 } => {
                     let mut args = Vec::with_capacity(*arg_count as usize);
                     for _ in 0..*arg_count {
@@ -258,6 +261,7 @@ fn execute_instr(
             kind,
             arg_count,
             format,
+            ..
         } => {
             let mut args = Vec::with_capacity(*arg_count as usize);
             for _ in 0..*arg_count {
@@ -906,8 +910,9 @@ mod tests {
             const_pool: vec![BytecodeConst::Int(40), BytecodeConst::Int(2)],
             functions: vec![BytecodeFunction {
                 name: "main".to_string(),
-                params: 0,
-                locals: 1,
+                param_types: vec![],
+                return_type: fp_core::lir::LirType::I64,
+                local_types: vec![fp_core::lir::LirType::I64],
                 blocks: vec![BytecodeBlock {
                     id: 0,
                     code: vec![
@@ -933,8 +938,9 @@ mod tests {
             const_pool: vec![],
             functions: vec![BytecodeFunction {
                 name: "main".to_string(),
-                params: 1,
-                locals: 1,
+                param_types: vec![fp_core::lir::LirType::I64],
+                return_type: fp_core::lir::LirType::I64,
+                local_types: vec![fp_core::lir::LirType::I64],
                 blocks: vec![BytecodeBlock {
                     id: 0,
                     code: vec![],
@@ -960,8 +966,9 @@ mod tests {
             ],
             functions: vec![BytecodeFunction {
                 name: "main".to_string(),
-                params: 0,
-                locals: 2,
+                param_types: vec![],
+                return_type: fp_core::lir::LirType::I64,
+                local_types: vec![fp_core::lir::LirType::I64, fp_core::lir::LirType::I1],
                 blocks: vec![BytecodeBlock {
                     id: 0,
                     code: vec![
@@ -991,8 +998,9 @@ mod tests {
             const_pool: vec![BytecodeConst::Bool(true)],
             functions: vec![BytecodeFunction {
                 name: "main".to_string(),
-                params: 0,
-                locals: 1,
+                param_types: vec![],
+                return_type: fp_core::lir::LirType::I64,
+                local_types: vec![fp_core::lir::LirType::I1],
                 blocks: vec![BytecodeBlock {
                     id: 0,
                     code: vec![BytecodeInstr::LoadConst(0), BytecodeInstr::StoreLocal(0)],

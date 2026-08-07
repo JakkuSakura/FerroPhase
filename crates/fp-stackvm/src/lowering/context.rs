@@ -49,17 +49,20 @@ impl<'a> LoweringContext<'a> {
     ) -> LowerResult<fp_core::lir::LirFunction> {
         let entry_block_id = func.blocks.first().map(|b| b.id).unwrap_or(0);
         let sig = fp_core::lir::LirFunctionSignature {
-            params: vec![fp_core::lir::LirType::I64; func.params as usize],
-            return_type: fp_core::lir::LirType::I64,
+            params: func.param_types.clone(),
+            return_type: func.return_type.clone(),
             is_variadic: false,
         };
 
-        let locals: Vec<fp_core::lir::LirLocal> = (0..func.locals)
-            .map(|i| fp_core::lir::LirLocal {
-                id: i,
-                ty: fp_core::lir::LirType::I64,
+        let locals: Vec<fp_core::lir::LirLocal> = func
+            .local_types
+            .iter()
+            .enumerate()
+            .map(|(i, ty)| fp_core::lir::LirLocal {
+                id: i as u32,
+                ty: ty.clone(),
                 name: Some(format!("local_{i}")),
-                is_argument: i > 0 && i <= func.params,
+                is_argument: i > 0 && i <= func.param_types.len(),
             })
             .collect();
 
@@ -71,7 +74,13 @@ impl<'a> LoweringContext<'a> {
         );
         lir_func.locals = locals;
 
-        let mut fl = FunctionLowering::new(self.bytecode, &mut lir_func, entry_block_id);
+        let local_types = lir_func
+            .locals
+            .iter()
+            .map(|local| local.ty.clone())
+            .collect();
+        let mut fl =
+            FunctionLowering::new(self.bytecode, &mut lir_func, entry_block_id, local_types);
 
         // The LirInterpreter pre-allocates stack slots for all locals
         // declared in func.locals during run_function().  We reference

@@ -229,12 +229,12 @@ impl ThreadState {
             .expect("no active frame - missing function prologue")
     }
 
-    pub fn local_addr(&self, local_idx: u32) -> u64 {
+    pub fn local_addr(&self, local_idx: u32) -> Result<u64, VmError> {
         self.current_frame()
             .local_offsets
             .get(&local_idx)
             .copied()
-            .unwrap_or(0)
+            .ok_or(VmError::InvalidAddress(local_idx as u64))
     }
 
     pub fn set_local_addr(&mut self, local_idx: u32, addr: u64) {
@@ -245,39 +245,6 @@ impl ThreadState {
 }
 
 use fp_core::ast::Value;
-
-pub fn raw_to_value(raw: u64, signed: bool, bits: u32) -> Value {
-    match (signed, bits) {
-        (true, 1) => Value::bool(raw != 0),
-        (true, 8) => Value::int(raw as i8 as i64),
-        (false, 8) => Value::uint(raw as u8 as u64),
-        (true, 16) => Value::int(raw as i16 as i64),
-        (false, 16) => Value::uint(raw as u16 as u64),
-        (true, 32) => Value::int(raw as i32 as i64),
-        (false, 32) => Value::uint(raw as u32 as u64),
-        (true, _) => Value::int(raw as i64),
-        (false, _) => Value::uint(raw),
-    }
-}
-
-pub fn value_to_raw(v: &Value) -> u64 {
-    match v {
-        Value::Int(i) => i.value as u64,
-        Value::UInt(u) => u.value,
-        Value::Bool(b) => {
-            if b.value {
-                1
-            } else {
-                0
-            }
-        }
-        Value::Decimal(f) => f.value.to_bits(),
-        // JUSTIFY: all other Value variants (String, Map, List, Struct,
-        // etc.) have no meaningful raw u64 representation; returning 0
-        // is the only sensible fallback for a raw-value conversion.
-        _ => 0,
-    }
-}
 
 pub fn lir_type_info(ty: &fp_core::lir::LirType) -> (u32, bool) {
     use fp_core::lir::LirType;
@@ -293,14 +260,6 @@ pub fn lir_type_info(ty: &fp_core::lir::LirType) -> (u32, bool) {
         LirType::Void => (0, false),
         _ => (64, false),
     }
-}
-
-pub fn is_object_type(ty: &fp_core::lir::LirType) -> bool {
-    use fp_core::lir::LirType;
-    matches!(
-        ty,
-        LirType::Ptr(_) | LirType::Struct { .. } | LirType::Array(..) | LirType::Vector(..)
-    )
 }
 
 pub fn mem_store(
