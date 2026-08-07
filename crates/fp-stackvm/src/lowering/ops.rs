@@ -373,7 +373,7 @@ pub(crate) fn lower_store_place(
             LowerError::Internal(format!("register %{value_reg} has no lowered type"))
         })?;
         fl.set_local_type(place.local, value_type.clone())?;
-        fl.emit_in_block(
+        fl.emit_void_in_block(
             block_id,
             LirInstructionKind::Store {
                 value: fl.reg_val(value_reg)?,
@@ -414,7 +414,7 @@ pub(crate) fn lower_store_place(
                     fl.reg_val(value_reg)?,
                 ],
             )?;
-            fl.emit_in_block(
+            fl.emit_void_in_block(
                 block_id,
                 LirInstructionKind::Store {
                     value: fl.reg_val(new_handle)?,
@@ -480,7 +480,7 @@ fn lower_call_intrinsic_void(
     name: &str,
     args: &[LirValue],
 ) -> LowerResult<()> {
-    fl.emit_in_block(
+    fl.emit_void_in_block(
         block_id,
         LirInstructionKind::Call {
             function: LirValue::function(

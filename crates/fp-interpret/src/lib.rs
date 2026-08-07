@@ -922,13 +922,18 @@ impl LirInterpreter {
     ) -> LirResult<()> {
         let aggregate_ty = aggregate.ty.clone();
         let aggregate_value = self.resolve_aggregate_value(aggregate, &aggregate_ty)?;
-        let element_ty = if let Some(result_ty) = result_ty {
-            result_ty.clone()
-        } else {
-            self.aggregate_element_type(&aggregate_ty, indices)?
-        };
+        let result_ty = result_ty.ok_or_else(|| {
+            VmError::Runtime("extract_value instruction has no result type".into())
+        })?;
+        let element_ty = self.aggregate_element_type(&aggregate_ty, indices)?;
+        if element_ty != *result_ty {
+            return Err(VmError::TypeMismatch {
+                expected: format!("{:?}", element_ty),
+                found: format!("{:?}", result_ty),
+            });
+        }
         let value = Self::aggregate_extract(&aggregate_value, indices)?;
-        self.store_runtime_value(dst, &element_ty, value)
+        self.store_runtime_value(dst, result_ty, value)
     }
 
     fn store_runtime_value(&mut self, dst: u32, ty: &LirType, value: Value) -> LirResult<()> {
@@ -1530,7 +1535,15 @@ impl LirInterpreter {
                     .collect::<LirResult<Vec<_>>>()?;
                 let program = LirProgram::new(self.data_layout.clone());
                 let value = self.run_function(&program, &function, &resolved_args)?;
-                let ty = result_ty.unwrap_or(&function.signature.return_type);
+                let ty = result_ty.ok_or_else(|| {
+                    VmError::Runtime(format!("call '{}' has no result type", function.name))
+                })?;
+                if *ty != function.signature.return_type {
+                    return Err(VmError::TypeMismatch {
+                        expected: format!("{:?}", function.signature.return_type),
+                        found: format!("{ty:?}"),
+                    });
+                }
                 self.write_typed_result(dst, ty, value)
             }
         }
@@ -1608,7 +1621,15 @@ impl LirInterpreter {
         }
         let prog = LirProgram::new(self.data_layout.clone());
         let value = self.run_function(&prog, &function, &resolved_args)?;
-        let ty = result_ty.unwrap_or(&function.signature.return_type);
+        let ty = result_ty.ok_or_else(|| {
+            VmError::Runtime(format!("call '{}' has no result type", function.name))
+        })?;
+        if *ty != function.signature.return_type {
+            return Err(VmError::TypeMismatch {
+                expected: format!("{:?}", function.signature.return_type),
+                found: format!("{ty:?}"),
+            });
+        }
         self.write_typed_result(dst, ty, value)
     }
 

@@ -129,15 +129,32 @@ impl<'a> FunctionLowering<'a> {
         block_id: BasicBlockId,
         kind: LirInstructionKind,
     ) -> LowerResult<RegisterId> {
-        let result_type = Self::result_type(&kind);
-        let reg = self.alloc_reg(result_type.clone().unwrap_or(LirType::I64));
-        let instr = match result_type {
-            Some(ty) => LirInstruction::new(reg, kind).with_result(ty),
-            None => LirInstruction::new(reg, kind),
-        };
+        let result_type = Self::result_type(&kind).ok_or_else(|| {
+            LowerError::Internal(format!("instruction {:?} has no result type", kind))
+        })?;
+        let reg = self.alloc_reg(result_type.clone());
+        let instr = LirInstruction::new(reg, kind).with_result(result_type);
         let block = self.current_block_mut(block_id);
         block.add_instruction(instr);
         Ok(reg)
+    }
+
+    pub fn emit_void_in_block(
+        &mut self,
+        block_id: BasicBlockId,
+        kind: LirInstructionKind,
+    ) -> LowerResult<()> {
+        if Self::result_type(&kind).is_some() {
+            return Err(LowerError::Internal(format!(
+                "instruction {:?} unexpectedly produces a result",
+                kind
+            )));
+        }
+        let reg = self.next_reg;
+        self.next_reg += 1;
+        self.current_block_mut(block_id)
+            .add_instruction(LirInstruction::new(reg, kind));
+        Ok(())
     }
 
     pub fn emit_typed_in_block(
@@ -242,7 +259,7 @@ impl<'a> FunctionLowering<'a> {
                             LowerError::Internal(format!("register %{val_reg} has no lowered type"))
                         })?;
                     self.set_local_type(*local, value_type.clone())?;
-                    self.emit_in_block(
+                    self.emit_void_in_block(
                         block_id,
                         LirInstructionKind::Store {
                             value: self.reg_val(val_reg)?,
