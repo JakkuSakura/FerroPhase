@@ -505,8 +505,23 @@ impl LirGenerator {
                 lir::LirConstant::integer(target_ty.clone(), lir::LirInteger::I1(*value))
                     .map_err(|error| fp_core::error::Error::from(error.to_string()))?
             }
-            mir::ConstantKind::Int(value) => self.integer_constant(&target_ty, *value)?,
-            mir::ConstantKind::UInt(value) => self.unsigned_constant(&target_ty, *value)?,
+            mir::ConstantKind::Int(value) => {
+                self.integer_constant(&target_ty, *value).map_err(|error| {
+                    fp_core::error::Error::from(format!(
+                        "constant at {:?}: {}",
+                        constant.span, error
+                    ))
+                })?
+            }
+            mir::ConstantKind::UInt(value) => {
+                self.unsigned_constant(&target_ty, *value)
+                    .map_err(|error| {
+                        fp_core::error::Error::from(format!(
+                            "constant at {:?}: {}",
+                            constant.span, error
+                        ))
+                    })?
+            }
             mir::ConstantKind::Float(value) => self.float_constant(&target_ty, *value)?,
             mir::ConstantKind::Str(value) => {
                 let needs_fat_ptr = matches!(&ty_hint.kind, TyKind::Slice(_))
@@ -555,7 +570,13 @@ impl LirGenerator {
             }
         };
 
-        Ok(self.require_constant_type(lir_constant, &target_ty))
+        if lir_constant.ty != target_ty {
+            return Err(fp_core::error::Error::from(format!(
+                "typed constant mismatch at {:?}: MIR type {:?}, literal {:?}, LIR value {:?}, target {:?}",
+                constant.span, constant.ty, constant.literal, lir_constant.ty, target_ty
+            )));
+        }
+        Ok(lir_constant)
     }
 
     fn integer_constant(&self, ty: &lir::LirType, value: i64) -> Result<lir::LirConstant> {
@@ -583,9 +604,9 @@ impl LirGenerator {
                     )
                 }
                 _ => {
-                    return Err(fp_core::error::Error::from(
-                        "integer constant requires integer type",
-                    ));
+                    return Err(fp_core::error::Error::from(format!(
+                        "integer constant {value} requires integer type, got {ty:?}"
+                    )));
                 }
             };
         lir::LirConstant::integer(ty.clone(), integer)
@@ -616,9 +637,9 @@ impl LirGenerator {
                     )
                 }
                 _ => {
-                    return Err(fp_core::error::Error::from(
-                        "integer constant requires integer type",
-                    ));
+                    return Err(fp_core::error::Error::from(format!(
+                        "unsigned integer constant {value} requires integer type, got {ty:?}"
+                    )));
                 }
             };
         lir::LirConstant::integer(ty.clone(), integer)
@@ -993,6 +1014,11 @@ impl LirGenerator {
                     self.try_encode_global_initializer_bytes(&initializer, ty)?;
                 Ok((lir::LirConstant::bytes(ty.clone(), bytes), relocations))
             }
+            lir::LirConstantKind::Expr(lir::LirConstantExpr::GetElementPtr {
+                base,
+                indices,
+                ..
+            }) if indices.is_empty() => self.canonicalize_global_initializer((**base).clone(), ty),
             lir::LirConstantKind::Poison | lir::LirConstantKind::Expr(_) => {
                 Err(fp_core::error::Error::from(
                     "unsupported constant expression in global initializer",
@@ -1015,7 +1041,12 @@ impl LirGenerator {
         ];
         let mut relocations = Vec::new();
         self.encode_global_initializer_into(&mut bytes, &mut relocations, 0, constant, ty)
-            .ok_or_else(|| fp_core::error::Error::from("invalid global initializer"))?;
+            .ok_or_else(|| {
+                fp_core::error::Error::from(format!(
+                    "invalid global initializer: constant {:?}, target {:?}",
+                    constant, ty
+                ))
+            })?;
         Ok((bytes, relocations))
     }
 
@@ -1118,6 +1149,13 @@ impl LirGenerator {
                     target: lir::LirRelocationTarget::Function(name.clone()),
                     addend: 0,
                 });
+            }
+            lir::LirConstantKind::Expr(lir::LirConstantExpr::GetElementPtr {
+                base: inner,
+                indices,
+                ..
+            }) if indices.is_empty() => {
+                self.encode_global_initializer_into(out, relocations, base, inner, ty)?;
             }
             lir::LirConstantKind::Null | lir::LirConstantKind::Undef => {
                 let size = self.data_layout.size_of(&constant.ty).ok()? as usize;
@@ -2758,12 +2796,26 @@ impl LirGenerator {
                         self.lir_type_from_ty(&constant.ty),
                     ))
                 }
-                mir::ConstantKind::Str(s) => Ok(lir::LirValue::constant(self.const_string_ptr(s))),
+                mir::ConstantKind::Str(_) => Ok(lir::LirValue::constant(
+                    self.constant_to_lir_constant(constant, &constant.ty)?,
+                )),
                 mir::ConstantKind::Int(value) => Ok(lir::LirValue::constant(
-                    self.integer_constant(&self.lir_type_from_ty(&constant.ty), *value)?,
+                    self.integer_constant(&self.lir_type_from_ty(&constant.ty), *value)
+                        .map_err(|error| {
+                            fp_core::error::Error::from(format!(
+                                "constant at {:?} with MIR type {:?}: {}",
+                                constant.span, constant.ty, error
+                            ))
+                        })?,
                 )),
                 mir::ConstantKind::UInt(value) => Ok(lir::LirValue::constant(
-                    self.unsigned_constant(&self.lir_type_from_ty(&constant.ty), *value)?,
+                    self.unsigned_constant(&self.lir_type_from_ty(&constant.ty), *value)
+                        .map_err(|error| {
+                            fp_core::error::Error::from(format!(
+                                "constant at {:?} with MIR type {:?}: {}",
+                                constant.span, constant.ty, error
+                            ))
+                        })?,
                 )),
                 mir::ConstantKind::Float(value) => Ok(lir::LirValue::constant(
                     self.float_constant(&self.lir_type_from_ty(&constant.ty), *value)?,

@@ -73,7 +73,7 @@ impl LirInterpreter {
     pub fn run_main(&mut self, program: &LirProgram) -> LirResult<Value> {
         self.populate_functions_from_program(program);
         self.populate_functions_for_package(program, PackageId(0));
-        self.populate_globals(program);
+        self.populate_globals(program)?;
         let entry = program.functions.iter().find(|f| f.name.as_str() == "main");
         let func = entry.ok_or(VmError::Runtime("no entry point".into()))?;
         self.run_function(program, func, &[])
@@ -86,7 +86,7 @@ impl LirInterpreter {
     ) -> LirResult<Value> {
         self.populate_functions_from_program(program);
         self.populate_functions_for_package(program, def_id.package_id);
-        self.populate_globals(program);
+        self.populate_globals(program)?;
         let func = program
             .functions
             .iter()
@@ -106,7 +106,7 @@ impl LirInterpreter {
     ) -> LirResult<Value> {
         self.populate_functions_from_units(units);
         for unit in units {
-            self.populate_globals(&unit.program);
+            self.populate_globals(&unit.program)?;
         }
         for unit in units.iter().filter(|unit| unit.package_id == package_id) {
             if let Some(func) = unit
@@ -225,7 +225,7 @@ impl LirInterpreter {
                 LirTerminator::Return(val) => {
                     let v = match val {
                         Some(v) => self.resolve_operand(v)?.value,
-                        None => return Err(VmError::Runtime("return value is missing".into())),
+                        None => Value::unit(),
                     };
                     break Ok(v);
                 }
@@ -308,9 +308,16 @@ impl LirInterpreter {
                 let sp = self.state.regs.sp();
                 let addr = self.state.mem.stack_alloc(sp, raw_size, *alignment)?;
                 self.state.regs.set_sp(addr);
+                let result_ty = self.result_type(instr)?;
+                if !matches!(result_ty, LirType::Ptr(_)) {
+                    return Err(VmError::TypeMismatch {
+                        expected: "alloca pointer result".into(),
+                        found: format!("{result_ty:?}"),
+                    });
+                }
                 self.write_typed_result(
                     dst,
-                    &LirType::Ptr(Box::new(LirType::I8)),
+                    result_ty,
                     Value::Pointer(fp_core::ast::ValuePointer::managed(addr as i64)),
                 )
             }
@@ -460,9 +467,15 @@ impl LirInterpreter {
             LirInstructionKind::IntrinsicCall { kind, format, args } => {
                 let rendered = self.render_intrinsic(format, args)?;
                 match kind {
-                    fp_core::lir::LirIntrinsicKind::Print
-                    | fp_core::lir::LirIntrinsicKind::Format => print!("{rendered}"),
-                    fp_core::lir::LirIntrinsicKind::Println => println!("{rendered}"),
+                    fp_core::lir::LirIntrinsicKind::Print => {
+                        print!("{rendered}");
+                        return Ok(());
+                    }
+                    fp_core::lir::LirIntrinsicKind::Println => {
+                        println!("{rendered}");
+                        return Ok(());
+                    }
+                    fp_core::lir::LirIntrinsicKind::Format => {}
                     fp_core::lir::LirIntrinsicKind::TimeNow => {}
                 }
                 self.write_typed_result(dst, self.result_type(instr)?, Value::unit())
@@ -661,15 +674,14 @@ impl LirInterpreter {
         }
     }
 
-    fn populate_globals(&mut self, program: &LirProgram) {
+    fn populate_globals(&mut self, program: &LirProgram) -> LirResult<()> {
         for global in &program.globals {
             if let Some(init) = &global.initializer {
                 // Push the value into the object heap and store the handle.
-                if let Ok(value) = self.constant_to_value(&LirValue::constant(init.clone())) {
-                    let handle = self.state.objects.len() as u64;
-                    self.state.objects.push(value);
-                    self.global_values.insert(global.name.to_string(), handle);
-                }
+                let value = self.constant_to_value(&LirValue::constant(init.clone()))?;
+                let handle = self.state.objects.len() as u64;
+                self.state.objects.push(value);
+                self.global_values.insert(global.name.to_string(), handle);
             }
         }
         // Collect C signatures from extern function declarations.
@@ -679,16 +691,40 @@ impl LirInterpreter {
                 self.extern_sigs.insert(func.name.to_string(), sig);
             }
         }
+        Ok(())
     }
 
     /// Inject externally-resolved constant values as globals so that
     /// comptime functions can reference other already-computed consts.
-    pub fn inject_globals(&mut self, values: &HashMap<String, Value>) {
+    pub fn inject_globals(&mut self, values: &HashMap<String, Value>) -> LirResult<()> {
         for (name, value) in values {
             let handle = self.state.objects.len() as u64;
             self.state.objects.push(value.clone());
             self.global_values.insert(name.clone(), handle);
+
+            // Executable constants are referenced by their module-qualified
+            // symbol in MIR/LIR, while the compile-time store is keyed by
+            // source location. Publish the compiler identity alongside the
+            // internal evaluation key.
+            if let Some(symbol) = Self::qualified_const_symbol(name) {
+                if self.global_values.contains_key(&symbol) {
+                    return Err(VmError::Runtime(format!(
+                        "duplicate injected constant symbol {symbol}"
+                    )));
+                }
+                self.global_values.insert(symbol, handle);
+            }
         }
+        Ok(())
+    }
+
+    fn qualified_const_symbol(key: &str) -> Option<String> {
+        let mut parts = key.splitn(4, ':');
+        parts.next()?;
+        parts.next()?;
+        parts.next()?;
+        let name = parts.next()?;
+        (name.contains("::") && !name.contains(":::")).then(|| name.to_string())
     }
 
     /// Resolve an address operand — for `LirValue::Local`, returns
@@ -942,11 +978,17 @@ impl LirInterpreter {
 
     fn resolve_runtime_value(&self, val: &LirValue, ty: &LirType) -> LirResult<Value> {
         if let LirValueKind::Register(register) = &val.kind {
-            if let Some(value) = self.register_values.get(register) {
-                if Self::is_aggregate_runtime_type(ty) || matches!(ty, LirType::Ptr(_)) {
-                    return Ok(value.value.clone());
-                }
+            let value = self
+                .register_values
+                .get(register)
+                .ok_or(VmError::UndefinedRegister(*register))?;
+            if value.ty != *ty || val.ty != *ty {
+                return Err(VmError::TypeMismatch {
+                    expected: format!("{ty:?}"),
+                    found: format!("register {:?} has {:?}", val.ty, value.ty),
+                });
             }
+            return Ok(value.value.clone());
         }
         if Self::is_aggregate_runtime_type(ty) {
             return self.resolve_aggregate_value(val, ty);
@@ -1064,7 +1106,13 @@ impl LirInterpreter {
                 if matches!(constant.ty, LirType::Ptr(_)) {
                     Value::Pointer(fp_core::ast::ValuePointer::managed(address as i64))
                 } else {
-                    Value::uint(address)
+                    self.state
+                        .objects
+                        .get(address as usize)
+                        .cloned()
+                        .ok_or_else(|| {
+                            VmError::Runtime(format!("global object handle {address} is dangling"))
+                        })?
                 }
             }
             LirValueKind::Constant(LirConstantKind::Expr(LirConstantExpr::GetElementPtr {
@@ -1349,25 +1397,16 @@ impl LirInterpreter {
         let rhs = self.resolve_operand(b)?;
         self.require_same_type(&lhs, &rhs)?;
         let result = self.integer_value(&lhs)? == self.integer_value(&rhs)?;
-        let result_ty = if is_integer_type(&lhs.ty) {
-            &lhs.ty
-        } else {
+        if !is_integer_type(&lhs.ty) {
             return Err(VmError::TypeMismatch {
-                expected: "integer comparison result".into(),
+                expected: "integer comparison operand".into(),
                 found: format!("{:?}", lhs.ty),
             });
-        };
+        }
         self.write_typed_result(
             dst,
-            result_ty,
-            integer_value(
-                if equal {
-                    u64::from(result)
-                } else {
-                    u64::from(!result)
-                },
-                lir_type_info(result_ty).1,
-            ),
+            &LirType::I1,
+            Value::bool(if equal { result } else { !result }),
         )
     }
 
@@ -1426,7 +1465,7 @@ impl LirInterpreter {
     ) -> LirResult<()> {
         let lhs = self.resolve_operand(a)?;
         let rhs = self.resolve_operand(b)?;
-        self.require_same_type(&lhs, &lhs)?;
+        self.require_same_type(&lhs, &rhs)?;
         let (_, _, signed) = self.integer_details(&lhs)?;
         let result = op(self.integer_value(&lhs)?, self.integer_value(&rhs)? as u32);
         self.write_typed_result(dst, &lhs.ty, integer_value(result, signed))
@@ -2127,15 +2166,120 @@ impl LirInterpreter {
         let mut rendered = format.to_string();
         for arg in args {
             let value = self.resolve_runtime_value(arg, &arg.ty)?;
-            let text = self.render_value(&value);
-            let placeholder = ["{}", "%lld", "%llu", "%ld", "%lu", "%d", "%i", "%f", "%s"]
-                .iter()
-                .find(|placeholder| rendered.contains(**placeholder));
-            if let Some(placeholder) = placeholder {
-                rendered = rendered.replacen(placeholder, &text, 1);
-            }
+            let text = self.render_typed_value(&value, &arg.ty)?;
+            let placeholder = Self::next_format_placeholder(&rendered).ok_or_else(|| {
+                VmError::Runtime("intrinsic format has fewer placeholders than arguments".into())
+            })?;
+            rendered.replace_range(placeholder, &text);
         }
         Ok(rendered)
+    }
+
+    fn next_format_placeholder(format: &str) -> Option<std::ops::Range<usize>> {
+        let bytes = format.as_bytes();
+        let mut index = 0;
+        while index < bytes.len() {
+            if bytes[index] == b'{' && bytes.get(index + 1) == Some(&b'}') {
+                return Some(index..index + 2);
+            }
+            if bytes[index] != b'%' {
+                index += 1;
+                continue;
+            }
+            if bytes.get(index + 1) == Some(&b'%') {
+                index += 2;
+                continue;
+            }
+            let mut end = index + 1;
+            while let Some(byte) = bytes.get(end) {
+                if byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+' | b'#' | b'*')
+                {
+                    end += 1;
+                } else {
+                    break;
+                }
+            }
+            return (end > index + 1).then_some(index..end);
+        }
+        None
+    }
+
+    fn render_typed_value(&self, value: &Value, ty: &LirType) -> LirResult<String> {
+        if matches!(ty, LirType::Ptr(inner) if matches!(inner.as_ref(), LirType::I8)) {
+            let Value::Pointer(pointer) = value else {
+                return Err(VmError::TypeMismatch {
+                    expected: "string pointer".into(),
+                    found: format!("{value:?}"),
+                });
+            };
+            let handle = usize::try_from(pointer.value)
+                .map_err(|_| VmError::Runtime("negative string pointer".into()))?;
+            let backing = self.state.objects.get(handle).ok_or_else(|| {
+                VmError::Runtime(format!("string handle {handle} is out of range"))
+            })?;
+            return match backing {
+                Value::String(string) => Ok(string.value.clone()),
+                Value::Bytes(bytes) => String::from_utf8(bytes.value.as_ref().to_vec())
+                    .map_err(|error| VmError::Runtime(format!("invalid UTF-8 string: {error}"))),
+                other => Err(VmError::TypeMismatch {
+                    expected: "string backing object".into(),
+                    found: format!("{other:?}"),
+                }),
+            };
+        }
+        if let LirType::Struct {
+            fields,
+            name: Some(name),
+            ..
+        } = ty
+        {
+            if name == "__slice" && fields.len() == 2 {
+                let Value::Tuple(tuple) = value else {
+                    return Err(VmError::TypeMismatch {
+                        expected: "slice fat pointer".into(),
+                        found: format!("{value:?}"),
+                    });
+                };
+                let [Value::Pointer(pointer), length] = tuple.values.as_slice() else {
+                    return Err(VmError::TypeMismatch {
+                        expected: "slice pointer and length".into(),
+                        found: format!("{:?}", tuple.values),
+                    });
+                };
+                let handle = usize::try_from(pointer.value)
+                    .map_err(|_| VmError::Runtime("negative string pointer".into()))?;
+                let backing = self.state.objects.get(handle).ok_or_else(|| {
+                    VmError::Runtime(format!("string handle {handle} is out of range"))
+                })?;
+                let bytes = match backing {
+                    Value::String(string) => string.value.as_bytes().to_vec(),
+                    Value::Bytes(bytes) => bytes.value.as_ref().to_vec(),
+                    other => {
+                        return Err(VmError::TypeMismatch {
+                            expected: "string backing object".into(),
+                            found: format!("{other:?}"),
+                        });
+                    }
+                };
+                let length = match length {
+                    Value::UInt(length) => length.value,
+                    Value::Int(length) => u64::try_from(length.value)
+                        .map_err(|_| VmError::Runtime("negative slice length".into()))?,
+                    other => {
+                        return Err(VmError::TypeMismatch {
+                            expected: "integer slice length".into(),
+                            found: format!("{other:?}"),
+                        });
+                    }
+                } as usize;
+                let bytes = bytes.get(..length).ok_or_else(|| {
+                    VmError::Runtime("slice length exceeds string backing object".into())
+                })?;
+                return String::from_utf8(bytes.to_vec())
+                    .map_err(|error| VmError::Runtime(format!("invalid UTF-8 slice: {error}")));
+            }
+        }
+        Ok(self.render_value(value))
     }
 
     fn render_value(&self, v: &Value) -> String {
@@ -2407,6 +2551,72 @@ mod tests {
         );
     }
 
+    #[test]
+    fn alloca_preserves_typed_pointer_result() {
+        let bool_ty = LirType::I1;
+        let bool_ptr_ty = LirType::Ptr(Box::new(bool_ty.clone()));
+        let f = LirFunction {
+            def_id: None,
+            name: Name::new("main"),
+            signature: sig(&[], bool_ty.clone()),
+            basic_blocks: vec![bb(
+                0,
+                vec![
+                    LirInstruction {
+                        id: 0,
+                        kind: LirInstructionKind::Alloca {
+                            size: int(1),
+                            alignment: 1,
+                        },
+                        result: Some(LirRegister {
+                            id: 0,
+                            ty: bool_ptr_ty.clone(),
+                        }),
+                        debug_info: None,
+                    },
+                    LirInstruction {
+                        id: 1,
+                        kind: LirInstructionKind::Store {
+                            value: LirValue::constant(
+                                LirConstant::integer(LirType::I1, LirInteger::I1(true))
+                                    .expect("valid i1 constant"),
+                            ),
+                            address: LirValue::register(0, bool_ptr_ty.clone()),
+                            alignment: Some(1),
+                            volatile: false,
+                        },
+                        result: None,
+                        debug_info: None,
+                    },
+                    LirInstruction {
+                        id: 2,
+                        kind: LirInstructionKind::Load {
+                            address: LirValue::register(0, bool_ptr_ty),
+                            alignment: Some(1),
+                            volatile: false,
+                        },
+                        result: Some(LirRegister {
+                            id: 2,
+                            ty: bool_ty.clone(),
+                        }),
+                        debug_info: None,
+                    },
+                ],
+                ret(LirValue::register(2, bool_ty)),
+            )],
+            locals: vec![],
+            stack_slots: vec![],
+            calling_convention: CallingConvention::C,
+            linkage: fp_core::lir::Linkage::Internal,
+            is_declaration: false,
+        };
+
+        assert_eq!(
+            LirInterpreter::new().run_main(&make(f)).unwrap(),
+            Value::bool(true)
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn calls_libc_function_through_extern_c_declaration() {
@@ -2584,12 +2794,17 @@ mod tests {
                 LirBasicBlock {
                     id: 0,
                     label: None,
-                    instructions: vec![ins(LirInstructionKind::Eq(
-                        int(if take { 1 } else { 0 }),
-                        int(1),
-                    ))],
+                    instructions: vec![LirInstruction {
+                        id: 0,
+                        kind: LirInstructionKind::Eq(int(if take { 1 } else { 0 }), int(1)),
+                        result: Some(LirRegister {
+                            id: 0,
+                            ty: LirType::I1,
+                        }),
+                        debug_info: None,
+                    }],
                     terminator: LirTerminator::CondBr {
-                        condition: reg(0),
+                        condition: LirValue::register(0, LirType::I1),
                         if_true: 1,
                         if_false: 2,
                     },

@@ -395,6 +395,14 @@ struct ConstInfo {
     value: mir::Constant,
 }
 
+impl ConstInfo {
+    fn typed_value(&self) -> mir::Constant {
+        let mut value = self.value.clone();
+        value.ty = self.ty.clone();
+        value
+    }
+}
+
 #[derive(Clone)]
 enum ConstContainerArgs {
     List { elem_ty: Ty },
@@ -3678,6 +3686,37 @@ impl MirLowering {
     }
 
     fn lower_type_expr(&mut self, ty_expr: &hir::TypeExpr) -> Ty {
+        if let hir::TypeExprKind::Ref(inner) = &ty_expr.kind {
+            if self.is_string_slice_ref(inner) {
+                return self.string_slice_ty();
+            }
+        }
+        if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
+            if path.segments.last().is_some_and(|segment| {
+                matches!(
+                    segment.name.as_str(),
+                    "bool"
+                        | "char"
+                        | "str"
+                        | "i8"
+                        | "i16"
+                        | "i32"
+                        | "i64"
+                        | "i128"
+                        | "isize"
+                        | "u8"
+                        | "u16"
+                        | "u32"
+                        | "u64"
+                        | "u128"
+                        | "usize"
+                        | "f32"
+                        | "f64"
+                )
+            }) {
+                return self.lower_path_type(path, ty_expr.span);
+            }
+        }
         if let Some(ty) = self.typeck_type_exprs.get(&ty_expr.hir_id) {
             return ty.clone();
         }
@@ -5948,13 +5987,13 @@ impl MirLowering {
                     return None;
                 };
                 if let Some(const_info) = self.const_values.get(def_id) {
-                    return Some(const_info.value.clone());
+                    return Some(const_info.typed_value());
                 }
                 if let Some(item) = program.def_map.get(def_id) {
                     if let hir::ItemKind::Const(konst) = &item.kind {
                         self.register_const_value(program, *def_id, konst);
                         if let Some(const_info) = self.const_values.get(def_id) {
-                            return Some(const_info.value.clone());
+                            return Some(const_info.typed_value());
                         }
                     }
                 }
@@ -8150,6 +8189,14 @@ impl<'a> BodyBuilder<'a> {
                 );
             }
         }
+        if Self::is_builtin_type_path(ty_expr) {
+            return self.lowering.lower_type_expr(ty_expr);
+        }
+        if let hir::TypeExprKind::Ref(inner) = &ty_expr.kind {
+            if self.lowering.is_string_slice_ref(inner) {
+                return self.lowering.string_slice_ty();
+            }
+        }
         if let Some(ty) = self.lowering.typeck_type_exprs.get(&ty_expr.hir_id) {
             if !matches!(ty.kind, TyKind::Error(_)) {
                 return ty.clone();
@@ -8164,6 +8211,35 @@ impl<'a> BodyBuilder<'a> {
         }
         self.lowering
             .lower_type_expr_with_substs(ty_expr, &self.type_substs)
+    }
+
+    fn is_builtin_type_path(ty_expr: &hir::TypeExpr) -> bool {
+        let hir::TypeExprKind::Path(path) = &ty_expr.kind else {
+            return false;
+        };
+        let Some(segment) = path.segments.last() else {
+            return false;
+        };
+        matches!(
+            segment.name.as_str(),
+            "bool"
+                | "char"
+                | "str"
+                | "i8"
+                | "i16"
+                | "i32"
+                | "i64"
+                | "i128"
+                | "isize"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "u128"
+                | "usize"
+                | "f32"
+                | "f64"
+        )
     }
 
     fn type_expr_mentions_self(ty_expr: &hir::TypeExpr) -> bool {
@@ -11250,7 +11326,7 @@ impl<'a> BodyBuilder<'a> {
                     source_info: span,
                     kind: mir::StatementKind::Assign(
                         mir::Place::from_local(local_id),
-                        mir::Rvalue::Use(mir::Operand::Constant(const_info.value.clone())),
+                        mir::Rvalue::Use(mir::Operand::Constant(const_info.typed_value())),
                     ),
                 };
                 self.push_statement(statement);
@@ -11910,7 +11986,7 @@ impl<'a> BodyBuilder<'a> {
                             if let Some((constant, ty)) = self.lowering.const_index_value(
                                 self.program,
                                 expr.span,
-                                &const_info.value,
+                                &const_info.typed_value(),
                                 &arg_values[1],
                             ) {
                                 self.push_statement(mir::Statement {
@@ -11985,7 +12061,7 @@ impl<'a> BodyBuilder<'a> {
                                                     len,
                                                 },
                                                 container: mir::Operand::Constant(
-                                                    const_info.value.clone(),
+                                                    const_info.typed_value(),
                                                 ),
                                                 key: key_operand.operand,
                                             },
@@ -12258,7 +12334,7 @@ impl<'a> BodyBuilder<'a> {
                             source_info: expr.span,
                             kind: mir::StatementKind::Assign(
                                 place.clone(),
-                                mir::Rvalue::Use(mir::Operand::Constant(const_info.value.clone())),
+                                mir::Rvalue::Use(mir::Operand::Constant(const_info.typed_value())),
                             ),
                         });
                         return Ok(Some(PlaceInfo {
@@ -13970,7 +14046,7 @@ impl<'a> BodyBuilder<'a> {
                     }
                     if let Some(const_info) = self.lowering.const_values.get(def_id).cloned() {
                         return Ok(OperandInfo {
-                            operand: mir::Operand::Constant(const_info.value),
+                            operand: mir::Operand::Constant(const_info.typed_value()),
                             ty: const_info.ty,
                         });
                     }
@@ -13991,7 +14067,7 @@ impl<'a> BodyBuilder<'a> {
                                 .register_const_value(self.program, *def_id, konst);
                             if let Some(const_info) = self.lowering.const_values.get(def_id) {
                                 return Ok(OperandInfo {
-                                    operand: mir::Operand::Constant(const_info.value.clone()),
+                                    operand: mir::Operand::Constant(const_info.typed_value()),
                                     ty: const_info.ty.clone(),
                                 });
                             }
@@ -14212,7 +14288,7 @@ impl<'a> BodyBuilder<'a> {
                             if let Some((constant, ty)) = self.lowering.const_index_value(
                                 self.program,
                                 expr.span,
-                                &const_info.value,
+                                &const_info.typed_value(),
                                 index,
                             ) {
                                 return Ok(OperandInfo {
@@ -14221,7 +14297,7 @@ impl<'a> BodyBuilder<'a> {
                                 });
                             }
                             resolved_const_base = Some(OperandInfo {
-                                operand: mir::Operand::Constant(const_info.value),
+                                operand: mir::Operand::Constant(const_info.typed_value()),
                                 ty: const_info.ty,
                             });
                         }
@@ -17769,7 +17845,7 @@ impl<'a> BodyBuilder<'a> {
                                 if let Some((constant, ty)) = self.lowering.const_index_value(
                                     self.program,
                                     expr.span,
-                                    &const_info.value,
+                                    &const_info.typed_value(),
                                     &args[0].value,
                                 ) {
                                     self.push_statement(mir::Statement {
@@ -17849,7 +17925,7 @@ impl<'a> BodyBuilder<'a> {
                                                         len,
                                                     },
                                                     container: mir::Operand::Constant(
-                                                        const_info.value.clone(),
+                                                        const_info.typed_value(),
                                                     ),
                                                     key: key_operand.operand,
                                                 },

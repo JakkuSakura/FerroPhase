@@ -16,7 +16,7 @@ if ! (cd "$ROOT_DIR" && LLVM_SYS_210_PREFIX="${LLVM_SYS_210_PREFIX:-}" cargo bui
   exit 0
 fi
 
-RUN_CMD=(cargo run -p fp-cli --bin fp -- interpret)
+RUN_CMD=(cargo run -p fp-cli --bin fp -- interpret --package examples)
 FAILED=0
 
 for file in "$ROOT_DIR"/examples/*.fp; do

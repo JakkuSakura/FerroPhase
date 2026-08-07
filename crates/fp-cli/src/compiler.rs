@@ -830,7 +830,10 @@ fn execute_ast(
             .map(|value| value.clone())
             .map_err(|err| CliError::Compilation(err.to_string())),
         fp_core::context::ExecutionMode::Runtime => {
-            let lir_id = LirId::new(format!("lir:{value_key}"));
+            let package_id = PackageId::new(identity.path.path().head().ok_or_else(|| {
+                CliError::Compilation("source file has no package identity".to_string())
+            })?);
+            let lir_id = LirId::new(format!("lir:{}:{}", package_id.as_str(), value_key));
             driver
                 .execute_runtime(&lir_id)
                 .map_err(|err| CliError::Compilation(err.to_string()))
@@ -859,9 +862,14 @@ fn lower_file(
         &executor,
     )?;
     drain_driver(&mut driver, lossy)?;
+    let package_id =
+        PackageId::new(identity.path.path().head().ok_or_else(|| {
+            CliError::Compilation("source file has no package identity".to_string())
+        })?);
     Ok(LoweredProgram {
         driver,
         path_key,
+        package_id,
         executor,
     })
 }
@@ -1039,6 +1047,9 @@ pub fn compile_file_to_lir_bundle(
     let lowered = LoweredProgram {
         driver,
         path_key,
+        package_id: PackageId::new(identity.path.path().head().ok_or_else(|| {
+            CliError::Compilation("source file has no package identity".to_string())
+        })?),
         executor,
     };
     Ok(LirBundle {
@@ -1247,6 +1258,7 @@ struct CompilerIdentity {
 struct LoweredProgram {
     driver: CompilerDriver,
     path_key: String,
+    package_id: PackageId,
     executor: CompilerExecutor,
 }
 
@@ -1277,7 +1289,11 @@ impl LoweredProgram {
     fn lir(&self) -> Result<fp_core::lir::LirProgram> {
         self.driver
             .state
-            .lir(&LirId::new(format!("lir:{}", self.path_key)))
+            .lir(&LirId::new(format!(
+                "lir:{}:{}",
+                self.package_id.as_str(),
+                self.path_key
+            )))
             .map(|program| program.clone())
             .map_err(|err| CliError::Compilation(err.to_string()))
     }

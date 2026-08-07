@@ -54,8 +54,8 @@ impl CompilerDriver {
             .state
             .typing_ctx
             .env_ctx
-            .package_id_for_module(path)
-            .map(|package_id| package_id.0.to_string());
+            .current_package()
+            .map(|package_id| package_id.as_str().to_string());
         match package_id {
             Some(package_id) => format!("{package_id}:{}", path.to_key()),
             None => path.to_key(),
@@ -208,7 +208,9 @@ impl CompilerDriver {
         let lir = self.state.lir(lir_id)?.clone();
         self.interpreter = LirInterpreter::new();
         let resolved = self.collect_resolved_const_values();
-        self.interpreter.inject_globals(&resolved);
+        self.interpreter
+            .inject_globals(&resolved)
+            .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         let entrypoint = self.state.runtime_entrypoint(lir_id)?;
         let value = self.interpreter.run_entrypoint(&lir, entrypoint)?;
         let value_id = RuntimeValueId::new(format!("runtime_value:{}", lir_id.as_str()));
@@ -248,7 +250,15 @@ impl CompilerDriver {
                     module_path.to_key()
                 ))
             })?;
-        let lir_id = LirId::new(format!("lir:{}", self.module_state_key(module_path)));
+        let lir_id = Self::package_module_lir_id(package_id, module_path);
+        let lir = package
+            .borrow()
+            .lir_units
+            .iter()
+            .find(|unit| unit.module_path == *module_path)
+            .map(|unit| unit.program.clone())
+            .ok_or_else(|| CompilerDriverError::MissingLir(lir_id.clone()))?;
+        self.state.insert_lir(lir_id.clone(), lir);
         self.state.lir(&lir_id)?;
         self.state
             .insert_runtime_entrypoint(lir_id.clone(), function);
@@ -414,7 +424,7 @@ impl CompilerDriver {
         path: &FullyQualifiedPath,
     ) -> Result<CompileUnitCoreResult, CompilerDriverError> {
         let key = format!("module:{}", ast_id.as_str());
-        let package_id = self
+        let hir_package_id = self
             .state
             .typing_ctx
             .env_ctx
@@ -435,7 +445,7 @@ impl CompilerDriver {
             key,
             self.typing_future(TypingUnit {
                 module_path,
-                package_id,
+                package_id: hir_package_id,
                 source,
                 lowering_config: HirLoweringConfig,
                 external_definitions: self.state.typing_ctx.env_ctx.hir_definitions(),
@@ -467,7 +477,18 @@ impl CompilerDriver {
         self.state.insert_hir(hir_id.clone(), hir_program);
         self.state.insert_hir_typeck(hir_id.clone(), typeck_results);
         let mir_id = self.lower_to_mir(&hir_id, path)?;
-        let lir_id = self.lower_to_lir(&mir_id, path)?;
+        let package_id = self
+            .state
+            .typing_ctx
+            .env_ctx
+            .current_package()
+            .cloned()
+            .ok_or_else(|| {
+                CompilerDriverError::UnresolvablePackage(
+                    "module compilation requires a focused package workspace".to_string(),
+                )
+            })?;
+        let lir_id = self.lower_to_lir(&mir_id, path, &package_id)?;
         if let Some(entrypoint) = entrypoint {
             self.state
                 .insert_runtime_entrypoint(lir_id.clone(), entrypoint);
@@ -731,7 +752,8 @@ impl CompilerDriver {
         }
         self.interpreter = LirInterpreter::new();
         self.interpreter
-            .inject_globals(&self.collect_resolved_const_values());
+            .inject_globals(&self.collect_resolved_const_values())
+            .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         let mut value = self
             .interpreter
             .run_function_named(&units, package_id, &function_name)
@@ -1035,7 +1057,7 @@ impl CompilerDriver {
             .collect();
         source_modules.sort_by_key(|(path, _)| path.to_key());
 
-        let package_id = self
+        let hir_package_id = self
             .state
             .typing_ctx
             .env_ctx
@@ -1052,7 +1074,7 @@ impl CompilerDriver {
             .with_intrinsic_normalizer(FerroIntrinsicNormalizer::new(
                 fp_core::intrinsics::IntrinsicNormalizationMode::Compile,
             ))
-            .with_package_id(package_id)
+            .with_package_id(hir_package_id)
             .with_def_id_start(self.next_hir_def_id)
             .with_lowering_config(HirLoweringConfig)
             .with_external_definitions(self.state.typing_ctx.env_ctx.hir_definitions())
@@ -1077,6 +1099,17 @@ impl CompilerDriver {
         );
 
         let mut units = Vec::new();
+        let current_package_id = self
+            .state
+            .typing_ctx
+            .env_ctx
+            .current_package()
+            .cloned()
+            .ok_or_else(|| {
+                CompilerDriverError::UnresolvablePackage(
+                    "package compilation requires a focused package workspace".to_string(),
+                )
+            })?;
         for (path, _declarations) in modules {
             let items = &items_map[&path];
             if items.is_empty() {
@@ -1092,7 +1125,7 @@ impl CompilerDriver {
                     attrs: Vec::new(),
                 },
             );
-            let package_id = self
+            let hir_package_id = self
                 .state
                 .typing_ctx
                 .env_ctx
@@ -1102,7 +1135,7 @@ impl CompilerDriver {
                 format!("package-module:{}", path.to_key()),
                 self.typing_future(TypingUnit {
                     module_path: path.clone(),
-                    package_id,
+                    package_id: hir_package_id,
                     source: File {
                         path: std::path::PathBuf::from(path.to_key()),
                         attrs: Vec::new(),
@@ -1165,20 +1198,23 @@ impl CompilerDriver {
                     path.to_key()
                 ))
             })?;
-            let lir_id = self.lower_to_lir(&mir_id, &fqp).map_err(|error| {
-                CompilerDriverError::UnsupportedWork(format!(
-                    "module {}: LIR lowering failed: {error}",
-                    path.to_key()
-                ))
-            })?;
+            let lir_id = self
+                .lower_to_lir(&mir_id, &fqp, &current_package_id)
+                .map_err(|error| {
+                    CompilerDriverError::UnsupportedWork(format!(
+                        "module {}: LIR lowering failed: {error}",
+                        path.to_key()
+                    ))
+                })?;
+            let published_lir_id = lir_id.clone();
             if let Some(entrypoint) = entrypoint {
                 self.state
-                    .insert_runtime_entrypoint(lir_id.clone(), entrypoint);
+                    .insert_runtime_entrypoint(published_lir_id.clone(), entrypoint);
             }
             let core = CompileUnitCoreResult {
                 hir_id,
                 mir_id,
-                lir_id,
+                lir_id: published_lir_id,
             };
             if let Some(package_id) = self.state.typing_ctx.env_ctx.current_package().cloned() {
                 if let Some(package) = self.state.typing_ctx.env_ctx.compiled_package(&package_id) {
@@ -1244,7 +1280,9 @@ impl CompilerDriver {
         let mut last = Value::unit();
         self.interpreter = LirInterpreter::new();
         let resolved = self.collect_resolved_const_values();
-        self.interpreter.inject_globals(&resolved);
+        self.interpreter
+            .inject_globals(&resolved)
+            .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         for entry in &comptime_entries {
             let result = self.interpreter.run_function_named(
                 &all_units,
@@ -1385,20 +1423,25 @@ impl CompilerDriver {
         &mut self,
         mir_id: &MirId,
         path: &FullyQualifiedPath,
+        package_id: &PackageId,
     ) -> Result<LirId, CompilerDriverError> {
         let mir = self.state.mir(mir_id)?.clone();
-        let package_id = self
+        let hir_package_id = self
             .state
             .typing_ctx
             .env_ctx
             .package_id_for_module(path.path())
             .unwrap_or_default();
         let mut lowering = LirGenerator::new(self.state.typing_ctx.data_layout.clone())
-            .with_package_id(package_id);
+            .with_package_id(hir_package_id);
         let lir = lowering.transform(mir)?;
-        let lir_id = LirId::new(format!("lir:{}", self.module_state_key(path.path())));
+        let lir_id = Self::package_module_lir_id(package_id, path.path());
         self.state.insert_lir(lir_id.clone(), lir);
         Ok(lir_id)
+    }
+
+    fn package_module_lir_id(package_id: &PackageId, path: &QualifiedPath) -> LirId {
+        LirId::new(format!("lir:{}:{}", package_id.as_str(), path.to_key()))
     }
 
     fn collect_resolved_const_values(&self) -> HashMap<String, Value> {
