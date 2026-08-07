@@ -34,6 +34,7 @@ pub struct LirInterpreter {
     /// Global object handles keyed by name, populated from the LIR
     /// program during run_main / package-scoped run_function_named.
     global_values: HashMap<String, u64>,
+    initialized_globals: std::collections::HashSet<String>,
     /// Optional FFI runtime for calling extern C functions.  Set
     /// before running if the program contains extern declarations.
     ffi: Option<FfiRuntime>,
@@ -61,6 +62,7 @@ impl LirInterpreter {
             .expect("valid default LIR data layout"),
             register_values: HashMap::new(),
             global_values: HashMap::new(),
+            initialized_globals: std::collections::HashSet::new(),
             ffi: FfiRuntime::new().ok(),
             extern_sigs: HashMap::new(),
             last_predecessor: None,
@@ -73,7 +75,7 @@ impl LirInterpreter {
     pub fn run_main(&mut self, program: &LirProgram) -> LirResult<Value> {
         self.populate_functions_from_program(program);
         self.populate_functions_for_package(program, PackageId(0));
-        self.populate_globals(program)?;
+        self.populate_globals_batch(&[program])?;
         let entry = program.functions.iter().find(|f| f.name.as_str() == "main");
         let func = entry.ok_or(VmError::Runtime("no entry point".into()))?;
         self.run_function(program, func, &[])
@@ -86,7 +88,7 @@ impl LirInterpreter {
     ) -> LirResult<Value> {
         self.populate_functions_from_program(program);
         self.populate_functions_for_package(program, def_id.package_id);
-        self.populate_globals(program)?;
+        self.populate_globals_batch(&[program])?;
         let func = program
             .functions
             .iter()
@@ -105,9 +107,8 @@ impl LirInterpreter {
         name: &str,
     ) -> LirResult<Value> {
         self.populate_functions_from_units(units);
-        for unit in units {
-            self.populate_globals(&unit.program)?;
-        }
+        let programs: Vec<&LirProgram> = units.iter().map(|unit| &unit.program).collect();
+        self.populate_globals_batch(&programs)?;
         for unit in units.iter().filter(|unit| unit.package_id == package_id) {
             if let Some(func) = unit
                 .program
@@ -124,41 +125,51 @@ impl LirInterpreter {
         )))
     }
 
-    /// Look up an object handle from the objects table.
-    pub fn resolve_object(&self, handle: u64) -> Option<Value> {
-        self.state.objects.get(handle as usize).cloned()
-    }
-
-    pub fn resolve_string_slice(&self, value: &Value) -> LirResult<Option<Value>> {
+    /// Read a compile-time result using the result's declared LIR layout.
+    ///
+    /// The interpreter does not infer semantic values from arbitrary runtime
+    /// shapes. A string is reconstructed only from the exact wide-pointer
+    /// representation emitted for `&str`.
+    pub fn read_typed_const_value(&self, value: Value, ty: &LirType) -> LirResult<Value> {
+        let LirType::Struct {
+            name: Some(name),
+            fields,
+            ..
+        } = ty
+        else {
+            return Ok(value);
+        };
+        if name != "__slice"
+            || fields.as_slice() != [LirType::Ptr(Box::new(LirType::I8)), LirType::I64]
+        {
+            return Ok(value);
+        }
         let Value::Tuple(tuple) = value else {
-            return Ok(None);
+            return Err(VmError::TypeMismatch {
+                expected: format!("runtime value for {ty:?}"),
+                found: "non-tuple".into(),
+            });
         };
         let [Value::Pointer(pointer), length] = tuple.values.as_slice() else {
-            return Ok(None);
+            return Err(VmError::TypeMismatch {
+                expected: format!("pointer and length for {ty:?}"),
+                found: format!("{:?}", tuple.values),
+            });
         };
         let length = match length {
-            Value::UInt(length) => usize::try_from(length.value),
-            Value::Int(length) => usize::try_from(length.value),
-            _ => return Ok(None),
-        }
-        .map_err(|_| VmError::Runtime("invalid string slice length".into()))?;
-        let handle = usize::try_from(pointer.value)
-            .map_err(|_| VmError::Runtime("negative string slice pointer".into()))?;
-        let backing =
-            self.state.objects.get(handle).ok_or_else(|| {
-                VmError::Runtime(format!("string handle {handle} is out of range"))
-            })?;
-        let text = match backing {
-            Value::String(string) => string.value.as_bytes(),
-            Value::Bytes(bytes) => bytes.value.as_ref(),
-            _ => return Ok(None),
+            Value::Int(length) if length.value >= 0 => length.value as u64,
+            Value::UInt(length) => length.value,
+            other => {
+                return Err(VmError::TypeMismatch {
+                    expected: "non-negative slice length".into(),
+                    found: format!("{other:?}"),
+                });
+            }
         };
-        let text = text
-            .get(..length)
-            .ok_or_else(|| VmError::Runtime("string slice length exceeds backing value".into()))?;
-        let text = String::from_utf8(text.to_vec())
+        let bytes = self.state.mem.load_bytes(pointer.value as u64, length)?;
+        let text = String::from_utf8(bytes)
             .map_err(|error| VmError::Runtime(format!("invalid UTF-8 string slice: {error}")))?;
-        Ok(Some(Value::string(text)))
+        Ok(Value::string(text))
     }
 
     fn populate_functions_from_units(&mut self, units: &[LirCompileUnit]) {
@@ -675,14 +686,13 @@ impl LirInterpreter {
             LirConstantKind::Null | LirConstantKind::Undef | LirConstantKind::Poison => Ok(0),
             LirConstantKind::Expr(LirConstantExpr::GetElementPtr { base, indices, .. }) => {
                 let base_raw = self.resolve_constant_address(&base.ty, &base.kind)?;
-                let elem_size = match &base.ty {
-                    LirType::Ptr(pointee) => {
-                        let (bits, _) = lir_type_info(pointee);
-                        ((bits + 7) / 8) as u64
-                    }
-                    _ => 1,
-                }
-                .max(1);
+                let LirType::Ptr(pointee) = base.ty.clone() else {
+                    return Err(VmError::TypeMismatch {
+                        expected: "pointer constant base".into(),
+                        found: format!("{:?}", base.ty),
+                    });
+                };
+                let mut current = *pointee;
                 let mut offset = 0u64;
                 for (index, index_constant) in indices.iter().enumerate() {
                     let index_raw = match &index_constant.kind {
@@ -695,10 +705,87 @@ impl LirInterpreter {
                             )));
                         }
                     };
-                    let scale = if index == 0 { elem_size } else { 1 };
-                    offset = offset.wrapping_add(index_raw.wrapping_mul(scale));
+                    if index == 0 {
+                        let scale = self
+                            .data_layout
+                            .size_of(&current)
+                            .map_err(|error| VmError::Runtime(error.to_string()))?;
+                        offset = offset
+                            .checked_add(index_raw.checked_mul(scale).ok_or_else(|| {
+                                VmError::Runtime("constant GEP offset overflow".into())
+                            })?)
+                            .ok_or_else(|| {
+                                VmError::Runtime("constant GEP offset overflow".into())
+                            })?;
+                        continue;
+                    }
+                    match current.clone() {
+                        LirType::Array(elem, len) => {
+                            if index_raw >= len {
+                                return Err(VmError::Runtime(format!(
+                                    "constant GEP index {index_raw} out of bounds"
+                                )));
+                            }
+                            let scale = self
+                                .data_layout
+                                .size_of(&elem)
+                                .map_err(|error| VmError::Runtime(error.to_string()))?;
+                            offset = offset
+                                .checked_add(index_raw.checked_mul(scale).ok_or_else(|| {
+                                    VmError::Runtime("constant GEP offset overflow".into())
+                                })?)
+                                .ok_or_else(|| {
+                                    VmError::Runtime("constant GEP offset overflow".into())
+                                })?;
+                            current = *elem;
+                        }
+                        LirType::Vector(elem, len) => {
+                            if index_raw >= u64::from(len) {
+                                return Err(VmError::Runtime(format!(
+                                    "constant GEP index {index_raw} out of bounds"
+                                )));
+                            }
+                            let scale = self
+                                .data_layout
+                                .size_of(&elem)
+                                .map_err(|error| VmError::Runtime(error.to_string()))?;
+                            offset = offset
+                                .checked_add(index_raw.checked_mul(scale).ok_or_else(|| {
+                                    VmError::Runtime("constant GEP offset overflow".into())
+                                })?)
+                                .ok_or_else(|| {
+                                    VmError::Runtime("constant GEP offset overflow".into())
+                                })?;
+                            current = *elem;
+                        }
+                        LirType::Struct { fields, .. } => {
+                            let field = fields.get(index_raw as usize).ok_or_else(|| {
+                                VmError::Runtime(format!(
+                                    "constant GEP field {index_raw} out of bounds"
+                                ))
+                            })?;
+                            let layout = self
+                                .data_layout
+                                .struct_layout(&current)
+                                .map_err(|error| VmError::Runtime(error.to_string()))?
+                                .ok_or_else(|| VmError::Runtime("missing struct layout".into()))?;
+                            offset = offset
+                                .checked_add(layout.field_offsets[index_raw as usize])
+                                .ok_or_else(|| {
+                                    VmError::Runtime("constant GEP offset overflow".into())
+                                })?;
+                            current = field.clone();
+                        }
+                        other => {
+                            return Err(VmError::Runtime(format!(
+                                "cannot index constant GEP through {other:?}"
+                            )));
+                        }
+                    }
                 }
-                Ok(base_raw.wrapping_add(offset))
+                base_raw
+                    .checked_add(offset)
+                    .ok_or_else(|| VmError::Runtime("constant GEP address overflow".into()))
             }
             LirConstantKind::Aggregate(_) | LirConstantKind::FunctionAddress(_) => Err(
                 VmError::Runtime("constant address requires a scalar or GEP constant".into()),
@@ -706,21 +793,99 @@ impl LirInterpreter {
         }
     }
 
-    fn populate_globals(&mut self, program: &LirProgram) -> LirResult<()> {
-        for global in &program.globals {
-            if let Some(init) = &global.initializer {
-                // Push the value into the object heap and store the handle.
-                let value = self.constant_to_value(&LirValue::constant(init.clone()))?;
-                let handle = self.state.objects.len() as u64;
-                self.state.objects.push(value);
-                self.global_values.insert(global.name.to_string(), handle);
+    fn populate_globals_batch(&mut self, programs: &[&LirProgram]) -> LirResult<()> {
+        for program in programs {
+            self.data_layout = program.data_layout.clone();
+            for global in &program.globals {
+                if self.global_values.contains_key(global.name.as_str()) {
+                    continue;
+                }
+                let size = self
+                    .data_layout
+                    .size_of(&global.ty)
+                    .map_err(|error| VmError::Runtime(error.to_string()))?;
+                let alignment = global.alignment.unwrap_or(
+                    self.data_layout
+                        .align_of(&global.ty)
+                        .map_err(|error| VmError::Runtime(error.to_string()))?,
+                );
+                let address = self.state.mem.heap_alloc(size, alignment)?;
+                self.global_values.insert(global.name.to_string(), address);
+            }
+        }
+        for program in programs {
+            for global in &program.globals {
+                if self.initialized_globals.contains(global.name.as_str()) {
+                    continue;
+                }
+                let address = *self
+                    .global_values
+                    .get(global.name.as_str())
+                    .ok_or_else(|| VmError::Runtime(format!("missing global {}", global.name)))?;
+                let size = self
+                    .data_layout
+                    .size_of(&global.ty)
+                    .map_err(|error| VmError::Runtime(error.to_string()))?;
+                if let Some(initializer) = &global.initializer {
+                    match &initializer.kind {
+                        LirConstantKind::Data(LirConstantData::Bytes(bytes)) => {
+                            if bytes.len() as u64 != size {
+                                return Err(VmError::Runtime(format!(
+                                    "global {} initializer has {} bytes, expected {}",
+                                    global.name,
+                                    bytes.len(),
+                                    size
+                                )));
+                            }
+                            self.state.mem.store_bytes(address, bytes)?;
+                        }
+                        _ => {
+                            let value =
+                                self.constant_to_value(&LirValue::constant(initializer.clone()))?;
+                            self.store_value_at(address, &global.ty, &value)?;
+                        }
+                    }
+                }
+                for relocation in &global.relocations {
+                    if relocation.kind != fp_core::lir::LirRelocationKind::Abs64 {
+                        return Err(VmError::Runtime(format!(
+                            "unsupported global relocation {:?}",
+                            relocation.kind
+                        )));
+                    }
+                    let target = match &relocation.target {
+                        fp_core::lir::LirRelocationTarget::Global(name) => {
+                            *self.global_values.get(name.as_str()).ok_or_else(|| {
+                                VmError::Runtime(format!("missing relocation target {name}"))
+                            })?
+                        }
+                        fp_core::lir::LirRelocationTarget::Function(name) => {
+                            return Err(VmError::Runtime(format!(
+                                "function relocation {} is not a runtime address",
+                                name
+                            )));
+                        }
+                    };
+                    let value = if relocation.addend >= 0 {
+                        target.checked_add(relocation.addend as u64)
+                    } else {
+                        target.checked_sub(relocation.addend.unsigned_abs())
+                    }
+                    .ok_or_else(|| VmError::Runtime("global relocation overflow".into()))?;
+                    self.state
+                        .mem
+                        .store_u64(address + relocation.offset, value)?;
+                }
+                self.initialized_globals.insert(global.name.to_string());
             }
         }
         // Collect C signatures from extern function declarations.
-        for func in &program.functions {
-            if func.is_declaration && func.calling_convention == CallingConvention::C {
-                let sig = lir_sig_to_ffi(&func.signature);
-                self.extern_sigs.insert(func.name.to_string(), sig);
+        for program in programs {
+            for func in &program.functions {
+                if func.is_declaration && func.calling_convention == CallingConvention::C {
+                    let sig = lir_sig_to_ffi(&func.signature);
+                    self.extern_sigs.insert(func.name.to_string(), sig);
+                }
             }
         }
         Ok(())
@@ -1075,43 +1240,12 @@ impl LirInterpreter {
             | LirValueKind::Constant(LirConstantKind::Null) => Ok(Self::default_value_for_type(ty)),
             LirValueKind::Global(name)
             | LirValueKind::Constant(LirConstantKind::GlobalAddress { global: name }) => {
-                let handle = self
+                let address = self
                     .global_values
                     .get(name.as_str())
                     .copied()
                     .ok_or_else(|| VmError::Runtime(format!("missing global {name}")))?;
-                let value = self
-                    .state
-                    .objects
-                    .get(handle as usize)
-                    .cloned()
-                    .ok_or_else(|| {
-                        VmError::Runtime(format!("global object {handle} is dangling"))
-                    })?;
-                if let Value::String(string) = &value {
-                    if let LirType::Struct {
-                        name: Some(type_name),
-                        fields,
-                        ..
-                    } = ty
-                    {
-                        if type_name == "__slice" && fields.len() == 2 {
-                            return Ok(Value::Tuple(ValueTuple::new(vec![
-                                Value::Pointer(fp_core::ast::ValuePointer::managed(handle as i64)),
-                                Value::UInt(
-                                    fp_core::ast::ValueUInt::new(string.value.len() as u64),
-                                ),
-                            ])));
-                        }
-                    }
-                }
-                if Self::is_aggregate_runtime_type(ty) {
-                    return Ok(value);
-                }
-                Err(VmError::TypeMismatch {
-                    expected: format!("aggregate {ty:?}"),
-                    found: format!("{value:?}"),
-                })
+                self.load_value_at(address, ty)
             }
             LirValueKind::Constant(_) => self.constant_to_value(val),
             _ => Err(VmError::Runtime(format!(
@@ -1178,13 +1312,7 @@ impl LirInterpreter {
                 if matches!(constant.ty, LirType::Ptr(_)) {
                     Value::Pointer(fp_core::ast::ValuePointer::managed(address as i64))
                 } else {
-                    self.state
-                        .objects
-                        .get(address as usize)
-                        .cloned()
-                        .ok_or_else(|| {
-                            VmError::Runtime(format!("global object handle {address} is dangling"))
-                        })?
+                    self.load_value_at(address, &constant.ty)?
                 }
             }
             LirValueKind::Constant(LirConstantKind::Expr(LirConstantExpr::GetElementPtr {
@@ -1754,8 +1882,10 @@ impl LirInterpreter {
         for (arg, ty) in args.iter().zip(&sig.args) {
             let raw = self.encode_ffi_value(arg)?;
             if *ty == FfiType::Ptr {
-                if let Some(bytes) = self.object_bytes_for_ffi(raw) {
-                    let bytes = bytes.strip_suffix(&[0]).unwrap_or(&bytes);
+                if raw != 0 {
+                    let bytes = self.state.mem.load_c_string(raw).map_err(|error| {
+                        VmError::Runtime(format!("invalid VM pointer: {error}"))
+                    })?;
                     let cstring = CString::new(bytes).map_err(|error| {
                         VmError::Runtime(format!("invalid C string argument: {error}"))
                     })?;
@@ -1788,15 +1918,6 @@ impl LirInterpreter {
                 expected: "FFI scalar or pointer value".into(),
                 found: format!("{value:?}"),
             }),
-        }
-    }
-
-    fn object_bytes_for_ffi(&self, raw: u64) -> Option<Vec<u8>> {
-        let value = self.state.objects.get(raw as usize)?;
-        match value {
-            Value::String(value) => Some(value.value.as_bytes().to_vec()),
-            Value::Bytes(value) => Some(value.value.to_vec()),
-            _ => None,
         }
     }
 
@@ -3009,27 +3130,28 @@ mod tests {
             is_declaration: false,
         };
 
-        assert_eq!(
-            LirInterpreter::new()
-                .run_main(&make_with_globals(
-                    f,
-                    vec![LirGlobal {
-                        name: Name::new("abc"),
-                        ty: LirType::Array(Box::new(LirType::I8), 3),
-                        initializer: Some(LirConstant::bytes(
-                            LirType::Array(Box::new(LirType::I8), 3),
-                            b"abc".to_vec(),
-                        )),
-                        relocations: vec![],
-                        linkage: fp_core::lir::Linkage::Internal,
-                        visibility: fp_core::lir::Visibility::Default,
-                        is_constant: true,
-                        alignment: None,
-                        section: None,
-                    }],
-                ))
-                .unwrap(),
-            Value::Pointer(fp_core::ast::ValuePointer::managed(0))
-        );
+        let value = LirInterpreter::new()
+            .run_main(&make_with_globals(
+                f,
+                vec![LirGlobal {
+                    name: Name::new("abc"),
+                    ty: LirType::Array(Box::new(LirType::I8), 3),
+                    initializer: Some(LirConstant::bytes(
+                        LirType::Array(Box::new(LirType::I8), 3),
+                        b"abc".to_vec(),
+                    )),
+                    relocations: vec![],
+                    linkage: fp_core::lir::Linkage::Internal,
+                    visibility: fp_core::lir::Visibility::Default,
+                    is_constant: true,
+                    alignment: None,
+                    section: None,
+                }],
+            ))
+            .unwrap();
+        let Value::Pointer(pointer) = value else {
+            panic!("expected a VM pointer");
+        };
+        assert!(pointer.value >= 0x1000);
     }
 }

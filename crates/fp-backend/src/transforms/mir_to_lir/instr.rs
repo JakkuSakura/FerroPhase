@@ -1812,7 +1812,7 @@ impl LirGenerator {
                                 self.type_of_operand(operand).as_ref(),
                                 &elem_lir_ty,
                                 &mut instructions,
-                            );
+                            )?;
                             let index_value = lir::LirValue::constant(
                                 self.unsigned_constant(&lir::LirType::I64, idx as u64)?,
                             );
@@ -1882,7 +1882,7 @@ impl LirGenerator {
                                             self.type_of_operand(operand).as_ref(),
                                             &elem_lir_ty,
                                             &mut instructions,
-                                        );
+                                        )?;
                                         let index_value = lir::LirValue::constant(
                                             self.unsigned_constant(&lir::LirType::I64, idx as u64)?,
                                         );
@@ -1948,7 +1948,7 @@ impl LirGenerator {
                         self.type_of_operand(operand).as_ref(),
                         &elem_lir_ty,
                         &mut instructions,
-                    );
+                    )?;
                     let index_value = lir::LirValue::constant(
                         self.unsigned_constant(&lir::LirType::I64, idx as u64)?,
                     );
@@ -2029,13 +2029,13 @@ impl LirGenerator {
                         self.type_of_operand(key_op).as_ref(),
                         &key_ty,
                         &mut instructions,
-                    );
+                    )?;
                     let value_val = self.coerce_aggregate_value_with_source(
                         value_val,
                         self.type_of_operand(value_op).as_ref(),
                         &value_ty,
                         &mut instructions,
-                    );
+                    )?;
 
                     let mut entry_value =
                         lir::LirValue::constant(lir::LirConstant::undef(entry_lir_ty.clone()));
@@ -2173,7 +2173,7 @@ impl LirGenerator {
                             self.type_of_operand(key).as_ref(),
                             &key_lir_ty,
                             &mut instructions,
-                        );
+                        )?;
 
                         let mut current =
                             lir::LirValue::constant(lir::LirConstant::undef(value_lir_ty.clone()));
@@ -2608,8 +2608,11 @@ impl LirGenerator {
             let mut adjusted_value = value;
 
             if !target_is_zst {
-                adjusted_value =
-                    self.coerce_assignment_value(adjusted_value, &target_lir_ty, &mut instructions);
+                adjusted_value = self.coerce_assignment_value(
+                    adjusted_value,
+                    &target_lir_ty,
+                    &mut instructions,
+                )?;
             }
 
             if let PlaceAccess::Address(addr) = &target_access {
@@ -4277,12 +4280,7 @@ impl LirGenerator {
             if source_lir_ty == expected {
                 return Ok(value);
             }
-            return Ok(self.cast_value_to_type(
-                value,
-                source_lir_ty.clone(),
-                expected.clone(),
-                block,
-            ));
+            return self.cast_value_to_type(value, source_lir_ty.clone(), expected.clone(), block);
         }
 
         Ok(self.promote_vararg_argument(value, source_ty, source_lir_ty, block))
@@ -4399,12 +4397,12 @@ impl LirGenerator {
         from_ty: lir::LirType,
         target_ty: lir::LirType,
         block: &mut lir::LirBasicBlock,
-    ) -> lir::LirValue {
+    ) -> Result<lir::LirValue> {
         if matches!(target_ty, lir::LirType::Void) {
-            return lir::LirValue::constant(lir::LirConstant::undef(target_ty));
+            return Ok(lir::LirValue::constant(lir::LirConstant::undef(target_ty)));
         }
         if from_ty == target_ty {
-            return value;
+            return Ok(value);
         }
         if let (
             lir::LirType::Struct {
@@ -4450,7 +4448,7 @@ impl LirGenerator {
                 }),
                 debug_info: None,
             });
-            return lir::LirValue::register(ptr_id, target_ty);
+            return Ok(lir::LirValue::register(ptr_id, target_ty));
         }
         if matches!(from_ty, lir::LirType::Ptr(_)) && self.is_float_type(&target_ty) {
             let int_ty = lir::LirType::I64;
@@ -4477,7 +4475,7 @@ impl LirGenerator {
                 }),
                 debug_info: None,
             });
-            return lir::LirValue::register(fp_id, target_ty);
+            return Ok(lir::LirValue::register(fp_id, target_ty));
         }
         let id = self.next_id();
         let kind = if matches!(from_ty, lir::LirType::Ptr(_)) && self.is_integral_type(&target_ty) {
@@ -4520,7 +4518,7 @@ impl LirGenerator {
             }),
             debug_info: None,
         });
-        lir::LirValue::register(id, target_ty)
+        Ok(lir::LirValue::register(id, target_ty))
     }
 
     fn cast_struct_value_to_struct_type(
@@ -4530,7 +4528,7 @@ impl LirGenerator {
         target_fields: &[lir::LirType],
         target_ty: lir::LirType,
         block: &mut lir::LirBasicBlock,
-    ) -> lir::LirValue {
+    ) -> Result<lir::LirValue> {
         if let lir::LirValue {
             kind:
                 lir::LirValueKind::Constant(lir::LirConstantKind::Aggregate(
@@ -4542,17 +4540,17 @@ impl LirGenerator {
             let mut adjusted = Vec::with_capacity(target_fields.len());
             for (index, target_field) in target_fields.iter().enumerate() {
                 if let Some(field) = fields.get(index) {
-                    adjusted.push(self.require_constant_type(field.clone(), target_field));
+                    adjusted.push(self.require_constant_type(field.clone(), target_field)?);
                 } else if let Some(zero) = self.zero_constant_for_lir_type(target_field) {
                     adjusted.push(zero);
                 } else {
                     adjusted.push(lir::LirConstant::undef(target_field.clone()));
                 }
             }
-            return lir::LirValue::constant(lir::LirConstant::aggregate(
+            return Ok(lir::LirValue::constant(lir::LirConstant::aggregate(
                 target_ty,
                 lir::LirConstantAggregate::Struct(adjusted),
-            ));
+            )));
         }
 
         let mut current = lir::LirValue::constant(lir::LirConstant::undef(target_ty.clone()));
@@ -4577,7 +4575,7 @@ impl LirGenerator {
                     source_field.clone(),
                     target_field.clone(),
                     block,
-                )
+                )?
             } else if let Some(zero) = self.zero_value_for_lir_type(target_field) {
                 zero
             } else {
@@ -4600,7 +4598,7 @@ impl LirGenerator {
             });
             current = lir::LirValue::register(insert_id, target_ty.clone());
         }
-        current
+        Ok(current)
     }
 
     fn extend_integer_value(
@@ -4755,7 +4753,7 @@ impl LirGenerator {
 
         if all_constants {
             let adjusted_consts =
-                self.adjust_constants_for_aggregate(constants, &expected_field_tys);
+                self.adjust_constants_for_aggregate(constants, &expected_field_tys)?;
             if let Some(place_ty) = place_ty.as_ref() {
                 if let Some(constant) =
                     self.constant_from_aggregate(kind, adjusted_consts, place_ty)
@@ -4847,7 +4845,7 @@ impl LirGenerator {
                         source_ty.as_ref(),
                         field_ty,
                         &mut instructions,
-                    );
+                    )?;
                 }
                 let instr_id = self.next_id();
                 instructions.push(lir::LirInstruction {
@@ -4922,7 +4920,7 @@ impl LirGenerator {
         &self,
         constants: Vec<lir::LirConstant>,
         expected_field_tys: &[lir::LirType],
-    ) -> Vec<lir::LirConstant> {
+    ) -> Result<Vec<lir::LirConstant>> {
         constants
             .into_iter()
             .enumerate()
@@ -4930,10 +4928,10 @@ impl LirGenerator {
                 if let Some(field_ty) = expected_field_tys.get(index) {
                     self.require_constant_type(constant, field_ty)
                 } else {
-                    constant
+                    Ok(constant)
                 }
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()
     }
 
     fn coerce_aggregate_value_with_source(
@@ -4942,14 +4940,16 @@ impl LirGenerator {
         source_ty: Option<&lir::LirType>,
         target_ty: &lir::LirType,
         instructions: &mut Vec<lir::LirInstruction>,
-    ) -> lir::LirValue {
+    ) -> Result<lir::LirValue> {
         match value.kind.clone() {
             lir::LirValueKind::Constant(constant_kind) => {
                 let constant = lir::LirConstant {
                     ty: value.ty,
                     kind: constant_kind,
                 };
-                lir::LirValue::constant(self.require_constant_type(constant, target_ty))
+                Ok(lir::LirValue::constant(
+                    self.require_constant_type(constant, target_ty)?,
+                ))
             }
             _ => self.cast_runtime_value_to_lir_type_with_source(
                 value,
@@ -4966,10 +4966,10 @@ impl LirGenerator {
         source_ty: Option<&lir::LirType>,
         target_ty: lir::LirType,
         instructions: &mut Vec<lir::LirInstruction>,
-    ) -> lir::LirValue {
+    ) -> Result<lir::LirValue> {
         let current_ty = source_ty.cloned().unwrap_or_else(|| value.ty.clone());
         if current_ty == target_ty {
-            return value;
+            return Ok(value);
         }
 
         if self.is_integral_type(&current_ty) && self.is_integral_type(&target_ty) {
@@ -4992,7 +4992,7 @@ impl LirGenerator {
                 }),
                 debug_info: None,
             });
-            return lir::LirValue::register(instr_id, target_ty.clone());
+            return Ok(lir::LirValue::register(instr_id, target_ty.clone()));
         }
 
         if self.is_float_type(&current_ty) && self.is_float_type(&target_ty) {
@@ -5015,10 +5015,10 @@ impl LirGenerator {
                 }),
                 debug_info: None,
             });
-            return lir::LirValue::register(instr_id, target_ty.clone());
+            return Ok(lir::LirValue::register(instr_id, target_ty.clone()));
         }
 
-        // Pointer/integer interop for tolerant lowering.
+        // Pointer/integer interop is emitted only for explicit typed pairs.
         let current_is_int = self.is_integral_type(&current_ty);
         let target_is_int = self.is_integral_type(&target_ty);
         let current_is_ptr = matches!(&current_ty, lir::LirType::Ptr(_));
@@ -5034,7 +5034,7 @@ impl LirGenerator {
                 }),
                 debug_info: None,
             });
-            return lir::LirValue::register(instr_id, target_ty.clone());
+            return Ok(lir::LirValue::register(instr_id, target_ty.clone()));
         }
         if current_is_ptr && target_is_int {
             let instr_id = self.next_id();
@@ -5047,24 +5047,35 @@ impl LirGenerator {
                 }),
                 debug_info: None,
             });
-            return lir::LirValue::register(instr_id, target_ty);
+            return Ok(lir::LirValue::register(instr_id, target_ty));
         }
-        value
+        Err(fp_core::error::Error::from(format!(
+            "unsupported runtime value conversion: {:?} to {:?}",
+            current_ty, target_ty
+        )))
     }
 
     fn require_constant_type(
         &self,
         constant: lir::LirConstant,
         target_ty: &lir::LirType,
-    ) -> lir::LirConstant {
+    ) -> Result<lir::LirConstant> {
         if constant.ty != *target_ty {
-            todo!(
+            if matches!(target_ty, lir::LirType::Ptr(_))
+                && matches!(
+                    constant.kind,
+                    lir::LirConstantKind::Data(lir::LirConstantData::Integer(ref value))
+                        if value.is_zero()
+                )
+            {
+                return Ok(lir::LirConstant::null(target_ty.clone()));
+            }
+            return Err(fp_core::error::Error::from(format!(
                 "typed constant mismatch: {:?} versus {:?}",
-                constant.ty,
-                target_ty
-            );
+                constant.ty, target_ty
+            )));
         }
-        constant
+        Ok(constant)
     }
 
     fn coerce_assignment_value(
@@ -5072,9 +5083,11 @@ impl LirGenerator {
         value: lir::LirValue,
         expected_ty: &lir::LirType,
         instructions: &mut Vec<lir::LirInstruction>,
-    ) -> lir::LirValue {
+    ) -> Result<lir::LirValue> {
         if matches!(expected_ty, lir::LirType::Void) {
-            return lir::LirValue::constant(lir::LirConstant::undef(expected_ty.clone()));
+            return Ok(lir::LirValue::constant(lir::LirConstant::undef(
+                expected_ty.clone(),
+            )));
         }
         self.cast_runtime_value_to_lir_type_with_source(
             value,
@@ -5954,7 +5967,7 @@ impl LirGenerator {
                 ));
             }
         };
-        Ok(self.require_constant_type(constant, lir_ty))
+        Ok(self.require_constant_type(constant, lir_ty)?)
     }
 
     fn array_length_from_const(&self, len: &ConstKind) -> u64 {

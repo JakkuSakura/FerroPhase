@@ -37,6 +37,7 @@ const HEAP_DEFAULT: u64 = 64 * 1024 * 1024;
 
 pub struct VirtMem {
     bytes: Vec<u8>,
+    heap_next: u64,
     stack_top: u64,
     stack_low: u64,
 }
@@ -49,6 +50,7 @@ impl VirtMem {
         let stack_low = stack_top - STACK_SIZE;
         Self {
             bytes,
+            heap_next: 0x1000,
             stack_top,
             stack_low,
         }
@@ -69,6 +71,49 @@ impl VirtMem {
         }
         self.bounds(new_sp, aligned_size)?;
         Ok(new_sp)
+    }
+
+    pub fn heap_alloc(&mut self, size: u64, alignment: u32) -> Result<u64, VmError> {
+        let alignment = u64::from(alignment.max(1));
+        let aligned = self
+            .heap_next
+            .checked_add(alignment - 1)
+            .map(|value| value & !(alignment - 1))
+            .ok_or(VmError::InvalidAddress(self.heap_next))?;
+        let end = aligned
+            .checked_add(size)
+            .ok_or(VmError::InvalidAddress(aligned))?;
+        self.bounds(aligned, size)?;
+        self.heap_next = end;
+        Ok(aligned)
+    }
+
+    pub fn store_bytes(&mut self, addr: u64, bytes: &[u8]) -> Result<(), VmError> {
+        self.bounds(addr, bytes.len() as u64)?;
+        let start = addr as usize;
+        self.bytes[start..start + bytes.len()].copy_from_slice(bytes);
+        Ok(())
+    }
+
+    pub fn load_bytes(&self, addr: u64, size: u64) -> Result<Vec<u8>, VmError> {
+        self.bounds(addr, size)?;
+        let start = addr as usize;
+        Ok(self.bytes[start..start + size as usize].to_vec())
+    }
+
+    pub fn load_c_string(&self, addr: u64) -> Result<Vec<u8>, VmError> {
+        let mut bytes = Vec::new();
+        let mut current = addr;
+        loop {
+            let byte = self.load_u8(current)?;
+            if byte == 0 {
+                return Ok(bytes);
+            }
+            bytes.push(byte);
+            current = current
+                .checked_add(1)
+                .ok_or(VmError::InvalidAddress(current))?;
+        }
     }
 
     pub fn store_u64(&mut self, addr: u64, val: u64) -> Result<(), VmError> {

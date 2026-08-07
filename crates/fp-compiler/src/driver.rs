@@ -754,13 +754,10 @@ impl CompilerDriver {
         self.interpreter
             .inject_globals(&self.collect_resolved_const_values())
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
-        let mut value = self
+        let value = self
             .interpreter
             .run_function_named(&units, package_id, &function_name)
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
-        if let Some(resolved) = Self::resolve_comptime_value(&mut self.interpreter, &value) {
-            value = resolved;
-        }
         Ok(value)
     }
 
@@ -1291,20 +1288,25 @@ impl CompilerDriver {
             );
             let mut value =
                 result.map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
-            // If the returned value is a raw handle (u64 from comptime
-            // struct construction), resolve it from the interpreter's objects.
-            if let Some(resolved) = Self::resolve_comptime_value(&mut self.interpreter, &value) {
-                value = resolved;
-            }
-            if matches!(entry.ty.kind, TyKind::Slice(_)) {
-                if let Some(resolved) = self
-                    .interpreter
-                    .resolve_string_slice(&value)
-                    .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?
-                {
-                    value = resolved;
-                }
-            }
+            let entry_lir_ty = all_units
+                .iter()
+                .find_map(|unit| {
+                    unit.program
+                        .functions
+                        .iter()
+                        .find(|function| function.name == entry.function)
+                        .map(|function| function.signature.return_type.clone())
+                })
+                .ok_or_else(|| {
+                    CompilerDriverError::UnsupportedWork(format!(
+                        "missing LIR result type for comptime entry {}",
+                        entry.function
+                    ))
+                })?;
+            value = self
+                .interpreter
+                .read_typed_const_value(value, &entry_lir_ty)
+                .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
             // Store struct types from ALL entries, not just the last one.
             // Each const-block type alias produces its own struct.
             let entry_struct = Self::extract_struct_type(&value);
@@ -1354,18 +1356,6 @@ impl CompilerDriver {
             },
             _ => None,
         }
-    }
-
-    /// Resolve a raw handle (u64) from the interpreter's objects table.
-    /// During comptime evaluation, struct construction produces handles that
-    /// need to be looked up to get the actual struct type.
-    fn resolve_comptime_value(interp: &mut LirInterpreter, value: &Value) -> Option<Value> {
-        let handle = match value {
-            Value::Int(v) => v.value as u64,
-            Value::UInt(v) => v.value,
-            _ => return None,
-        };
-        interp.resolve_object(handle)
     }
 
     fn lower_to_mir(
