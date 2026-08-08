@@ -423,7 +423,7 @@ fn build_frame_layout(
                     | AsmInstructionKind::Shl(_, _)
                     | AsmInstructionKind::Shr(_, _)
             ) {
-                if matches!(inst.type_hint, Some(AsmType::I128)) {
+                if matches!(inst.ty, AsmType::I128) {
                     has_calls = true;
                     let args = match inst.kind {
                         AsmInstructionKind::Shl(_, _) | AsmInstructionKind::Shr(_, _) => 3,
@@ -432,10 +432,10 @@ fn build_frame_layout(
                     max_call_args = max_call_args.max(args);
                 }
             } else if let AsmInstructionKind::Alloca { size, alignment } = &inst.kind {
-                let ty = inst
-                    .type_hint
-                    .clone()
-                    .ok_or_else(|| Error::from("missing type for alloca"))?;
+                let ty = inst.ty.clone();
+                if matches!(ty, AsmType::Void) {
+                    return Err(Error::from("alloca requires a concrete type"));
+                }
                 let AsmType::Ptr(inner) = ty else {
                     return Err(Error::from("alloca expects pointer type"));
                 };
@@ -706,8 +706,8 @@ fn build_reg_types(func: &AsmFunction) -> HashMap<u32, AsmType> {
     let mut map = HashMap::new();
     for block in &func.basic_blocks {
         for inst in &block.instructions {
-            if let Some(ty) = inst.type_hint.as_ref() {
-                map.insert(inst.id, ty.clone());
+            if !matches!(inst.ty, AsmType::Void) {
+                map.insert(inst.id, inst.ty.clone());
             }
         }
     }
@@ -6584,10 +6584,10 @@ fn emit_block(
                 asm.emit_u32(0xD503201F);
             }
             AsmInstructionKind::Add(lhs, rhs) => {
-                let ty = inst
-                    .type_hint
-                    .as_ref()
-                    .ok_or_else(|| Error::from("missing type for add"))?;
+                let ty = inst.ty.clone();
+                if matches!(ty, AsmType::Void) {
+                    return Err(Error::from("add requires a concrete type"));
+                }
                 if matches!(ty, AsmType::Ptr(_)) {
                     if let (
                         AsmValue::Constant(AsmConstant::String(lhs_text)),
@@ -6610,16 +6610,16 @@ fn emit_block(
                     lhs,
                     rhs,
                     BinOp::Add,
-                    ty,
+                    &ty,
                     reg_types,
                     local_types,
                 )?
             }
             AsmInstructionKind::Sub(lhs, rhs) => {
-                let ty = inst
-                    .type_hint
-                    .as_ref()
-                    .ok_or_else(|| Error::from("missing type for sub"))?;
+                let ty = inst.ty.clone();
+                if matches!(ty, AsmType::Void) {
+                    return Err(Error::from("sub requires a concrete type"));
+                }
                 emit_binop(
                     asm,
                     layout,
@@ -6627,16 +6627,16 @@ fn emit_block(
                     lhs,
                     rhs,
                     BinOp::Sub,
-                    ty,
+                    &ty,
                     reg_types,
                     local_types,
                 )?
             }
             AsmInstructionKind::Mul(lhs, rhs) => {
-                let ty = inst
-                    .type_hint
-                    .as_ref()
-                    .ok_or_else(|| Error::from("missing type for mul"))?;
+                let ty = inst.ty.clone();
+                if matches!(ty, AsmType::Void) {
+                    return Err(Error::from("mul requires a concrete type"));
+                }
                 emit_binop(
                     asm,
                     layout,
@@ -6644,7 +6644,7 @@ fn emit_block(
                     lhs,
                     rhs,
                     BinOp::Mul,
-                    ty,
+                    &ty,
                     reg_types,
                     local_types,
                 )?
@@ -6654,27 +6654,27 @@ fn emit_block(
                 lane_bits,
                 lanes,
             } => {
-                let result_ty = inst
-                    .type_hint
-                    .as_ref()
-                    .ok_or_else(|| Error::from("missing type for splat"))?;
-                if !matches!(result_ty, AsmType::Vector(_, _) if size_of(result_ty) == 16) {
+                let result_ty = inst.ty.clone();
+                if matches!(result_ty, AsmType::Void) {
+                    return Err(Error::from("splat requires a concrete result type"));
+                }
+                if !matches!(result_ty, AsmType::Vector(_, _) if size_of(&result_ty) == 16) {
                     return Err(Error::from("splat expects 128-bit vector result"));
                 }
 
                 load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
                 emit_dup_from_gpr(asm, FReg::V0, Reg::X16, *lane_bits, *lanes)?;
-                store_vreg_float(asm, layout, inst.id, FReg::V0, result_ty)?;
+                store_vreg_float(asm, layout, inst.id, FReg::V0, &result_ty)?;
             }
             AsmInstructionKind::BuildVector { elements } => {
-                let result_ty = inst
-                    .type_hint
-                    .as_ref()
-                    .ok_or_else(|| Error::from("missing type for build_vector"))?;
-                let AsmType::Vector(elem_ty, lanes) = result_ty else {
+                let result_ty = inst.ty.clone();
+                if matches!(result_ty, AsmType::Void) {
+                    return Err(Error::from("build_vector requires a concrete result type"));
+                }
+                let AsmType::Vector(elem_ty, lanes) = &result_ty else {
                     return Err(Error::from("build_vector expects vector result type"));
                 };
-                if size_of(result_ty) != 16 {
+                if size_of(&result_ty) != 16 {
                     return Err(Error::from("build_vector only supports 128-bit vectors"));
                 }
                 if *elem_ty.as_ref() != AsmType::I64 || *lanes != 2 {
@@ -6690,14 +6690,14 @@ fn emit_block(
                 asm.emit_u32(0x6F00_E400u32 | FReg::V0.id());
                 asm.emit_u32(0x4E08_1E00u32 | (Reg::X16.id() << 5) | FReg::V0.id());
                 asm.emit_u32(0x4E18_1E00u32 | (Reg::X17.id() << 5) | FReg::V0.id());
-                store_vreg_float(asm, layout, inst.id, FReg::V0, result_ty)?;
+                store_vreg_float(asm, layout, inst.id, FReg::V0, &result_ty)?;
             }
             AsmInstructionKind::ExtractLane { vector, lane } => {
-                let result_ty = inst
-                    .type_hint
-                    .as_ref()
-                    .ok_or_else(|| Error::from("missing type for extract_lane"))?;
-                if *result_ty != AsmType::I64 {
+                let result_ty = inst.ty.clone();
+                if matches!(result_ty, AsmType::Void) {
+                    return Err(Error::from("extract_lane requires a concrete result type"));
+                }
+                if result_ty != AsmType::I64 {
                     return Err(Error::from("extract_lane only supports i64 for now"));
                 }
                 let vector_ty = value_type(vector, reg_types, local_types)?;
@@ -6730,11 +6730,11 @@ fn emit_block(
                 lane,
                 value,
             } => {
-                let result_ty = inst
-                    .type_hint
-                    .as_ref()
-                    .ok_or_else(|| Error::from("missing type for insert_lane"))?;
-                if !matches!(result_ty, AsmType::Vector(_, _) if size_of(result_ty) == 16) {
+                let result_ty = inst.ty.clone();
+                if matches!(result_ty, AsmType::Void) {
+                    return Err(Error::from("insert_lane requires a concrete result type"));
+                }
+                if !matches!(result_ty, AsmType::Vector(_, _) if size_of(&result_ty) == 16) {
                     return Err(Error::from("insert_lane expects 128-bit vector result"));
                 }
                 if *lane > 1 {
@@ -6759,18 +6759,18 @@ fn emit_block(
                     0x4E18_1E00u32
                 };
                 asm.emit_u32(base | (Reg::X16.id() << 5) | FReg::V0.id());
-                store_vreg_float(asm, layout, inst.id, FReg::V0, result_ty)?;
+                store_vreg_float(asm, layout, inst.id, FReg::V0, &result_ty)?;
             }
             AsmInstructionKind::ZipLow {
                 lhs,
                 rhs,
                 lane_bits,
             } => {
-                let result_ty = inst
-                    .type_hint
-                    .as_ref()
-                    .ok_or_else(|| Error::from("missing type for zip_low"))?;
-                if !matches!(result_ty, AsmType::Vector(_, _) if size_of(result_ty) == 16) {
+                let result_ty = inst.ty.clone();
+                if matches!(result_ty, AsmType::Void) {
+                    return Err(Error::from("zip_low requires a concrete result type"));
+                }
+                if !matches!(result_ty, AsmType::Vector(_, _) if size_of(&result_ty) == 16) {
                     return Err(Error::from("zip_low expects 128-bit vector result"));
                 }
                 let base = match *lane_bits {
@@ -6792,7 +6792,7 @@ fn emit_block(
                 // zip1 v0.(lanes), v0.(lanes), v1.(lanes)
                 asm.emit_u32(base | (FReg::V1.id() << 16) | (FReg::V0.id() << 5) | FReg::V0.id());
 
-                store_vreg_float(asm, layout, inst.id, FReg::V0, result_ty)?;
+                store_vreg_float(asm, layout, inst.id, FReg::V0, &result_ty)?;
             }
             AsmInstructionKind::And(lhs, rhs) => emit_bitwise_binop(
                 asm,
@@ -6968,11 +6968,10 @@ fn emit_block(
                 asm.record_vreg_sp_offset(inst.id, offset);
             }
             AsmInstructionKind::Load { address, .. } => {
-                let ty = inst
-                    .type_hint
-                    .as_ref()
-                    .ok_or_else(|| Error::from("missing type for load"))?;
-                emit_load(asm, layout, inst.id, address, ty)?;
+                if matches!(inst.ty, AsmType::Void) {
+                    return Err(Error::from("load requires a concrete type"));
+                }
+                emit_load(asm, layout, inst.id, address, &inst.ty)?;
             }
             AsmInstructionKind::Store { value, address, .. } => {
                 emit_store(
@@ -6999,11 +6998,7 @@ fn emit_block(
                 calling_convention,
                 ..
             } => {
-                let ty = inst
-                    .type_hint
-                    .as_ref()
-                    .cloned()
-                    .ok_or_else(|| Error::from("call instruction is missing a result type"))?;
+                let ty = inst.ty.clone();
                 emit_call(
                     asm,
                     layout,
@@ -7025,10 +7020,7 @@ fn emit_block(
                 number,
                 args,
             } => {
-                let ty =
-                    inst.type_hint.as_ref().cloned().ok_or_else(|| {
-                        Error::from("syscall instruction is missing a result type")
-                    })?;
+                let ty = inst.ty.clone();
                 emit_syscall(
                     asm,
                     layout,
@@ -7047,7 +7039,7 @@ fn emit_block(
                 format: format_str,
                 args,
             } => {
-                let ty = inst.type_hint.clone().unwrap_or(AsmType::Void);
+                let ty = inst.ty.clone();
                 emit_intrinsic_call(
                     asm,
                     layout,
@@ -8057,7 +8049,7 @@ mod tests {
                             AsmValue::Constant(AsmConstant::Int(1, AsmType::I64)),
                             AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
                         ),
-                        type_hint: Some(AsmType::I1),
+                        ty: AsmType::I1,
                         opcode: AsmOpcode::Generic(AsmGenericOpcode::Ugt),
                         operands: Vec::new(),
                         implicit_uses: Vec::new(),

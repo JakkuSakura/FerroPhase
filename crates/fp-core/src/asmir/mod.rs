@@ -168,7 +168,7 @@ pub struct AsmBlock {
 pub struct AsmInstruction {
     pub id: AsmInstrId,
     pub kind: AsmInstructionKind,
-    pub type_hint: Option<AsmType>,
+    pub ty: AsmType,
     pub opcode: AsmOpcode,
     pub operands: Vec<AsmOperand>,
     pub implicit_uses: Vec<AsmRegister>,
@@ -521,7 +521,7 @@ pub enum AsmInstructionKind {
     },
     /// Constructs a vector value from explicit lane values.
     ///
-    /// Lane types are derived from the destination instruction `type_hint`.
+    /// Lane types are derived from the destination instruction `ty`.
     BuildVector {
         elements: Vec<AsmValue>,
     },
@@ -772,7 +772,7 @@ mod tests {
                         0,
                         Ty::I32,
                     ))),
-                    type_hint: Some(Ty::I32),
+                    ty: Ty::I32,
                     opcode: AsmOpcode::Generic(AsmGenericOpcode::Freeze),
                     operands: vec![
                         AsmOperand::Register {

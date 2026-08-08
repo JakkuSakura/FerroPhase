@@ -4972,6 +4972,26 @@ impl LirGenerator {
             return Ok(value);
         }
 
+        if let lir::LirType::Ptr(pointee) = &current_ty {
+            if pointee.as_ref() == &target_ty {
+                let load_id = self.next_id();
+                instructions.push(lir::LirInstruction {
+                    id: load_id,
+                    kind: lir::LirInstructionKind::Load {
+                        address: value,
+                        alignment: Some(self.alignment_for_lir_type(&target_ty)),
+                        volatile: false,
+                    },
+                    result: Some(lir::LirRegister {
+                        id: load_id,
+                        ty: target_ty.clone(),
+                    }),
+                    debug_info: None,
+                });
+                return Ok(lir::LirValue::register(load_id, target_ty));
+            }
+        }
+
         if self.is_integral_type(&current_ty) && self.is_integral_type(&target_ty) {
             let current_bits = self.type_bit_width(&current_ty).unwrap_or(64);
             let target_bits = self.type_bit_width(&target_ty).unwrap_or(64);
@@ -5141,6 +5161,26 @@ impl LirGenerator {
                         }
                     }
                     PlaceAccess::Value { value, ty, lir_ty } => {
+                        if let (lir::LirType::Ptr(pointee), Some(expected)) = (&lir_ty, expected_ty)
+                        {
+                            if pointee.as_ref() == expected {
+                                let load_id = self.next_id();
+                                block.instructions.push(lir::LirInstruction {
+                                    id: load_id,
+                                    kind: lir::LirInstructionKind::Load {
+                                        address: value,
+                                        alignment: Some(self.alignment_for_lir_type(expected)),
+                                        volatile: false,
+                                    },
+                                    result: Some(lir::LirRegister {
+                                        id: load_id,
+                                        ty: expected.clone(),
+                                    }),
+                                    debug_info: None,
+                                });
+                                return Ok(lir::LirValue::register(load_id, expected.clone()));
+                            }
+                        }
                         if expects_pointer {
                             if matches!(lir_ty, lir::LirType::Ptr(_)) {
                                 Ok(value)

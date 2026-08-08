@@ -98,7 +98,11 @@ pub fn select_program(
                 instructions.push(AsmInstruction {
                     id: instruction.id,
                     kind: map_instruction_kind(&instruction.kind),
-                    type_hint: instruction.result.as_ref().map(|result| result.ty.clone()),
+                    ty: instruction
+                        .result
+                        .as_ref()
+                        .map(|result| result.ty.clone())
+                        .unwrap_or(AsmType::Void),
                     opcode: AsmOpcode::Generic(generic_opcode(&map_instruction_kind(
                         &instruction.kind,
                     ))),
@@ -1283,11 +1287,8 @@ fn normalize_program_generic(program: &mut AsmProgram) {
         for block in &mut function.basic_blocks {
             for instruction in &mut block.instructions {
                 instruction.opcode = AsmOpcode::Generic(generic_opcode(&instruction.kind));
-                instruction.operands = generic_operands(
-                    instruction.id,
-                    &instruction.kind,
-                    instruction.type_hint.as_ref(),
-                );
+                instruction.operands =
+                    generic_operands(instruction.id, &instruction.kind, Some(&instruction.ty));
             }
         }
     }
@@ -1357,7 +1358,7 @@ fn x86_detail_from_instruction(
             let mut detail = x86_detail(
                 instruction.id,
                 &instruction.kind,
-                instruction.type_hint.as_ref(),
+                Some(&instruction.ty),
                 ctx,
             );
             if let Some(write_operand) = mapped_x86_write_operand(&instruction.operands, ctx) {
@@ -1386,7 +1387,7 @@ fn aarch64_detail_from_instruction(
             let mut detail = aarch64_detail(
                 instruction.id,
                 &instruction.kind,
-                instruction.type_hint.as_ref(),
+                Some(&instruction.ty),
                 ctx,
             );
             if let Some(write_operand) = mapped_aarch64_write_operand(&instruction.operands, ctx) {
@@ -3161,13 +3162,13 @@ fn lift_x86_instruction(instruction: &X86InstructionDetail, id: u32) -> Result<A
         .iter()
         .map(x86_operand_to_asm)
         .collect::<Vec<_>>();
-    let type_hint = output_type_from_asm_operands(&operands);
+    let ty = output_type_from_asm_operands(&operands).unwrap_or(AsmType::Void);
     let kind = semanticize_x86_detail(instruction, &operands)?;
     Ok(AsmInstruction {
         id,
         opcode: AsmOpcode::Generic(generic_opcode(&kind)),
         kind,
-        type_hint,
+        ty,
         operands,
         implicit_uses: Vec::new(),
         implicit_defs: Vec::new(),
@@ -3186,13 +3187,13 @@ fn lift_aarch64_instruction(
         .iter()
         .map(aarch64_operand_to_asm)
         .collect::<Vec<_>>();
-    let type_hint = output_type_from_asm_operands(&operands);
+    let ty = output_type_from_asm_operands(&operands).unwrap_or(AsmType::Void);
     let kind = semanticize_aarch64_detail(instruction, &operands)?;
     Ok(AsmInstruction {
         id,
         opcode: AsmOpcode::Generic(generic_opcode(&kind)),
         kind,
-        type_hint,
+        ty,
         operands,
         implicit_uses: Vec::new(),
         implicit_defs: Vec::new(),

@@ -176,7 +176,7 @@ fn rejects_non_constant_static_initializer_operand() {
 }
 
 #[test]
-fn rejects_tuple_constant_with_non_tuple_type_hint() {
+fn rejects_tuple_constant_with_non_tuple_ty() {
     let ty = Ty::int(IntTy::I32);
     let constant = mir::Constant {
         span: Span::new(0, 0, 0),

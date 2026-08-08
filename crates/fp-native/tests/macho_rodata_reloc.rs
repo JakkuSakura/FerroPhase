@@ -54,7 +54,7 @@ fn macho_aarch64_rodata_addresses_use_adrp_add_relocations() {
                     calling_convention: CallingConvention::C,
                     tail_call: false,
                 },
-                type_hint: Some(AsmType::I32),
+                ty: AsmType::I32,
                 operands: Vec::new(),
                 implicit_uses: Vec::new(),
                 implicit_defs: Vec::new(),

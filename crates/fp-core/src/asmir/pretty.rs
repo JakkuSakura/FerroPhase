@@ -208,7 +208,7 @@ mod tests {
                     kind: AsmInstructionKind::Freeze(crate::asmir::AsmValue::Constant(
                         crate::asmir::AsmConstant::Int(0, crate::lir::Ty::I32),
                     )),
-                    type_hint: Some(crate::lir::Ty::I32),
+                    ty: crate::lir::Ty::I32,
                     opcode: AsmOpcode::Generic(AsmGenericOpcode::Freeze),
                     operands: vec![AsmOperand::Immediate(0)],
                     implicit_uses: Vec::new(),

@@ -362,7 +362,9 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
         } else if let Some(offset) = plan.data_symbols.get(name) {
             Ok(data_addr.wrapping_add(*offset).wrapping_add(addend as u64))
         } else {
-            Err(Error::from("unsupported relocation in ELF executable"))
+            Err(Error::from(format!(
+                "unsupported relocation in ELF executable: {name}"
+            )))
         }
     };
 

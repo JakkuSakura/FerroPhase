@@ -831,7 +831,7 @@ fn materialize_darwin_progname(program: &mut AsmProgram) {
                         calling_convention: CallingConvention::C,
                         tail_call: false,
                     },
-                    type_hint: Some(AsmType::Ptr(Box::new(AsmType::I8))),
+                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
                     operands: Vec::new(),
                     implicit_uses: Vec::new(),
                     implicit_defs: Vec::new(),

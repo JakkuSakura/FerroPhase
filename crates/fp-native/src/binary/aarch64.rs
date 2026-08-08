@@ -73,7 +73,7 @@ fn compare_instruction(
         id,
         opcode: AsmOpcode::Generic(opcode),
         kind,
-        type_hint: None,
+        ty: AsmType::Void,
         operands: Vec::new(),
         implicit_uses: Vec::new(),
         implicit_defs: Vec::new(),
@@ -114,7 +114,7 @@ fn patch_compare_kind(
     let (kind, opcode) = compare_kind_from_cond(condition, lhs, rhs)?;
     inst.kind = kind;
     inst.opcode = AsmOpcode::Generic(opcode);
-    inst.type_hint = None;
+    inst.ty = AsmType::Void;
     Ok(())
 }
 
@@ -252,7 +252,7 @@ pub fn lift_function_bytes(
                     id: nop_id,
                     opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Nop),
                     kind: AsmInstructionKind::Nop,
-                    type_hint: None,
+                    ty: AsmType::Void,
                     operands: Vec::new(),
                     implicit_uses: Vec::new(),
                     implicit_defs: Vec::new(),
@@ -342,7 +342,7 @@ pub fn lift_function_bytes(
                         calling_convention: CallingConvention::AAPCS,
                         tail_call: false,
                     },
-                    type_hint: Some(AsmType::Void),
+                    ty: AsmType::Void,
                     operands: Vec::new(),
                     implicit_uses: Vec::new(),
                     implicit_defs: Vec::new(),
@@ -373,7 +373,7 @@ pub fn lift_function_bytes(
                     id: symbol_id,
                     opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
                     kind: AsmInstructionKind::Freeze(symbol_const),
-                    type_hint: Some(AsmType::Ptr(Box::new(AsmType::I8))),
+                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
                     operands: Vec::new(),
                     implicit_uses: Vec::new(),
                     implicit_defs: Vec::new(),
@@ -441,7 +441,7 @@ pub fn lift_function_bytes(
                         number,
                         args,
                     },
-                    type_hint: Some(AsmType::I64),
+                    ty: AsmType::I64,
                     operands: Vec::new(),
                     implicit_uses: Vec::new(),
                     implicit_defs: Vec::new(),
@@ -529,7 +529,7 @@ pub fn lift_function_bytes(
                             alignment: None,
                             volatile: false,
                         },
-                        type_hint: Some(AsmType::I64),
+                        ty: AsmType::I64,
                         operands: Vec::new(),
                         implicit_uses: Vec::new(),
                         implicit_defs: Vec::new(),
@@ -564,7 +564,7 @@ pub fn lift_function_bytes(
                             alignment: None,
                             volatile: false,
                         },
-                        type_hint: Some(AsmType::Void),
+                        ty: AsmType::Void,
                         operands: Vec::new(),
                         implicit_uses: Vec::new(),
                         implicit_defs: Vec::new(),
@@ -709,7 +709,7 @@ fn lift_instruction(
                 alignment: None,
                 volatile: false,
             },
-            type_hint: Some(AsmType::I64),
+            ty: AsmType::I64,
             operands: Vec::new(),
             implicit_uses: Vec::new(),
             implicit_defs: Vec::new(),
@@ -736,7 +736,7 @@ fn lift_instruction(
                 alignment: None,
                 volatile: false,
             },
-            type_hint: Some(AsmType::Void),
+            ty: AsmType::Void,
             operands: Vec::new(),
             implicit_uses: Vec::new(),
             implicit_defs: Vec::new(),
@@ -758,7 +758,7 @@ fn build_binop(id: u32, kind: AsmInstructionKind, opcode: AsmOpcode) -> AsmInstr
         id,
         opcode,
         kind,
-        type_hint: Some(AsmType::I64),
+        ty: AsmType::I64,
         operands: Vec::new(),
         implicit_uses: Vec::new(),
         implicit_defs: Vec::new(),
