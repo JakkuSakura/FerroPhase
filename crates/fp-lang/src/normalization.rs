@@ -54,17 +54,26 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
         };
         match self.mode {
             IntrinsicNormalizationMode::Compile => {
+                let (args, kwargs) = if matches!(op, OpKind::Print | OpKind::Println) {
+                    let (template, skip) = build_print_template_from_args(&call.args)?;
+                    let mut args = Vec::with_capacity(1 + call.args.len().saturating_sub(skip));
+                    args.push(Expr::new(ExprKind::FormatString(template)));
+                    args.extend(call.args[skip..].iter().cloned());
+                    (args, call.kwargs)
+                } else {
+                    (call.args, call.kwargs)
+                };
                 let replacement = match compile_mode_std_path(op) {
                     Some(path) => ExprKind::Invoke(ExprInvoke {
                         span: call.span,
                         target: ExprInvokeTarget::Function(Name::path(Path::plain(path))),
-                        args: call.args,
-                        kwargs: call.kwargs,
+                        args,
+                        kwargs,
                     }),
                     None => ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
                         CallKind::Intrinsic(call.kind.intrinsic_kind().expect("operation mapping")),
-                        call.args,
-                        call.kwargs,
+                        args,
+                        kwargs,
                     )),
                 };
                 Ok(NormalizeOutcome::Normalized(Expr::from_parts(
@@ -420,8 +429,12 @@ fn resolve_lang_intrinsic(invoke: &ExprInvoke) -> Option<CallKind> {
         ExprInvokeTarget::Function(name) => name.to_string(),
         _ => return None,
     };
-    // Check both qualified (std::intrinsics::create_struct) and bare names
-    let fn_name = name.rsplit("::").next().unwrap_or(&name);
+    let fn_name = match name.as_str() {
+        "print" | "println" | "std::print" | "std::println" | "std::io::print"
+        | "std::io::println" => name.rsplit("::").next().unwrap_or(&name),
+        _ if !name.contains("::") => name.as_str(),
+        _ => return None,
+    };
     intrinsic_macro_kind(fn_name).or_else(|| {
         matches!(fn_name, "format" | "print" | "println")
             .then(|| operation_kind(fn_name))
@@ -987,6 +1000,53 @@ mod tests {
             .expect("normalize intrinsic call")
             .into_inner();
         assert!(matches!(intrinsic.kind(), ExprKind::IntrinsicCall(_)));
+    }
+
+    #[test]
+    fn compile_mode_shapes_direct_print_calls() {
+        let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile);
+        let call = Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+            CallKind::Op(OpKind::Print),
+            vec![Expr::value(Value::string("value".to_string()))],
+            Vec::new(),
+        )));
+
+        let normalized = normalizer
+            .normalize_call(call)
+            .expect("normalize print call")
+            .into_inner();
+        let ExprKind::IntrinsicCall(call) = normalized.kind() else {
+            panic!("expected compiler print intrinsic");
+        };
+        assert!(matches!(
+            call.kind,
+            CallKind::Intrinsic(IntrinsicKind::Print)
+        ));
+        assert!(matches!(
+            call.args.first().map(Expr::kind),
+            Some(ExprKind::FormatString(_))
+        ));
+        assert_eq!(call.args.len(), 1);
+    }
+
+    #[test]
+    fn compile_mode_does_not_capture_qualified_user_print() {
+        let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile);
+        let invoke = Expr::new(ExprKind::Invoke(ExprInvoke {
+            span: Span::null(),
+            target: ExprInvokeTarget::Function(Name::path(Path::plain(vec![
+                Ident::new("json"),
+                Ident::new("print"),
+            ]))),
+            args: vec![Expr::value(Value::string("value".to_string()))],
+            kwargs: Vec::new(),
+        }));
+
+        let normalized = normalizer
+            .normalize_invoke(invoke)
+            .expect("normalize qualified call")
+            .into_inner();
+        assert!(matches!(normalized.kind(), ExprKind::Invoke(_)));
     }
 
     #[test]

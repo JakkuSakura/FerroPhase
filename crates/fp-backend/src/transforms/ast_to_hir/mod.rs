@@ -267,20 +267,38 @@ impl HirGenerator {
             return;
         }
         let target_path = fp_core::module::path::QualifiedPath::new(binding.target.clone());
-        if self.module_defs.contains(&target_path) {
-            self.current_value_scope()
-                .insert(alias.clone(), hir::Res::Module(binding.target.clone()));
+        let mut candidates = vec![target_path.clone()];
+        if !self.module_path.is_empty() {
+            let relative = self.module_path.join(&target_path.segments);
+            if relative != target_path {
+                candidates.push(relative);
+            }
+        }
+
+        for candidate in candidates {
+            if self.module_defs.contains(&candidate) {
+                self.current_value_scope()
+                    .insert(alias.clone(), hir::Res::Module(candidate.segments.clone()));
+                return;
+            }
+
+            let key = candidate.to_key();
+            let value = self.lookup_symbol(&key, &self.global_value_defs);
+            let ty = self.lookup_symbol(&key, &self.global_type_defs);
+            if value.is_none() && ty.is_none() {
+                continue;
+            }
+
+            if let Some(res) = value {
+                self.current_value_scope()
+                    .insert(alias.clone(), res.clone());
+                self.record_value_symbol(&alias, res, visibility);
+            }
+            if let Some(res) = ty {
+                self.current_type_scope().insert(alias.clone(), res.clone());
+                self.record_type_symbol(&alias, res, visibility);
+            }
             return;
-        }
-        let key = target_path.to_key();
-        if let Some(res) = self.lookup_symbol(&key, &self.global_value_defs) {
-            self.current_value_scope()
-                .insert(alias.clone(), res.clone());
-            self.record_value_symbol(&alias, res, visibility);
-        }
-        if let Some(res) = self.lookup_symbol(&key, &self.global_type_defs) {
-            self.current_type_scope().insert(alias.clone(), res.clone());
-            self.record_type_symbol(&alias, res, visibility);
         }
     }
 
