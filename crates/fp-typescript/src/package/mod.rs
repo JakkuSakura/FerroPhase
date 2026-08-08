@@ -4,12 +4,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use fp_core::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
-use fp_core::package::provider::{
-    ModuleProvider, ModuleSource, PackageProvider, ProviderError, ProviderResult,
-};
+use fp_core::package::graph::PackageGraph;
+use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::package::{
     DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageMetadata,
-    TargetFilter,
+    PackageSource, TargetFilter,
 };
 use fp_core::vfs::VirtualPath;
 use semver::{Version, VersionReq};
@@ -40,7 +39,6 @@ pub struct TypeScriptPackageProvider {
     root: PathBuf,
     packages: RwLock<HashMap<PackageId, Arc<PackageDescriptor>>>,
     modules: RwLock<HashMap<ModuleId, Arc<ModuleDescriptor>>>,
-    modules_by_package: RwLock<HashMap<PackageId, Vec<ModuleId>>>,
 }
 
 impl TypeScriptPackageProvider {
@@ -49,7 +47,6 @@ impl TypeScriptPackageProvider {
             root,
             packages: RwLock::new(HashMap::new()),
             modules: RwLock::new(HashMap::new()),
-            modules_by_package: RwLock::new(HashMap::new()),
         }
     }
 
@@ -153,7 +150,9 @@ impl PackageProvider for TypeScriptPackageProvider {
             Ok(g) => g,
             Err(poison) => poison.into_inner(),
         };
-        Ok(guard.keys().cloned().collect())
+        let mut packages: Vec<_> = guard.keys().cloned().collect();
+        packages.sort_by_key(|id| id.to_string());
+        Ok(packages)
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
@@ -242,69 +241,27 @@ impl PackageProvider for TypeScriptPackageProvider {
                     .collect();
             }
         }
-        match self.modules_by_package.write() {
-            Ok(mut w) => *w = HashMap::from([(package_id, module_ids)]),
-            Err(poison) => *poison.into_inner() = HashMap::from([(package_id, module_ids)]),
-        }
         Ok(())
     }
-}
 
-impl ModuleSource for TypeScriptPackageProvider {
-    fn modules_for_package(&self, id: &PackageId) -> ProviderResult<Vec<ModuleId>> {
-        let guard = match self.modules_by_package.read() {
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
+        let descriptor = self.load_package_metadata(id)?;
+        let modules = match self.modules.read() {
             Ok(g) => g,
             Err(poison) => poison.into_inner(),
         };
-        guard
-            .get(id)
-            .cloned()
-            .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))
-    }
-
-    fn load_module_descriptor(&self, id: &ModuleId) -> ProviderResult<Arc<ModuleDescriptor>> {
-        let guard = match self.modules.read() {
-            Ok(g) => g,
-            Err(poison) => poison.into_inner(),
-        };
-        guard
-            .get(id)
-            .cloned()
-            .ok_or_else(|| ProviderError::ModuleNotFound(id.clone()))
-    }
-}
-
-pub struct TypeScriptModuleProvider<P> {
-    packages: Arc<P>,
-}
-
-impl<P> TypeScriptModuleProvider<P>
-where
-    P: PackageProvider + ModuleSource + 'static,
-{
-    pub fn new(packages: Arc<P>) -> Self {
-        Self { packages }
-    }
-}
-
-impl<P> ModuleProvider for TypeScriptModuleProvider<P>
-where
-    P: PackageProvider + ModuleSource + 'static,
-{
-    fn modules_for_package(&self, id: &PackageId) -> ProviderResult<Vec<ModuleId>> {
-        self.packages.modules_for_package(id)
-    }
-
-    fn load_module(&self, id: &ModuleId) -> ProviderResult<Arc<ModuleDescriptor>> {
-        self.packages.load_module_descriptor(id)
-    }
-
-    fn refresh(&self, id: &PackageId) -> ProviderResult<()> {
-        self.packages.refresh()?;
-        if self.packages.modules_for_package(id).is_err() {
-            return Err(ProviderError::PackageNotFound(id.clone()));
+        let mut graph = PackageGraph::new(vec![(*descriptor).clone()]);
+        for module_id in &descriptor.modules {
+            let module = modules
+                .get(module_id)
+                .ok_or_else(|| ProviderError::ModuleNotFound(module_id.clone()))?;
+            graph.insert_module((**module).clone());
         }
-        Ok(())
+        Ok(PackageSource::new(
+            id.clone(),
+            descriptor.name.clone(),
+            graph,
+        ))
     }
 }
 
@@ -434,14 +391,21 @@ mod tests {
         let provider = TypeScriptPackageProvider::new(root.to_path_buf());
         provider.refresh()?;
 
-        let package_id = PackageId::new("example");
         let packages = provider.list_packages()?;
-        assert_eq!(packages, vec![package_id.clone()]);
+        assert_eq!(packages.len(), 1);
+        let package_id = packages[0].clone();
 
-        let module_ids = provider.modules_for_package(&package_id)?;
+        let source = provider.load_package_source(&package_id)?;
+        let module_ids = source
+            .graph
+            .modules_for_package(&package_id)
+            .expect("package graph should contain TypeScript modules");
         assert_eq!(module_ids.len(), 2);
 
-        let module = provider.load_module_descriptor(&module_ids[0])?;
+        let module = source
+            .graph
+            .module(&module_ids[0])
+            .expect("package graph should contain module descriptor");
         assert_eq!(module.language, ModuleLanguage::TypeScript);
         Ok(())
     }

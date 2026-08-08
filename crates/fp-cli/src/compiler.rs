@@ -8,10 +8,9 @@ use fp_compiler::{
     ConstValueId, FullyQualifiedPath, LirId, MirId,
 };
 use fp_core::module::path::QualifiedPath;
-use fp_core::package::graph::PackageGraph;
 use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::package::{PackageDescriptor, PackageId, PackageSource};
-use fp_core::vfs::VirtualPath;
+use fp_core::vfs::{UnixFileSystem, VirtualPath};
 use fp_core::{
     ast::register_threadlocal_serializer,
     ast::{
@@ -24,6 +23,7 @@ use fp_core::{
 };
 use fp_goasm::config::GoAsmTarget;
 use fp_lang::FerroFrontend;
+use fp_lang::module_source::FerroModuleSourceResolver;
 use fp_typing::{TypingDiagnostic, TypingDiagnosticLevel};
 
 #[cfg(feature = "lang-flatbuffers")]
@@ -887,8 +887,12 @@ struct InputPackageProvider {
 }
 
 impl InputPackageProvider {
-    fn new(package_id: PackageId, module_path: QualifiedPath, source: File) -> Self {
-        let descriptor = Arc::new(PackageDescriptor {
+    fn new(
+        package_id: PackageId,
+        module_path: QualifiedPath,
+        source: File,
+    ) -> ProviderResult<Self> {
+        let descriptor = PackageDescriptor {
             id: package_id.clone(),
             name: package_id.as_str().to_owned(),
             version: None,
@@ -896,19 +900,15 @@ impl InputPackageProvider {
             root: VirtualPath::from_path(source.path.parent().unwrap_or(Path::new("."))),
             metadata: Default::default(),
             modules: Vec::new(),
-        });
-        let mut package_source = PackageSource::new(
-            package_id.clone(),
-            package_id.as_str(),
-            PackageGraph::new(Vec::new()),
-        );
-        package_source.module_paths.insert(module_path.clone());
-        package_source.items.insert(module_path, source.items);
-        Self {
+        };
+        let resolver = FerroModuleSourceResolver::new(Arc::new(UnixFileSystem::new("/")));
+        let package_source =
+            resolver.resolve_package_source(descriptor.clone(), module_path, source)?;
+        Ok(Self {
             package_id,
-            descriptor,
+            descriptor: Arc::new(descriptor),
             source: package_source,
-        }
+        })
     }
 }
 
@@ -950,11 +950,13 @@ fn compile_source_file(
         PackageId::new(identity.path.path().head().ok_or_else(|| {
             CliError::Compilation("source file has no package identity".to_string())
         })?);
-    session.register_provider(Arc::new(InputPackageProvider::new(
+    let input_provider = InputPackageProvider::new(
         package_id.clone(),
         identity.path.path().clone(),
         ast.clone(),
-    )));
+    )
+    .map_err(|error| CliError::Compilation(error.to_string()))?;
+    session.register_provider(Arc::new(input_provider));
     session.driver().state.set_lossy(lossy.enabled);
 
     if let Some(resolver) = resolver {

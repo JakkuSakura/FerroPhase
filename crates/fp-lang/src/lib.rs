@@ -6,6 +6,7 @@ mod macro_parser;
 pub use normalization::FerroIntrinsicNormalizer;
 pub mod embedded_libc;
 pub mod module_path;
+pub mod module_source;
 mod normalization;
 mod serializer;
 use fp_core::Result as CoreResult;

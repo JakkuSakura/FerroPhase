@@ -5,7 +5,7 @@ use crate::resolver::{
 };
 use eyre::Result;
 use fp_core::package::DependencyDescriptor;
-use fp_core::package::provider::{ModuleSource, PackageProvider};
+use fp_core::package::provider::PackageProvider;
 use fp_typescript::TypeScriptPackageProvider;
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};
@@ -374,9 +374,9 @@ impl PackageGraph {
             let descriptor = provider
                 .load_package_metadata(&package_id)
                 .map_err(|err| eyre::eyre!("Failed to load package {package_id}: {err}"))?;
-            let _module_ids = provider
-                .modules_for_package(&package_id)
-                .map_err(|err| eyre::eyre!("Failed to list modules for {package_id}: {err}"))?;
+            let _source = provider
+                .load_package_source(&package_id)
+                .map_err(|err| eyre::eyre!("Failed to load modules for {package_id}: {err}"))?;
             let module_roots = default_module_roots(&descriptor.root.to_path_buf());
             let entry = detect_entry(&descriptor.root.to_path_buf(), &["ts", "tsx"]);
             let dependencies = descriptor

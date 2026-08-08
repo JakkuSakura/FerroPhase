@@ -1675,7 +1675,9 @@ mod comptime_source_tests {
         DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageMetadata,
         PackageSource, TargetFilter,
     };
+    use fp_core::vfs::UnixFileSystem;
     use fp_core::vfs::VirtualPath;
+    use fp_lang::module_source::FerroModuleSourceResolver;
     use std::sync::Arc;
 
     fn path() -> FullyQualifiedPath {
@@ -1931,11 +1933,10 @@ fn main() {
         let label = name.trim_end_matches(".fp");
         let package_id = PackageId::new(format!("example_{label}"));
         let module_path = QualifiedPath::new(vec![package_id.as_str().to_owned(), label.into()]);
-        workspace.register_provider(Arc::new(ExamplePackageProvider::new(
-            package_id.clone(),
-            module_path.clone(),
-            ast_node.clone(),
-        )));
+        let example_provider =
+            ExamplePackageProvider::new(package_id.clone(), module_path.clone(), ast_node.clone())
+                .map_err(|error| format!("load example modules: {error}"))?;
+        workspace.register_provider(Arc::new(example_provider));
 
         let executor = CompilerExecutor::new();
         let mut driver =
@@ -1966,8 +1967,12 @@ fn main() {
     }
 
     impl ExamplePackageProvider {
-        fn new(package_id: PackageId, module_path: QualifiedPath, file: File) -> Self {
-            let descriptor = Arc::new(PackageDescriptor {
+        fn new(
+            package_id: PackageId,
+            module_path: QualifiedPath,
+            file: File,
+        ) -> ProviderResult<Self> {
+            let descriptor = PackageDescriptor {
                 id: package_id.clone(),
                 name: package_id.as_str().to_owned(),
                 version: None,
@@ -1977,19 +1982,14 @@ fn main() {
                 ),
                 metadata: Default::default(),
                 modules: Vec::new(),
-            });
-            let mut source = PackageSource::new(
-                package_id.clone(),
-                package_id.as_str(),
-                PackageGraph::new(Vec::new()),
-            );
-            source.module_paths.insert(module_path.clone());
-            source.items.insert(module_path, file.items);
-            Self {
+            };
+            let resolver = FerroModuleSourceResolver::new(Arc::new(UnixFileSystem::new("/")));
+            let source = resolver.resolve_package_source(descriptor.clone(), module_path, file)?;
+            Ok(Self {
                 package_id,
-                descriptor,
+                descriptor: Arc::new(descriptor),
                 source,
-            }
+            })
         }
     }
 
