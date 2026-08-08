@@ -70,6 +70,7 @@ fn mangles_function_path_into_lir_name() {
         name: mir::Symbol::new("leaf"),
         path: vec![mir::Symbol::new("module"), mir::Symbol::new("leaf")],
         def_id: None,
+        instance_id: None,
         sig: FunctionSig {
             inputs: Vec::new(),
             output: return_ty.clone(),
@@ -324,6 +325,7 @@ fn lowers_single_case_switchint_as_equality_compare() {
         name: mir::Symbol::new("switch_test"),
         path: vec![mir::Symbol::new("switch_test")],
         def_id: None,
+        instance_id: None,
         sig: FunctionSig {
             inputs: Vec::new(),
             output: Ty {
@@ -405,6 +407,7 @@ fn rejects_slice_intrinsic_assignment_with_wrong_arity() {
         name: mir::Symbol::new("bad_slice"),
         path: vec![mir::Symbol::new("bad_slice")],
         def_id: None,
+        instance_id: None,
         sig: FunctionSig {
             inputs: Vec::new(),
             output: result_ty,
@@ -463,6 +466,7 @@ fn rejects_unsupported_intrinsic_assignment() {
         name: mir::Symbol::new("bad_intrinsic"),
         path: vec![mir::Symbol::new("bad_intrinsic")],
         def_id: None,
+        instance_id: None,
         sig: FunctionSig {
             inputs: Vec::new(),
             output: result_ty,
@@ -509,6 +513,7 @@ fn rejects_unhandled_mir_terminator() {
         name: mir::Symbol::new("bad_term"),
         path: vec![mir::Symbol::new("bad_term")],
         def_id: None,
+        instance_id: None,
         sig: FunctionSig {
             inputs: Vec::new(),
             output: Ty::int(IntTy::I32),
@@ -567,6 +572,7 @@ fn rejects_call_terminator_without_destination() {
         name: mir::Symbol::new("bad_call"),
         path: vec![mir::Symbol::new("bad_call")],
         def_id: None,
+        instance_id: None,
         sig: FunctionSig {
             inputs: Vec::new(),
             output: Ty::int(IntTy::I32),
@@ -627,6 +633,7 @@ fn rejects_downcast_place_projection() {
         name: mir::Symbol::new("downcast_test"),
         path: vec![mir::Symbol::new("downcast_test")],
         def_id: None,
+        instance_id: None,
         sig: FunctionSig {
             inputs: Vec::new(),
             output: Ty::int(IntTy::I32),

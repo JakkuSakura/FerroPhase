@@ -258,6 +258,7 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
 #[derive(Clone, Debug)]
 struct MethodLoweringInfo {
     def_id: Option<hir::DefId>,
+    instance_id: Option<mir::FunctionInstanceId>,
     sig: mir::FunctionSig,
     fn_name: String,
     fn_ty: Ty,
@@ -300,6 +301,7 @@ struct FunctionSpecializationKey {
 
 #[derive(Clone, Debug)]
 struct FunctionSpecializationInfo {
+    instance_id: mir::FunctionInstanceId,
     name: String,
     sig: mir::FunctionSig,
     fn_ty: Ty,
@@ -454,10 +456,6 @@ pub struct MirLowering {
     typeck_generic_method_args: HashMap<hir::HirId, Vec<Ty>>,
 }
 
-fn terminal_segment(name: &str) -> &str {
-    name.split("::").last().unwrap_or(name)
-}
-
 impl MirLowering {
     fn default_runtime_signatures() -> HashMap<String, mir::FunctionSig> {
         let mut map = HashMap::new();
@@ -561,6 +559,16 @@ impl MirLowering {
         self.lower_program(&hir_program)
     }
 
+    /// Lower HIR through the compiler's asynchronous boundary.
+    ///
+    /// Generic instance requests are resolved while producing MIR and are
+    /// cached by their typed `FunctionInstanceId`. Keeping this boundary
+    /// async lets the compiler driver own executor progress without making
+    /// every recursive expression operation an artificial future.
+    pub async fn transform_async(&mut self, hir_program: hir::Program) -> Result<mir::Program> {
+        self.transform(hir_program)
+    }
+
     pub fn set_lossy(&mut self, enabled: bool) {
         self.tolerate_errors = enabled;
     }
@@ -620,11 +628,7 @@ impl MirLowering {
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
         let hash = hasher.finish();
-        format!(
-            "__fp_comptime_const_{}_{}",
-            terminal_segment(name.as_str()),
-            hash
-        )
+        format!("__fp_comptime_const_{}_{}", name.as_str(), hash)
     }
 
     fn lower_program(&mut self, program: &hir::Program) -> Result<mir::Program> {
@@ -749,6 +753,7 @@ impl MirLowering {
                         roots.push_back(item.def_id);
                     }
                 }
+                hir::ItemKind::Const(_) => roots.push_back(item.def_id),
                 hir::ItemKind::Query(_) => roots.push_back(item.def_id),
                 hir::ItemKind::Expr(_) => roots.push_back(item.def_id),
                 _ => {}
@@ -774,8 +779,6 @@ impl MirLowering {
         program: &hir::Program,
     ) -> (HashMap<String, hir::DefId>, HashMap<String, hir::DefId>) {
         let mut full = HashMap::new();
-        let mut tails: HashMap<String, Option<hir::DefId>> = HashMap::new();
-
         for item in &program.items {
             let name = match &item.kind {
                 hir::ItemKind::Function(func) => func.sig.name.as_str().to_string(),
@@ -786,21 +789,8 @@ impl MirLowering {
                 _ => continue,
             };
             full.insert(name.clone(), item.def_id);
-            let tail = terminal_segment(&name).to_string();
-            tails
-                .entry(tail)
-                .and_modify(|entry| *entry = None)
-                .or_insert(Some(item.def_id));
         }
-
-        let mut tail_map = HashMap::new();
-        for (name, def_id) in tails {
-            if let Some(def_id) = def_id {
-                tail_map.insert(name, def_id);
-            }
-        }
-
-        (full, tail_map)
+        (full, HashMap::new())
     }
 
     fn collect_def_ids_from_item(
@@ -910,8 +900,8 @@ impl MirLowering {
         if let Some(def_id) = full_map.get(&full) {
             return Some(*def_id);
         }
-        let tail = segments.last()?.name.as_str();
-        tail_map.get(tail).copied()
+        let _ = tail_map;
+        None
     }
 
     fn collect_def_ids_from_type(
@@ -1185,6 +1175,7 @@ impl MirLowering {
                 name: mir::Symbol::new(name.clone()),
                 path: Vec::new(),
                 def_id: None,
+                instance_id: None,
                 sig: sig.clone(),
                 body_id,
                 abi: mir::ty::Abi::Rust,
@@ -1242,6 +1233,7 @@ impl MirLowering {
             name: mir::Symbol::from(function.sig.name.clone()),
             path: Vec::new(),
             def_id: Some(item.def_id),
+            instance_id: None,
             sig,
             body_id,
             abi: self.map_abi(&function.sig.abi),
@@ -1314,6 +1306,7 @@ impl MirLowering {
         sig: &mir::FunctionSig,
         substs: HashMap<String, Ty>,
         name_override: &str,
+        instance_id: mir::FunctionInstanceId,
     ) -> Result<(mir::Item, mir::BodyId, mir::Body)> {
         let body_id = mir::BodyId::new(self.next_body_id);
         self.next_body_id += 1;
@@ -1331,6 +1324,7 @@ impl MirLowering {
             name: mir::Symbol::new(name_override),
             path: Vec::new(),
             def_id: None,
+            instance_id: Some(instance_id.clone()),
             sig: sig.clone(),
             body_id,
             abi: self.map_abi(&function.sig.abi),
@@ -1531,6 +1525,11 @@ impl MirLowering {
             def_id,
             args: args_in_order.clone(),
         };
+        let instance_id = mir::FunctionInstanceId {
+            source_def_id: def_id,
+            method_name: None,
+            args: args_in_order.clone(),
+        };
 
         if let Some(info) = self.function_specializations.get(&key) {
             return Ok(info.clone());
@@ -1545,12 +1544,20 @@ impl MirLowering {
             .def_map
             .get(&def_id)
             .ok_or_else(|| crate::error::optimization_error("missing function item"))?;
-        let (mir_item, body_id, body) =
-            self.lower_function_with_substs(program, item, function, &sig, substs, &name)?;
+        let (mir_item, body_id, body) = self.lower_function_with_substs(
+            program,
+            item,
+            function,
+            &sig,
+            substs,
+            &name,
+            instance_id.clone(),
+        )?;
         self.extra_items.push(mir_item);
         self.extra_bodies.push((body_id, body));
 
         let info = FunctionSpecializationInfo {
+            instance_id,
             name: name.clone(),
             sig: sig.clone(),
             fn_ty: fn_ty.clone(),
@@ -1583,6 +1590,11 @@ impl MirLowering {
             def_id,
             args: args_in_order.clone(),
         };
+        let instance_id = mir::FunctionInstanceId {
+            source_def_id: def_id,
+            method_name: None,
+            args: args_in_order.clone(),
+        };
 
         if let Some(info) = self.function_specializations.get(&key) {
             return Ok(info.clone());
@@ -1597,12 +1609,20 @@ impl MirLowering {
             .def_map
             .get(&def_id)
             .ok_or_else(|| crate::error::optimization_error("missing function item"))?;
-        let (mir_item, body_id, body) =
-            self.lower_function_with_substs(program, item, function, &sig, substs, &name)?;
+        let (mir_item, body_id, body) = self.lower_function_with_substs(
+            program,
+            item,
+            function,
+            &sig,
+            substs,
+            &name,
+            instance_id.clone(),
+        )?;
         self.extra_items.push(mir_item);
         self.extra_bodies.push((body_id, body));
 
         let info = FunctionSpecializationInfo {
+            instance_id,
             name: name.clone(),
             sig: sig.clone(),
             fn_ty: fn_ty.clone(),
@@ -1756,110 +1776,9 @@ impl MirLowering {
             method_name: def.method_name.clone(),
             args: args_in_order.clone(),
         };
-
-        if let Some(info) = self.method_specializations.get(&key) {
-            return Ok(info.clone());
-        }
-
-        let mut method_context = if let hir::TypeExprKind::Path(path) = &def.self_ty.kind {
-            let mir_self_ty = self.lower_type_expr_with_substs(&def.self_ty, &substs);
-            Some(MethodContext {
-                def_id: def.self_def,
-                path: path.segments.clone(),
-                mir_self_ty,
-            })
-        } else {
-            None
-        };
-
-        let sig = self.lower_function_sig_with_substs(
-            &def.function.sig,
-            method_context.as_ref(),
-            &substs,
-        );
-        let suffix = self.specialization_suffix(&args_in_order);
-        let name = format!("{}__{}", def.method_name, suffix);
-        let fn_ty = self.function_pointer_ty(&sig);
-
-        let body_id = mir::BodyId::new(self.next_body_id);
-        self.next_body_id += 1;
-
-        let span = def
-            .function
-            .body
-            .as_ref()
-            .map(|body| body.span())
-            .unwrap_or(span);
-        let mir_body = BodyBuilder::new(
-            self,
-            program,
-            &def.function,
-            &sig,
-            span,
-            method_context.take(),
-            substs,
-        )
-        .lower()?;
-
-        let mir_function = mir::Function {
-            name: mir::Symbol::new(name.clone()),
-            path: Vec::new(),
-            def_id: None,
-            sig: sig.clone(),
-            body_id,
-            abi: self.map_abi(&def.function.sig.abi),
-            is_extern: false,
-            attrs: Vec::new(),
-        };
-        let mir_item = mir::Item {
-            mir_id: self.next_mir_id,
-            kind: mir::ItemKind::Function(mir_function),
-        };
-        self.next_mir_id += 1;
-
-        self.extra_items.push(mir_item);
-        self.extra_bodies.push((body_id, mir_body));
-
-        let info = MethodLoweringInfo {
-            def_id: None,
-            sig,
-            fn_name: name.clone(),
-            fn_ty,
-            struct_def: def.self_def,
-        };
-        self.method_specializations.insert(key, info.clone());
-        Ok(info)
-    }
-
-    fn ensure_method_specialization_from_explicit_args(
-        &mut self,
-        program: &hir::Program,
-        def: &MethodDefinition,
-        explicit_args: &[Ty],
-        span: Span,
-    ) -> Result<MethodLoweringInfo> {
-        let impl_generics = def
-            .impl_generics
-            .params
-            .iter()
-            .map(|param| param.name.as_str().to_string());
-        let method_generics = def
-            .function
-            .sig
-            .generics
-            .params
-            .iter()
-            .map(|param| param.name.as_str().to_string());
-        let generics = impl_generics.chain(method_generics).collect::<Vec<_>>();
-
-        let substs = self.build_substs_from_explicit_args(&generics, explicit_args, span)?;
-        let args_in_order = generics
-            .iter()
-            .filter_map(|name| substs.get(name).cloned())
-            .collect::<Vec<_>>();
-        let key = MethodSpecializationKey {
-            def_id: def.def_id,
-            method_name: def.method_name.clone(),
+        let instance_id = mir::FunctionInstanceId {
+            source_def_id: def.def_id,
+            method_name: Some(mir::Symbol::new(def.method_name.clone())),
             args: args_in_order.clone(),
         };
 
@@ -1911,6 +1830,120 @@ impl MirLowering {
             name: mir::Symbol::new(name.clone()),
             path: Vec::new(),
             def_id: None,
+            instance_id: Some(instance_id.clone()),
+            sig: sig.clone(),
+            body_id,
+            abi: self.map_abi(&def.function.sig.abi),
+            is_extern: false,
+            attrs: Vec::new(),
+        };
+        let mir_item = mir::Item {
+            mir_id: self.next_mir_id,
+            kind: mir::ItemKind::Function(mir_function),
+        };
+        self.next_mir_id += 1;
+
+        self.extra_items.push(mir_item);
+        self.extra_bodies.push((body_id, mir_body));
+
+        let info = MethodLoweringInfo {
+            def_id: Some(def.def_id),
+            instance_id: Some(instance_id),
+            sig,
+            fn_name: name.clone(),
+            fn_ty,
+            struct_def: def.self_def,
+        };
+        self.method_specializations.insert(key, info.clone());
+        Ok(info)
+    }
+
+    fn ensure_method_specialization_from_explicit_args(
+        &mut self,
+        program: &hir::Program,
+        def: &MethodDefinition,
+        explicit_args: &[Ty],
+        span: Span,
+    ) -> Result<MethodLoweringInfo> {
+        let impl_generics = def
+            .impl_generics
+            .params
+            .iter()
+            .map(|param| param.name.as_str().to_string());
+        let method_generics = def
+            .function
+            .sig
+            .generics
+            .params
+            .iter()
+            .map(|param| param.name.as_str().to_string());
+        let generics = impl_generics.chain(method_generics).collect::<Vec<_>>();
+
+        let substs = self.build_substs_from_explicit_args(&generics, explicit_args, span)?;
+        let args_in_order = generics
+            .iter()
+            .filter_map(|name| substs.get(name).cloned())
+            .collect::<Vec<_>>();
+        let key = MethodSpecializationKey {
+            def_id: def.def_id,
+            method_name: def.method_name.clone(),
+            args: args_in_order.clone(),
+        };
+        let instance_id = mir::FunctionInstanceId {
+            source_def_id: def.def_id,
+            method_name: Some(mir::Symbol::new(def.method_name.clone())),
+            args: args_in_order.clone(),
+        };
+
+        if let Some(info) = self.method_specializations.get(&key) {
+            return Ok(info.clone());
+        }
+
+        let mut method_context = if let hir::TypeExprKind::Path(path) = &def.self_ty.kind {
+            let mir_self_ty = self.lower_type_expr_with_substs(&def.self_ty, &substs);
+            Some(MethodContext {
+                def_id: def.self_def,
+                path: path.segments.clone(),
+                mir_self_ty,
+            })
+        } else {
+            None
+        };
+
+        let sig = self.lower_function_sig_with_substs(
+            &def.function.sig,
+            method_context.as_ref(),
+            &substs,
+        );
+        let suffix = self.specialization_suffix(&args_in_order);
+        let name = format!("{}__{}", def.method_name, suffix);
+        let fn_ty = self.function_pointer_ty(&sig);
+
+        let body_id = mir::BodyId::new(self.next_body_id);
+        self.next_body_id += 1;
+
+        let span = def
+            .function
+            .body
+            .as_ref()
+            .map(|body| body.span())
+            .unwrap_or(span);
+        let mir_body = BodyBuilder::new(
+            self,
+            program,
+            &def.function,
+            &sig,
+            span,
+            method_context.take(),
+            substs,
+        )
+        .lower()?;
+
+        let mir_function = mir::Function {
+            name: mir::Symbol::new(name.clone()),
+            path: Vec::new(),
+            def_id: None,
+            instance_id: Some(instance_id.clone()),
             sig: sig.clone(),
             body_id,
             abi: self.map_abi(&def.function.sig.abi),
@@ -1928,6 +1961,7 @@ impl MirLowering {
 
         let info = MethodLoweringInfo {
             def_id: None,
+            instance_id: Some(instance_id),
             sig,
             fn_name: name.clone(),
             fn_ty,
@@ -3605,6 +3639,7 @@ impl MirLowering {
         );
 
         let mir_static = mir::Static {
+            name: konst.name.clone().into(),
             ty,
             init,
             mutability: mir::Mutability::Not,
@@ -4355,13 +4390,6 @@ impl MirLowering {
             self.enum_variant_names
                 .entry(variant.name.clone())
                 .or_insert(variant.def_id);
-            let enum_tail = terminal_segment(&name);
-            if enum_tail != name {
-                let short_name = format!("{}::{}", enum_tail, variant.name);
-                self.enum_variant_names
-                    .entry(short_name)
-                    .or_insert(variant.def_id);
-            }
         }
 
         self.enum_defs.insert(
@@ -4948,13 +4976,6 @@ impl MirLowering {
             self.enum_variant_names
                 .entry(variant.name.as_str().to_string())
                 .or_insert(variant.def_id);
-            let enum_tail = terminal_segment(enm.name.as_str());
-            if enum_tail != enm.name.as_str() {
-                let short_name = format!("{}::{}", enum_tail, variant.name.as_str());
-                self.enum_variant_names
-                    .entry(short_name)
-                    .or_insert(variant.def_id);
-            }
         }
 
         self.enum_defs.insert(
@@ -5676,10 +5697,11 @@ impl MirLowering {
                         let fn_name = format!("{}::{}", struct_prefix, function.sig.name.as_str());
                         let fn_ty = self.function_pointer_ty(&sig);
                         let struct_def = method_context.as_ref().and_then(|ctx| ctx.def_id);
-                        let method_tail = terminal_segment(function.sig.name.as_str()).to_string();
-                        let impl_item_tail = terminal_segment(impl_item.name.as_str()).to_string();
+                        let method_name = function.sig.name.as_str().to_string();
+                        let impl_item_name = impl_item.name.as_str().to_string();
                         let info = MethodLoweringInfo {
                             def_id: Some(impl_item.def_id),
+                            instance_id: None,
                             sig: sig.clone(),
                             fn_name: fn_name.clone(),
                             fn_ty: fn_ty.clone(),
@@ -5690,13 +5712,13 @@ impl MirLowering {
                             .insert(impl_item.def_id, info.clone());
                         self.method_lookup.insert(fn_name.clone(), info.clone());
                         self.method_lookup
-                            .insert(format!("{}::{}", struct_name, method_tail), info.clone());
+                            .insert(format!("{}::{}", struct_name, method_name), info.clone());
                         self.method_lookup
-                            .insert(format!("{}::{}", struct_name, impl_item_tail), info.clone());
+                            .insert(format!("{}::{}", struct_name, impl_item_name), info.clone());
                         self.struct_methods
                             .entry(struct_name.to_string())
                             .or_default()
-                            .insert(method_tail, info);
+                            .insert(method_name, info);
                     }
                 }
                 hir::ImplItemKind::AssocConst(_const_item) => {
@@ -5754,6 +5776,7 @@ impl MirLowering {
             name: mir::Symbol::new(qualified_name),
             path: Vec::new(),
             def_id: Some(def_id),
+            instance_id: None,
             sig: sig.clone(),
             body_id,
             abi: self.map_abi(&function.sig.abi),
@@ -13206,7 +13229,7 @@ impl<'a> BodyBuilder<'a> {
                     span: callee.span,
                     ty: info.fn_ty.clone(),
                     user_ty: None,
-                    literal: mir::ConstantKind::Fn(Symbol::new(info.name.clone())),
+                    literal: mir::ConstantKind::FnInstance(info.instance_id.clone()),
                 });
                 sig = info.sig.clone();
                 callee_name = Some(info.name.clone());
@@ -13238,7 +13261,9 @@ impl<'a> BodyBuilder<'a> {
                 span: callee.span,
                 ty: info.fn_ty.clone(),
                 user_ty: None,
-                literal: mir::ConstantKind::Fn(Symbol::new(info.fn_name.clone())),
+                literal: mir::ConstantKind::FnInstance(info.instance_id.clone().ok_or_else(
+                    || fp_core::error::Error::from("specialized method has no instance identity"),
+                )?),
             });
             sig = info.sig.clone();
             callee_name = Some(info.fn_name.clone());
@@ -13260,7 +13285,7 @@ impl<'a> BodyBuilder<'a> {
                     let literal = match &func_operand {
                         mir::Operand::Constant(constant) => match &constant.literal {
                             mir::ConstantKind::Global(_) => {
-                                mir::ConstantKind::Global(symbol.clone())
+                                mir::ConstantKind::Global(mir::Path::from_symbol(symbol.clone()))
                             }
                             _ => mir::ConstantKind::Fn(symbol.clone()),
                         },
@@ -13750,7 +13775,13 @@ impl<'a> BodyBuilder<'a> {
                 span: callee.span,
                 ty: ty.clone(),
                 user_ty: None,
-                literal: mir::ConstantKind::Global(mir::Symbol::new(name.clone())),
+                literal: mir::ConstantKind::Global(mir::Path::new(
+                    resolved_path
+                        .segments
+                        .iter()
+                        .map(|segment| mir::Symbol::new(segment.name.clone()))
+                        .collect(),
+                )),
             });
             return Ok((operand, sig, Some(name)));
         }
@@ -13991,9 +14022,9 @@ impl<'a> BodyBuilder<'a> {
                                     span: expr.span,
                                     ty: info.fn_ty.clone(),
                                     user_ty: None,
-                                    literal: mir::ConstantKind::Fn(mir::Symbol::new(
-                                        info.name.clone(),
-                                    )),
+                                    literal: mir::ConstantKind::FnInstance(
+                                        info.instance_id.clone(),
+                                    ),
                                 }),
                                 ty: info.fn_ty,
                             });
@@ -14056,7 +14087,9 @@ impl<'a> BodyBuilder<'a> {
                                 span: expr.span,
                                 ty: ty.clone(),
                                 user_ty: None,
-                                literal: mir::ConstantKind::Global(name.clone()),
+                                literal: mir::ConstantKind::Global(mir::Path::from_symbol(
+                                    name.clone(),
+                                )),
                             }),
                             ty: ty.clone(),
                         });
@@ -14213,9 +14246,13 @@ impl<'a> BodyBuilder<'a> {
                                 span: expr.span,
                                 ty: info.fn_ty.clone(),
                                 user_ty: None,
-                                literal: mir::ConstantKind::Fn(mir::Symbol::new(
-                                    info.fn_name.clone(),
-                                )),
+                                literal: mir::ConstantKind::FnInstance(
+                                    info.instance_id.clone().ok_or_else(|| {
+                                        fp_core::error::Error::from(
+                                            "specialized method has no instance identity",
+                                        )
+                                    })?,
+                                ),
                             }),
                             ty: info.fn_ty,
                         });
@@ -19128,19 +19165,13 @@ impl<'a> BodyBuilder<'a> {
             return true;
         }
         self.container_type_name(ty)
-            .map(|name| {
-                let tail = terminal_segment(&name);
-                matches!(tail, "Vec" | "List" | "list")
-            })
+            .map(|name| matches!(name.as_str(), "Vec" | "List" | "list"))
             .unwrap_or(false)
     }
 
     fn is_map_container(&self, ty: &Ty) -> bool {
         self.container_type_name(ty)
-            .map(|name| {
-                let tail = terminal_segment(&name);
-                tail == "HashMap"
-            })
+            .map(|name| name == "HashMap")
             .unwrap_or(false)
     }
 

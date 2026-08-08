@@ -20,6 +20,13 @@ pub fn format_program(program: &AsmProgram) -> String {
         ));
     }
 
+    for global in &program.globals {
+        out.push_str(&format!(
+            "global {} ty={:?} constant={} initializer={:?}\n",
+            global.name, global.ty, global.is_constant, global.initializer
+        ));
+    }
+
     for function in &program.functions {
         out.push_str(&format!("fn {}\n", function.name));
         for block in &function.basic_blocks {

@@ -8,10 +8,10 @@ use fp_core::ast::{
 };
 use fp_core::hir::PackageId;
 use fp_core::lir::{
-    BasicBlockId, CallingConvention, ComptimeOp, LirBasicBlock, LirCompileUnit, LirConstant,
+    BasicBlockId, CallingConvention, ComptimeOp, LirArtifactKind, LirBasicBlock, LirConstant,
     LirConstantAggregate, LirConstantData, LirConstantExpr, LirConstantKind, LirDataLayout,
     LirFloat, LirFunction, LirFunctionRef, LirInstruction, LirInstructionKind, LirInteger,
-    LirLocal, LirProgram, LirTerminator, LirType, LirValue, LirValueKind, RegisterId,
+    LirLocal, LirProgram, LirTerminator, LirType, LirValue, LirValueKind, LirWorkspace, RegisterId,
 };
 use fp_ffi::{FfiRuntime, FfiSignature, FfiType};
 
@@ -32,7 +32,7 @@ pub struct LirInterpreter {
     data_layout: LirDataLayout,
     register_values: HashMap<RegisterId, TypedValue>,
     /// Global object handles keyed by name, populated from the LIR
-    /// program during run_main / package-scoped run_function_named.
+    /// program during run_main / workspace-scoped execution.
     global_values: HashMap<String, u64>,
     initialized_globals: std::collections::HashSet<String>,
     /// Optional FFI runtime for calling extern C functions.  Set
@@ -44,9 +44,10 @@ pub struct LirInterpreter {
     /// Tracks the predecessor block ID for correct Phi resolution.
     last_predecessor: Option<BasicBlockId>,
     /// All LIR functions keyed by name, for cross-module call resolution.
-    /// Populated from the LirProgram on each call to run_function_named.
+    /// Populated from a flat program for legacy runtime entrypoints.
     program_functions: HashMap<String, LirFunction>,
     package_functions: HashMap<(PackageId, String), LirFunction>,
+    workspace_functions: HashMap<(fp_core::package::PackageId, String), LirFunction>,
     definition_functions: HashMap<fp_core::hir::DefId, LirFunction>,
 }
 
@@ -68,6 +69,7 @@ impl LirInterpreter {
             last_predecessor: None,
             program_functions: HashMap::new(),
             package_functions: HashMap::new(),
+            workspace_functions: HashMap::new(),
             definition_functions: HashMap::new(),
         }
     }
@@ -100,29 +102,23 @@ impl LirInterpreter {
         self.run_function(program, &func, &[])
     }
 
-    pub fn run_function_named(
+    pub fn run_function_named_in_workspace(
         &mut self,
-        units: &[LirCompileUnit],
-        package_id: PackageId,
-        name: &str,
+        workspace: &LirWorkspace,
+        package_id: &fp_core::package::PackageId,
+        name: &fp_core::lir::Name,
     ) -> LirResult<Value> {
-        self.populate_functions_from_units(units);
-        let programs: Vec<&LirProgram> = units.iter().map(|unit| &unit.program).collect();
-        self.populate_globals_batch(&programs)?;
-        for unit in units.iter().filter(|unit| unit.package_id == package_id) {
-            if let Some(func) = unit
-                .program
-                .functions
-                .iter()
-                .find(|f| f.name.as_str() == name)
-            {
-                return self.run_function(&unit.program, func, &[]);
-            }
-        }
-        Err(VmError::Runtime(format!(
-            "missing function {name} in package {}",
-            package_id.0
-        )))
+        self.data_layout = workspace.data_layout.clone();
+        self.populate_functions_from_workspace(workspace);
+        self.populate_globals_from_workspace(workspace)?;
+        let function = workspace
+            .find_function(package_id.clone(), name)
+            .cloned()
+            .ok_or_else(|| {
+                VmError::Runtime(format!("missing function {name} in package {package_id}"))
+            })?;
+        let program = LirProgram::new(workspace.data_layout.clone());
+        self.run_function(&program, &function, &[])
     }
 
     /// Read a compile-time result using the result's declared LIR layout.
@@ -172,19 +168,28 @@ impl LirInterpreter {
         Ok(Value::string(text))
     }
 
-    fn populate_functions_from_units(&mut self, units: &[LirCompileUnit]) {
-        for unit in units {
-            for function in &unit.program.functions {
+    fn populate_functions_from_workspace(&mut self, workspace: &LirWorkspace) {
+        for artifact in workspace.artifacts() {
+            if let LirArtifactKind::Function(function) = &artifact.kind {
                 if let Some(def_id) = function.def_id {
                     self.definition_functions.insert(def_id, function.clone());
                 }
-                self.package_functions.insert(
-                    (unit.package_id, function.name.as_str().to_string()),
+                self.workspace_functions.insert(
+                    (
+                        artifact.package_id.clone(),
+                        function.name.as_str().to_string(),
+                    ),
                     function.clone(),
                 );
+                self.program_functions
+                    .insert(function.name.as_str().to_string(), function.clone());
             }
-            self.populate_functions_from_program(&unit.program);
         }
+    }
+
+    fn populate_globals_from_workspace(&mut self, workspace: &LirWorkspace) -> LirResult<()> {
+        let program = workspace.to_program();
+        self.populate_globals_batch(&[&program])
     }
 
     fn populate_functions_from_program(&mut self, program: &LirProgram) {

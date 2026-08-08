@@ -6,6 +6,7 @@ pub mod ty;
 use crate::query::{QueryExpr, QueryIrDocument, QueryIrStmt, QueryOrigin};
 use crate::span::Span;
 pub use ident::Name;
+use std::collections::HashMap;
 pub use ty::Ty;
 pub type LirType = Ty;
 pub type LirId = u32;
@@ -79,6 +80,208 @@ pub struct LirProgram {
     pub queries: Vec<LirQuery>,
 }
 
+/// One independently addressable LIR definition.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LirArtifact {
+    pub package_id: crate::package::PackageId,
+    pub module_path: crate::module::path::QualifiedPath,
+    pub kind: LirArtifactKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LirArtifactKind {
+    Function(LirFunction),
+    Global(LirGlobal),
+    TypeDefinition(LirTypeDefinition),
+    ComptimeEntry(LirComptimeEntry),
+    Query(LirQuery),
+}
+
+/// Dependency-aware LIR view used by interpretation and comptime execution.
+///
+/// The workspace is deliberately artifact-oriented. A flattened `LirProgram`
+/// is produced only at a backend boundary that requires one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LirWorkspace {
+    pub data_layout: LirDataLayout,
+    artifacts: Vec<LirArtifact>,
+    functions: HashMap<(crate::package::PackageId, Name), usize>,
+    globals: HashMap<(crate::package::PackageId, Name), usize>,
+    types: HashMap<(crate::package::PackageId, Name), usize>,
+    comptime_entries: HashMap<(crate::package::PackageId, Name), usize>,
+}
+
+impl LirWorkspace {
+    pub fn new(data_layout: LirDataLayout) -> Self {
+        Self {
+            data_layout,
+            artifacts: Vec::new(),
+            functions: HashMap::new(),
+            globals: HashMap::new(),
+            types: HashMap::new(),
+            comptime_entries: HashMap::new(),
+        }
+    }
+
+    pub fn add_artifact(&mut self, artifact: LirArtifact) -> Result<(), LirWorkspaceError> {
+        let index = self.artifacts.len();
+        let key = artifact.package_id.clone();
+        let duplicate = match &artifact.kind {
+            LirArtifactKind::Function(function) => {
+                self.functions.insert((key, function.name.clone()), index)
+            }
+            LirArtifactKind::Global(global) => {
+                self.globals.insert((key, global.name.clone()), index)
+            }
+            LirArtifactKind::TypeDefinition(definition) => {
+                self.types.insert((key, definition.name.clone()), index)
+            }
+            LirArtifactKind::ComptimeEntry(entry) => self
+                .comptime_entries
+                .insert((key, entry.function.clone()), index),
+            LirArtifactKind::Query(query) => self
+                .types
+                .insert((key, Name::new(format!("query:{}", query.query_id))), index),
+        };
+        if duplicate.is_some() {
+            return Err(LirWorkspaceError::DuplicateArtifact {
+                package_id: artifact.package_id,
+                name: artifact_name(&artifact.kind),
+            });
+        }
+        self.artifacts.push(artifact);
+        Ok(())
+    }
+
+    pub fn add_program(
+        &mut self,
+        package_id: crate::package::PackageId,
+        module_path: crate::module::path::QualifiedPath,
+        program: LirProgram,
+    ) -> Result<(), LirProgramError> {
+        if self.data_layout != program.data_layout {
+            return Err(LirProgramError::DataLayoutMismatch);
+        }
+        for function in program.functions {
+            self.add_artifact(LirArtifact {
+                package_id: package_id.clone(),
+                module_path: module_path.clone(),
+                kind: LirArtifactKind::Function(function),
+            })
+            .map_err(LirProgramError::Workspace)?;
+        }
+        for global in program.globals {
+            self.add_artifact(LirArtifact {
+                package_id: package_id.clone(),
+                module_path: module_path.clone(),
+                kind: LirArtifactKind::Global(global),
+            })
+            .map_err(LirProgramError::Workspace)?;
+        }
+        for ty in program.type_definitions {
+            self.add_artifact(LirArtifact {
+                package_id: package_id.clone(),
+                module_path: module_path.clone(),
+                kind: LirArtifactKind::TypeDefinition(ty),
+            })
+            .map_err(LirProgramError::Workspace)?;
+        }
+        for entry in program.comptime_entries {
+            self.add_artifact(LirArtifact {
+                package_id: package_id.clone(),
+                module_path: module_path.clone(),
+                kind: LirArtifactKind::ComptimeEntry(entry),
+            })
+            .map_err(LirProgramError::Workspace)?;
+        }
+        for query in program.queries {
+            self.add_artifact(LirArtifact {
+                package_id: package_id.clone(),
+                module_path: module_path.clone(),
+                kind: LirArtifactKind::Query(query),
+            })
+            .map_err(LirProgramError::Workspace)?;
+        }
+        Ok(())
+    }
+
+    pub fn artifacts(&self) -> &[LirArtifact] {
+        &self.artifacts
+    }
+
+    pub fn add_workspace(&mut self, other: &LirWorkspace) -> Result<(), LirProgramError> {
+        if self.data_layout != other.data_layout {
+            return Err(LirProgramError::DataLayoutMismatch);
+        }
+        for artifact in &other.artifacts {
+            self.add_artifact(artifact.clone())
+                .map_err(LirProgramError::Workspace)?;
+        }
+        Ok(())
+    }
+
+    pub fn functions(&self) -> impl Iterator<Item = &LirArtifact> {
+        self.artifacts
+            .iter()
+            .filter(|artifact| matches!(artifact.kind, LirArtifactKind::Function(_)))
+    }
+
+    pub fn find_function(
+        &self,
+        package_id: crate::package::PackageId,
+        name: &Name,
+    ) -> Option<&LirFunction> {
+        self.functions
+            .get(&(package_id, name.clone()))
+            .and_then(|index| match &self.artifacts[*index].kind {
+                LirArtifactKind::Function(function) => Some(function),
+                _ => None,
+            })
+    }
+
+    pub fn find_global(
+        &self,
+        package_id: crate::package::PackageId,
+        name: &Name,
+    ) -> Option<&LirGlobal> {
+        self.globals
+            .get(&(package_id, name.clone()))
+            .and_then(|index| match &self.artifacts[*index].kind {
+                LirArtifactKind::Global(global) => Some(global),
+                _ => None,
+            })
+    }
+
+    pub fn find_comptime_entry(
+        &self,
+        package_id: crate::package::PackageId,
+        function: &Name,
+    ) -> Option<&LirComptimeEntry> {
+        self.comptime_entries
+            .get(&(package_id, function.clone()))
+            .and_then(|index| match &self.artifacts[*index].kind {
+                LirArtifactKind::ComptimeEntry(entry) => Some(entry),
+                _ => None,
+            })
+    }
+
+    pub fn to_program(&self) -> LirProgram {
+        let mut program = LirProgram::new(self.data_layout.clone());
+        for artifact in &self.artifacts {
+            match &artifact.kind {
+                LirArtifactKind::Function(function) => program.functions.push(function.clone()),
+                LirArtifactKind::Global(global) => program.globals.push(global.clone()),
+                LirArtifactKind::TypeDefinition(ty) => program.type_definitions.push(ty.clone()),
+                LirArtifactKind::ComptimeEntry(entry) => {
+                    program.comptime_entries.push(entry.clone())
+                }
+                LirArtifactKind::Query(query) => program.queries.push(query.clone()),
+            }
+        }
+        program
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LirDataLayout {
     pub pointer_size_bits: u32,
@@ -110,6 +313,27 @@ pub enum LirDataLayoutError {
 pub enum LirProgramError {
     #[error("cannot merge LIR programs with different data layouts")]
     DataLayoutMismatch,
+    #[error(transparent)]
+    Workspace(#[from] LirWorkspaceError),
+}
+
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum LirWorkspaceError {
+    #[error("duplicate LIR artifact `{name}` in package {package_id}")]
+    DuplicateArtifact {
+        package_id: crate::package::PackageId,
+        name: Name,
+    },
+}
+
+fn artifact_name(kind: &LirArtifactKind) -> Name {
+    match kind {
+        LirArtifactKind::Function(function) => function.name.clone(),
+        LirArtifactKind::Global(global) => global.name.clone(),
+        LirArtifactKind::TypeDefinition(definition) => definition.name.clone(),
+        LirArtifactKind::ComptimeEntry(entry) => entry.function.clone(),
+        LirArtifactKind::Query(query) => Name::new(format!("query:{}", query.query_id)),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

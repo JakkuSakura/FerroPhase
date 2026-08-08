@@ -251,13 +251,7 @@ impl CompilerDriver {
                 ))
             })?;
         let lir_id = Self::package_module_lir_id(package_id, module_path);
-        let lir = package
-            .borrow()
-            .lir_units
-            .iter()
-            .find(|unit| unit.module_path == *module_path)
-            .map(|unit| unit.program.clone())
-            .ok_or_else(|| CompilerDriverError::MissingLir(lir_id.clone()))?;
+        let lir = package.borrow().lir_workspace.to_program();
         self.state.insert_lir(lir_id.clone(), lir);
         self.state.lir(&lir_id)?;
         self.state
@@ -372,14 +366,30 @@ impl CompilerDriver {
                         source.package_id
                     )));
                 }
-                let package = self
-                    .state
-                    .typing_ctx
-                    .env_ctx
-                    .begin_package(package_id.clone(), source);
+                let package = self.state.typing_ctx.env_ctx.begin_package(
+                    package_id.clone(),
+                    source,
+                    self.state.typing_ctx.data_layout.clone(),
+                );
                 let items = package.borrow().items.clone();
+                let initial_units = self.compile_items_to_lir_units(&items).await?;
+                Self::publish_lir_units(&package, package_id, &initial_units)?;
+
+                for unit in &initial_units {
+                    if unit.program.comptime_entries.is_empty() {
+                        continue;
+                    }
+                    let lir_id = Self::package_module_lir_id(package_id, &unit.module_path);
+                    self.state.insert_lir(lir_id.clone(), unit.program.clone());
+                    self.evaluate_comptime_lir(
+                        &lir_id,
+                        &FullyQualifiedPath::new(unit.module_path.clone()),
+                    )
+                    .await?;
+                }
+
                 let units = self.compile_items_to_lir_units(&items).await?;
-                package.borrow_mut().lir_units = units;
+                Self::publish_lir_units(&package, package_id, &units)?;
                 Ok(package)
             }
             .await;
@@ -393,6 +403,28 @@ impl CompilerDriver {
             .env_ctx
             .import_package(package_id.clone(), package.clone());
         Ok(package)
+    }
+
+    fn publish_lir_units(
+        package: &Rc<RefCell<fp_core::package::CompiledPackage>>,
+        package_id: &PackageId,
+        units: &[fp_core::lir::LirCompileUnit],
+    ) -> Result<(), CompilerDriverError> {
+        let layout = package.borrow().lir_workspace.data_layout.clone();
+        let mut workspace = fp_core::lir::LirWorkspace::new(layout);
+        for unit in units {
+            workspace
+                .add_program(
+                    package_id.clone(),
+                    unit.module_path.clone(),
+                    unit.program.clone(),
+                )
+                .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
+        }
+        let mut package = package.borrow_mut();
+        package.lir_units = units.to_vec();
+        package.lir_workspace = workspace;
+        Ok(())
     }
 
     /// The real single-source-file entry point: fetches the stored `File`
@@ -476,7 +508,7 @@ impl CompilerDriver {
         let hir_id = HirId::new(format!("hir:{}", self.module_state_key(path.path())));
         self.state.insert_hir(hir_id.clone(), hir_program);
         self.state.insert_hir_typeck(hir_id.clone(), typeck_results);
-        let mir_id = self.lower_to_mir(&hir_id, path)?;
+        let mir_id = self.lower_to_mir(&hir_id, path).await?;
         let package_id = self
             .state
             .typing_ctx
@@ -740,23 +772,38 @@ impl CompilerDriver {
             .transform(mir)
             .map_err(CompilerDriverError::Core)?;
 
-        let package_id = function_def_id.package_id;
-        let unit = fp_core::lir::LirCompileUnit {
-            package_id,
-            module_path: QualifiedPath::new(Vec::new()),
-            program: lir,
-        };
-        let mut units = vec![unit];
+        let package_id = self
+            .state
+            .typing_ctx
+            .env_ctx
+            .current_package()
+            .cloned()
+            .ok_or_else(|| {
+                CompilerDriverError::UnresolvablePackage(
+                    "comptime evaluation requires a focused package workspace".to_string(),
+                )
+            })?;
+        let mut execution_workspace =
+            fp_core::lir::LirWorkspace::new(self.state.typing_ctx.data_layout.clone());
         for package in self.state.typing_ctx.env_ctx.crates().values() {
-            units.extend(package.borrow().lir_units.iter().cloned());
+            execution_workspace
+                .add_workspace(&package.borrow().lir_workspace)
+                .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         }
+        execution_workspace
+            .add_program(package_id.clone(), QualifiedPath::new(Vec::new()), lir)
+            .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         self.interpreter = LirInterpreter::new();
         self.interpreter
             .inject_globals(&self.collect_resolved_const_values())
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         let value = self
             .interpreter
-            .run_function_named(&units, package_id, &function_name)
+            .run_function_named_in_workspace(
+                &execution_workspace,
+                &package_id,
+                &fp_core::lir::Name::new(function_name),
+            )
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         Ok(value)
     }
@@ -1189,7 +1236,7 @@ impl CompilerDriver {
                 continue;
             }
             self.state.insert_hir_typeck(hir_id.clone(), typeck_results);
-            let mir_id = self.lower_to_mir(&hir_id, &fqp).map_err(|error| {
+            let mir_id = self.lower_to_mir(&hir_id, &fqp).await.map_err(|error| {
                 CompilerDriverError::UnsupportedWork(format!(
                     "module {}: MIR lowering failed: {error}",
                     path.to_key()
@@ -1245,32 +1292,36 @@ impl CompilerDriver {
         // program) rather than cloning the entire `LirProgram` a second time.
         let comptime_entries = lir.comptime_entries.clone();
 
-        // Collect all LirCompileUnits: user's module + workspace crates
         let package_id = self
             .state
             .typing_ctx
             .env_ctx
-            .package_id_for_module(path.path())
-            .unwrap_or_default();
-        let mut all_units: Vec<fp_core::lir::LirCompileUnit> = Vec::new();
-        all_units.push(fp_core::lir::LirCompileUnit {
-            package_id,
-            module_path: path.path().clone(),
-            program: lir,
-        });
-        // Workspace crates with pre-compiled LIR
-        for krate in self.state.typing_ctx.env_ctx.crates().values() {
-            for unit in &krate.borrow().lir_units {
-                all_units.push(unit.clone());
-            }
-        }
-
+            .current_package()
+            .cloned()
+            .ok_or_else(|| {
+                CompilerDriverError::UnresolvablePackage(
+                    "comptime evaluation requires a focused package workspace".to_string(),
+                )
+            })?;
         let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
-
         if comptime_entries.is_empty() {
             self.state
                 .insert_const_value(value_id.clone(), Value::unit());
             return Ok(0);
+        }
+        let mut execution_workspace = fp_core::lir::LirWorkspace::new(lir.data_layout.clone());
+        for (_dependency_id, package) in self.state.typing_ctx.env_ctx.crates().iter() {
+            execution_workspace
+                .add_workspace(&package.borrow().lir_workspace)
+                .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
+        }
+        if execution_workspace
+            .find_function(package_id.clone(), &comptime_entries[0].function)
+            .is_none()
+        {
+            execution_workspace
+                .add_program(package_id.clone(), path.path().clone(), lir)
+                .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         }
 
         let mut count = 0usize;
@@ -1281,22 +1332,16 @@ impl CompilerDriver {
             .inject_globals(&resolved)
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         for entry in &comptime_entries {
-            let result = self.interpreter.run_function_named(
-                &all_units,
-                package_id,
-                entry.function.as_str(),
+            let result = self.interpreter.run_function_named_in_workspace(
+                &execution_workspace,
+                &package_id,
+                &entry.function,
             );
             let mut value =
                 result.map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
-            let entry_lir_ty = all_units
-                .iter()
-                .find_map(|unit| {
-                    unit.program
-                        .functions
-                        .iter()
-                        .find(|function| function.name == entry.function)
-                        .map(|function| function.signature.return_type.clone())
-                })
+            let entry_lir_ty = execution_workspace
+                .find_function(package_id.clone(), &entry.function)
+                .map(|function| function.signature.return_type.clone())
                 .ok_or_else(|| {
                     CompilerDriverError::UnsupportedWork(format!(
                         "missing LIR result type for comptime entry {}",
@@ -1358,18 +1403,18 @@ impl CompilerDriver {
         }
     }
 
-    fn lower_to_mir(
+    async fn lower_to_mir(
         &mut self,
         hir_id: &HirId,
         path: &FullyQualifiedPath,
     ) -> Result<MirId, CompilerDriverError> {
-        self.lower_to_mir_lossy(hir_id, path, false)
+        self.lower_to_mir_lossy(hir_id, path, false).await
     }
 
     /// Lower HIR to MIR, optionally tolerating diagnostic errors.
     /// Used for comptime LIR generation where unresolved types are
     /// expected to resolve after evaluation.
-    fn lower_to_mir_lossy(
+    async fn lower_to_mir_lossy(
         &mut self,
         hir_id: &HirId,
         path: &FullyQualifiedPath,
@@ -1390,7 +1435,7 @@ impl CompilerDriver {
         for (key, value) in self.state.resolved_const_values() {
             lowering.seed_resolved_const(key.to_string(), value.clone());
         }
-        let mir = lowering.transform(hir);
+        let mir = lowering.transform_async(hir).await;
         let (diagnostics, had_errors) = lowering.take_diagnostics();
         let mir = if allow_errors {
             match mir {
@@ -1432,7 +1477,8 @@ impl CompilerDriver {
             .package_id_for_module(path.path())
             .unwrap_or_default();
         let mut lowering = LirGenerator::new(self.state.typing_ctx.data_layout.clone())
-            .with_package_id(hir_package_id);
+            .with_package_id(hir_package_id)
+            .with_module_path(path.path().to_key());
         let lir = lowering.transform(mir)?;
         let lir_id = Self::package_module_lir_id(package_id, path.path());
         self.state.insert_lir(lir_id.clone(), lir);

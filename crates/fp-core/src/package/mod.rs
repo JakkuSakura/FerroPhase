@@ -136,7 +136,7 @@ pub mod provider;
 
 use crate::ast::{FunctionSignature, Item, ItemId, MethodSignature, TypeEnum, TypeStruct};
 use crate::hir::PackageId as HirPackageId;
-use crate::lir::LirCompileUnit;
+use crate::lir::{LirCompileUnit, LirWorkspace};
 use crate::module::path::QualifiedPath;
 use std::collections::{HashMap, HashSet};
 
@@ -179,7 +179,7 @@ impl PackageSource {
 ///
 /// A compiled package is stored in the workspace so dependent packages can
 /// query its definitions without re-parsing or re-type-checking it.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct CompiledPackage {
     pub package_id: HirPackageId,
     pub name: String,
@@ -220,6 +220,9 @@ pub struct CompiledPackage {
     /// The interpreter searches across all units for function definitions.
     pub lir_units: Vec<LirCompileUnit>,
 
+    /// Fine-grained LIR artifacts owned by this package.
+    pub lir_workspace: LirWorkspace,
+
     /// HIR definitions published by this package, keyed by module path.
     /// Dependents use these definitions for path resolution without sharing
     /// the package's mutable compiler workspace.
@@ -239,6 +242,7 @@ impl CompiledPackage {
         package_id: HirPackageId,
         name: impl Into<String>,
         graph: graph::PackageGraph,
+        data_layout: crate::lir::LirDataLayout,
     ) -> Self {
         let module_paths: HashSet<QualifiedPath> = graph
             .modules()
@@ -258,6 +262,7 @@ impl CompiledPackage {
             method_sigs: HashMap::new(),
             module_paths,
             lir_units: Vec::new(),
+            lir_workspace: LirWorkspace::new(data_layout),
             hir_modules: HashMap::new(),
             hir_exports: HashMap::new(),
             items: HashMap::new(),

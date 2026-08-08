@@ -252,12 +252,18 @@ impl WorkspaceContext {
         &self,
         package_id: PackageId,
         source: PackageSource,
+        data_layout: crate::lir::LirDataLayout,
     ) -> Rc<RefCell<CompiledPackage>> {
         let source_package_id = package_id.clone();
         let name = source.name.clone();
         let hir_package_id = HirPackageId(self.next_package_id.get());
         self.next_package_id.set(hir_package_id.0.saturating_add(1));
-        let mut krate = CompiledPackage::new(hir_package_id, name.clone(), source.graph.clone());
+        let mut krate = CompiledPackage::new(
+            hir_package_id,
+            name.clone(),
+            source.graph.clone(),
+            data_layout,
+        );
         krate.module_paths = source.module_paths;
         krate.items = source.items;
         let krate = Rc::new(RefCell::new(krate));

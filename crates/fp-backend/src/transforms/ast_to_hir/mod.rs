@@ -1693,7 +1693,7 @@ impl HirGenerator {
         };
 
         Ok(hir::Const {
-            name: hir::Symbol::new(self.qualify_name(&const_def.name.name)),
+            name: hir::Symbol::new(const_def.name.name.clone()),
             ty,
             body,
         })

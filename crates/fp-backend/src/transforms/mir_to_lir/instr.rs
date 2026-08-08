@@ -14,6 +14,7 @@ use crate::abi;
 /// Generator for transforming MIR to LIR (Low-level IR)
 pub struct LirGenerator {
     package_id: hir::PackageId,
+    module_path: Option<String>,
     data_layout: lir::LirDataLayout,
     next_lir_id: lir::LirId,
     next_label: u32,
@@ -33,6 +34,7 @@ pub struct LirGenerator {
     name_counters: HashMap<String, usize>,
     struct_layouts: HashMap<mir::DefId, Vec<Option<lir::LirType>>>,
     function_symbol_map: HashMap<String, String>,
+    function_instance_map: HashMap<mir::FunctionInstanceId, String>,
     function_signatures: HashMap<String, lir::LirFunctionSignature>,
     function_call_conventions: HashMap<String, lir::CallingConvention>,
     function_declarations: HashMap<String, bool>,
@@ -100,6 +102,7 @@ impl LirGenerator {
     ) -> Self {
         Self {
             package_id: hir::PackageId(0),
+            module_path: None,
             data_layout,
             next_lir_id: 0,
             next_label: 0,
@@ -119,6 +122,7 @@ impl LirGenerator {
             name_counters: HashMap::new(),
             struct_layouts: HashMap::new(),
             function_symbol_map: HashMap::new(),
+            function_instance_map: HashMap::new(),
             function_signatures: HashMap::new(),
             function_call_conventions: HashMap::new(),
             function_declarations: HashMap::new(),
@@ -129,6 +133,20 @@ impl LirGenerator {
     pub fn with_package_id(mut self, package_id: hir::PackageId) -> Self {
         self.package_id = package_id;
         self
+    }
+
+    pub fn with_module_path(mut self, module_path: impl Into<String>) -> Self {
+        self.module_path = Some(module_path.into());
+        self
+    }
+
+    fn resolve_global_symbol(&self, path: &mir::Path) -> lir::Name {
+        match &self.module_path {
+            Some(module_path) if path.segments.len() == 1 => {
+                lir::Name::new(format!("{module_path}::{}", path.segments[0]))
+            }
+            _ => lir::Name::new(path.to_string()),
+        }
     }
 
     fn function_value(&self, name: String) -> Result<lir::LirValue> {
@@ -149,68 +167,86 @@ impl LirGenerator {
         ))
     }
 
-    /// Transform a MIR program to LIR
-    pub fn transform(&mut self, mir_program: mir::Program) -> Result<lir::LirProgram> {
+    pub fn prepare_program(&mut self, mir_program: &mir::Program) {
+        self.predeclare_function_signatures(mir_program);
+    }
+
+    /// Lower one MIR declaration into independently publishable LIR.
+    pub fn transform_item(
+        &mut self,
+        mir_item: mir::Item,
+        bodies: &std::collections::HashMap<mir::BodyId, mir::Body>,
+    ) -> Result<lir::LirProgram> {
         let mut lir_program = lir::LirProgram::new(self.data_layout.clone());
-
-        self.predeclare_function_signatures(&mir_program);
-
-        for mir_item in mir_program.items {
-            match mir_item.kind {
-                mir::ItemKind::Function(mir_func) => {
-                    let lir_func =
-                        self.transform_function_with_bodies(mir_func, &mir_program.bodies)?;
-                    lir_program.functions.push(lir_func);
-                }
-                mir::ItemKind::Static(mir_static) => {
-                    let lir_static = self.transform_static(mir_static)?;
-                    lir_program.globals.push(lir_static);
-                }
-                mir::ItemKind::ExecutableConst(konst) => {
-                    let mir_func = mir::Function {
-                        name: konst.function_name,
-                        path: Vec::new(),
-                        def_id: None,
-                        sig: mir::FunctionSig {
-                            inputs: Vec::new(),
-                            output: konst.ty.clone(),
-                        },
-                        body_id: konst.body_id,
-                        abi: mir::ty::Abi::Rust,
-                        is_extern: false,
-                        attrs: Vec::new(),
-                    };
-                    let lir_func =
-                        self.transform_function_with_bodies(mir_func, &mir_program.bodies)?;
-                    let function_name = lir_func.name.clone();
-                    lir_program.functions.push(lir_func);
-                    lir_program.comptime_entries.push(lir::LirComptimeEntry {
-                        function: function_name,
-                        key: konst.key,
-                        ty: konst.ty,
-                        token_stream: false,
-                    });
-                }
-                mir::ItemKind::Query(query) => {
-                    lir_program.queries.push(lir::LirQuery {
-                        query_id: mir_item.mir_id,
-                        origin: query.origin,
-                        ir: query.ir,
-                        span: query.span,
-                    });
-                }
+        match mir_item.kind {
+            mir::ItemKind::Function(mir_func) => {
+                lir_program
+                    .functions
+                    .push(self.transform_function_with_bodies(mir_func, bodies)?);
+            }
+            mir::ItemKind::Static(mir_static) => {
+                lir_program.globals.push(self.transform_static(mir_static)?);
+            }
+            mir::ItemKind::ExecutableConst(konst) => {
+                let mir_func = mir::Function {
+                    name: konst.function_name,
+                    path: Vec::new(),
+                    def_id: None,
+                    instance_id: None,
+                    sig: mir::FunctionSig {
+                        inputs: Vec::new(),
+                        output: konst.ty.clone(),
+                    },
+                    body_id: konst.body_id,
+                    abi: mir::ty::Abi::Rust,
+                    is_extern: false,
+                    attrs: Vec::new(),
+                };
+                let lir_func = self.transform_function_with_bodies(mir_func, bodies)?;
+                let function_name = lir_func.name.clone();
+                lir_program.functions.push(lir_func);
+                lir_program.comptime_entries.push(lir::LirComptimeEntry {
+                    function: function_name,
+                    key: konst.key,
+                    ty: konst.ty,
+                    token_stream: false,
+                });
+            }
+            mir::ItemKind::Query(query) => {
+                lir_program.queries.push(lir::LirQuery {
+                    query_id: mir_item.mir_id,
+                    origin: query.origin,
+                    ir: query.ir,
+                    span: query.span,
+                });
             }
         }
-
         if !self.extra_globals.is_empty() {
-            // Prepend data globals (string data, etc.) before
-            // reference globals so the native emitter can use
-            // direct ADRP+ADD rather than GOT-based loads on MachO.
             let mut extras: Vec<_> = self.extra_globals.drain(..).collect();
             extras.append(&mut lir_program.globals);
             lir_program.globals = extras;
         }
+        Ok(lir_program)
+    }
 
+    pub fn transform_items(&mut self, mir_program: mir::Program) -> Result<Vec<lir::LirProgram>> {
+        self.prepare_program(&mir_program);
+        mir_program
+            .items
+            .into_iter()
+            .map(|item| self.transform_item(item, &mir_program.bodies))
+            .collect()
+    }
+
+    /// Transform MIR to a flat LIR program for legacy backend callers.
+    pub fn transform(&mut self, mir_program: mir::Program) -> Result<lir::LirProgram> {
+        let mut lir_program = lir::LirProgram::new(self.data_layout.clone());
+        self.prepare_program(&mir_program);
+        for item in mir_program.items {
+            lir_program
+                .extend(self.transform_item(item, &mir_program.bodies)?)
+                .map_err(|error| fp_core::error::Error::from(error.to_string()))?;
+        }
         Ok(lir_program)
     }
 
@@ -225,6 +261,10 @@ impl LirGenerator {
         for item in &program.items {
             if let mir::ItemKind::Function(func) = &item.kind {
                 let name = self.mangle_function_name(func);
+                if let Some(instance_id) = &func.instance_id {
+                    self.function_instance_map
+                        .insert(instance_id.clone(), name.clone());
+                }
                 let signature = lir::LirFunctionSignature {
                     params: func
                         .sig
@@ -460,7 +500,10 @@ impl LirGenerator {
 
     /// Transform a MIR static to LIR global
     fn transform_static(&mut self, mir_static: mir::Static) -> Result<lir::LirGlobal> {
-        let name = lir::Name::new(format!("global_{}", self.next_id()));
+        let name = lir::Name::new(match &self.module_path {
+            Some(module_path) => format!("{module_path}::{}", mir_static.name),
+            None => mir_static.name.as_str().to_string(),
+        });
         let lir_ty = self.lir_type_from_ty(&mir_static.ty);
         let raw_initializer = self.convert_static_initializer(&mir_static.init, &mir_static.ty)?;
         let (initializer, relocations) =
@@ -550,13 +593,19 @@ impl LirGenerator {
                     "function definition references are not valid static initializer data",
                 ));
             }
+            mir::ConstantKind::FnInstance(instance) => {
+                return Err(fp_core::error::Error::from(format!(
+                    "function instance {:?} is not valid static initializer data",
+                    instance
+                )));
+            }
             mir::ConstantKind::Fn(name) => lir::LirConstant::function_address(
                 target_ty.clone(),
                 lir::LirFunctionRef::Name(lir::Name::new(name.as_str().to_string())),
             ),
-            mir::ConstantKind::Global(name) => lir::LirConstant::global_address(
+            mir::ConstantKind::Global(path) => lir::LirConstant::global_address(
                 target_ty.clone(),
-                lir::Name::new(name.as_str().to_string()),
+                self.resolve_global_symbol(path),
             ),
             mir::ConstantKind::Ty(_) => {
                 return Err(fp_core::error::Error::from(
@@ -2774,6 +2823,25 @@ impl LirGenerator {
                     lir::LirFunctionRef::Definition(*def_id),
                     self.lir_type_from_ty(&constant.ty),
                 )),
+                mir::ConstantKind::FnInstance(instance_id) => {
+                    let name = self
+                        .function_instance_map
+                        .get(instance_id)
+                        .cloned()
+                        .ok_or_else(|| {
+                            fp_core::error::Error::from(format!(
+                                "missing MIR function instance {:?}",
+                                instance_id
+                            ))
+                        })?;
+                    Ok(lir::LirValue::function(
+                        lir::LirFunctionRef::Package {
+                            package_id: self.package_id,
+                            name: lir::Name::new(name),
+                        },
+                        self.lir_type_from_ty(&constant.ty),
+                    ))
+                }
                 mir::ConstantKind::Fn(name) => {
                     let function_name = self
                         .function_symbol_map
@@ -2782,12 +2850,9 @@ impl LirGenerator {
                         .unwrap_or_else(|| String::from(name.clone()));
                     self.function_value(function_name)
                 }
-                mir::ConstantKind::Global(name) => {
-                    let mapped_name = self
-                        .function_symbol_map
-                        .get(&String::from(name.clone()))
-                        .cloned()
-                        .unwrap_or_else(|| String::from(name.clone()));
+                mir::ConstantKind::Global(path) => {
+                    let name = path.to_string();
+                    let mapped_name = self.function_symbol_map.get(&name).cloned().unwrap_or(name);
                     if self.function_signatures.contains_key(&mapped_name) {
                         return self.function_value(mapped_name);
                     }
@@ -2795,7 +2860,7 @@ impl LirGenerator {
                         return self.function_value(runtime_target.as_str().to_owned());
                     }
                     Ok(lir::LirValue::global(
-                        lir::Name::new(mapped_name),
+                        self.resolve_global_symbol(path),
                         self.lir_type_from_ty(&constant.ty),
                     ))
                 }

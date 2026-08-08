@@ -1993,9 +1993,13 @@ fn lower_constant(constant: &mir::Constant) -> Result<BytecodeConst, BytecodeErr
                 def_id
             ),
         }),
-        mir::ConstantKind::Global(symbol) => {
-            Ok(BytecodeConst::Function(symbol.as_str().to_string()))
-        }
+        mir::ConstantKind::FnInstance(instance) => Err(BytecodeError::Lowering {
+            message: format!(
+                "generic function instance {:?} cannot be represented in bytecode",
+                instance
+            ),
+        }),
+        mir::ConstantKind::Global(symbol) => Ok(BytecodeConst::Function(symbol.to_string())),
         mir::ConstantKind::Val(value) => lower_const_value(value),
         mir::ConstantKind::Ty(_) => Err(BytecodeError::Lowering {
             message: format!(
@@ -2083,18 +2087,20 @@ fn lower_place(place: &mir::Place) -> Result<BytecodePlace, BytecodeError> {
 fn lower_callee(operand: &mir::Operand) -> Result<BytecodeCallee, BytecodeError> {
     match operand {
         mir::Operand::Constant(constant) => match &constant.literal {
-            mir::ConstantKind::Fn(symbol) => {
-                Ok(BytecodeCallee::Function(symbol.as_str().to_string()))
-            }
+            mir::ConstantKind::Fn(symbol) => Ok(BytecodeCallee::Function(symbol.to_string())),
             mir::ConstantKind::FnDef(def_id) => Err(BytecodeError::Lowering {
                 message: format!(
                     "function definition reference {:?} cannot be called from bytecode",
                     def_id
                 ),
             }),
-            mir::ConstantKind::Global(symbol) => {
-                Ok(BytecodeCallee::Function(symbol.as_str().to_string()))
-            }
+            mir::ConstantKind::FnInstance(instance) => Err(BytecodeError::Lowering {
+                message: format!(
+                    "generic function instance {:?} cannot be represented in bytecode",
+                    instance
+                ),
+            }),
+            mir::ConstantKind::Global(symbol) => Ok(BytecodeCallee::Function(symbol.to_string())),
             _ => Err(BytecodeError::Lowering {
                 message: format!("unsupported call operand: {:?}", constant.literal),
             }),

@@ -1289,15 +1289,26 @@ impl LoweredProgram {
     }
 
     fn lir(&self) -> Result<fp_core::lir::LirProgram> {
-        self.driver
+        let package = self
+            .driver
             .state
-            .lir(&LirId::new(format!(
-                "lir:{}:{}",
-                self.package_id.as_str(),
-                self.path_key
-            )))
-            .map(|program| program.clone())
-            .map_err(|err| CliError::Compilation(err.to_string()))
+            .typing_ctx
+            .env_ctx
+            .compiled_package(&self.package_id)
+            .ok_or_else(|| {
+                CliError::Compilation(format!(
+                    "compiled package `{}` is unavailable",
+                    self.package_id
+                ))
+            })?;
+        let package = package.borrow();
+        if package.lir_workspace.artifacts().is_empty() {
+            return Err(CliError::Compilation(format!(
+                "compiled package `{}` contains no LIR artifacts",
+                self.package_id
+            )));
+        }
+        Ok(package.lir_workspace.to_program())
     }
 
     fn bytecode(&self) -> Result<fp_bytecode::BytecodeProgram> {
