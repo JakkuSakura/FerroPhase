@@ -530,11 +530,65 @@ fn kotlin_type_from_ty(ty: &Ty, _e: &KotlinEmitter) -> String {
         Ty::Struct(s) => s.name.name.clone(),
         Ty::Enum(en) => en.name.name.clone(),
         Ty::Reference(r) => kotlin_type_from_ty(&r.ty, _e),
-        Ty::Expr(_) => "Any".into(),
+        Ty::Expr(expr) => map_name_to_kt(&expr_to_name(expr)),
         Ty::Unit(_) => "Unit".into(),
         Ty::Slice(sl) => format!("List<{}>", kotlin_type_from_ty(&sl.elem, _e)),
         Ty::Any(_) | Ty::Unknown(_) => "Any".into(),
         Ty::Nothing(_) => "Nothing".into(),
         _ => "Any".into(),
+    }
+}
+
+fn expr_to_name(expr: &Expr) -> String {
+    match expr.kind() {
+        ExprKind::Name(name) => name_to_string(name),
+        ExprKind::Select(sel) => {
+            format!("{}.{}", expr_to_name(&sel.obj), sel.field.name.as_str())
+        }
+        _ => format!("Any"),
+    }
+}
+
+fn name_to_string(name: &fp_core::ast::Name) -> String {
+    use fp_core::ast::Name::*;
+    match name {
+        Ident(id) => id.name.clone(),
+        Path(p) => p.segments.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join("."),
+        ParameterPath(pp) => {
+            let base = pp.segments.iter()
+                .map(|s| {
+                    let name = s.ident.name.as_str();
+                    if s.args.is_empty() { name.to_string() }
+                    else {
+                        let args = s.args.iter()
+                            .map(|ty| kotlin_type_from_ty(ty, &KotlinEmitter::new()))
+                            .collect::<Vec<_>>().join(", ");
+                        format!("{}<{}>", name, args)
+                    }
+                })
+                .collect::<Vec<_>>().join(".");
+            base
+        },
+    }
+}
+
+fn map_name_to_kt(name: &str) -> String {
+    if let Some(inner) = name.strip_prefix("Vec<").and_then(|s| s.strip_suffix(">")) {
+        return format!("MutableList<{}>", map_name_to_kt(inner));
+    }
+    if let Some(inner) = name.strip_prefix("Option<").and_then(|s| s.strip_suffix(">")) {
+        return format!("{}?", map_name_to_kt(inner));
+    }
+    match name {
+        "str" | "String" => "String".into(),
+        "char" => "Char".into(),
+        "bool" => "Boolean".into(),
+        "i8" => "Byte".into(), "i16" => "Short".into(),
+        "i32" => "Int".into(), "i64" => "Long".into(),
+        "u8" => "UByte".into(), "u16" => "UShort".into(),
+        "u32" => "UInt".into(), "u64" => "ULong".into(),
+        "f32" => "Float".into(), "f64" => "Double".into(),
+        "usize" => "Long".into(), "isize" => "Long".into(),
+        _ => name.to_string(),
     }
 }

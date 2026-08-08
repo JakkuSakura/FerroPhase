@@ -1167,6 +1167,7 @@ fn select_frontend(
             CliError::Compilation(format!("failed to initialize C frontend: {err}"))
         })?)),
         value if value == languages::FERROPHASE => Ok(Box::new(FerroFrontend::new())),
+        value if value == languages::RUST => Ok(Box::new(FerroFrontend::new())),
         #[cfg(feature = "lang-typescript")]
         value if value == languages::TYPESCRIPT || value == languages::JAVASCRIPT => {
             Ok(Box::new(TypeScriptFrontend::new(TsParseMode::Loose)))
