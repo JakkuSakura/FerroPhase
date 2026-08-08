@@ -1262,6 +1262,7 @@ dependencies = [
  "fp-json",
  "fp-jsonschema",
  "fp-jvm",
+ "fp-kotlin",
  "fp-lang",
  "fp-llvm",
  "fp-native",
@@ -1484,6 +1485,16 @@ dependencies = [
  "crc32fast",
  "fp-core",
  "thiserror 2.0.19",
+]
+
+[[package]]
+name = "fp-kotlin"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "fp-core",
+ "itertools 0.13.0",
+ "tracing",
 ]
 
 [[package]]

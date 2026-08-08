@@ -28,6 +28,8 @@ use fp_csharp::CSharpSerializer;
 use fp_godot::GdscriptSerializer;
 #[cfg(feature = "lang-golang")]
 use fp_golang::GoSerializer;
+#[cfg(feature = "lang-kotlin")]
+use fp_kotlin::KotlinSerializer;
 use fp_lang::PrettyAstSerializer;
 use fp_native::asm::{aarch64::AsmAarch64Program, x86_64::AsmX86_64Program};
 use fp_native::asmir::{lift_from_aarch64, lift_from_x86_64, lower_to_aarch64, lower_to_x86_64};
@@ -1036,6 +1038,23 @@ fn emit_ast_target(
             #[cfg(not(feature = "lang-csharp"))]
             {
                 Err(disabled_feature_error("lang-csharp", "C# AST emission"))
+            }
+        }
+        crate::languages::backend::AstLanguageTarget::Kotlin => {
+            #[cfg(feature = "lang-kotlin")]
+            {
+                let serializer = KotlinSerializer;
+                let code = serializer
+                    .serialize_file(node)
+                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
+                Ok(fp_core::ast::AstTargetOutput {
+                    code,
+                    side_files: Vec::new(),
+                })
+            }
+            #[cfg(not(feature = "lang-kotlin"))]
+            {
+                Err(disabled_feature_error("lang-kotlin", "Kotlin AST emission"))
             }
         }
         crate::languages::backend::AstLanguageTarget::Python => {

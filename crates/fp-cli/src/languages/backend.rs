@@ -14,6 +14,7 @@ pub enum AstLanguageTarget {
     Sycl,
     Rust,
     Wit,
+    Kotlin,
 }
 
 /// Parse an AST output target from a user-provided string.
@@ -31,6 +32,7 @@ pub fn parse_ast_target(s: &str) -> Result<AstLanguageTarget> {
         "sycl" => AstLanguageTarget::Sycl,
         "rust" | "rs" => AstLanguageTarget::Rust,
         "wit" => AstLanguageTarget::Wit,
+        "kotlin" | "kt" => AstLanguageTarget::Kotlin,
         _ => {
             return Err(CliError::InvalidInput(format!("Unsupported target: {}", s)));
         }
@@ -52,6 +54,7 @@ pub fn ast_output_extension_for(target: AstLanguageTarget) -> &'static str {
         AstLanguageTarget::Sycl => "cpp",
         AstLanguageTarget::Rust => "rs",
         AstLanguageTarget::Wit => "wit",
+        AstLanguageTarget::Kotlin => "kt",
     }
 }
 

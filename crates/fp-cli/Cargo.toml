@@ -25,6 +25,7 @@ fp-llvm = { path = "../fp-llvm", optional = true }
 fp-lang = { path = "../fp-lang" }
 fp-wit = { path = "../fp-wit", optional = true }
 fp-zig = { path = "../fp-zig", optional = true }
+fp-kotlin = { path = "../fp-kotlin", optional = true }
 fp-sycl = { path = "../fp-sycl", optional = true }
 fp-prql = { path = "../fp-prql", optional = true }
 fp-sql = { path = "../fp-sql", optional = true }
@@ -103,6 +104,7 @@ default = [
     "lang-godot",
     "lang-sycl",
     "lang-wit",
+    "lang-kotlin",
     "lang-prql",
     "lang-sql",
     "lang-jsonschema",
@@ -124,6 +126,7 @@ lang-dotnet = ["dep:fp-dotnet"]
 lang-godot = ["dep:fp-godot"]
 lang-sycl = ["dep:fp-sycl"]
 lang-wit = ["dep:fp-wit"]
+lang-kotlin = ["dep:fp-kotlin"]
 lang-prql = ["dep:fp-prql"]
 lang-sql = ["dep:fp-sql"]
 lang-jsonschema = ["dep:fp-jsonschema"]

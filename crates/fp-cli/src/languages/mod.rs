@@ -120,6 +120,13 @@ pub const SUPPORTED_LANGUAGES: &[Language] = &[
         extensions: &["java"],
         ast_target_supported: false,
     },
+    #[cfg(feature = "lang-kotlin")]
+    Language {
+        name: KOTLIN,
+        extensions: &["kt"],
+        ast_target_supported: true,
+    },
+    #[cfg(not(feature = "lang-kotlin"))]
     Language {
         name: KOTLIN,
         extensions: &["kt"],
@@ -207,6 +214,7 @@ pub fn detect_target_language(target: &str) -> Option<&'static Language> {
                     | (GO, "golang")
                     | (ZIG, "zig")
                     | (SYCL, "sycl")
+                    | (KOTLIN, "kotlin" | "kt")
             )
     })
 }
