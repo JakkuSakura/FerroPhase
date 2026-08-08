@@ -6,7 +6,7 @@ use tracing::{debug, info};
 use magnet::MagnetCli;
 use magnet::commands::{
     BenchOptions, BuildOptions, LockOptions, RunMode, RunOptions, TestOptions, UpdateOptions,
-    export::ExportOptions, generate::GenerateOptions,
+    export::ExportOptions, generate::GenerateOptions, transpile::TranspileOptions,
 };
 use magnet::utils::{LogLevel, setup_logs};
 
@@ -177,6 +177,10 @@ fn main() -> Result<()> {
                 fetch,
             };
             magnet_cli.build(&options)
+        }
+        Some(Commands::Transpile { path, target, output, package }) => {
+            let options = TranspileOptions { path, target, output, package };
+            magnet_cli.transpile(&options)
         }
         Some(Commands::Test {
             path,
@@ -475,6 +479,24 @@ enum Commands {
         /// Skip prefetching registry dependencies
         #[arg(long = "no-fetch", default_value_t = true, action = clap::ArgAction::SetFalse)]
         fetch: bool,
+    },
+    /// Transpile source code to a target language (Kotlin, TypeScript, etc.)
+    Transpile {
+        /// Path to a package/workspace directory
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Target language (kotlin, typescript, python, go, etc.)
+        #[arg(long, default_value = "kotlin")]
+        target: String,
+
+        /// Output directory for the generated project
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Select a package by name
+        #[arg(long)]
+        package: Option<String>,
     },
     /// Run tests for a package
     Test {

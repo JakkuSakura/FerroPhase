@@ -13,6 +13,7 @@ mod run;
 mod submodule;
 mod test;
 mod tree;
+pub mod transpile;
 mod update;
 mod utils;
 
@@ -32,6 +33,7 @@ pub use submodule::{
 };
 pub use test::{TestOptions, test};
 pub use tree::tree;
+pub use transpile::{TranspileOptions, transpile};
 pub use update::{UpdateOptions, update};
 #[allow(unused_imports)]
 pub use utils::*;

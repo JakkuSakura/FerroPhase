@@ -5,6 +5,7 @@ use eyre::Result;
 use crate::commands::{
     self, BenchOptions, BuildOptions, LockOptions, RunOptions, TestOptions, UpdateOptions,
     export::ExportOptions, generate::GenerateOptions,
+    transpile::TranspileOptions,
 };
 use crate::models::{IdentityCandidate, ManifestModel, PackageModel, ProjectIdentity};
 use crate::resolver::identity;
@@ -85,6 +86,10 @@ impl MagnetCli {
 
     pub fn build(&self, options: &BuildOptions) -> Result<()> {
         commands::build(options)
+    }
+
+    pub fn transpile(&self, options: &TranspileOptions) -> Result<()> {
+        commands::transpile(options)
     }
 
     pub fn test(&self, options: &TestOptions) -> Result<()> {
