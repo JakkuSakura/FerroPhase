@@ -199,15 +199,9 @@ impl<'a> BashRenderer<'a> {
             self.push_line(1, &format!("local {}=\"${}\"", param.name, index + 1));
         }
         if function_returns_value(def) {
-            match def.body.kind() {
-                ExprKind::Block(block) => self.render_function_block(block, 1)?,
-                _ => self.render_result_expr(&def.body, 1)?,
-            }
+            self.render_function_block(&def.body, 1)?;
         } else {
-            match def.body.kind() {
-                ExprKind::Block(block) => self.render_block(block, 1)?,
-                _ => self.render_expr_statement(&def.body, 1)?,
-            }
+            self.render_block(&def.body, 1)?;
         }
         self.push_line(0, "}");
         self.push_line(0, "");

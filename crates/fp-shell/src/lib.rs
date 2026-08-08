@@ -3,8 +3,8 @@ mod inventory;
 mod shell_materializer;
 
 use fp_core::ast::{
-    Abi, AstTargetOutput, AttrMeta, AttributesExt, BlockStmt, Expr, ExprInvokeTarget, ExprKind,
-    File, Ident, Item, ItemDeclFunction, ItemKind, Module, Name, Value, Visibility,
+    Abi, AstTargetOutput, AttrMeta, AttributesExt, BlockStmt, Expr, ExprBlock, ExprInvokeTarget,
+    ExprKind, File, Ident, Item, ItemDeclFunction, ItemKind, Module, Name, Value, Visibility,
 };
 use fp_core::frontend::LanguageFrontend;
 use fp_lang::FerroFrontend;
@@ -534,14 +534,11 @@ fn inventory_root_expr(file: &fp_core::ast::File) -> Option<&Expr> {
     function_result_expr(&function.body)
 }
 
-fn function_result_expr(expr: &Expr) -> Option<&Expr> {
-    match expr.kind() {
-        ExprKind::Block(block) => block.stmts.iter().rev().find_map(|stmt| match stmt {
-            BlockStmt::Expr(expr) => Some(expr.expr.as_ref()),
-            _ => None,
-        }),
-        _ => Some(expr),
-    }
+fn function_result_expr(block: &ExprBlock) -> Option<&Expr> {
+    block.stmts.iter().rev().find_map(|stmt| match stmt {
+        BlockStmt::Expr(expr) => Some(expr.expr.as_ref()),
+        _ => None,
+    })
 }
 
 fn inventory_hosts(expr: &Expr) -> Vec<InventoryHostAccessor> {

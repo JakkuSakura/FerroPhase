@@ -1,6 +1,6 @@
 use fp_core::Result;
 use fp_core::ast::{
-    BlockStmt, Expr, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, File,
+    BlockStmt, Expr, ExprBlock, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, File,
     FunctionSignature, Item, ItemKind, Name, Value,
 };
 use fp_core::intrinsics::{CallKind, IntrinsicMaterializer};
@@ -29,7 +29,7 @@ impl<'a> ShellMaterializer<'a> {
             ItemKind::DefFunction(f) if f.name.as_str() == "inventory" => Some(f),
             _ => None,
         })?;
-        let hosts_expr = struct_field(&item.body, "hosts")?;
+        let hosts_expr = struct_field_from_block(&item.body, "hosts")?;
         let map = match hosts_expr.kind() {
             ExprKind::Value(v) => match v.as_ref() {
                 Value::Map(map) => Some(map),
@@ -75,10 +75,12 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
         while i < file.items.len() {
             match file.items[i].kind() {
                 ItemKind::DefFunction(f) if f.name.as_str() == "main" => {
-                    push_main_body(&f.body, &mut new_items);
+                    push_main_body_from_block(&f.body, &mut new_items);
                 }
                 ItemKind::DefConst(c) if c.name.as_str() == "main" => {
-                    push_main_body(&c.value, &mut new_items);
+                    if let ExprKind::Block(block) = c.value.kind() {
+                        push_main_body_from_block(block, &mut new_items);
+                    }
                 }
                 _ => new_items.push(file.items[i].clone()),
             }
@@ -206,12 +208,10 @@ fn invoke_to(
     }))
 }
 
-fn push_main_body(body: &Expr, out: &mut Vec<Item>) {
-    if let ExprKind::Block(block) = body.kind() {
-        for stmt in &block.stmts {
-            if let BlockStmt::Expr(e) = stmt {
-                out.push(Item::from(ItemKind::Expr(e.expr.as_ref().clone())));
-            }
+fn push_main_body_from_block(block: &ExprBlock, out: &mut Vec<Item>) {
+    for stmt in &block.stmts {
+        if let BlockStmt::Expr(e) = stmt {
+            out.push(Item::from(ItemKind::Expr(e.expr.as_ref().clone())));
         }
     }
 }
@@ -334,7 +334,8 @@ fn mangle_name(name: &str) -> String {
     out
 }
 
-fn struct_field(expr: &Expr, field: &str) -> Option<Expr> {
+fn struct_field_from_block(block: &ExprBlock, field: &str) -> Option<Expr> {
+    let expr = block.last_expr()?;
     match expr.kind() {
         ExprKind::Struct(s) => s.fields.iter().find_map(|f| {
             if f.name.as_str() == field {
