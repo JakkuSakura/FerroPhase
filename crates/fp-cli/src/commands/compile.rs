@@ -63,7 +63,7 @@ pub struct CompileArgs {
     #[arg(required = true)]
     pub input: Vec<PathBuf>,
     /// Package name used to qualify source identities
-    #[arg(long = "package", required = true)]
+    #[arg(long = "package", default_value = "skln")]
     pub package: String,
 
     /// Output backend (binary, ebpf, cil, dotnet, rust, llvm, wasm, bytecode, text-bytecode, jvm-bytecode, interpret)
@@ -114,10 +114,6 @@ pub struct CompileArgs {
     /// Output file or directory
     #[arg(short, long)]
     pub output: Option<PathBuf>,
-
-    /// Path to a workspace graph (JSON) for dependency resolution
-    #[arg(long = "graph")]
-    pub graph: Option<PathBuf>,
 
     /// Optimization level (0, 1, 2, 3)
     #[arg(short = 'O', long, default_value_t = 2)]
@@ -311,10 +307,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let emit_text_bytecode = is_text_backend;
 
     let container_registry = crate::container::ContainerRegistry::new();
-    let module_resolution_state = match args.graph.as_ref() {
-        Some(graph) => Some(Arc::new(build_module_resolution_state(graph)?)),
-        None => None,
-    };
+    let module_resolution_state = None;
 
     let output_is_dir = args
         .output
@@ -902,10 +895,14 @@ async fn compile_ast_target(
     args: &CompileArgs,
     target: crate::languages::backend::AstLanguageTarget,
 ) -> Result<()> {
-    if is_package_manifest(input) || is_tsconfig(input) {
+    // If input is a directory, do project-level transpilation
+    if input.is_dir() {
+        return compile_ast_project(input, output, args, target);
+    }
+
+    if is_tsconfig(input) {
         return Err(CliError::Compilation(
-            "fp compile --target only accepts source files; use magnet for package manifests"
-                .to_string(),
+            "fp compile --target requires source files, not tsconfig".to_string(),
         ));
     }
 
@@ -954,6 +951,63 @@ async fn compile_ast_target(
     }
 
     info!("Generated AST target output: {}", output.display());
+    Ok(())
+}
+
+fn compile_ast_project(
+    input: &Path,
+    output: &Path,
+    args: &CompileArgs,
+    target: crate::languages::backend::AstLanguageTarget,
+) -> Result<()> {
+    let root = fp_lang::project::find_manifest(input)
+        .ok_or_else(|| CliError::Compilation("no Cargo.toml or Magnet.toml found".to_string()))?;
+
+    let members = fp_lang::project::list_members(&root);
+    info!("Project root: {}, {} crate(s)", root.display(), members.len());
+
+    let ext = crate::languages::backend::ast_output_extension_for(target);
+    let mut file_count = 0;
+
+    for (name, dir) in &members {
+        let sources = fp_lang::project::list_sources(dir);
+        for (rel_path, abs_path) in &sources {
+            let out_path = output.join(name).join(rel_path).with_extension(ext);
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+            }
+
+            let mut ast = compiler::parse_ast_target_file(abs_path, args.source_language.as_deref())?;
+            if args.const_eval {
+                warn!("--const-eval is ignored: AST const evaluation has been removed");
+            }
+            compiler::prepare_ast_target(&mut ast, abs_path, args.source_language.as_deref(), false)?;
+
+            let result = emit_ast_target(&ast, target, args.type_defs, abs_path, args.single_world)?;
+            std::fs::write(&out_path, &result.code).map_err(CliError::Io)?;
+            file_count += 1;
+        }
+    }
+
+    // Generate Gradle build files for Kotlin
+    if matches!(target, crate::languages::backend::AstLanguageTarget::Kotlin) {
+        let package = args.package.as_str();
+        std::fs::write(
+            output.join("settings.gradle.kts"),
+            format!("rootProject.name = \"{}\"\n", package.replace('-', "_")),
+        ).map_err(CliError::Io)?;
+        std::fs::write(
+            output.join("build.gradle.kts"),
+            "plugins { kotlin(\"jvm\") version \"2.1.0\" }\n\
+             group = \"com.sakuralens.skln\"\n\
+             version = \"0.1.0\"\n\
+             repositories { mavenCentral() }\n\
+             dependencies { testImplementation(kotlin(\"test\")) }\n\
+             kotlin { jvmToolchain(21) }\n",
+        ).map_err(CliError::Io)?;
+    }
+
+    info!("Transpiled {} files from {} crate(s) to {}", file_count, members.len(), output.display());
     Ok(())
 }
 
@@ -1468,10 +1522,8 @@ fn exec_compiled_bytecode(path: &Path) -> Result<()> {
 }
 
 fn validate_inputs(args: &CompileArgs) -> Result<()> {
-    validate_paths_exist(&args.input, true, "compile")?;
-    if let Some(graph) = args.graph.as_ref() {
-        validate_paths_exist(&[graph.clone()], true, "compile")?;
-    }
+    let has_dir = args.input.iter().any(|p| p.is_dir());
+    validate_paths_exist(&args.input, !has_dir, "compile")?;
 
     // Validate optimization level
     if args.opt_level > 3 {

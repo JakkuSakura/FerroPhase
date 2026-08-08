@@ -387,5 +387,6 @@ mod tests {
 
 pub mod ast;
 pub mod embedded_std;
+pub mod project;
 pub mod lexer;
 pub mod provider;
