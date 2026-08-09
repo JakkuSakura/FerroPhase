@@ -62,9 +62,9 @@ pub struct CompileArgs {
     /// Input file(s) to compile
     #[arg(required = true)]
     pub input: Vec<PathBuf>,
-    /// Package name used to qualify source identities
-    #[arg(long = "package", default_value = "skln")]
-    pub package: String,
+    /// Package name used to qualify source identities (auto-detected for projects)
+    #[arg(long = "package")]
+    pub package: Option<String>,
 
     /// Output backend (binary, ebpf, cil, dotnet, rust, llvm, wasm, bytecode, text-bytecode, jvm-bytecode, interpret)
     #[arg(short = 'b', long = "backend", default_value = "binary")]
@@ -181,6 +181,12 @@ pub struct CompileArgs {
     /// Generate a single WIT world instead of per-package worlds.
     #[arg(long)]
     pub single_world: bool,
+}
+
+impl CompileArgs {
+    fn package(&self) -> &str {
+        self.package.as_deref().unwrap_or("unnamed")
+    }
 }
 
 fn target_triple_matches_host(target_triple: &str) -> bool {
@@ -527,7 +533,7 @@ fn try_compile_with_compiler(
                 EmitterKind::Llvm => {
                     let artifact = compiler::compile_llvm_file(
                         input,
-                        &args.package,
+                        args.package(),
                         args.source_language.as_deref(),
                         resolver.clone(),
                         lossy,
@@ -554,7 +560,7 @@ fn try_compile_with_compiler(
                 EmitterKind::Cranelift => {
                     let artifact = compiler::compile_cranelift_file(
                         input,
-                        &args.package,
+                        args.package(),
                         args.source_language.as_deref(),
                         resolver.clone(),
                         lossy,
@@ -575,7 +581,7 @@ fn try_compile_with_compiler(
             };
             let artifact = compiler::compile_native_file(
                 input,
-                &args.package,
+                args.package(),
                 args.source_language.as_deref(),
                 resolver,
                 lossy,
@@ -598,7 +604,7 @@ fn try_compile_with_compiler(
         BackendKind::Bytecode | BackendKind::TextBytecode => {
             let artifact = compiler::compile_bytecode_file(
                 input,
-                &args.package,
+                args.package(),
                 args.source_language.as_deref(),
                 resolver,
                 lossy,
@@ -617,7 +623,7 @@ fn try_compile_with_compiler(
                 .map(|stem| stem.to_string());
             let artifact = compiler::compile_jvm_file(
                 input,
-                &args.package,
+                args.package(),
                 args.source_language.as_deref(),
                 resolver,
                 lossy,
@@ -632,7 +638,7 @@ fn try_compile_with_compiler(
         BackendKind::Wasm => {
             let artifact = compiler::compile_wasm_file(
                 input,
-                &args.package,
+                args.package(),
                 args.source_language.as_deref(),
                 resolver,
                 lossy,
@@ -645,7 +651,7 @@ fn try_compile_with_compiler(
         BackendKind::Ebpf => {
             let artifact = compiler::compile_ebpf_file(
                 input,
-                &args.package,
+                args.package(),
                 args.source_language.as_deref(),
                 resolver,
                 lossy,
@@ -677,7 +683,7 @@ fn try_compile_with_compiler(
         BackendKind::Llvm => {
             let artifact = compiler::compile_llvm_file(
                 input,
-                &args.package,
+                args.package(),
                 args.source_language.as_deref(),
                 resolver,
                 lossy,
@@ -925,7 +931,7 @@ async fn compile_ast_target(
     if !args.skip_typing && !is_wit_input && !is_typescript_input {
         ast = compiler::typecheck_ast_target(
             ast,
-            &args.package,
+            args.package(),
             input,
             LossyCompileOptions {
                 enabled: args.lossy || fp_core::config::lossy_mode(),
@@ -991,7 +997,13 @@ fn compile_ast_project(
 
     // Generate Gradle build files for Kotlin
     if matches!(target, crate::languages::backend::AstLanguageTarget::Kotlin) {
-        let package = args.package.as_str();
+        let package = if let Some(pkg) = &args.package {
+            pkg.clone()
+        } else if members.len() == 1 {
+            members[0].0.clone()
+        } else {
+            root.file_name().unwrap_or_default().to_string_lossy().to_string()
+        };
         std::fs::write(
             output.join("settings.gradle.kts"),
             format!("rootProject.name = \"{}\"\n", package.replace('-', "_")),
