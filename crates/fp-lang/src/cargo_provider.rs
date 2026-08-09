@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fp_core::ast::Item;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::module::path::QualifiedPath;
 use fp_core::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
@@ -15,6 +14,7 @@ use crate::FerroFrontend;
 use crate::project;
 
 pub struct CargoWorkspaceProvider {
+    #[allow(dead_code)]
     root: PathBuf,
     members: Vec<(String, PathBuf)>,
     cache: std::sync::RwLock<HashMap<String, Vec<PackageItem>>>,

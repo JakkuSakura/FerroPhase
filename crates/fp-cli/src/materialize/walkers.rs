@@ -1,4 +1,4 @@
-use fp_core::ast::{self, File};
+use fp_core::ast::{self};
 use fp_core::error::Result as CoreResult;
 use fp_core::intrinsics::IntrinsicMaterializer;
 use fp_core::span::Span;

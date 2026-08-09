@@ -53,7 +53,7 @@ fn parse_toml_members(content: &str, root: &Path) -> Option<Vec<(String, PathBuf
                         for entry in entries.flatten() {
                             if entry.file_type().map_or(false, |t| t.is_dir()) {
                                 let p = entry.path();
-                                let rel = p.strip_prefix(root).unwrap_or(&p);
+                                let _rel = p.strip_prefix(root).unwrap_or(&p);
                                 result.push((
                                     p.file_name().unwrap_or_default().to_string_lossy().to_string(),
                                     p,

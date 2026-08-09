@@ -2793,6 +2793,7 @@ fn signature_contains_quote(sig: &ast::FunctionSignature) -> bool {
         || sig.ret_ty.as_ref().is_some_and(ty_contains_quote)
 }
 
+#[allow(dead_code)]
 fn signature_contains_type_type(sig: &ast::FunctionSignature) -> bool {
     sig.params.iter().any(|param| {
         ty_contains_type_type(&param.ty)
@@ -2856,6 +2857,7 @@ fn ty_contains_quote(ty: &ast::Ty) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn ty_contains_type_type(ty: &ast::Ty) -> bool {
     match ty {
         ast::Ty::Type(_) | ast::Ty::RequestedType(_) | ast::Ty::ConstBlock(_) => true,
@@ -2903,6 +2905,7 @@ fn ty_contains_type_type(ty: &ast::Ty) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn type_function_contains_type_type(func: &ast::TypeFunction) -> bool {
     func.params.iter().any(ty_contains_type_type)
         || func
@@ -2918,6 +2921,7 @@ fn expr_contains_quote_value(expr: &ast::Expr) -> bool {
     false
 }
 
+#[allow(dead_code)]
 fn expr_contains_type_type(expr: &ast::Expr) -> bool {
     expr.ty()
         .as_ref()
@@ -2934,6 +2938,7 @@ fn value_contains_quote(value: &ast::Value) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn value_contains_type_type(value: &ast::Value) -> bool {
     match value {
         ast::Value::Type(ty) => ty_contains_type_type(ty),

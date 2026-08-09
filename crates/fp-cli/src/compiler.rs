@@ -1245,6 +1245,7 @@ impl LoweredProgram {
             })
     }
 
+    #[allow(dead_code)]
     fn bytecode(&mut self) -> Result<fp_bytecode::BytecodeProgram> {
         self.executor
             .run(self.driver.compile_bytecode(&self.package_id))

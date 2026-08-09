@@ -9,7 +9,7 @@ use crate::compiler::{
 };
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
-use fp_core::ast::{AstSerializer, AstTarget, AstTargetOutput, File};
+use fp_core::ast::{AstSerializer, AstTargetOutput, File};
 use fp_core::config;
 #[cfg(feature = "lang-csharp")]
 use fp_csharp::CSharpSerializer;
@@ -1221,6 +1221,7 @@ fn sanitize_wit_component(raw: &str) -> String {
     result
 }
 
+#[allow(dead_code)]
 fn is_package_manifest(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())

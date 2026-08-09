@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use fp_core::{
     ast::{Expr, ExprId, Value},
@@ -22,7 +22,6 @@ pub struct CompilerState {
     pub typing_ctx: std::rc::Rc<TypingContext>,
     runtime_values: BTreeMap<RuntimeValueId, Value>,
     lossy: bool,
-    pub(crate) generic_instantiations: HashSet<String>,
     bytecode: BTreeMap<BytecodeId, fp_bytecode::BytecodeProgram>,
     /// The one shared task pool every suspendable unit of driver work runs
     /// through: per-compile-unit HIR typing tasks and compiler-owned
@@ -52,7 +51,6 @@ impl CompilerState {
             )),
             runtime_values: BTreeMap::new(),
             lossy: false,
-            generic_instantiations: HashSet::new(),
             bytecode: BTreeMap::new(),
             tasks,
         }
