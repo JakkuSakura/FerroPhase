@@ -144,7 +144,9 @@ impl LirGenerator {
         &mut self,
         layouts: &HashMap<mir::DefId, Vec<mir::Ty>>,
     ) {
-        for (def_id, field_tys) in layouts {
+        let mut sorted: Vec<_> = layouts.iter().collect();
+        sorted.sort_by_key(|(def_id, _)| (def_id.package_id, def_id.index));
+        for (def_id, field_tys) in sorted {
             let fields: Vec<Option<lir::LirType>> = field_tys
                 .iter()
                 .map(|ty| Some(self.lir_type_from_ty(ty)))
