@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -8,18 +8,16 @@ use fp_core::module::path::QualifiedPath;
 use fp_core::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
 use fp_core::package::graph::PackageGraph;
 use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
-use fp_core::package::{
-    PackageDescriptor, PackageId, PackageSource,
-};
+use fp_core::package::{PackageDescriptor, PackageId, PackageItem, PackageSource};
 use fp_core::vfs::VirtualPath;
 
-use crate::project;
 use crate::FerroFrontend;
+use crate::project;
 
 pub struct CargoWorkspaceProvider {
     root: PathBuf,
     members: Vec<(String, PathBuf)>,
-    cache: std::sync::RwLock<HashMap<String, HashMap<QualifiedPath, Vec<Item>>>>,
+    cache: std::sync::RwLock<HashMap<String, Vec<PackageItem>>>,
 }
 
 impl CargoWorkspaceProvider {
@@ -27,13 +25,19 @@ impl CargoWorkspaceProvider {
         let root = project::find_manifest(start)
             .ok_or_else(|| ProviderError::other("no Cargo.toml or Magnet.toml found"))?;
         let members = project::list_members(&root);
-        Ok(Self { root, members, cache: Default::default() })
+        Ok(Self {
+            root,
+            members,
+            cache: Default::default(),
+        })
     }
 }
 
 impl PackageProvider for CargoWorkspaceProvider {
     fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
-        Ok(self.members.iter()
+        Ok(self
+            .members
+            .iter()
             .map(|(name, _)| PackageId::new(name))
             .collect())
     }
@@ -57,7 +61,9 @@ impl PackageProvider for CargoWorkspaceProvider {
     }
 
     fn refresh(&self) -> ProviderResult<()> {
-        if let Ok(mut c) = self.cache.write() { c.clear(); }
+        if let Ok(mut c) = self.cache.write() {
+            c.clear();
+        }
         Ok(())
     }
 
@@ -70,30 +76,33 @@ impl PackageProvider for CargoWorkspaceProvider {
 
         let dir = self.resolve_dir(id)?;
         let frontend = FerroFrontend::new();
-        let mut items_by_path: HashMap<QualifiedPath, Vec<Item>> = HashMap::new();
+        let mut items = Vec::new();
 
         for (rel, abs) in project::list_sources(&dir) {
             let source = std::fs::read_to_string(&abs)
                 .map_err(|e| ProviderError::other(format!("read {}: {}", abs.display(), e)))?;
-            let result = frontend.parse_file(&source, &abs)
+            let result = frontend
+                .parse_file(&source, &abs)
                 .map_err(|e| ProviderError::other(format!("parse {}: {}", abs.display(), e)))?;
             let path = module_path_from_relative(&rel);
-            if !result.ast.items.is_empty() {
-                items_by_path.insert(path, result.ast.items);
-            }
+            items.extend(result.ast.items.into_iter().map(|item| PackageItem {
+                path: path.clone(),
+                item,
+            }));
         }
 
         if let Ok(mut c) = self.cache.write() {
-            c.insert(id.as_str().to_string(), items_by_path.clone());
+            c.insert(id.as_str().to_string(), items.clone());
         }
 
-        Ok(package_source_from_items(id, &items_by_path))
+        Ok(package_source_from_items(id, &items))
     }
 }
 
 impl CargoWorkspaceProvider {
     fn resolve_dir(&self, id: &PackageId) -> ProviderResult<PathBuf> {
-        self.members.iter()
+        self.members
+            .iter()
             .find(|(name, _)| name == id.as_str())
             .map(|(_, dir)| dir.clone())
             .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))
@@ -106,11 +115,10 @@ fn module_path_from_relative(rel: &str) -> QualifiedPath {
     QualifiedPath::new(parts)
 }
 
-fn package_source_from_items(
-    id: &PackageId,
-    items: &HashMap<QualifiedPath, Vec<Item>>,
-) -> PackageSource {
-    let descriptors: Vec<ModuleDescriptor> = items.keys()
+fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> PackageSource {
+    let paths: HashSet<_> = items.iter().map(|item| item.path.clone()).collect();
+    let descriptors: Vec<ModuleDescriptor> = paths
+        .into_iter()
         .map(|path| ModuleDescriptor {
             id: ModuleId::new(&path.to_key()),
             package: id.clone(),
@@ -123,14 +131,19 @@ fn package_source_from_items(
         .collect();
     let module_ids: Vec<_> = descriptors.iter().map(|d| d.id.clone()).collect();
     let package = PackageDescriptor {
-        id: id.clone(), name: id.as_str().to_string(), version: None,
+        id: id.clone(),
+        name: id.as_str().to_string(),
+        version: None,
         manifest_path: VirtualPath::from_path(Path::new("Cargo.toml")),
         root: VirtualPath::from_path(Path::new(".")),
-        metadata: Default::default(), modules: module_ids,
+        metadata: Default::default(),
+        modules: module_ids,
     };
     let mut graph = PackageGraph::new(vec![package]);
-    for desc in descriptors { graph.insert_module(desc); }
+    for desc in descriptors {
+        graph.insert_module(desc);
+    }
     let mut source = PackageSource::new(id.clone(), id.as_str(), graph);
-    source.items = items.clone();
+    source.items = items.to_vec();
     source
 }

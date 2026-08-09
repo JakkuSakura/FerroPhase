@@ -488,7 +488,8 @@ async fn compile_file(
             return Ok(Some(output.to_path_buf()));
         }
         return Err(CliError::InvalidInput(
-            "directory input requires an AST target (--target kotlin, typescript, etc.)".to_string(),
+            "directory input requires an AST target (--target kotlin, typescript, etc.)"
+                .to_string(),
         ));
     }
 
@@ -981,7 +982,8 @@ async fn compile_project(
     let provider = provider_for_language(lang, input)
         .ok_or_else(|| CliError::Compilation(format!("no provider for language: {lang}")))?;
 
-    let packages = provider.list_packages()
+    let packages = provider
+        .list_packages()
         .map_err(|e| CliError::Compilation(e.to_string()))?;
 
     info!("Project: {} package(s), language: {}", packages.len(), lang);
@@ -990,31 +992,35 @@ async fn compile_project(
     let mut file_count = 0;
 
     for package_id in &packages {
-        let source = provider.load_package_source(package_id)
+        let source = provider
+            .load_package_source(package_id)
             .map_err(|e| CliError::Compilation(e.to_string()))?;
 
         let name = package_id.as_str();
 
-        for (path, items) in &source.items {
-            let rel = path.to_key().replace("::", "/");
-            let out_path = output.join(name).join(&rel).with_extension(ext);
-            if let Some(parent) = out_path.parent() {
-                std::fs::create_dir_all(parent).map_err(CliError::Io)?;
-            }
-
-            let file = File {
-                path: PathBuf::from(&rel),
-                attrs: Vec::new(),
-                collected_items: Vec::new(),
-                items: items.clone(),
-            };
-            let result = emit_ast_target(&file, target, args.type_defs, &out_path, args.single_world)?;
-            std::fs::write(&out_path, &result.code).map_err(CliError::Io)?;
-            file_count += 1;
+        let rel = name.to_string();
+        let out_path = output.join(name).with_extension(ext);
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent).map_err(CliError::Io)?;
         }
+
+        let file = File {
+            path: PathBuf::from(&rel),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: source.items.into_iter().map(|item| item.item).collect(),
+        };
+        let result = emit_ast_target(&file, target, args.type_defs, &out_path, args.single_world)?;
+        std::fs::write(&out_path, &result.code).map_err(CliError::Io)?;
+        file_count += 1;
     }
 
-    info!("Transpiled {} files from {} package(s) to {}", file_count, packages.len(), output.display());
+    info!(
+        "Transpiled {} files from {} package(s) to {}",
+        file_count,
+        packages.len(),
+        output.display()
+    );
     Ok(())
 }
 
