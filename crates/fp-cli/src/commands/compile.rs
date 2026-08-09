@@ -482,6 +482,16 @@ async fn compile_file(
 ) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
 
+    if input.is_dir() {
+        if let CompileTarget::Ast(ast_target) = target {
+            compile_project(input, output, args, ast_target)?;
+            return Ok(Some(output.to_path_buf()));
+        }
+        return Err(CliError::InvalidInput(
+            "directory input requires an AST target (--target kotlin, typescript, etc.)".to_string(),
+        ));
+    }
+
     if let Some(artifact) = maybe_transpile_native_asm(input, output, args).await? {
         return Ok(Some(artifact));
     }
@@ -901,11 +911,6 @@ async fn compile_ast_target(
     args: &CompileArgs,
     target: crate::languages::backend::AstLanguageTarget,
 ) -> Result<()> {
-    // If input is a directory, do project-level transpilation
-    if input.is_dir() {
-        return compile_ast_project(input, output, args, target);
-    }
-
     if is_tsconfig(input) {
         return Err(CliError::Compilation(
             "fp compile --target requires source files, not tsconfig".to_string(),
@@ -960,63 +965,48 @@ async fn compile_ast_target(
     Ok(())
 }
 
-fn compile_ast_project(
+fn compile_project(
     input: &Path,
     output: &Path,
     args: &CompileArgs,
     target: crate::languages::backend::AstLanguageTarget,
 ) -> Result<()> {
-    let root = fp_lang::project::find_manifest(input)
+    use crate::languages::discovery::discovery_for_language;
+    use crate::languages::detect_source_language;
+
+    let lang = detect_source_language(input)
+        .map(|l| l.name)
+        .unwrap_or("ferrophase");
+
+    let discovery = discovery_for_language(lang)
+        .ok_or_else(|| CliError::Compilation(format!("no project discovery for language: {lang}")))?;
+
+    let root = (discovery.find_manifest)(input)
         .ok_or_else(|| CliError::Compilation("no Cargo.toml or Magnet.toml found".to_string()))?;
 
-    let members = fp_lang::project::list_members(&root);
-    info!("Project root: {}, {} crate(s)", root.display(), members.len());
+    let members = (discovery.list_members)(&root);
+    info!("Project root: {}, {} crate(s), language: {}", root.display(), members.len(), lang);
 
     let ext = crate::languages::backend::ast_output_extension_for(target);
     let mut file_count = 0;
 
     for (name, dir) in &members {
-        let sources = fp_lang::project::list_sources(dir);
-        for (rel_path, abs_path) in &sources {
-            let out_path = output.join(name).join(rel_path).with_extension(ext);
+        for (rel_path, abs_path) in (discovery.list_sources)(dir) {
+            let out_path = output.join(name).join(&rel_path).with_extension(ext);
             if let Some(parent) = out_path.parent() {
                 std::fs::create_dir_all(parent).map_err(CliError::Io)?;
             }
 
-            let mut ast = compiler::parse_ast_target_file(abs_path, args.source_language.as_deref())?;
+            let mut ast = compiler::parse_ast_target_file(&abs_path, args.source_language.as_deref())?;
             if args.const_eval {
                 warn!("--const-eval is ignored: AST const evaluation has been removed");
             }
-            compiler::prepare_ast_target(&mut ast, abs_path, args.source_language.as_deref(), false)?;
+            compiler::prepare_ast_target(&mut ast, &abs_path, args.source_language.as_deref(), false)?;
 
-            let result = emit_ast_target(&ast, target, args.type_defs, abs_path, args.single_world)?;
+            let result = emit_ast_target(&ast, target, args.type_defs, &abs_path, args.single_world)?;
             std::fs::write(&out_path, &result.code).map_err(CliError::Io)?;
             file_count += 1;
         }
-    }
-
-    // Generate Gradle build files for Kotlin
-    if matches!(target, crate::languages::backend::AstLanguageTarget::Kotlin) {
-        let package = if let Some(pkg) = &args.package {
-            pkg.clone()
-        } else if members.len() == 1 {
-            members[0].0.clone()
-        } else {
-            root.file_name().unwrap_or_default().to_string_lossy().to_string()
-        };
-        std::fs::write(
-            output.join("settings.gradle.kts"),
-            format!("rootProject.name = \"{}\"\n", package.replace('-', "_")),
-        ).map_err(CliError::Io)?;
-        std::fs::write(
-            output.join("build.gradle.kts"),
-            "plugins { kotlin(\"jvm\") version \"2.1.0\" }\n\
-             group = \"com.sakuralens.skln\"\n\
-             version = \"0.1.0\"\n\
-             repositories { mavenCentral() }\n\
-             dependencies { testImplementation(kotlin(\"test\")) }\n\
-             kotlin { jvmToolchain(21) }\n",
-        ).map_err(CliError::Io)?;
     }
 
     info!("Transpiled {} files from {} crate(s) to {}", file_count, members.len(), output.display());

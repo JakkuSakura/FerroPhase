@@ -1,4 +1,5 @@
 pub mod backend;
+pub mod discovery;
 pub mod frontend;
 
 use std::path::Path;
