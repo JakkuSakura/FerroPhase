@@ -86,6 +86,7 @@ enum MaterializedTypeAlias {
 struct SymbolEntry {
     res: hir::Res,
     export: SymbolExport,
+    path: Option<fp_core::module::path::QualifiedPath>,
 }
 
 #[derive(Debug, Clone)]
@@ -490,10 +491,17 @@ impl HirGenerator {
     }
 
     fn record_value_symbol(&mut self, name: &str, res: hir::Res, visibility: &ast::Visibility) {
-        let qualified = self.qualify_name(name);
+        let path = self.qualify_path(name);
+        let qualified = path.to_key();
         let export = self.symbol_export_marker(visibility);
-        self.global_value_defs
-            .insert(qualified, SymbolEntry { res, export });
+        self.global_value_defs.insert(
+            qualified,
+            SymbolEntry {
+                res,
+                export,
+                path: Some(path),
+            },
+        );
     }
 
     fn record_value_path(
@@ -503,15 +511,28 @@ impl HirGenerator {
         visibility: &ast::Visibility,
     ) {
         let export = self.symbol_export_marker(visibility);
-        self.global_value_defs
-            .insert(path.to_key(), SymbolEntry { res, export });
+        self.global_value_defs.insert(
+            path.to_key(),
+            SymbolEntry {
+                res,
+                export,
+                path: Some(path.clone()),
+            },
+        );
     }
 
     fn record_type_symbol(&mut self, name: &str, res: hir::Res, visibility: &ast::Visibility) {
-        let qualified = self.qualify_name(name);
+        let path = self.qualify_path(name);
+        let qualified = path.to_key();
         let export = self.symbol_export_marker(visibility);
-        self.global_type_defs
-            .insert(qualified, SymbolEntry { res, export });
+        self.global_type_defs.insert(
+            qualified,
+            SymbolEntry {
+                res,
+                export,
+                path: Some(path),
+            },
+        );
     }
 
     fn symbol_export_marker(&self, visibility: &ast::Visibility) -> SymbolExport {
@@ -520,6 +541,54 @@ impl HirGenerator {
         } else {
             SymbolExport::Scoped(self.module_path.segments.clone())
         }
+    }
+
+    fn canonical_type_path(
+        &self,
+        self_path: &hir::Path,
+    ) -> Result<fp_core::module::path::QualifiedPath> {
+        let self_def_id = match self_path.res {
+            Some(hir::Res::Def(def_id)) => Some(def_id),
+            _ => {
+                let relative = self.module_path.join(
+                    &self_path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.name.as_str().to_owned())
+                        .collect::<Vec<_>>(),
+                );
+                match self.lookup_global_res(&relative, PathResolutionScope::Type) {
+                    Some(hir::Res::Def(def_id)) => Some(def_id),
+                    _ => None,
+                }
+            }
+        }
+        .ok_or_else(|| {
+            fp_core::Error::from("unresolved impl self type")
+        })?;
+
+        let relative = self.module_path.join(
+            &self_path
+                .segments
+                .iter()
+                .map(|segment| segment.name.as_str().to_owned())
+                .collect::<Vec<_>>(),
+        );
+        let mut paths: Vec<_> = self
+            .global_type_defs
+            .iter()
+            .filter(|(_, entry)| entry.res == hir::Res::Def(self_def_id))
+            .filter_map(|(_, entry)| entry.path.clone())
+            .collect();
+        paths.sort_by_key(|path| path.to_key());
+        if paths.iter().any(|path| path == &relative) {
+            return Ok(relative);
+        }
+        paths.into_iter().next().ok_or_else(|| {
+            fp_core::Error::from(format!(
+                "type definition `{self_def_id}` has no canonical path"
+            ))
+        })
     }
 
     fn should_export(&self, visibility: &ast::Visibility) -> bool {
@@ -624,6 +693,7 @@ impl HirGenerator {
                 let entry = SymbolEntry {
                     res,
                     export: SymbolExport::Public,
+                    path: None,
                 };
                 self.global_value_defs.insert(path.clone(), entry.clone());
                 self.global_type_defs.insert(path, entry);
@@ -779,13 +849,7 @@ impl HirGenerator {
                     self.allocate_def_id_for_item(item);
                     let self_path =
                         self.ast_expr_to_hir_path(&impl_block.self_ty, PathResolutionScope::Type)?;
-                    let mut method_path = self.module_path.segments.clone();
-                    method_path.extend(
-                        self_path
-                            .segments
-                            .iter()
-                            .map(|segment| segment.name.as_str().to_string()),
-                    );
+                    let mut method_path = self.canonical_type_path(&self_path)?.segments;
                     for impl_item in &impl_block.items {
                         let ast::ItemKind::DefFunction(function) = impl_item.kind() else {
                             continue;
