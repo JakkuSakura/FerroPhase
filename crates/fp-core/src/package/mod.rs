@@ -240,6 +240,9 @@ pub struct CompiledPackage {
 
     /// All parsed source items with their fully qualified source paths.
     pub items: Vec<PackageItem>,
+
+    /// MIR struct field types keyed by DefId, computed during MIR lowering.
+    pub mir_struct_fields: HashMap<crate::hir::DefId, Vec<crate::mir::Ty>>,
 }
 
 impl CompiledPackage {
@@ -272,6 +275,7 @@ impl CompiledPackage {
             mir_program: None,
             hir_exports: HashMap::new(),
             items: Vec::new(),
+            mir_struct_fields: HashMap::new(),
         }
     }
 }

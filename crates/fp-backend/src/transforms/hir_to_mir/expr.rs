@@ -296,7 +296,7 @@ struct FunctionSpecializationInfo {
 }
 
 #[derive(Clone, Debug)]
-struct EnumLayout {
+pub struct EnumLayout {
     def_id: hir::DefId,
     args: Vec<Ty>,
     tag_ty: Ty,
@@ -357,9 +357,9 @@ struct StructFieldDef {
 }
 
 #[derive(Clone, Debug)]
-struct StructLayout {
-    ty: Ty,
-    field_tys: Vec<Ty>,
+pub struct StructLayout {
+    pub ty: Ty,
+    pub field_tys: Vec<Ty>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -368,9 +368,9 @@ struct StructuralLayoutKey {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct StructLayoutKey {
-    def_id: hir::DefId,
-    args: Vec<Ty>,
+pub struct StructLayoutKey {
+    pub def_id: hir::DefId,
+    pub args: Vec<Ty>,
 }
 
 #[derive(Clone)]
@@ -551,9 +551,75 @@ impl MirLowering {
                 hir::ItemKind::Impl(impl_block) => {
                     self.register_external_impl_methods(&impl_block);
                 }
+                hir::ItemKind::Struct(def) => {
+                    self.register_struct(item.def_id, &def, item.span);
+                }
+                hir::ItemKind::Enum(def) => {
+                    self.register_enum(item.def_id, &def, item.span);
+                }
                 _ => {}
             }
         }
+    }
+
+    pub fn compute_external_struct_layouts(&mut self) {
+        let mut def_ids: Vec<hir::DefId> = self
+            .struct_defs
+            .iter()
+            .filter_map(|(def_id, def)| {
+                if def.generics.is_empty() {
+                    Some(*def_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        def_ids.sort();
+        for def_id in def_ids {
+            let _ = self.struct_layout_for_instance(def_id, &[], Span::null());
+        }
+        let mut enum_ids: Vec<hir::DefId> = self
+            .enum_defs
+            .iter()
+            .filter_map(|(def_id, def)| {
+                if def.generics.is_empty() {
+                    Some(*def_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        enum_ids.sort();
+        for def_id in enum_ids {
+            let _ = self.enum_layout_for_instance(def_id, &[], Span::null());
+        }
+    }
+
+    pub fn struct_layout_map(&self) -> &HashMap<StructLayoutKey, StructLayout> {
+        &self.struct_layouts
+    }
+
+    pub fn enum_layout_map(&self) -> &HashMap<EnumLayoutKey, EnumLayout> {
+        &self.enum_layouts
+    }
+
+    pub fn all_adt_field_tys(&self) -> HashMap<hir::DefId, Vec<Ty>> {
+        let mut map = HashMap::new();
+        for (key, layout) in &self.struct_layouts {
+            if key.args.is_empty() {
+                map.insert(key.def_id, layout.field_tys.clone());
+            }
+        }
+        for (key, layout) in &self.enum_layouts {
+            if key.args.is_empty() {
+                let mut fields: Vec<Ty> = Vec::new();
+                for payload_tys in layout.variant_payloads.values() {
+                    fields.extend(payload_tys.iter().cloned());
+                }
+                map.insert(key.def_id, fields);
+            }
+        }
+        map
     }
 
     fn register_external_impl_methods(&mut self, impl_block: &hir::Impl) {

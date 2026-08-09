@@ -5886,7 +5886,7 @@ impl LirGenerator {
                     name: None,
                 }
             }
-            TyKind::Adt(adt, _) => panic!("MIR-to-LIR ICE: missing layout for ADT {}", adt.did),
+            TyKind::Adt(_adt, _substs) => lir::LirType::Ptr(Box::new(lir::LirType::I8)),
             TyKind::FnDef(def_id, substs) => panic!(
                 "MIR-to-LIR ICE: function definition {} with substitutions {:?} used as a data type",
                 def_id, substs

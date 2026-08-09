@@ -428,7 +428,7 @@ impl CompilerDriver {
             package.borrow_mut().hir_program = Some(self.state.hir(&hir_id)?.clone());
         }
         let fqp = FullyQualifiedPath::new(package_path.clone());
-        let mir_id = self.lower_to_mir(&hir_id, &fqp).await?;
+        let (mir_id, struct_layouts) = self.lower_to_mir(&hir_id, &fqp).await?;
         if let Some(package) = self
             .state
             .typing_ctx
@@ -436,8 +436,13 @@ impl CompilerDriver {
             .compiled_package(&current_package_id)
         {
             package.borrow_mut().mir_program = Some(self.state.mir(&mir_id)?.clone());
+            package
+                .borrow_mut()
+                .mir_struct_fields
+                .extend(struct_layouts.clone());
         }
-        let lir_id = self.lower_to_lir(&mir_id, &fqp, &current_package_id)?;
+        let lir_id =
+            self.lower_to_lir(&mir_id, &fqp, &current_package_id, &struct_layouts)?;
         let lir = self.state.lir(&lir_id)?.clone();
         Ok(vec![fp_core::lir::LirCompileUnit {
             package_id: hir_package_id,
@@ -572,7 +577,7 @@ impl CompilerDriver {
         &mut self,
         hir_id: &HirId,
         path: &FullyQualifiedPath,
-    ) -> Result<MirId, CompilerDriverError> {
+    ) -> Result<(MirId, HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>>), CompilerDriverError> {
         // HIR has already passed type checking at this boundary. Lowering is
         // therefore strict: a failure is an internal compiler error, never a
         // recoverable source diagnostic.
@@ -599,6 +604,9 @@ impl CompilerDriver {
             lowering.seed_resolved_const(key.to_string(), value.clone());
         }
         let result = lowering.transform_async(hir).await;
+        lowering.compute_external_struct_layouts();
+        let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
+            lowering.all_adt_field_tys().into_iter().collect();
         let (diagnostics, had_errors) = lowering.take_diagnostics();
         let mir = result.map_err(|error| {
             CompilerDriverError::InternalCompilerError(format!(
@@ -617,7 +625,7 @@ impl CompilerDriver {
         }
         let mir_id = MirId::new(format!("mir:{}", self.module_state_key(path.path())));
         self.state.insert_mir(mir_id.clone(), mir);
-        Ok(mir_id)
+        Ok((mir_id, struct_layouts))
     }
 
     fn lower_to_lir(
@@ -625,6 +633,7 @@ impl CompilerDriver {
         mir_id: &MirId,
         path: &FullyQualifiedPath,
         package_id: &PackageId,
+        _struct_layouts: &HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>>,
     ) -> Result<LirId, CompilerDriverError> {
         let mir = self.state.mir(mir_id)?.clone();
         let mut lowering = LirGenerator::new(self.state.typing_ctx.data_layout.clone())
