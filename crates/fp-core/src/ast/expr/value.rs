@@ -5,7 +5,7 @@ use crate::ast::{
     BExpr, BPattern, BType, Expr, ExprBlock, ExprKind, Ident, ItemChunk, Name, Pattern, Ty, Value,
     ValueFunction, get_threadlocal_serializer,
 };
-use crate::intrinsics::CallKind;
+use crate::intrinsics::{CallKind, OpKind};
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::span::Span;
 use crate::{common_enum, common_struct};
@@ -1094,6 +1094,13 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
         | CallKind::ShellFileCopy
         | CallKind::ShellFileTemplate
         | CallKind::ShellFileRsync => None,
+        CallKind::Op(OpKind::OptionSome)
+        | CallKind::Op(OpKind::OptionNone)
+        | CallKind::Op(OpKind::OptionUnwrap)
+        | CallKind::Op(OpKind::VecNew)
+        | CallKind::Op(OpKind::Clone) => {
+            Some(ExprIntrinsicCall::new(kind, invoke.args.clone(), invoke.kwargs.clone()))
+        }
         CallKind::Intrinsic(_) => None,
     }?;
     Some(call)

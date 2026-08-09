@@ -1,5 +1,6 @@
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprIf, ExprIntrinsicCall, ExprInvoke,
+    BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprIf, ExprIntrinsicCall,
+    ExprIntrinsicContainer, ExprInvoke,
     ExprInvokeTarget, ExprKind, ExprStringTemplate, ExprUnOp, FormatArgRef, FormatPlaceholder,
     FormatSpec, FormatTemplatePart, Ident, MacroTokenTree, Name, Path, StmtLet, Ty, Value,
 };
@@ -367,18 +368,54 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     )),
                 ))),
             },
-            IntrinsicNormalizationMode::Transpile => {
-                Ok(NormalizeOutcome::Normalized(Expr::from_parts(
-                    id,
-                    ty_slot,
-                    span,
-                    ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                        intrinsic_kind,
-                        invoke.args,
-                        invoke.kwargs,
-                    )),
-                )))
-            }
+            IntrinsicNormalizationMode::Transpile => match intrinsic_kind {
+                CallKind::Op(OpKind::OptionSome) => {
+                    Ok(NormalizeOutcome::Normalized(
+                        invoke.args.first().cloned().unwrap_or_else(|| {
+                            Expr::from_parts(0, None, Some(Span::default()),
+                                ExprKind::Value(Box::new(Value::Null(Default::default()))))
+                        })
+                    ))
+                }
+                CallKind::Op(OpKind::OptionNone) => {
+                    Ok(NormalizeOutcome::Normalized(Expr::from_parts(
+                        id, ty_slot, span,
+                        ExprKind::Value(Box::new(Value::Null(Default::default()))),
+                    )))
+                }
+                CallKind::Op(OpKind::OptionUnwrap) => {
+                    Ok(NormalizeOutcome::Normalized(
+                        invoke.args.first().cloned().unwrap_or_else(|| {
+                            Expr::from_parts(0, None, Some(Span::default()),
+                                ExprKind::Value(Box::new(Value::Null(Default::default()))))
+                        })
+                    ))
+                }
+                CallKind::Op(OpKind::VecNew) => {
+                    Ok(NormalizeOutcome::Normalized(Expr::from_parts(
+                        id, ty_slot, span,
+                        ExprKind::IntrinsicContainer(
+                            ExprIntrinsicContainer::VecElements { elements: vec![] }
+                        ),
+                    )))
+                }
+                CallKind::Op(OpKind::Clone) => {
+                    Ok(NormalizeOutcome::Normalized(
+                        invoke.args.first().cloned().unwrap_or_else(|| {
+                            Expr::from_parts(0, None, Some(Span::default()),
+                                ExprKind::Value(Box::new(Value::Null(Default::default()))))
+                        })
+                    ))
+                }
+                _ => {
+                    Ok(NormalizeOutcome::Normalized(Expr::from_parts(
+                        id, ty_slot, span,
+                        ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                            intrinsic_kind, invoke.args, invoke.kwargs,
+                        )),
+                    )))
+                }
+            },
         }
     }
 }
@@ -420,8 +457,89 @@ fn compile_mode_std_path(kind: OpKind) -> Option<Vec<Ident>> {
         OpKind::ShellFileCopy => &["std", "shell", "file_copy"][..],
         OpKind::ShellFileTemplate => &["std", "shell", "file_template"][..],
         OpKind::ShellFileRsync => &["std", "shell", "file_rsync"][..],
+        // Portable data ops — no std path, handled in normalize_invoke
+        OpKind::OptionSome | OpKind::OptionNone | OpKind::OptionUnwrap
+        | OpKind::VecNew | OpKind::Clone => return None,
     };
     Some(path.iter().map(|segment| Ident::new(*segment)).collect())
+}
+
+/// Apply the intrinsic normalizer to all expressions in AST items.
+/// Used in transpile mode to normalize Rust-specific patterns before serialization.
+pub fn normalize_items(items: &mut [fp_core::ast::Item], normalizer: &dyn IntrinsicNormalizer) -> Result<()> {
+    for item in items {
+        normalize_item(item, normalizer)?;
+    }
+    Ok(())
+}
+
+fn normalize_item(item: &mut fp_core::ast::Item, n: &dyn IntrinsicNormalizer) -> Result<()> {
+    use fp_core::ast::ItemKind;
+    match item.kind_mut() {
+        ItemKind::Module(m) => { for c in &mut m.items { normalize_item(c, n)?; } }
+        ItemKind::DefFunction(f) => {
+            for stmt in &mut f.body.stmts { normalize_stmt(stmt, n)?; }
+        }
+        ItemKind::Impl(imp) => { for c in &mut imp.items { normalize_item(c, n)?; } }
+        ItemKind::Expr(expr) => { normalize_expr(expr, n)?; }
+        ItemKind::DefConst(c) => { normalize_expr(&mut c.value, n)?; }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn normalize_stmt(stmt: &mut BlockStmt, n: &dyn IntrinsicNormalizer) -> Result<()> {
+    match stmt {
+        BlockStmt::Let(l) => { if let Some(init) = &mut l.init { normalize_expr(init, n)?; } }
+        BlockStmt::Expr(se) => { normalize_expr(&mut se.expr, n)?; }
+        BlockStmt::Item(item) => { normalize_item(item, n)?; }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn normalize_expr(expr: &mut Expr, n: &dyn IntrinsicNormalizer) -> Result<()> {
+    // Walk children first
+    match expr.kind_mut() {
+        ExprKind::Block(block) => { for s in &mut block.stmts { normalize_stmt(s, n)?; } }
+        ExprKind::If(if_expr) => {
+            normalize_expr(&mut if_expr.cond, n)?;
+            normalize_expr(&mut if_expr.then, n)?;
+            if let Some(e) = &mut if_expr.elze { normalize_expr(e, n)?; }
+        }
+        ExprKind::Match(mt) => {
+            if let Some(s) = &mut mt.scrutinee { normalize_expr(s, n)?; }
+            for c in &mut mt.cases { normalize_expr(&mut c.body, n)?; }
+        }
+        ExprKind::While(wh) => { normalize_expr(&mut wh.cond, n)?; normalize_expr(&mut wh.body, n)?; }
+        ExprKind::For(fr) => { normalize_expr(&mut fr.iter, n)?; normalize_expr(&mut fr.body, n)?; }
+        ExprKind::Loop(lp) => { normalize_expr(&mut lp.body, n)?; }
+        ExprKind::BinOp(b) => { normalize_expr(&mut b.lhs, n)?; normalize_expr(&mut b.rhs, n)?; }
+        ExprKind::UnOp(u) => { normalize_expr(&mut u.val, n)?; }
+        ExprKind::Assign(a) => { normalize_expr(&mut a.target, n)?; normalize_expr(&mut a.value, n)?; }
+        ExprKind::Return(r) => { if let Some(v) = &mut r.value { normalize_expr(v, n)?; } }
+        ExprKind::Let(l) => { normalize_expr(&mut l.expr, n)?; }
+        ExprKind::Closure(cl) => { normalize_expr(&mut cl.body, n)?; }
+        ExprKind::Array(arr) => { for v in &mut arr.values { normalize_expr(v, n)?; } }
+        ExprKind::Struct(st) => { for f in &mut st.fields { if let Some(v) = &mut f.value { normalize_expr(v, n)?; } } }
+        ExprKind::Select(sel) => { normalize_expr(&mut sel.obj, n)?; }
+        ExprKind::Index(idx) => { normalize_expr(&mut idx.obj, n)?; normalize_expr(&mut idx.index, n)?; }
+        ExprKind::Paren(p) => { normalize_expr(&mut p.expr, n)?; }
+        ExprKind::Reference(r) => { normalize_expr(&mut r.referee, n)?; }
+        ExprKind::Dereference(d) => { normalize_expr(&mut d.referee, n)?; }
+        ExprKind::Cast(c) => { normalize_expr(&mut c.expr, n)?; }
+        _ => {}
+    }
+
+    // Apply normalizer to this expression
+    let original = expr.clone();
+    match n.normalize_expr(original) {
+        Ok(outcome) if outcome.is_normalized() => {
+            *expr = outcome.into_inner();
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn resolve_lang_intrinsic(invoke: &ExprInvoke) -> Option<CallKind> {
@@ -436,10 +554,7 @@ fn resolve_lang_intrinsic(invoke: &ExprInvoke) -> Option<CallKind> {
         _ => return None,
     };
     intrinsic_macro_kind(fn_name).or_else(|| {
-        matches!(fn_name, "format" | "print" | "println")
-            .then(|| operation_kind(fn_name))
-            .flatten()
-            .map(CallKind::Op)
+        operation_kind(fn_name).map(CallKind::Op)
     })
 }
 
@@ -479,6 +594,11 @@ fn operation_kind(name: &str) -> Option<OpKind> {
         "file_copy" => Some(OpKind::ShellFileCopy),
         "file_template" => Some(OpKind::ShellFileTemplate),
         "file_rsync" => Some(OpKind::ShellFileRsync),
+        "some" | "Some" => Some(OpKind::OptionSome),
+        "none" | "None" => Some(OpKind::OptionNone),
+        "unwrap" | "Unwrap" => Some(OpKind::OptionUnwrap),
+        "vec_new" | "Vec::new" | "Vec" | "vec" => Some(OpKind::VecNew),
+        "clone" | "Clone" => Some(OpKind::Clone),
         _ => None,
     }
 }
@@ -504,6 +624,11 @@ fn intrinsic_macro_kind(name: &str) -> Option<CallKind> {
         "generate_method" => Some(CallKind::Intrinsic(IntrinsicKind::GenerateMethod)),
         "compile_error" => Some(CallKind::Intrinsic(IntrinsicKind::CompileError)),
         "compile_warning" => Some(CallKind::Intrinsic(IntrinsicKind::CompileWarning)),
+        "some" | "Some" => Some(CallKind::Op(OpKind::OptionSome)),
+        "none" | "None" => Some(CallKind::Op(OpKind::OptionNone)),
+        "unwrap" | "Unwrap" => Some(CallKind::Op(OpKind::OptionUnwrap)),
+        "vec_new" | "Vec::new" | "Vec" | "vec" => Some(CallKind::Op(OpKind::VecNew)),
+        "clone" | "Clone" => Some(CallKind::Op(OpKind::Clone)),
         _ => None,
     }
 }

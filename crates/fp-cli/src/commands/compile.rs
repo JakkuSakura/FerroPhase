@@ -9,7 +9,7 @@ use crate::compiler::{
 };
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
-use fp_core::ast::{AstSerializer, AstTargetOutput, File};
+use fp_core::ast::{AstSerializer, AstTargetOutput, File, Item};
 use fp_core::config;
 #[cfg(feature = "lang-csharp")]
 use fp_csharp::CSharpSerializer;
@@ -916,28 +916,46 @@ async fn compile_project(
     let ext = crate::languages::backend::output_extension_for(target);
     let mut file_count = 0;
 
+    let normalizer = fp_lang::FerroIntrinsicNormalizer::new(
+        fp_core::intrinsics::IntrinsicNormalizationMode::Transpile,
+    );
+
     for package_id in &packages {
-        let source = provider
+        let mut source = provider
             .load_package_source(package_id)
             .map_err(|e| CliError::Compilation(e.to_string()))?;
 
         let name = package_id.as_str();
 
-        let rel = name.to_string();
-        let out_path = output.join(name).with_extension(ext);
-        if let Some(parent) = out_path.parent() {
-            std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+        // Normalize portable ops (Some, None, Vec::new, etc.) before serialization
+        for pkg_item in &mut source.items {
+            fp_lang::normalization::normalize_items(std::slice::from_mut(&mut pkg_item.item), &normalizer)?;
         }
 
-        let file = File {
-            path: PathBuf::from(&rel),
-            attrs: Vec::new(),
-            collected_items: Vec::new(),
-            items: source.items.into_iter().map(|item| item.item).collect(),
-        };
-        let result = emit_ast_target(&file, target, args.type_defs, &out_path, args.single_world)?;
-        std::fs::write(&out_path, &result.code).map_err(CliError::Io)?;
-        file_count += 1;
+        // Group items by module path
+        use std::collections::BTreeMap;
+        let mut modules: BTreeMap<String, Vec<Item>> = BTreeMap::new();
+        for pkg_item in &source.items {
+            let key = pkg_item.path.segments.join("/");
+            modules.entry(key).or_default().push(pkg_item.item.clone());
+        }
+
+        for (mod_path, items) in modules {
+            let out_path = output.join(name).join(&mod_path).with_extension(ext);
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+            }
+
+            let file = File {
+                path: PathBuf::from(&mod_path),
+                attrs: Vec::new(),
+                collected_items: Vec::new(),
+                items,
+            };
+            let result = emit_ast_target(&file, target, args.type_defs, &out_path, args.single_world)?;
+            std::fs::write(&out_path, &result.code).map_err(CliError::Io)?;
+            file_count += 1;
+        }
     }
 
     info!(

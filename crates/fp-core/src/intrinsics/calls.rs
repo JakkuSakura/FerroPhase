@@ -35,6 +35,11 @@ pub enum OpKind {
     ShellFileCopy,
     ShellFileTemplate,
     ShellFileRsync,
+    OptionSome,
+    OptionNone,
+    OptionUnwrap,
+    VecNew,
+    Clone,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -177,6 +182,11 @@ impl CallKind {
             Self::Op(OpKind::ShellFileCopy) => Some(IntrinsicKind::ShellFileCopy),
             Self::Op(OpKind::ShellFileTemplate) => Some(IntrinsicKind::ShellFileTemplate),
             Self::Op(OpKind::ShellFileRsync) => Some(IntrinsicKind::ShellFileRsync),
+            Self::Op(OpKind::OptionSome) => None,
+            Self::Op(OpKind::OptionNone) => None,
+            Self::Op(OpKind::OptionUnwrap) => None,
+            Self::Op(OpKind::VecNew) => None,
+            Self::Op(OpKind::Clone) => None,
             Self::Intrinsic(kind) => Some(kind),
         }
     }
@@ -341,6 +351,11 @@ impl CallKind {
             Self::Op(OpKind::ShellFileRsync) | Self::Intrinsic(IntrinsicKind::ShellFileRsync) => {
                 "shell_file_rsync"
             }
+            Self::Op(OpKind::OptionSome) => "option_some",
+            Self::Op(OpKind::OptionNone) => "option_none",
+            Self::Op(OpKind::OptionUnwrap) => "option_unwrap",
+            Self::Op(OpKind::VecNew) => "vec_new",
+            Self::Op(OpKind::Clone) => "clone",
         }
     }
 
