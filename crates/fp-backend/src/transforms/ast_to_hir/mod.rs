@@ -62,7 +62,6 @@ pub struct HirGenerator {
     program_def_map: HashMap<hir::DefId, hir::Item>,
     unimplemented_type_def_ids: HashSet<hir::DefId>,
     resolving_type_aliases: HashSet<String>,
-    module_resolution: Option<fp_core::module::resolution::ModuleResolutionContext>,
     resolved_names: ResolvedNameTable,
     expr_resolution: ExprResolutionTable,
     target_env: TargetEnv,
@@ -334,7 +333,6 @@ impl HirGenerator {
             program_def_map: HashMap::new(),
             unimplemented_type_def_ids: HashSet::new(),
             resolving_type_aliases: HashSet::new(),
-            module_resolution: None,
             resolved_names: ResolvedNameTable::new(),
             expr_resolution: ExprResolutionTable::default(),
             target_env: TargetEnv::host(),
@@ -418,14 +416,6 @@ impl HirGenerator {
 
     pub fn with_expr_resolution(mut self, expr_resolution: ExprResolutionTable) -> Self {
         self.expr_resolution = expr_resolution;
-        self
-    }
-
-    pub fn with_module_resolution(
-        mut self,
-        module_resolution: fp_core::module::resolution::ModuleResolutionContext,
-    ) -> Self {
-        self.module_resolution = Some(module_resolution);
         self
     }
 

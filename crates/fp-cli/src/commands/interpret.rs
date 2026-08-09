@@ -1,6 +1,6 @@
 //! Interpret FerroPhase source or bytecode files.
 
-use crate::{cli::CliConfig, compiler, CliError, Result};
+use crate::{CliError, Result, cli::CliConfig, compiler};
 use clap::Args;
 use fp_jit::JitOptions;
 use std::path::{Path, PathBuf};

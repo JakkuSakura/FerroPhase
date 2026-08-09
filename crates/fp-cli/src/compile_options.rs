@@ -25,7 +25,6 @@ pub struct PipelineOptions {
     pub release: bool,
     pub execute_main: bool,
     pub disabled_stages: Vec<String>,
-    pub module_resolution: Option<fp_core::module::resolution::ModuleResolutionContext>,
     pub jit: Option<JitOptions>,
 }
 
@@ -123,7 +122,6 @@ impl Default for PipelineOptions {
             release: false,
             execute_main: false,
             disabled_stages: Vec::new(),
-            module_resolution: None,
             jit: None,
         }
     }

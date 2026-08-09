@@ -7,7 +7,7 @@ use crate::compiler::{
     LlvmCompileOptions, LossyCompileOptions, NativeCompileOptions, NativeEmitterKind,
     WasmCompileOptions,
 };
-use crate::{cli::CliConfig, CliError, Result};
+use crate::{CliError, Result, cli::CliConfig};
 use console::style;
 use fp_core::ast::{AstSerializer, AstTarget, AstTargetOutput, File};
 use fp_core::config;
@@ -843,7 +843,7 @@ async fn compile_emit_target(
         ));
     }
 
-    use crate::languages::frontend::{detect_language_source_by_path, LanguageSource};
+    use crate::languages::frontend::{LanguageSource, detect_language_source_by_path};
     let detected = detect_language_source_by_path(input);
     let is_wit_input = matches!(detected, Some(LanguageSource::Wit));
     let is_typescript_input = matches!(
@@ -1545,17 +1545,9 @@ fn determine_output_path(
                     } else if native_asm_text_target {
                         "s"
                     } else if native_object_target {
-                        if native_link_requested {
-                            "out"
-                        } else {
-                            "o"
-                        }
+                        if native_link_requested { "out" } else { "o" }
                     } else if native_archive_target {
-                        if native_link_requested {
-                            "out"
-                        } else {
-                            "a"
-                        }
+                        if native_link_requested { "out" } else { "a" }
                     } else if urcl_object_target {
                         "o"
                     } else if goasm_object_target {

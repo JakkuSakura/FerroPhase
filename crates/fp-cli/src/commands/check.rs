@@ -1,6 +1,6 @@
 //! Code checking and validation command implementation
 
-use crate::{cli::CliConfig, compiler, utils::FileUtils, Result};
+use crate::{Result, cli::CliConfig, compiler, utils::FileUtils};
 use clap::Args;
 use console::style;
 use fp_core::config;

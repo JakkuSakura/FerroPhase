@@ -21,8 +21,8 @@ use fp_core::{
     lir::LirDataLayout,
 };
 use fp_goasm::config::GoAsmTarget;
-use fp_lang::module_source::FerroModuleSourceResolver;
 use fp_lang::FerroFrontend;
+use fp_lang::module_source::FerroModuleSourceResolver;
 use fp_typing::{TypingDiagnostic, TypingDiagnosticLevel};
 
 #[cfg(feature = "lang-flatbuffers")]
