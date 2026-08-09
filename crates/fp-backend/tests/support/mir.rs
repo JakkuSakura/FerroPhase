@@ -45,7 +45,7 @@ pub fn function_item(body_id: BodyId) -> Item {
         name: symbol.clone(),
         path: vec![symbol],
         def_id: None,
-        instance_id: None,
+        substs: Vec::new(),
         sig,
         body_id,
         abi: mir::ty::Abi::Rust,

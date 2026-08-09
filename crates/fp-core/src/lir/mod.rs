@@ -624,7 +624,7 @@ pub enum LirValueKind {
 pub enum LirFunctionRef {
     Name(Name),
     Package {
-        package_id: crate::hir::PackageId,
+        package_id: crate::package::PackageId,
         name: Name,
     },
     Definition(crate::hir::DefId),

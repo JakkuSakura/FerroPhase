@@ -39,6 +39,8 @@ pub enum CompilerDriverError {
     ModuleResolution(#[from] ModuleResolutionError),
     #[error("unsupported compiler work: {0}")]
     UnsupportedWork(String),
+    #[error("internal compiler error: {0}")]
+    InternalCompilerError(String),
     #[error("unresolvable comptime cycle: {0}")]
     UnresolvableComptime(String),
     #[error(

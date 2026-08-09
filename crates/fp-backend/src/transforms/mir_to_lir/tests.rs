@@ -57,7 +57,7 @@ fn builds_function_signature_and_locals() {
                 name: MirSymbol::new("test_fn"),
                 path: vec![MirSymbol::new("test_fn")],
                 def_id: None,
-                instance_id: None,
+                substs: Vec::new(),
                 sig: mir::FunctionSig {
                     inputs: vec![param_ty.clone()],
                     output: return_ty.clone(),
@@ -148,7 +148,7 @@ fn lowers_general_call_and_branches() {
         name: MirSymbol::new("foo"),
         path: vec![MirSymbol::new("foo")],
         def_id: None,
-        instance_id: None,
+        substs: Vec::new(),
         sig: mir::FunctionSig {
             inputs: vec![param_ty.clone()],
             output: return_ty.clone(),
@@ -171,7 +171,7 @@ fn lowers_general_call_and_branches() {
                     name: MirSymbol::new("test_fn"),
                     path: vec![MirSymbol::new("test_fn")],
                     def_id: None,
-                    instance_id: None,
+                    substs: Vec::new(),
                     sig: mir::FunctionSig {
                         inputs: vec![param_ty.clone()],
                         output: return_ty.clone(),

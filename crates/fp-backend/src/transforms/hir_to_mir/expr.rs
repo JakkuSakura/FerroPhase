@@ -258,7 +258,7 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
 #[derive(Clone, Debug)]
 struct MethodLoweringInfo {
     def_id: Option<hir::DefId>,
-    instance_id: Option<mir::FunctionInstanceId>,
+    substs: mir::ty::SubstsRef,
     sig: mir::FunctionSig,
     fn_name: String,
     fn_ty: Ty,
@@ -273,7 +273,7 @@ struct MethodLoweringInfo {
 //   generic args and/or the expected return type.
 // - Build a specialized MethodLoweringInfo and emit a cloned MIR body using
 //   lower_function_sig_with_substs + BodyBuilder (type_substs).
-// - Avoid re-emitting by caching MethodSpecializationKey in method_specializations.
+// - Avoid re-emitting by caching `(DefId, SubstsRef)` in method_specializations.
 // This is required to fix generic enum payloads and to eliminate invalid
 // bitcasts (e.g., in examples/17_generics).
 #[derive(Clone)]
@@ -286,22 +286,10 @@ struct MethodDefinition {
     method_name: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct MethodSpecializationKey {
-    def_id: hir::DefId,
-    method_name: String,
-    args: Vec<Ty>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct FunctionSpecializationKey {
-    def_id: hir::DefId,
-    args: Vec<Ty>,
-}
-
 #[derive(Clone, Debug)]
 struct FunctionSpecializationInfo {
-    instance_id: mir::FunctionInstanceId,
+    def_id: hir::DefId,
+    substs: mir::ty::SubstsRef,
     name: String,
     sig: mir::FunctionSig,
     fn_ty: Ty,
@@ -440,14 +428,12 @@ pub struct MirLowering {
     method_lookup: HashMap<String, MethodLoweringInfo>,
     method_defs: HashMap<String, MethodDefinition>,
     method_defs_by_def: HashMap<hir::DefId, MethodDefinition>,
-    method_specializations: HashMap<MethodSpecializationKey, MethodLoweringInfo>,
-    function_specializations: HashMap<FunctionSpecializationKey, FunctionSpecializationInfo>,
+    method_specializations: HashMap<(hir::DefId, mir::ty::SubstsRef), MethodLoweringInfo>,
+    function_specializations: HashMap<(hir::DefId, mir::ty::SubstsRef), FunctionSpecializationInfo>,
     extra_items: Vec<mir::Item>,
     extra_bodies: Vec<(mir::BodyId, mir::Body)>,
     opaque_types: HashMap<String, Ty>,
     synthetic_runtime_functions: HashSet<String>,
-    tolerate_errors: bool,
-    lossy_mode: bool,
     next_synthetic_hir_def_id: hir::DefId,
     typeck_type_exprs: HashMap<hir::HirId, Ty>,
     typeck_exprs: HashMap<hir::HirId, Ty>,
@@ -523,8 +509,6 @@ impl MirLowering {
             extra_bodies: Vec::new(),
             opaque_types: HashMap::new(),
             synthetic_runtime_functions: HashSet::new(),
-            tolerate_errors: false,
-            lossy_mode: fp_core::config::lossy_mode(),
             next_synthetic_hir_def_id: hir::DefId::local(1),
             typeck_type_exprs: HashMap::new(),
             typeck_exprs: HashMap::new(),
@@ -535,42 +519,72 @@ impl MirLowering {
     }
 
     pub fn transform(&mut self, hir_program: hir::Program) -> Result<mir::Program> {
-        if self.tolerate_errors && self.lossy_mode {
-            let mut saw_rust = false;
-            let mut saw_non_rust = false;
-            for item in &hir_program.items {
-                if self.is_rust_span(item.span) {
-                    saw_rust = true;
-                } else {
-                    saw_non_rust = true;
-                    break;
-                }
-            }
-            if saw_rust && !saw_non_rust {
-                if let Some(span) = hir_program.items.first().map(|item| item.span) {
-                    self.emit_warning(
-                        span,
-                        "lossy mode: skipping HIR→MIR lowering for Rust sources",
-                    );
-                }
-                return Ok(mir::Program::new());
-            }
+        let program = self.lower_program(&hir_program)?;
+        if self.has_errors {
+            return Err(fp_core::error::Error::from(
+                "internal compiler error: HIR-to-MIR lowering reported an error",
+            ));
         }
-        self.lower_program(&hir_program)
+        Ok(program)
     }
 
     /// Lower HIR through the compiler's asynchronous boundary.
     ///
     /// Generic instance requests are resolved while producing MIR and are
-    /// cached by their typed `FunctionInstanceId`. Keeping this boundary
+    /// cached by their typed `(DefId, SubstsRef)` identity. Keeping this boundary
     /// async lets the compiler driver own executor progress without making
     /// every recursive expression operation an artificial future.
     pub async fn transform_async(&mut self, hir_program: hir::Program) -> Result<mir::Program> {
         self.transform(hir_program)
     }
 
-    pub fn set_lossy(&mut self, enabled: bool) {
-        self.tolerate_errors = enabled;
+    /// Register imported definitions that can be referenced while lowering
+    /// this package. Imported bodies are specialized only when a call needs
+    /// them; they are never emitted as source items in the current package.
+    pub fn register_external_definitions(&mut self, program: &hir::Program) {
+        let items = program.def_map.values().cloned().collect::<Vec<_>>();
+        for item in items {
+            match item.kind {
+                hir::ItemKind::Function(function) if !function.sig.generics.params.is_empty() => {
+                    self.register_generic_function(item.def_id, &function);
+                }
+                hir::ItemKind::Impl(impl_block) => {
+                    self.register_external_impl_methods(&impl_block);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn register_external_impl_methods(&mut self, impl_block: &hir::Impl) {
+        let struct_name = self.struct_name_from_type(&impl_block.self_ty);
+        let method_context = self.make_method_context(&impl_block.self_ty);
+        let impl_is_generic = !impl_block.generics.params.is_empty();
+
+        for impl_item in &impl_block.items {
+            let hir::ImplItemKind::Method(function) = &impl_item.kind else {
+                continue;
+            };
+            if !impl_is_generic && function.sig.generics.params.is_empty() {
+                continue;
+            }
+
+            let method_name = match struct_name.as_deref() {
+                Some(name) => format!("{}::{}", name, function.sig.name),
+                None => function.sig.name.as_str().to_string(),
+            };
+            let definition = MethodDefinition {
+                def_id: impl_item.def_id,
+                function: function.clone(),
+                impl_generics: impl_block.generics.clone(),
+                self_ty: impl_block.self_ty.clone(),
+                self_def: method_context.as_ref().and_then(|ctx| ctx.def_id),
+                method_name: method_name.clone(),
+            };
+            self.method_defs_by_def
+                .insert(impl_item.def_id, definition.clone());
+            self.method_defs.insert(method_name, definition);
+        }
     }
 
     pub fn seed_resolved_const(&mut self, key: impl Into<String>, value: mir::Constant) {
@@ -680,13 +694,6 @@ impl MirLowering {
 
         for item in &items {
             if let hir::ItemKind::Const(const_item) = &item.kind {
-                if self.lossy_mode && self.is_rust_span(const_item.body.value.span) {
-                    self.emit_warning(
-                        const_item.body.value.span,
-                        "lossy mode: skipping const evaluation for Rust source",
-                    );
-                    continue;
-                }
                 self.register_const_value(program, item.def_id, const_item);
             }
         }
@@ -700,13 +707,6 @@ impl MirLowering {
                     self.register_enum(item.def_id, def, item.span);
                 }
                 hir::ItemKind::Const(const_item) => {
-                    if self.lossy_mode && self.is_rust_span(const_item.body.value.span) {
-                        self.emit_warning(
-                            const_item.body.value.span,
-                            "lossy mode: skipping const lowering for Rust source",
-                        );
-                        continue;
-                    }
                     let ty = self.lower_type_expr(&const_item.ty);
                     if Self::is_unit_ty(&ty) {
                         // Unit consts don't need a static allocation; keep them as inline constants.
@@ -1175,7 +1175,7 @@ impl MirLowering {
                 name: mir::Symbol::new(name.clone()),
                 path: Vec::new(),
                 def_id: None,
-                instance_id: None,
+                substs: Vec::new(),
                 sig: sig.clone(),
                 body_id,
                 abi: mir::ty::Abi::Rust,
@@ -1222,9 +1222,6 @@ impl MirLowering {
             .unwrap_or(item.span);
         let mir_body = if function.body.is_none() {
             self.stub_body(&sig, span)
-        } else if self.lossy_mode && self.is_rust_span(span) {
-            self.emit_warning(span, "lossy mode: stubbing MIR for Rust source");
-            self.stub_body(&sig, span)
         } else {
             self.lower_body(program, item, function, &sig, None)?
         };
@@ -1233,7 +1230,7 @@ impl MirLowering {
             name: mir::Symbol::from(function.sig.name.clone()),
             path: Vec::new(),
             def_id: Some(item.def_id),
-            instance_id: None,
+            substs: Vec::new(),
             sig,
             body_id,
             abi: self.map_abi(&function.sig.abi),
@@ -1248,17 +1245,6 @@ impl MirLowering {
         self.next_mir_id += 1;
 
         Ok((mir_item, body_id, mir_body))
-    }
-
-    fn is_rust_span(&self, span: Span) -> bool {
-        let Some(file) = fp_core::source_map::source_map().file(span.file) else {
-            return true;
-        };
-        match file.path.extension().and_then(|ext| ext.to_str()) {
-            Some("fp") => false,
-            Some("rs") => true,
-            _ => true,
-        }
     }
 
     fn stub_body(&mut self, sig: &mir::FunctionSig, span: Span) -> mir::Body {
@@ -1306,7 +1292,7 @@ impl MirLowering {
         sig: &mir::FunctionSig,
         substs: HashMap<String, Ty>,
         name_override: &str,
-        instance_id: mir::FunctionInstanceId,
+        function_substs: mir::ty::SubstsRef,
     ) -> Result<(mir::Item, mir::BodyId, mir::Body)> {
         let body_id = mir::BodyId::new(self.next_body_id);
         self.next_body_id += 1;
@@ -1323,8 +1309,8 @@ impl MirLowering {
         let mir_function = mir::Function {
             name: mir::Symbol::new(name_override),
             path: Vec::new(),
-            def_id: None,
-            instance_id: Some(instance_id.clone()),
+            def_id: Some(item.def_id),
+            substs: function_substs,
             sig: sig.clone(),
             body_id,
             abi: self.map_abi(&function.sig.abi),
@@ -1521,15 +1507,12 @@ impl MirLowering {
             .iter()
             .filter_map(|name| substs.get(name).cloned())
             .collect::<Vec<_>>();
-        let key = FunctionSpecializationKey {
-            def_id,
-            args: args_in_order.clone(),
-        };
-        let instance_id = mir::FunctionInstanceId {
-            source_def_id: def_id,
-            method_name: None,
-            args: args_in_order.clone(),
-        };
+        let function_substs = args_in_order
+            .iter()
+            .cloned()
+            .map(mir::ty::GenericArg::Type)
+            .collect::<mir::ty::SubstsRef>();
+        let key = (def_id, function_substs.clone());
 
         if let Some(info) = self.function_specializations.get(&key) {
             return Ok(info.clone());
@@ -1551,13 +1534,14 @@ impl MirLowering {
             &sig,
             substs,
             &name,
-            instance_id.clone(),
+            function_substs.clone(),
         )?;
         self.extra_items.push(mir_item);
         self.extra_bodies.push((body_id, body));
 
         let info = FunctionSpecializationInfo {
-            instance_id,
+            def_id,
+            substs: function_substs,
             name: name.clone(),
             sig: sig.clone(),
             fn_ty: fn_ty.clone(),
@@ -1586,15 +1570,12 @@ impl MirLowering {
             .iter()
             .filter_map(|name| substs.get(name).cloned())
             .collect::<Vec<_>>();
-        let key = FunctionSpecializationKey {
-            def_id,
-            args: args_in_order.clone(),
-        };
-        let instance_id = mir::FunctionInstanceId {
-            source_def_id: def_id,
-            method_name: None,
-            args: args_in_order.clone(),
-        };
+        let function_substs = args_in_order
+            .iter()
+            .cloned()
+            .map(mir::ty::GenericArg::Type)
+            .collect::<mir::ty::SubstsRef>();
+        let key = (def_id, function_substs.clone());
 
         if let Some(info) = self.function_specializations.get(&key) {
             return Ok(info.clone());
@@ -1616,13 +1597,14 @@ impl MirLowering {
             &sig,
             substs,
             &name,
-            instance_id.clone(),
+            function_substs.clone(),
         )?;
         self.extra_items.push(mir_item);
         self.extra_bodies.push((body_id, body));
 
         let info = FunctionSpecializationInfo {
-            instance_id,
+            def_id,
+            substs: function_substs,
             name: name.clone(),
             sig: sig.clone(),
             fn_ty: fn_ty.clone(),
@@ -1771,16 +1753,12 @@ impl MirLowering {
             .iter()
             .filter_map(|name| substs.get(name).cloned())
             .collect::<Vec<_>>();
-        let key = MethodSpecializationKey {
-            def_id: def.def_id,
-            method_name: def.method_name.clone(),
-            args: args_in_order.clone(),
-        };
-        let instance_id = mir::FunctionInstanceId {
-            source_def_id: def.def_id,
-            method_name: Some(mir::Symbol::new(def.method_name.clone())),
-            args: args_in_order.clone(),
-        };
+        let method_substs = args_in_order
+            .iter()
+            .cloned()
+            .map(mir::ty::GenericArg::Type)
+            .collect::<mir::ty::SubstsRef>();
+        let key = (def.def_id, method_substs.clone());
 
         if let Some(info) = self.method_specializations.get(&key) {
             return Ok(info.clone());
@@ -1829,8 +1807,8 @@ impl MirLowering {
         let mir_function = mir::Function {
             name: mir::Symbol::new(name.clone()),
             path: Vec::new(),
-            def_id: None,
-            instance_id: Some(instance_id.clone()),
+            def_id: Some(def.def_id),
+            substs: method_substs.clone(),
             sig: sig.clone(),
             body_id,
             abi: self.map_abi(&def.function.sig.abi),
@@ -1848,7 +1826,7 @@ impl MirLowering {
 
         let info = MethodLoweringInfo {
             def_id: Some(def.def_id),
-            instance_id: Some(instance_id),
+            substs: method_substs,
             sig,
             fn_name: name.clone(),
             fn_ty,
@@ -1884,16 +1862,12 @@ impl MirLowering {
             .iter()
             .filter_map(|name| substs.get(name).cloned())
             .collect::<Vec<_>>();
-        let key = MethodSpecializationKey {
-            def_id: def.def_id,
-            method_name: def.method_name.clone(),
-            args: args_in_order.clone(),
-        };
-        let instance_id = mir::FunctionInstanceId {
-            source_def_id: def.def_id,
-            method_name: Some(mir::Symbol::new(def.method_name.clone())),
-            args: args_in_order.clone(),
-        };
+        let method_substs = args_in_order
+            .iter()
+            .cloned()
+            .map(mir::ty::GenericArg::Type)
+            .collect::<mir::ty::SubstsRef>();
+        let key = (def.def_id, method_substs.clone());
 
         if let Some(info) = self.method_specializations.get(&key) {
             return Ok(info.clone());
@@ -1942,8 +1916,8 @@ impl MirLowering {
         let mir_function = mir::Function {
             name: mir::Symbol::new(name.clone()),
             path: Vec::new(),
-            def_id: None,
-            instance_id: Some(instance_id.clone()),
+            def_id: Some(def.def_id),
+            substs: method_substs.clone(),
             sig: sig.clone(),
             body_id,
             abi: self.map_abi(&def.function.sig.abi),
@@ -1961,7 +1935,7 @@ impl MirLowering {
 
         let info = MethodLoweringInfo {
             def_id: None,
-            instance_id: Some(instance_id),
+            substs: method_substs,
             sig,
             fn_name: name.clone(),
             fn_ty,
@@ -5559,14 +5533,6 @@ impl MirLowering {
         if self.const_values.contains_key(&def_id) {
             return;
         }
-        if self.lossy_mode && self.is_rust_span(konst.body.value.span) {
-            self.emit_warning(
-                konst.body.value.span,
-                "lossy mode: skipping const evaluation for Rust source",
-            );
-            return;
-        }
-
         let ty = self.lower_type_expr(&konst.ty);
         let key = self.const_key(konst.name.as_str(), konst.body.value.span);
         if let Some(constant) = self.resolved_const_values.get(&key).cloned() {
@@ -5701,7 +5667,7 @@ impl MirLowering {
                         let impl_item_name = impl_item.name.as_str().to_string();
                         let info = MethodLoweringInfo {
                             def_id: Some(impl_item.def_id),
-                            instance_id: None,
+                            substs: Vec::new(),
                             sig: sig.clone(),
                             fn_name: fn_name.clone(),
                             fn_ty: fn_ty.clone(),
@@ -5776,7 +5742,7 @@ impl MirLowering {
             name: mir::Symbol::new(qualified_name),
             path: Vec::new(),
             def_id: Some(def_id),
-            instance_id: None,
+            substs: Vec::new(),
             sig: sig.clone(),
             body_id,
             abi: self.map_abi(&function.sig.abi),
@@ -6033,7 +5999,7 @@ impl MirLowering {
                     span: expr.span,
                     ty: fn_ty,
                     user_ty: None,
-                    literal: mir::ConstantKind::FnDef(*def_id),
+                    literal: mir::ConstantKind::FnDef(*def_id, Vec::new()),
                 })
             }
             hir::ExprKind::Slice(slice) => {
@@ -6929,13 +6895,6 @@ impl MirLowering {
     }
 
     fn emit_error(&mut self, span: Span, message: impl Into<String>) {
-        if self.tolerate_errors {
-            let diagnostic = Diagnostic::warning(message.into())
-                .with_source_context(DIAGNOSTIC_CONTEXT)
-                .with_span(span);
-            self.diagnostics.push(diagnostic);
-            return;
-        }
         self.has_errors = true;
         let diagnostic = Diagnostic::error(message.into())
             .with_source_context(DIAGNOSTIC_CONTEXT)
@@ -13229,7 +13188,7 @@ impl<'a> BodyBuilder<'a> {
                     span: callee.span,
                     ty: info.fn_ty.clone(),
                     user_ty: None,
-                    literal: mir::ConstantKind::FnInstance(info.instance_id.clone()),
+                    literal: mir::ConstantKind::FnDef(info.def_id, info.substs.clone()),
                 });
                 sig = info.sig.clone();
                 callee_name = Some(info.name.clone());
@@ -13261,9 +13220,12 @@ impl<'a> BodyBuilder<'a> {
                 span: callee.span,
                 ty: info.fn_ty.clone(),
                 user_ty: None,
-                literal: mir::ConstantKind::FnInstance(info.instance_id.clone().ok_or_else(
-                    || fp_core::error::Error::from("specialized method has no instance identity"),
-                )?),
+                literal: mir::ConstantKind::FnDef(
+                    info.def_id.ok_or_else(|| {
+                        fp_core::error::Error::from("specialized method has no definition identity")
+                    })?,
+                    info.substs.clone(),
+                ),
             });
             sig = info.sig.clone();
             callee_name = Some(info.fn_name.clone());
@@ -13712,7 +13674,7 @@ impl<'a> BodyBuilder<'a> {
                     span: callee.span,
                     ty: ty.clone(),
                     user_ty: None,
-                    literal: mir::ConstantKind::FnDef(*def_id),
+                    literal: mir::ConstantKind::FnDef(*def_id, Vec::new()),
                 });
                 return Ok((operand, sig, Some(String::from(name))));
             }
@@ -13726,7 +13688,7 @@ impl<'a> BodyBuilder<'a> {
                         span: callee.span,
                         ty: ty.clone(),
                         user_ty: None,
-                        literal: mir::ConstantKind::FnDef(*def_id),
+                        literal: mir::ConstantKind::FnDef(*def_id, Vec::new()),
                     });
                     return Ok((operand, sig, Some(String::from(name))));
                 }
@@ -13753,7 +13715,7 @@ impl<'a> BodyBuilder<'a> {
                 .and_then(|methods| methods.get(&String::from(method_name.clone())))
             {
                 let literal = match info.def_id {
-                    Some(def_id) => mir::ConstantKind::FnDef(def_id),
+                    Some(def_id) => mir::ConstantKind::FnDef(def_id, Vec::new()),
                     None => mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
                 };
                 let operand = mir::Operand::Constant(mir::Constant {
@@ -13789,7 +13751,7 @@ impl<'a> BodyBuilder<'a> {
         if let Some(hir::Res::Def(def_id)) = resolved_path.res.as_ref() {
             if let Some(info) = self.lowering.method_lookup_by_def.get(def_id) {
                 let literal = match info.def_id {
-                    Some(def_id) => mir::ConstantKind::FnDef(def_id),
+                    Some(def_id) => mir::ConstantKind::FnDef(def_id, Vec::new()),
                     None => mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
                 };
                 let operand = mir::Operand::Constant(mir::Constant {
@@ -13826,16 +13788,8 @@ impl<'a> BodyBuilder<'a> {
         let expected = expected.or(inferred_expected.as_ref());
         if self.active_exprs.contains(&expr.hir_id) {
             let message = "recursive expression detected during MIR lowering";
-            if self.lowering.lossy_mode {
-                self.lowering.emit_warning(expr.span, message);
-            } else {
-                self.lowering.emit_error(expr.span, message);
-            }
-            let constant = self.lowering.error_constant(expr.span);
-            return Ok(OperandInfo {
-                operand: mir::Operand::Constant(constant),
-                ty: self.lowering.error_ty(),
-            });
+            self.lowering.emit_error(expr.span, message);
+            return Err(fp_core::error::Error::from(message));
         }
         self.active_exprs.insert(expr.hir_id);
         let _guard = ExprRecursionGuard::new(&mut self.active_exprs, expr.hir_id);
@@ -14022,8 +13976,9 @@ impl<'a> BodyBuilder<'a> {
                                     span: expr.span,
                                     ty: info.fn_ty.clone(),
                                     user_ty: None,
-                                    literal: mir::ConstantKind::FnInstance(
-                                        info.instance_id.clone(),
+                                    literal: mir::ConstantKind::FnDef(
+                                        info.def_id,
+                                        info.substs.clone(),
                                     ),
                                 }),
                                 ty: info.fn_ty,
@@ -14246,12 +14201,13 @@ impl<'a> BodyBuilder<'a> {
                                 span: expr.span,
                                 ty: info.fn_ty.clone(),
                                 user_ty: None,
-                                literal: mir::ConstantKind::FnInstance(
-                                    info.instance_id.clone().ok_or_else(|| {
+                                literal: mir::ConstantKind::FnDef(
+                                    info.def_id.ok_or_else(|| {
                                         fp_core::error::Error::from(
-                                            "specialized method has no instance identity",
+                                            "specialized method has no definition identity",
                                         )
                                     })?,
+                                    info.substs.clone(),
                                 ),
                             }),
                             ty: info.fn_ty,
@@ -18222,7 +18178,7 @@ impl<'a> BodyBuilder<'a> {
                     }
 
                     let literal = match info.def_id {
-                        Some(def_id) => mir::ConstantKind::FnDef(def_id),
+                        Some(def_id) => mir::ConstantKind::FnDef(def_id, Vec::new()),
                         None => mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
                     };
                     let func_operand = mir::Operand::Constant(mir::Constant {

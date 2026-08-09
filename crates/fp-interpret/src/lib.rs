@@ -6,13 +6,13 @@ use std::ffi::CString;
 use fp_core::ast::{
     Ty, TypeStruct, TypeType, TypeUnknown, Value, ValueList, ValueMapEntry, ValueTuple,
 };
-use fp_core::hir::PackageId;
 use fp_core::lir::{
     BasicBlockId, CallingConvention, ComptimeOp, LirArtifactKind, LirBasicBlock, LirConstant,
     LirConstantAggregate, LirConstantData, LirConstantExpr, LirConstantKind, LirDataLayout,
     LirFloat, LirFunction, LirFunctionRef, LirInstruction, LirInstructionKind, LirInteger,
     LirLocal, LirProgram, LirTerminator, LirType, LirValue, LirValueKind, LirWorkspace, RegisterId,
 };
+use fp_core::package::PackageId;
 use fp_ffi::{FfiRuntime, FfiSignature, FfiType};
 
 use crate::vm::{ThreadState, lir_type_info, mem_load, mem_store};
@@ -76,7 +76,7 @@ impl LirInterpreter {
 
     pub fn run_main(&mut self, program: &LirProgram) -> LirResult<Value> {
         self.populate_functions_from_program(program);
-        self.populate_functions_for_package(program, PackageId(0));
+        self.populate_functions_for_package(program, PackageId::new(""));
         self.populate_globals_batch(&[program])?;
         let entry = program.functions.iter().find(|f| f.name.as_str() == "main");
         let func = entry.ok_or(VmError::Runtime("no entry point".into()))?;
@@ -89,7 +89,7 @@ impl LirInterpreter {
         def_id: fp_core::hir::DefId,
     ) -> LirResult<Value> {
         self.populate_functions_from_program(program);
-        self.populate_functions_for_package(program, def_id.package_id);
+        self.populate_functions_for_package(program, PackageId::new(""));
         self.populate_globals_batch(&[program])?;
         let func = program
             .functions
@@ -181,6 +181,13 @@ impl LirInterpreter {
                     ),
                     function.clone(),
                 );
+                self.package_functions.insert(
+                    (
+                        artifact.package_id.clone(),
+                        function.name.as_str().to_string(),
+                    ),
+                    function.clone(),
+                );
                 self.program_functions
                     .insert(function.name.as_str().to_string(), function.clone());
             }
@@ -202,7 +209,7 @@ impl LirInterpreter {
     fn populate_functions_for_package(&mut self, program: &LirProgram, package_id: PackageId) {
         for function in &program.functions {
             self.package_functions.insert(
-                (package_id, function.name.as_str().to_string()),
+                (package_id.clone(), function.name.as_str().to_string()),
                 function.clone(),
             );
         }
@@ -1749,9 +1756,14 @@ impl LirInterpreter {
             LirFunctionRef::Name(name) => {
                 self.handle_call_named(dst, name.as_str(), args, None, None, result_ty)
             }
-            LirFunctionRef::Package { package_id, name } => {
-                self.handle_call_named(dst, name.as_str(), args, Some(*package_id), None, result_ty)
-            }
+            LirFunctionRef::Package { package_id, name } => self.handle_call_named(
+                dst,
+                name.as_str(),
+                args,
+                Some(package_id.clone()),
+                None,
+                result_ty,
+            ),
             LirFunctionRef::Definition(def_id) => {
                 let function =
                     self.definition_functions
@@ -1779,9 +1791,9 @@ impl LirInterpreter {
                     .collect::<LirResult<Vec<_>>>()?;
                 let program = LirProgram::new(self.data_layout.clone());
                 let value = self.run_function(&program, &function, &resolved_args)?;
-                let ty = result_ty.ok_or_else(|| {
-                    VmError::Runtime(format!("call '{}' has no result type", function.name))
-                })?;
+                let Some(ty) = result_ty else {
+                    return Ok(());
+                };
                 if *ty != function.signature.return_type {
                     return Err(VmError::TypeMismatch {
                         expected: format!("{:?}", function.signature.return_type),
@@ -1865,9 +1877,9 @@ impl LirInterpreter {
         }
         let prog = LirProgram::new(self.data_layout.clone());
         let value = self.run_function(&prog, &function, &resolved_args)?;
-        let ty = result_ty.ok_or_else(|| {
-            VmError::Runtime(format!("call '{}' has no result type", function.name))
-        })?;
+        let Some(ty) = result_ty else {
+            return Ok(());
+        };
         if *ty != function.signature.return_type {
             return Err(VmError::TypeMismatch {
                 expected: format!("{:?}", function.signature.return_type),

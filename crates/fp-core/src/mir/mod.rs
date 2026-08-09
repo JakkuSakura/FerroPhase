@@ -41,23 +41,14 @@ pub struct Function {
     pub name: Symbol,
     pub path: Vec<Symbol>,
     pub def_id: Option<ty::DefId>,
-    pub instance_id: Option<FunctionInstanceId>,
+    /// Generic substitutions used to produce this concrete function body.
+    /// Empty for non-generic source functions.
+    pub substs: ty::SubstsRef,
     pub sig: FunctionSig,
     pub body_id: BodyId,
     pub abi: ty::Abi,
     pub is_extern: bool,
     pub attrs: Vec<crate::ast::Attribute>,
-}
-
-/// Exact identity of a concrete generic function or method instance.
-///
-/// The source definition is retained for diagnostics, but substitutions are
-/// part of the identity so different concrete instances cannot alias.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct FunctionInstanceId {
-    pub source_def_id: ty::DefId,
-    pub method_name: Option<Symbol>,
-    pub args: Vec<Ty>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -303,10 +294,9 @@ pub enum ConstantKind {
     Val(ConstValue),
     /// Reference to a function by name (simple)
     Fn(Symbol),
-    /// Reference to a language function by its definition identity.
-    FnDef(DefId),
-    /// Reference to one concrete generic MIR instance.
-    FnInstance(FunctionInstanceId),
+    /// Reference to a language function by its definition identity and the
+    /// complete generic substitutions for this use.
+    FnDef(DefId, ty::SubstsRef),
     /// Reference to a global constant by path
     Global(Path),
     /// Token stream — comptime-only quote token carrying AST items.

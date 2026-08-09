@@ -2,7 +2,6 @@ use fp_backend::transformations::{HirGenerator, HirLoweringConfig, LirGenerator,
 use fp_core::ast::{
     BlockStmt, Expr, ExprKind, File, Item, ItemKind, Name, Ty, TypeStruct, TypeType, Value,
 };
-use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::hir;
 use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
@@ -502,7 +501,6 @@ impl CompilerDriver {
         );
         self.run_pool_to_idle().await?;
         let (mut hir_program, typeck_results, hir_exports, next_def_id) = typing_handle.await?;
-        Self::index_external_methods_for_lowering(&mut hir_program);
         self.next_hir_def_id = self.next_hir_def_id.max(next_def_id);
         if let Some(package_id) = self.state.typing_ctx.env_ctx.current_package().cloned() {
             if let Some(package) = self.state.typing_ctx.env_ctx.compiled_package(&package_id) {
@@ -545,41 +543,6 @@ impl CompilerDriver {
             mir_id,
             lir_id,
         })
-    }
-
-    /// Imported impls remain definition-map data during type checking so
-    /// their original generic environment is preserved. MIR needs a callable
-    /// item when lowering an associated function path, so add backend-only
-    /// method views after type checking has completed.
-    fn index_external_methods_for_lowering(program: &mut hir::Program) {
-        let methods: Vec<hir::Item> = program
-            .def_map
-            .values()
-            .filter_map(|item| {
-                let hir::ItemKind::Impl(impl_item) = &item.kind else {
-                    return None;
-                };
-                impl_item.items.iter().find_map(|member| {
-                    let hir::ImplItemKind::Method(function) = &member.kind else {
-                        return None;
-                    };
-                    let mut callable = function.clone();
-                    let mut generics = impl_item.generics.clone();
-                    generics.params.extend(callable.sig.generics.params.clone());
-                    callable.sig.generics = generics;
-                    Some(hir::Item {
-                        hir_id: member.hir_id,
-                        def_id: member.def_id,
-                        visibility: hir::Visibility::Private,
-                        kind: hir::ItemKind::Function(callable),
-                        span: item.span,
-                    })
-                })
-            })
-            .collect();
-        for method in methods {
-            program.def_map.entry(method.def_id).or_insert(method);
-        }
     }
 
     /// Ticks the shared task pool (`CompilerState::tasks`) until nothing is
@@ -775,18 +738,7 @@ impl CompilerDriver {
             .insert(function.def_id, function.clone());
         comptime_program.items.push(function);
 
-        let mut lowering = MirLowering::new()
-            .with_typeck_results(&request.typeck_results)
-            .map_err(CompilerDriverError::Core)?;
-        let mir = lowering
-            .transform(comptime_program)
-            .map_err(CompilerDriverError::Core)?;
-        let mut lir_generator = LirGenerator::new(self.state.typing_ctx.data_layout.clone());
-        let lir = lir_generator
-            .transform(mir)
-            .map_err(CompilerDriverError::Core)?;
-
-        let package_id = self
+        let runtime_package_id = self
             .state
             .typing_ctx
             .env_ctx
@@ -797,6 +749,27 @@ impl CompilerDriver {
                     "comptime evaluation requires a focused package workspace".to_string(),
                 )
             })?;
+        let mut lowering = MirLowering::new()
+            .with_typeck_results(&request.typeck_results)
+            .map_err(|error| {
+                CompilerDriverError::InternalCompilerError(format!(
+                    "comptime HIR-to-MIR setup failed: {error}"
+                ))
+            })?;
+        lowering.register_external_definitions(&comptime_program);
+        let mir = lowering.transform(comptime_program).map_err(|error| {
+            CompilerDriverError::InternalCompilerError(format!(
+                "comptime HIR-to-MIR lowering failed: {error}"
+            ))
+        })?;
+        let mut lir_generator = LirGenerator::new(self.state.typing_ctx.data_layout.clone())
+            .with_package_id(runtime_package_id.clone());
+        let lir = lir_generator.transform(mir).map_err(|error| {
+            CompilerDriverError::InternalCompilerError(format!(
+                "comptime MIR-to-LIR lowering failed: {error}"
+            ))
+        })?;
+
         let mut execution_workspace =
             fp_core::lir::LirWorkspace::new(self.state.typing_ctx.data_layout.clone());
         for package in self.state.typing_ctx.env_ctx.crates().values() {
@@ -805,7 +778,11 @@ impl CompilerDriver {
                 .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         }
         execution_workspace
-            .add_program(package_id.clone(), QualifiedPath::new(Vec::new()), lir)
+            .add_program(
+                runtime_package_id.clone(),
+                QualifiedPath::new(Vec::new()),
+                lir,
+            )
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         self.interpreter = LirInterpreter::new();
         self.interpreter
@@ -815,7 +792,7 @@ impl CompilerDriver {
             .interpreter
             .run_function_named_in_workspace(
                 &execution_workspace,
-                &package_id,
+                &runtime_package_id,
                 &fp_core::lir::Name::new(function_name),
             )
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
@@ -1213,7 +1190,6 @@ impl CompilerDriver {
                 .map_err(|error| {
                 CompilerDriverError::UnsupportedWork(format!("module {}: {error}", path.to_key()))
             })?;
-            Self::index_external_methods_for_lowering(&mut hir_program);
             self.next_hir_def_id = self.next_hir_def_id.max(next_def_id);
             if let Some(package_id) = self.state.typing_ctx.env_ctx.current_package().cloned() {
                 if let Some(package) = self.state.typing_ctx.env_ctx.compiled_package(&package_id) {
@@ -1250,20 +1226,8 @@ impl CompilerDriver {
                 continue;
             }
             self.state.insert_hir_typeck(hir_id.clone(), typeck_results);
-            let mir_id = self.lower_to_mir(&hir_id, &fqp).await.map_err(|error| {
-                CompilerDriverError::UnsupportedWork(format!(
-                    "module {}: MIR lowering failed: {error}",
-                    path.to_key()
-                ))
-            })?;
-            let lir_id = self
-                .lower_to_lir(&mir_id, &fqp, &current_package_id)
-                .map_err(|error| {
-                    CompilerDriverError::UnsupportedWork(format!(
-                        "module {}: LIR lowering failed: {error}",
-                        path.to_key()
-                    ))
-                })?;
+            let mir_id = self.lower_to_mir(&hir_id, &fqp).await?;
+            let lir_id = self.lower_to_lir(&mir_id, &fqp, &current_package_id)?;
             let published_lir_id = lir_id.clone();
             if let Some(entrypoint) = entrypoint {
                 self.state
@@ -1422,18 +1386,9 @@ impl CompilerDriver {
         hir_id: &HirId,
         path: &FullyQualifiedPath,
     ) -> Result<MirId, CompilerDriverError> {
-        self.lower_to_mir_lossy(hir_id, path, false).await
-    }
-
-    /// Lower HIR to MIR, optionally tolerating diagnostic errors.
-    /// Used for comptime LIR generation where unresolved types are
-    /// expected to resolve after evaluation.
-    async fn lower_to_mir_lossy(
-        &mut self,
-        hir_id: &HirId,
-        path: &FullyQualifiedPath,
-        allow_errors: bool,
-    ) -> Result<MirId, CompilerDriverError> {
+        // HIR has already passed type checking at this boundary. Lowering is
+        // therefore strict: a failure is an internal compiler error, never a
+        // recoverable source diagnostic.
         let mut hir = self.state.hir(hir_id)?.clone();
         for (_, external, _) in self.state.typing_ctx.env_ctx.hir_definitions() {
             for item in external.items {
@@ -1444,34 +1399,35 @@ impl CompilerDriver {
             }
         }
         let typeck_results = self.state.hir_typeck(hir_id)?.clone();
-        let mut lowering = MirLowering::new().with_typeck_results(&typeck_results)?;
-        lowering.set_lossy(self.state.lossy() || allow_errors);
+        let mut lowering = MirLowering::new()
+            .with_typeck_results(&typeck_results)
+            .map_err(|error| {
+                CompilerDriverError::InternalCompilerError(format!(
+                    "HIR-to-MIR setup failed for {}: {error}",
+                    path.to_key()
+                ))
+            })?;
+        lowering.register_external_definitions(&hir);
         for (key, value) in self.state.resolved_const_values() {
             lowering.seed_resolved_const(key.to_string(), value.clone());
         }
-        let mir = lowering.transform_async(hir).await;
+        let result = lowering.transform_async(hir).await;
         let (diagnostics, had_errors) = lowering.take_diagnostics();
-        let mir = if allow_errors {
-            match mir {
-                Ok(program) => program,
-                Err(err) => return Err(err.into()),
-            }
-        } else {
-            match (mir, had_errors, self.state.lossy()) {
-                (Ok(program), false, _) => program,
-                (Ok(_), true, true) => fp_core::mir::Program::new(),
-                (Err(_), _, true) => fp_core::mir::Program::new(),
-                (Ok(_), true, false) => {
-                    let message = diagnostics
-                        .iter()
-                        .find(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
-                        .map(|diagnostic| diagnostic.message.clone())
-                        .unwrap_or_else(|| "HIR→MIR lowering reported errors".to_string());
-                    return Err(CompilerDriverError::UnsupportedWork(message));
-                }
-                (Err(err), _, false) => return Err(err.into()),
-            }
-        };
+        let mir = result.map_err(|error| {
+            CompilerDriverError::InternalCompilerError(format!(
+                "HIR-to-MIR lowering failed: {error}"
+            ))
+        })?;
+        if had_errors {
+            let details = diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.message.as_str())
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(CompilerDriverError::InternalCompilerError(format!(
+                "HIR-to-MIR lowering reported diagnostics: {details}"
+            )));
+        }
         let mir_id = MirId::new(format!("mir:{}", self.module_state_key(path.path())));
         self.state.insert_mir(mir_id.clone(), mir);
         Ok(mir_id)
@@ -1484,16 +1440,15 @@ impl CompilerDriver {
         package_id: &PackageId,
     ) -> Result<LirId, CompilerDriverError> {
         let mir = self.state.mir(mir_id)?.clone();
-        let hir_package_id = self
-            .state
-            .typing_ctx
-            .env_ctx
-            .package_id_for_module(path.path())
-            .unwrap_or_default();
         let mut lowering = LirGenerator::new(self.state.typing_ctx.data_layout.clone())
-            .with_package_id(hir_package_id)
+            .with_package_id(package_id.clone())
             .with_module_path(path.path().to_key());
-        let lir = lowering.transform(mir)?;
+        let lir = lowering.transform(mir).map_err(|error| {
+            CompilerDriverError::InternalCompilerError(format!(
+                "MIR-to-LIR lowering failed for {}: {error}",
+                path.to_key()
+            ))
+        })?;
         let lir_id = Self::package_module_lir_id(package_id, path.path());
         self.state.insert_lir(lir_id.clone(), lir);
         Ok(lir_id)

@@ -4,7 +4,7 @@ use fp_core::intrinsics::IntrinsicKind;
 use fp_core::mir::ty::{
     ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, TypeAndMut, UintTy,
 };
-use fp_core::{hir, lir, mir};
+use fp_core::{lir, mir};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::abi;
@@ -13,7 +13,7 @@ use crate::abi;
 
 /// Generator for transforming MIR to LIR (Low-level IR)
 pub struct LirGenerator {
-    package_id: hir::PackageId,
+    package_id: fp_core::package::PackageId,
     module_path: Option<String>,
     data_layout: lir::LirDataLayout,
     next_lir_id: lir::LirId,
@@ -34,7 +34,7 @@ pub struct LirGenerator {
     name_counters: HashMap<String, usize>,
     struct_layouts: HashMap<mir::DefId, Vec<Option<lir::LirType>>>,
     function_symbol_map: HashMap<String, String>,
-    function_instance_map: HashMap<mir::FunctionInstanceId, String>,
+    function_def_map: HashMap<(mir::DefId, mir::ty::SubstsRef), String>,
     function_signatures: HashMap<String, lir::LirFunctionSignature>,
     function_call_conventions: HashMap<String, lir::CallingConvention>,
     function_declarations: HashMap<String, bool>,
@@ -101,7 +101,7 @@ impl LirGenerator {
         runtime_symbol_map: fn(&str) -> Option<lir::RuntimeSymbol>,
     ) -> Self {
         Self {
-            package_id: hir::PackageId(0),
+            package_id: fp_core::package::PackageId::new(""),
             module_path: None,
             data_layout,
             next_lir_id: 0,
@@ -122,7 +122,7 @@ impl LirGenerator {
             name_counters: HashMap::new(),
             struct_layouts: HashMap::new(),
             function_symbol_map: HashMap::new(),
-            function_instance_map: HashMap::new(),
+            function_def_map: HashMap::new(),
             function_signatures: HashMap::new(),
             function_call_conventions: HashMap::new(),
             function_declarations: HashMap::new(),
@@ -130,7 +130,7 @@ impl LirGenerator {
         }
     }
 
-    pub fn with_package_id(mut self, package_id: hir::PackageId) -> Self {
+    pub fn with_package_id(mut self, package_id: fp_core::package::PackageId) -> Self {
         self.package_id = package_id;
         self
     }
@@ -160,7 +160,7 @@ impl LirGenerator {
         }));
         Ok(lir::LirValue::function(
             lir::LirFunctionRef::Package {
-                package_id: self.package_id,
+                package_id: self.package_id.clone(),
                 name: lir::Name::new(name),
             },
             ty,
@@ -192,7 +192,7 @@ impl LirGenerator {
                     name: konst.function_name,
                     path: Vec::new(),
                     def_id: None,
-                    instance_id: None,
+                    substs: Vec::new(),
                     sig: mir::FunctionSig {
                         inputs: Vec::new(),
                         output: konst.ty.clone(),
@@ -261,9 +261,9 @@ impl LirGenerator {
         for item in &program.items {
             if let mir::ItemKind::Function(func) = &item.kind {
                 let name = self.mangle_function_name(func);
-                if let Some(instance_id) = &func.instance_id {
-                    self.function_instance_map
-                        .insert(instance_id.clone(), name.clone());
+                if let Some(def_id) = func.def_id {
+                    self.function_def_map
+                        .insert((def_id, func.substs.clone()), name.clone());
                 }
                 let signature = lir::LirFunctionSignature {
                     params: func
@@ -588,16 +588,10 @@ impl LirGenerator {
             mir::ConstantKind::Val(value) => {
                 self.const_value_to_lir_constant(value, &constant.ty)?
             }
-            mir::ConstantKind::FnDef(_) => {
+            mir::ConstantKind::FnDef(_, _) => {
                 return Err(fp_core::error::Error::from(
                     "function definition references are not valid static initializer data",
                 ));
-            }
-            mir::ConstantKind::FnInstance(instance) => {
-                return Err(fp_core::error::Error::from(format!(
-                    "function instance {:?} is not valid static initializer data",
-                    instance
-                )));
             }
             mir::ConstantKind::Fn(name) => lir::LirConstant::function_address(
                 target_ty.clone(),
@@ -2819,28 +2813,18 @@ impl LirGenerator {
                 }
             }
             mir::Operand::Constant(constant) => match &constant.literal {
-                mir::ConstantKind::FnDef(def_id) => Ok(lir::LirValue::function(
-                    lir::LirFunctionRef::Definition(*def_id),
-                    self.lir_type_from_ty(&constant.ty),
-                )),
-                mir::ConstantKind::FnInstance(instance_id) => {
+                mir::ConstantKind::FnDef(def_id, substs) => {
                     let name = self
-                        .function_instance_map
-                        .get(instance_id)
+                        .function_def_map
+                        .get(&(*def_id, substs.clone()))
                         .cloned()
                         .ok_or_else(|| {
                             fp_core::error::Error::from(format!(
-                                "missing MIR function instance {:?}",
-                                instance_id
+                                "missing MIR function definition {} with substitutions {:?}",
+                                def_id, substs
                             ))
                         })?;
-                    Ok(lir::LirValue::function(
-                        lir::LirFunctionRef::Package {
-                            package_id: self.package_id,
-                            name: lir::Name::new(name),
-                        },
-                        self.lir_type_from_ty(&constant.ty),
-                    ))
+                    self.function_value(name)
                 }
                 mir::ConstantKind::Fn(name) => {
                     let function_name = self
@@ -5890,18 +5874,24 @@ impl LirGenerator {
                         .into_iter()
                         .flat_map(|fields| fields.iter())
                         .map(|field| {
-                            field
-                                .clone()
-                                .unwrap_or_else(|| lir::LirType::Ptr(Box::new(lir::LirType::I8)))
+                            field.clone().unwrap_or_else(|| {
+                                panic!(
+                                    "MIR-to-LIR ICE: missing layout for field of ADT {}",
+                                    adt.did
+                                )
+                            })
                         })
                         .collect(),
                     packed: false,
                     name: None,
                 }
             }
-            TyKind::Adt(_, _)
-            | TyKind::FnDef(_, _)
-            | TyKind::Dynamic(_, _)
+            TyKind::Adt(adt, _) => panic!("MIR-to-LIR ICE: missing layout for ADT {}", adt.did),
+            TyKind::FnDef(def_id, substs) => panic!(
+                "MIR-to-LIR ICE: function definition {} with substitutions {:?} used as a data type",
+                def_id, substs
+            ),
+            TyKind::Dynamic(_, _)
             | TyKind::Closure(_, _)
             | TyKind::Generator(_, _, _)
             | TyKind::GeneratorWitness(_)
@@ -5912,7 +5902,9 @@ impl LirGenerator {
             | TyKind::Placeholder(_)
             | TyKind::Infer(_)
             | TyKind::Error(_)
-            | TyKind::Type => lir::LirType::Ptr(Box::new(lir::LirType::I8)),
+            | TyKind::Type => {
+                panic!("MIR-to-LIR ICE: unsupported unresolved type in typed MIR: {ty:?}")
+            }
             TyKind::Never => lir::LirType::Void,
             TyKind::FnPtr(poly_fn_sig) => {
                 let fn_sig = &poly_fn_sig.binder.value;
