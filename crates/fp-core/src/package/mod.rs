@@ -140,6 +140,12 @@ use crate::lir::{LirCompileUnit, LirWorkspace};
 use crate::module::path::QualifiedPath;
 use std::collections::{HashMap, HashSet};
 
+#[derive(Clone, Debug)]
+pub struct PackageItem {
+    pub path: QualifiedPath,
+    pub item: Item,
+}
+
 /// Parsed source returned by a package provider.
 ///
 /// This type intentionally contains no generated HIR identity or compiler
@@ -153,8 +159,8 @@ pub struct PackageSource {
     /// All known module paths within this package.
     pub module_paths: HashSet<QualifiedPath>,
 
-    /// Parsed items indexed by their qualified module path.
-    pub items: HashMap<QualifiedPath, Vec<Item>>,
+    /// All parsed source items with their fully qualified source paths.
+    pub items: Vec<PackageItem>,
 }
 
 impl PackageSource {
@@ -170,7 +176,7 @@ impl PackageSource {
             name: name.into(),
             graph,
             module_paths,
-            items: HashMap::new(),
+            items: Vec::new(),
         }
     }
 }
@@ -223,18 +229,14 @@ pub struct CompiledPackage {
     /// Fine-grained LIR artifacts owned by this package.
     pub lir_workspace: LirWorkspace,
 
-    /// HIR definitions published by this package, keyed by module path.
-    /// Dependents use these definitions for path resolution without sharing
-    /// the package's mutable compiler workspace.
-    pub hir_modules: HashMap<QualifiedPath, crate::hir::Program>,
+    /// HIR definitions published by this package.
+    pub hir_program: Option<crate::hir::Program>,
 
     /// Fully-qualified HIR lookup entries exported by this package.
     pub hir_exports: HashMap<String, crate::hir::Res>,
 
-    /// Parsed items per module path, available for on-demand compilation
-    /// when lir_units is empty. The CompilerDriver uses these to type-check
-    /// and lower modules as needed during comptime evaluation.
-    pub items: HashMap<QualifiedPath, Vec<Item>>,
+    /// All parsed source items with their fully qualified source paths.
+    pub items: Vec<PackageItem>,
 }
 
 impl CompiledPackage {
@@ -263,9 +265,9 @@ impl CompiledPackage {
             module_paths,
             lir_units: Vec::new(),
             lir_workspace: LirWorkspace::new(data_layout),
-            hir_modules: HashMap::new(),
+            hir_program: None,
             hir_exports: HashMap::new(),
-            items: HashMap::new(),
+            items: Vec::new(),
         }
     }
 }

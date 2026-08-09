@@ -243,8 +243,8 @@ impl CompilerDriver {
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
         let function = package
             .borrow()
-            .hir_modules
-            .get(module_path)
+            .hir_program
+            .as_ref()
             .and_then(|program| {
                 program.items.iter().find_map(|item| match &item.kind {
                     hir::ItemKind::Function(function)
@@ -473,7 +473,14 @@ impl CompilerDriver {
             .state
             .typing_ctx
             .env_ctx
-            .package_id_for_module(&module_path)
+            .current_package()
+            .and_then(|package_id| {
+                self.state
+                    .typing_ctx
+                    .env_ctx
+                    .compiled_package(package_id)
+                    .map(|package| package.borrow().package_id)
+            })
             .unwrap_or_default();
         let source = File {
             path: std::path::PathBuf::from(path.to_key()),
@@ -1084,14 +1091,8 @@ impl CompilerDriver {
     /// were resolved package-wide before any body was type-checked.
     async fn compile_items_to_lir_units(
         &mut self,
-        items_map: &HashMap<QualifiedPath, Vec<Item>>,
+        items: &[fp_core::package::PackageItem],
     ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
-        let mut source_modules: Vec<_> = items_map
-            .iter()
-            .map(|(path, items)| (path.clone(), items.clone()))
-            .collect();
-        source_modules.sort_by_key(|(path, _)| path.to_key());
-
         let hir_package_id = self
             .state
             .typing_ctx
@@ -1114,26 +1115,23 @@ impl CompilerDriver {
             .with_lowering_config(HirLoweringConfig)
             .with_external_definitions(self.state.typing_ctx.env_ctx.hir_definitions())
             .with_external_modules(self.state.typing_ctx.env_ctx.module_paths());
-        let modules = generator.transform_package_modules(&source_modules)?;
+        let hir_program = generator.transform_package(items)?;
         self.next_hir_def_id = self.next_hir_def_id.max(generator.next_def_id_value());
         let package_exports = generator.exported_symbols();
-        let preassigned_def_ids = generator.preassigned_def_ids();
         if let Some(package_id) = self.state.typing_ctx.env_ctx.current_package().cloned() {
             if let Some(package) = self.state.typing_ctx.env_ctx.compiled_package(&package_id) {
-                package
-                    .borrow_mut()
-                    .hir_exports
-                    .extend(package_exports.clone());
+                package.borrow_mut().hir_exports.extend(package_exports);
             }
         }
-        let mut external_definitions = self.state.typing_ctx.env_ctx.hir_definitions();
-        external_definitions.extend(
-            modules
-                .iter()
-                .map(|(path, program)| (path.clone(), program.clone(), package_exports.clone())),
-        );
-
-        let mut units = Vec::new();
+        let (hir_program, typeck_results) = HirTypeChecker::new(hir_program)
+            .with_context(self.state.typing_ctx.clone())
+            .check()
+            .await
+            .map_err(|error| {
+                CompilerDriverError::InternalCompilerError(format!(
+                    "package HIR type checking failed: {error}"
+                ))
+            })?;
         let current_package_id = self
             .state
             .typing_ctx
@@ -1145,118 +1143,27 @@ impl CompilerDriver {
                     "package compilation requires a focused package workspace".to_string(),
                 )
             })?;
-        for (path, _declarations) in modules {
-            let items = &items_map[&path];
-            if items.is_empty() {
-                continue;
-            }
-            let ast_id = AstId::new(format!("package-module:{}", self.module_state_key(&path)));
-            self.state.insert_ast(
-                ast_id.clone(),
-                File {
-                    path: std::path::PathBuf::from(path.to_key()),
-                    items: items.clone(),
-                    collected_items: Vec::new(),
-                    attrs: Vec::new(),
-                },
-            );
-            let hir_package_id = self
-                .state
-                .typing_ctx
-                .env_ctx
-                .package_id_for_module(&path)
-                .unwrap_or_default();
-            let typing_handle = self.state.tasks.spawn(
-                format!("package-module:{}", path.to_key()),
-                self.typing_future(TypingUnit {
-                    module_path: path.clone(),
-                    package_id: hir_package_id,
-                    source: File {
-                        path: std::path::PathBuf::from(path.to_key()),
-                        attrs: Vec::new(),
-                        collected_items: Vec::new(),
-                        items: items.clone(),
-                    },
-                    lowering_config: HirLoweringConfig,
-                    external_definitions: external_definitions.clone(),
-                    def_id_start: self.next_hir_def_id,
-                    preassigned_def_ids: preassigned_def_ids.clone(),
-                    external_modules: self.state.typing_ctx.env_ctx.module_paths(),
-                }),
-            );
-            self.run_pool_to_idle().await?;
-            let (mut hir_program, typeck_results, hir_exports, next_def_id) = typing_handle
-                .await
-                .map_err(|error| {
-                CompilerDriverError::UnsupportedWork(format!("module {}: {error}", path.to_key()))
-            })?;
-            self.next_hir_def_id = self.next_hir_def_id.max(next_def_id);
-            if let Some(package_id) = self.state.typing_ctx.env_ctx.current_package().cloned() {
-                if let Some(package) = self.state.typing_ctx.env_ctx.compiled_package(&package_id) {
-                    package.borrow_mut().hir_exports.extend(hir_exports);
-                }
-            }
-            let fqp = FullyQualifiedPath::new(path.clone());
-            let hir_id = HirId::new(format!("hir:{}", self.module_state_key(&path)));
-            let entrypoint = hir_program.items.iter().find_map(|item| match &item.kind {
-                hir::ItemKind::Function(function) if function.sig.name.as_str() == "main" => {
-                    Some(item.def_id)
-                }
-                _ => None,
-            });
-            let has_lowerable_items = hir_program.items.iter().any(|item| match &item.kind {
-                hir::ItemKind::Function(function) => function.body.is_some(),
-                hir::ItemKind::Const(_) | hir::ItemKind::Expr(_) | hir::ItemKind::Query(_) => true,
-                hir::ItemKind::Impl(impl_block) => {
-                    impl_block.items.iter().any(|item| match &item.kind {
-                        hir::ImplItemKind::Method(function) => function.body.is_some(),
-                        hir::ImplItemKind::AssocConst(_) => true,
-                    })
-                }
-                hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) => false,
-            });
-            self.state.insert_hir(hir_id.clone(), hir_program);
-            if let Some(package_id) = self.state.typing_ctx.env_ctx.current_package().cloned() {
-                if let Some(package) = self.state.typing_ctx.env_ctx.compiled_package(&package_id) {
-                    let hir = self.state.hir(&hir_id)?.clone();
-                    package.borrow_mut().hir_modules.insert(path.clone(), hir);
-                }
-            }
-            if !has_lowerable_items {
-                continue;
-            }
-            self.state.insert_hir_typeck(hir_id.clone(), typeck_results);
-            let mir_id = self.lower_to_mir(&hir_id, &fqp).await?;
-            let lir_id = self.lower_to_lir(&mir_id, &fqp, &current_package_id)?;
-            let published_lir_id = lir_id.clone();
-            if let Some(entrypoint) = entrypoint {
-                self.state
-                    .insert_runtime_entrypoint(published_lir_id.clone(), entrypoint);
-            }
-            let core = CompileUnitCoreResult {
-                hir_id,
-                mir_id,
-                lir_id: published_lir_id,
-            };
-            if let Some(package_id) = self.state.typing_ctx.env_ctx.current_package().cloned() {
-                if let Some(package) = self.state.typing_ctx.env_ctx.compiled_package(&package_id) {
-                    let hir = self.state.hir(&core.hir_id)?.clone();
-                    package.borrow_mut().hir_modules.insert(path.clone(), hir);
-                }
-            }
-            let lir = self.state.lir(&core.lir_id)?.clone();
-            units.push(fp_core::lir::LirCompileUnit {
-                package_id: self
-                    .state
-                    .typing_ctx
-                    .env_ctx
-                    .package_id_for_module(&path)
-                    .unwrap_or_default(),
-                module_path: path.clone(),
-                program: lir,
-            });
+        let package_path = QualifiedPath::new(Vec::new());
+        let hir_id = HirId::new(format!("hir:{}", self.module_state_key(&package_path)));
+        self.state.insert_hir(hir_id.clone(), hir_program);
+        self.state.insert_hir_typeck(hir_id.clone(), typeck_results);
+        if let Some(package) = self
+            .state
+            .typing_ctx
+            .env_ctx
+            .compiled_package(&current_package_id)
+        {
+            package.borrow_mut().hir_program = Some(self.state.hir(&hir_id)?.clone());
         }
-        Ok(units)
+        let fqp = FullyQualifiedPath::new(package_path.clone());
+        let mir_id = self.lower_to_mir(&hir_id, &fqp).await?;
+        let lir_id = self.lower_to_lir(&mir_id, &fqp, &current_package_id)?;
+        let lir = self.state.lir(&lir_id)?.clone();
+        Ok(vec![fp_core::lir::LirCompileUnit {
+            package_id: hir_package_id,
+            module_path: package_path,
+            program: lir,
+        }])
     }
 
     async fn evaluate_comptime_lir(
@@ -2241,7 +2148,14 @@ fn main() {
             let mut source =
                 PackageSource::new(package_id.clone(), "dup", PackageGraph::new(Vec::new()));
             source.module_paths.insert(module_path.clone());
-            source.items.insert(module_path.clone(), file.items);
+            source.items = file
+                .items
+                .into_iter()
+                .map(|item| fp_core::package::PackageItem {
+                    path: module_path.clone(),
+                    item,
+                })
+                .collect();
             packages.insert(package_id, (descriptor, source));
         }
 
@@ -2269,8 +2183,8 @@ fn main() {
         let first_hir = first.borrow().package_id;
         let second_hir = second.borrow().package_id;
         assert_ne!(first_hir, second_hir);
-        assert!(first.borrow().hir_modules.contains_key(&module_path));
-        assert!(second.borrow().hir_modules.contains_key(&module_path));
+        assert!(first.borrow().hir_program.is_some());
+        assert!(second.borrow().hir_program.is_some());
         assert_eq!(first.borrow().lir_units.len(), 1);
         assert_eq!(second.borrow().lir_units.len(), 1);
         assert_ne!(
@@ -2376,31 +2290,39 @@ fn main() {
             .parse_file(source, std::path::Path::new("cycle.fp"))
             .expect("parse circular module source")
             .ast;
-        let mut source_modules = Vec::new();
+        let mut items = Vec::new();
         for item in file.items {
             let ItemKind::Module(module) = item.kind() else {
                 continue;
             };
             let path =
                 QualifiedPath::new(vec!["cycle".to_owned(), module.name.as_str().to_owned()]);
-            source_modules.push((path, module.items.clone()));
+            items.extend(
+                module
+                    .items
+                    .iter()
+                    .cloned()
+                    .map(|item| fp_core::package::PackageItem {
+                        path: path.clone(),
+                        item,
+                    }),
+            );
         }
 
         let mut generator = HirGenerator::new().with_package_id(hir::PackageId(0));
-        let modules = generator
-            .transform_package_modules(&source_modules)
+        let program = generator
+            .transform_package(&items)
             .expect("circular sibling modules should lower as one package");
-        assert_eq!(modules.len(), 2);
-        assert!(
-            modules
-                .iter()
-                .any(|(path, _)| path == &QualifiedPath::new(vec!["cycle".into(), "a".into()]))
-        );
-        assert!(
-            modules
-                .iter()
-                .any(|(path, _)| path == &QualifiedPath::new(vec!["cycle".into(), "b".into()]))
-        );
+        let function_names = program
+            .items
+            .iter()
+            .filter_map(|item| match &item.kind {
+                hir::ItemKind::Function(function) => Some(function.sig.name.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(function_names.iter().any(|name| *name == "run_a"));
+        assert!(function_names.iter().any(|name| *name == "run_b"));
     }
 
     fn compile_inline_source(source: &str, expected_const_values: usize) {

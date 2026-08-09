@@ -295,8 +295,6 @@ impl WorkspaceContext {
     }
 
     /// Return immutable HIR definitions published by imported packages.
-    /// Cloning here is deliberate: a package workspace must not borrow or
-    /// mutate another package's compiler state while lowering its modules.
     pub fn hir_definitions(
         &self,
     ) -> Vec<(
@@ -304,16 +302,19 @@ impl WorkspaceContext {
         crate::hir::Program,
         HashMap<String, crate::hir::Res>,
     )> {
-        let mut definitions = Vec::new();
-        for package in self.sorted_packages() {
-            let package = package.borrow();
-            let mut modules: Vec<_> = package.hir_modules.iter().collect();
-            modules.sort_by_key(|(path, _)| path.to_key());
-            definitions.extend(modules.into_iter().map(|(path, program)| {
-                (path.clone(), program.clone(), package.hir_exports.clone())
-            }));
-        }
-        definitions
+        self.sorted_packages()
+            .into_iter()
+            .filter_map(|package| {
+                let package = package.borrow();
+                package.hir_program.clone().map(|program| {
+                    (
+                        QualifiedPath::new(Vec::new()),
+                        program,
+                        package.hir_exports.clone(),
+                    )
+                })
+            })
+            .collect()
     }
 
     pub fn is_loaded(&self, package_id: &PackageId) -> bool {
@@ -450,21 +451,5 @@ impl WorkspaceContext {
     /// gathering LIR units) rather than looking up one qualified path.
     pub fn crates(&self) -> Ref<'_, HashMap<PackageId, Rc<RefCell<CompiledPackage>>>> {
         self.crates.borrow()
-    }
-
-    pub fn package_id_for_module(&self, path: &QualifiedPath) -> Option<HirPackageId> {
-        if let Some(current_package) = &self.current_package {
-            if let Some(package) = self.crates.borrow().get(current_package) {
-                let package = package.borrow();
-                if package.module_paths.contains(path) || package.items.contains_key(path) {
-                    return Some(package.package_id);
-                }
-            }
-        }
-        self.sorted_packages().into_iter().find_map(|krate| {
-            let krate = krate.borrow();
-            (krate.module_paths.contains(path) || krate.items.contains_key(path))
-                .then_some(krate.package_id)
-        })
     }
 }

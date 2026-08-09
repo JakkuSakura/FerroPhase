@@ -1023,54 +1023,42 @@ impl HirGenerator {
         self.transform_module(module_path, items)
     }
 
-    /// Lower every module in one package after collecting declarations for
-    /// the complete package. Module bodies remain separate programs, but all
-    /// of them resolve against the same package-level declaration graph.
-    pub fn transform_package_modules(
+    pub fn transform_package(
         &mut self,
-        modules: &[(fp_core::module::path::QualifiedPath, Vec<ast::Item>)],
-    ) -> Result<Vec<(fp_core::module::path::QualifiedPath, hir::Program)>> {
+        items: &[fp_core::package::PackageItem],
+    ) -> Result<hir::Program> {
         self.reset_file_context("<package>");
         self.prepare_lowering_state();
 
-        let mut external = hir::Program::new();
-        self.seed_external_definitions(&mut external);
+        let mut program = hir::Program::new();
+        self.seed_external_definitions(&mut program);
         self.module_defs
             .extend(self.external_modules.iter().cloned());
 
-        // This is the package's reduced graph phase. Every declaration is
-        // assigned before imports or bodies are lowered, so module cycles do
-        // not depend on a compilation order.
-        for (module_path, items) in modules {
-            self.with_module_scope(module_path, |this| this.predeclare_items(items))?;
+        for package_item in items {
+            self.with_module_scope(&package_item.path, |this| {
+                this.predeclare_items(std::slice::from_ref(&package_item.item))
+            })?;
         }
         self.insert_default_prelude_aliases();
-        self.program_def_map = external.def_map.clone();
+        self.program_def_map = program.def_map.clone();
 
-        let mut programs = Vec::with_capacity(modules.len());
-        for (module_path, items) in modules {
-            let mut program = hir::Program::new();
-            self.with_module_scope(module_path, |this| {
-                for item in items {
-                    this.append_item(&mut program, item)?;
-                }
-                Ok(())
+        for package_item in items {
+            self.with_module_scope(&package_item.path, |this| {
+                this.append_item(&mut program, &package_item.item)
             })?;
-            if !self.synthetic_items.is_empty() {
-                let mut synthetic = std::mem::take(&mut self.synthetic_items);
-                for item in &synthetic {
-                    program.def_map.insert(item.def_id, item.clone());
-                    self.program_def_map.insert(item.def_id, item.clone());
-                }
-                program.items.extend(synthetic.drain(..));
-            }
-            programs.push((module_path.clone(), program));
         }
 
-        for (_, program) in &mut programs {
-            program.def_map = self.program_def_map.clone();
+        if !self.synthetic_items.is_empty() {
+            let mut synthetic = std::mem::take(&mut self.synthetic_items);
+            for item in &synthetic {
+                program.def_map.insert(item.def_id, item.clone());
+                self.program_def_map.insert(item.def_id, item.clone());
+            }
+            program.items.extend(synthetic.drain(..));
         }
-        Ok(programs)
+        program.def_map = self.program_def_map.clone();
+        Ok(program)
     }
 
     /// Transform a query document node into HIR.

@@ -1,15 +1,14 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use fp_core::ast::Item;
+use fp_core::ast::{Item, ItemKind};
 use fp_core::frontend::LanguageFrontend;
 use fp_core::module::path::QualifiedPath;
 use fp_core::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
 use fp_core::package::graph::PackageGraph;
 use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::package::{
-    DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageMetadata,
-    PackageSource,
+    DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
+    PackageMetadata, PackageSource,
 };
 use fp_core::vfs::VirtualPath;
 
@@ -25,6 +24,23 @@ pub struct FerroPhaseProvider;
 const STD_PACKAGE_NAME: &str = "std";
 const LIBC_PACKAGE_NAME: &str = "libc";
 
+fn flatten_items(path: &QualifiedPath, items: &[Item], output: &mut Vec<PackageItem>) {
+    for item in items {
+        if let ItemKind::Module(module) = item.kind() {
+            flatten_items(
+                &path.with_segment(module.name.as_str().to_owned()),
+                &module.items,
+                output,
+            );
+        } else {
+            output.push(PackageItem {
+                path: path.clone(),
+                item: item.clone(),
+            });
+        }
+    }
+}
+
 fn load_embedded_package(
     package_name: &str,
     root: std::path::PathBuf,
@@ -34,7 +50,7 @@ fn load_embedded_package(
     let frontend = FerroFrontend::new();
     let package_id = PackageId::new(package_name);
     let mut descriptors = Vec::new();
-    let mut items_by_path: HashMap<QualifiedPath, Vec<Item>> = HashMap::new();
+    let mut items = Vec::new();
 
     for relative_str in module_paths {
         let path = root.join(relative_str);
@@ -48,10 +64,11 @@ fn load_embedded_package(
         let result = frontend
             .parse_file(source, &path)
             .map_err(|e| ProviderError::other(format!("failed to parse {relative_str}: {e}")))?;
-        let items = result.ast.items;
-        if !items.is_empty() {
-            items_by_path.insert(QualifiedPath::new(module_path.clone()), items);
-        }
+        flatten_items(
+            &QualifiedPath::new(module_path.clone()),
+            &result.ast.items,
+            &mut items,
+        );
         descriptors.push(ModuleDescriptor {
             id: ModuleId::new(module_path.join("::")),
             package: package_id.clone(),
@@ -78,7 +95,7 @@ fn load_embedded_package(
         graph.insert_module(descriptor);
     }
     let mut krate = PackageSource::new(PackageId::new(package_name), package_name, graph);
-    krate.items = items_by_path;
+    krate.items = items;
     Ok(krate)
 }
 

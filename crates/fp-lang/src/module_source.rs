@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use fp_core::ast::{File, Item, ItemKind};
@@ -7,10 +7,27 @@ use fp_core::module::path::QualifiedPath;
 use fp_core::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
 use fp_core::package::graph::PackageGraph;
 use fp_core::package::provider::{ProviderError, ProviderResult};
-use fp_core::package::{PackageDescriptor, PackageSource};
+use fp_core::package::{PackageDescriptor, PackageItem, PackageSource};
 use fp_core::vfs::{VirtualFileSystem, VirtualPath};
 
 use crate::FerroFrontend;
+
+fn flatten_items(path: &QualifiedPath, items: &[Item], output: &mut Vec<PackageItem>) {
+    for item in items {
+        if let ItemKind::Module(module) = item.kind() {
+            flatten_items(
+                &path.with_segment(module.name.as_str().to_owned()),
+                &module.items,
+                output,
+            );
+        } else {
+            output.push(PackageItem {
+                path: path.clone(),
+                item: item.clone(),
+            });
+        }
+    }
+}
 
 /// Resolves a Ferro root file and its declared external modules into one
 /// package source snapshot. Filesystem access stays behind the VFS boundary.
@@ -43,7 +60,7 @@ impl FerroModuleSourceResolver {
 
         let root_source_path = VirtualPath::from_path(&root_file.path);
         let mut modules = Vec::new();
-        let mut items = HashMap::new();
+        let mut items = Vec::new();
         let mut module_paths = HashSet::new();
         let mut source_paths = HashSet::new();
 
@@ -84,7 +101,7 @@ impl FerroModuleSourceResolver {
         module_items: Vec<Item>,
         is_root: bool,
         modules: &mut Vec<ModuleDescriptor>,
-        items: &mut HashMap<QualifiedPath, Vec<Item>>,
+        items: &mut Vec<PackageItem>,
         module_paths: &mut HashSet<QualifiedPath>,
         source_paths: &mut HashSet<VirtualPath>,
     ) -> ProviderResult<()> {
@@ -111,7 +128,7 @@ impl FerroModuleSourceResolver {
             exports: Vec::new(),
             requires_features: Vec::new(),
         });
-        items.insert(module_path.clone(), module_items.clone());
+        flatten_items(&module_path, &module_items, items);
 
         self.collect_external_declarations(
             package,
@@ -134,7 +151,7 @@ impl FerroModuleSourceResolver {
         items: &[Item],
         is_root: bool,
         modules: &mut Vec<ModuleDescriptor>,
-        source_items: &mut HashMap<QualifiedPath, Vec<Item>>,
+        source_items: &mut Vec<PackageItem>,
         module_paths: &mut HashSet<QualifiedPath>,
         source_paths: &mut HashSet<VirtualPath>,
     ) -> ProviderResult<()> {
