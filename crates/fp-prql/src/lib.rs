@@ -3,6 +3,7 @@
 pub mod compile;
 pub mod dialect;
 pub mod frontend;
+pub mod package;
 
 pub use compile::{PrqlCompileResult, compile_prql};
 pub use fp_core::query::SqlDialect;

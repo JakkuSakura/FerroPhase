@@ -1,5 +1,7 @@
 //! FerroPhase frontend for TOML documents.
 
+pub mod package;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

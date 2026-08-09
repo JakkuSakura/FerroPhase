@@ -2,6 +2,7 @@
 
 pub mod frontend;
 pub mod manifest;
+pub mod package;
 pub mod parser;
 pub mod serializer;
 

@@ -1,5 +1,6 @@
 //! C# code generation and transpilation support
 
+pub mod package;
 pub mod printer;
 pub mod serializer;
 

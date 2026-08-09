@@ -1268,6 +1268,7 @@ dependencies = [
  "fp-native",
  "fp-prql",
  "fp-python",
+ "fp-rust",
  "fp-sql",
  "fp-stackvm",
  "fp-sycl",
@@ -1574,6 +1575,13 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml 0.8.23",
+]
+
+[[package]]
+name = "fp-rust"
+version = "0.1.0"
+dependencies = [
+ "fp-core",
 ]
 
 [[package]]

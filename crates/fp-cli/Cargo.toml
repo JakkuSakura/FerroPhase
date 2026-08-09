@@ -23,6 +23,7 @@ fp-golang = { path = "../fp-golang", optional = true }
 fp-godot = { path = "../fp-godot", optional = true }
 fp-llvm = { path = "../fp-llvm", optional = true }
 fp-lang = { path = "../fp-lang" }
+fp-rust = { path = "../fp-rust" }
 fp-wit = { path = "../fp-wit", optional = true }
 fp-zig = { path = "../fp-zig", optional = true }
 fp-kotlin = { path = "../fp-kotlin", optional = true }

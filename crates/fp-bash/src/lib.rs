@@ -1369,7 +1369,9 @@ fn extern_command(function: &ItemDeclFunction) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fp_core::ast::{
+pub mod package;
+
+use fp_core::ast::{
         Abi, AttrMeta, AttrMetaNameValue, AttrStyle, Attribute, Expr, ExprInvoke, ExprInvokeTarget,
         ExprKind, File, FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction, ItemKind,
         Name, Path, Ty,

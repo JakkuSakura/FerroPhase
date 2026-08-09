@@ -3,6 +3,8 @@
 //! Walks the FerroPhase AST and emits idiomatic Kotlin source code.
 //! Handles data classes, enum classes, functions, imports, and full expression trees.
 
+pub mod package;
 pub mod serializer;
 
+pub use package::KotlinPackageProvider;
 pub use serializer::KotlinSerializer;

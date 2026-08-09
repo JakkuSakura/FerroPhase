@@ -1,5 +1,7 @@
 //! FerroPhase frontend for JSON Schema validation documents.
 
+pub mod package;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;

@@ -4,6 +4,7 @@ pub use fp_core::query::SqlDialect;
 pub mod ast;
 pub mod dialect;
 pub mod frontend;
+pub mod package;
 pub mod parser;
 pub mod select;
 pub mod split;

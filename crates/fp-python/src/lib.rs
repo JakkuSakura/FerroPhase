@@ -3,6 +3,7 @@
 pub mod codegen;
 pub mod frontend;
 pub mod manifest;
+pub mod package;
 
 pub use codegen::PythonSerializer;
 pub use frontend::PythonFrontend;

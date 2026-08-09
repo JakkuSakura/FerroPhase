@@ -3,6 +3,8 @@
 //! The Clang frontend owns the AST lowering; this crate provides the C-only
 //! entry point and a small libc parsing helper.
 
+pub mod package;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

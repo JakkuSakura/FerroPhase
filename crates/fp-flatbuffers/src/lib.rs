@@ -1,5 +1,7 @@
 //! FerroPhase frontend for FlatBuffers type-IDL files.
 
+pub mod package;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

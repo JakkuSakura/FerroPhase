@@ -1,5 +1,7 @@
 //! FerroPhase frontend for HCL documents.
 
+pub mod package;
+
 use std::path::Path;
 use std::sync::Arc;
 

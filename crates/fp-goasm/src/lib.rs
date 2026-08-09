@@ -1,5 +1,6 @@
 pub mod config;
 mod emit;
+pub mod package;
 mod parse;
 
 use crate::config::{GoAsmConfig, GoAsmTarget};
