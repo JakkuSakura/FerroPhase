@@ -2,7 +2,7 @@ use crate::{CliError, Result};
 
 /// Supported AST output targets for the CLI.
 #[derive(Debug, Clone, Copy)]
-pub enum AstLanguageTarget {
+pub enum LanguageTarget {
     FerroPhase,
     TypeScript,
     JavaScript,
@@ -18,21 +18,21 @@ pub enum AstLanguageTarget {
 }
 
 /// Parse an AST output target from a user-provided string.
-pub fn parse_ast_target(s: &str) -> Result<AstLanguageTarget> {
+pub fn parse_language_target(s: &str) -> Result<LanguageTarget> {
     let normalized = s.to_lowercase();
     let target = match normalized.as_str() {
-        "fp" | "ferro" | "ferrophase" => AstLanguageTarget::FerroPhase,
-        "typescript" | "ts" => AstLanguageTarget::TypeScript,
-        "javascript" | "js" => AstLanguageTarget::JavaScript,
-        "csharp" | "cs" | "c#" => AstLanguageTarget::CSharp,
-        "python" | "py" => AstLanguageTarget::Python,
-        "go" | "golang" => AstLanguageTarget::Go,
-        "gdscript" | "gd" => AstLanguageTarget::Gdscript,
-        "zig" => AstLanguageTarget::Zig,
-        "sycl" => AstLanguageTarget::Sycl,
-        "rust" | "rs" => AstLanguageTarget::Rust,
-        "wit" => AstLanguageTarget::Wit,
-        "kotlin" | "kt" => AstLanguageTarget::Kotlin,
+        "fp" | "ferro" | "ferrophase" => LanguageTarget::FerroPhase,
+        "typescript" | "ts" => LanguageTarget::TypeScript,
+        "javascript" | "js" => LanguageTarget::JavaScript,
+        "csharp" | "cs" | "c#" => LanguageTarget::CSharp,
+        "python" | "py" => LanguageTarget::Python,
+        "go" | "golang" => LanguageTarget::Go,
+        "gdscript" | "gd" => LanguageTarget::Gdscript,
+        "zig" => LanguageTarget::Zig,
+        "sycl" => LanguageTarget::Sycl,
+        "rust" | "rs" => LanguageTarget::Rust,
+        "wit" => LanguageTarget::Wit,
+        "kotlin" | "kt" => LanguageTarget::Kotlin,
         _ => {
             return Err(CliError::InvalidInput(format!("Unsupported target: {}", s)));
         }
@@ -41,20 +41,20 @@ pub fn parse_ast_target(s: &str) -> Result<AstLanguageTarget> {
 }
 
 /// File extension to use when emitting code for a target.
-pub fn ast_output_extension_for(target: AstLanguageTarget) -> &'static str {
+pub fn output_extension_for(target: LanguageTarget) -> &'static str {
     match target {
-        AstLanguageTarget::FerroPhase => "fp",
-        AstLanguageTarget::TypeScript => "ts",
-        AstLanguageTarget::JavaScript => "js",
-        AstLanguageTarget::CSharp => "cs",
-        AstLanguageTarget::Python => "py",
-        AstLanguageTarget::Go => "go",
-        AstLanguageTarget::Gdscript => "gd",
-        AstLanguageTarget::Zig => "zig",
-        AstLanguageTarget::Sycl => "cpp",
-        AstLanguageTarget::Rust => "rs",
-        AstLanguageTarget::Wit => "wit",
-        AstLanguageTarget::Kotlin => "kt",
+        LanguageTarget::FerroPhase => "fp",
+        LanguageTarget::TypeScript => "ts",
+        LanguageTarget::JavaScript => "js",
+        LanguageTarget::CSharp => "cs",
+        LanguageTarget::Python => "py",
+        LanguageTarget::Go => "go",
+        LanguageTarget::Gdscript => "gd",
+        LanguageTarget::Zig => "zig",
+        LanguageTarget::Sycl => "cpp",
+        LanguageTarget::Rust => "rs",
+        LanguageTarget::Wit => "wit",
+        LanguageTarget::Kotlin => "kt",
     }
 }
 
@@ -69,8 +69,8 @@ pub fn resolve_ast_output_path(
     if let Some(out) = output.cloned() {
         Ok(out)
     } else {
-        let parsed = parse_ast_target(target)?;
-        let ext = ast_output_extension_for(parsed);
+        let parsed = parse_language_target(target)?;
+        let ext = output_extension_for(parsed);
         Ok(input.with_extension(ext))
     }
 }

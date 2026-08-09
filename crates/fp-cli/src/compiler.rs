@@ -1011,7 +1011,7 @@ fn parse_file(
     parse_file_with_mode(path, source_language, FrontendParseMode::Strict, lossy)
 }
 
-pub fn parse_ast_target_file(path: &Path, source_language: Option<&str>) -> Result<File> {
+pub fn parse_language_target_file(path: &Path, source_language: Option<&str>) -> Result<File> {
     parse_file_with_context(
         path,
         source_language,
@@ -1071,7 +1071,7 @@ pub fn parse_file_with_mode(
     parse_file_with_context(path, source_language, parse_mode, lossy).map(|parsed| parsed.ast)
 }
 
-pub fn prepare_ast_target(
+pub fn prepare_language_target(
     ast: &mut File,
     path: &Path,
     source_language: Option<&str>,
@@ -1090,7 +1090,7 @@ pub fn prepare_ast_target(
 
 /// Run the shared AST through HIR generation and typing, then lift the typed
 /// HIR back to AST for the existing target printers.
-pub fn typecheck_ast_target(
+pub fn typecheck_language_target(
     ast: File,
     package: &str,
     path: &Path,

@@ -29,6 +29,16 @@ pub struct CompilerDriver {
     building_packages: HashSet<PackageId>,
     compiled_packages: HashMap<PackageId, Rc<RefCell<fp_core::package::CompiledPackage>>>,
     next_hir_def_id: u32,
+    pub pipeline: PipelineMode,
+}
+
+/// Controls how far the compiler pipeline runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipelineMode {
+    /// Full native compilation: AST → HIR → MIR → LIR
+    Full,
+    /// Stop after parsing: resolve modules, parse sources, return AST items
+    Parse,
 }
 
 struct CompileUnitCoreResult {
@@ -128,6 +138,7 @@ impl CompilerDriver {
             building_packages: HashSet::new(),
             compiled_packages: HashMap::new(),
             next_hir_def_id: 0,
+            pipeline: PipelineMode::Full,
         }
     }
 
@@ -138,6 +149,7 @@ impl CompilerDriver {
             building_packages: HashSet::new(),
             compiled_packages: HashMap::new(),
             next_hir_def_id: 0,
+            pipeline: PipelineMode::Full,
         }
     }
 
@@ -371,25 +383,27 @@ impl CompilerDriver {
                     source,
                     self.state.typing_ctx.data_layout.clone(),
                 );
-                let items = package.borrow().items.clone();
-                let initial_units = self.compile_items_to_lir_units(&items).await?;
-                Self::publish_lir_units(&package, package_id, &initial_units)?;
+                if self.pipeline == PipelineMode::Full {
+                    let items = package.borrow().items.clone();
+                    let initial_units = self.compile_items_to_lir_units(&items).await?;
+                    Self::publish_lir_units(&package, package_id, &initial_units)?;
 
-                for unit in &initial_units {
-                    if unit.program.comptime_entries.is_empty() {
-                        continue;
+                    for unit in &initial_units {
+                        if unit.program.comptime_entries.is_empty() {
+                            continue;
+                        }
+                        let lir_id = Self::package_module_lir_id(package_id, &unit.module_path);
+                        self.state.insert_lir(lir_id.clone(), unit.program.clone());
+                        self.evaluate_comptime_lir(
+                            &lir_id,
+                            &FullyQualifiedPath::new(unit.module_path.clone()),
+                        )
+                        .await?;
                     }
-                    let lir_id = Self::package_module_lir_id(package_id, &unit.module_path);
-                    self.state.insert_lir(lir_id.clone(), unit.program.clone());
-                    self.evaluate_comptime_lir(
-                        &lir_id,
-                        &FullyQualifiedPath::new(unit.module_path.clone()),
-                    )
-                    .await?;
-                }
 
-                let units = self.compile_items_to_lir_units(&items).await?;
-                Self::publish_lir_units(&package, package_id, &units)?;
+                    let units = self.compile_items_to_lir_units(&items).await?;
+                    Self::publish_lir_units(&package, package_id, &units)?;
+                }
                 Ok(package)
             }
             .await;

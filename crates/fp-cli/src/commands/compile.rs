@@ -212,7 +212,7 @@ fn target_triple_matches_host(target_triple: &str) -> bool {
 #[derive(Debug, Clone, Copy)]
 enum CompileTarget {
     Backend(BackendKind),
-    Ast(crate::languages::backend::AstLanguageTarget),
+    Ast(crate::languages::backend::LanguageTarget),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -483,8 +483,8 @@ async fn compile_file(
     info!("Compiling: {} -> {}", input.display(), output.display());
 
     if input.is_dir() {
-        if let CompileTarget::Ast(ast_target) = target {
-            compile_project(input, output, args, ast_target)?;
+        if let CompileTarget::Ast(target) = target {
+            compile_project(input, output, args, target).await?;
             return Ok(Some(output.to_path_buf()));
         }
         return Err(CliError::InvalidInput(
@@ -503,7 +503,7 @@ async fn compile_file(
     }
 
     if let CompileTarget::Ast(ast_target) = target {
-        compile_ast_target(input, output, args, ast_target).await?;
+        compile_emit_target(input, output, args, ast_target).await?;
         return Ok(Some(output.to_path_buf()));
     }
 
@@ -905,11 +905,11 @@ fn parse_native_asm_source(text: &str, source: NativeAsmSource) -> Result<Parsed
     }
 }
 
-async fn compile_ast_target(
+async fn compile_emit_target(
     input: &Path,
     output: &Path,
     args: &CompileArgs,
-    target: crate::languages::backend::AstLanguageTarget,
+    target: crate::languages::backend::LanguageTarget,
 ) -> Result<()> {
     if is_tsconfig(input) {
         return Err(CliError::Compilation(
@@ -925,16 +925,16 @@ async fn compile_ast_target(
         Some(LanguageSource::TypeScript | LanguageSource::JavaScript)
     );
 
-    let mut ast = compiler::parse_ast_target_file(input, args.source_language.as_deref())?;
+    let mut ast = compiler::parse_language_target_file(input, args.source_language.as_deref())?;
     if !is_wit_input && !is_typescript_input {
         if args.const_eval {
             warn!("--const-eval is ignored: AST const evaluation has been removed");
         }
-        compiler::prepare_ast_target(&mut ast, input, args.source_language.as_deref(), false)?;
+        compiler::prepare_language_target(&mut ast, input, args.source_language.as_deref(), false)?;
     }
 
     if !args.skip_typing && !is_wit_input && !is_typescript_input {
-        ast = compiler::typecheck_ast_target(
+        ast = compiler::typecheck_language_target(
             ast,
             args.package(),
             input,
@@ -965,11 +965,11 @@ async fn compile_ast_target(
     Ok(())
 }
 
-fn compile_project(
+async fn compile_project(
     input: &Path,
     output: &Path,
     args: &CompileArgs,
-    target: crate::languages::backend::AstLanguageTarget,
+    target: crate::languages::backend::LanguageTarget,
 ) -> Result<()> {
     use crate::languages::discovery::discovery_for_language;
     use crate::languages::detect_source_language;
@@ -987,7 +987,7 @@ fn compile_project(
     let members = (discovery.list_members)(&root);
     info!("Project root: {}, {} crate(s), language: {}", root.display(), members.len(), lang);
 
-    let ext = crate::languages::backend::ast_output_extension_for(target);
+    let ext = crate::languages::backend::output_extension_for(target);
     let mut file_count = 0;
 
     for (name, dir) in &members {
@@ -997,14 +997,7 @@ fn compile_project(
                 std::fs::create_dir_all(parent).map_err(CliError::Io)?;
             }
 
-            let mut ast = compiler::parse_ast_target_file(&abs_path, args.source_language.as_deref())?;
-            if args.const_eval {
-                warn!("--const-eval is ignored: AST const evaluation has been removed");
-            }
-            compiler::prepare_ast_target(&mut ast, &abs_path, args.source_language.as_deref(), false)?;
-
-            let result = emit_ast_target(&ast, target, args.type_defs, &abs_path, args.single_world)?;
-            std::fs::write(&out_path, &result.code).map_err(CliError::Io)?;
+            compile_emit_target(&abs_path, &out_path, args, target).await?;
             file_count += 1;
         }
     }
@@ -1016,13 +1009,13 @@ fn compile_project(
 #[allow(unused_variables)]
 fn emit_ast_target(
     node: &File,
-    target: crate::languages::backend::AstLanguageTarget,
+    target: crate::languages::backend::LanguageTarget,
     emit_type_defs: bool,
     input: &Path,
     single_world: bool,
 ) -> Result<AstTargetOutput> {
     match target {
-        crate::languages::backend::AstLanguageTarget::FerroPhase => {
+        crate::languages::backend::LanguageTarget::FerroPhase => {
             let serializer = fp_c::CSerializer;
             let code = serializer
                 .serialize_file(node)
@@ -1032,7 +1025,7 @@ fn emit_ast_target(
                 side_files: Vec::new(),
             })
         }
-        crate::languages::backend::AstLanguageTarget::TypeScript => {
+        crate::languages::backend::LanguageTarget::TypeScript => {
             #[cfg(feature = "lang-typescript")]
             {
                 let serializer = TypeScriptSerializer::new(emit_type_defs);
@@ -1059,7 +1052,7 @@ fn emit_ast_target(
                 ))
             }
         }
-        crate::languages::backend::AstLanguageTarget::JavaScript => {
+        crate::languages::backend::LanguageTarget::JavaScript => {
             #[cfg(feature = "lang-typescript")]
             {
                 let serializer = JavaScriptSerializer;
@@ -1079,7 +1072,7 @@ fn emit_ast_target(
                 ))
             }
         }
-        crate::languages::backend::AstLanguageTarget::CSharp => {
+        crate::languages::backend::LanguageTarget::CSharp => {
             #[cfg(feature = "lang-csharp")]
             {
                 let serializer = CSharpSerializer;
@@ -1096,7 +1089,7 @@ fn emit_ast_target(
                 Err(disabled_feature_error("lang-csharp", "C# AST emission"))
             }
         }
-        crate::languages::backend::AstLanguageTarget::Kotlin => {
+        crate::languages::backend::LanguageTarget::Kotlin => {
             #[cfg(feature = "lang-kotlin")]
             {
                 let serializer = KotlinSerializer;
@@ -1113,7 +1106,7 @@ fn emit_ast_target(
                 Err(disabled_feature_error("lang-kotlin", "Kotlin AST emission"))
             }
         }
-        crate::languages::backend::AstLanguageTarget::Python => {
+        crate::languages::backend::LanguageTarget::Python => {
             #[cfg(feature = "lang-python")]
             {
                 let serializer = PythonSerializer;
@@ -1130,7 +1123,7 @@ fn emit_ast_target(
                 Err(disabled_feature_error("lang-python", "Python AST emission"))
             }
         }
-        crate::languages::backend::AstLanguageTarget::Go => {
+        crate::languages::backend::LanguageTarget::Go => {
             #[cfg(feature = "lang-golang")]
             {
                 let serializer = GoSerializer::default();
@@ -1147,7 +1140,7 @@ fn emit_ast_target(
                 Err(disabled_feature_error("lang-golang", "Go AST emission"))
             }
         }
-        crate::languages::backend::AstLanguageTarget::Gdscript => {
+        crate::languages::backend::LanguageTarget::Gdscript => {
             #[cfg(feature = "lang-godot")]
             {
                 let serializer = GdscriptSerializer;
@@ -1167,7 +1160,7 @@ fn emit_ast_target(
                 ))
             }
         }
-        crate::languages::backend::AstLanguageTarget::Zig => {
+        crate::languages::backend::LanguageTarget::Zig => {
             #[cfg(feature = "lang-zig")]
             {
                 let serializer = ZigSerializer;
@@ -1184,7 +1177,7 @@ fn emit_ast_target(
                 Err(disabled_feature_error("lang-zig", "Zig AST emission"))
             }
         }
-        crate::languages::backend::AstLanguageTarget::Sycl => {
+        crate::languages::backend::LanguageTarget::Sycl => {
             #[cfg(feature = "lang-sycl")]
             {
                 let serializer = SyclSerializer;
@@ -1201,7 +1194,7 @@ fn emit_ast_target(
                 Err(disabled_feature_error("lang-sycl", "SYCL AST emission"))
             }
         }
-        crate::languages::backend::AstLanguageTarget::Rust => {
+        crate::languages::backend::LanguageTarget::Rust => {
             let serializer = PrettyAstSerializer::new();
             let code = serializer
                 .serialize_file(node)
@@ -1211,7 +1204,7 @@ fn emit_ast_target(
                 side_files: Vec::new(),
             })
         }
-        crate::languages::backend::AstLanguageTarget::Wit => {
+        crate::languages::backend::LanguageTarget::Wit => {
             #[cfg(feature = "lang-wit")]
             {
                 let serializer =
@@ -1310,7 +1303,7 @@ fn is_tsconfig(path: &Path) -> bool {
 
 fn resolve_compile_target(args: &CompileArgs) -> Result<CompileTarget> {
     if let Some(target) = args.target.as_deref() {
-        let ast_target = crate::languages::backend::parse_ast_target(target)?;
+        let ast_target = crate::languages::backend::parse_language_target(target)?;
         return Ok(CompileTarget::Ast(ast_target));
     }
     Ok(CompileTarget::Backend(args.backend))
@@ -1762,7 +1755,7 @@ fn determine_output_path(
     let backend = match target {
         CompileTarget::Backend(backend) => backend,
         CompileTarget::Ast(ast_target) => {
-            let extension = crate::languages::backend::ast_output_extension_for(ast_target);
+            let extension = crate::languages::backend::output_extension_for(ast_target);
             if let Some(output) = output {
                 if output_is_dir {
                     let stem = input.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {

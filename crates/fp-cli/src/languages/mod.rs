@@ -222,9 +222,9 @@ pub fn detect_target_language(target: &str) -> Option<&'static Language> {
 
 /// Get file extension for a target language
 pub fn get_target_extension(target: &str) -> Option<&'static str> {
-    backend::parse_ast_target(target)
+    backend::parse_language_target(target)
         .ok()
-        .map(backend::ast_output_extension_for)
+        .map(backend::output_extension_for)
 }
 
 /// Check if a target language is supported as an AST output target.
