@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::resolution::ModuleResolutionError;
-use crate::{AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
+use crate::{BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
 
 impl From<fp_interpret::VmError> for CompilerDriverError {
     fn from(e: fp_interpret::VmError) -> Self {
@@ -21,8 +21,6 @@ pub enum CompilerDriverError {
     Core(#[from] fp_core::Error),
     #[error("interpreter error: {0}")]
     Interpreter(String),
-    #[error("missing AST {0}")]
-    MissingAst(AstId),
     #[error("missing HIR {0}")]
     MissingHir(HirId),
     #[error("missing MIR {0}")]

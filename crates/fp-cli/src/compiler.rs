@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use fp_c::CFrontend;
 use fp_compiler::{
-    AstId, BytecodeId, CompilerDriver, CompilerExecutor, CompilerModuleResolver, CompilerSession,
-    ConstValueId, FullyQualifiedPath, LirId, MirId,
+    CompilerDriver, CompilerExecutor, CompilerModuleResolver, CompilerSession, ConstValueId,
+    FullyQualifiedPath, LirId,
 };
 use fp_core::module::path::QualifiedPath;
 use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
@@ -22,8 +22,8 @@ use fp_core::{
     lir::LirDataLayout,
 };
 use fp_goasm::config::GoAsmTarget;
-use fp_lang::FerroFrontend;
 use fp_lang::module_source::FerroModuleSourceResolver;
+use fp_lang::FerroFrontend;
 use fp_typing::{TypingDiagnostic, TypingDiagnosticLevel};
 
 #[cfg(feature = "lang-flatbuffers")]
@@ -323,17 +323,11 @@ pub fn compile_bytecode_file(
     lossy: LossyCompileOptions,
     options: &BytecodeCompileOptions,
 ) -> Result<PathBuf> {
-    let identity = CompilerIdentity::for_file(package, path);
     let mut lowered = lower_file(path, package, source_language, resolver, lossy)?;
-    lowered
+    let bytecode = lowered
         .executor
-        .run(
-            lowered
-                .driver
-                .compile_bytecode(&identity.ast_id, &identity.path),
-        )
+        .run(lowered.driver.compile_bytecode(&lowered.package_id))
         .map_err(|err| CliError::Compilation(err.to_string()))?;
-    let bytecode = lowered.bytecode()?;
 
     if let Some(parent) = options.output.parent() {
         std::fs::create_dir_all(parent).map_err(CliError::Io)?;
@@ -850,7 +844,6 @@ fn lower_file(
 ) -> Result<LoweredProgram> {
     let ast = parse_file(path, source_language, lossy)?;
     let identity = CompilerIdentity::for_file(package, path);
-    let path_key = identity.path.to_key();
     let executor = CompilerExecutor::new();
     let mut driver = compile_source_file(
         ast,
@@ -868,7 +861,6 @@ fn lower_file(
         })?);
     Ok(LoweredProgram {
         driver,
-        path_key,
         package_id,
         executor,
     })
@@ -959,14 +951,7 @@ fn compile_source_file(
     session.register_provider(Arc::new(input_provider));
     session.driver().state.set_lossy(lossy.enabled);
 
-    if let Some(resolver) = resolver {
-        session.driver().state.set_module_resolver(resolver);
-        session
-            .driver()
-            .state
-            .prepare_module_resolution(identity.ast_id.clone(), source_path)
-            .map_err(|err| CliError::Compilation(err.to_string()))?;
-    }
+    let _ = (resolver, source_path);
     executor
         .run(session.driver().compile_package(&package_id))
         .map_err(|err| CliError::Compilation(err.to_string()))?;
@@ -1034,7 +1019,6 @@ pub fn compile_file_to_lir_bundle(
         frontend_snapshot: parsed.frontend_snapshot.clone(),
     };
     let identity = CompilerIdentity::for_file(package, path);
-    let path_key = identity.path.to_key();
     let executor = CompilerExecutor::new();
     let mut driver = compile_source_file(
         parsed.ast,
@@ -1048,7 +1032,6 @@ pub fn compile_file_to_lir_bundle(
     drain_driver(&mut driver, lossy)?;
     let lowered = LoweredProgram {
         driver,
-        path_key,
         package_id: PackageId::new(identity.path.path().head().ok_or_else(|| {
             CliError::Compilation("source file has no package identity".to_string())
         })?),
@@ -1255,12 +1238,10 @@ fn as_core_diagnostic(diagnostic: &TypingDiagnostic) -> Diagnostic<String> {
 
 struct CompilerIdentity {
     path: FullyQualifiedPath,
-    ast_id: AstId,
 }
 
 struct LoweredProgram {
     driver: CompilerDriver,
-    path_key: String,
     package_id: PackageId,
     executor: CompilerExecutor,
 }
@@ -1274,34 +1255,29 @@ struct ParsedAst {
 
 impl LoweredProgram {
     fn hir(&self) -> Result<fp_core::hir::Program> {
-        self.driver
-            .state
-            .hir(&fp_compiler::HirId::new(format!("hir:{}", self.path_key)))
-            .map(|program| program.clone())
-            .map_err(|err| CliError::Compilation(err.to_string()))
+        let package = self.compiled_package()?;
+        let package = package.borrow();
+        package.hir_program.clone().ok_or_else(|| {
+            CliError::Compilation(format!(
+                "compiled package `{}` contains no HIR program",
+                self.package_id
+            ))
+        })
     }
 
     fn mir(&self) -> Result<fp_core::mir::Program> {
-        self.driver
-            .state
-            .mir(&MirId::new(format!("mir:{}", self.path_key)))
-            .map(|program| program.clone())
-            .map_err(|err| CliError::Compilation(err.to_string()))
+        let package = self.compiled_package()?;
+        let package = package.borrow();
+        package.mir_program.clone().ok_or_else(|| {
+            CliError::Compilation(format!(
+                "compiled package `{}` contains no MIR program",
+                self.package_id
+            ))
+        })
     }
 
     fn lir(&self) -> Result<fp_core::lir::LirProgram> {
-        let package = self
-            .driver
-            .state
-            .typing_ctx
-            .env_ctx
-            .compiled_package(&self.package_id)
-            .ok_or_else(|| {
-                CliError::Compilation(format!(
-                    "compiled package `{}` is unavailable",
-                    self.package_id
-                ))
-            })?;
+        let package = self.compiled_package()?;
         let package = package.borrow();
         if package.lir_workspace.artifacts().is_empty() {
             return Err(CliError::Compilation(format!(
@@ -1312,11 +1288,25 @@ impl LoweredProgram {
         Ok(package.lir_workspace.to_program())
     }
 
-    fn bytecode(&self) -> Result<fp_bytecode::BytecodeProgram> {
+    fn compiled_package(
+        &self,
+    ) -> Result<std::rc::Rc<std::cell::RefCell<fp_core::package::CompiledPackage>>> {
         self.driver
             .state
-            .bytecode_program(&BytecodeId::new(format!("bytecode:{}", self.path_key)))
-            .map(|program| program.clone())
+            .typing_ctx
+            .env_ctx
+            .compiled_package(&self.package_id)
+            .ok_or_else(|| {
+                CliError::Compilation(format!(
+                    "compiled package `{}` is unavailable",
+                    self.package_id
+                ))
+            })
+    }
+
+    fn bytecode(&mut self) -> Result<fp_bytecode::BytecodeProgram> {
+        self.executor
+            .run(self.driver.compile_bytecode(&self.package_id))
             .map_err(|err| CliError::Compilation(err.to_string()))
     }
 }
@@ -1337,7 +1327,6 @@ impl CompilerIdentity {
 
     fn new(segments: Vec<String>) -> Self {
         let path = FullyQualifiedPath::from_segments(segments);
-        let ast_id = AstId::new(format!("ast:{}", path.to_key()));
-        Self { path, ast_id }
+        Self { path }
     }
 }

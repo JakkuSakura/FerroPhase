@@ -115,8 +115,7 @@ pub struct GenericMonorph {
     /// it's kept only for the specialized function's display name and the
     /// dedup key, not for re-locating the original definition.
     pub item_id: ItemId,
-    /// The discovering compile unit's own `AstId` (as a plain string --
-    /// fp-typing can't name `fp-compiler`'s `AstId` type), carried verbatim
+    /// The discovering compile unit's own package item key, carried verbatim.
     /// from the discovering compile unit rather than re-derived later from
     /// `function_path`/a naming convention: `handle_resolved_task` runs
     /// once the pool is fully drained, with no compile-unit-specific

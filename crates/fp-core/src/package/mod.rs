@@ -232,6 +232,9 @@ pub struct CompiledPackage {
     /// HIR definitions published by this package.
     pub hir_program: Option<crate::hir::Program>,
 
+    /// MIR produced for this package.
+    pub mir_program: Option<crate::mir::Program>,
+
     /// Fully-qualified HIR lookup entries exported by this package.
     pub hir_exports: HashMap<String, crate::hir::Res>,
 
@@ -266,6 +269,7 @@ impl CompiledPackage {
             lir_units: Vec::new(),
             lir_workspace: LirWorkspace::new(data_layout),
             hir_program: None,
+            mir_program: None,
             hir_exports: HashMap::new(),
             items: Vec::new(),
         }

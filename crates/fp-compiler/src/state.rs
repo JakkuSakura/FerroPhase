@@ -1,21 +1,16 @@
 use std::collections::{BTreeMap, HashSet};
-use std::path::Path;
-use std::sync::Arc;
 
 use fp_core::{
-    ast::{Expr, ExprId, File, Value},
+    ast::{Expr, ExprId, Value},
     hir, lir, mir,
-    module::resolution::ModuleResolutionContext,
 };
 use fp_typing::{TypeckResults, TypingContext};
 
 use crate::error::CompilerDriverError;
 use crate::executor::ExecutorHandle;
-use crate::resolution::CompilerModuleResolver;
-use crate::{AstId, BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
+use crate::{BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
 
 pub struct CompilerState {
-    ast: BTreeMap<AstId, File>,
     hir: BTreeMap<HirId, hir::Program>,
     hir_typeck: BTreeMap<HirId, TypeckResults>,
     mir: BTreeMap<MirId, mir::Program>,
@@ -27,8 +22,6 @@ pub struct CompilerState {
     pub typing_ctx: std::rc::Rc<TypingContext>,
     runtime_values: BTreeMap<RuntimeValueId, Value>,
     lossy: bool,
-    module_resolver: Option<Arc<dyn CompilerModuleResolver>>,
-    module_resolutions: BTreeMap<AstId, ModuleResolutionContext>,
     pub(crate) generic_instantiations: HashSet<String>,
     bytecode: BTreeMap<BytecodeId, fp_bytecode::BytecodeProgram>,
     /// The one shared task pool every suspendable unit of driver work runs
@@ -46,7 +39,6 @@ pub struct CompilerState {
 impl CompilerState {
     pub fn new(data_layout: lir::LirDataLayout, tasks: ExecutorHandle) -> Self {
         Self {
-            ast: BTreeMap::new(),
             hir: BTreeMap::new(),
             hir_typeck: BTreeMap::new(),
             mir: BTreeMap::new(),
@@ -60,16 +52,10 @@ impl CompilerState {
             )),
             runtime_values: BTreeMap::new(),
             lossy: false,
-            module_resolver: None,
-            module_resolutions: BTreeMap::new(),
             generic_instantiations: HashSet::new(),
             bytecode: BTreeMap::new(),
             tasks,
         }
-    }
-
-    pub fn insert_ast(&mut self, ast_id: AstId, ast: File) {
-        self.ast.insert(ast_id, ast);
     }
 
     pub fn insert_hir(&mut self, hir_id: HirId, hir: hir::Program) {
@@ -138,31 +124,8 @@ impl CompilerState {
         self.runtime_values.insert(value_id, value);
     }
 
-    pub fn set_module_resolver(&mut self, resolver: Arc<dyn CompilerModuleResolver>) {
-        self.module_resolver = Some(resolver);
-    }
-
-    pub fn prepare_module_resolution(
-        &mut self,
-        ast_id: AstId,
-        input: &Path,
-    ) -> Result<(), CompilerDriverError> {
-        let Some(resolver) = self.module_resolver.as_ref() else {
-            return Ok(());
-        };
-        let context = resolver.resolve_context(input)?;
-        self.module_resolutions.insert(ast_id, context);
-        Ok(())
-    }
-
     pub fn set_lossy(&mut self, lossy: bool) {
         self.lossy = lossy;
-    }
-
-    pub fn ast(&self, ast_id: &AstId) -> Result<&File, CompilerDriverError> {
-        self.ast
-            .get(ast_id)
-            .ok_or_else(|| CompilerDriverError::MissingAst(ast_id.clone()))
     }
 
     pub fn hir(&self, hir_id: &HirId) -> Result<&hir::Program, CompilerDriverError> {
@@ -209,10 +172,6 @@ impl CompilerState {
 
     pub fn lossy(&self) -> bool {
         self.lossy
-    }
-
-    pub fn module_resolution(&self, ast_id: &AstId) -> Option<&ModuleResolutionContext> {
-        self.module_resolutions.get(ast_id)
     }
 
     pub fn hir_len(&self) -> usize {

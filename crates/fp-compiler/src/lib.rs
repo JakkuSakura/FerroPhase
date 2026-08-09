@@ -15,6 +15,6 @@ pub use resolution::{CompilerModuleResolver, ModuleResolutionError};
 pub use session::CompilerSession;
 pub use state::CompilerState;
 pub use storage::{
-    AstId, BytecodeId, ConstValueId, HirId, JitObjectId, LirId, MirId, NativeObjectId,
-    RuntimeValueId, SavedOutputId,
+    BytecodeId, ConstValueId, HirId, JitObjectId, LirId, MirId, NativeObjectId, RuntimeValueId,
+    SavedOutputId,
 };

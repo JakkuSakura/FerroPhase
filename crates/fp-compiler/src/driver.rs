@@ -1,6 +1,6 @@
 use fp_backend::transformations::{HirGenerator, HirLoweringConfig, LirGenerator, MirLowering};
 use fp_core::ast::{
-    BlockStmt, Expr, ExprKind, File, Item, ItemKind, Name, Ty, TypeStruct, TypeType, Value,
+    BlockStmt, Expr, ExprKind, Item, ItemKind, Name, Ty, TypeStruct, TypeType, Value,
 };
 use fp_core::hir;
 use fp_core::mir;
@@ -10,7 +10,7 @@ use fp_core::package::PackageId;
 use fp_core::span::Span;
 use fp_interpret::LirInterpreter;
 use fp_lang::FerroIntrinsicNormalizer;
-use fp_typing::{ComptimeRequest, HirTypeChecker, TypeckResults, TypingContext};
+use fp_typing::{ComptimeRequest, HirTypeChecker, TypingContext};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -18,8 +18,8 @@ use std::pin::Pin;
 use std::rc::Rc;
 
 use crate::{
-    AstId, BytecodeId, CompilerDriverError, CompilerState, ConstValueId, ExecutorHandle,
-    FullyQualifiedPath, HirId, LirId, MirId, RuntimeValueId,
+    CompilerDriverError, CompilerState, ConstValueId, ExecutorHandle, FullyQualifiedPath, HirId,
+    LirId, MirId, RuntimeValueId,
 };
 
 pub struct CompilerDriver {
@@ -40,23 +40,6 @@ pub enum PipelineMode {
     Parse,
 }
 
-struct CompileUnitCoreResult {
-    hir_id: HirId,
-    mir_id: MirId,
-    lir_id: LirId,
-}
-
-struct TypingUnit {
-    module_path: QualifiedPath,
-    package_id: hir::PackageId,
-    source: File,
-    lowering_config: HirLoweringConfig,
-    external_definitions: Vec<(QualifiedPath, hir::Program, HashMap<String, hir::Res>)>,
-    def_id_start: u32,
-    preassigned_def_ids: HashMap<u64, hir::DefId>,
-    external_modules: Vec<QualifiedPath>,
-}
-
 impl CompilerDriver {
     fn module_state_key(&self, path: &QualifiedPath) -> String {
         let package_id = self
@@ -69,51 +52,6 @@ impl CompilerDriver {
             Some(package_id) => format!("{package_id}:{}", path.to_key()),
             None => path.to_key(),
         }
-    }
-
-    /// Build (but do not spawn or drive) the HIR typing task for one source
-    /// module. The future is owned by the driver's task pool, while the unit
-    /// keeps the source document and module identity together.
-    fn typing_future(
-        &self,
-        unit: TypingUnit,
-    ) -> fp_typing::BoxFuture<
-        'static,
-        fp_core::error::Result<(hir::Program, TypeckResults, HashMap<String, hir::Res>, u32)>,
-    > {
-        let typing_context = self.state.typing_ctx.clone();
-        Box::pin(async move {
-            let mut generator = HirGenerator::new()
-                .with_intrinsic_normalizer(FerroIntrinsicNormalizer::new(
-                    fp_core::intrinsics::IntrinsicNormalizationMode::Compile,
-                ))
-                .with_package_id(unit.package_id)
-                .with_def_id_start(unit.def_id_start)
-                .with_preassigned_def_ids(unit.preassigned_def_ids)
-                .with_lowering_config(unit.lowering_config)
-                .with_external_definitions(unit.external_definitions)
-                .with_external_modules(unit.external_modules);
-            let result = match generator
-                .transform_module_async(
-                    &unit.module_path,
-                    &unit.source.items,
-                    typing_context.clone(),
-                )
-                .await
-            {
-                Ok(program) => {
-                    let exports = generator.exported_symbols();
-                    let next_def_id = generator.next_def_id_value();
-                    HirTypeChecker::new(program)
-                        .with_context(typing_context)
-                        .check()
-                        .await
-                        .map(|(program, results)| (program, results, exports, next_def_id))
-                }
-                Err(error) => Err(error),
-            };
-            result
-        })
     }
 
     pub fn new(data_layout: fp_core::lir::LirDataLayout, tasks: ExecutorHandle) -> Self {
@@ -154,36 +92,38 @@ impl CompilerDriver {
 
     pub async fn compile_native(
         &mut self,
-        ast_id: &AstId,
-        path: &FullyQualifiedPath,
-    ) -> Result<(), CompilerDriverError> {
-        self.compile_unit_compile_native(ast_id, path).await
+        package_id: &PackageId,
+    ) -> Result<Rc<RefCell<fp_core::package::CompiledPackage>>, CompilerDriverError> {
+        self.compile_package(package_id).await
     }
 
     pub async fn compile_bytecode(
         &mut self,
-        ast_id: &AstId,
-        path: &FullyQualifiedPath,
-    ) -> Result<(), CompilerDriverError> {
-        self.compile_unit_compile_bytecode(ast_id, path).await
+        package_id: &PackageId,
+    ) -> Result<fp_bytecode::BytecodeProgram, CompilerDriverError> {
+        let package = self.compile_package(package_id).await?;
+        let mir = package.borrow().mir_program.clone().ok_or_else(|| {
+            CompilerDriverError::InternalCompilerError(format!(
+                "package {package_id} has no MIR program"
+            ))
+        })?;
+        fp_bytecode::lower_program(&mir).map_err(CompilerDriverError::from)
     }
 
     pub fn compile_native_sync(
         &mut self,
-        ast_id: &AstId,
-        path: &FullyQualifiedPath,
-    ) -> Result<(), CompilerDriverError> {
+        package_id: &PackageId,
+    ) -> Result<Rc<RefCell<fp_core::package::CompiledPackage>>, CompilerDriverError> {
         let executor = self.state.tasks.clone();
-        executor.run(self.compile_native(ast_id, path))
+        executor.run(self.compile_native(package_id))
     }
 
     pub fn compile_bytecode_sync(
         &mut self,
-        ast_id: &AstId,
-        path: &FullyQualifiedPath,
-    ) -> Result<(), CompilerDriverError> {
+        package_id: &PackageId,
+    ) -> Result<fp_bytecode::BytecodeProgram, CompilerDriverError> {
         let executor = self.state.tasks.clone();
-        executor.run(self.compile_unit_compile_bytecode(ast_id, path))
+        executor.run(self.compile_bytecode(package_id))
     }
 
     /// Focus subsequent module work on an already compiled package. The
@@ -353,12 +293,13 @@ impl CompilerDriver {
                 }
 
                 for dependency in &metadata.metadata.dependencies {
-                    let dependency_id = dependency.resolved_package_id.clone().ok_or_else(|| {
-                        CompilerDriverError::UnresolvablePackage(format!(
+                    let dependency_id =
+                        dependency.resolved_package_id.clone().ok_or_else(|| {
+                            CompilerDriverError::UnresolvablePackage(format!(
                             "dependency `{}` of package `{package_id}` has no selected package ID",
                             dependency.package
                         ))
-                    })?;
+                        })?;
                     let dependency_package = Box::pin(self.compile_package(&dependency_id)).await?;
                     if dependency_id.as_str() == "std" {
                         self.state
@@ -383,8 +324,7 @@ impl CompilerDriver {
                     self.state.typing_ctx.data_layout.clone(),
                 );
                 if self.pipeline == PipelineMode::Full {
-                    let items = package.borrow().items.clone();
-                    let initial_units = self.compile_items_to_lir_units(&items).await?;
+                    let initial_units = self.compile_items_to_lir_units(&package).await?;
                     Self::publish_lir_units(&package, package_id, &initial_units)?;
 
                     for unit in &initial_units {
@@ -400,7 +340,7 @@ impl CompilerDriver {
                         .await?;
                     }
 
-                    let units = self.compile_items_to_lir_units(&items).await?;
+                    let units = self.compile_items_to_lir_units(&package).await?;
                     Self::publish_lir_units(&package, package_id, &units)?;
                 }
                 Ok(package)
@@ -438,118 +378,6 @@ impl CompilerDriver {
         package.lir_units = units.to_vec();
         package.lir_workspace = workspace;
         Ok(())
-    }
-
-    /// The real single-source-file entry point: fetches the stored `File`
-    /// and delegates to `compile_module_core` with its items — the shared
-    /// core itself never touches `ast::File`.
-    async fn compile_unit_core(
-        &mut self,
-        ast_id: &AstId,
-        path: &FullyQualifiedPath,
-    ) -> Result<CompileUnitCoreResult, CompilerDriverError> {
-        let ast = self.state.ast(ast_id)?.clone();
-        let result = self
-            .compile_module_core(path.path().clone(), ast.items, ast_id, path)
-            .await?;
-        Ok(result)
-    }
-
-    /// Runs the typer → HIR → MIR → LIR pipeline for a module's items
-    /// directly — no `ast::File` involved. Used by `compile_unit_core` (the
-    /// one real user-source-file case, which extracts `.items` from its
-    /// stored `File` before calling in) and, more importantly, by
-    /// `compile_items_to_lir_units`/generic monomorphization, which already
-    /// have `(QualifiedPath, Vec<Item>)` in hand and no real file at all.
-    async fn compile_module_core(
-        &mut self,
-        module_path: QualifiedPath,
-        items: Vec<Item>,
-        ast_id: &AstId,
-        path: &FullyQualifiedPath,
-    ) -> Result<CompileUnitCoreResult, CompilerDriverError> {
-        let key = format!("module:{}", ast_id.as_str());
-        let hir_package_id = self
-            .state
-            .typing_ctx
-            .env_ctx
-            .current_package()
-            .and_then(|package_id| {
-                self.state
-                    .typing_ctx
-                    .env_ctx
-                    .compiled_package(package_id)
-                    .map(|package| package.borrow().package_id)
-            })
-            .unwrap_or_default();
-        let source = File {
-            path: std::path::PathBuf::from(path.to_key()),
-            attrs: Vec::new(),
-            collected_items: Vec::new(),
-            items,
-        };
-        if self.state.tasks.contains(&key) {
-            return Err(CompilerDriverError::UnsupportedWork(format!(
-                "typing task already exists: {key}"
-            )));
-        }
-        let typing_handle = self.state.tasks.spawn(
-            key,
-            self.typing_future(TypingUnit {
-                module_path,
-                package_id: hir_package_id,
-                source,
-                lowering_config: HirLoweringConfig,
-                external_definitions: self.state.typing_ctx.env_ctx.hir_definitions(),
-                def_id_start: self.next_hir_def_id,
-                preassigned_def_ids: HashMap::new(),
-                external_modules: self.state.typing_ctx.env_ctx.module_paths(),
-            }),
-        );
-        self.run_pool_to_idle().await?;
-        let (mut hir_program, typeck_results, hir_exports, next_def_id) = typing_handle.await?;
-        self.next_hir_def_id = self.next_hir_def_id.max(next_def_id);
-        if let Some(package_id) = self.state.typing_ctx.env_ctx.current_package().cloned() {
-            if let Some(package) = self.state.typing_ctx.env_ctx.compiled_package(&package_id) {
-                package.borrow_mut().hir_exports.extend(hir_exports);
-            }
-        }
-        let entrypoint = hir_program.items.iter().find_map(|item| match &item.kind {
-            hir::ItemKind::Function(function) if function.sig.name.as_str() == "main" => {
-                Some(item.def_id)
-            }
-            _ => None,
-        });
-
-        // `run_pool_to_idle` only returns once every package/comptime need
-        // the typer touched has actually been satisfied in place — nothing
-        // pending to check for here, just lower for real.
-        let hir_id = HirId::new(format!("hir:{}", self.module_state_key(path.path())));
-        self.state.insert_hir(hir_id.clone(), hir_program);
-        self.state.insert_hir_typeck(hir_id.clone(), typeck_results);
-        let mir_id = self.lower_to_mir(&hir_id, path).await?;
-        let package_id = self
-            .state
-            .typing_ctx
-            .env_ctx
-            .current_package()
-            .cloned()
-            .ok_or_else(|| {
-                CompilerDriverError::UnresolvablePackage(
-                    "module compilation requires a focused package workspace".to_string(),
-                )
-            })?;
-        let lir_id = self.lower_to_lir(&mir_id, path, &package_id)?;
-        if let Some(entrypoint) = entrypoint {
-            self.state
-                .insert_runtime_entrypoint(lir_id.clone(), entrypoint);
-        }
-
-        Ok(CompileUnitCoreResult {
-            hir_id,
-            mir_id,
-            lir_id,
-        })
     }
 
     /// Ticks the shared task pool (`CompilerState::tasks`) until nothing is
@@ -620,7 +448,7 @@ impl CompilerDriver {
     /// When it is one: dedups via `generic_cannon_key`/`generic_instantiations`
     /// (unchanged), finds the original definition by its stable `ItemId` in
     /// *the discovering compile unit's own pre-typing stored AST*
-    /// (`self.state.ast(&AstId::new(monomorph.ast_key))`; safe because
+    /// package's source items; safe because
     /// `Item` derives
     /// `Clone` including its `id`, so the pre-typing clone typing was
     /// working from carries the identical `ItemId`), substitutes the
@@ -649,9 +477,28 @@ impl CompilerDriver {
             }
             self.state.generic_instantiations.insert(cannon_key.clone());
 
-            let ast_id = AstId::new(monomorph.ast_key.clone());
-            let original = self.state.ast(&ast_id)?;
-            let mut func_item = Self::find_item_by_id(&original.items, monomorph.item_id)
+            let package_id = self
+                .state
+                .typing_ctx
+                .env_ctx
+                .current_package()
+                .cloned()
+                .ok_or_else(|| {
+                    CompilerDriverError::UnresolvablePackage(
+                        "generic specialization requires a focused package".to_string(),
+                    )
+                })?;
+            let package = self
+                .state
+                .typing_ctx
+                .env_ctx
+                .compiled_package(&package_id)
+                .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
+            let mut func_item = package
+                .borrow()
+                .items
+                .iter()
+                .find_map(|item| (item.item.id() == monomorph.item_id).then(|| item.item.clone()))
                 .ok_or_else(|| {
                     CompilerDriverError::UnsupportedWork(format!(
                         "generic function not found: {}",
@@ -682,19 +529,12 @@ impl CompilerDriver {
                 );
             }
 
-            let specialized_path =
-                FullyQualifiedPath::new(monomorph.function_path.with_segment(cannon_key.clone()));
-            let specialized_ast_id = AstId::new(format!("ast:{}", specialized_path.to_key()));
-            let file = File {
-                path: std::path::PathBuf::new(),
-                attrs: Vec::new(),
-                collected_items: Vec::new(),
-                items: vec![func_item],
+            let item = fp_core::package::PackageItem {
+                path: monomorph.function_path.clone(),
+                item: func_item,
             };
-            self.state.insert_ast(specialized_ast_id.clone(), file);
-
-            self.compile_unit_compile_native(&specialized_ast_id, &specialized_path)
-                .await?;
+            package.borrow_mut().items.push(item);
+            self.compile_package(&package_id).await?;
             Ok(())
         })
     }
@@ -804,39 +644,6 @@ impl CompilerDriver {
             )
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         Ok(value)
-    }
-
-    async fn compile_unit_compile_native(
-        &mut self,
-        ast_id: &AstId,
-        path: &FullyQualifiedPath,
-    ) -> Result<(), CompilerDriverError> {
-        let core = self.compile_unit_core(ast_id, path).await?;
-        self.evaluate_comptime_lir(&core.lir_id, path).await?;
-        Ok(())
-    }
-
-    async fn compile_unit_compile_bytecode(
-        &mut self,
-        ast_id: &AstId,
-        path: &FullyQualifiedPath,
-    ) -> Result<(), CompilerDriverError> {
-        let core = self.compile_unit_core(ast_id, path).await?;
-        self.generate_bytecode(&core.mir_id, path)?;
-        Ok(())
-    }
-
-    /// Compile-time values are resolved in place through the compiler task
-    /// pool; this entry point remains for callers that need an explicit value.
-    pub async fn answer_comptime(
-        &mut self,
-        ast_id: &AstId,
-        path: &FullyQualifiedPath,
-    ) -> Result<Value, CompilerDriverError> {
-        let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
-        let core = self.compile_unit_core(ast_id, path).await?;
-        self.evaluate_comptime_lir(&core.lir_id, path).await?;
-        self.state.const_value(&value_id).cloned()
     }
 
     /// Canonical identity for a generic instantiation, matching the doc's
@@ -1074,24 +881,9 @@ impl CompilerDriver {
         }
     }
 
-    fn generate_bytecode(
-        &mut self,
-        mir_id: &MirId,
-        path: &FullyQualifiedPath,
-    ) -> Result<(), CompilerDriverError> {
-        let mir = self.state.mir(mir_id)?.clone();
-        let program = fp_bytecode::lower_program(&mir)?;
-        let bytecode_id = BytecodeId::new(format!("bytecode:{}", path.to_key()));
-        self.state.insert_bytecode(bytecode_id, program);
-        Ok(())
-    }
-
-    /// Compile one package after its complete module declaration graph has
-    /// been built. Modules are lowered deterministically, but their names
-    /// were resolved package-wide before any body was type-checked.
     async fn compile_items_to_lir_units(
         &mut self,
-        items: &[fp_core::package::PackageItem],
+        package: &Rc<RefCell<fp_core::package::CompiledPackage>>,
     ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
         let hir_package_id = self
             .state
@@ -1115,7 +907,8 @@ impl CompilerDriver {
             .with_lowering_config(HirLoweringConfig)
             .with_external_definitions(self.state.typing_ctx.env_ctx.hir_definitions())
             .with_external_modules(self.state.typing_ctx.env_ctx.module_paths());
-        let hir_program = generator.transform_package(items)?;
+        let package_source = package.borrow().clone();
+        let hir_program = generator.transform_package(&package_source)?;
         self.next_hir_def_id = self.next_hir_def_id.max(generator.next_def_id_value());
         let package_exports = generator.exported_symbols();
         if let Some(package_id) = self.state.typing_ctx.env_ctx.current_package().cloned() {
@@ -1157,6 +950,14 @@ impl CompilerDriver {
         }
         let fqp = FullyQualifiedPath::new(package_path.clone());
         let mir_id = self.lower_to_mir(&hir_id, &fqp).await?;
+        if let Some(package) = self
+            .state
+            .typing_ctx
+            .env_ctx
+            .compiled_package(&current_package_id)
+        {
+            package.borrow_mut().mir_program = Some(self.state.mir(&mir_id)?.clone());
+        }
         let lir_id = self.lower_to_lir(&mir_id, &fqp, &current_package_id)?;
         let lir = self.state.lir(&lir_id)?.clone();
         Ok(vec![fp_core::lir::LirCompileUnit {
@@ -1583,820 +1384,5 @@ impl CompilerDriver {
         let name = key.rsplit(':').next()?;
         let suffix = name.strip_prefix("__fp_expr_")?;
         suffix.parse().ok()
-    }
-}
-
-#[cfg(test)]
-mod comptime_source_tests {
-    use super::*;
-    use crate::{AstId, CompilerExecutor, FullyQualifiedPath};
-    use fp_core::frontend::LanguageFrontend;
-    use fp_core::package::graph::PackageGraph;
-    use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
-    use fp_core::package::{
-        DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageMetadata,
-        PackageSource, TargetFilter,
-    };
-    use fp_core::vfs::UnixFileSystem;
-    use fp_core::vfs::VirtualPath;
-    use fp_lang::module_source::FerroModuleSourceResolver;
-    use std::sync::Arc;
-
-    fn path() -> FullyQualifiedPath {
-        FullyQualifiedPath::from_segments(vec!["test".to_string(), "main".to_string()])
-    }
-
-    fn test_data_layout() -> fp_core::lir::LirDataLayout {
-        fp_core::lir::LirDataLayout::new(
-            64,
-            8,
-            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
-        )
-        .expect("valid test data layout")
-    }
-
-    #[test]
-    fn parses_fp_source_and_runs_const_item_through_driver() {
-        let source = r#"
-const ANSWER: i64 = 42;
-
-fn main() {
-    let result = const { ANSWER * 2 };
-}
-"#;
-        let fe = fp_lang::FerroFrontend::new();
-        let result = fe
-            .parse_file(source, std::path::Path::new("test.fp"))
-            .expect("parse .fp source");
-        let ast_node = result.ast;
-
-        let executor = CompilerExecutor::new();
-        let mut driver = CompilerDriver::new(test_data_layout(), executor.handle());
-        let ast_id = AstId::new("ast:test::main");
-        driver.state.insert_ast(ast_id.clone(), ast_node);
-
-        driver
-            .compile_native_sync(&ast_id, &path())
-            .expect("compile unit");
-    }
-
-    #[test]
-    fn parses_simple_const_and_evaluates_through_full_pipeline() {
-        let source = "const ANSWER: i64 = 42;\n";
-        let fe = fp_lang::FerroFrontend::new();
-        let result = fe
-            .parse_file(source, std::path::Path::new("const.fp"))
-            .expect("parse const source");
-        let ast_node = result.ast;
-
-        let mut driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
-        let ast_id = AstId::new("ast:test::const");
-        driver.state.insert_ast(ast_id.clone(), ast_node);
-
-        driver
-            .compile_native_sync(&ast_id, &path())
-            .expect("compile unit");
-
-        assert_eq!(
-            driver.state.const_value_len(),
-            1,
-            "const should produce one compile-time value"
-        );
-    }
-
-    #[test]
-    fn multiple_const_items_produce_separate_comptime_needs() {
-        let source = r#"
-const WIDTH: i64 = 640;
-const HEIGHT: i64 = 480;
-const AREA: i64 = WIDTH * HEIGHT;
-"#;
-        let fe = fp_lang::FerroFrontend::new();
-        let result = fe
-            .parse_file(source, std::path::Path::new("multi.fp"))
-            .expect("parse multi-const source");
-        let ast_node = result.ast;
-
-        let mut driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
-        let ast_id = AstId::new("ast:test::multi");
-        driver.state.insert_ast(ast_id.clone(), ast_node);
-
-        driver
-            .compile_native_sync(&ast_id, &path())
-            .expect("compile unit");
-        assert_eq!(driver.state.const_value_len(), 1);
-    }
-
-    #[test]
-    fn const_block_in_function_triggers_comptime_path() {
-        let source = r#"
-fn calculate() {
-    let size = const { 1024 * 8 };
-}
-"#;
-        let fe = fp_lang::FerroFrontend::new();
-        let result = fe
-            .parse_file(source, std::path::Path::new("block.fp"))
-            .expect("parse const-block source");
-        let ast_node = result.ast;
-
-        let mut driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
-        let ast_id = AstId::new("ast:test::block");
-        driver.state.insert_ast(ast_id.clone(), ast_node);
-
-        driver
-            .compile_native_sync(&ast_id, &path())
-            .expect("compile unit");
-    }
-
-    enum ExampleResult {
-        Completed { lowered: usize, executed: usize },
-    }
-
-    /// Regression test for the generic-monomorphization identity fix: a
-    /// generic function that's actually *called* (not just declared --
-    /// `compile_unit_native_submits_enqueue_for_generic` above never calls
-    /// `id`, so it never exercised `enqueue_generic`'s function lookup at
-    /// all) must specialize successfully end to end through the real
-    /// driver, rather than failing with "generic function not found" (the
-    /// old path-based lookup treated the compile unit's own synthetic
-    /// identity prefix as if it were real `mod` nesting in the file).
-    #[test]
-    fn called_generic_function_compiles_end_to_end() {
-        let source = r#"
-fn identity<T>(a: T) -> T {
-    a
-}
-
-fn main() {
-    let r = identity(10);
-}
-"#;
-        let fe = fp_lang::FerroFrontend::new();
-        let result = fe
-            .parse_file(source, std::path::Path::new("generic_call.fp"))
-            .expect("parse generic-call source");
-        let ast_node = result.ast;
-
-        let mut workspace = fp_core::workspace::WorkspaceContext::new();
-        workspace.register_provider(std::sync::Arc::new(fp_lang::provider::FerroPhaseProvider));
-        let mut driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
-        driver.state.typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(
-            test_data_layout(),
-            std::rc::Rc::new(workspace),
-        ));
-        let ast_id = AstId::new("ast:test::generic_call");
-        driver.state.insert_ast(ast_id.clone(), ast_node);
-        let path =
-            FullyQualifiedPath::from_segments(vec!["test".to_string(), "generic_call".to_string()]);
-        driver
-            .compile_native_sync(&ast_id, &path)
-            .expect("driver should not error");
-
-        assert!(
-            driver
-                .state
-                .hir(&HirId::new("hir:test::generic_call"))
-                .is_ok()
-        );
-        assert!(
-            driver
-                .state
-                .mir(&MirId::new("mir:test::generic_call"))
-                .is_ok()
-        );
-    }
-
-    /// Regression test for `CompiledPackage::method_sigs`: inherent methods
-    /// (`impl SelfType { .. }`) now resolve through one shared, name-keyed
-    /// registry regardless of whether `SelfType` is a struct or an enum --
-    /// previously `TypeEnum` had no method storage at all (`TypeStruct` did),
-    /// so an enum's own `impl` block was silently ignored and specific
-    /// methods (`is_some`/`is_none`/`is_ok`/`is_err`/`unwrap` on
-    /// `Option`/`Result`) were hardcoded by literal type name in the typer
-    /// instead. This exercises a local enum *and* a local struct calling
-    /// their own inherent methods, proving both now go through the exact
-    /// same dispatch path (`lookup_struct_method`).
-    ///
-    /// Doesn't use `std::option::Option`/`std::result::Result` directly:
-    /// confirmed (via direct debug instrumentation on `lookup_struct_method`)
-    /// that `is_some`/`is_none`/`is_ok`/`is_err` already resolve correctly
-    /// against `std`'s real `impl<T> Option<T>`/`impl<T,E> Result<T,E>`
-    /// blocks through this same mechanism -- but merely *referencing*
-    /// `Option::Some(..)`/`Result::Ok(..)` at all (even with no method call)
-    /// separately triggers a pre-existing, unrelated failure somewhere in
-    /// the comptime-probing pipeline when `std::option`/`std::result` get
-    /// pulled in for on-demand LIR compilation, which is out of scope for
-    /// this fix (method dispatch, not comptime probing).
-    #[test]
-    fn struct_and_enum_inherent_methods_share_one_method_registry() {
-        let source = r#"
-enum Status {
-    Ready,
-    Done,
-}
-
-impl Status {
-    fn is_ready(&self) -> bool {
-        true
-    }
-}
-
-struct Counter {
-    value: i64,
-}
-
-impl Counter {
-    fn get(&self) -> i64 {
-        self.value
-    }
-}
-
-fn main() {
-    let s = Status::Ready;
-    let ready = s.is_ready();
-    let c = Counter { value: 5 };
-    let v = c.get();
-}
-"#;
-        let fe = fp_lang::FerroFrontend::new();
-        let result = fe
-            .parse_file(source, std::path::Path::new("struct_enum_methods.fp"))
-            .expect("parse struct/enum-methods source");
-        let ast_node = result.ast;
-
-        let mut driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
-        let ast_id = AstId::new("ast:test::struct_enum_methods");
-        driver.state.insert_ast(ast_id.clone(), ast_node);
-        let path = FullyQualifiedPath::from_segments(vec![
-            "test".to_string(),
-            "struct_enum_methods".to_string(),
-        ]);
-        driver
-            .compile_native_sync(&ast_id, &path)
-            .expect("driver should not error");
-    }
-
-    fn compile_example_file(
-        name: &str,
-        workspace: std::rc::Rc<fp_core::workspace::WorkspaceContext>,
-    ) -> Result<ExampleResult, String> {
-        let abs = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../examples")
-            .join(name);
-        let source = std::fs::read_to_string(&abs).map_err(|e| format!("read: {e}"))?;
-
-        let fe = fp_lang::FerroFrontend::new();
-        let result = fe
-            .parse_file(&source, &abs)
-            .map_err(|e| format!("parse: {e}"))?;
-        let ast_node = result.ast;
-
-        let label = name.trim_end_matches(".fp");
-        let package_id = PackageId::new(format!("example_{label}"));
-        let module_path = QualifiedPath::new(vec![package_id.as_str().to_owned(), label.into()]);
-        let example_provider =
-            ExamplePackageProvider::new(package_id.clone(), module_path.clone(), ast_node.clone())
-                .map_err(|error| format!("load example modules: {error}"))?;
-        workspace.register_provider(Arc::new(example_provider));
-
-        let executor = CompilerExecutor::new();
-        let mut driver =
-            CompilerDriver::with_workspace(test_data_layout(), executor.handle(), workspace);
-        let ast_id = AstId::new(format!("ast:{}", module_path.to_key()));
-        driver.state.insert_ast(ast_id.clone(), ast_node);
-        executor
-            .run(driver.compile_package(&package_id))
-            .map_err(|error| format!("compile package: {error}"))?;
-        driver
-            .focus_package(package_id)
-            .map_err(|error| format!("focus package: {error}"))?;
-        let path = FullyQualifiedPath::new(module_path);
-        executor
-            .run(driver.compile_native(&ast_id, &path))
-            .map_err(|e| format!("compile: {e}"))?;
-
-        Ok(ExampleResult::Completed {
-            lowered: 1,
-            executed: driver.state.const_value_len(),
-        })
-    }
-
-    struct ExamplePackageProvider {
-        package_id: PackageId,
-        descriptor: Arc<PackageDescriptor>,
-        source: PackageSource,
-    }
-
-    impl ExamplePackageProvider {
-        fn new(
-            package_id: PackageId,
-            module_path: QualifiedPath,
-            file: File,
-        ) -> ProviderResult<Self> {
-            let descriptor = PackageDescriptor {
-                id: package_id.clone(),
-                name: package_id.as_str().to_owned(),
-                version: None,
-                manifest_path: VirtualPath::from_path(&file.path),
-                root: VirtualPath::from_path(
-                    file.path.parent().unwrap_or(std::path::Path::new(".")),
-                ),
-                metadata: Default::default(),
-                modules: Vec::new(),
-            };
-            let resolver = FerroModuleSourceResolver::new(Arc::new(UnixFileSystem::new("/")));
-            let source = resolver.resolve_package_source(descriptor.clone(), module_path, file)?;
-            Ok(Self {
-                package_id,
-                descriptor: Arc::new(descriptor),
-                source,
-            })
-        }
-    }
-
-    impl PackageProvider for ExamplePackageProvider {
-        fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
-            Ok(vec![self.package_id.clone()])
-        }
-
-        fn load_package_metadata(
-            &self,
-            package_id: &PackageId,
-        ) -> ProviderResult<Arc<PackageDescriptor>> {
-            if package_id != &self.package_id {
-                return Err(ProviderError::PackageNotFound(package_id.clone()));
-            }
-            Ok(self.descriptor.clone())
-        }
-
-        fn load_package_source(&self, package_id: &PackageId) -> ProviderResult<PackageSource> {
-            if package_id != &self.package_id {
-                return Err(ProviderError::PackageNotFound(package_id.clone()));
-            }
-            Ok(self.source.clone())
-        }
-
-        fn refresh(&self) -> ProviderResult<()> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn run_all_example_files() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .name("example-runner".into())
-            .spawn(run_all_example_files_impl)
-            .unwrap()
-            .join()
-            .unwrap();
-    }
-
-    fn run_all_example_files_impl() {
-        let examples_dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples");
-        let mut entries: Vec<_> = std::fs::read_dir(&examples_dir)
-            .expect("read examples dir")
-            .filter_map(|e| match e {
-                Ok(entry) => Some(entry),
-                Err(err) => {
-                    eprintln!("[fp-compiler] error reading examples dir entry: {err}");
-                    None
-                }
-            })
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "fp"))
-            .map(|e| e.file_name().to_string_lossy().to_string())
-            .collect();
-        entries.sort();
-
-        let mut workspace = fp_core::workspace::WorkspaceContext::new();
-        workspace.register_provider(std::sync::Arc::new(fp_lang::provider::FerroPhaseProvider));
-        let workspace = std::rc::Rc::new(workspace);
-
-        let mut completed = 0;
-        let mut errors = 0;
-
-        for name in &entries {
-            print!("  {name:.<50} ");
-            match compile_example_file(name, workspace.clone()) {
-                Ok(ExampleResult::Completed { lowered, executed }) => {
-                    completed += 1;
-                    println!("OK  (lowered={lowered}, executed={executed})");
-                }
-                Err(e) => {
-                    errors += 1;
-                    println!("ERROR: {e}");
-                }
-            }
-        }
-
-        println!(
-            "\n  Examples: {completed} completed, {errors} errors ({} total)",
-            entries.len()
-        );
-        assert_eq!(errors, 0, "example compilation failures: {errors}");
-    }
-
-    #[test]
-    fn duplicate_package_requests_load_std_exactly_once() {
-        use std::sync::Arc;
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        struct CountingStdProvider {
-            calls: Arc<AtomicUsize>,
-        }
-
-        impl fp_core::package::provider::PackageProvider for CountingStdProvider {
-            fn list_packages(
-                &self,
-            ) -> fp_core::package::provider::ProviderResult<Vec<fp_core::package::PackageId>>
-            {
-                Ok(vec![fp_core::package::PackageId::new("std")])
-            }
-
-            fn load_package_metadata(
-                &self,
-                id: &fp_core::package::PackageId,
-            ) -> fp_core::package::provider::ProviderResult<Arc<fp_core::package::PackageDescriptor>>
-            {
-                Ok(Arc::new(fp_core::package::PackageDescriptor {
-                    id: id.clone(),
-                    name: id.as_str().to_owned(),
-                    version: None,
-                    manifest_path: fp_core::vfs::VirtualPath::from_path(std::path::Path::new(
-                        "std/fp.toml",
-                    )),
-                    root: fp_core::vfs::VirtualPath::from_path(std::path::Path::new("std")),
-                    metadata: Default::default(),
-                    modules: Vec::new(),
-                }))
-            }
-
-            fn refresh(&self) -> fp_core::package::provider::ProviderResult<()> {
-                Ok(())
-            }
-
-            fn load_package_source(
-                &self,
-                id: &fp_core::package::PackageId,
-            ) -> fp_core::package::provider::ProviderResult<fp_core::package::PackageSource>
-            {
-                self.calls.fetch_add(1, Ordering::SeqCst);
-                Ok(fp_core::package::PackageSource::new(
-                    id.clone(),
-                    id.as_str().to_owned(),
-                    fp_core::package::graph::PackageGraph::new(vec![]),
-                ))
-            }
-        }
-
-        let calls = Arc::new(AtomicUsize::new(0));
-        let mut workspace = fp_core::workspace::WorkspaceContext::new();
-        workspace.register_provider(Arc::new(CountingStdProvider {
-            calls: calls.clone(),
-        }));
-        let executor = CompilerExecutor::new();
-        let mut driver = CompilerDriver::new(test_data_layout(), executor.handle());
-        driver.state.typing_ctx = std::rc::Rc::new(fp_typing::TypingContext::new(
-            test_data_layout(),
-            std::rc::Rc::new(workspace),
-        ));
-
-        let std = fp_core::package::PackageId::new("std");
-        let first = executor
-            .run(driver.compile_package(&std))
-            .expect("first load");
-        let second = executor
-            .run(driver.compile_package(&std))
-            .expect("second load (already loaded)");
-
-        assert_eq!(first.borrow().name, "std");
-        assert!(std::rc::Rc::ptr_eq(&first, &second));
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            1,
-            "provider should only be invoked once across both requests"
-        );
-        assert_eq!(
-            driver.state.typing_ctx.env_ctx.crates().len(),
-            1,
-            "workspace should hold exactly one std crate, not one per request"
-        );
-    }
-
-    #[test]
-    fn distinct_selected_packages_keep_identical_module_state_separate() {
-        struct DuplicateSourceProvider {
-            packages: HashMap<PackageId, (Arc<PackageDescriptor>, PackageSource)>,
-        }
-
-        impl PackageProvider for DuplicateSourceProvider {
-            fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
-                Ok(self.packages.keys().cloned().collect())
-            }
-
-            fn load_package_metadata(
-                &self,
-                package_id: &PackageId,
-            ) -> ProviderResult<Arc<PackageDescriptor>> {
-                self.packages
-                    .get(package_id)
-                    .map(|(descriptor, _)| descriptor.clone())
-                    .ok_or_else(|| ProviderError::PackageNotFound(package_id.clone()))
-            }
-
-            fn load_package_source(&self, package_id: &PackageId) -> ProviderResult<PackageSource> {
-                self.packages
-                    .get(package_id)
-                    .map(|(_, source)| source.clone())
-                    .ok_or_else(|| ProviderError::PackageNotFound(package_id.clone()))
-            }
-
-            fn refresh(&self) -> ProviderResult<()> {
-                Ok(())
-            }
-        }
-
-        let frontend = fp_lang::FerroFrontend::new();
-        let module_path = QualifiedPath::new(vec!["dup".into(), "main".into()]);
-        let source_file = |file_name: &str| {
-            frontend
-                .parse_file(
-                    "fn main() { let value: i64 = 1; }",
-                    std::path::Path::new(file_name),
-                )
-                .expect("parse duplicate package source")
-                .ast
-        };
-        let mut packages = HashMap::new();
-        for (source, file_name) in [("test-v1", "dup-v1.fp"), ("test-v2", "dup-v2.fp")] {
-            let package_id = PackageId::with_source("dup", None, source);
-            let file = source_file(file_name);
-            let descriptor = Arc::new(PackageDescriptor {
-                id: package_id.clone(),
-                name: "dup".into(),
-                version: package_id.version().cloned(),
-                manifest_path: VirtualPath::from_path(std::path::Path::new(file_name)),
-                root: VirtualPath::from_path(std::path::Path::new(".")),
-                metadata: PackageMetadata {
-                    dependencies: Vec::new(),
-                    ..PackageMetadata::default()
-                },
-                modules: Vec::new(),
-            });
-            let mut source =
-                PackageSource::new(package_id.clone(), "dup", PackageGraph::new(Vec::new()));
-            source.module_paths.insert(module_path.clone());
-            source.items = file
-                .items
-                .into_iter()
-                .map(|item| fp_core::package::PackageItem {
-                    path: module_path.clone(),
-                    item,
-                })
-                .collect();
-            packages.insert(package_id, (descriptor, source));
-        }
-
-        let mut workspace = fp_core::workspace::WorkspaceContext::new();
-        workspace.register_provider(Arc::new(fp_lang::provider::FerroPhaseProvider));
-        workspace.register_provider(Arc::new(DuplicateSourceProvider { packages }));
-        let executor = CompilerExecutor::new();
-        let mut driver = CompilerDriver::with_workspace(
-            test_data_layout(),
-            executor.handle(),
-            Rc::new(workspace),
-        );
-        let ids = driver.state.typing_ctx.env_ctx.registered_names();
-        assert!(ids.iter().any(|name| name == "dup"));
-
-        let first_id = PackageId::with_source("dup", None, "test-v1");
-        let second_id = PackageId::with_source("dup", None, "test-v2");
-        let first = executor
-            .run(driver.compile_package(&first_id))
-            .expect("compile first selected package");
-        let second = executor
-            .run(driver.compile_package(&second_id))
-            .expect("compile second selected package");
-
-        let first_hir = first.borrow().package_id;
-        let second_hir = second.borrow().package_id;
-        assert_ne!(first_hir, second_hir);
-        assert!(first.borrow().hir_program.is_some());
-        assert!(second.borrow().hir_program.is_some());
-        assert_eq!(first.borrow().lir_units.len(), 1);
-        assert_eq!(second.borrow().lir_units.len(), 1);
-        assert_ne!(
-            first.borrow().lir_units[0].package_id,
-            second.borrow().lir_units[0].package_id
-        );
-    }
-
-    #[test]
-    fn raw_manifest_dependency_without_selected_id_is_rejected() {
-        struct RawDependencyProvider {
-            package_id: PackageId,
-            descriptor: Arc<PackageDescriptor>,
-            source: PackageSource,
-        }
-
-        impl PackageProvider for RawDependencyProvider {
-            fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
-                Ok(vec![self.package_id.clone()])
-            }
-
-            fn load_package_metadata(
-                &self,
-                package_id: &PackageId,
-            ) -> ProviderResult<Arc<PackageDescriptor>> {
-                if package_id == &self.package_id {
-                    Ok(self.descriptor.clone())
-                } else {
-                    Err(ProviderError::PackageNotFound(package_id.clone()))
-                }
-            }
-
-            fn load_package_source(&self, package_id: &PackageId) -> ProviderResult<PackageSource> {
-                if package_id == &self.package_id {
-                    Ok(self.source.clone())
-                } else {
-                    Err(ProviderError::PackageNotFound(package_id.clone()))
-                }
-            }
-
-            fn refresh(&self) -> ProviderResult<()> {
-                Ok(())
-            }
-        }
-
-        let package_id = PackageId::new("raw-app");
-        let descriptor = Arc::new(PackageDescriptor {
-            id: package_id.clone(),
-            name: "raw-app".into(),
-            version: None,
-            manifest_path: VirtualPath::from_path(std::path::Path::new("raw-app/fp.toml")),
-            root: VirtualPath::from_path(std::path::Path::new("raw-app")),
-            metadata: PackageMetadata {
-                dependencies: vec![fp_core::package::DependencyDescriptor {
-                    package: "dep".into(),
-                    resolved_package_id: None,
-                    constraint: None,
-                    kind: fp_core::package::DependencyKind::Normal,
-                    features: Vec::new(),
-                    optional: false,
-                    target: fp_core::package::TargetFilter::default(),
-                }],
-                ..PackageMetadata::default()
-            },
-            modules: Vec::new(),
-        });
-        let source =
-            PackageSource::new(package_id.clone(), "raw-app", PackageGraph::new(Vec::new()));
-        let mut workspace = fp_core::workspace::WorkspaceContext::new();
-        workspace.register_provider(Arc::new(fp_lang::provider::FerroPhaseProvider));
-        workspace.register_provider(Arc::new(RawDependencyProvider {
-            package_id: package_id.clone(),
-            descriptor,
-            source,
-        }));
-        let executor = CompilerExecutor::new();
-        let mut driver = CompilerDriver::with_workspace(
-            test_data_layout(),
-            executor.handle(),
-            Rc::new(workspace),
-        );
-
-        let error = executor
-            .run(driver.compile_package(&package_id))
-            .expect_err("raw dependency metadata must not be compiled by name");
-        assert!(error.to_string().contains("has no selected package ID"));
-    }
-
-    #[test]
-    fn package_modules_resolve_circular_sibling_references() {
-        let source = r#"
-            mod a {
-                pub fn run_a() -> i64 { super::b::run_b() }
-            }
-
-            mod b {
-                pub use super::a::run_a;
-                pub fn run_b() -> i64 { 1 }
-            }
-        "#;
-        let frontend = fp_lang::FerroFrontend::new();
-        let file = frontend
-            .parse_file(source, std::path::Path::new("cycle.fp"))
-            .expect("parse circular module source")
-            .ast;
-        let mut items = Vec::new();
-        for item in file.items {
-            let ItemKind::Module(module) = item.kind() else {
-                continue;
-            };
-            let path =
-                QualifiedPath::new(vec!["cycle".to_owned(), module.name.as_str().to_owned()]);
-            items.extend(
-                module
-                    .items
-                    .iter()
-                    .cloned()
-                    .map(|item| fp_core::package::PackageItem {
-                        path: path.clone(),
-                        item,
-                    }),
-            );
-        }
-
-        let mut generator = HirGenerator::new().with_package_id(hir::PackageId(0));
-        let program = generator
-            .transform_package(&items)
-            .expect("circular sibling modules should lower as one package");
-        let function_names = program
-            .items
-            .iter()
-            .filter_map(|item| match &item.kind {
-                hir::ItemKind::Function(function) => Some(function.sig.name.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert!(function_names.iter().any(|name| *name == "run_a"));
-        assert!(function_names.iter().any(|name| *name == "run_b"));
-    }
-
-    fn compile_inline_source(source: &str, expected_const_values: usize) {
-        let fe = fp_lang::FerroFrontend::new();
-        let result = fe
-            .parse_file(source, std::path::Path::new("inline.fp"))
-            .unwrap_or_else(|e| panic!("parse inline: {e}"));
-        let ast_node = result.ast;
-
-        let mut driver = CompilerDriver::new(test_data_layout(), CompilerExecutor::new().handle());
-        let ast_id = AstId::new("ast:example::inline");
-        driver.state.insert_ast(ast_id.clone(), ast_node);
-
-        let path = FullyQualifiedPath::from_segments(vec!["example".into(), "inline".into()]);
-        driver
-            .compile_native_sync(&ast_id, &path)
-            .expect("compile unit");
-
-        assert_eq!(
-            driver.state.const_value_len(),
-            expected_const_values,
-            "expected {expected_const_values} const values, got {}",
-            driver.state.const_value_len()
-        );
-    }
-
-    #[test]
-    fn comptime_const_with_arithmetic() {
-        compile_inline_source(
-            r#"
-const BUFFER_SIZE: i64 = 1024 * 4;
-const MAX_CONNECTIONS: i64 = 150;
-const FACTORIAL_5: i64 = 5 * 4 * 3 * 2 * 1;
-const IS_LARGE: bool = BUFFER_SIZE > 2048;
-"#,
-            1,
-        );
-    }
-
-    #[test]
-    fn comptime_const_with_struct_defaults() {
-        compile_inline_source(
-            r#"
-struct Config {
-    buffer_size: i64,
-    max_connections: i64,
-}
-
-const BUFFER_SIZE: i64 = 4096;
-const MAX_CONNECTIONS: i64 = 150;
-const DEFAULT_CONFIG: Config = Config {
-    buffer_size: BUFFER_SIZE,
-    max_connections: MAX_CONNECTIONS,
-};
-"#,
-            1,
-        );
-    }
-
-    #[test]
-    fn comptime_const_block_with_conditional() {
-        compile_inline_source(
-            r#"
-const BUFFER_SIZE: i64 = 4096;
-const OPTIMIZED_SIZE: i64 = const { BUFFER_SIZE * 2 };
-const CACHE_STRATEGY: &str = const {
-    if BUFFER_SIZE > 2048 {
-        "large"
-    } else {
-        "small"
-    }
-};
-"#,
-            1,
-        );
     }
 }

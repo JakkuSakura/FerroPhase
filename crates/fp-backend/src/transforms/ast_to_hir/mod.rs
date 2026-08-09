@@ -1025,7 +1025,7 @@ impl HirGenerator {
 
     pub fn transform_package(
         &mut self,
-        items: &[fp_core::package::PackageItem],
+        package: &fp_core::package::CompiledPackage,
     ) -> Result<hir::Program> {
         self.reset_file_context("<package>");
         self.prepare_lowering_state();
@@ -1035,7 +1035,7 @@ impl HirGenerator {
         self.module_defs
             .extend(self.external_modules.iter().cloned());
 
-        for package_item in items {
+        for package_item in &package.items {
             self.with_module_scope(&package_item.path, |this| {
                 this.predeclare_items(std::slice::from_ref(&package_item.item))
             })?;
@@ -1043,7 +1043,7 @@ impl HirGenerator {
         self.insert_default_prelude_aliases();
         self.program_def_map = program.def_map.clone();
 
-        for package_item in items {
+        for package_item in &package.items {
             self.with_module_scope(&package_item.path, |this| {
                 this.append_item(&mut program, &package_item.item)
             })?;
