@@ -38,6 +38,37 @@ impl FerroIntrinsicNormalizer {
 }
 
 impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
+    fn normalize_expr(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        // Handle None / Some as bare name references (enum variants)
+        if self.mode == IntrinsicNormalizationMode::Transpile {
+            if let ExprKind::Name(name) = expr.kind() {
+                let s = name.to_string();
+                if s == "None" {
+                    let (id, ty_slot, span, _) = expr.into_parts();
+                    return Ok(NormalizeOutcome::Normalized(Expr::from_parts(
+                        id, ty_slot, span,
+                        ExprKind::Value(Box::new(Value::Null(Default::default()))),
+                    )));
+                }
+                if s == "Some" {
+                    return Ok(NormalizeOutcome::Ignored(expr));
+                }
+            }
+        }
+        // Fall through to default dispatch
+        let kind = expr.kind().clone();
+        let moved = expr;
+        match kind {
+            fp_core::ast::ExprKind::Macro(_) => self.normalize_macro(moved),
+            fp_core::ast::ExprKind::IntrinsicCall(_) => self.normalize_call(moved),
+            fp_core::ast::ExprKind::IntrinsicContainer(_) => self.normalize_container(moved),
+            fp_core::ast::ExprKind::Struct(_) => self.normalize_struct(moved),
+            fp_core::ast::ExprKind::Structural(_) => self.normalize_structural(moved),
+            fp_core::ast::ExprKind::Invoke(_) => self.normalize_invoke(moved),
+            _ => Ok(NormalizeOutcome::Ignored(moved)),
+        }
+    }
+
     fn normalize_call(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
         let (id, ty_slot, span, kind) = expr.into_parts();
         let ExprKind::IntrinsicCall(call) = kind else {
@@ -306,6 +337,55 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 id, ty_slot, span, kind,
             )));
         };
+
+        // In transpile mode, let resolve_lang_intrinsic handle portable ops
+        // directly (Some, None, Vec::new, etc.) instead of routing through
+        // intrinsic_call_from_invoke → normalize_call which returns Ignored.
+        if self.mode == IntrinsicNormalizationMode::Transpile {
+            if let Some(kind) = resolve_lang_intrinsic(&invoke) {
+                match kind {
+                    CallKind::Op(OpKind::OptionSome) => {
+                        return Ok(NormalizeOutcome::Normalized(
+                            invoke.args.first().cloned().unwrap_or_else(|| {
+                                Expr::from_parts(0, None, Some(Span::default()),
+                                    ExprKind::Value(Box::new(Value::Null(Default::default()))))
+                            })
+                        ));
+                    }
+                    CallKind::Op(OpKind::OptionNone) => {
+                        return Ok(NormalizeOutcome::Normalized(Expr::from_parts(
+                            id, ty_slot, span,
+                            ExprKind::Value(Box::new(Value::Null(Default::default()))),
+                        )));
+                    }
+                    CallKind::Op(OpKind::OptionUnwrap) => {
+                        return Ok(NormalizeOutcome::Normalized(
+                            invoke.args.first().cloned().unwrap_or_else(|| {
+                                Expr::from_parts(0, None, Some(Span::default()),
+                                    ExprKind::Value(Box::new(Value::Null(Default::default()))))
+                            })
+                        ));
+                    }
+                    CallKind::Op(OpKind::VecNew) => {
+                        return Ok(NormalizeOutcome::Normalized(Expr::from_parts(
+                            id, ty_slot, span,
+                            ExprKind::IntrinsicContainer(
+                                ExprIntrinsicContainer::VecElements { elements: vec![] }
+                            ),
+                        )));
+                    }
+                    CallKind::Op(OpKind::Clone) => {
+                        return Ok(NormalizeOutcome::Normalized(
+                            invoke.args.first().cloned().unwrap_or_else(|| {
+                                Expr::from_parts(0, None, Some(Span::default()),
+                                    ExprKind::Value(Box::new(Value::Null(Default::default()))))
+                            })
+                        ));
+                    }
+                    _ => {} // fall through to existing native path
+                }
+            }
+        }
 
         // Keep the exact language-item registry as the source of truth for
         // operations exposed by loaded std modules. This also preserves the

@@ -297,11 +297,22 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
         ExprKind::Id(id) => Ok(id.to_string()),
 
         ExprKind::Invoke(inv) => {
-            let func = map_kt_method(&invoke_name(&inv.target));
-            let args: Vec<String> = inv.args.iter()
-                .map(|a| render_expr(a, e))
-                .collect::<Result<Vec<_>>>()?;
-            Ok(format!("{}({})", func, args.join(", ")))
+            match &inv.target {
+                ExprInvokeTarget::Method(sel) => {
+                    let obj = render_expr(&sel.obj, e)?;
+                    let args: Vec<String> = inv.args.iter()
+                        .map(|a| render_expr(a, e))
+                        .collect::<Result<Vec<_>>>()?;
+                    Ok(format!("{}.{}({})", obj, sel.field.name, args.join(", ")))
+                }
+                _ => {
+                    let func = map_kt_method(&invoke_name(&inv.target));
+                    let args: Vec<String> = inv.args.iter()
+                        .map(|a| render_expr(a, e))
+                        .collect::<Result<Vec<_>>>()?;
+                    Ok(format!("{}({})", func, args.join(", ")))
+                }
+            }
         }
 
         ExprKind::Select(sel) => {
