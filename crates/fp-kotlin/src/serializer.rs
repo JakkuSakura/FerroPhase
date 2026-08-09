@@ -268,10 +268,18 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
         ExprKind::Id(id) => Ok(id.to_string()),
 
         ExprKind::Invoke(inv) => {
-            let args: Vec<String> = inv.args.iter()
-                .map(|a| render_expr(a, e))
-                .collect::<Result<Vec<_>>>()?;
-            Ok(format!("{}({})", render_invoke_target(&inv.target, e)?, args.join(", ")))
+            let name = invoke_name(&inv.target);
+            match name.as_str() {
+                "Some" => inv.args.first().map(|a| render_expr(a, e)).unwrap_or(Ok("null".into())),
+                "None" => Ok("null".into()),
+                _ => {
+                    let func = map_kt_method(&name);
+                    let args: Vec<String> = inv.args.iter()
+                        .map(|a| render_expr(a, e))
+                        .collect::<Result<Vec<_>>>()?;
+                    Ok(format!("{}({})", func, args.join(", ")))
+                }
+            }
         }
 
         ExprKind::Select(sel) => {
@@ -422,6 +430,26 @@ fn render_invoke_target(target: &ExprInvokeTarget, e: &mut KotlinEmitter) -> Res
         ExprInvokeTarget::Method(sel) => Ok(format!("{}.{}", render_expr(&sel.obj, e)?, sel.field.name)),
         ExprInvokeTarget::Expr(bexpr) => render_expr(bexpr, e),
         _ => Ok("call".to_string()),
+    }
+}
+
+fn invoke_name(target: &ExprInvokeTarget) -> String {
+    match target {
+        ExprInvokeTarget::Function(name) => name.to_string(),
+        ExprInvokeTarget::Method(sel) => {
+            format!(".{}", sel.field.name)
+        }
+        _ => String::new(),
+    }
+}
+
+fn map_kt_method(name: &str) -> String {
+    match name {
+        "Vec::new" | "Vec" => "mutableListOf".into(),
+        "HashSet::new" => "mutableSetOf".into(),
+        "HashMap::new" => "mutableMapOf".into(),
+        "unwrap" | "expect" => "!!".into(),
+        _ => name.replace("::", "."),
     }
 }
 
