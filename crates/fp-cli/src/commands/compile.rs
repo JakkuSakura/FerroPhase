@@ -932,28 +932,34 @@ async fn compile_project(
             fp_lang::normalization::normalize_items(std::slice::from_mut(&mut pkg_item.item), &normalizer)?;
         }
 
-        // Group items by module path
-        use std::collections::BTreeMap;
-        let mut modules: BTreeMap<String, Vec<Item>> = BTreeMap::new();
-        for pkg_item in &source.items {
-            let key = pkg_item.path.segments.join("/");
-            modules.entry(key).or_default().push(pkg_item.item.clone());
-        }
+        // Serialize package via language-specific serializer
+        let files = if let crate::languages::backend::LanguageTarget::Kotlin = target {
+            let serializer = fp_kotlin::KotlinSerializer;
+            serializer.serialize_package(&source)
+                .map_err(|e| CliError::Compilation(e.to_string()))?
+        } else {
+            // Fallback: per-file emit_ast_target for other targets
+            use std::collections::BTreeMap;
+            let mut modules: BTreeMap<String, Vec<Item>> = BTreeMap::new();
+            for pkg_item in &source.items {
+                let key = pkg_item.path.segments.join("/");
+                modules.entry(key).or_default().push(pkg_item.item.clone());
+            }
+            let mut files = Vec::new();
+            for (mod_path, items) in modules {
+                let file = File { path: PathBuf::from(&mod_path), attrs: vec![], collected_items: vec![], items };
+                let result = emit_ast_target(&file, target, args.type_defs, &output.join(&mod_path), args.single_world)?;
+                files.push((mod_path, result.code));
+            }
+            files
+        };
 
-        for (mod_path, items) in modules {
+        for (mod_path, code) in files {
             let out_path = output.join(name).join(&mod_path).with_extension(ext);
             if let Some(parent) = out_path.parent() {
                 std::fs::create_dir_all(parent).map_err(CliError::Io)?;
             }
-
-            let file = File {
-                path: PathBuf::from(&mod_path),
-                attrs: Vec::new(),
-                collected_items: Vec::new(),
-                items,
-            };
-            let result = emit_ast_target(&file, target, args.type_defs, &out_path, args.single_world)?;
-            std::fs::write(&out_path, &result.code).map_err(CliError::Io)?;
+            std::fs::write(&out_path, &code).map_err(CliError::Io)?;
             file_count += 1;
         }
     }
