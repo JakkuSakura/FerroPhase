@@ -690,6 +690,11 @@ impl HirGenerator {
             return;
         };
         for (_module_path, hir_program, exports) in workspace.hir_definitions() {
+            for item in &hir_program.items {
+                if matches!(item.kind, hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_)) {
+                    program.items.push(item.clone());
+                }
+            }
             program.def_map.extend(hir_program.def_map);
             for (path_str, res) in exports {
                 let path = fp_core::module::path::QualifiedPath::new(
