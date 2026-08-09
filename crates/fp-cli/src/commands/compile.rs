@@ -7,21 +7,10 @@ use crate::compiler::{
     LlvmCompileOptions, LossyCompileOptions, NativeCompileOptions, NativeEmitterKind,
     WasmCompileOptions,
 };
-use crate::{CliError, Result, cli::CliConfig};
+use crate::{cli::CliConfig, CliError, Result};
 use console::style;
 use fp_core::ast::{AstSerializer, AstTarget, AstTargetOutput, File};
 use fp_core::config;
-use fp_core::module::resolution::ModuleResolutionContext;
-use fp_core::module::resolver::ResolverRegistry;
-use fp_core::module::resolvers::{AstTargetResolver, FerroResolver};
-use fp_core::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
-use fp_core::package::graph::PackageGraph;
-use fp_core::package::{
-    DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageMetadata,
-    TargetFilter,
-};
-use fp_core::vfs::VirtualPath;
-use fp_core::workspace::WorkspaceDocument;
 #[cfg(feature = "lang-csharp")]
 use fp_csharp::CSharpSerializer;
 #[cfg(feature = "lang-godot")]
@@ -45,17 +34,12 @@ use fp_wit::{WitOptions, WitSerializer, WorldMode};
 #[cfg(feature = "lang-zig")]
 use fp_zig::ZigSerializer;
 use object::Object as _;
-use semver::Version;
-use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use tokio::{fs as async_fs, process::Command};
 use tracing::{info, warn};
 
 use clap::{ArgAction, Args, ValueEnum};
-use fp_compiler::{CompilerModuleResolver, ModuleResolutionError};
-
 /// Arguments for the compile command (also used by Clap)
 #[derive(Debug, Clone, Args)]
 pub struct CompileArgs {
@@ -236,44 +220,6 @@ impl EmitterKind {
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct ModuleResolutionState {
-    graph: Arc<PackageGraph>,
-    resolvers: Arc<ResolverRegistry>,
-    module_paths: Vec<(VirtualPath, ModuleId)>,
-}
-
-impl ModuleResolutionState {
-    fn context_for_input(&self, input: &Path) -> Result<ModuleResolutionContext> {
-        let input_path = if input.is_absolute() {
-            input.to_path_buf()
-        } else {
-            std::env::current_dir().map_err(CliError::Io)?.join(input)
-        };
-        let input_path = VirtualPath::from_path(&input_path);
-        let current_module = self
-            .module_paths
-            .iter()
-            .find(|(path, _)| *path == input_path)
-            .map(|(_, module_id)| module_id.clone());
-        Ok(ModuleResolutionContext {
-            graph: self.graph.clone(),
-            resolvers: self.resolvers.clone(),
-            current_module,
-        })
-    }
-}
-
-impl CompilerModuleResolver for ModuleResolutionState {
-    fn resolve_context(
-        &self,
-        input: &Path,
-    ) -> std::result::Result<ModuleResolutionContext, ModuleResolutionError> {
-        self.context_for_input(input)
-            .map_err(|err| ModuleResolutionError::new(err.to_string()))
-    }
-}
-
 /// Execute the compile command
 pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let target = resolve_compile_target(&args)?;
@@ -313,8 +259,6 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let emit_text_bytecode = is_text_backend;
 
     let container_registry = crate::container::ContainerRegistry::new();
-    let module_resolution_state = None;
-
     let output_is_dir = args
         .output
         .as_ref()
@@ -355,15 +299,8 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         )?;
 
         // Compile single file
-        if let Some(artifact_path) = compile_file(
-            input_file,
-            &output_file,
-            &args,
-            target,
-            module_resolution_state.clone(),
-            config,
-        )
-        .await?
+        if let Some(artifact_path) =
+            compile_file(input_file, &output_file, &args, target, config).await?
         {
             compiled_files.push(artifact_path);
         }
@@ -477,7 +414,6 @@ async fn compile_file(
     output: &Path,
     args: &CompileArgs,
     target: CompileTarget,
-    module_resolution: Option<Arc<ModuleResolutionState>>,
     _config: &CliConfig,
 ) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
@@ -520,7 +456,7 @@ async fn compile_file(
         );
     }
 
-    try_compile_with_compiler(input, output, args, backend, module_resolution)
+    try_compile_with_compiler(input, output, args, backend)
 }
 
 fn try_compile_with_compiler(
@@ -528,12 +464,10 @@ fn try_compile_with_compiler(
     output: &Path,
     args: &CompileArgs,
     backend: BackendKind,
-    module_resolution: Option<Arc<ModuleResolutionState>>,
 ) -> Result<Option<PathBuf>> {
     let lossy = compiler::LossyCompileOptions {
         enabled: args.lossy || config::lossy_mode(),
     };
-    let resolver = module_resolution.map(|state| state as Arc<dyn CompilerModuleResolver>);
 
     match backend {
         BackendKind::Binary => {
@@ -546,7 +480,6 @@ fn try_compile_with_compiler(
                         input,
                         args.package(),
                         args.source_language.as_deref(),
-                        resolver.clone(),
                         lossy,
                         &LlvmCompileOptions {
                             output: output.to_path_buf(),
@@ -573,7 +506,6 @@ fn try_compile_with_compiler(
                         input,
                         args.package(),
                         args.source_language.as_deref(),
-                        resolver.clone(),
                         lossy,
                         &CraneliftCompileOptions {
                             output: output.to_path_buf(),
@@ -594,7 +526,6 @@ fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                resolver,
                 lossy,
                 &NativeCompileOptions {
                     emitter,
@@ -617,7 +548,6 @@ fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                resolver,
                 lossy,
                 &BytecodeCompileOptions {
                     output: output.to_path_buf(),
@@ -636,7 +566,6 @@ fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                resolver,
                 lossy,
                 &JvmCompileOptions {
                     output: output.to_path_buf(),
@@ -651,7 +580,6 @@ fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                resolver,
                 lossy,
                 &WasmCompileOptions {
                     output: output.to_path_buf(),
@@ -664,7 +592,6 @@ fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                resolver,
                 lossy,
                 &EbpfCompileOptions {
                     output: output.to_path_buf(),
@@ -684,7 +611,6 @@ fn try_compile_with_compiler(
             let artifact = compiler::compile_dotnet_file(
                 input,
                 args.source_language.as_deref(),
-                resolver,
                 lossy,
                 output,
                 args.save_intermediates,
@@ -696,7 +622,6 @@ fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                resolver,
                 lossy,
                 &LlvmCompileOptions {
                     output: output.to_path_buf(),
@@ -918,7 +843,7 @@ async fn compile_emit_target(
         ));
     }
 
-    use crate::languages::frontend::{LanguageSource, detect_language_source_by_path};
+    use crate::languages::frontend::{detect_language_source_by_path, LanguageSource};
     let detected = detect_language_source_by_path(input);
     let is_wit_input = matches!(detected, Some(LanguageSource::Wit));
     let is_typescript_input = matches!(
@@ -1548,210 +1473,6 @@ fn validate_inputs(args: &CompileArgs) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn build_module_resolution_state(graph_path: &Path) -> Result<ModuleResolutionState> {
-    let workspace = load_workspace_document(graph_path)?;
-    let (graph, module_paths, languages) =
-        build_package_graph_from_workspace(&workspace, graph_path)?;
-
-    let mut registry = ResolverRegistry::new();
-    let ferro_resolver = Arc::new(FerroResolver::default());
-    registry.register(ModuleLanguage::Ferro, ferro_resolver.clone());
-    registry.register(ModuleLanguage::Rust, ferro_resolver);
-    for language in languages {
-        if matches!(language, ModuleLanguage::Ferro | ModuleLanguage::Rust) {
-            continue;
-        }
-        registry.register(language.clone(), Arc::new(AstTargetResolver::new(language)));
-    }
-
-    Ok(ModuleResolutionState {
-        graph: Arc::new(graph),
-        resolvers: Arc::new(registry),
-        module_paths,
-    })
-}
-
-fn load_workspace_document(path: &Path) -> Result<WorkspaceDocument> {
-    let payload = std::fs::read(path).map_err(CliError::Io)?;
-    serde_json::from_slice(&payload).map_err(|err| {
-        CliError::InvalidInput(format!(
-            "Failed to parse workspace graph {}: {}",
-            path.display(),
-            err
-        ))
-    })
-}
-
-fn build_package_graph_from_workspace(
-    workspace: &WorkspaceDocument,
-    graph_path: &Path,
-) -> Result<(
-    PackageGraph,
-    Vec<(VirtualPath, ModuleId)>,
-    HashSet<ModuleLanguage>,
-)> {
-    let graph_root = graph_path.parent().unwrap_or_else(|| Path::new("."));
-    let manifest_path = resolve_workspace_path(graph_root, &workspace.manifest);
-    let workspace_root = manifest_path.parent().unwrap_or(graph_root);
-
-    let mut graph = PackageGraph::new(Vec::new());
-    let mut module_paths = Vec::new();
-    let mut languages = HashSet::new();
-    let mut package_ids = HashMap::new();
-
-    for package in &workspace.packages {
-        let version = package
-            .version
-            .as_deref()
-            .map(Version::parse)
-            .transpose()
-            .map_err(|err| {
-                CliError::InvalidInput(format!(
-                    "Invalid version for workspace package '{}': {err}",
-                    package.name
-                ))
-            })?;
-        let package_manifest = resolve_workspace_path(workspace_root, &package.manifest_path);
-        package_ids.insert(
-            package.name.clone(),
-            PackageId::with_source(
-                package.name.clone(),
-                version,
-                format!("workspace:{}", package_manifest.display()),
-            ),
-        );
-    }
-
-    for package in &workspace.packages {
-        let package_id = package_ids.get(&package.name).cloned().ok_or_else(|| {
-            CliError::InvalidInput(format!("missing package ID for {}", package.name))
-        })?;
-        let package_root = resolve_workspace_path(workspace_root, &package.root);
-        let package_manifest = resolve_workspace_path(workspace_root, &package.manifest_path);
-        let version = match package.version.as_deref() {
-            Some(raw) => {
-                let parsed = Version::parse(raw).map_err(|err| {
-                    CliError::InvalidInput(format!(
-                        "Invalid version '{}' in workspace graph: {}",
-                        raw, err
-                    ))
-                })?;
-                Some(parsed)
-            }
-            None => None,
-        };
-
-        let mut module_ids = Vec::new();
-        for module in &package.modules {
-            let module_id = ModuleId::new(module.id.clone());
-            module_ids.push(module_id.clone());
-
-            let language = parse_module_language(module.language.as_deref());
-            languages.insert(language.clone());
-
-            let module_source =
-                resolve_module_source_path(module.path.as_str(), &package_root, workspace_root);
-            let module_source = VirtualPath::from_path(&module_source);
-            module_paths.push((module_source.clone(), module_id.clone()));
-
-            let module_desc = ModuleDescriptor {
-                id: module_id,
-                package: package_id.clone(),
-                language,
-                module_path: module.module_path.clone(),
-                source: module_source,
-                exports: Vec::new(),
-                requires_features: module.required_features.clone(),
-            };
-            graph.insert_module(module_desc);
-        }
-
-        let mut dependencies = Vec::new();
-        for dep in &package.dependencies {
-            let kind = parse_dependency_kind(dep.kind.as_deref())?;
-            dependencies.push(DependencyDescriptor {
-                package: dep.name.clone(),
-                resolved_package_id: Some(package_ids.get(&dep.name).cloned().ok_or_else(
-                    || {
-                        CliError::InvalidInput(format!(
-                            "workspace package '{}' depends on unknown package '{}'",
-                            package.name, dep.name
-                        ))
-                    },
-                )?),
-                constraint: None,
-                kind,
-                features: Vec::new(),
-                optional: false,
-                target: TargetFilter::default(),
-            });
-        }
-
-        let metadata = PackageMetadata {
-            dependencies,
-            ..PackageMetadata::default()
-        };
-
-        let package_desc = PackageDescriptor {
-            id: package_id.clone(),
-            name: package.name.clone(),
-            version,
-            manifest_path: VirtualPath::from_path(&package_manifest),
-            root: VirtualPath::from_path(&package_root),
-            metadata,
-            modules: module_ids,
-        };
-        graph.insert_package(package_desc);
-    }
-
-    Ok((graph, module_paths, languages))
-}
-
-fn resolve_workspace_path(base: &Path, raw: &str) -> PathBuf {
-    let path = PathBuf::from(raw);
-    if path.is_absolute() {
-        path
-    } else {
-        base.join(path)
-    }
-}
-
-fn resolve_module_source_path(path: &str, package_root: &Path, workspace_root: &Path) -> PathBuf {
-    let raw_path = PathBuf::from(path);
-    if raw_path.is_absolute() {
-        return raw_path;
-    }
-    let package_candidate = package_root.join(&raw_path);
-    if package_candidate.exists() {
-        return package_candidate;
-    }
-    workspace_root.join(raw_path)
-}
-
-fn parse_module_language(raw: Option<&str>) -> ModuleLanguage {
-    let raw = raw.unwrap_or("ferro");
-    let normalized = raw.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "ferro" | "fp" => ModuleLanguage::Ferro,
-        "rust" => ModuleLanguage::Rust,
-        "typescript" | "ts" | "javascript" | "js" => ModuleLanguage::TypeScript,
-        "python" | "py" => ModuleLanguage::Python,
-        other => ModuleLanguage::Other(other.to_string()),
-    }
-}
-
-fn parse_dependency_kind(raw: Option<&str>) -> Result<DependencyKind> {
-    match raw.map(|value| value.trim()) {
-        None | Some("") | Some("normal") => Ok(DependencyKind::Normal),
-        Some("dev") | Some("development") => Ok(DependencyKind::Development),
-        Some("build") => Ok(DependencyKind::Build),
-        Some(other) => Err(CliError::InvalidInput(format!(
-            "Unsupported dependency kind '{}' in workspace graph",
-            other
-        ))),
-    }
-}
-
 fn determine_output_path(
     input: &Path,
     output: Option<&PathBuf>,
@@ -1824,9 +1545,17 @@ fn determine_output_path(
                     } else if native_asm_text_target {
                         "s"
                     } else if native_object_target {
-                        if native_link_requested { "out" } else { "o" }
+                        if native_link_requested {
+                            "out"
+                        } else {
+                            "o"
+                        }
                     } else if native_archive_target {
-                        if native_link_requested { "out" } else { "a" }
+                        if native_link_requested {
+                            "out"
+                        } else {
+                            "a"
+                        }
                     } else if urcl_object_target {
                         "o"
                     } else if goasm_object_target {
@@ -2002,87 +1731,6 @@ fn determine_output_path(
         };
 
         Ok(input.with_extension(extension))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use fp_core::workspace::{WorkspaceDependency, WorkspaceModule, WorkspacePackage};
-    use tempfile::tempdir;
-
-    #[test]
-    fn build_module_resolution_state_from_workspace_graph() -> Result<()> {
-        let temp = tempdir()?;
-        let root = temp.path();
-        let manifest_path = root.join("Magnet.toml");
-        std::fs::write(&manifest_path, "[workspace]\n")?;
-
-        let package_root = root.join("demo");
-        let package_manifest = package_root.join("Magnet.toml");
-        std::fs::create_dir_all(package_root.join("src"))?;
-        std::fs::write(&package_manifest, "[package]\nname = \"demo\"\n")?;
-        let module_path = package_root.join("src").join("mod.fp");
-        std::fs::write(&module_path, "fn main() {}\n")?;
-
-        let workspace =
-            WorkspaceDocument::new(manifest_path.to_string_lossy()).with_packages(vec![
-                WorkspacePackage::new(
-                    "demo",
-                    package_manifest.to_string_lossy(),
-                    package_root.to_string_lossy(),
-                )
-                .with_modules(vec![
-                    WorkspaceModule::new("demo", module_path.to_string_lossy())
-                        .with_module_path(Vec::new())
-                        .with_language(Some("ferro".to_string())),
-                ]),
-            ]);
-
-        let graph_path = root.join("workspace-graph.json");
-        let payload = serde_json::to_string_pretty(&workspace)
-            .map_err(|err| CliError::InvalidInput(err.to_string()))?;
-        std::fs::write(&graph_path, payload)?;
-
-        let state = build_module_resolution_state(&graph_path)?;
-        assert_eq!(state.module_paths.len(), 1);
-        assert_eq!(state.graph.packages().count(), 1);
-        Ok(())
-    }
-
-    #[test]
-    fn reject_unknown_dependency_kind_in_workspace_graph() -> Result<()> {
-        let temp = tempdir()?;
-        let root = temp.path();
-        let manifest_path = root.join("Magnet.toml");
-        std::fs::write(&manifest_path, "[workspace]\n")?;
-
-        let package_root = root.join("demo");
-        let package_manifest = package_root.join("Magnet.toml");
-        std::fs::create_dir_all(package_root.join("src"))?;
-        std::fs::write(&package_manifest, "[package]\nname = \"demo\"\n")?;
-
-        let workspace =
-            WorkspaceDocument::new(manifest_path.to_string_lossy()).with_packages(vec![
-                WorkspacePackage::new(
-                    "demo",
-                    package_manifest.to_string_lossy(),
-                    package_root.to_string_lossy(),
-                )
-                .with_dependencies(vec![WorkspaceDependency::new(
-                    "dep",
-                    Some("invalid".to_string()),
-                )]),
-            ]);
-
-        let graph_path = root.join("workspace-graph.json");
-        let payload = serde_json::to_string_pretty(&workspace)
-            .map_err(|err| CliError::InvalidInput(err.to_string()))?;
-        std::fs::write(&graph_path, payload)?;
-
-        let err = build_package_graph_from_workspace(&workspace, &graph_path).unwrap_err();
-        assert!(err.to_string().contains("Unsupported dependency kind"));
-        Ok(())
     }
 }
 

@@ -159,13 +159,6 @@ impl ExecutorHandle {
 }
 
 impl ExecutorState {
-    fn new() -> Self {
-        Self {
-            tasks: RefCell::new(HashMap::new()),
-            ready: Rc::new(RefCell::new(VecDeque::new())),
-        }
-    }
-
     /// Insert (or replace) the task registered under `key`, marking it ready
     /// to poll. Only call this when `key` isn't already tracked (see
     /// `contains`) -- the whole point of keying tasks is that a compile

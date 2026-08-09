@@ -1,11 +1,7 @@
 //! Interpret FerroPhase source or bytecode files.
 
-use std::sync::Arc;
-
-use crate::commands::compile::build_module_resolution_state;
-use crate::{CliError, Result, cli::CliConfig, compiler};
+use crate::{cli::CliConfig, compiler, CliError, Result};
 use clap::Args;
-use fp_compiler::CompilerModuleResolver;
 use fp_jit::JitOptions;
 use std::path::{Path, PathBuf};
 
@@ -56,14 +52,7 @@ async fn interpret_source(path: &Path, args: &InterpretArgs) -> Result<()> {
         ));
     }
 
-    let resolver = match args.graph.as_ref() {
-        Some(graph) => {
-            Some(Arc::new(build_module_resolution_state(graph)?) as Arc<dyn CompilerModuleResolver>)
-        }
-        None => None,
-    };
-
-    let _ = compiler::interpret_file(path, &args.package, resolver)?;
+    let _ = compiler::interpret_file(path, &args.package)?;
     Ok(())
 }
 

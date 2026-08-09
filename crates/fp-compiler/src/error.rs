@@ -1,6 +1,5 @@
 use thiserror::Error;
 
-use crate::resolution::ModuleResolutionError;
 use crate::{BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
 
 impl From<fp_interpret::VmError> for CompilerDriverError {
@@ -33,8 +32,6 @@ pub enum CompilerDriverError {
     MissingRuntimeValue(RuntimeValueId),
     #[error("missing bytecode {0}")]
     MissingBytecode(BytecodeId),
-    #[error("module resolution failed: {0}")]
-    ModuleResolution(#[from] ModuleResolutionError),
     #[error("unsupported compiler work: {0}")]
     UnsupportedWork(String),
     #[error("internal compiler error: {0}")]

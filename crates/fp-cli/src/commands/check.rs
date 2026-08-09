@@ -1,6 +1,6 @@
 //! Code checking and validation command implementation
 
-use crate::{Result, cli::CliConfig, compiler, utils::FileUtils};
+use crate::{cli::CliConfig, compiler, utils::FileUtils, Result};
 use clap::Args;
 use console::style;
 use fp_core::config;
@@ -36,7 +36,6 @@ pub async fn check_command(args: CheckArgs, _config: &CliConfig) -> Result<()> {
             file,
             &args.package,
             args.syntax_only,
-            None,
             compiler::LossyCompileOptions {
                 enabled: config::lossy_mode(),
             },
