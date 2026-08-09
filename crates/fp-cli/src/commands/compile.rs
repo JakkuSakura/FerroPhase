@@ -971,38 +971,50 @@ async fn compile_project(
     args: &CompileArgs,
     target: crate::languages::backend::LanguageTarget,
 ) -> Result<()> {
-    use crate::languages::discovery::discovery_for_language;
     use crate::languages::detect_source_language;
+    use crate::languages::discovery::provider_for_language;
 
     let lang = detect_source_language(input)
         .map(|l| l.name)
         .unwrap_or("ferrophase");
 
-    let discovery = discovery_for_language(lang)
-        .ok_or_else(|| CliError::Compilation(format!("no project discovery for language: {lang}")))?;
+    let provider = provider_for_language(lang, input)
+        .ok_or_else(|| CliError::Compilation(format!("no provider for language: {lang}")))?;
 
-    let root = (discovery.find_manifest)(input)
-        .ok_or_else(|| CliError::Compilation("no Cargo.toml or Magnet.toml found".to_string()))?;
+    let packages = provider.list_packages()
+        .map_err(|e| CliError::Compilation(e.to_string()))?;
 
-    let members = (discovery.list_members)(&root);
-    info!("Project root: {}, {} crate(s), language: {}", root.display(), members.len(), lang);
+    info!("Project: {} package(s), language: {}", packages.len(), lang);
 
     let ext = crate::languages::backend::output_extension_for(target);
     let mut file_count = 0;
 
-    for (name, dir) in &members {
-        for (rel_path, abs_path) in (discovery.list_sources)(dir) {
-            let out_path = output.join(name).join(&rel_path).with_extension(ext);
+    for package_id in &packages {
+        let source = provider.load_package_source(package_id)
+            .map_err(|e| CliError::Compilation(e.to_string()))?;
+
+        let name = package_id.as_str();
+
+        for (path, items) in &source.items {
+            let rel = path.to_key().replace("::", "/");
+            let out_path = output.join(name).join(&rel).with_extension(ext);
             if let Some(parent) = out_path.parent() {
                 std::fs::create_dir_all(parent).map_err(CliError::Io)?;
             }
 
-            compile_emit_target(&abs_path, &out_path, args, target).await?;
+            let file = File {
+                path: PathBuf::from(&rel),
+                attrs: Vec::new(),
+                collected_items: Vec::new(),
+                items: items.clone(),
+            };
+            let result = emit_ast_target(&file, target, args.type_defs, &out_path, args.single_world)?;
+            std::fs::write(&out_path, &result.code).map_err(CliError::Io)?;
             file_count += 1;
         }
     }
 
-    info!("Transpiled {} files from {} crate(s) to {}", file_count, members.len(), output.display());
+    info!("Transpiled {} files from {} package(s) to {}", file_count, packages.len(), output.display());
     Ok(())
 }
 

@@ -1,24 +1,15 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::sync::Arc;
 
-/// Language-specific project discovery functions.
-/// Each `fp-{lang}` crate provides its own implementation.
-pub struct ProjectDiscovery {
-    pub find_manifest: fn(&Path) -> Option<PathBuf>,
-    pub list_members: fn(&Path) -> Vec<(String, PathBuf)>,
-    pub list_sources: fn(&Path) -> Vec<(String, PathBuf)>,
-}
+use fp_core::package::provider::PackageProvider;
+use fp_lang::cargo_provider::CargoWorkspaceProvider;
 
-/// Resolve discovery functions for a source language.
-/// Mirrors the pattern in `compiler.rs::select_frontend()`.
-pub fn discovery_for_language(language: &str) -> Option<&'static ProjectDiscovery> {
-    match language {
-        "ferrophase" | "rust" | "rs" | "fp" => Some(&RUST_DISCOVERY),
+/// Factory: maps a source language to a PackageProvider implementation.
+pub fn provider_for_language(lang: &str, root: &Path) -> Option<Arc<dyn PackageProvider>> {
+    match lang {
+        "ferrophase" | "rust" | "rs" | "fp" => {
+            CargoWorkspaceProvider::discover(root).ok().map(|p| Arc::new(p) as Arc<dyn PackageProvider>)
+        }
         _ => None,
     }
 }
-
-static RUST_DISCOVERY: ProjectDiscovery = ProjectDiscovery {
-    find_manifest: fp_lang::project::find_manifest,
-    list_members: fp_lang::project::list_members,
-    list_sources: fp_lang::project::list_sources,
-};
