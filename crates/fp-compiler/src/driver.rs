@@ -1,5 +1,5 @@
 use fp_backend::transformations::{HirGenerator, HirLoweringConfig, LirGenerator, MirLowering};
-use fp_core::ast::{TypeStruct, TypeType, Ty, Value};
+use fp_core::ast::{Ty, TypeStruct, TypeType, Value};
 use fp_core::hir;
 use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
@@ -320,22 +320,6 @@ impl CompilerDriver {
                     self.state.typing_ctx.data_layout.clone(),
                 );
                 if self.pipeline == PipelineMode::Full {
-                    let initial_units = self.compile_items_to_lir_units(&package).await?;
-                    Self::publish_lir_units(&package, package_id, &initial_units)?;
-
-                    for unit in &initial_units {
-                        if unit.program.comptime_entries.is_empty() {
-                            continue;
-                        }
-                        let lir_id = Self::package_module_lir_id(package_id, &unit.module_path);
-                        self.state.insert_lir(lir_id.clone(), unit.program.clone());
-                        self.evaluate_comptime_lir(
-                            &lir_id,
-                            &FullyQualifiedPath::new(unit.module_path.clone()),
-                        )
-                        .await?;
-                    }
-
                     let units = self.compile_items_to_lir_units(&package).await?;
                     Self::publish_lir_units(&package, package_id, &units)?;
                 }
@@ -375,7 +359,6 @@ impl CompilerDriver {
         package.lir_workspace = workspace;
         Ok(())
     }
-
 
     async fn compile_items_to_lir_units(
         &mut self,
