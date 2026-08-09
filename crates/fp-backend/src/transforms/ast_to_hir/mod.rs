@@ -562,10 +562,28 @@ impl HirGenerator {
                     _ => None,
                 }
             }
-        }
-        .ok_or_else(|| {
-            fp_core::Error::from("unresolved impl self type")
-        })?;
+        };
+        let self_def_id = match self_def_id {
+            Some(id) => id,
+            None => {
+                let name = self_path
+                    .segments
+                    .first()
+                    .map(|s| s.name.as_str())
+                    .unwrap_or("");
+                match name {
+                    "str" | "char" | "bool" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
+                    | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "f32" | "f64" => {
+                        return Ok(fp_core::module::path::QualifiedPath::new(vec![
+                            name.to_string(),
+                        ]));
+                    }
+                    _ => {
+                        return Err(fp_core::Error::from("unresolved impl self type"));
+                    }
+                }
+            }
+        };
 
         let relative = self.module_path.join(
             &self_path
@@ -689,14 +707,17 @@ impl HirGenerator {
         let external_definitions = self.external_definitions.clone();
         for (_module_path, external, exports) in external_definitions {
             program.def_map.extend(external.def_map);
-            for (path, res) in exports {
+            for (path_str, res) in exports {
+                let path = fp_core::module::path::QualifiedPath::new(
+                    path_str.split("::").map(|s| s.to_owned()).collect::<Vec<_>>(),
+                );
                 let entry = SymbolEntry {
                     res,
                     export: SymbolExport::Public,
-                    path: None,
+                    path: Some(path),
                 };
-                self.global_value_defs.insert(path.clone(), entry.clone());
-                self.global_type_defs.insert(path, entry);
+                self.global_value_defs.insert(path_str.clone(), entry.clone());
+                self.global_type_defs.insert(path_str, entry);
             }
         }
     }
@@ -927,6 +948,7 @@ impl HirGenerator {
             .rev()
             .find_map(|scope| scope.get(name).cloned())
             .or_else(|| self.lookup_symbol(name, &self.global_type_defs))
+            .or_else(|| self.resolve_global_by_last_segment(name, &self.global_type_defs))
     }
 
     fn resolve_value_symbol(&self, name: &str) -> Option<hir::Res> {
@@ -935,6 +957,21 @@ impl HirGenerator {
             .rev()
             .find_map(|scope| scope.get(name).cloned())
             .or_else(|| self.lookup_symbol(name, &self.global_value_defs))
+            .or_else(|| self.resolve_global_by_last_segment(name, &self.global_value_defs))
+    }
+
+    fn resolve_global_by_last_segment(
+        &self,
+        name: &str,
+        map: &HashMap<String, SymbolEntry>,
+    ) -> Option<hir::Res> {
+        let suffix = format!("::{}", name);
+        for (key, entry) in map.iter() {
+            if key.ends_with(&suffix) && entry.export.can_access(&self.module_path.segments) {
+                return Some(entry.res.clone());
+            }
+        }
+        None
     }
 
     fn push_value_scope(&mut self) {
@@ -1088,13 +1125,13 @@ impl HirGenerator {
         self.seed_external_definitions(&mut program);
         self.module_defs
             .extend(self.external_modules.iter().cloned());
+        self.insert_default_prelude_aliases();
 
         for package_item in &package.items {
             self.with_module_scope(&package_item.path, |this| {
                 this.predeclare_items(std::slice::from_ref(&package_item.item))
             })?;
         }
-        self.insert_default_prelude_aliases();
         self.program_def_map = program.def_map.clone();
 
         for package_item in &package.items {
