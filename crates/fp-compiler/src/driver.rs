@@ -384,8 +384,7 @@ impl CompilerDriver {
             .with_package_id(hir_package_id)
             .with_def_id_start(self.next_hir_def_id)
             .with_lowering_config(HirLoweringConfig)
-            .with_external_definitions(self.state.typing_ctx.env_ctx.hir_definitions())
-            .with_external_modules(self.state.typing_ctx.env_ctx.module_paths());
+            .with_workspace(self.state.typing_ctx.env_ctx.clone());
         let package_source = package.borrow().clone();
         let hir_program = generator.transform_package(&package_source)?;
         self.next_hir_def_id = self.next_hir_def_id.max(generator.next_def_id_value());
@@ -582,14 +581,6 @@ impl CompilerDriver {
         // therefore strict: a failure is an internal compiler error, never a
         // recoverable source diagnostic.
         let mut hir = self.state.hir(hir_id)?.clone();
-        for (_, external, _) in self.state.typing_ctx.env_ctx.hir_definitions() {
-            for item in external.items {
-                if matches!(item.kind, hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_)) {
-                    hir.def_map.insert(item.def_id, item.clone());
-                    hir.items.push(item);
-                }
-            }
-        }
         let typeck_results = self.state.hir_typeck(hir_id)?.clone();
         let mut lowering = MirLowering::new()
             .with_typeck_results(&typeck_results)
@@ -599,12 +590,11 @@ impl CompilerDriver {
                     path.to_key()
                 ))
             })?;
-        lowering.register_external_definitions(&hir);
         for (key, value) in self.state.resolved_const_values() {
             lowering.seed_resolved_const(key.to_string(), value.clone());
         }
         let result = lowering.transform_async(hir).await;
-        lowering.compute_external_struct_layouts();
+        lowering.compute_all_struct_layouts();
         let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
             lowering.all_adt_field_tys().into_iter().collect();
         let (diagnostics, had_errors) = lowering.take_diagnostics();

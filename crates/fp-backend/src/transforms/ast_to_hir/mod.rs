@@ -68,12 +68,7 @@ pub struct HirGenerator {
     respect_cfg: bool,
     lowering_config: HirLoweringConfig,
     intrinsic_normalizer: Option<Box<dyn IntrinsicNormalizer>>,
-    external_definitions: Vec<(
-        fp_core::module::path::QualifiedPath,
-        hir::Program,
-        HashMap<String, hir::Res>,
-    )>,
-    external_modules: Vec<fp_core::module::path::QualifiedPath>,
+    workspace: Option<std::rc::Rc<fp_core::workspace::WorkspaceContext>>,
 }
 
 enum MaterializedTypeAlias {
@@ -340,8 +335,7 @@ impl HirGenerator {
             respect_cfg: true,
             lowering_config: HirLoweringConfig::default(),
             intrinsic_normalizer: None,
-            external_definitions: Vec::new(),
-            external_modules: Vec::new(),
+            workspace: None,
         }
     }
 
@@ -364,23 +358,11 @@ impl HirGenerator {
         self
     }
 
-    pub fn with_external_definitions(
+    pub fn with_workspace(
         mut self,
-        definitions: Vec<(
-            fp_core::module::path::QualifiedPath,
-            hir::Program,
-            HashMap<String, hir::Res>,
-        )>,
+        workspace: std::rc::Rc<fp_core::workspace::WorkspaceContext>,
     ) -> Self {
-        self.external_definitions = definitions;
-        self
-    }
-
-    pub fn with_external_modules(
-        mut self,
-        modules: Vec<fp_core::module::path::QualifiedPath>,
-    ) -> Self {
-        self.external_modules = modules;
+        self.workspace = Some(workspace);
         self
     }
 
@@ -703,10 +685,12 @@ impl HirGenerator {
         }
     }
 
-    fn seed_external_definitions(&mut self, program: &mut hir::Program) {
-        let external_definitions = self.external_definitions.clone();
-        for (_module_path, external, exports) in external_definitions {
-            program.def_map.extend(external.def_map);
+    fn seed_workspace_definitions(&mut self, program: &mut hir::Program) {
+        let Some(ref workspace) = self.workspace else {
+            return;
+        };
+        for (_module_path, hir_program, exports) in workspace.hir_definitions() {
+            program.def_map.extend(hir_program.def_map);
             for (path_str, res) in exports {
                 let path = fp_core::module::path::QualifiedPath::new(
                     path_str.split("::").map(|s| s.to_owned()).collect::<Vec<_>>(),
@@ -720,6 +704,8 @@ impl HirGenerator {
                 self.global_type_defs.insert(path_str, entry);
             }
         }
+        self.module_defs
+            .extend(workspace.module_paths().into_iter());
     }
 
     fn predeclare_items(&mut self, items: &[ast::Item]) -> Result<()> {
@@ -1122,9 +1108,7 @@ impl HirGenerator {
         self.prepare_lowering_state();
 
         let mut program = hir::Program::new();
-        self.seed_external_definitions(&mut program);
-        self.module_defs
-            .extend(self.external_modules.iter().cloned());
+        self.seed_workspace_definitions(&mut program);
         self.insert_default_prelude_aliases();
 
         for package_item in &package.items {
@@ -1192,9 +1176,7 @@ impl HirGenerator {
 
         self.module_path = module_path.clone();
         let mut program = hir::Program::new();
-        self.seed_external_definitions(&mut program);
-        self.module_defs
-            .extend(self.external_modules.iter().cloned());
+        self.seed_workspace_definitions(&mut program);
         self.predeclare_items(items)?;
         self.insert_default_prelude_aliases();
         self.program_def_map = program.def_map.clone();

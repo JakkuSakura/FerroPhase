@@ -538,31 +538,7 @@ impl MirLowering {
         self.transform(hir_program)
     }
 
-    /// Register imported definitions that can be referenced while lowering
-    /// this package. Imported bodies are specialized only when a call needs
-    /// them; they are never emitted as source items in the current package.
-    pub fn register_external_definitions(&mut self, program: &hir::Program) {
-        let items = program.def_map.values().cloned().collect::<Vec<_>>();
-        for item in items {
-            match item.kind {
-                hir::ItemKind::Function(function) if !function.sig.generics.params.is_empty() => {
-                    self.register_generic_function(item.def_id, &function);
-                }
-                hir::ItemKind::Impl(impl_block) => {
-                    self.register_external_impl_methods(&impl_block);
-                }
-                hir::ItemKind::Struct(def) => {
-                    self.register_struct(item.def_id, &def, item.span);
-                }
-                hir::ItemKind::Enum(def) => {
-                    self.register_enum(item.def_id, &def, item.span);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    pub fn compute_external_struct_layouts(&mut self) {
+    pub fn compute_all_struct_layouts(&mut self) {
         let mut def_ids: Vec<hir::DefId> = self
             .struct_defs
             .iter()
@@ -608,37 +584,6 @@ impl MirLowering {
             map.insert(key.def_id, fields);
         }
         map
-    }
-
-    fn register_external_impl_methods(&mut self, impl_block: &hir::Impl) {
-        let struct_name = self.struct_name_from_type(&impl_block.self_ty);
-        let method_context = self.make_method_context(&impl_block.self_ty);
-        let impl_is_generic = !impl_block.generics.params.is_empty();
-
-        for impl_item in &impl_block.items {
-            let hir::ImplItemKind::Method(function) = &impl_item.kind else {
-                continue;
-            };
-            if !impl_is_generic && function.sig.generics.params.is_empty() {
-                continue;
-            }
-
-            let method_name = match struct_name.as_deref() {
-                Some(name) => format!("{}::{}", name, function.sig.name),
-                None => function.sig.name.as_str().to_string(),
-            };
-            let definition = MethodDefinition {
-                def_id: impl_item.def_id,
-                function: function.clone(),
-                impl_generics: impl_block.generics.clone(),
-                self_ty: impl_block.self_ty.clone(),
-                self_def: method_context.as_ref().and_then(|ctx| ctx.def_id),
-                method_name: method_name.clone(),
-            };
-            self.method_defs_by_def
-                .insert(impl_item.def_id, definition.clone());
-            self.method_defs.insert(method_name, definition);
-        }
     }
 
     pub fn seed_resolved_const(&mut self, key: impl Into<String>, value: mir::Constant) {
