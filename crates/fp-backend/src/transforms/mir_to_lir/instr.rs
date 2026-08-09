@@ -5,6 +5,7 @@ use fp_core::mir::ty::{
     ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, TypeAndMut, UintTy,
 };
 use fp_core::{lir, mir};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::abi;
@@ -32,7 +33,8 @@ pub struct LirGenerator {
     entry_allocas: Vec<lir::LirInstruction>,
     queued_instructions: Vec<lir::LirInstruction>,
     name_counters: HashMap<String, usize>,
-    struct_layouts: HashMap<mir::DefId, Vec<Option<lir::LirType>>>,
+    struct_layouts: RefCell<HashMap<mir::DefId, Vec<Option<lir::LirType>>>>,
+    mir_layouts: HashMap<mir::DefId, Vec<mir::Ty>>,
     function_symbol_map: HashMap<String, String>,
     function_def_map: HashMap<(mir::DefId, mir::ty::SubstsRef), String>,
     function_signatures: HashMap<String, lir::LirFunctionSignature>,
@@ -120,7 +122,8 @@ impl LirGenerator {
             entry_allocas: Vec::new(),
             queued_instructions: Vec::new(),
             name_counters: HashMap::new(),
-            struct_layouts: HashMap::new(),
+            struct_layouts: RefCell::new(HashMap::new()),
+            mir_layouts: HashMap::new(),
             function_symbol_map: HashMap::new(),
             function_def_map: HashMap::new(),
             function_signatures: HashMap::new(),
@@ -140,19 +143,12 @@ impl LirGenerator {
         self
     }
 
-    pub fn seed_struct_layouts(
-        &mut self,
-        layouts: &HashMap<mir::DefId, Vec<mir::Ty>>,
-    ) {
-        let mut sorted: Vec<_> = layouts.iter().collect();
-        sorted.sort_by_key(|(def_id, _)| (def_id.package_id, def_id.index));
-        for (def_id, field_tys) in sorted {
-            let fields: Vec<Option<lir::LirType>> = field_tys
-                .iter()
-                .map(|ty| Some(self.lir_type_from_ty(ty)))
-                .collect();
-            self.struct_layouts.insert(*def_id, fields);
-        }
+    pub fn with_mir_layouts(
+        mut self,
+        layouts: HashMap<mir::DefId, Vec<mir::Ty>>,
+    ) -> Self {
+        self.mir_layouts = layouts;
+        self
     }
 
     fn resolve_global_symbol(&self, path: &mir::Path) -> lir::Name {
@@ -3064,7 +3060,8 @@ impl LirGenerator {
                 mir::PlaceElem::Field(index, field_ty) => {
                     if let TyKind::Adt(adt, _) = &ty.kind {
                         let field_lir_ty = self.lir_type_from_ty(field_ty);
-                        let fields = self.struct_layouts.entry(adt.did).or_default();
+                        let mut layouts = self.struct_layouts.borrow_mut();
+                        let fields = layouts.entry(adt.did).or_default();
                         if fields.len() <= *index {
                             fields.resize(index + 1, None);
                         }
@@ -5880,22 +5877,36 @@ impl LirGenerator {
             TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
                 lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
             }
-            TyKind::Adt(adt, _) if self.struct_layouts.contains_key(&adt.did) => {
+            TyKind::Adt(adt, _) if self.struct_layouts.borrow().contains_key(&adt.did) => {
+                let fields = self
+                    .struct_layouts
+                    .borrow()
+                    .get(&adt.did)
+                    .unwrap()
+                    .clone();
                 lir::LirType::Struct {
-                    fields: self
-                        .struct_layouts
-                        .get(&adt.did)
-                        .into_iter()
-                        .flat_map(|fields| fields.iter())
-                        .map(|field| {
-                            field.clone().unwrap_or_else(|| {
-                                panic!(
-                                    "MIR-to-LIR ICE: missing layout for field of ADT {}",
-                                    adt.did
-                                )
-                            })
+                    fields: fields.iter().map(|field| {
+                        field.clone().unwrap_or_else(|| {
+                            panic!(
+                                "MIR-to-LIR ICE: missing layout for field of ADT {}",
+                                adt.did
+                            )
                         })
-                        .collect(),
+                    }).collect(),
+                    packed: false,
+                    name: None,
+                }
+            }
+            TyKind::Adt(adt, _) if self.mir_layouts.contains_key(&adt.did) => {
+                let field_tys = self.mir_layouts.get(&adt.did).unwrap().clone();
+                let fields: Vec<Option<lir::LirType>> = field_tys
+                    .iter()
+                    .map(|ty| Some(self.lir_type_from_ty(ty)))
+                    .collect();
+                let struct_fields: Vec<lir::LirType> = fields.iter().map(|f| f.clone().unwrap()).collect();
+                self.struct_layouts.borrow_mut().insert(adt.did, fields);
+                lir::LirType::Struct {
+                    fields: struct_fields,
                     packed: false,
                     name: None,
                 }

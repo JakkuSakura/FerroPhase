@@ -436,9 +436,13 @@ impl CompilerDriver {
             .compiled_package(&current_package_id)
         {
             package.borrow_mut().mir_program = Some(self.state.mir(&mir_id)?.clone());
+            package
+                .borrow_mut()
+                .mir_struct_fields
+                .extend(struct_layouts);
         }
         let lir_id =
-            self.lower_to_lir(&mir_id, &fqp, &current_package_id, &struct_layouts)?;
+            self.lower_to_lir(&mir_id, &fqp, &current_package_id)?;
         let lir = self.state.lir(&lir_id)?.clone();
         Ok(vec![fp_core::lir::LirCompileUnit {
             package_id: hir_package_id,
@@ -629,13 +633,16 @@ impl CompilerDriver {
         mir_id: &MirId,
         path: &FullyQualifiedPath,
         package_id: &PackageId,
-        struct_layouts: &HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>>,
     ) -> Result<LirId, CompilerDriverError> {
         let mir = self.state.mir(mir_id)?.clone();
+        let mut all_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> = HashMap::new();
+        for (_dep_id, dep_package) in self.state.typing_ctx.env_ctx.crates().iter() {
+            all_layouts.extend(dep_package.borrow().mir_struct_fields.iter().map(|(k, v)| (*k, v.clone())));
+        }
         let mut lowering = LirGenerator::new(self.state.typing_ctx.data_layout.clone())
             .with_package_id(package_id.clone())
-            .with_module_path(path.path().to_key());
-        lowering.seed_struct_layouts(struct_layouts);
+            .with_module_path(path.path().to_key())
+            .with_mir_layouts(all_layouts);
         let lir = lowering.transform(mir).map_err(|error| {
             CompilerDriverError::InternalCompilerError(format!(
                 "MIR-to-LIR lowering failed for {}: {error}",
