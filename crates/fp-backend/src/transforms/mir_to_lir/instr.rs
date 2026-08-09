@@ -140,6 +140,19 @@ impl LirGenerator {
         self
     }
 
+    pub fn seed_struct_layouts(
+        &mut self,
+        layouts: &HashMap<mir::DefId, Vec<mir::Ty>>,
+    ) {
+        for (def_id, field_tys) in layouts {
+            let fields: Vec<Option<lir::LirType>> = field_tys
+                .iter()
+                .map(|ty| Some(self.lir_type_from_ty(ty)))
+                .collect();
+            self.struct_layouts.insert(*def_id, fields);
+        }
+    }
+
     fn resolve_global_symbol(&self, path: &mir::Path) -> lir::Name {
         match &self.module_path {
             Some(module_path) if path.segments.len() == 1 => {
@@ -2907,7 +2920,6 @@ impl LirGenerator {
         self.local_storage.clear();
         self.entry_allocas.clear();
         self.queued_instructions.clear();
-        self.struct_layouts.clear();
     }
 
     fn collect_struct_layouts(&mut self, body: &mir::Body) {
@@ -5886,7 +5898,7 @@ impl LirGenerator {
                     name: None,
                 }
             }
-            TyKind::Adt(_adt, _substs) => lir::LirType::Ptr(Box::new(lir::LirType::I8)),
+            TyKind::Adt(adt, _) => panic!("MIR-to-LIR ICE: missing layout for ADT {}", adt.did),
             TyKind::FnDef(def_id, substs) => panic!(
                 "MIR-to-LIR ICE: function definition {} with substitutions {:?} used as a data type",
                 def_id, substs

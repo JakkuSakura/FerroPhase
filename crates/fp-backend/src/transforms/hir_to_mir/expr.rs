@@ -595,29 +595,17 @@ impl MirLowering {
         }
     }
 
-    pub fn struct_layout_map(&self) -> &HashMap<StructLayoutKey, StructLayout> {
-        &self.struct_layouts
-    }
-
-    pub fn enum_layout_map(&self) -> &HashMap<EnumLayoutKey, EnumLayout> {
-        &self.enum_layouts
-    }
-
     pub fn all_adt_field_tys(&self) -> HashMap<hir::DefId, Vec<Ty>> {
         let mut map = HashMap::new();
         for (key, layout) in &self.struct_layouts {
-            if key.args.is_empty() {
-                map.insert(key.def_id, layout.field_tys.clone());
-            }
+            map.insert(key.def_id, layout.field_tys.clone());
         }
         for (key, layout) in &self.enum_layouts {
-            if key.args.is_empty() {
-                let mut fields: Vec<Ty> = Vec::new();
-                for payload_tys in layout.variant_payloads.values() {
-                    fields.extend(payload_tys.iter().cloned());
-                }
-                map.insert(key.def_id, fields);
+            let mut fields: Vec<Ty> = Vec::new();
+            for payload_tys in layout.variant_payloads.values() {
+                fields.extend(payload_tys.iter().cloned());
             }
+            map.insert(key.def_id, fields);
         }
         map
     }
