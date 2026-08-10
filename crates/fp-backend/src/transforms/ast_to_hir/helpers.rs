@@ -150,6 +150,21 @@ impl HirGenerator {
             }
         }
 
+        // Lexical bindings (especially generic parameters) are identities, not
+        // module paths. Keep their DefId intact and do not pass them through
+        // global canonicalization.
+        if segments.len() == 1
+            && matches!(
+                resolved,
+                Some(hir::Res::Def(_)) | Some(hir::Res::Local(_)) | Some(hir::Res::SelfTy)
+            )
+        {
+            return Ok(hir::Path {
+                segments,
+                res: resolved,
+            });
+        }
+
         if segments.len() > 1 && path_prefix == PathPrefix::Plain {
             let local_path = self.module_path.join(
                 &segments
