@@ -198,6 +198,14 @@ pub trait OperationMaterializer {
         Ok(None)
     }
 
+    fn materialize_structural(
+        &self,
+        _struct_expr: &mut crate::ast::ExprStructural,
+        _expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        Ok(None)
+    }
+
     fn materialize_container(
         &self,
         _container: &mut ExprIntrinsicContainer,

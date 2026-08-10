@@ -927,6 +927,22 @@ async fn compile_project(
 
         let name = package_id.as_str();
 
+        // Apply OperationMaterializer (transpile-mode AST rewrites: Some/None/Match→If)
+        let op_materializer = fp_lang::op_materializer::FerroOperationMaterializer;
+        for pkg_item in &mut source.items {
+            let file = File {
+                path: PathBuf::new(),
+                attrs: vec![],
+                collected_items: vec![],
+                items: vec![pkg_item.item.clone()],
+            };
+            let file = crate::materialize::op_walker::materialize_file(file, &op_materializer)
+                .map_err(|e| CliError::Compilation(e.to_string()))?;
+            if let Some(item) = file.items.into_iter().next() {
+                pkg_item.item = item;
+            }
+        }
+
         // Normalize portable ops (Some, None, Vec::new, etc.) before serialization
         for pkg_item in &mut source.items {
             fp_lang::normalization::normalize_items(std::slice::from_mut(&mut pkg_item.item), &normalizer)?;
