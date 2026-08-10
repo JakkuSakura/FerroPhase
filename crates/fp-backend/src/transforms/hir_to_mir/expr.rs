@@ -579,63 +579,79 @@ impl MirLowering {
             }
             for block in &body.basic_blocks {
                 for stmt in &block.statements {
-                    self.compute_stmt_layouts(program, stmt);
+                    self.compute_stmt_layouts(body, stmt);
                 }
                 if let Some(term) = &block.terminator {
-                    self.compute_terminator_layouts(program, term);
+                    self.compute_terminator_layouts(body, term);
                 }
             }
         }
     }
 
-    fn compute_stmt_layouts(&mut self, program: &mir::Program, stmt: &mir::Statement) {
+    fn compute_stmt_layouts(&mut self, body: &mir::Body, stmt: &mir::Statement) {
         match &stmt.kind {
             mir::StatementKind::Assign(place, rv) => {
-                self.compute_place_layouts(program, place);
+                self.compute_place_layouts(body, place);
                 self.compute_rvalue_layouts(rv);
             }
             mir::StatementKind::SetDiscriminant { place, .. }
             | mir::StatementKind::Retag(_, place)
             | mir::StatementKind::AscribeUserType(place, _, _) => {
-                self.compute_place_layouts(program, place);
+                self.compute_place_layouts(body, place);
             }
             _ => {}
         }
     }
 
-    fn compute_terminator_layouts(&mut self, program: &mir::Program, term: &mir::Terminator) {
+    fn compute_terminator_layouts(&mut self, body: &mir::Body, term: &mir::Terminator) {
         match &term.kind {
             mir::TerminatorKind::Call { args, destination, .. } => {
                 for arg in args {
-                    self.compute_operand_layouts(program, arg);
+                    self.compute_operand_layouts(arg);
                 }
                 if let Some((place, _)) = destination {
-                    self.compute_place_layouts(program, place);
+                    self.compute_place_layouts(body, place);
                 }
             }
             mir::TerminatorKind::SwitchInt { discr, .. }
             | mir::TerminatorKind::Assert { cond: discr, .. } => {
-                self.compute_operand_layouts(program, discr);
+                self.compute_operand_layouts(discr);
             }
             mir::TerminatorKind::Drop { place, .. }
             | mir::TerminatorKind::DropAndReplace { place, .. } => {
-                self.compute_place_layouts(program, place);
+                self.compute_place_layouts(body, place);
             }
             _ => {}
         }
     }
 
-    fn compute_place_layouts(&mut self, program: &mir::Program, place: &mir::Place) {
-        // Walk all bodies to find the local type for this place
-        for body in program.bodies.values() {
-            if let Some(local) = body.locals.get(place.local as usize) {
-                self.compute_ty_layout(&local.ty, Span::null());
-                return;
+    fn compute_place_layouts(&mut self, body: &mir::Body, place: &mir::Place) {
+        let Some(mut ty) = body.locals.get(place.local as usize).map(|l| l.ty.clone()) else {
+            return;
+        };
+        self.compute_ty_layout(&ty, Span::null());
+        for proj in &place.projection {
+            match proj {
+                mir::PlaceElem::Field(_, field_ty) => {
+                    self.compute_ty_layout(field_ty, Span::null());
+                    ty = field_ty.clone();
+                }
+                mir::PlaceElem::Deref => {
+                    match &ty.kind {
+                        TyKind::Ref(_, inner, _) | TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
+                            let inner = inner.clone();
+                            self.compute_ty_layout(&inner, Span::null());
+                            ty = *inner;
+                        }
+                        _ => return,
+                    }
+                }
+                _ => {}
             }
         }
     }
 
-    fn compute_operand_layouts(&mut self, _program: &mir::Program, op: &mir::Operand) {
+    fn compute_operand_layouts(&mut self, op: &mir::Operand) {
         if let mir::Operand::Constant(c) = op {
             self.compute_ty_layout(&c.ty, Span::null());
         }
