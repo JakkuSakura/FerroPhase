@@ -538,18 +538,119 @@ impl MirLowering {
         self.transform(hir_program)
     }
 
-    fn force_adt_layout(&mut self, def_id: hir::DefId, substs: &[Ty], span: Span) {
+    fn compute_adt_layout(&mut self, def_id: hir::DefId, substs: &[Ty], span: Span) {
         let _ = self.struct_layout_for_instance(def_id, substs, span);
         let _ = self.enum_layout_for_instance(def_id, substs, span);
     }
 
-    fn force_layout_for_ty(&mut self, ty: &Ty, span: Span) {
-        if let TyKind::Adt(adt, substs) = &ty.kind {
-            let types: Vec<Ty> = substs.iter().filter_map(|a| match a {
-                mir::ty::GenericArg::Type(t) => Some(t.clone()),
-                _ => None,
-            }).collect();
-            self.force_adt_layout(adt.did, &types, span);
+    fn compute_ty_layout(&mut self, ty: &Ty, span: Span) {
+        match &ty.kind {
+            TyKind::Adt(adt, substs) => {
+                let types: Vec<Ty> = substs.iter().filter_map(|a| match a {
+                    mir::ty::GenericArg::Type(t) => Some(t.clone()),
+                    _ => None,
+                }).collect();
+                self.compute_adt_layout(adt.did, &types, span);
+            }
+            TyKind::Tuple(elements) => {
+                for elem in elements {
+                    self.compute_ty_layout(elem, span);
+                }
+            }
+            TyKind::Array(elem, _) | TyKind::Slice(elem) => {
+                self.compute_ty_layout(elem, span);
+            }
+            TyKind::Ref(_, inner, _) | TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
+                self.compute_ty_layout(inner, span);
+            }
+            _ => {}
+        }
+    }
+
+    fn compute_body_locals(&mut self, program: &mir::Program, body_id: mir::BodyId) {
+        if let Some(body) = program.bodies.get(&body_id) {
+            for local in &body.locals {
+                self.compute_ty_layout(&local.ty, Span::null());
+            }
+            for block in &body.basic_blocks {
+                for stmt in &block.statements {
+                    self.compute_stmt_layouts(program, stmt);
+                }
+                if let Some(term) = &block.terminator {
+                    self.compute_terminator_layouts(program, term);
+                }
+            }
+        }
+    }
+
+    fn compute_stmt_layouts(&mut self, program: &mir::Program, stmt: &mir::Statement) {
+        match &stmt.kind {
+            mir::StatementKind::Assign(place, rv) => {
+                self.compute_place_layouts(program, place);
+                self.compute_rvalue_layouts(rv);
+            }
+            mir::StatementKind::SetDiscriminant { place, .. }
+            | mir::StatementKind::Retag(_, place)
+            | mir::StatementKind::AscribeUserType(place, _, _) => {
+                self.compute_place_layouts(program, place);
+            }
+            _ => {}
+        }
+    }
+
+    fn compute_terminator_layouts(&mut self, program: &mir::Program, term: &mir::Terminator) {
+        match &term.kind {
+            mir::TerminatorKind::Call { args, destination, .. } => {
+                for arg in args {
+                    self.compute_operand_layouts(program, arg);
+                }
+                if let Some((place, _)) = destination {
+                    self.compute_place_layouts(program, place);
+                }
+            }
+            mir::TerminatorKind::SwitchInt { discr, .. }
+            | mir::TerminatorKind::Assert { cond: discr, .. } => {
+                self.compute_operand_layouts(program, discr);
+            }
+            mir::TerminatorKind::Drop { place, .. }
+            | mir::TerminatorKind::DropAndReplace { place, .. } => {
+                self.compute_place_layouts(program, place);
+            }
+            _ => {}
+        }
+    }
+
+    fn compute_place_layouts(&mut self, program: &mir::Program, place: &mir::Place) {
+        // Walk all bodies to find the local type for this place
+        for body in program.bodies.values() {
+            if let Some(local) = body.locals.get(place.local as usize) {
+                self.compute_ty_layout(&local.ty, Span::null());
+                return;
+            }
+        }
+    }
+
+    fn compute_operand_layouts(&mut self, _program: &mir::Program, op: &mir::Operand) {
+        if let mir::Operand::Constant(c) = op {
+            self.compute_ty_layout(&c.ty, Span::null());
+        }
+    }
+
+    fn compute_rvalue_layouts(&mut self, rv: &mir::Rvalue) {
+        match rv {
+            mir::Rvalue::Cast(_, _, ty) => {
+                self.compute_ty_layout(ty, Span::null());
+            }
+            mir::Rvalue::Aggregate(agg, _) => {
+                if let mir::AggregateKind::Adt(adt, _, substs, _) = agg {
+                    let substs_types: Vec<Ty> = substs.iter().filter_map(|a| match a {
+                        mir::ty::GenericArg::Type(t) => Some(t.clone()),
+                        _ => None,
+                    }).collect();
+                    self.compute_adt_layout(adt.did, &substs_types, Span::null());
+                }
+            }
+            _ => {}
         }
     }
 
@@ -557,13 +658,17 @@ impl MirLowering {
         for item in &program.items {
             match &item.kind {
                 mir::ItemKind::Function(func) => {
-                    for ty in &func.sig.inputs { self.force_layout_for_ty(ty, Span::null()); }
-                    self.force_layout_for_ty(&func.sig.output, Span::null());
-                    if let Some(body) = program.bodies.get(&func.body_id) {
-                        for local in &body.locals { self.force_layout_for_ty(&local.ty, Span::null()); }
+                    for ty in &func.sig.inputs { self.compute_ty_layout(ty, Span::null()); }
+                    self.compute_ty_layout(&func.sig.output, Span::null());
+                    self.compute_body_locals(program, func.body_id);
                     }
+                mir::ItemKind::ExecutableConst(ec) => {
+                    self.compute_ty_layout(&ec.ty, Span::null());
+                    self.compute_body_locals(program, ec.body_id);
                 }
-                mir::ItemKind::Static(s) => { self.force_layout_for_ty(&s.ty, Span::null()); }
+                mir::ItemKind::Static(s) => {
+                    self.compute_ty_layout(&s.ty, Span::null());
+                }
                 _ => {}
             }
         }
