@@ -73,27 +73,6 @@ enum PlaceAccess {
 impl LirGenerator {
     const DIAGNOSTIC_CONTEXT: &'static str = "mir→lir";
 
-    fn skip_large_return_storage(&self) -> bool {
-        self.current_return_type
-            .as_ref()
-            .map(|ty| {
-                if Self::slice_element_type(ty).is_some() {
-                    return false;
-                }
-                matches!(
-                    ty,
-                    lir::LirType::Struct { .. }
-                        | lir::LirType::Array(_, _)
-                        | lir::LirType::Vector(_, _)
-                ) && self
-                    .data_layout
-                    .size_of(ty)
-                    .map(|size| size > 8)
-                    .unwrap_or(false)
-            })
-            .unwrap_or(false)
-    }
-
     /// Create a new LIR generator
     pub fn new(data_layout: lir::LirDataLayout) -> Self {
         Self::new_with_runtime_symbol_map(data_layout, |_| None)
@@ -147,10 +126,7 @@ impl LirGenerator {
         self
     }
 
-    pub fn with_mir_layouts(
-        mut self,
-        layouts: HashMap<mir::DefId, Vec<mir::Ty>>,
-    ) -> Self {
+    pub fn with_mir_layouts(mut self, layouts: HashMap<mir::DefId, Vec<mir::Ty>>) -> Self {
         self.mir_layouts = layouts;
         self
     }
@@ -3125,13 +3101,8 @@ impl LirGenerator {
         self.entry_allocas.clear();
         self.local_storage.clear();
 
-        let skip_return_storage = self.skip_large_return_storage();
-
         let locals: Vec<_> = self.mutable_locals.clone().into_iter().collect();
         for local in locals {
-            if skip_return_storage && Some(local) == self.return_local {
-                continue;
-            }
             let local_index = local as usize;
             if local_index >= self.local_types.len() {
                 continue;
@@ -3199,11 +3170,6 @@ impl LirGenerator {
     }
 
     fn get_or_create_register_for_place(&mut self, place: &mir::Place) -> Result<lir::LirValue> {
-        if self.skip_large_return_storage() && Some(place.local) == self.return_local {
-            return Err(crate::error::optimization_error(
-                "MIR→LIR: return place uses register storage for large aggregates",
-            ));
-        }
         if let Some(storage) = self.local_storage.get(&place.local) {
             return Ok(storage.ptr_value.clone());
         }
@@ -3329,45 +3295,6 @@ impl LirGenerator {
                 }
                 let lir_ty = self.lir_type_from_ty(&ty);
                 return Ok(PlaceAccess::Value { value, ty, lir_ty });
-            }
-
-            // When storage is intentionally skipped for the return local
-            // (e.g. for large aggregate returns managed by prepare_return_value),
-            // create a zero-initialized stack slot so the place is still resolvable.
-            let lir_ty = self.lir_type_from_ty(&ty);
-            let alignment = self.alignment_for_lir_type(&lir_ty);
-            if alignment > 0 {
-                let pointer_type = lir::LirType::Ptr(Box::new(lir_ty.clone()));
-                let alloca_id = self.next_id();
-                self.queued_instructions.push(lir::LirInstruction {
-                    id: alloca_id,
-                    kind: lir::LirInstructionKind::Alloca {
-                        size: lir::LirValue::constant(
-                            self.integer_constant(&lir::LirType::I32, 1)?,
-                        ),
-                        alignment,
-                    },
-                    result: Some(lir::LirRegister {
-                        id: alloca_id,
-                        ty: pointer_type.clone(),
-                    }),
-                    debug_info: None,
-                });
-                let ptr_value = lir::LirValue::register(alloca_id, pointer_type);
-                self.local_storage.insert(
-                    place.local,
-                    LocalStorage {
-                        ptr_value: ptr_value.clone(),
-                        element_type: lir_ty.clone(),
-                        alignment,
-                    },
-                );
-                return Ok(PlaceAccess::Address(PlaceAddress {
-                    ptr: ptr_value,
-                    ty,
-                    lir_ty,
-                    alignment,
-                }));
             }
 
             return Err(crate::error::optimization_error(format!(
@@ -5895,21 +5822,19 @@ impl LirGenerator {
                 lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
             }
             TyKind::Adt(adt, _) if self.struct_layouts.borrow().contains_key(&adt.did) => {
-                let fields = self
-                    .struct_layouts
-                    .borrow()
-                    .get(&adt.did)
-                    .unwrap()
-                    .clone();
+                let fields = self.struct_layouts.borrow().get(&adt.did).unwrap().clone();
                 lir::LirType::Struct {
-                    fields: fields.iter().map(|field| {
+                    fields: fields
+                        .iter()
+                        .map(|field| {
                         field.clone().unwrap_or_else(|| {
                             panic!(
                                 "MIR-to-LIR ICE: missing layout for field of ADT {}",
                                 adt.did
                             )
                         })
-                    }).collect(),
+                        })
+                        .collect(),
                     packed: false,
                     name: None,
                 }
@@ -5920,7 +5845,8 @@ impl LirGenerator {
                     .iter()
                     .map(|ty| Some(self.lir_type_from_ty(ty)))
                     .collect();
-                let struct_fields: Vec<lir::LirType> = fields.iter().map(|f| f.clone().unwrap()).collect();
+                let struct_fields: Vec<lir::LirType> =
+                    fields.iter().map(|f| f.clone().unwrap()).collect();
                 self.struct_layouts.borrow_mut().insert(adt.did, fields);
                 lir::LirType::Struct {
                     fields: struct_fields,
@@ -5930,10 +5856,13 @@ impl LirGenerator {
             }
             TyKind::Adt(adt, substs) => {
                 let key = {
-                    let substs_types: Vec<mir::Ty> = substs.iter().filter_map(|a| match a {
+                    let substs_types: Vec<mir::Ty> = substs
+                        .iter()
+                        .filter_map(|a| match a {
                         mir::ty::GenericArg::Type(t) => Some(t.clone()),
                         _ => None,
-                    }).collect();
+                        })
+                        .collect();
                     (adt.did, substs_types)
                 };
                 if let Some(field_tys) = self.full_layouts.get(&key) {
@@ -5941,7 +5870,8 @@ impl LirGenerator {
                         .iter()
                         .map(|ty| Some(self.lir_type_from_ty(ty)))
                         .collect();
-                    let struct_fields: Vec<lir::LirType> = fields.iter().map(|f| f.clone().unwrap()).collect();
+                    let struct_fields: Vec<lir::LirType> =
+                        fields.iter().map(|f| f.clone().unwrap()).collect();
                     self.struct_layouts.borrow_mut().insert(adt.did, fields);
                     return lir::LirType::Struct {
                         fields: struct_fields,
@@ -5951,10 +5881,13 @@ impl LirGenerator {
                 }
                 if let Some(populated) = self.adt_defs.get(&adt.did) {
                     if let Some(variant) = populated.variants.first() {
-                        let fields: Vec<Option<lir::LirType>> = variant.fields.iter()
+                        let fields: Vec<Option<lir::LirType>> = variant
+                            .fields
+                            .iter()
                             .map(|f| Some(self.lir_type_from_ty(&f.ty)))
                             .collect();
-                        let struct_fields: Vec<lir::LirType> = fields.iter().map(|f| f.clone().unwrap()).collect();
+                        let struct_fields: Vec<lir::LirType> =
+                            fields.iter().map(|f| f.clone().unwrap()).collect();
                         self.struct_layouts.borrow_mut().insert(adt.did, fields);
                         return lir::LirType::Struct {
                             fields: struct_fields,
@@ -5964,7 +5897,7 @@ impl LirGenerator {
                     }
                 }
                 panic!("MIR-to-LIR ICE: missing layout for ADT {}", adt.did)
-            },
+            }
             TyKind::FnDef(def_id, substs) => panic!(
                 "MIR-to-LIR ICE: function definition {} with substitutions {:?} used as a data type",
                 def_id, substs

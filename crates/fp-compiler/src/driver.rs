@@ -432,18 +432,24 @@ impl CompilerDriver {
         // TypecheckedTranspile: lift typed HIR back to AST, skip MIR/LIR
         if self.pipeline == PipelineMode::TypecheckedTranspile {
             let hir = self.state.hir(&hir_id)?;
-            let lifted = fp_backend::transforms::lift_program(
-                hir,
-                std::path::PathBuf::new(),
-            ).map_err(|e| CompilerDriverError::InternalCompilerError(format!("HIR→AST lift: {e}")))?;
-            if let Some(pkg) = self.state.typing_ctx.env_ctx.compiled_package(&current_package_id) {
+            let lifted = fp_backend::transforms::lift_program(hir, std::path::PathBuf::new())
+                .map_err(|e| {
+                    CompilerDriverError::InternalCompilerError(format!("HIR→AST lift: {e}"))
+                })?;
+            if let Some(pkg) = self
+                .state
+                .typing_ctx
+                .env_ctx
+                .compiled_package(&current_package_id)
+            {
                 pkg.borrow_mut().lifted_ast = Some(lifted);
             }
             return Ok(Vec::new()); // No LIR units needed
         }
 
         let fqp = FullyQualifiedPath::new(package_path.clone());
-        let (mir_id, struct_layouts, full_layouts, adt_defs) = self.lower_to_mir(&hir_id, &fqp).await?;
+        let (mir_id, struct_layouts, full_layouts, adt_defs) =
+            self.lower_to_mir(&hir_id, &fqp).await?;
         if let Some(package) = self
             .state
             .typing_ctx
@@ -455,17 +461,19 @@ impl CompilerDriver {
                 .borrow_mut()
                 .mir_struct_fields
                 .extend(struct_layouts);
-            package
-                .borrow_mut()
-                .mir_adt_defs
-                .extend(adt_defs.clone());
+            package.borrow_mut().mir_adt_defs.extend(adt_defs.clone());
         }
         let mut all_adt_defs = HashMap::new();
         for (_dep_id, dep_package) in self.state.typing_ctx.env_ctx.crates().iter() {
             all_adt_defs.extend(dep_package.borrow().mir_adt_defs.clone());
         }
-        let lir_id =
-            self.lower_to_lir(&mir_id, &fqp, &current_package_id, &full_layouts, &all_adt_defs)?;
+        let lir_id = self.lower_to_lir(
+            &mir_id,
+            &fqp,
+            &current_package_id,
+            &full_layouts,
+            &all_adt_defs,
+        )?;
         let lir = self.state.lir(&lir_id)?.clone();
         Ok(vec![fp_core::lir::LirCompileUnit {
             package_id: hir_package_id,
@@ -600,7 +608,15 @@ impl CompilerDriver {
         &mut self,
         hir_id: &HirId,
         path: &FullyQualifiedPath,
-    ) -> Result<(MirId, HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>>, HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>, HashMap<fp_core::hir::DefId, fp_core::mir::ty::AdtDef>), CompilerDriverError> {
+    ) -> Result<
+        (
+            MirId,
+            HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>>,
+            HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>,
+            HashMap<fp_core::hir::DefId, fp_core::mir::ty::AdtDef>,
+        ),
+        CompilerDriverError,
+    > {
         // HIR has already passed type checking at this boundary. Lowering is
         // therefore strict: a failure is an internal compiler error, never a
         // recoverable source diagnostic.
@@ -619,17 +635,25 @@ impl CompilerDriver {
         }
         let result = lowering.transform_async(hir).await;
         let (diagnostics, had_errors) = lowering.take_diagnostics();
-        let mir = result.map_err(|error| {
-            CompilerDriverError::InternalCompilerError(format!(
-                "HIR-to-MIR lowering failed: {error}"
-            ))
-        })?;
-        if had_errors {
             let details = diagnostics
                 .iter()
                 .map(|diagnostic| diagnostic.message.as_str())
                 .collect::<Vec<_>>()
                 .join("; ");
+        let mir = match result {
+            Ok(mir) => mir,
+            Err(error) if details.is_empty() => {
+                return Err(CompilerDriverError::InternalCompilerError(format!(
+                    "HIR-to-MIR lowering failed: {error}"
+                )));
+            }
+            Err(error) => {
+                return Err(CompilerDriverError::InternalCompilerError(format!(
+                    "HIR-to-MIR lowering failed: {error}; diagnostics: {details}"
+                )));
+            }
+        };
+        if had_errors {
             return Err(CompilerDriverError::InternalCompilerError(format!(
                 "HIR-to-MIR lowering reported diagnostics: {details}"
             )));
@@ -639,8 +663,11 @@ impl CompilerDriver {
             lowering.take_adt_defs();
         let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
             lowering.all_adt_field_tys().into_iter().collect();
-        let full_layouts: HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>> =
-            lowering.struct_layout_map()
+        let full_layouts: HashMap<
+            (fp_core::mir::DefId, Vec<fp_core::mir::Ty>),
+            Vec<fp_core::mir::Ty>,
+        > = lowering
+            .struct_layout_map()
                 .iter()
                 .map(|(key, layout)| ((key.def_id, key.args.clone()), layout.field_tys.clone()))
                 .collect();
@@ -660,7 +687,13 @@ impl CompilerDriver {
         let mir = self.state.mir(mir_id)?.clone();
         let mut all_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> = HashMap::new();
         for (_dep_id, dep_package) in self.state.typing_ctx.env_ctx.crates().iter() {
-            all_layouts.extend(dep_package.borrow().mir_struct_fields.iter().map(|(k, v)| (*k, v.clone())));
+            all_layouts.extend(
+                dep_package
+                    .borrow()
+                    .mir_struct_fields
+                    .iter()
+                    .map(|(k, v)| (*k, v.clone())),
+            );
         }
         let mut lowering = LirGenerator::new(self.state.typing_ctx.data_layout.clone())
             .with_package_id(package_id.clone())

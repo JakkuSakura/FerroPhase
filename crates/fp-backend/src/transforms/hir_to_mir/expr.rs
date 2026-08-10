@@ -551,10 +551,13 @@ impl MirLowering {
                         self.compute_ty_layout(t, span);
                     }
                 }
-                let types: Vec<Ty> = substs.iter().filter_map(|a| match a {
+                let types: Vec<Ty> = substs
+                    .iter()
+                    .filter_map(|a| match a {
                     mir::ty::GenericArg::Type(t) => Some(t.clone()),
                     _ => None,
-                }).collect();
+                    })
+                    .collect();
                 self.compute_adt_layout(adt.did, &types, span);
             }
             TyKind::Tuple(elements) => {
@@ -610,7 +613,12 @@ impl MirLowering {
 
     fn compute_terminator_layouts(&mut self, body: &mir::Body, term: &mir::Terminator) {
         match &term.kind {
-            mir::TerminatorKind::Call { func, args, destination, .. } => {
+            mir::TerminatorKind::Call {
+                func,
+                args,
+                destination,
+                ..
+            } => {
                 self.compute_operand_layouts(body, func);
                 for arg in args {
                     self.compute_operand_layouts(body, arg);
@@ -630,7 +638,9 @@ impl MirLowering {
                 self.compute_place_layouts(body, place);
                 self.compute_operand_layouts(body, value);
             }
-            mir::TerminatorKind::Yield { value, resume_arg, .. } => {
+            mir::TerminatorKind::Yield {
+                value, resume_arg, ..
+            } => {
                 self.compute_operand_layouts(body, value);
                 self.compute_place_layouts(body, resume_arg);
             }
@@ -649,16 +659,14 @@ impl MirLowering {
                     self.compute_ty_layout(field_ty, Span::null());
                     ty = field_ty.clone();
                 }
-                mir::PlaceElem::Deref => {
-                    match &ty.kind {
+                mir::PlaceElem::Deref => match &ty.kind {
                         TyKind::Ref(_, inner, _) | TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
                             let inner = inner.clone();
                             self.compute_ty_layout(&inner, Span::null());
                             ty = *inner;
                         }
                         _ => return,
-                    }
-                }
+                },
                 _ => {}
             }
         }
@@ -682,10 +690,13 @@ impl MirLowering {
             }
             mir::Rvalue::Aggregate(agg, _) => {
                 if let mir::AggregateKind::Adt(adt, _, substs, _) = agg {
-                    let substs_types: Vec<Ty> = substs.iter().filter_map(|a| match a {
+                    let substs_types: Vec<Ty> = substs
+                        .iter()
+                        .filter_map(|a| match a {
                         mir::ty::GenericArg::Type(t) => Some(t.clone()),
                         _ => None,
-                    }).collect();
+                        })
+                        .collect();
                     self.compute_adt_layout(adt.did, &substs_types, Span::null());
                 }
             }
@@ -697,7 +708,9 @@ impl MirLowering {
         for item in &program.items {
             match &item.kind {
                 mir::ItemKind::Function(func) => {
-                    for ty in &func.sig.inputs { self.compute_ty_layout(ty, Span::null()); }
+                    for ty in &func.sig.inputs {
+                        self.compute_ty_layout(ty, Span::null());
+                    }
                     self.compute_ty_layout(&func.sig.output, Span::null());
                     self.compute_body_locals(program, func.body_id);
                     }
@@ -817,6 +830,7 @@ impl MirLowering {
                 _ => {}
             }
         }
+        self.finalize_adt_definitions(program);
         let items: Vec<&hir::Item> = if reachable.is_empty() {
             program.items.iter().collect()
         } else {
@@ -3289,10 +3303,7 @@ impl MirLowering {
                 if let Some(path_args) =
                     path.segments.iter().rev().find_map(|seg| seg.args.as_ref())
                 {
-                    let def_id = path
-                        .res
-                        .as_ref()
-                        .and_then(|res| match res {
+                    let def_id = path.res.as_ref().and_then(|res| match res {
                             hir::Res::Def(def_id) => Some(*def_id),
                             _ => None,
                         });
@@ -4808,7 +4819,6 @@ impl MirLowering {
                 }
                 _ => {}
             }
-
         }
 
         let display = path
@@ -4821,7 +4831,7 @@ impl MirLowering {
         self.error_ty()
     }
 
-    fn register_struct(&mut self, def_id: hir::DefId, strukt: &hir::Struct, span: Span) {
+    fn register_struct(&mut self, def_id: hir::DefId, strukt: &hir::Struct, _span: Span) {
         if self.struct_defs.contains_key(&def_id) {
             return;
         }
@@ -4853,48 +4863,9 @@ impl MirLowering {
                 field_index,
             },
         );
-        let mir_fields: Vec<mir::ty::FieldDef> = strukt
-            .fields
-            .iter()
-            .map(|f| {
-                let field_ty = self.lower_type_expr(&f.ty);
-                mir::ty::FieldDef {
-                    did: hir::DefId::local(f.hir_id),
-                    ident: mir::Symbol::from(f.name.as_str()),
-                    vis: mir::ty::Visibility::Public,
-                    ty: field_ty,
                 }
-            })
-            .collect();
-        let mir_variant = mir::ty::VariantDef {
-            def_id,
-            ctor_def_id: None,
-            ident: mir::Symbol::from(strukt.name.as_str()),
-            discr: mir::ty::VariantDiscr::Relative(0),
-            fields: mir_fields,
-            ctor_kind: mir::ty::CtorKind::Fn,
-            is_recovered: false,
-        };
-        self.adt_defs.insert(def_id, mir::ty::AdtDef {
-            did: def_id,
-            variants: vec![mir_variant],
-            flags: mir::ty::AdtFlags::from_bits_retain(0),
-            repr: mir::ty::ReprOptions { int: None, align: None, pack: None, flags: mir::ty::ReprFlags::empty(), field_shuffle_seed: 0 },
-        });
 
-        if strukt.generics.params.is_empty() {
-            // JUSTIFY: layout may be uncomputable for forward-referenced types
-            // during registration; computed lazily when needed later.
-            if self.struct_layout_for_instance(def_id, &[], span).is_none() {
-                self.emit_warning(
-                    span,
-                    "struct layout computation returned None during registration",
-                );
-            }
-        }
-    }
-
-    fn register_enum(&mut self, def_id: hir::DefId, enm: &hir::Enum, span: Span) {
+    fn register_enum(&mut self, def_id: hir::DefId, enm: &hir::Enum, _span: Span) {
         if self.enum_defs.contains_key(&def_id) {
             return;
         }
@@ -4976,15 +4947,56 @@ impl MirLowering {
                 variants,
             },
         );
+    }
 
-        if enm.generics.params.is_empty() {
-            // JUSTIFY: layout may be uncomputable for forward-referenced types
-            // during registration; computed lazily when needed later.
-            if self.enum_layout_for_instance(def_id, &[], span).is_none() {
-                self.emit_warning(
-                    span,
-                    "enum layout computation returned None during registration",
+    // Resolve field types and layouts only after every canonical ADT identity
+    // has been registered; dependency definitions arrive in hash-map order.
+    fn finalize_adt_definitions(&mut self, program: &hir::Program) {
+        for item in program.def_map.values() {
+            match &item.kind {
+                hir::ItemKind::Struct(strukt) => {
+                    let mir_fields = strukt
+                        .fields
+                        .iter()
+                        .map(|field| mir::ty::FieldDef {
+                            did: hir::DefId::local(field.hir_id),
+                            ident: mir::Symbol::from(field.name.as_str()),
+                            vis: mir::ty::Visibility::Public,
+                            ty: self.lower_type_expr(&field.ty),
+                        })
+                        .collect();
+                    let mir_variant = mir::ty::VariantDef {
+                        def_id: item.def_id,
+                        ctor_def_id: None,
+                        ident: mir::Symbol::from(strukt.name.as_str()),
+                        discr: mir::ty::VariantDiscr::Relative(0),
+                        fields: mir_fields,
+                        ctor_kind: mir::ty::CtorKind::Fn,
+                        is_recovered: false,
+                    };
+                    self.adt_defs.insert(
+                        item.def_id,
+                        mir::ty::AdtDef {
+                            did: item.def_id,
+                            variants: vec![mir_variant],
+                            flags: mir::ty::AdtFlags::from_bits_retain(0),
+                            repr: mir::ty::ReprOptions {
+                                int: None,
+                                align: None,
+                                pack: None,
+                                flags: mir::ty::ReprFlags::empty(),
+                                field_shuffle_seed: 0,
+                            },
+                        },
                 );
+                    if strukt.generics.params.is_empty() {
+                        let _ = self.struct_layout_for_instance(item.def_id, &[], item.span);
+                    }
+                }
+                hir::ItemKind::Enum(enm) if enm.generics.params.is_empty() => {
+                    let _ = self.enum_layout_for_instance(item.def_id, &[], item.span);
+                }
+                _ => {}
             }
         }
     }
@@ -5057,13 +5069,18 @@ impl MirLowering {
         let field_tys = layout.field_tys.clone();
         for field_ty in &field_tys {
             if let TyKind::Adt(adt, substs) = &field_ty.kind {
-                if !self.struct_defs.contains_key(&adt.did) && !self.enum_defs.contains_key(&adt.did) {
+                if !self.struct_defs.contains_key(&adt.did)
+                    && !self.enum_defs.contains_key(&adt.did)
+                {
                     continue;
                 }
-                let types: Vec<Ty> = substs.iter().filter_map(|a| match a {
+                let types: Vec<Ty> = substs
+                    .iter()
+                    .filter_map(|a| match a {
                     mir::ty::GenericArg::Type(t) => Some(t.clone()),
                     _ => None,
-                }).collect();
+                    })
+                    .collect();
                 let _ = self.struct_layout_for_instance(adt.did, &types, span);
                 let _ = self.enum_layout_for_instance(adt.did, &types, span);
             }
@@ -5270,13 +5287,18 @@ impl MirLowering {
         let payload_tys = layout.payload_tys.clone();
         for field_ty in &payload_tys {
             if let TyKind::Adt(adt, substs) = &field_ty.kind {
-                if !self.struct_defs.contains_key(&adt.did) && !self.enum_defs.contains_key(&adt.did) {
+                if !self.struct_defs.contains_key(&adt.did)
+                    && !self.enum_defs.contains_key(&adt.did)
+                {
                     continue;
                 }
-                let types: Vec<Ty> = substs.iter().filter_map(|a| match a {
+                let types: Vec<Ty> = substs
+                    .iter()
+                    .filter_map(|a| match a {
                     mir::ty::GenericArg::Type(t) => Some(t.clone()),
                     _ => None,
-                }).collect();
+                    })
+                    .collect();
                 let _ = self.struct_layout_for_instance(adt.did, &types, span);
                 let _ = self.enum_layout_for_instance(adt.did, &types, span);
             }
