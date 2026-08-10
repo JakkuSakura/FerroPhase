@@ -407,7 +407,6 @@ pub struct MirLowering {
     diagnostics: Vec<Diagnostic>,
     has_errors: bool,
     struct_defs: HashMap<hir::DefId, StructDefinition>,
-    struct_defs_by_name: HashMap<String, hir::DefId>,
     struct_layouts: HashMap<StructLayoutKey, StructLayout>,
     struct_layouts_by_ty: HashMap<Ty, StructLayoutKey>,
     struct_layouts_in_progress: HashSet<StructLayoutKey>,
@@ -483,7 +482,6 @@ impl MirLowering {
             diagnostics: Vec::new(),
             has_errors: false,
             struct_defs: HashMap::new(),
-            struct_defs_by_name: HashMap::new(),
             struct_layouts: HashMap::new(),
             struct_layouts_by_ty: HashMap::new(),
             struct_layouts_in_progress: HashSet::new(),
@@ -3297,8 +3295,7 @@ impl MirLowering {
                         .and_then(|res| match res {
                             hir::Res::Def(def_id) => Some(*def_id),
                             _ => None,
-                        })
-                        .or_else(|| self.resolve_path_def_id(path));
+                        });
                     if let Some(def_id) = def_id {
                         if let Some(layout) = self.enum_layout_for_ty(actual_ty) {
                             let enum_def_id = variant_enum_def.unwrap_or(def_id);
@@ -4586,57 +4583,10 @@ impl MirLowering {
     }
 
     fn resolve_path_def_id(&self, path: &hir::Path) -> Option<hir::DefId> {
-        if let Some(hir::Res::Def(def_id)) = path.res {
-            return Some(def_id);
+        match path.res {
+            Some(hir::Res::Def(def_id)) => Some(def_id),
+            _ => None,
         }
-        let segments = path.segments.as_slice();
-        if segments.is_empty() {
-            return None;
-        }
-        let full = segments
-            .iter()
-            .map(|seg| seg.name.as_str())
-            .collect::<Vec<_>>()
-            .join("::");
-        let resolved = self.struct_defs_by_name.get(&full).copied().or_else(|| {
-            self.enum_defs
-                .values()
-                .find(|def| def.name == full)
-                .map(|def| def.def_id)
-        });
-        if resolved.is_some() {
-            return resolved;
-        }
-        let tail = segments.last()?.name.as_str();
-        let struct_matches: Vec<hir::DefId> = self
-            .struct_defs
-            .iter()
-            .filter_map(|(def_id, def)| {
-                if def.name == tail || def.name.ends_with(&format!("::{}", tail)) {
-                    Some(*def_id)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        if struct_matches.len() == 1 {
-            return struct_matches.into_iter().next();
-        }
-        let enum_matches: Vec<hir::DefId> = self
-            .enum_defs
-            .iter()
-            .filter_map(|(def_id, def)| {
-                if def.name == tail || def.name.ends_with(&format!("::{}", tail)) {
-                    Some(*def_id)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        if enum_matches.len() == 1 {
-            return enum_matches.into_iter().next();
-        }
-        None
     }
 
     fn lower_path_type(&mut self, path: &hir::Path, span: Span) -> Ty {
@@ -4772,57 +4722,6 @@ impl MirLowering {
         }
 
         if let Some(segment) = path.segments.last() {
-            let tail = segment.name.as_str();
-            let struct_matches: Vec<hir::DefId> = self
-                .struct_defs
-                .iter()
-                .filter_map(|(def_id, def)| {
-                    if def.name == tail || def.name.ends_with(&format!("::{}", tail)) {
-                        Some(*def_id)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            if struct_matches.len() == 1 {
-                let def_id = struct_matches[0];
-                let args = segment
-                    .args
-                    .as_ref()
-                    .map(|args| self.lower_generic_args(Some(args), span))
-                    .unwrap_or_default();
-                if let Some(layout) = self.struct_layout_for_instance(def_id, &args, span) {
-                    return layout.ty.clone();
-                }
-                return self.error_ty();
-            }
-
-            let enum_matches: Vec<hir::DefId> = self
-                .enum_defs
-                .iter()
-                .filter_map(|(def_id, def)| {
-                    if def.name == tail || def.name.ends_with(&format!("::{}", tail)) {
-                        Some(*def_id)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            if enum_matches.len() == 1 {
-                let def_id = enum_matches[0];
-                let args = segment
-                    .args
-                    .as_ref()
-                    .map(|args| self.lower_generic_args(Some(args), span))
-                    .unwrap_or_default();
-                if let Some(layout) = self.enum_layout_for_instance(def_id, &args, span) {
-                    return layout.enum_ty.clone();
-                }
-                return self.error_ty();
-            }
-        }
-
-        if let Some(segment) = path.segments.last() {
             let name = segment.name.clone();
             match name.as_str() {
                 "i8" => {
@@ -4910,33 +4809,6 @@ impl MirLowering {
                 _ => {}
             }
 
-            if let Some(def_id) = self.struct_defs_by_name.get(name.as_str()).copied() {
-                let args = segment
-                    .args
-                    .as_ref()
-                    .map(|args| self.lower_generic_args(Some(args), span))
-                    .unwrap_or_default();
-                if let Some(layout) = self.struct_layout_for_instance(def_id, &args, span) {
-                    return layout.ty.clone();
-                }
-                return self.error_ty();
-            }
-            if let Some(def) = self
-                .enum_defs
-                .values()
-                .find(|def| def.name.as_str() == name.as_str())
-                .cloned()
-            {
-                let args = segment
-                    .args
-                    .as_ref()
-                    .map(|args| self.lower_generic_args(Some(args), span))
-                    .unwrap_or_default();
-                if let Some(layout) = self.enum_layout_for_instance(def.def_id, &args, span) {
-                    return layout.enum_ty.clone();
-                }
-                return self.error_ty();
-            }
         }
 
         let display = path
@@ -4945,25 +4817,8 @@ impl MirLowering {
             .map(|seg| seg.name.as_str())
             .collect::<Vec<_>>()
             .join("::");
-        let args = path
-            .segments
-            .last()
-            .and_then(|segment| segment.args.as_ref())
-            .map(|args| self.lower_generic_args(Some(args), span))
-            .unwrap_or_default();
-        if !args.is_empty() {
-            let opaque = self.opaque_ty(&display);
-            if let TyKind::Adt(adt, _) = opaque.kind {
-                return Ty {
-                    kind: TyKind::Adt(
-                        adt,
-                        args.into_iter().map(mir::ty::GenericArg::Type).collect(),
-                    ),
-                };
-            }
-            return opaque;
-        }
-        self.opaque_ty(&display)
+        self.emit_error(span, format!("unresolved type path `{display}`"));
+        self.error_ty()
     }
 
     fn register_struct(&mut self, def_id: hir::DefId, strukt: &hir::Struct, span: Span) {
@@ -4998,9 +4853,6 @@ impl MirLowering {
                 field_index,
             },
         );
-        self.struct_defs_by_name
-            .insert(String::from(strukt.name.clone()), def_id);
-
         let mir_fields: Vec<mir::ty::FieldDef> = strukt
             .fields
             .iter()
@@ -5023,7 +4875,7 @@ impl MirLowering {
             ctor_kind: mir::ty::CtorKind::Fn,
             is_recovered: false,
         };
-        eprintln!("adt_defs insert: {}", def_id); self.adt_defs.insert(def_id, mir::ty::AdtDef {
+        self.adt_defs.insert(def_id, mir::ty::AdtDef {
             did: def_id,
             variants: vec![mir_variant],
             flags: mir::ty::AdtFlags::from_bits_retain(0),

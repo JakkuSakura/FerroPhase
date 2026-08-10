@@ -71,6 +71,20 @@ fn transform_expr_uses_typing_resolved_name_table() -> Result<()> {
 }
 
 #[test]
+fn unqualified_lookup_does_not_scan_global_paths_by_suffix() {
+    let mut generator = HirGenerator::new();
+    generator.module_path = QualifiedPath::new(vec!["dependency".to_string()]);
+    generator.record_type_symbol(
+        "SharedType",
+        hir::Res::Def(hir::DefId::new(hir::PackageId(7), 1)),
+        &ast::Visibility::Public,
+    );
+
+    assert_eq!(generator.resolve_value_symbol("SharedType"), None);
+    assert_eq!(generator.resolve_type_symbol("SharedType"), None);
+}
+
+#[test]
 fn compile_normalization_runs_during_ast_to_hir_lowering() -> Result<()> {
     let frontend = fp_lang::FerroFrontend::new();
     let parsed = frontend.parse_expr("println!(\"hello\")")?;

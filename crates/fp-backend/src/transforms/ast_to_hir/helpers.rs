@@ -1,5 +1,5 @@
 use super::*;
-use fp_core::module::path::{ParsedPath, PathPrefix, QualifiedPath, parse_path, resolve_item_path};
+use fp_core::module::path::{parse_path, resolve_item_path, ParsedPath, PathPrefix, QualifiedPath};
 
 impl HirGenerator {
     fn resolved_name_to_hir_path(
@@ -249,7 +249,7 @@ impl HirGenerator {
                     }
                     return Ok(hir::Path {
                         segments: canonical_segments,
-                        res: canonical_res.or(resolved),
+                        res: canonical_res,
                     });
                 }
             }
@@ -292,13 +292,6 @@ impl HirGenerator {
                         if self.global_value_defs.contains_key(&key) {
                             return true;
                         }
-                        if candidate.segments.len() > 1 {
-                            if let Some(parent) = candidate.parent_n(1) {
-                                if self.global_type_defs.contains_key(&parent.to_key()) {
-                                    return true;
-                                }
-                            }
-                        }
                     }
                     PathResolutionScope::Type => {
                         if self.global_type_defs.contains_key(&key) {
@@ -337,7 +330,7 @@ impl HirGenerator {
                 }
                 return Ok(hir::Path {
                     segments: canonical_segments,
-                    res: canonical_res.or(resolved),
+                    res: canonical_res,
                 });
             }
         }

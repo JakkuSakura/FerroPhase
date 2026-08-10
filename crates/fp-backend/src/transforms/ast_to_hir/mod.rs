@@ -940,7 +940,6 @@ impl HirGenerator {
             .rev()
             .find_map(|scope| scope.get(name).cloned())
             .or_else(|| self.lookup_symbol(name, &self.global_type_defs))
-            .or_else(|| self.resolve_global_by_last_segment(name, &self.global_type_defs))
     }
 
     fn resolve_value_symbol(&self, name: &str) -> Option<hir::Res> {
@@ -949,21 +948,6 @@ impl HirGenerator {
             .rev()
             .find_map(|scope| scope.get(name).cloned())
             .or_else(|| self.lookup_symbol(name, &self.global_value_defs))
-            .or_else(|| self.resolve_global_by_last_segment(name, &self.global_value_defs))
-    }
-
-    fn resolve_global_by_last_segment(
-        &self,
-        name: &str,
-        map: &HashMap<String, SymbolEntry>,
-    ) -> Option<hir::Res> {
-        let suffix = format!("::{}", name);
-        for (key, entry) in map.iter() {
-            if key.ends_with(&suffix) && entry.export.can_access(&self.module_path.segments) {
-                return Some(entry.res.clone());
-            }
-        }
-        None
     }
 
     fn push_value_scope(&mut self) {
