@@ -48,14 +48,26 @@ impl OperationMaterializer for FerroOperationMaterializer {
         m: &mut ExprMatch,
         _ty: &TySlot,
     ) -> Result<Option<Expr>> {
-        // Single non-wildcard arm: desugar to if-let
-        if m.cases.len() != 1 { return Ok(None); }
-        let case = &m.cases[0];
-        let pat = match &case.pat {
+        // Find the binding arm (non-wildcard, non-guard)
+        let binding_case = if m.cases.len() == 1 {
+            &m.cases[0]
+        } else if m.cases.len() == 2 {
+            if matches!(m.cases[0].pat.as_ref().map(|p| &p.kind), Some(PatternKind::Wildcard(_))) {
+                &m.cases[1]
+            } else if matches!(m.cases[1].pat.as_ref().map(|p| &p.kind), Some(PatternKind::Wildcard(_))) {
+                &m.cases[0]
+            } else {
+                return Ok(None);
+            }
+        } else {
+            return Ok(None);
+        };
+
+        let pat = match &binding_case.pat {
             Some(p) => p,
             None => return Ok(None),
         };
-        if matches!(&pat.kind, PatternKind::Wildcard(_)) { return Ok(None); }
+        if matches!(&pat.kind, PatternKind::Wildcard(_) | PatternKind::Ident(_)) { return Ok(None); }
 
         let scrutinee = match &m.scrutinee {
             Some(s) => s.as_ref().clone(),
@@ -82,14 +94,14 @@ impl OperationMaterializer for FerroOperationMaterializer {
                             semicolon: Some(true),
                         }),
                         fp_core::ast::BlockStmt::Expr(fp_core::ast::BlockStmtExpr {
-                            expr: case.body.clone(),
+                            expr: binding_case.body.clone(),
                             semicolon: Some(false),
                         }),
                     ],
                 })
             )
         } else {
-            case.body.as_ref().clone()
+            binding_case.body.as_ref().clone()
         };
 
         let if_expr = Expr::from_parts(0, None, None,
@@ -114,6 +126,8 @@ fn match_binding_name(pat: &fp_core::ast::Pattern) -> Option<String> {
     match &pat.kind {
         PatternKind::Ident(id) => Some(id.ident.name.clone()),
         PatternKind::Struct(s) => s.fields.first().map(|f| f.name.name.clone()),
+        PatternKind::TupleStruct(ts) => ts.patterns.first()
+            .and_then(|p| match_binding_name(p)),
         _ => None,
     }
 }

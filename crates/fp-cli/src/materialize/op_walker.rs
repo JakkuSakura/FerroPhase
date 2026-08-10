@@ -185,7 +185,7 @@ pub fn materialize_expr(
                 kwarg.value = materialize_expr(value, strategy)?;
             }
             if let Some(expr) = strategy.materialize_invoke(&mut invoke, &expr_ty)? {
-                expr
+                materialize_expr(expr, strategy)?
             } else {
                 ast::Expr::with_ty(ast::ExprKind::Invoke(invoke), ty)
             }
@@ -201,7 +201,7 @@ pub fn materialize_expr(
                 }
             }
             if let Some(new_expr) = strategy.materialize_struct(&mut struct_expr, &expr_ty)? {
-                new_expr
+                materialize_expr(new_expr, strategy)?
             } else {
                 ast::Expr::with_ty(ast::ExprKind::Struct(struct_expr), ty)
             }
@@ -213,7 +213,7 @@ pub fn materialize_expr(
                 }
             }
             if let Some(new_expr) = strategy.materialize_structural(&mut struct_expr, &expr_ty)? {
-                new_expr
+                materialize_expr(new_expr, strategy)?
             } else {
                 ast::Expr::with_ty(ast::ExprKind::Structural(struct_expr), ty)
             }
@@ -313,7 +313,7 @@ pub fn materialize_expr(
             }
 
             if let Some(expr) = strategy.materialize_call(&mut call, &expr_ty)? {
-                expr
+                materialize_expr(expr, strategy)?
             } else {
                 ast::Expr::with_ty(ast::ExprKind::IntrinsicCall(call), ty)
             }
@@ -355,7 +355,7 @@ pub fn materialize_expr(
                 }
             }
             if let Some(new_expr) = strategy.materialize_container(&mut collection, &expr_ty)? {
-                new_expr
+                materialize_expr(new_expr, strategy)?
             } else {
                 ast::Expr::with_ty(ast::ExprKind::IntrinsicContainer(collection), ty)
             }

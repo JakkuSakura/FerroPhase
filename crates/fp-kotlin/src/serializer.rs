@@ -549,6 +549,10 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                     let receiver = args.first().cloned().unwrap_or_default();
                     Ok(format!("{}.let {{ it }}", receiver))
                 }
+                CallKind::Op(OpKind::OptionUnwrap) => {
+                    let receiver = args.first().cloned().unwrap_or_default();
+                    Ok(format!("{}!!", receiver))
+                }
                 _ => {
                     let name = intrinsic_name(&ic.kind);
                     Ok(format!("{}({})", name, args.join(", ")))
