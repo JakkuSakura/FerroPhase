@@ -927,17 +927,21 @@ async fn compile_project(
 
         let name = package_id.as_str();
 
-        // Apply OperationMaterializer (transpile-mode AST rewrites: Some/None/Match→If)
+        // Apply OperationMaterializer (two passes to catch nested patterns)
         let op_materializer = fp_lang::op_materializer::FerroOperationMaterializer;
         for pkg_item in &mut source.items {
-            let file = File {
+            let mut file = File {
                 path: PathBuf::new(),
                 attrs: vec![],
                 collected_items: vec![],
                 items: vec![pkg_item.item.clone()],
             };
-            let file = crate::materialize::op_walker::materialize_file(file, &op_materializer)
-                .map_err(|e| CliError::Compilation(e.to_string()))?;
+            // Run until convergence (max 5 passes)
+            for _ in 0..5 {
+                let new_file = crate::materialize::op_walker::materialize_file(file, &op_materializer)
+                    .map_err(|e| CliError::Compilation(e.to_string()))?;
+                file = new_file;
+            }
             if let Some(item) = file.items.into_iter().next() {
                 pkg_item.item = item;
             }

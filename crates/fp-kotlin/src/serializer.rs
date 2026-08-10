@@ -658,6 +658,12 @@ fn render_match_pat(pat: &Option<fp_core::ast::BPattern>) -> String {
             PatternKind::Tuple(t) => t.patterns.iter()
                 .map(|p| render_match_pat(&Some(Box::new(p.clone()))))
                 .collect::<Vec<_>>().join(", "),
+            PatternKind::TupleStruct(ts) => {
+                let inner = ts.patterns.iter()
+                    .map(|p| render_match_pat(&Some(Box::new(p.clone()))))
+                    .collect::<Vec<_>>().join(", ");
+                format!("{}({})", ts.name.to_string(), inner)
+            }
             _ => "else".to_string(),
         },
         None => "else".to_string(),

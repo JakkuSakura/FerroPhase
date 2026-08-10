@@ -158,7 +158,7 @@ pub fn materialize_expr(
             }
             match_expr.cases = cases;
             if let Some(expr) = strategy.materialize_match(&mut match_expr, &expr_ty)? {
-                expr
+                materialize_expr(expr, strategy)?
             } else {
                 ast::Expr::with_ty(ast::ExprKind::Match(match_expr), ty)
             }
