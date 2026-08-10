@@ -232,6 +232,9 @@ pub struct CompiledPackage {
     /// HIR definitions published by this package.
     pub hir_program: Option<crate::hir::Program>,
 
+    /// Lifted AST from typed HIR (TypecheckedTranspile mode).
+    pub lifted_ast: Option<crate::ast::File>,
+
     /// MIR produced for this package.
     pub mir_program: Option<crate::mir::Program>,
 
@@ -272,6 +275,7 @@ impl CompiledPackage {
             lir_units: Vec::new(),
             lir_workspace: LirWorkspace::new(data_layout),
             hir_program: None,
+            lifted_ast: None,
             mir_program: None,
             hir_exports: HashMap::new(),
             items: Vec::new(),

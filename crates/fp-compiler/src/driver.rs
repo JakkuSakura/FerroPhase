@@ -31,9 +31,11 @@ pub struct CompilerDriver {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PipelineMode {
     /// Full native compilation: AST → HIR → MIR → LIR
-    Full,
+    Native,
     /// Stop after parsing: resolve modules, parse sources, return AST items
-    Parse,
+    NominalTranspile,
+    /// HIR typing + lift back to AST: AST → HIR → typing → AST
+    TypecheckedTranspile,
 }
 
 impl CompilerDriver {
@@ -71,7 +73,7 @@ impl CompilerDriver {
             building_packages: HashSet::new(),
             compiled_packages: HashMap::new(),
             next_hir_def_id: 0,
-            pipeline: PipelineMode::Full,
+            pipeline: PipelineMode::Native,
         }
     }
 
@@ -82,7 +84,7 @@ impl CompilerDriver {
             building_packages: HashSet::new(),
             compiled_packages: HashMap::new(),
             next_hir_def_id: 0,
-            pipeline: PipelineMode::Full,
+            pipeline: PipelineMode::Native,
         }
     }
 
@@ -319,7 +321,7 @@ impl CompilerDriver {
                     source,
                     self.state.typing_ctx.data_layout.clone(),
                 );
-                if self.pipeline == PipelineMode::Full {
+                if self.pipeline == PipelineMode::Native {
                     let units = self.compile_items_to_lir_units(&package).await?;
                     Self::publish_lir_units(&package, package_id, &units)?;
                 }
@@ -426,6 +428,20 @@ impl CompilerDriver {
         {
             package.borrow_mut().hir_program = Some(self.state.hir(&hir_id)?.clone());
         }
+
+        // TypecheckedTranspile: lift typed HIR back to AST, skip MIR/LIR
+        if self.pipeline == PipelineMode::TypecheckedTranspile {
+            let hir = self.state.hir(&hir_id)?;
+            let lifted = fp_backend::transforms::lift_program(
+                hir,
+                std::path::PathBuf::new(),
+            ).map_err(|e| CompilerDriverError::InternalCompilerError(format!("HIR→AST lift: {e}")))?;
+            if let Some(pkg) = self.state.typing_ctx.env_ctx.compiled_package(&current_package_id) {
+                pkg.borrow_mut().lifted_ast = Some(lifted);
+            }
+            return Ok(Vec::new()); // No LIR units needed
+        }
+
         let fqp = FullyQualifiedPath::new(package_path.clone());
         let (mir_id, struct_layouts) = self.lower_to_mir(&hir_id, &fqp).await?;
         if let Some(package) = self

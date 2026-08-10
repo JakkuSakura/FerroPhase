@@ -362,6 +362,10 @@ fn emit_box_body(body: &BExpr, e: &mut KotlinEmitter) -> Result<()> {
 fn ident_from_pattern(pat: &Pattern) -> String {
     match &pat.kind {
         PatternKind::Ident(id) => id.ident.name.clone(),
+        PatternKind::Tuple(t) => {
+            let names: Vec<String> = t.patterns.iter().map(|p| ident_from_pattern(p)).collect();
+            format!("({})", names.join(", "))
+        }
         _ => "_".to_string(),
     }
 }
@@ -423,15 +427,28 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
             let scrutinee = mt.scrutinee.as_ref()
                 .map(|s| render_expr(s, e)).transpose()?
                 .unwrap_or_else(|| "null".to_string());
-            let mut buf = format!("when ({}) {{\n", scrutinee);
-            for case in &mt.cases {
-                let pat = render_match_pat(&case.pat);
+
+            // Single non-wildcard arm → if (x) { body }
+            if mt.cases.len() == 1 && !matches!(mt.cases[0].pat.as_ref().map(|p| &p.kind), Some(PatternKind::Wildcard(_))) {
+                let case = &mt.cases[0];
+                let pat_var = match_case_binding(&case.pat);
                 let body = render_expr(&case.body, e)?;
-                let _ = writeln!(buf, "        {} -> {}", pat, body);
+                if let Some(var) = pat_var {
+                    Ok(format!("if ({0} != null) {{ val {1} = {0}!!; {2} }}", scrutinee, var, body))
+                } else {
+                    Ok(format!("if ({}) {{ {} }}", scrutinee, body))
+                }
+            } else {
+                let mut buf = format!("when ({}) {{\n", scrutinee);
+                for case in &mt.cases {
+                    let pat = render_match_pat(&case.pat);
+                    let body = render_expr(&case.body, e)?;
+                    let _ = writeln!(buf, "        {} -> {}", pat, body);
+                }
+                for _ in 0..e.indent { buf.push_str("    "); }
+                buf.push('}');
+                Ok(buf)
             }
-            for _ in 0..e.indent { buf.push_str("    "); }
-            buf.push('}');
-            Ok(buf)
         }
 
         ExprKind::Block(block) => {
@@ -631,9 +648,27 @@ fn render_match_pat(pat: &Option<fp_core::ast::BPattern>) -> String {
         Some(p) => match &p.kind {
             PatternKind::Ident(id) => id.ident.name.clone(),
             PatternKind::Wildcard(_) => "else".to_string(),
+            PatternKind::Struct(s) => s.fields.iter()
+                .map(|f| f.name.name.clone())
+                .collect::<Vec<_>>().join(", "),
+            PatternKind::Tuple(t) => t.patterns.iter()
+                .map(|p| render_match_pat(&Some(Box::new(p.clone()))))
+                .collect::<Vec<_>>().join(", "),
             _ => "else".to_string(),
         },
         None => "else".to_string(),
+    }
+}
+
+/// Extract a binding variable name from the first struct field of a match arm.
+fn match_case_binding(pat: &Option<fp_core::ast::BPattern>) -> Option<String> {
+    match pat {
+        Some(p) => match &p.kind {
+            PatternKind::Ident(id) => Some(id.ident.name.clone()),
+            PatternKind::Struct(s) => s.fields.first().map(|f| f.name.name.clone()),
+            _ => None,
+        },
+        None => None,
     }
 }
 
