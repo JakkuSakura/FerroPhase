@@ -48,19 +48,17 @@ impl OperationMaterializer for FerroOperationMaterializer {
         m: &mut ExprMatch,
         _ty: &TySlot,
     ) -> Result<Option<Expr>> {
-        // Find the binding arm (non-wildcard, non-guard)
-        let binding_case = if m.cases.len() == 1 {
-            &m.cases[0]
-        } else if m.cases.len() == 2 {
-            if matches!(m.cases[0].pat.as_ref().map(|p| &p.kind), Some(PatternKind::Wildcard(_))) {
-                &m.cases[1]
-            } else if matches!(m.cases[1].pat.as_ref().map(|p| &p.kind), Some(PatternKind::Wildcard(_))) {
-                &m.cases[0]
-            } else {
-                return Ok(None);
+        if m.cases.len() != 2 { return Ok(None); }
+
+        let (binding_case, _) = match (&m.cases[0].pat, &m.cases[1].pat) {
+            (Some(p0), Some(p1)) => {
+                let p0_trivial = is_trivial_pattern(&p0.kind);
+                let p1_trivial = is_trivial_pattern(&p1.kind);
+            if p0_trivial && !p1_trivial { eprintln!("  → binding=case1"); (&m.cases[1], &m.cases[0]) }
+            else if !p0_trivial && p1_trivial { eprintln!("  → binding=case0"); (&m.cases[0], &m.cases[1]) }
+            else { eprintln!("  → skip (both trivial or both non-trivial)"); return Ok(None); }
             }
-        } else {
-            return Ok(None);
+            _ => return Ok(None),
         };
 
         let pat = match &binding_case.pat {
@@ -120,6 +118,15 @@ fn null_expr() -> Expr {
     Expr::from_parts(0, None, None,
         ExprKind::Value(Box::new(Value::Null(Default::default()))),
     )
+}
+
+/// Whether this pattern is a trivial/fallthrough arm (Wildcard, None ident, etc.)
+fn is_trivial_pattern(kind: &PatternKind) -> bool {
+    match kind {
+        PatternKind::Wildcard(_) => true,
+        PatternKind::Ident(id) => id.ident.name == "None" || id.ident.name == "Err",
+        _ => false,
+    }
 }
 
 fn match_binding_name(pat: &fp_core::ast::Pattern) -> Option<String> {
