@@ -5167,6 +5167,18 @@ impl MirLowering {
         self.struct_layouts_by_ty.insert(struct_ty, key.clone());
         self.struct_layouts_in_progress.remove(&key);
 
+        let field_tys = layout.field_tys.clone();
+        for field_ty in &field_tys {
+            if let TyKind::Adt(adt, substs) = &field_ty.kind {
+                let types: Vec<Ty> = substs.iter().filter_map(|a| match a {
+                    mir::ty::GenericArg::Type(t) => Some(t.clone()),
+                    _ => None,
+                }).collect();
+                let _ = self.struct_layout_for_instance(adt.did, &types, span);
+                let _ = self.enum_layout_for_instance(adt.did, &types, span);
+            }
+        }
+
         Some(layout)
     }
 
@@ -5364,6 +5376,18 @@ impl MirLowering {
 
         self.enum_layouts.insert(key.clone(), layout.clone());
         self.enum_layouts_in_progress.remove(&key);
+
+        let payload_tys = layout.payload_tys.clone();
+        for field_ty in &payload_tys {
+            if let TyKind::Adt(adt, substs) = &field_ty.kind {
+                let types: Vec<Ty> = substs.iter().filter_map(|a| match a {
+                    mir::ty::GenericArg::Type(t) => Some(t.clone()),
+                    _ => None,
+                }).collect();
+                let _ = self.struct_layout_for_instance(adt.did, &types, span);
+                let _ = self.enum_layout_for_instance(adt.did, &types, span);
+            }
+        }
 
         if !has_payload {
             for variant in &enum_def.variants {
