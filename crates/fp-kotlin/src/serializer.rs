@@ -89,18 +89,19 @@ fn settings_gradle(name: &str) -> String {
     format!("rootProject.name = \"{}\"\n", name.replace('-', "_"))
 }
 
-fn build_gradle(name: &str, _deps: &[String]) -> String {
+fn build_gradle(name: &str, deps: &[String]) -> String {
     let group = format!("com.{}", name.replace('-', "."));
-    // Cross-package deps deferred for multi-module project support.
-    // For now, each package builds independently.
+    let dep_lines: String = deps.iter()
+        .map(|d| format!("    implementation(project(\":{}\"))\n", d.replace('-', "_")))
+        .collect();
     format!(
         "plugins {{\n    kotlin(\"jvm\") version \"2.1.0\"\n}}\n\n\
          group = \"{}\"\n\
          version = \"0.1.0\"\n\n\
          repositories {{\n    mavenCentral()\n}}\n\n\
-         dependencies {{\n    testImplementation(kotlin(\"test\"))\n}}\n\n\
+         dependencies {{\n    testImplementation(kotlin(\"test\"))\n{}}}\n\n\
          kotlin {{\n    jvmToolchain(21)\n}}\n",
-        group,
+        group, dep_lines,
     )
 }
 

@@ -929,11 +929,6 @@ async fn compile_project(
 
         let name = package_id.as_str();
 
-        // Normalize: source patterns → portable ops
-        for pkg_item in &mut source.items {
-            fp_lang::normalization::normalize_items(std::slice::from_mut(&mut pkg_item.item), normalizer.as_ref())?;
-        }
-
         // Materialize: portable ops → target-language idioms (optional)
         if let Some(ref mat) = materializer {
             for pkg_item in &mut source.items {
@@ -949,6 +944,11 @@ async fn compile_project(
                     pkg_item.item = item;
                 }
             }
+        }
+
+        // Normalize: source patterns → portable ops (MUST be last transform)
+        for pkg_item in &mut source.items {
+            fp_lang::normalization::normalize_items(std::slice::from_mut(&mut pkg_item.item), normalizer.as_ref())?;
         }
 
         // Serialize package via language-specific serializer
@@ -986,6 +986,23 @@ async fn compile_project(
             std::fs::write(&out_path, &code).map_err(CliError::Io)?;
             file_count += 1;
         }
+    }
+
+    // Generate workspace-level Gradle project for multi-module builds
+    if matches!(target, crate::languages::backend::LanguageTarget::Kotlin) {
+        let pkg_names: Vec<String> = packages.iter().map(|p| p.as_str().to_string()).collect();
+        let settings = format!(
+            "rootProject.name = \"skln\"\n\n{}\n",
+            pkg_names.iter()
+                .map(|n| format!("include(\":{}\")", n.replace('-', "_")))
+                .collect::<Vec<_>>().join("\n")
+        );
+        std::fs::write(output.join("settings.gradle.kts"), &settings).map_err(CliError::Io)?;
+        std::fs::write(output.join("build.gradle.kts"),
+            "plugins {\n    kotlin(\"jvm\") version \"2.1.0\" apply false\n}\n\n\
+             allprojects {\n    repositories { mavenCentral() }\n}\n\n\
+             subprojects {\n    apply(plugin = \"org.jetbrains.kotlin.jvm\")\n    kotlin { jvmToolchain(21) }\n}\n"
+        ).map_err(CliError::Io)?;
     }
 
     info!(
