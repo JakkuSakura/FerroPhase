@@ -916,8 +916,10 @@ async fn compile_project(
     let ext = crate::languages::backend::output_extension_for(target);
     let mut file_count = 0;
 
-    let normalizer = fp_lang::FerroIntrinsicNormalizer::new(
-        fp_core::intrinsics::IntrinsicNormalizationMode::Transpile,
+    let normalizer = crate::languages::normalizer::normalizer_for_language(lang)
+        .ok_or_else(|| CliError::Compilation(format!("no normalizer for source language: {lang}")))?;
+    let materializer = crate::languages::materializer::materializer_for_language(
+        &crate::languages::backend::output_extension_for(target)
     );
 
     for package_id in &packages {
@@ -927,29 +929,26 @@ async fn compile_project(
 
         let name = package_id.as_str();
 
-        // Apply OperationMaterializer (two passes to catch nested patterns)
-        let op_materializer = fp_lang::op_materializer::FerroOperationMaterializer;
+        // Normalize: source patterns → portable ops
         for pkg_item in &mut source.items {
-            let mut file = File {
-                path: PathBuf::new(),
-                attrs: vec![],
-                collected_items: vec![],
-                items: vec![pkg_item.item.clone()],
-            };
-            // Run until convergence (max 5 passes)
-            for _ in 0..5 {
-                let new_file = crate::materialize::op_walker::materialize_file(file, &op_materializer)
-                    .map_err(|e| CliError::Compilation(e.to_string()))?;
-                file = new_file;
-            }
-            if let Some(item) = file.items.into_iter().next() {
-                pkg_item.item = item;
-            }
+            fp_lang::normalization::normalize_items(std::slice::from_mut(&mut pkg_item.item), normalizer.as_ref())?;
         }
 
-        // Normalize portable ops (Some, None, Vec::new, etc.) before serialization
-        for pkg_item in &mut source.items {
-            fp_lang::normalization::normalize_items(std::slice::from_mut(&mut pkg_item.item), &normalizer)?;
+        // Materialize: portable ops → target-language idioms (optional)
+        if let Some(ref mat) = materializer {
+            for pkg_item in &mut source.items {
+                let file = File {
+                    path: PathBuf::new(),
+                    attrs: vec![],
+                    collected_items: vec![],
+                    items: vec![pkg_item.item.clone()],
+                };
+                let file = crate::materialize::materialize_file(file, mat.as_ref())
+                    .map_err(|e| CliError::Compilation(e.to_string()))?;
+                if let Some(item) = file.items.into_iter().next() {
+                    pkg_item.item = item;
+                }
+            }
         }
 
         // Serialize package via language-specific serializer

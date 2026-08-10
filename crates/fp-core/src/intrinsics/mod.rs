@@ -62,6 +62,7 @@ pub trait IntrinsicNormalizer {
             crate::ast::ExprKind::Struct(_) => self.normalize_struct(expr),
             crate::ast::ExprKind::Structural(_) => self.normalize_structural(expr),
             crate::ast::ExprKind::Invoke(_) => self.normalize_invoke(expr),
+            crate::ast::ExprKind::Match(_) => self.normalize_match(expr),
             _ => Ok(NormalizeOutcome::Ignored(expr)),
         }
     }
@@ -98,6 +99,12 @@ pub trait IntrinsicNormalizer {
     ///
     /// The framework guarantees `expr.kind()` is `ExprKind::Invoke`.
     fn normalize_invoke(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        Ok(NormalizeOutcome::Ignored(expr))
+    }
+
+    /// Strategy hook for match expressions (e.g., if-let desugaring).
+    /// The framework guarantees `expr.kind()` is `ExprKind::Match`.
+    fn normalize_match(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
         Ok(NormalizeOutcome::Ignored(expr))
     }
 
@@ -146,61 +153,6 @@ pub trait IntrinsicMaterializer {
     fn materialize_structural(
         &self,
         _struct_expr: &mut ExprStructural,
-        _expr_ty: &TySlot,
-    ) -> Result<Option<Expr>> {
-        Ok(None)
-    }
-
-    fn materialize_container(
-        &self,
-        _container: &mut ExprIntrinsicContainer,
-        _expr_ty: &TySlot,
-    ) -> Result<Option<Expr>> {
-        Ok(None)
-    }
-}
-
-/// Transpile-mode AST→AST rewriting strategy. Applied via the parallel
-/// `op_walker.rs` (sibling to `walkers.rs`). Only runs in `NominalTranspile`
-/// mode — native compilation uses `IntrinsicMaterializer` instead.
-pub trait OperationMaterializer {
-    fn prepare_file(&self, _file: &mut File) {}
-
-    fn materialize_invoke(
-        &self,
-        _invoke: &mut crate::ast::ExprInvoke,
-        _expr_ty: &TySlot,
-    ) -> Result<Option<Expr>> {
-        Ok(None)
-    }
-
-    fn materialize_call(
-        &self,
-        _call: &mut ExprIntrinsicCall,
-        _expr_ty: &TySlot,
-    ) -> Result<Option<Expr>> {
-        Ok(None)
-    }
-
-    fn materialize_struct(
-        &self,
-        _struct_expr: &mut ExprStruct,
-        _expr_ty: &TySlot,
-    ) -> Result<Option<Expr>> {
-        Ok(None)
-    }
-
-    fn materialize_match(
-        &self,
-        _match_expr: &mut crate::ast::ExprMatch,
-        _expr_ty: &TySlot,
-    ) -> Result<Option<Expr>> {
-        Ok(None)
-    }
-
-    fn materialize_structural(
-        &self,
-        _struct_expr: &mut crate::ast::ExprStructural,
         _expr_ty: &TySlot,
     ) -> Result<Option<Expr>> {
         Ok(None)

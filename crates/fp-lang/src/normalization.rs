@@ -1,8 +1,8 @@
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprIf, ExprIntrinsicCall,
-    ExprIntrinsicContainer, ExprInvoke,
+    ExprIntrinsicContainer, ExprInvoke, ExprLet, ExprMatch,
     ExprInvokeTarget, ExprKind, ExprStringTemplate, ExprUnOp, FormatArgRef, FormatPlaceholder,
-    FormatSpec, FormatTemplatePart, Ident, MacroTokenTree, Name, Path, StmtLet, Ty, Value,
+    FormatSpec, FormatTemplatePart, Ident, MacroTokenTree, Name, Path, PatternKind, StmtLet, Ty, Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{
@@ -65,6 +65,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             fp_core::ast::ExprKind::Struct(_) => self.normalize_struct(moved),
             fp_core::ast::ExprKind::Structural(_) => self.normalize_structural(moved),
             fp_core::ast::ExprKind::Invoke(_) => self.normalize_invoke(moved),
+            fp_core::ast::ExprKind::Match(_) => self.normalize_match(moved),
             _ => Ok(NormalizeOutcome::Ignored(moved)),
         }
     }
@@ -516,6 +517,81 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 }
             },
         }
+    }
+
+    fn normalize_match(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        if self.mode != IntrinsicNormalizationMode::Transpile {
+            return Ok(NormalizeOutcome::Ignored(expr));
+        }
+        let (id, ty_slot, span, kind) = expr.into_parts();
+        let ExprKind::Match(mut m) = kind else {
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, ty_slot, span, kind)));
+        };
+
+        // Find binding arm in 1 or 2-arm match
+        let binding_case = if m.cases.len() == 1 {
+            &m.cases[0]
+        } else if m.cases.len() == 2 {
+            let p0 = m.cases[0].pat.as_ref().map(|p| &p.kind);
+            let p1 = m.cases[1].pat.as_ref().map(|p| &p.kind);
+            let t0 = is_trivial_match_arm(p0);
+            let t1 = is_trivial_match_arm(p1);
+            if !t0 && t1 { &m.cases[1] } else if t0 && !t1 { &m.cases[0] } else {
+                return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, ty_slot, span, ExprKind::Match(m))));
+            }
+        } else {
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, ty_slot, span, ExprKind::Match(m))));
+        };
+
+        let pat = match binding_case.pat.as_ref() {
+            Some(p) if !matches!(p.kind, PatternKind::Wildcard(_)) => p,
+            _ => return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, ty_slot, span, ExprKind::Match(m)))),
+        };
+
+        let scrutinee = match &m.scrutinee {
+            Some(s) => s.as_ref().clone(),
+            None => return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, ty_slot, span, ExprKind::Match(m)))),
+        };
+
+        // Build: if (scrutinee != null) { val x = scrutinee!!; body }
+        let binding = match_binding_name(pat);
+        let body = if let Some(b) = binding {
+            let let_expr = Expr::from_parts(0, None, None,
+                ExprKind::Let(ExprLet {
+                    span: Span::default(),
+                    pat: pat.clone(),
+                    expr: Box::new(build_force_unwrap_expr(&scrutinee)),
+                })
+            );
+            Expr::from_parts(0, None, None,
+                ExprKind::Block(ExprBlock {
+                    span: Span::default(),
+                    collected_items: vec![],
+                    stmts: vec![
+                        BlockStmt::Expr(BlockStmtExpr {
+                            expr: Box::new(let_expr),
+                            semicolon: Some(true),
+                        }),
+                        BlockStmt::Expr(BlockStmtExpr {
+                            expr: binding_case.body.clone(),
+                            semicolon: Some(false),
+                        }),
+                    ],
+                })
+            )
+        } else {
+            binding_case.body.as_ref().clone()
+        };
+
+        let if_expr = Expr::from_parts(id, ty_slot, span,
+            ExprKind::If(ExprIf {
+                span: Span::default(),
+                cond: Box::new(build_not_null_check_expr(&scrutinee)),
+                then: Box::new(body),
+                elze: None,
+            })
+        );
+        Ok(NormalizeOutcome::Normalized(if_expr))
     }
 }
 
@@ -1216,6 +1292,54 @@ fn panic_call_with_message(message: &str) -> Expr {
         vec![Expr::value(Value::string(message.to_string()))],
         Vec::new(),
     )))
+}
+
+/// Whether a match arm pattern is trivial (no binding).
+fn is_trivial_match_arm(pat: Option<&PatternKind>) -> bool {
+    match pat {
+        Some(PatternKind::Wildcard(_)) => true,
+        Some(PatternKind::Ident(id)) => id.ident.name == "None" || id.ident.name == "Err",
+        None => true,
+        _ => false,
+    }
+}
+
+/// Extract the binding variable name from a pattern.
+fn match_binding_name(pat: &fp_core::ast::Pattern) -> Option<String> {
+    match &pat.kind {
+        PatternKind::Ident(id) => Some(id.ident.name.clone()),
+        PatternKind::TupleStruct(ts) => ts.patterns.first().and_then(|p| match_binding_name(p)),
+        _ => None,
+    }
+}
+
+fn build_not_null_check_expr(expr: &Expr) -> Expr {
+    Expr::from_parts(0, None, None,
+        ExprKind::BinOp(ExprBinOp {
+            span: Span::default(),
+            kind: fp_core::ops::BinOpKind::Ne,
+            lhs: Box::new(expr.clone()),
+            rhs: Box::new(Expr::from_parts(0, None, None,
+                ExprKind::Value(Box::new(Value::Null(Default::default()))),
+            )),
+        })
+    )
+}
+
+fn build_force_unwrap_expr(expr: &Expr) -> Expr {
+    Expr::from_parts(0, None, None,
+        ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+            fp_core::intrinsics::CallKind::Op(fp_core::intrinsics::calls::OpKind::OptionUnwrap),
+            vec![expr.clone()],
+            vec![],
+        ))
+    )
+}
+
+// Allow returning Ok(None) from normalize_match without extra type annotations
+struct NoneOutcome;
+impl From<NoneOutcome> for NormalizeOutcome<Expr> {
+    fn from(_: NoneOutcome) -> Self { NormalizeOutcome::Ignored(Expr::from_parts(0, None, None, ExprKind::Value(Box::new(Value::Null(Default::default()))))) }
 }
 
 #[cfg(test)]

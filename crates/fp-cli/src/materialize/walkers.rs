@@ -82,7 +82,11 @@ pub fn materialize_block(
     for stmt in block.stmts {
         stmts.push(materialize_stmt(stmt, strategy)?);
     }
-    Ok(ast::ExprBlock { stmts, ..block })
+    let mut collected_items = Vec::with_capacity(block.collected_items.len());
+    for item in block.collected_items {
+        collected_items.push(materialize_item(item, strategy)?);
+    }
+    Ok(ast::ExprBlock { stmts, collected_items, ..block })
 }
 
 pub fn materialize_stmt(

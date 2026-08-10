@@ -8,7 +8,6 @@ pub mod embedded_libc;
 pub mod module_path;
 pub mod module_source;
 pub mod normalization;
-pub mod op_materializer;
 mod serializer;
 use fp_core::Result as CoreResult;
 use fp_core::ast::{AstSerializer, File, ScriptBlock};

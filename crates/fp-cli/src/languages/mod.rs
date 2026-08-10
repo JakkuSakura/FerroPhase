@@ -1,6 +1,8 @@
 pub mod backend;
 pub mod discovery;
 pub mod frontend;
+pub mod materializer;
+pub mod normalizer;
 
 use std::path::Path;
 
