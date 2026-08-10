@@ -955,7 +955,12 @@ async fn compile_project(
         };
 
         for (mod_path, code) in files {
-            let out_path = output.join(name).join(&mod_path).with_extension(ext);
+            let rel = if mod_path.contains('.') {
+                mod_path.clone()
+            } else {
+                format!("{}.{}", mod_path, ext)
+            };
+            let out_path = output.join(name).join(&rel);
             if let Some(parent) = out_path.parent() {
                 std::fs::create_dir_all(parent).map_err(CliError::Io)?;
             }

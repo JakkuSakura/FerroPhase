@@ -46,10 +46,9 @@ impl AstSerializer for KotlinSerializer {
 }
 
 impl KotlinSerializer {
-    /// Serialize a package into per-module Kotlin files.
-    /// Returns `Vec<(relative_path, code)>` — one entry per module.
+    /// Serialize a package into per-module Kotlin files with Gradle manifest.
+    /// Returns `Vec<(relative_path, code)>` — source files + build files.
     pub fn serialize_package(&self, source: &PackageSource) -> Result<Vec<(String, String)>> {
-        // Group items by module path
         use std::collections::BTreeMap;
         let mut modules: BTreeMap<String, Vec<Item>> = BTreeMap::new();
         for pkg_item in &source.items {
@@ -57,7 +56,14 @@ impl KotlinSerializer {
             modules.entry(key).or_default().push(pkg_item.item.clone());
         }
 
+        let pkg_name = &source.name;
         let mut files = Vec::new();
+
+        // Gradle manifest
+        files.push(("settings.gradle.kts".into(), settings_gradle(pkg_name)));
+        files.push(("build.gradle.kts".into(), build_gradle(pkg_name)));
+
+        // Source files under src/main/kotlin/
         for (mod_path, items) in modules {
             let file = File {
                 path: std::path::PathBuf::from(&mod_path),
@@ -67,10 +73,28 @@ impl KotlinSerializer {
             };
             let code = self.serialize_file(&file)
                 .map_err(|e| eyre::eyre!("serialize {}: {}", mod_path, e))?;
-            files.push((mod_path, code));
+            let out_path = format!("src/main/kotlin/{}.kt", mod_path);
+            files.push((out_path, code));
         }
         Ok(files)
     }
+}
+
+fn settings_gradle(name: &str) -> String {
+    format!("rootProject.name = \"{}\"\n", name.replace('-', "_"))
+}
+
+fn build_gradle(name: &str) -> String {
+    let group = format!("com.{}", name.replace('-', "."));
+    format!(
+        "plugins {{\n    kotlin(\"jvm\") version \"2.1.0\"\n}}\n\n\
+         group = \"{}\"\n\
+         version = \"0.1.0\"\n\n\
+         repositories {{\n    mavenCentral()\n}}\n\n\
+         dependencies {{\n    testImplementation(kotlin(\"test\"))\n}}\n\n\
+         kotlin {{\n    jvmToolchain(21)\n}}\n",
+        group,
+    )
 }
 
 fn emit_file(file: &File, e: &mut KotlinEmitter) -> Result<()> {
