@@ -538,7 +538,7 @@ impl MirLowering {
         self.transform(hir_program)
     }
 
-    fn compute_adt_layout(&mut self, def_id: hir::DefId, substs: &[Ty], span: Span) {
+    pub fn compute_adt_layout(&mut self, def_id: hir::DefId, substs: &[Ty], span: Span) {
         let _ = self.struct_layout_for_instance(def_id, substs, span);
         let _ = self.enum_layout_for_instance(def_id, substs, span);
     }
@@ -546,6 +546,11 @@ impl MirLowering {
     fn compute_ty_layout(&mut self, ty: &Ty, span: Span) {
         match &ty.kind {
             TyKind::Adt(adt, substs) => {
+                for a in substs {
+                    if let mir::ty::GenericArg::Type(t) = a {
+                        self.compute_ty_layout(t, span);
+                    }
+                }
                 let types: Vec<Ty> = substs.iter().filter_map(|a| match a {
                     mir::ty::GenericArg::Type(t) => Some(t.clone()),
                     _ => None,
