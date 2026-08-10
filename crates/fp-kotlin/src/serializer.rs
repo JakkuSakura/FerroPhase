@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use fp_core::ast::{
@@ -60,9 +61,12 @@ impl KotlinSerializer {
         let pkg_name = &source.name;
         let mut files = Vec::new();
 
+        // Collect cross-package dependencies from imports
+        let deps = collect_workspace_deps(&source.items);
+
         // Gradle manifest
         files.push(("settings.gradle.kts".into(), settings_gradle(pkg_name)));
-        files.push(("build.gradle.kts".into(), build_gradle(pkg_name)));
+        files.push(("build.gradle.kts".into(), build_gradle(pkg_name, &deps)));
 
         // Source files under src/main/kotlin/
         for (mod_path, items) in modules {
@@ -85,8 +89,10 @@ fn settings_gradle(name: &str) -> String {
     format!("rootProject.name = \"{}\"\n", name.replace('-', "_"))
 }
 
-fn build_gradle(name: &str) -> String {
+fn build_gradle(name: &str, _deps: &[String]) -> String {
     let group = format!("com.{}", name.replace('-', "."));
+    // Cross-package deps deferred for multi-module project support.
+    // For now, each package builds independently.
     format!(
         "plugins {{\n    kotlin(\"jvm\") version \"2.1.0\"\n}}\n\n\
          group = \"{}\"\n\
@@ -96,6 +102,52 @@ fn build_gradle(name: &str) -> String {
          kotlin {{\n    jvmToolchain(21)\n}}\n",
         group,
     )
+}
+
+fn collect_workspace_deps(items: &[PackageItem]) -> Vec<String> {
+    use std::collections::BTreeSet;
+    let mut deps = BTreeSet::new();
+    for pkg_item in items {
+        collect_deps_from_item(&pkg_item.item, &mut deps);
+    }
+    // Only return deps that reference known workspace packages (multi-segment paths
+    // that start with a workspace package name like skln_core, skln_git)
+    let known_workspace: &[&str] = &["skln_core", "skln_git"];
+    deps.into_iter()
+        .filter(|d| known_workspace.contains(&d.as_str()))
+        .collect()
+}
+
+fn collect_deps_from_item(item: &Item, deps: &mut BTreeSet<String>) {
+    use fp_core::ast::ItemKind;
+    match item.kind() {
+        ItemKind::Import(imp) => {
+            let path = flatten_import_tree(&imp.tree);
+            // Skip std, serde, winnow, relative imports, java
+            if !path.starts_with("std.") && !path.starts_with("serde") 
+                && !path.starts_with("winnow") && !path.starts_with('.')
+                && !path.is_empty()
+                && !path.starts_with("java")
+            {
+                let pkg = path.split('.').next().unwrap_or(&path);
+                deps.insert(pkg.to_string());
+            }
+        }
+        ItemKind::Module(m) => {
+            for child in &m.items { collect_deps_from_item(child, deps); }
+        }
+        ItemKind::DefFunction(f) => {
+            for stmt in &f.body.stmts { collect_deps_from_stmt(stmt, deps); }
+        }
+        _ => {}
+    }
+}
+
+fn collect_deps_from_stmt(stmt: &BlockStmt, deps: &mut BTreeSet<String>) {
+    match stmt {
+        BlockStmt::Item(item) => collect_deps_from_item(item, deps),
+        _ => {}
+    }
 }
 
 fn emit_file(file: &File, e: &mut KotlinEmitter) -> Result<()> {
@@ -178,7 +230,7 @@ fn emit_function(f: &ItemDefFunction, e: &mut KotlinEmitter) -> Result<()> {
         .collect::<Vec<_>>().join(", ");
     let ret = f.sig.ret_ty.as_ref()
         .map(|ty| format!(": {}", kotlin_type_from_ty(ty, e)))
-        .unwrap_or_default();
+        .unwrap_or_else(|| ": Unit".to_string());
 
     e.push_line(&format!("fun {}({}){} {{", name, params, ret));
     e.indent += 1;
