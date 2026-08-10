@@ -5170,6 +5170,9 @@ impl MirLowering {
         let field_tys = layout.field_tys.clone();
         for field_ty in &field_tys {
             if let TyKind::Adt(adt, substs) = &field_ty.kind {
+                if !self.struct_defs.contains_key(&adt.did) && !self.enum_defs.contains_key(&adt.did) {
+                    continue;
+                }
                 let types: Vec<Ty> = substs.iter().filter_map(|a| match a {
                     mir::ty::GenericArg::Type(t) => Some(t.clone()),
                     _ => None,
@@ -5380,6 +5383,9 @@ impl MirLowering {
         let payload_tys = layout.payload_tys.clone();
         for field_ty in &payload_tys {
             if let TyKind::Adt(adt, substs) = &field_ty.kind {
+                if !self.struct_defs.contains_key(&adt.did) && !self.enum_defs.contains_key(&adt.did) {
+                    continue;
+                }
                 let types: Vec<Ty> = substs.iter().filter_map(|a| match a {
                     mir::ty::GenericArg::Type(t) => Some(t.clone()),
                     _ => None,
