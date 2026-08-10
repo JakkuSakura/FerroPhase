@@ -189,9 +189,8 @@ fn emit_function(f: &ItemDefFunction, e: &mut KotlinEmitter) -> Result<()> {
 
 // ── Import ───────────────────────────────────────────────────────────────────
 
-fn emit_import(imp: &ItemImport, e: &mut KotlinEmitter) -> Result<()> {
-    let path = flatten_import_tree(&imp.tree);
-    if !path.is_empty() { e.push_line(&format!("import {}", path)); }
+fn emit_import(_imp: &ItemImport, _e: &mut KotlinEmitter) -> Result<()> {
+    // Skip raw Rust crate imports — they don't map to Kotlin
     Ok(())
 }
 
