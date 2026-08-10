@@ -538,36 +538,34 @@ impl MirLowering {
         self.transform(hir_program)
     }
 
-    pub fn compute_all_struct_layouts(&mut self) {
-        let mut def_ids: Vec<hir::DefId> = self
-            .struct_defs
-            .iter()
-            .filter_map(|(def_id, def)| {
-                if def.generics.is_empty() {
-                    Some(*def_id)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        def_ids.sort();
-        for def_id in def_ids {
-            let _ = self.struct_layout_for_instance(def_id, &[], Span::null());
+    fn force_adt_layout(&mut self, def_id: hir::DefId, substs: &[Ty], span: Span) {
+        let _ = self.struct_layout_for_instance(def_id, substs, span);
+        let _ = self.enum_layout_for_instance(def_id, substs, span);
+    }
+
+    fn force_layout_for_ty(&mut self, ty: &Ty, span: Span) {
+        if let TyKind::Adt(adt, substs) = &ty.kind {
+            let types: Vec<Ty> = substs.iter().filter_map(|a| match a {
+                mir::ty::GenericArg::Type(t) => Some(t.clone()),
+                _ => None,
+            }).collect();
+            self.force_adt_layout(adt.did, &types, span);
         }
-        let mut enum_ids: Vec<hir::DefId> = self
-            .enum_defs
-            .iter()
-            .filter_map(|(def_id, def)| {
-                if def.generics.is_empty() {
-                    Some(*def_id)
-                } else {
-                    None
+    }
+
+    pub fn walk_program_types_for_layouts(&mut self, program: &mir::Program) {
+        for item in &program.items {
+            match &item.kind {
+                mir::ItemKind::Function(func) => {
+                    for ty in &func.sig.inputs { self.force_layout_for_ty(ty, Span::null()); }
+                    self.force_layout_for_ty(&func.sig.output, Span::null());
+                    if let Some(body) = program.bodies.get(&func.body_id) {
+                        for local in &body.locals { self.force_layout_for_ty(&local.ty, Span::null()); }
+                    }
                 }
-            })
-            .collect();
-        enum_ids.sort();
-        for def_id in enum_ids {
-            let _ = self.enum_layout_for_instance(def_id, &[], Span::null());
+                mir::ItemKind::Static(s) => { self.force_layout_for_ty(&s.ty, Span::null()); }
+                _ => {}
+            }
         }
     }
 

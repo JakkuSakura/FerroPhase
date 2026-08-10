@@ -594,9 +594,6 @@ impl CompilerDriver {
             lowering.seed_resolved_const(key.to_string(), value.clone());
         }
         let result = lowering.transform_async(hir).await;
-        lowering.compute_all_struct_layouts();
-        let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
-            lowering.all_adt_field_tys().into_iter().collect();
         let (diagnostics, had_errors) = lowering.take_diagnostics();
         let mir = result.map_err(|error| {
             CompilerDriverError::InternalCompilerError(format!(
@@ -613,6 +610,9 @@ impl CompilerDriver {
                 "HIR-to-MIR lowering reported diagnostics: {details}"
             )));
         }
+        lowering.walk_program_types_for_layouts(&mir);
+        let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
+            lowering.all_adt_field_tys().into_iter().collect();
         let mir_id = MirId::new(format!("mir:{}", self.module_state_key(path.path())));
         self.state.insert_mir(mir_id.clone(), mir);
         Ok((mir_id, struct_layouts))
