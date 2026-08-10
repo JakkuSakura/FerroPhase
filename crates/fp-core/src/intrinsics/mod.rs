@@ -160,6 +160,53 @@ pub trait IntrinsicMaterializer {
     }
 }
 
+/// Transpile-mode AST→AST rewriting strategy. Applied via the parallel
+/// `op_walker.rs` (sibling to `walkers.rs`). Only runs in `NominalTranspile`
+/// mode — native compilation uses `IntrinsicMaterializer` instead.
+pub trait OperationMaterializer {
+    fn prepare_file(&self, _file: &mut File) {}
+
+    fn materialize_invoke(
+        &self,
+        _invoke: &mut crate::ast::ExprInvoke,
+        _expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        Ok(None)
+    }
+
+    fn materialize_call(
+        &self,
+        _call: &mut ExprIntrinsicCall,
+        _expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        Ok(None)
+    }
+
+    fn materialize_struct(
+        &self,
+        _struct_expr: &mut ExprStruct,
+        _expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        Ok(None)
+    }
+
+    fn materialize_match(
+        &self,
+        _match_expr: &mut crate::ast::ExprMatch,
+        _expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        Ok(None)
+    }
+
+    fn materialize_container(
+        &self,
+        _container: &mut ExprIntrinsicContainer,
+        _expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        Ok(None)
+    }
+}
+
 fn build_function_decl_item(
     name: &str,
     mut params: Vec<FunctionParam>,
