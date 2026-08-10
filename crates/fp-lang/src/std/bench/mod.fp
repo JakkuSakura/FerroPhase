@@ -3,7 +3,7 @@ struct BenchCase {
     run: fn(),
 }
 
-const mut REGISTRY: Vec<BenchCase> = Vec::new();
+const mut REGISTRY: ::std::alloc::Vec<BenchCase> = ::std::alloc::Vec::new();
 
 const fn bench(item: quote<item>) -> quote<item> {
     let name = item.name;
@@ -18,7 +18,7 @@ struct BenchReport {
 }
 
 fn run_benches() -> BenchReport {
-    let benches: Vec<BenchCase> = REGISTRY;
+    let benches: ::std::alloc::Vec<BenchCase> = REGISTRY;
     let mut passed = 0;
     let mut failed = 0;
     let mut idx = 0;
@@ -28,10 +28,10 @@ fn run_benches() -> BenchReport {
         let warmup_secs = 5.0f64;
         let measure_secs = 15.0f64;
 
-        let warmup_start = std::time::now();
+        let warmup_start = ::std::time::now();
         let warmup_deadline = warmup_start + warmup_secs;
         let mut warmup_iters = 0;
-        while std::time::now() < warmup_deadline {
+        while ::std::time::now() < warmup_deadline {
             let warm_ok = catch_unwind(bench.run);
             if !warm_ok {
                 ok = false;
@@ -40,11 +40,11 @@ fn run_benches() -> BenchReport {
             warmup_iters = warmup_iters + 1;
         }
 
-        let measure_start = std::time::now();
+        let measure_start = ::std::time::now();
         let measure_deadline = measure_start + measure_secs;
         let mut measure_iters = 0;
         if ok {
-            while std::time::now() < measure_deadline || measure_iters == 0 {
+            while ::std::time::now() < measure_deadline || measure_iters == 0 {
                 let run_ok = catch_unwind(bench.run);
                 if !run_ok {
                     ok = false;
@@ -53,7 +53,7 @@ fn run_benches() -> BenchReport {
                 measure_iters = measure_iters + 1;
             }
         }
-        let measure_end = std::time::now();
+        let measure_end = ::std::time::now();
         let elapsed = measure_end - measure_start;
         if ok {
             passed = passed + 1;

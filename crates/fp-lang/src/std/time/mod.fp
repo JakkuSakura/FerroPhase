@@ -1,6 +1,6 @@
 #[op = "time_now"]
 fn now() -> f64 {
-    std::intrinsics::time::now()
+    ::std::intrinsics::time::now()
 }
 
 fn sleep(seconds: f64) -> () {

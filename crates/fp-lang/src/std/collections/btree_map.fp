@@ -3,24 +3,23 @@ pub struct BTreeMapEntry<K, V> {
     value: V,
 }
 
-use std::alloc::Vec;
 
 pub struct BTreeMap<K, V> {
     len: i64,
-    keys: Vec<K>,
-    values: Vec<V>,
+    keys: ::std::alloc::Vec<K>,
+    values: ::std::alloc::Vec<V>,
 }
 
 impl<K, V> BTreeMap<K, V> {
     fn new() -> BTreeMap<K, V> {
         BTreeMap {
             len: 0,
-            keys: Vec::new(),
-            values: Vec::new(),
+            keys: ::std::alloc::Vec::new(),
+            values: ::std::alloc::Vec::new(),
         }
     }
 
-    fn from(entries: Vec<BTreeMapEntry<K, V>>) -> BTreeMap<K, V> {
+    fn from(entries: ::std::alloc::Vec<BTreeMapEntry<K, V>>) -> BTreeMap<K, V> {
         let mut map = BTreeMap::new();
         let mut idx = 0;
         let entries_len = entries.len();
@@ -42,8 +41,8 @@ impl<K, V> BTreeMap<K, V> {
 
     fn clear(&mut self) {
         self.len = 0;
-        self.keys = Vec::new();
-        self.values = Vec::new();
+        self.keys = ::std::alloc::Vec::new();
+        self.values = ::std::alloc::Vec::new();
     }
 
     fn contains_key(&self, key: K) -> bool {

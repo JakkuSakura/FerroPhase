@@ -1,19 +1,18 @@
-use std::alloc::Vec;
 
 pub struct VecDeque<T> {
-    values: Vec<T>,
+    values: ::std::alloc::Vec<T>,
     len: i64,
 }
 
 impl<T> VecDeque<T> {
     fn new() -> VecDeque<T> {
         VecDeque {
-            values: Vec::new(),
+            values: ::std::alloc::Vec::new(),
             len: 0,
         }
     }
 
-    fn from(items: Vec<T>) -> VecDeque<T> {
+    fn from(items: ::std::alloc::Vec<T>) -> VecDeque<T> {
         let mut deque = VecDeque::new();
         let mut idx = 0;
         let items_len = items.len();
@@ -33,7 +32,7 @@ impl<T> VecDeque<T> {
     }
 
     fn clear(&mut self) {
-        self.values = Vec::new();
+        self.values = ::std::alloc::Vec::new();
         self.len = 0;
     }
 
@@ -62,7 +61,7 @@ impl<T> VecDeque<T> {
             return;
         }
 
-        let mut shifted: Vec<T> = Vec::new();
+        let mut shifted: ::std::alloc::Vec<T> = ::std::alloc::Vec::new();
         shifted.push(value);
         let mut idx = 0;
         while idx < self.len {

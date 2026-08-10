@@ -1,10 +1,9 @@
-use std::net::addr::SocketAddr;
 
 #[unimplemented]
 pub struct TcpStream {}
 
 impl TcpStream {
-    pub async fn connect(addr: SocketAddr) -> TcpStream {
+    pub async fn connect(addr: ::std::net::addr::SocketAddr) -> TcpStream {
         loop {}
     }
 
@@ -25,7 +24,7 @@ impl TcpStream {
 pub struct TcpListener {}
 
 impl TcpListener {
-    pub async fn bind(addr: SocketAddr) -> TcpListener {
+    pub async fn bind(addr: ::std::net::addr::SocketAddr) -> TcpListener {
         loop {}
     }
 

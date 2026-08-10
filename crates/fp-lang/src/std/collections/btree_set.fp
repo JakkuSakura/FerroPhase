@@ -1,19 +1,18 @@
-use std::alloc::Vec;
 
 pub struct BTreeSet<T> {
     len: i64,
-    values: Vec<T>,
+    values: ::std::alloc::Vec<T>,
 }
 
 impl<T> BTreeSet<T> {
     fn new() -> BTreeSet<T> {
         BTreeSet {
             len: 0,
-            values: Vec::new(),
+            values: ::std::alloc::Vec::new(),
         }
     }
 
-    fn from(values: Vec<T>) -> BTreeSet<T> {
+    fn from(values: ::std::alloc::Vec<T>) -> BTreeSet<T> {
         let mut set = BTreeSet::new();
         let mut idx = 0;
         let values_len = values.len();
@@ -34,7 +33,7 @@ impl<T> BTreeSet<T> {
 
     fn clear(&mut self) {
         self.len = 0;
-        self.values = Vec::new();
+        self.values = ::std::alloc::Vec::new();
     }
 
     fn contains_value(&self, value: T) -> bool {

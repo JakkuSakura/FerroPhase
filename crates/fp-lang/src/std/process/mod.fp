@@ -1,5 +1,3 @@
-use std::option::Option;
-use std::alloc::Vec;
 
 pub struct ProcessResult {
     stdout: str,
@@ -36,7 +34,7 @@ impl ProcessResult {
 pub struct Process {
     shell_command: str,
     program: str,
-    args: Vec<&str>,
+    args: ::std::alloc::Vec<&str>,
     cwd: str,
 }
 
@@ -45,7 +43,7 @@ impl Process {
         Process {
             shell_command: "",
             program,
-            args: Vec::new(),
+            args: ::std::alloc::Vec::new(),
             cwd: "",
         }
     }
@@ -54,7 +52,7 @@ impl Process {
         Process {
             shell_command: command,
             program: "",
-            args: Vec::new(),
+            args: ::std::alloc::Vec::new(),
             cwd: "",
         }
     }
@@ -71,7 +69,7 @@ impl Process {
         }
     }
 
-    pub fn args(self, extra_args: Vec<&str>) -> Process {
+    pub fn args(self, extra_args: ::std::alloc::Vec<&str>) -> Process {
         let mut process = self;
         let mut idx = 0;
         let extra_len = extra_args.len();
@@ -99,7 +97,7 @@ impl Process {
 
         let stdout = result.into_stdout();
         if stdout != "" {
-            std::io::write_stdout(&stdout);
+            ::std::io::write_stdout(&stdout);
         }
     }
 
@@ -122,15 +120,15 @@ impl Process {
 
     pub fn output_result(self) -> ProcessResult {
         let rendered_command = render_process_command(self);
-        let mocked: Option<std::intrinsics::test::CommandMockMatch> =
-            std::test::apply_command_mock(&rendered_command);
+        let mocked: ::std::option::Option<::std::intrinsics::test::CommandMockMatch> =
+            ::std::test::apply_command_mock(&rendered_command);
         match mocked {
-            Option::Some(mocked) => ProcessResult {
+            ::std::option::Option::Some(mocked) => ProcessResult {
                 stdout: mocked.stdout,
                 stderr: mocked.stderr,
                 status: mocked.status,
             },
-            Option::None => ProcessResult {
+            ::std::option::Option::None => ProcessResult {
                 stdout: "",
                 stderr: "",
                 status: decode_exit_status(::libc::system(&rendered_command)),
@@ -162,7 +160,7 @@ impl Command {
         }
     }
 
-    pub fn args(self, extra_args: Vec<&str>) -> Command {
+    pub fn args(self, extra_args: ::std::alloc::Vec<&str>) -> Command {
         Command {
             inner: self.inner.args(extra_args),
         }
@@ -215,35 +213,35 @@ pub fn status(command: str) -> i64 {
     Process::shell(command).status()
 }
 
-pub fn run_argv(program: &str, args: Vec<&str>) {
+pub fn run_argv(program: &str, args: ::std::alloc::Vec<&str>) {
     Process::new(program).args(args).run()
 }
 
-pub fn ok_argv(program: &str, args: Vec<&str>) -> bool {
+pub fn ok_argv(program: &str, args: ::std::alloc::Vec<&str>) -> bool {
     Process::new(program).args(args).ok()
 }
 
-pub fn output_argv(program: &str, args: Vec<&str>) -> str {
+pub fn output_argv(program: &str, args: ::std::alloc::Vec<&str>) -> str {
     Process::new(program).args(args).output()
 }
 
-pub fn status_argv(program: &str, args: Vec<&str>) -> i64 {
+pub fn status_argv(program: &str, args: ::std::alloc::Vec<&str>) -> i64 {
     Process::new(program).args(args).status()
 }
 
-pub fn run_argv_in(program: &str, args: Vec<&str>, cwd: &str) {
+pub fn run_argv_in(program: &str, args: ::std::alloc::Vec<&str>, cwd: &str) {
     Process::new(program).args(args).current_dir(cwd).run()
 }
 
-pub fn ok_argv_in(program: &str, args: Vec<&str>, cwd: &str) -> bool {
+pub fn ok_argv_in(program: &str, args: ::std::alloc::Vec<&str>, cwd: &str) -> bool {
     Process::new(program).args(args).current_dir(cwd).ok()
 }
 
-pub fn output_argv_in(program: &str, args: Vec<&str>, cwd: &str) -> str {
+pub fn output_argv_in(program: &str, args: ::std::alloc::Vec<&str>, cwd: &str) -> str {
     Process::new(program).args(args).current_dir(cwd).output()
 }
 
-pub fn status_argv_in(program: &str, args: Vec<&str>, cwd: &str) -> i64 {
+pub fn status_argv_in(program: &str, args: ::std::alloc::Vec<&str>, cwd: &str) -> i64 {
     Process::new(program).args(args).current_dir(cwd).status()
 }
 
@@ -258,8 +256,8 @@ fn render_process_command(process: Process) -> str {
     }
 }
 
-fn render_argv_command(program: &str, args: Vec<&str>) -> str {
-    let mut parts: Vec<str> = Vec::new();
+fn render_argv_command(program: &str, args: ::std::alloc::Vec<&str>) -> str {
+    let mut parts: ::std::alloc::Vec<str> = ::std::alloc::Vec::new();
     parts.push(quote_shell_arg(program));
     let mut idx = 0;
     while idx < args.len() {

@@ -1,4 +1,3 @@
-use std::net::tcp::TcpStream;
 
 #[unimplemented]
 pub struct TlsConnector {
@@ -6,7 +5,7 @@ pub struct TlsConnector {
 }
 
 impl TlsConnector {
-    pub async fn connect(&self, domain: &str, stream: TcpStream) -> TlsStream {
+    pub async fn connect(&self, domain: &str, stream: ::std::net::tcp::TcpStream) -> TlsStream {
         loop {}
     }
 }
@@ -17,7 +16,7 @@ pub struct TlsAcceptor {
 }
 
 impl TlsAcceptor {
-    pub async fn accept(&self, stream: TcpStream) -> TlsStream {
+    pub async fn accept(&self, stream: ::std::net::tcp::TcpStream) -> TlsStream {
         loop {}
     }
 }

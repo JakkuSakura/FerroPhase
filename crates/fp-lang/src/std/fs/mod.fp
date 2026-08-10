@@ -1,5 +1,3 @@
-use super::path::Path;
-use std::alloc::Vec;
 
 pub enum ErrorKind {
     NotFound,
@@ -165,10 +163,10 @@ impl OpenOptions {
         }
     }
 
-    pub fn open(self, path: &Path) -> std::result::Result<File, IoError> {
+    pub fn open(self, path: &::std::path::Path) -> ::std::result::Result<File, IoError> {
         let _ = self;
         let _ = path;
-        compile_error!("std::fs::OpenOptions::open is not implemented for the current std surface")
+        compile_error!("::std::fs::OpenOptions::open is not implemented for the current std surface")
     }
 }
 
@@ -177,11 +175,11 @@ pub struct File {
 }
 
 impl File {
-    pub fn open(path: &Path) -> std::result::Result<File, IoError> {
+    pub fn open(path: &::std::path::Path) -> ::std::result::Result<File, IoError> {
         OpenOptions::new().read(true).open(path)
     }
 
-    pub fn create(path: &Path) -> std::result::Result<File, IoError> {
+    pub fn create(path: &::std::path::Path) -> ::std::result::Result<File, IoError> {
         OpenOptions::new()
             .write(true)
             .truncate(true)
@@ -193,40 +191,40 @@ impl File {
         OpenOptions::new()
     }
 
-    pub fn metadata(&self) -> std::result::Result<Metadata, IoError> {
+    pub fn metadata(&self) -> ::std::result::Result<Metadata, IoError> {
         let _ = self.fd;
-        compile_error!("std::fs::File::metadata is not implemented for the current std surface")
+        compile_error!("::std::fs::File::metadata is not implemented for the current std surface")
     }
 
-    pub fn read_to_string(&mut self) -> std::result::Result<str, IoError> {
+    pub fn read_to_string(&mut self) -> ::std::result::Result<str, IoError> {
         let _ = self.fd;
-        compile_error!("std::fs::File::read_to_string is not implemented for the current std surface")
+        compile_error!("::std::fs::File::read_to_string is not implemented for the current std surface")
     }
 
-    pub fn write_all(&mut self, content: &str) -> std::result::Result<(), IoError> {
+    pub fn write_all(&mut self, content: &str) -> ::std::result::Result<(), IoError> {
         let _ = self;
         let _ = content;
-        compile_error!("std::fs::File::write_all is not implemented for the current std surface")
+        compile_error!("::std::fs::File::write_all is not implemented for the current std surface")
     }
 
-    pub fn flush(&mut self) -> std::result::Result<(), IoError> {
-        std::result::Result::Ok(())
+    pub fn flush(&mut self) -> ::std::result::Result<(), IoError> {
+        ::std::result::Result::Ok(())
     }
 
-    pub fn sync_all(&mut self) -> std::result::Result<(), IoError> {
+    pub fn sync_all(&mut self) -> ::std::result::Result<(), IoError> {
         let _ = self;
-        compile_error!("std::fs::File::sync_all is not implemented for the current std surface")
+        compile_error!("::std::fs::File::sync_all is not implemented for the current std surface")
     }
 
-    pub fn seek(&mut self, pos: SeekFrom) -> std::result::Result<i64, IoError> {
+    pub fn seek(&mut self, pos: SeekFrom) -> ::std::result::Result<i64, IoError> {
         let _ = self;
         let _ = pos;
-        compile_error!("std::fs::File::seek is not implemented for the current std surface")
+        compile_error!("::std::fs::File::seek is not implemented for the current std surface")
     }
 
-    pub fn close(self) -> std::result::Result<(), IoError> {
+    pub fn close(self) -> ::std::result::Result<(), IoError> {
         let _ = self;
-        compile_error!("std::fs::File::close is not implemented for the current std surface")
+        compile_error!("::std::fs::File::close is not implemented for the current std surface")
     }
 
     pub fn as_raw_fd(&self) -> i32 {
@@ -243,36 +241,36 @@ fn io_error_other(message: &str) -> IoError {
 }
 
 #[op = "fs_read_dir"]
-pub fn read_dir(path: &Path) -> Vec<&str> { std::intrinsics::fs::read_dir(path) }
+pub fn read_dir(path: &::std::path::Path) -> ::std::alloc::Vec<&str> { ::std::intrinsics::fs::read_dir(path) }
 
 #[op = "fs_walk_dir"]
-pub fn walk_dir(path: &Path) -> Vec<&str> { std::intrinsics::fs::walk_dir(path) }
+pub fn walk_dir(path: &::std::path::Path) -> ::std::alloc::Vec<&str> { ::std::intrinsics::fs::walk_dir(path) }
 
 #[op = "fs_read_to_string"]
-pub fn read_to_string(path: &Path) -> str { std::intrinsics::fs::read_to_string(path) }
+pub fn read_to_string(path: &::std::path::Path) -> str { ::std::intrinsics::fs::read_to_string(path) }
 
 #[op = "fs_write_string"]
-pub fn write_string(path: &Path, content: &str) { std::intrinsics::fs::write_string(path, content) }
+pub fn write_string(path: &::std::path::Path, content: &str) { ::std::intrinsics::fs::write_string(path, content) }
 
 #[op = "fs_append_string"]
-pub fn append_string(path: &Path, content: &str) { std::intrinsics::fs::append_string(path, content) }
+pub fn append_string(path: &::std::path::Path, content: &str) { ::std::intrinsics::fs::append_string(path, content) }
 
-pub fn exists(path: &Path) -> bool { ::libc::access(path.as_str(), 0) == 0 }
+pub fn exists(path: &::std::path::Path) -> bool { ::libc::access(path.as_str(), 0) == 0 }
 
 #[op = "fs_is_dir"]
-pub fn is_dir(path: &Path) -> bool { std::intrinsics::fs::is_dir(path) }
+pub fn is_dir(path: &::std::path::Path) -> bool { ::std::intrinsics::fs::is_dir(path) }
 
 #[op = "fs_is_file"]
-pub fn is_file(path: &Path) -> bool { std::intrinsics::fs::is_file(path) }
+pub fn is_file(path: &::std::path::Path) -> bool { ::std::intrinsics::fs::is_file(path) }
 
 #[op = "fs_create_dir_all"]
-pub fn create_dir_all(path: &Path) { std::intrinsics::fs::create_dir_all(path) }
+pub fn create_dir_all(path: &::std::path::Path) { ::std::intrinsics::fs::create_dir_all(path) }
 
 #[op = "fs_remove_file"]
-pub fn remove_file(path: &Path) { std::intrinsics::fs::remove_file(path) }
+pub fn remove_file(path: &::std::path::Path) { ::std::intrinsics::fs::remove_file(path) }
 
 #[op = "fs_remove_dir_all"]
-pub fn remove_dir_all(path: &Path) { std::intrinsics::fs::remove_dir_all(path) }
+pub fn remove_dir_all(path: &::std::path::Path) { ::std::intrinsics::fs::remove_dir_all(path) }
 
 #[op = "fs_glob"]
-pub fn glob(pattern: &str) -> Vec<&str> { std::intrinsics::fs::glob(pattern) }
+pub fn glob(pattern: &str) -> ::std::alloc::Vec<&str> { ::std::intrinsics::fs::glob(pattern) }

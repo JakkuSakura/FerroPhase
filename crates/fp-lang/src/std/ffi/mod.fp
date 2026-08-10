@@ -9,7 +9,7 @@ impl CStr {
 
     pub unsafe fn as_str_unchecked(&self) -> &str { compile_error!("compiler intrinsic") }
 
-    pub fn as_str(&self) -> std::result::Result<&str, std::string::Utf8Error> {
+    pub fn as_str(&self) -> ::std::result::Result<&str, ::std::string::Utf8Error> {
         compile_error!("compiler intrinsic")
     }
 }

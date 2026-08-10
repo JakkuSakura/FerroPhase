@@ -1,5 +1,5 @@
 #[op = "env_current_dir"]
-pub fn current_dir() -> str { std::intrinsics::env::current_dir() }
+pub fn current_dir() -> str { ::std::intrinsics::env::current_dir() }
 
 pub fn temp_dir() -> str { unsafe { ::libc::getenv("TMPDIR").as_str_unchecked() } }
 

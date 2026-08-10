@@ -1,19 +1,18 @@
-use std::alloc::Vec;
 
 pub struct HashSet<T> {
     len: i64,
-    values: Vec<T>,
+    values: ::std::alloc::Vec<T>,
 }
 
 impl<T> HashSet<T> {
     fn new() -> HashSet<T> {
         HashSet {
             len: 0,
-            values: Vec::new(),
+            values: ::std::alloc::Vec::new(),
         }
     }
 
-    fn from(values: Vec<T>) -> HashSet<T> {
+    fn from(values: ::std::alloc::Vec<T>) -> HashSet<T> {
         let mut set = HashSet::new();
         let mut idx = 0;
         let values_len = values.len();
@@ -34,7 +33,7 @@ impl<T> HashSet<T> {
 
     fn clear(&mut self) {
         self.len = 0;
-        self.values = Vec::new();
+        self.values = ::std::alloc::Vec::new();
     }
 
     fn contains(&self, value: T) -> bool {

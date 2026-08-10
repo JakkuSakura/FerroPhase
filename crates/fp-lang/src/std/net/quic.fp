@@ -1,4 +1,3 @@
-use std::net::addr::SocketAddr;
 
 #[unimplemented]
 pub struct QuicConnection {
@@ -6,7 +5,7 @@ pub struct QuicConnection {
 }
 
 impl QuicConnection {
-    pub async fn connect(addr: SocketAddr, server_name: &str) -> QuicConnection {
+    pub async fn connect(addr: ::std::net::addr::SocketAddr, server_name: &str) -> QuicConnection {
         loop {}
     }
 
@@ -21,7 +20,7 @@ pub struct QuicListener {
 }
 
 impl QuicListener {
-    pub async fn bind(addr: SocketAddr) -> QuicListener {
+    pub async fn bind(addr: ::std::net::addr::SocketAddr) -> QuicListener {
         loop {}
     }
 

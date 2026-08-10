@@ -1,4 +1,3 @@
-use std::option::Option;
 
 pub struct Path {
     inner: str,
@@ -20,37 +19,37 @@ impl Path {
     }
 
     pub fn join(&self, child: &Path) -> PathBuf {
-        PathBuf::from(std::intrinsics::path::join(self.inner, child.as_str()))
+        PathBuf::from(::std::intrinsics::path::join(self.inner, child.as_str()))
     }
 
-    pub fn parent(&self) -> Option<PathBuf> {
-        option_path_buf(std::intrinsics::path::parent(self.inner))
+    pub fn parent(&self) -> ::std::option::Option<PathBuf> {
+        option_path_buf(::std::intrinsics::path::parent(self.inner))
     }
 
-    pub fn file_name(&self) -> Option<str> {
-        option_str(std::intrinsics::path::file_name(self.inner))
+    pub fn file_name(&self) -> ::std::option::Option<str> {
+        option_str(::std::intrinsics::path::file_name(self.inner))
     }
 
-    pub fn extension(&self) -> Option<str> {
-        option_str(std::intrinsics::path::extension(self.inner))
+    pub fn extension(&self) -> ::std::option::Option<str> {
+        option_str(::std::intrinsics::path::extension(self.inner))
     }
 
-    pub fn stem(&self) -> Option<str> {
-        option_str(std::intrinsics::path::stem(self.inner))
+    pub fn stem(&self) -> ::std::option::Option<str> {
+        option_str(::std::intrinsics::path::stem(self.inner))
     }
 
     pub fn is_absolute(&self) -> bool {
-        std::intrinsics::path::is_absolute(self.inner)
+        ::std::intrinsics::path::is_absolute(self.inner)
     }
 
     pub fn normalize(&self) -> PathBuf {
-        PathBuf::from(std::intrinsics::path::normalize(self.inner))
+        PathBuf::from(::std::intrinsics::path::normalize(self.inner))
     }
 
     pub fn has_extension(&self, extension: &str) -> bool {
         match self.extension() {
-            Option::Some(current) => current == extension,
-            Option::None => false,
+            ::std::option::Option::Some(current) => current == extension,
+            ::std::option::Option::None => false,
         }
     }
 }
@@ -89,22 +88,22 @@ impl PathBuf {
     }
 
     pub fn push(&mut self, child: &Path) {
-        self.inner = std::intrinsics::path::join(self.inner, child.as_str());
+        self.inner = ::std::intrinsics::path::join(self.inner, child.as_str());
     }
 
-    pub fn parent(&self) -> Option<PathBuf> {
+    pub fn parent(&self) -> ::std::option::Option<PathBuf> {
         self.as_path().parent()
     }
 
-    pub fn file_name(&self) -> Option<str> {
+    pub fn file_name(&self) -> ::std::option::Option<str> {
         self.as_path().file_name()
     }
 
-    pub fn extension(&self) -> Option<str> {
+    pub fn extension(&self) -> ::std::option::Option<str> {
         self.as_path().extension()
     }
 
-    pub fn stem(&self) -> Option<str> {
+    pub fn stem(&self) -> ::std::option::Option<str> {
         self.as_path().stem()
     }
 
@@ -121,18 +120,18 @@ impl PathBuf {
     }
 }
 
-fn option_str(value: str) -> Option<str> {
+fn option_str(value: str) -> ::std::option::Option<str> {
     if value == "" {
-        std::option::none()
+        ::std::option::none()
     } else {
-        std::option::some(value)
+        ::std::option::some(value)
     }
 }
 
-fn option_path_buf(value: str) -> Option<PathBuf> {
+fn option_path_buf(value: str) -> ::std::option::Option<PathBuf> {
     if value == "" {
-        std::option::none()
+        ::std::option::none()
     } else {
-        std::option::some(PathBuf::from(value))
+        ::std::option::some(PathBuf::from(value))
     }
 }

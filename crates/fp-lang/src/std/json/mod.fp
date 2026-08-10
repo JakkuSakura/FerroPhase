@@ -1,7 +1,5 @@
 //! Minimal JSON parser and printer for ASCII input.
 
-use std::option::Option;
-use std::alloc::Vec;
 
 pub struct Field {
     key: &str,
@@ -13,8 +11,8 @@ pub enum Value {
     Bool(bool),
     Number(Number),
     String(&str),
-    Array(Vec<Value>),
-    Object(Vec<Field>),
+    Array(::std::alloc::Vec<Value>),
+    Object(::std::alloc::Vec<Field>),
 }
 
 pub enum NumberKind {
@@ -35,27 +33,27 @@ pub struct Number {
 }
 
 impl Number {
-    pub fn as_i64(&self) -> Option<i64> {
+    pub fn as_i64(&self) -> ::std::option::Option<i64> {
         if self.has_int {
-            Option::Some(self.int)
+            ::std::option::Option::Some(self.int)
         } else {
-            Option::None
+            ::std::option::Option::None
         }
     }
 
-    pub fn as_u64(&self) -> Option<u64> {
+    pub fn as_u64(&self) -> ::std::option::Option<u64> {
         if self.has_uint {
-            Option::Some(self.uint)
+            ::std::option::Option::Some(self.uint)
         } else {
-            Option::None
+            ::std::option::Option::None
         }
     }
 
-    pub fn as_f64(&self) -> Option<f64> {
+    pub fn as_f64(&self) -> ::std::option::Option<f64> {
         if self.has_float {
-            Option::Some(self.float)
+            ::std::option::Option::Some(self.float)
         } else {
-            Option::None
+            ::std::option::Option::None
         }
     }
 
@@ -119,77 +117,77 @@ impl Value {
         }
     }
 
-    pub fn as_bool(&self) -> Option<bool> {
+    pub fn as_bool(&self) -> ::std::option::Option<bool> {
         match self {
-            Value::Bool(flag) => Option::Some(flag),
-            _ => Option::None,
+            Value::Bool(flag) => ::std::option::Option::Some(flag),
+            _ => ::std::option::Option::None,
         }
     }
 
-    pub fn as_str(&self) -> Option<&str> {
+    pub fn as_str(&self) -> ::std::option::Option<&str> {
         match self {
-            Value::String(text) => Option::Some(text),
-            _ => Option::None,
+            Value::String(text) => ::std::option::Option::Some(text),
+            _ => ::std::option::Option::None,
         }
     }
 
-    pub fn as_number(&self) -> Option<Number> {
+    pub fn as_number(&self) -> ::std::option::Option<Number> {
         match self {
-            Value::Number(number) => Option::Some(number),
-            _ => Option::None,
+            Value::Number(number) => ::std::option::Option::Some(number),
+            _ => ::std::option::Option::None,
         }
     }
 
-    pub fn as_array(&self) -> Option<Vec<Value>> {
+    pub fn as_array(&self) -> ::std::option::Option<::std::alloc::Vec<Value>> {
         match self {
-            Value::Array(values) => Option::Some(values),
-            _ => Option::None,
+            Value::Array(values) => ::std::option::Option::Some(values),
+            _ => ::std::option::Option::None,
         }
     }
 
-    pub fn as_object(&self) -> Option<Vec<Field>> {
+    pub fn as_object(&self) -> ::std::option::Option<::std::alloc::Vec<Field>> {
         match self {
-            Value::Object(fields) => Option::Some(fields),
-            _ => Option::None,
+            Value::Object(fields) => ::std::option::Option::Some(fields),
+            _ => ::std::option::Option::None,
         }
     }
 
-    pub fn get(&self, key: &str) -> Option<Value> {
+    pub fn get(&self, key: &str) -> ::std::option::Option<Value> {
         match self {
             Value::Object(fields) => {
                 let mut idx = 0;
                 while idx < fields.len() {
                     let field = fields[idx];
                     if field.key == key {
-                        return Option::Some(field.value);
+                        return ::std::option::Option::Some(field.value);
                     }
                     idx = idx + 1;
                 }
-                Option::None
+                ::std::option::Option::None
             }
-            _ => Option::None,
+            _ => ::std::option::Option::None,
         }
     }
 
-    pub fn get_index(&self, index: i64) -> Option<Value> {
+    pub fn get_index(&self, index: i64) -> ::std::option::Option<Value> {
         match self {
             Value::Array(values) => {
                 if index < 0 {
-                    return Option::None;
+                    return ::std::option::Option::None;
                 }
                 if index >= values.len() {
-                    return Option::None;
+                    return ::std::option::Option::None;
                 }
                 let idx = index as usize;
-                Option::Some(values[idx])
+                ::std::option::Option::Some(values[idx])
             }
-            _ => Option::None,
+            _ => ::std::option::Option::None,
         }
     }
 }
 
 #[op = "json_parse"]
-pub fn parse(input: &str) -> Value { std::intrinsics::json::parse(input) }
+pub fn parse(input: &str) -> Value { ::std::intrinsics::json::parse(input) }
 
 pub fn is_null(value: Value) -> bool {
     value.is_null()
@@ -197,29 +195,29 @@ pub fn is_null(value: Value) -> bool {
 
 pub fn get_string(value: Value) -> &str {
     match value.as_str() {
-        Option::Some(text) => text,
-        Option::None => panic("expected json string"),
+        ::std::option::Option::Some(text) => text,
+        ::std::option::Option::None => panic("expected json string"),
     }
 }
 
-pub fn get_array(value: Value) -> Vec<Value> {
+pub fn get_array(value: Value) -> ::std::alloc::Vec<Value> {
     match value.as_array() {
-        Option::Some(items) => items,
-        Option::None => panic("expected json array"),
+        ::std::option::Option::Some(items) => items,
+        ::std::option::Option::None => panic("expected json array"),
     }
 }
 
 pub fn get_object_field(value: Value, key: &str) -> Value {
     match value.get(key) {
-        Option::Some(found) => found,
-        Option::None => panic(f"missing json object field: {key}"),
+        ::std::option::Option::Some(found) => found,
+        ::std::option::Option::None => panic(f"missing json object field: {key}"),
     }
 }
 
 pub fn find_object_field(value: Value, key: &str) -> Value {
     match value.get(key) {
-        Option::Some(found) => found,
-        Option::None => Value::Null,
+        ::std::option::Option::Some(found) => found,
+        ::std::option::Option::None => Value::Null,
     }
 }
 

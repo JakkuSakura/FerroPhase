@@ -1,5 +1,3 @@
-use std::option::Option;
-use std::alloc::Vec;
 
 struct TestCase {
     name: str,
@@ -13,7 +11,7 @@ pub struct CommandMock {
     status: i64,
 }
 
-const mut REGISTRY: Vec<TestCase> = std::alloc::Vec::new();
+const mut REGISTRY: ::std::alloc::Vec<TestCase> = ::std::alloc::Vec::new();
 // TODO: use quote<fn> instead
 const fn test(item: quote<item>) -> quote<item> {
     let name = item.name;
@@ -28,7 +26,7 @@ struct TestReport {
 }
 
 fn run_tests() -> TestReport {
-    let tests: Vec<TestCase> = REGISTRY;
+    let tests: ::std::alloc::Vec<TestCase> = REGISTRY;
     let mut passed = 0;
     let mut failed = 0;
     let mut idx = 0;
@@ -63,7 +61,7 @@ fn run() -> TestReport {
 }
 
 pub fn reset_command_mocks() {
-    std::intrinsics::test::command_mock_reset();
+    ::std::intrinsics::test::command_mock_reset();
 }
 
 pub fn mock_command(
@@ -72,15 +70,15 @@ pub fn mock_command(
     stderr: &str = "",
     status: i64 = 0,
 ) {
-    std::intrinsics::test::command_mock_push(pattern, stdout, stderr, status);
+    ::std::intrinsics::test::command_mock_push(pattern, stdout, stderr, status);
 }
 
-pub fn take_command_calls() -> Vec<&str> {
-    std::intrinsics::test::command_mock_take_calls()
+pub fn take_command_calls() -> ::std::alloc::Vec<&str> {
+    ::std::intrinsics::test::command_mock_take_calls()
 }
 
 pub fn apply_command_mock(
     command: &str,
-) -> Option<std::intrinsics::test::CommandMockMatch> {
-    std::intrinsics::test::command_mock_apply(command)
+) -> ::std::option::Option<::std::intrinsics::test::CommandMockMatch> {
+    ::std::intrinsics::test::command_mock_apply(command)
 }

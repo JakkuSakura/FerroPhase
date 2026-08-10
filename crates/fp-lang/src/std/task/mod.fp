@@ -4,15 +4,15 @@ pub struct Future<T> {
     pub handle: any,
 }
 
-// Accept any Future-like value (async block, std::future::sleep, etc.).
+// Accept any Future-like value (async block, ::std::future::sleep, etc.).
 fn spawn<T>(fut: any) -> Future<T> {
-    Future { handle: std::task::spawn(fut) }
+    Future { handle: ::std::task::spawn(fut) }
 }
 
 macro_rules! join {
-    ($($future:expr),+ $(,)?) => { std::task::join($($future),+) };
+    ($($future:expr),+ $(,)?) => { ::std::task::join($($future),+) };
 }
 
 macro_rules! select {
-    ($($future:expr),+ $(,)?) => { std::task::select($($future),+) };
+    ($($future:expr),+ $(,)?) => { ::std::task::select($($future),+) };
 }

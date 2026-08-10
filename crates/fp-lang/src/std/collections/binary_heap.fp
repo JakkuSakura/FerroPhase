@@ -1,19 +1,18 @@
-use std::alloc::Vec;
 
 pub struct BinaryHeap<T> {
-    values: Vec<T>,
+    values: ::std::alloc::Vec<T>,
     len: i64,
 }
 
 impl<T> BinaryHeap<T> {
     fn new() -> BinaryHeap<T> {
         BinaryHeap {
-            values: Vec::new(),
+            values: ::std::alloc::Vec::new(),
             len: 0,
         }
     }
 
-    fn from(items: Vec<T>) -> BinaryHeap<T> {
+    fn from(items: ::std::alloc::Vec<T>) -> BinaryHeap<T> {
         let mut heap = BinaryHeap::new();
         let mut idx = 0;
         let items_len = items.len();
@@ -33,7 +32,7 @@ impl<T> BinaryHeap<T> {
     }
 
     fn clear(&mut self) {
-        self.values = Vec::new();
+        self.values = ::std::alloc::Vec::new();
         self.len = 0;
     }
 

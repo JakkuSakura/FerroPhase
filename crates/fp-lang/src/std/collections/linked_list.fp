@@ -13,22 +13,21 @@ pub struct LinkedNode<T> {
     next: Option<Box<LinkedNode<T> > >,
 }
 
-use std::alloc::Vec;
 
 pub struct LinkedList<T> {
-    values: Vec<T>,
+    values: ::std::alloc::Vec<T>,
     len: i64,
 }
 
 impl<T> LinkedList<T> {
     fn new() -> LinkedList<T> {
         LinkedList {
-            values: Vec::new(),
+            values: ::std::alloc::Vec::new(),
             len: 0,
         }
     }
 
-    fn from(items: Vec<T>) -> LinkedList<T> {
+    fn from(items: ::std::alloc::Vec<T>) -> LinkedList<T> {
         let mut list = LinkedList::new();
         let mut idx = 0;
         let items_len = items.len();
@@ -48,7 +47,7 @@ impl<T> LinkedList<T> {
     }
 
     fn clear(&mut self) {
-        self.values = Vec::new();
+        self.values = ::std::alloc::Vec::new();
         self.len = 0;
     }
 
@@ -77,7 +76,7 @@ impl<T> LinkedList<T> {
             return;
         }
 
-        let mut shifted: Vec<T> = Vec::new();
+        let mut shifted: ::std::alloc::Vec<T> = ::std::alloc::Vec::new();
         shifted.push(value);
         let mut idx = 0;
         while idx < self.len {

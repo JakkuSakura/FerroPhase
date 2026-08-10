@@ -1,13 +1,12 @@
-use std::option::Option;
 
 pub trait Any {}
 
-pub fn try_as_dyn<T, U>(value: &T) -> Option<&U> {
+pub fn try_as_dyn<T, U>(value: &T) -> ::std::option::Option<&U> {
     let _ = value;
-    Option::None
+    ::std::option::Option::None
 }
 
-pub fn try_as_dyn_mut<T, U>(value: &mut T) -> Option<&mut U> {
+pub fn try_as_dyn_mut<T, U>(value: &mut T) -> ::std::option::Option<&mut U> {
     let _ = value;
-    Option::None
+    ::std::option::Option::None
 }

@@ -1,4 +1,3 @@
-use std::alloc::Vec;
 
 pub enum Delimiter {
     Parenthesis,
@@ -8,7 +7,7 @@ pub enum Delimiter {
 
 pub struct Group {
     delimiter: Delimiter,
-    tokens: Vec<TokenTree>,
+    tokens: ::std::alloc::Vec<TokenTree>,
 }
 
 pub struct Ident {
@@ -31,19 +30,19 @@ pub enum TokenTree {
 pub struct TokenStream {}
 
 pub const fn token_stream_from_str(text: str) -> TokenStream {
-    std::proc_macro::token_stream_from_str(text)
+    ::std::proc_macro::token_stream_from_str(text)
 }
 
 pub const fn token_stream_to_string(stream: TokenStream) -> str {
-    std::proc_macro::token_stream_to_string(stream)
+    ::std::proc_macro::token_stream_to_string(stream)
 }
 
 impl TokenStream {
     pub fn from_str(text: str) -> TokenStream {
-        std::proc_macro::token_stream_from_str(text)
+        ::std::proc_macro::token_stream_from_str(text)
     }
 
     pub fn to_string(self) -> str {
-        std::proc_macro::token_stream_to_string(self)
+        ::std::proc_macro::token_stream_to_string(self)
     }
 }
