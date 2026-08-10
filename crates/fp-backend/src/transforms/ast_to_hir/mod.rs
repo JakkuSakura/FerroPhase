@@ -691,9 +691,9 @@ impl HirGenerator {
         };
         for (_module_path, hir_program, exports) in workspace.hir_definitions() {
             for item in &hir_program.items {
+                program.def_map.insert(item.def_id, item.clone());
                 if matches!(item.kind, hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_)) {
                     program.items.push(item.clone());
-                    program.def_map.insert(item.def_id, item.clone());
                 }
             }
             program.def_map.extend(hir_program.def_map);
