@@ -443,7 +443,7 @@ impl CompilerDriver {
         }
 
         let fqp = FullyQualifiedPath::new(package_path.clone());
-        let (mir_id, struct_layouts) = self.lower_to_mir(&hir_id, &fqp).await?;
+        let (mir_id, struct_layouts, full_layouts) = self.lower_to_mir(&hir_id, &fqp).await?;
         if let Some(package) = self
             .state
             .typing_ctx
@@ -457,7 +457,7 @@ impl CompilerDriver {
                 .extend(struct_layouts);
         }
         let lir_id =
-            self.lower_to_lir(&mir_id, &fqp, &current_package_id)?;
+            self.lower_to_lir(&mir_id, &fqp, &current_package_id, &full_layouts)?;
         let lir = self.state.lir(&lir_id)?.clone();
         Ok(vec![fp_core::lir::LirCompileUnit {
             package_id: hir_package_id,
@@ -592,7 +592,7 @@ impl CompilerDriver {
         &mut self,
         hir_id: &HirId,
         path: &FullyQualifiedPath,
-    ) -> Result<(MirId, HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>>), CompilerDriverError> {
+    ) -> Result<(MirId, HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>>, HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>), CompilerDriverError> {
         // HIR has already passed type checking at this boundary. Lowering is
         // therefore strict: a failure is an internal compiler error, never a
         // recoverable source diagnostic.
@@ -629,9 +629,14 @@ impl CompilerDriver {
         lowering.walk_program_types_for_layouts(&mir);
         let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
             lowering.all_adt_field_tys().into_iter().collect();
+        let full_layouts: HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>> =
+            lowering.struct_layout_map()
+                .iter()
+                .map(|(key, layout)| ((key.def_id, key.args.clone()), layout.field_tys.clone()))
+                .collect();
         let mir_id = MirId::new(format!("mir:{}", self.module_state_key(path.path())));
         self.state.insert_mir(mir_id.clone(), mir);
-        Ok((mir_id, struct_layouts))
+        Ok((mir_id, struct_layouts, full_layouts))
     }
 
     fn lower_to_lir(
@@ -639,6 +644,7 @@ impl CompilerDriver {
         mir_id: &MirId,
         path: &FullyQualifiedPath,
         package_id: &PackageId,
+        full_layouts: &HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>,
     ) -> Result<LirId, CompilerDriverError> {
         let mir = self.state.mir(mir_id)?.clone();
         let mut all_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> = HashMap::new();
@@ -648,7 +654,8 @@ impl CompilerDriver {
         let mut lowering = LirGenerator::new(self.state.typing_ctx.data_layout.clone())
             .with_package_id(package_id.clone())
             .with_module_path(path.path().to_key())
-            .with_mir_layouts(all_layouts);
+            .with_mir_layouts(all_layouts)
+            .with_full_layouts(full_layouts.clone());
         let lir = lowering.transform(mir).map_err(|error| {
             CompilerDriverError::InternalCompilerError(format!(
                 "MIR-to-LIR lowering failed for {}: {error}",

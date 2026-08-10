@@ -594,6 +594,11 @@ impl MirLowering {
                 self.compute_place_layouts(body, place);
                 self.compute_rvalue_layouts(rv);
             }
+            mir::StatementKind::IntrinsicCall { args, .. } => {
+                for arg in args {
+                    self.compute_operand_layouts(body, arg);
+                }
+            }
             mir::StatementKind::SetDiscriminant { place, .. }
             | mir::StatementKind::Retag(_, place)
             | mir::StatementKind::AscribeUserType(place, _, _) => {
@@ -605,9 +610,10 @@ impl MirLowering {
 
     fn compute_terminator_layouts(&mut self, body: &mir::Body, term: &mir::Terminator) {
         match &term.kind {
-            mir::TerminatorKind::Call { args, destination, .. } => {
+            mir::TerminatorKind::Call { func, args, destination, .. } => {
+                self.compute_operand_layouts(body, func);
                 for arg in args {
-                    self.compute_operand_layouts(arg);
+                    self.compute_operand_layouts(body, arg);
                 }
                 if let Some((place, _)) = destination {
                     self.compute_place_layouts(body, place);
@@ -615,11 +621,18 @@ impl MirLowering {
             }
             mir::TerminatorKind::SwitchInt { discr, .. }
             | mir::TerminatorKind::Assert { cond: discr, .. } => {
-                self.compute_operand_layouts(discr);
+                self.compute_operand_layouts(body, discr);
             }
-            mir::TerminatorKind::Drop { place, .. }
-            | mir::TerminatorKind::DropAndReplace { place, .. } => {
+            mir::TerminatorKind::Drop { place, .. } => {
                 self.compute_place_layouts(body, place);
+            }
+            mir::TerminatorKind::DropAndReplace { place, value, .. } => {
+                self.compute_place_layouts(body, place);
+                self.compute_operand_layouts(body, value);
+            }
+            mir::TerminatorKind::Yield { value, resume_arg, .. } => {
+                self.compute_operand_layouts(body, value);
+                self.compute_place_layouts(body, resume_arg);
             }
             _ => {}
         }
@@ -651,9 +664,14 @@ impl MirLowering {
         }
     }
 
-    fn compute_operand_layouts(&mut self, op: &mir::Operand) {
-        if let mir::Operand::Constant(c) = op {
-            self.compute_ty_layout(&c.ty, Span::null());
+    fn compute_operand_layouts(&mut self, body: &mir::Body, op: &mir::Operand) {
+        match op {
+            mir::Operand::Copy(place) | mir::Operand::Move(place) => {
+                self.compute_place_layouts(body, place);
+            }
+            mir::Operand::Constant(c) => {
+                self.compute_ty_layout(&c.ty, Span::null());
+            }
         }
     }
 
@@ -693,6 +711,10 @@ impl MirLowering {
                 _ => {}
             }
         }
+    }
+
+    pub fn struct_layout_map(&self) -> &HashMap<StructLayoutKey, StructLayout> {
+        &self.struct_layouts
     }
 
     pub fn all_adt_field_tys(&self) -> HashMap<hir::DefId, Vec<Ty>> {
@@ -780,7 +802,7 @@ impl MirLowering {
 
         let reachable = self.collect_reachable_def_ids(program);
 
-        for item in &program.items {
+        for item in program.def_map.values() {
             match &item.kind {
                 hir::ItemKind::Struct(def) => {
                     self.register_struct(item.def_id, def, item.span);
@@ -804,18 +826,6 @@ impl MirLowering {
         };
 
         for item in &items {
-            match &item.kind {
-                hir::ItemKind::Struct(def) => {
-                    self.register_struct(item.def_id, def, item.span);
-                }
-                hir::ItemKind::Enum(def) => {
-                    self.register_enum(item.def_id, def, item.span);
-                }
-                _ => {}
-            }
-        }
-
-        for item in &items {
             if let hir::ItemKind::Const(const_item) = &item.kind {
                 self.register_const_value(program, item.def_id, const_item);
             }
@@ -823,12 +833,7 @@ impl MirLowering {
 
         for item in &items {
             match &item.kind {
-                hir::ItemKind::Struct(def) => {
-                    self.register_struct(item.def_id, def, item.span);
-                }
-                hir::ItemKind::Enum(def) => {
-                    self.register_enum(item.def_id, def, item.span);
-                }
+                hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) => {}
                 hir::ItemKind::Const(const_item) => {
                     let ty = self.lower_type_expr(&const_item.ty);
                     if Self::is_unit_ty(&ty) {
