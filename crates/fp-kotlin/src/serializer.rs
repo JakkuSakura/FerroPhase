@@ -9,7 +9,7 @@ use fp_core::ast::{
     StmtLet, BExpr, Pattern, PatternKind,
 };
 use fp_core::ops::{BinOpKind, UnOpKind};
-use fp_core::intrinsics::calls::KnownPackage;
+use fp_core::intrinsics::calls::{CallKind, KnownPackage, OpKind};
 use fp_core::package::{PackageItem, PackageSource};
 use eyre::{bail, Result};
 
@@ -262,7 +262,12 @@ fn emit_stmt(stmt: &BlockStmt, e: &mut KotlinEmitter, is_tail: bool) -> Result<(
     match stmt {
         BlockStmt::Let(l) => {
             let var_name = ident_from_pattern(&l.pat);
-            if let Some(init) = &l.init {
+            if var_name == "_" {
+                if let Some(init) = &l.init {
+                    let val = render_expr(init, e)?;
+                    e.push_line(&val);
+                }
+            } else if let Some(init) = &l.init {
                 let val = render_expr(init, e)?;
                 e.push_line(&format!("val {} = {}", var_name, val));
             } else {
@@ -471,7 +476,10 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
         ExprKind::Paren(p) => Ok(format!("({})", render_expr(&p.expr, e)?)),
 
         ExprKind::Closure(cl) => {
-            let params: Vec<String> = cl.params.iter().map(|p| ident_from_pattern(p)).collect();
+            let params: Vec<String> = cl.params.iter().map(|p| {
+                let n = ident_from_pattern(p);
+                if n == "_" { "it".to_string() } else { n }
+            }).collect();
             Ok(format!("{{ {} -> {} }}", params.join(", "), render_expr_single(&cl.body, e)?))
         }
 
@@ -486,10 +494,49 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
         }
 
         ExprKind::IntrinsicCall(ic) => {
+            use fp_core::intrinsics::calls::OpKind;
+            // Render all args first to avoid borrow conflicts
             let args: Vec<String> = ic.args.iter()
-                .map(|a| render_expr(a, e)).collect::<Result<Vec<_>>>()?;
-            let name = intrinsic_name(&ic.kind);
-            Ok(format!("{}({})", name, args.join(", ")))
+                .map(|a| render_expr(a, e))
+                .collect::<Result<Vec<_>>>()?;
+
+            match &ic.kind {
+                CallKind::Op(OpKind::MapOr) => {
+                    let receiver = args.first().cloned().unwrap_or_default();
+                    let default = args.get(1).cloned().unwrap_or_default();
+                    Ok(format!("{} ?: {}", receiver, default))
+                }
+                CallKind::Op(OpKind::Collect) => {
+                    let receiver = args.first().cloned().unwrap_or_default();
+                    Ok(format!("{}.toList()", receiver))
+                }
+                CallKind::Op(OpKind::Find) => {
+                    let receiver = args.first().cloned().unwrap_or_default();
+                    let pred = args.get(1).cloned();
+                    if let Some(p) = pred {
+                        Ok(format!("{}.firstOrNull {{ {} }}", receiver, p))
+                    } else {
+                        Ok(format!("{}.firstOrNull()", receiver))
+                    }
+                }
+                CallKind::Op(OpKind::UnwrapOr) => {
+                    let receiver = args.first().cloned().unwrap_or_default();
+                    let default = args.get(1).cloned().unwrap_or_default();
+                    Ok(format!("{} ?: {}", receiver, default))
+                }
+                CallKind::Op(OpKind::ToString) => {
+                    let receiver = args.first().cloned().unwrap_or_default();
+                    Ok(format!("{}.toString()", receiver))
+                }
+                CallKind::Op(OpKind::AndThen) => {
+                    let receiver = args.first().cloned().unwrap_or_default();
+                    Ok(format!("{}.let {{ it }}", receiver))
+                }
+                _ => {
+                    let name = intrinsic_name(&ic.kind);
+                    Ok(format!("{}({})", name, args.join(", ")))
+                }
+            }
         }
 
         ExprKind::Range(r) => {
@@ -516,7 +563,7 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
 
         ExprKind::Break(_) => Ok("break".to_string()),
         ExprKind::Continue(_) => Ok("continue".to_string()),
-        _ => Ok("/* TODO */".to_string()),
+        _ => Ok(String::new()),
     }
 }
 
@@ -555,6 +602,26 @@ fn map_kt_method(name: &str) -> String {
         "HashSet::new" => "mutableSetOf".into(),
         "HashMap::new" => "mutableMapOf".into(),
         "unwrap" | "expect" => "!!".into(),
+        "is_empty" => "isEmpty()".into(),
+        "push" => "add".into(),
+        "pop" => "removeLast()".into(),
+        "remove" => "removeAt".into(),
+        "insert" => "add".into(),
+        "len" => "size".into(),
+        "lines" => "lines()".into(),
+        "split" => "split".into(),
+        "contains" => "contains".into(),
+        "replace" => "replace".into(),
+        "trim" => "trim()".into(),
+        "to_uppercase" => "uppercase()".into(),
+        "to_lowercase" => "lowercase()".into(),
+        "starts_with" => "startsWith".into(),
+        "ends_with" => "endsWith".into(),
+        "strip_prefix" => "removePrefix".into(),
+        "strip_suffix" => "removeSuffix".into(),
+        "parse" => "toLong()".into(),
+        "rfind" => "lastIndexOf".into(),
+        "clone" => "copy()".into(),
         _ => name.replace("::", "."),
     }
 }
@@ -713,6 +780,15 @@ fn map_name_to_kt(name: &str) -> String {
     if let Some(inner) = name.strip_prefix("Option<").and_then(|s| s.strip_suffix(">")) {
         return format!("{}?", map_name_to_kt(inner));
     }
+    if let Some(inner) = name.strip_prefix("Arc<").and_then(|s| s.strip_suffix(">")) {
+        return map_name_to_kt(inner);
+    }
+    if let Some(inner) = name.strip_prefix("ModalResult<").and_then(|s| s.strip_suffix(">")) {
+        return map_name_to_kt(inner);
+    }
+    if let Some(inner) = name.strip_prefix("Box<").and_then(|s| s.strip_suffix(">")) {
+        return map_name_to_kt(inner);
+    }
     match name {
         "str" | "String" => "String".into(),
         "char" => "Char".into(),
@@ -723,6 +799,10 @@ fn map_name_to_kt(name: &str) -> String {
         "u32" => "UInt".into(), "u64" => "ULong".into(),
         "f32" => "Float".into(), "f64" => "Double".into(),
         "usize" => "Long".into(), "isize" => "Long".into(),
+        "PathBuf" | "Path" => "java.nio.file.Path".into(),
+        "Arc" => "Any".into(),
+        "ModalResult" => "Any".into(),
+        "Box" => "Any".into(),
         _ => name.to_string(),
     }
 }

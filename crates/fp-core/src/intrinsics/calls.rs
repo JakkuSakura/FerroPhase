@@ -40,6 +40,26 @@ pub enum OpKind {
     OptionUnwrap,
     VecNew,
     Clone,
+    /// Portable: x.as_ref() → drop (Kotlin nullable)
+    AsRef,
+    /// Portable: x.map_or(default, f) → x?.let { f } ?: default
+    MapOr,
+    /// Portable: x.iter() → drop (Kotlin collections auto-iterate)
+    Iter,
+    /// Portable: x.collect::<T>() → toList/toSet
+    Collect,
+    /// Portable: x.find(f) → firstOrNull { f }
+    Find,
+    /// Portable: x.unwrap_or(default) → x ?: default
+    UnwrapOr,
+    /// Portable: x.to_owned() → drop (Kotlin strings owned)
+    ToOwned,
+    /// Portable: x.as_str() → drop
+    AsStr,
+    /// Portable: x.to_string() → toString()
+    ToString,
+    /// Portable: x.and_then(f) → x?.let { f }
+    AndThen,
     /// Portable import of a known package
     Import(KnownPackage),
 }
@@ -217,6 +237,16 @@ impl CallKind {
             Self::Op(OpKind::OptionUnwrap) => None,
             Self::Op(OpKind::VecNew) => None,
             Self::Op(OpKind::Clone) => None,
+            Self::Op(OpKind::AsRef) => None,
+            Self::Op(OpKind::MapOr) => None,
+            Self::Op(OpKind::Iter) => None,
+            Self::Op(OpKind::Collect) => None,
+            Self::Op(OpKind::Find) => None,
+            Self::Op(OpKind::UnwrapOr) => None,
+            Self::Op(OpKind::ToOwned) => None,
+            Self::Op(OpKind::AsStr) => None,
+            Self::Op(OpKind::ToString) => None,
+            Self::Op(OpKind::AndThen) => None,
             Self::Op(OpKind::Import(_)) => None,
             Self::Intrinsic(kind) => Some(kind),
         }
@@ -387,6 +417,16 @@ impl CallKind {
             Self::Op(OpKind::OptionUnwrap) => "option_unwrap",
             Self::Op(OpKind::VecNew) => "vec_new",
             Self::Op(OpKind::Clone) => "clone",
+            Self::Op(OpKind::AsRef) => "as_ref",
+            Self::Op(OpKind::MapOr) => "map_or",
+            Self::Op(OpKind::Iter) => "iter",
+            Self::Op(OpKind::Collect) => "collect",
+            Self::Op(OpKind::Find) => "find",
+            Self::Op(OpKind::UnwrapOr) => "unwrap_or",
+            Self::Op(OpKind::ToOwned) => "to_owned",
+            Self::Op(OpKind::AsStr) => "as_str",
+            Self::Op(OpKind::ToString) => "to_string",
+            Self::Op(OpKind::AndThen) => "and_then",
             Self::Op(OpKind::Import(KnownPackage::StdCollections)) => "import_std_collections",
             Self::Op(OpKind::Import(KnownPackage::StdPath)) => "import_std_path",
             Self::Op(OpKind::Import(KnownPackage::StdProcess)) => "import_std_process",

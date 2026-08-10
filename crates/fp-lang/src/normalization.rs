@@ -382,6 +382,25 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                             })
                         ));
                     }
+                    // Method-like ops → drop method, keep receiver
+                    CallKind::Op(OpKind::AsRef | OpKind::Iter | OpKind::ToOwned | OpKind::AsStr) => {
+                        // These are method calls on the receiver — just keep args[0] (the receiver)
+                        return Ok(NormalizeOutcome::Normalized(
+                            invoke.args.first().cloned().unwrap_or_else(|| {
+                                Expr::from_parts(0, None, Some(Span::default()),
+                                    ExprKind::Value(Box::new(Value::Null(Default::default()))))
+                            })
+                        ));
+                    }
+                    // Wrapped as IntrinsicCall for serializer handling
+                    CallKind::Op(OpKind::MapOr | OpKind::Collect | OpKind::Find | OpKind::UnwrapOr | OpKind::ToString | OpKind::AndThen) => {
+                        return Ok(NormalizeOutcome::Normalized(Expr::from_parts(
+                            id, ty_slot, span,
+                            ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                                kind, invoke.args, invoke.kwargs,
+                            )),
+                        )));
+                    }
                     _ => {} // fall through to existing native path
                 }
             }
@@ -540,6 +559,10 @@ fn compile_mode_std_path(kind: OpKind) -> Option<Vec<Ident>> {
         // Portable data ops — no std path, handled in normalize_invoke
         OpKind::OptionSome | OpKind::OptionNone | OpKind::OptionUnwrap
         | OpKind::VecNew | OpKind::Clone => return None,
+        // Method-like portable ops — no std path
+        OpKind::AsRef | OpKind::MapOr | OpKind::Iter | OpKind::Collect
+        | OpKind::Find | OpKind::UnwrapOr | OpKind::ToOwned | OpKind::AsStr
+        | OpKind::ToString | OpKind::AndThen => return None,
         // Import ops — handled at item level, not expression level
         OpKind::Import(_) => return None,
     };
@@ -610,6 +633,12 @@ fn normalize_expr(expr: &mut Expr, n: &dyn IntrinsicNormalizer) -> Result<()> {
         ExprKind::Reference(r) => { normalize_expr(&mut r.referee, n)?; }
         ExprKind::Dereference(d) => { normalize_expr(&mut d.referee, n)?; }
         ExprKind::Cast(c) => { normalize_expr(&mut c.expr, n)?; }
+        ExprKind::Invoke(inv) => {
+            for arg in &mut inv.args { normalize_expr(arg, n)?; }
+            if let ExprInvokeTarget::Method(sel) = &mut inv.target {
+                normalize_expr(&mut sel.obj, n)?;
+            }
+        }
         _ => {}
     }
 
@@ -681,6 +710,16 @@ fn operation_kind(name: &str) -> Option<OpKind> {
         "unwrap" | "Unwrap" => Some(OpKind::OptionUnwrap),
         "vec_new" | "Vec::new" | "Vec" | "vec" => Some(OpKind::VecNew),
         "clone" | "Clone" => Some(OpKind::Clone),
+        "as_ref" => Some(OpKind::AsRef),
+        "map_or" => Some(OpKind::MapOr),
+        "iter" => Some(OpKind::Iter),
+        "collect" => Some(OpKind::Collect),
+        "find" => Some(OpKind::Find),
+        "unwrap_or" => Some(OpKind::UnwrapOr),
+        "to_owned" => Some(OpKind::ToOwned),
+        "as_str" => Some(OpKind::AsStr),
+        "to_string" => Some(OpKind::ToString),
+        "and_then" => Some(OpKind::AndThen),
         _ => None,
     }
 }
@@ -711,6 +750,16 @@ fn intrinsic_macro_kind(name: &str) -> Option<CallKind> {
         "unwrap" | "Unwrap" => Some(CallKind::Op(OpKind::OptionUnwrap)),
         "vec_new" | "Vec::new" | "Vec" | "vec" => Some(CallKind::Op(OpKind::VecNew)),
         "clone" | "Clone" => Some(CallKind::Op(OpKind::Clone)),
+        "as_ref" => Some(CallKind::Op(OpKind::AsRef)),
+        "map_or" => Some(CallKind::Op(OpKind::MapOr)),
+        "iter" => Some(CallKind::Op(OpKind::Iter)),
+        "collect" => Some(CallKind::Op(OpKind::Collect)),
+        "find" => Some(CallKind::Op(OpKind::Find)),
+        "unwrap_or" => Some(CallKind::Op(OpKind::UnwrapOr)),
+        "to_owned" => Some(CallKind::Op(OpKind::ToOwned)),
+        "as_str" => Some(CallKind::Op(OpKind::AsStr)),
+        "to_string" => Some(CallKind::Op(OpKind::ToString)),
+        "and_then" => Some(CallKind::Op(OpKind::AndThen)),
         _ => None,
     }
 }
