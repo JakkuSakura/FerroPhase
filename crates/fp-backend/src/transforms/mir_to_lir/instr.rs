@@ -36,6 +36,7 @@ pub struct LirGenerator {
     struct_layouts: RefCell<HashMap<mir::DefId, Vec<Option<lir::LirType>>>>,
     mir_layouts: HashMap<mir::DefId, Vec<mir::Ty>>,
     full_layouts: HashMap<(mir::DefId, Vec<mir::Ty>), Vec<mir::Ty>>,
+    adt_defs: HashMap<mir::DefId, mir::ty::AdtDef>,
     function_symbol_map: HashMap<String, String>,
     function_def_map: HashMap<(mir::DefId, mir::ty::SubstsRef), String>,
     function_signatures: HashMap<String, lir::LirFunctionSignature>,
@@ -126,6 +127,7 @@ impl LirGenerator {
             struct_layouts: RefCell::new(HashMap::new()),
             mir_layouts: HashMap::new(),
             full_layouts: HashMap::new(),
+            adt_defs: HashMap::new(),
             function_symbol_map: HashMap::new(),
             function_def_map: HashMap::new(),
             function_signatures: HashMap::new(),
@@ -158,6 +160,11 @@ impl LirGenerator {
         layouts: HashMap<(mir::DefId, Vec<mir::Ty>), Vec<mir::Ty>>,
     ) -> Self {
         self.full_layouts = layouts;
+        self
+    }
+
+    pub fn with_adt_defs(mut self, defs: HashMap<mir::DefId, mir::ty::AdtDef>) -> Self {
+        self.adt_defs = defs;
         self
     }
 
@@ -5941,6 +5948,20 @@ impl LirGenerator {
                         packed: false,
                         name: None,
                     };
+                }
+                if let Some(populated) = self.adt_defs.get(&adt.did) {
+                    if let Some(variant) = populated.variants.first() {
+                        let fields: Vec<Option<lir::LirType>> = variant.fields.iter()
+                            .map(|f| Some(self.lir_type_from_ty(&f.ty)))
+                            .collect();
+                        let struct_fields: Vec<lir::LirType> = fields.iter().map(|f| f.clone().unwrap()).collect();
+                        self.struct_layouts.borrow_mut().insert(adt.did, fields);
+                        return lir::LirType::Struct {
+                            fields: struct_fields,
+                            packed: false,
+                            name: None,
+                        };
+                    }
                 }
                 panic!("MIR-to-LIR ICE: missing layout for ADT {}", adt.did)
             },

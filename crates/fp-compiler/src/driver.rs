@@ -443,7 +443,7 @@ impl CompilerDriver {
         }
 
         let fqp = FullyQualifiedPath::new(package_path.clone());
-        let (mir_id, struct_layouts, full_layouts) = self.lower_to_mir(&hir_id, &fqp).await?;
+        let (mir_id, struct_layouts, full_layouts, adt_defs) = self.lower_to_mir(&hir_id, &fqp).await?;
         if let Some(package) = self
             .state
             .typing_ctx
@@ -455,9 +455,17 @@ impl CompilerDriver {
                 .borrow_mut()
                 .mir_struct_fields
                 .extend(struct_layouts);
+            package
+                .borrow_mut()
+                .mir_adt_defs
+                .extend(adt_defs.clone());
+        }
+        let mut all_adt_defs = HashMap::new();
+        for (_dep_id, dep_package) in self.state.typing_ctx.env_ctx.crates().iter() {
+            all_adt_defs.extend(dep_package.borrow().mir_adt_defs.clone());
         }
         let lir_id =
-            self.lower_to_lir(&mir_id, &fqp, &current_package_id, &full_layouts)?;
+            self.lower_to_lir(&mir_id, &fqp, &current_package_id, &full_layouts, &all_adt_defs)?;
         let lir = self.state.lir(&lir_id)?.clone();
         Ok(vec![fp_core::lir::LirCompileUnit {
             package_id: hir_package_id,
@@ -592,7 +600,7 @@ impl CompilerDriver {
         &mut self,
         hir_id: &HirId,
         path: &FullyQualifiedPath,
-    ) -> Result<(MirId, HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>>, HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>), CompilerDriverError> {
+    ) -> Result<(MirId, HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>>, HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>, HashMap<fp_core::hir::DefId, fp_core::mir::ty::AdtDef>), CompilerDriverError> {
         // HIR has already passed type checking at this boundary. Lowering is
         // therefore strict: a failure is an internal compiler error, never a
         // recoverable source diagnostic.
@@ -627,6 +635,8 @@ impl CompilerDriver {
             )));
         }
         lowering.walk_program_types_for_layouts(&mir);
+        let adt_defs: HashMap<fp_core::hir::DefId, fp_core::mir::ty::AdtDef> =
+            lowering.take_adt_defs();
         let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
             lowering.all_adt_field_tys().into_iter().collect();
         let full_layouts: HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>> =
@@ -636,7 +646,7 @@ impl CompilerDriver {
                 .collect();
         let mir_id = MirId::new(format!("mir:{}", self.module_state_key(path.path())));
         self.state.insert_mir(mir_id.clone(), mir);
-        Ok((mir_id, struct_layouts, full_layouts))
+        Ok((mir_id, struct_layouts, full_layouts, adt_defs))
     }
 
     fn lower_to_lir(
@@ -645,6 +655,7 @@ impl CompilerDriver {
         path: &FullyQualifiedPath,
         package_id: &PackageId,
         full_layouts: &HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>,
+        adt_defs: &HashMap<fp_core::hir::DefId, fp_core::mir::ty::AdtDef>,
     ) -> Result<LirId, CompilerDriverError> {
         let mir = self.state.mir(mir_id)?.clone();
         let mut all_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> = HashMap::new();
@@ -655,7 +666,8 @@ impl CompilerDriver {
             .with_package_id(package_id.clone())
             .with_module_path(path.path().to_key())
             .with_mir_layouts(all_layouts)
-            .with_full_layouts(full_layouts.clone());
+            .with_full_layouts(full_layouts.clone())
+            .with_adt_defs(adt_defs.clone());
         let lir = lowering.transform(mir).map_err(|error| {
             CompilerDriverError::InternalCompilerError(format!(
                 "MIR-to-LIR lowering failed for {}: {error}",

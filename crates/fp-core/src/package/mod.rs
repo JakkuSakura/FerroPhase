@@ -246,6 +246,7 @@ pub struct CompiledPackage {
 
     /// MIR struct field types keyed by DefId, computed during MIR lowering.
     pub mir_struct_fields: HashMap<crate::mir::DefId, Vec<crate::mir::Ty>>,
+    pub mir_adt_defs: HashMap<crate::hir::DefId, crate::mir::ty::AdtDef>,
 }
 
 impl CompiledPackage {
@@ -280,6 +281,7 @@ impl CompiledPackage {
             hir_exports: HashMap::new(),
             items: Vec::new(),
             mir_struct_fields: HashMap::new(),
+            mir_adt_defs: HashMap::new(),
         }
     }
 }

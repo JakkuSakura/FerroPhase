@@ -379,6 +379,7 @@ pub struct FieldDef {
     pub did: DefId,
     pub ident: Symbol,
     pub vis: Visibility,
+    pub ty: Ty,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

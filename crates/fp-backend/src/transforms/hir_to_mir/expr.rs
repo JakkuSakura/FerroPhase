@@ -440,6 +440,7 @@ pub struct MirLowering {
     typeck_method_resolutions: HashMap<hir::HirId, hir::DefId>,
     typeck_generic_call_args: HashMap<hir::HirId, Vec<Ty>>,
     typeck_generic_method_args: HashMap<hir::HirId, Vec<Ty>>,
+    adt_defs: HashMap<hir::DefId, mir::ty::AdtDef>,
 }
 
 impl MirLowering {
@@ -515,6 +516,7 @@ impl MirLowering {
             typeck_method_resolutions: HashMap::new(),
             typeck_generic_call_args: HashMap::new(),
             typeck_generic_method_args: HashMap::new(),
+            adt_defs: HashMap::new(),
         }
     }
 
@@ -715,6 +717,10 @@ impl MirLowering {
 
     pub fn struct_layout_map(&self) -> &HashMap<StructLayoutKey, StructLayout> {
         &self.struct_layouts
+    }
+
+    pub fn take_adt_defs(&mut self) -> HashMap<hir::DefId, mir::ty::AdtDef> {
+        std::mem::take(&mut self.adt_defs)
     }
 
     pub fn all_adt_field_tys(&self) -> HashMap<hir::DefId, Vec<Ty>> {
@@ -4994,6 +5000,35 @@ impl MirLowering {
         );
         self.struct_defs_by_name
             .insert(String::from(strukt.name.clone()), def_id);
+
+        let mir_fields: Vec<mir::ty::FieldDef> = strukt
+            .fields
+            .iter()
+            .map(|f| {
+                let field_ty = self.lower_type_expr(&f.ty);
+                mir::ty::FieldDef {
+                    did: hir::DefId::local(f.hir_id),
+                    ident: mir::Symbol::from(f.name.as_str()),
+                    vis: mir::ty::Visibility::Public,
+                    ty: field_ty,
+                }
+            })
+            .collect();
+        let mir_variant = mir::ty::VariantDef {
+            def_id,
+            ctor_def_id: None,
+            ident: mir::Symbol::from(strukt.name.as_str()),
+            discr: mir::ty::VariantDiscr::Relative(0),
+            fields: mir_fields,
+            ctor_kind: mir::ty::CtorKind::Fn,
+            is_recovered: false,
+        };
+        eprintln!("adt_defs insert: {}", def_id); self.adt_defs.insert(def_id, mir::ty::AdtDef {
+            did: def_id,
+            variants: vec![mir_variant],
+            flags: mir::ty::AdtFlags::from_bits_retain(0),
+            repr: mir::ty::ReprOptions { int: None, align: None, pack: None, flags: mir::ty::ReprFlags::empty(), field_shuffle_seed: 0 },
+        });
 
         if strukt.generics.params.is_empty() {
             // JUSTIFY: layout may be uncomputable for forward-referenced types
