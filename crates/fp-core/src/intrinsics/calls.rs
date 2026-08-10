@@ -40,6 +40,36 @@ pub enum OpKind {
     OptionUnwrap,
     VecNew,
     Clone,
+    /// Portable import of a known package
+    Import(KnownPackage),
+}
+
+/// Commonly known middle-layer packages that serializers can map to
+/// their target ecosystem. Only used in transpile mode (ops enabled).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum KnownPackage {
+    /// std::collections → Kotlin/TS built-in collections
+    StdCollections,
+    /// std::path → java.nio.file / Node path
+    StdPath,
+    /// std::process → ProcessBuilder / child_process
+    StdProcess,
+    /// std::sync → Kotlin built-in (no Arc), TS has no equivalent
+    StdSync,
+    /// std::fs → java.io / Node fs
+    StdFs,
+    /// std::io → Kotlin I/O / Node streams
+    StdIo,
+    /// std::str → built-in String
+    StdStr,
+    /// std::option → built-in nullable
+    StdOption,
+    /// serde → kotlinx.serialization / skip
+    Serde,
+    /// winnow → skip (parser combinator lib)
+    Winnow,
+    /// Local/unknown package — name is the portable path
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -187,6 +217,7 @@ impl CallKind {
             Self::Op(OpKind::OptionUnwrap) => None,
             Self::Op(OpKind::VecNew) => None,
             Self::Op(OpKind::Clone) => None,
+            Self::Op(OpKind::Import(_)) => None,
             Self::Intrinsic(kind) => Some(kind),
         }
     }
@@ -356,6 +387,17 @@ impl CallKind {
             Self::Op(OpKind::OptionUnwrap) => "option_unwrap",
             Self::Op(OpKind::VecNew) => "vec_new",
             Self::Op(OpKind::Clone) => "clone",
+            Self::Op(OpKind::Import(KnownPackage::StdCollections)) => "import_std_collections",
+            Self::Op(OpKind::Import(KnownPackage::StdPath)) => "import_std_path",
+            Self::Op(OpKind::Import(KnownPackage::StdProcess)) => "import_std_process",
+            Self::Op(OpKind::Import(KnownPackage::StdSync)) => "import_std_sync",
+            Self::Op(OpKind::Import(KnownPackage::StdFs)) => "import_std_fs",
+            Self::Op(OpKind::Import(KnownPackage::StdIo)) => "import_std_io",
+            Self::Op(OpKind::Import(KnownPackage::StdStr)) => "import_std_str",
+            Self::Op(OpKind::Import(KnownPackage::StdOption)) => "import_std_option",
+            Self::Op(OpKind::Import(KnownPackage::Serde)) => "import_serde",
+            Self::Op(OpKind::Import(KnownPackage::Winnow)) => "import_winnow",
+            Self::Op(OpKind::Import(KnownPackage::Other)) => "import_other",
         }
     }
 

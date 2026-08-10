@@ -9,6 +9,7 @@ use fp_core::ast::{
     StmtLet, BExpr, Pattern, PatternKind,
 };
 use fp_core::ops::{BinOpKind, UnOpKind};
+use fp_core::intrinsics::calls::KnownPackage;
 use fp_core::package::{PackageItem, PackageSource};
 use eyre::{bail, Result};
 
@@ -189,9 +190,58 @@ fn emit_function(f: &ItemDefFunction, e: &mut KotlinEmitter) -> Result<()> {
 
 // ── Import ───────────────────────────────────────────────────────────────────
 
-fn emit_import(_imp: &ItemImport, _e: &mut KotlinEmitter) -> Result<()> {
-    // Skip raw Rust crate imports — they don't map to Kotlin
+fn emit_import(imp: &ItemImport, e: &mut KotlinEmitter) -> Result<()> {
+    let path = flatten_import_tree(&imp.tree);
+    if path.is_empty() { return Ok(()); }
+
+    // Handle multi-name group imports: Rust `use foo::{A, B, C}` → `import foo.*`
+    let effective = if path.contains(",") {
+        let first = path.split(",").next().unwrap_or(&path);
+        // Drop the last segment (the specific name) to get the parent module
+        let parent = first.rsplitn(2, ".").nth(1).unwrap_or(first);
+        if parent.is_empty() { ".*".to_string() } else { format!("{}.*", parent) }
+    } else {
+        path.clone()
+    };
+
+    let pkg = known_package(&effective);
+    let kt = kt_import_for(pkg, &effective);
+    if let Some(import) = kt {
+        e.push_line(&format!("import {}", import));
+    }
     Ok(())
+}
+
+fn known_package(path: &str) -> KnownPackage {
+    use fp_core::intrinsics::calls::KnownPackage::*;
+    match path {
+        p if p.starts_with("std.collections") => StdCollections,
+        p if p.starts_with("std.path") => StdPath,
+        p if p.starts_with("std.process") => StdProcess,
+        p if p.starts_with("std.sync") => StdSync,
+        p if p.starts_with("std.fs") => StdFs,
+        p if p.starts_with("std.io") => StdIo,
+        p if p.starts_with("std.str") => StdStr,
+        p if p.starts_with("std.option") => StdOption,
+        p if p.starts_with("serde") => Serde,
+        p if p.starts_with("winnow") => Winnow,
+        _ => Other,
+    }
+}
+
+fn kt_import_for(pkg: KnownPackage, path: &str) -> Option<String> {
+    use fp_core::intrinsics::calls::KnownPackage::*;
+    match pkg {
+        // Built-in — skip
+        StdCollections | StdSync | StdStr | StdOption | Serde | Winnow => None,
+        // Mapped
+        StdPath => Some("java.nio.file.Path".into()),
+        StdProcess => Some("java.lang.ProcessBuilder".into()),
+        StdFs => Some("java.io.File".into()),
+        StdIo => Some("java.io.*".into()),
+        // Local package — preserve as-is
+        Other => Some(path.to_string()),
+    }
 }
 
 fn flatten_import_tree(tree: &fp_core::ast::ItemImportTree) -> String {

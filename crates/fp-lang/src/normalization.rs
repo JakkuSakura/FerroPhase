@@ -540,6 +540,8 @@ fn compile_mode_std_path(kind: OpKind) -> Option<Vec<Ident>> {
         // Portable data ops — no std path, handled in normalize_invoke
         OpKind::OptionSome | OpKind::OptionNone | OpKind::OptionUnwrap
         | OpKind::VecNew | OpKind::Clone => return None,
+        // Import ops — handled at item level, not expression level
+        OpKind::Import(_) => return None,
     };
     Some(path.iter().map(|segment| Ident::new(*segment)).collect())
 }
