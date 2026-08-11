@@ -324,8 +324,22 @@ impl CompilerDriver {
                     self.state.typing_ctx.data_layout.clone(),
                 );
                 if self.pipeline == PipelineMode::Native {
-                    let units = self.compile_items_to_lir_units(&package).await?;
+                    let mut units = self.compile_items_to_lir_units(&package).await?;
                     Self::publish_lir_units(&package, package_id, &units)?;
+
+                    let lir = package.borrow().lir_workspace.to_program();
+                    if !lir.comptime_entries.is_empty() {
+                        let module_path = QualifiedPath::new(Vec::new());
+                        let lir_id = Self::package_module_lir_id(package_id, &module_path);
+                        self.state.insert_lir(lir_id.clone(), lir);
+                        self.evaluate_comptime_lir(
+                            &lir_id,
+                            &FullyQualifiedPath::new(module_path),
+                        )
+                        .await?;
+                        units = self.relower_cached_lir_units(&package).await?;
+                        Self::publish_lir_units(&package, package_id, &units)?;
+                    }
                 }
                 Ok(package)
             }
@@ -481,6 +495,57 @@ impl CompilerDriver {
             package_id: hir_package_id,
             module_path: package_path,
             program: lir,
+        }])
+    }
+
+    async fn relower_cached_lir_units(
+        &mut self,
+        package: &Rc<RefCell<fp_core::package::CompiledPackage>>,
+    ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
+        let package_id = self
+            .state
+            .typing_ctx
+            .env_ctx
+            .current_package()
+            .cloned()
+            .ok_or_else(|| {
+                CompilerDriverError::UnresolvablePackage(
+                    "package re-lowering requires a focused package workspace".to_string(),
+                )
+            })?;
+        let hir_package_id = self
+            .state
+            .typing_ctx
+            .env_ctx
+            .compiled_package(&package_id)
+            .map(|package| package.borrow().package_id)
+            .unwrap_or_default();
+        let module_path = QualifiedPath::new(Vec::new());
+        let hir_id = HirId::new(format!("hir:{}", self.module_state_key(&module_path)));
+        let fqp = FullyQualifiedPath::new(module_path.clone());
+        let (mir_id, struct_layouts, full_layouts, adt_defs) =
+            self.lower_to_mir(&hir_id, &fqp).await?;
+        {
+            let mut package = package.borrow_mut();
+            package.mir_program = Some(self.state.mir(&mir_id)?.clone());
+            package.mir_struct_fields.extend(struct_layouts);
+            package.mir_adt_defs.extend(adt_defs.clone());
+        }
+        let mut all_adt_defs = HashMap::new();
+        for (_dependency_id, dependency) in self.state.typing_ctx.env_ctx.crates().iter() {
+            all_adt_defs.extend(dependency.borrow().mir_adt_defs.clone());
+        }
+        let lir_id = self.lower_to_lir(
+            &mir_id,
+            &fqp,
+            &package_id,
+            &full_layouts,
+            &all_adt_defs,
+        )?;
+        Ok(vec![fp_core::lir::LirCompileUnit {
+            package_id: hir_package_id,
+            module_path,
+            program: self.state.lir(&lir_id)?.clone(),
         }])
     }
 
@@ -730,6 +795,11 @@ impl CompilerDriver {
                 .insert_resolved_const_value(entry.key.clone(), constant);
             self.state
                 .insert_typing_const(entry.key.clone(), value.clone());
+            let mut newly_resolved = HashMap::new();
+            newly_resolved.insert(entry.key.clone(), value.clone());
+            self.interpreter
+                .inject_globals(&newly_resolved)
+                .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
             last = value;
             count += 1;
         }

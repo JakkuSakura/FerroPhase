@@ -11161,39 +11161,6 @@ impl<'a> BodyBuilder<'a> {
                 return Some((info.clone(), layout));
             }
         }
-        let payload_len = match &payload_ty.kind {
-            TyKind::Tuple(fields) => fields.len(),
-            _ if MirLowering::is_unit_ty(payload_ty) => 0,
-            _ => self
-                .lowering
-                .struct_layout_for_ty(payload_ty)
-                .map(|layout| layout.field_tys.len())
-                .unwrap_or(1),
-        };
-        let mut len_matches = layout
-            .variant_payloads
-            .iter()
-            .filter(|(_, payloads)| payloads.len() == payload_len)
-            .filter_map(|(def_id, _)| self.lowering.enum_variants.get(def_id))
-            .filter(|info| {
-                enum_def
-                    .map(|def_id| info.enum_def == def_id)
-                    .unwrap_or(true)
-            });
-        let first = len_matches.next().cloned();
-        if first.is_some() && len_matches.next().is_some() {
-            if self.lowering.has_unresolved_ty(payload_ty) {
-                return first.map(|info| (info, layout));
-            }
-            self.lowering.emit_error(
-                self.span,
-                "ambiguous enum payload coercion: multiple variants share the same payload shape",
-            );
-            return None;
-        }
-        if let Some(info) = first {
-            return Some((info, layout));
-        }
         None
     }
 
@@ -11299,6 +11266,46 @@ impl<'a> BodyBuilder<'a> {
                     .projection
                     .push(mir::PlaceElem::Field(idx, payload_ty.clone()));
                 operands.push(mir::Operand::Copy(field_place));
+            } else if payload_tys.len() == 1 {
+                let source_ty = self
+                    .locals
+                    .get(payload_place.local as usize)
+                    .map(|local| local.ty.clone())
+                    .ok_or_else(|| {
+                        fp_core::error::Error::from(
+                            "enum struct payload source local is unavailable",
+                        )
+                    })?;
+                let source_layout = self.lowering.struct_layout_for_ty(&source_ty).or_else(|| {
+                    if let TyKind::Adt(adt, substs) = &source_ty.kind {
+                        let args = substs
+                            .iter()
+                            .filter_map(|arg| match arg {
+                                mir::ty::GenericArg::Type(ty) => Some(ty.clone()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>();
+                        self.lowering
+                            .struct_layout_for_instance(adt.did, &args, span)
+                    } else {
+                        None
+                    }
+                }).ok_or_else(|| {
+                    fp_core::error::Error::from(format!(
+                        "enum struct payload source layout is unavailable for {:?}",
+                        source_ty.kind
+                    ))
+                })?;
+                let field_ty = source_layout.field_tys.get(idx).cloned().ok_or_else(|| {
+                    fp_core::error::Error::from(format!(
+                        "enum struct payload field {idx} is unavailable"
+                    ))
+                })?;
+                let mut field_place = payload_place.clone();
+                field_place
+                    .projection
+                    .push(mir::PlaceElem::Field(idx, field_ty));
+                operands.push(mir::Operand::Copy(field_place));
             } else {
                 return Err(fp_core::error::Error::from(format!(
                     "enum variant payload slot {idx} is missing in source place during MIR lowering (slot_ty={slot_ty})"
@@ -11360,19 +11367,12 @@ impl<'a> BodyBuilder<'a> {
                 .or_else(|| self.lowering.enum_layout_for_def(variant.enum_def, span))
             {
                 if layout.enum_ty == *expected_ty {
-                    let payload_args: Vec<hir::CallArg> = fields
-                        .iter()
-                        .map(|field| hir::CallArg {
-                            name: field.name.clone(),
-                            value: field.expr.clone(),
-                        })
-                        .collect();
-                    self.assign_enum_variant(
+                    self.assign_enum_variant_from_struct_fields(
                         mir::Place::from_local(local_id),
                         &variant,
                         &layout,
                         Some(expected_ty),
-                        &payload_args,
+                        fields,
                         span,
                     )?;
                     self.locals[local_id as usize].ty = layout.enum_ty.clone();
@@ -11411,19 +11411,12 @@ impl<'a> BodyBuilder<'a> {
                     .and_then(|ty| self.enum_layout_for_ty(ty, span))
                     .or_else(|| self.lowering.enum_layout_for_def(variant.enum_def, span));
                 if let Some(layout) = layout {
-                    let payload_args: Vec<hir::CallArg> = fields
-                        .iter()
-                        .map(|field| hir::CallArg {
-                            name: field.name.clone(),
-                            value: field.expr.clone(),
-                        })
-                        .collect();
-                    self.assign_enum_variant(
+                    self.assign_enum_variant_from_struct_fields(
                         mir::Place::from_local(local_id),
                         &variant,
                         &layout,
                         annotated_ty,
-                        &payload_args,
+                        fields,
                         span,
                     )?;
                     self.locals[local_id as usize].ty = layout.enum_ty.clone();
@@ -11461,19 +11454,12 @@ impl<'a> BodyBuilder<'a> {
                 .and_then(|ty| self.enum_layout_for_variant(&variant, Some(ty), span))
                 .or_else(|| self.lowering.enum_layout_for_def(variant.enum_def, span));
             if let Some(layout) = layout {
-                let payload_args: Vec<hir::CallArg> = fields
-                    .iter()
-                    .map(|field| hir::CallArg {
-                        name: field.name.clone(),
-                        value: field.expr.clone(),
-                    })
-                    .collect();
-                self.assign_enum_variant(
+                self.assign_enum_variant_from_struct_fields(
                     mir::Place::from_local(local_id),
                     &variant,
                     &layout,
                     annotated_ty,
-                    &payload_args,
+                    fields,
                     span,
                 )?;
 
@@ -11510,6 +11496,111 @@ impl<'a> BodyBuilder<'a> {
             "struct literal without registered definition; using tuple aggregate",
         );
         self.lower_unknown_struct_literal(local_id, annotated_ty, fields, span)
+    }
+
+    fn assign_enum_variant_from_struct_fields(
+        &mut self,
+        place: mir::Place,
+        variant: &EnumVariantInfo,
+        layout: &EnumLayout,
+        scrutinee_ty: Option<&Ty>,
+        fields: &[hir::StructExprField],
+        span: Span,
+    ) -> Result<()> {
+        let payload_tys = self.enum_variant_payloads_for_layout(
+            layout,
+            variant,
+            scrutinee_ty.unwrap_or(&layout.enum_ty),
+            span,
+        );
+        if payload_tys.is_empty() && fields.is_empty() {
+            return self.assign_enum_variant(
+                place,
+                variant,
+                layout,
+                scrutinee_ty,
+                &[],
+                span,
+            );
+        }
+        if payload_tys.len() != 1 && payload_tys.len() != fields.len() {
+            return Err(fp_core::error::Error::from(
+                format!(
+                    "struct-like enum payload shape does not match its ABI layout (payloads={}, fields={}, slots={})",
+                    payload_tys.len(), fields.len(), layout.payload_tys.len()
+                ),
+            ));
+        }
+        if payload_tys.len() == 1 && fields.len() != layout.payload_tys.len() {
+            let payload_ty = payload_tys[0].clone();
+            let payload_def = self.struct_def_from_ty(&payload_ty).ok_or_else(|| {
+                fp_core::error::Error::from("struct-like enum payload definition is unavailable")
+            })?;
+            let payload_info = self
+                .lowering
+                .struct_defs
+                .get(&payload_def)
+                .cloned()
+                .ok_or_else(|| fp_core::error::Error::from("struct-like enum payload fields are unavailable"))?;
+            let payload_layout = self
+                .lowering
+                .struct_layout_for_ty(&payload_ty)
+                .ok_or_else(|| fp_core::error::Error::from("struct-like enum payload layout is unavailable"))?;
+            let payload_local = self.allocate_temp(payload_ty.clone(), span);
+            self.lower_registered_struct_literal(
+                payload_local,
+                Some(&payload_ty),
+                &payload_info,
+                &payload_layout,
+                fields,
+                span,
+                payload_def,
+            )?;
+            let mut operands = vec![mir::Operand::Constant(mir::Constant {
+                span,
+                ty: layout.tag_ty.clone(),
+                user_ty: None,
+                literal: mir::ConstantKind::Int(variant.discriminant),
+            })];
+            operands.push(mir::Operand::Copy(mir::Place::from_local(payload_local)));
+            for slot_ty in layout.payload_tys.iter().skip(1) {
+                operands.push(mir::Operand::Constant(mir::Constant {
+                    span,
+                    ty: slot_ty.clone(),
+                    user_ty: None,
+                    literal: mir::ConstantKind::Undef,
+                }));
+            }
+            self.push_statement(mir::Statement {
+                source_info: span,
+                kind: mir::StatementKind::Assign(
+                    place,
+                    mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, operands),
+                ),
+            });
+            return Ok(());
+        }
+        let mut operands = Vec::with_capacity(1 + layout.payload_tys.len());
+        operands.push(mir::Operand::Constant(mir::Constant {
+            span,
+            ty: layout.tag_ty.clone(),
+            user_ty: None,
+            literal: mir::ConstantKind::Int(variant.discriminant),
+        }));
+        for (idx, slot_ty) in layout.payload_tys.iter().enumerate() {
+            let field = fields.get(idx).ok_or_else(|| {
+                fp_core::error::Error::from(format!("missing enum payload field {idx}"))
+            })?;
+            operands.push(self.lower_operand(&field.expr, Some(slot_ty))?.operand);
+        }
+        self.push_statement(mir::Statement {
+            source_info: span,
+            kind: mir::StatementKind::Assign(
+                place,
+                mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, operands),
+            ),
+        });
+        Ok(())
     }
 
     fn lower_registered_struct_literal(
@@ -16529,7 +16620,12 @@ impl<'a> BodyBuilder<'a> {
                         mir::Operand::Constant(constant)
                             if matches!(constant.literal, mir::ConstantKind::Str(_)) =>
                         {
-                            mir::Operand::Constant(constant)
+                            mir::Operand::Constant(mir::Constant {
+                                span: constant.span,
+                                ty: ptr_ty.clone(),
+                                user_ty: constant.user_ty,
+                                literal: constant.literal,
+                            })
                         }
                         mir::Operand::Copy(place) | mir::Operand::Move(place) => {
                             let mut ptr_place = place;

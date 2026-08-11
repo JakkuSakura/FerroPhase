@@ -937,6 +937,25 @@ impl HirGenerator {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).cloned())
+            .or_else(|| {
+                let qualified = self.module_path.with_segment(name.to_string());
+                self.lookup_symbol(&qualified.to_key(), &self.global_type_defs)
+            })
+            .or_else(|| {
+                let mut candidates = self
+                    .global_type_defs
+                    .iter()
+                    .filter(|(key, entry)| {
+                        key.rsplit("::").next() == Some(name)
+                            && matches!(
+                                entry.res,
+                                hir::Res::Def(def_id) if def_id.package_id == self.package_id
+                            )
+                    })
+                    .filter_map(|(_, entry)| entry.export.can_access(&self.module_path.segments).then(|| entry.res.clone()));
+                let first = candidates.next();
+                first.filter(|_| candidates.next().is_none())
+            })
             .or_else(|| self.lookup_symbol(name, &self.global_type_defs))
     }
 
@@ -945,6 +964,10 @@ impl HirGenerator {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).cloned())
+            .or_else(|| {
+                let qualified = self.module_path.with_segment(name.to_string());
+                self.lookup_symbol(&qualified.to_key(), &self.global_value_defs)
+            })
             .or_else(|| self.lookup_symbol(name, &self.global_value_defs))
     }
 
@@ -1581,6 +1604,13 @@ impl HirGenerator {
                                     None
                                 }
                             }
+                            ast::Ty::Structural(structural) => Some(
+                                self.materialize_enum_struct_payload(
+                                    &enum_def.name.name,
+                                    &variant.name.name,
+                                    structural,
+                                )?,
+                            ),
                             other => Some(self.transform_type_to_hir(other)?),
                         };
 
@@ -2341,6 +2371,63 @@ impl HirGenerator {
         }
     }
 
+    /// Give a struct-like enum payload a nominal HIR identity. The payload is
+    /// still represented as a struct all the way through MIR; it is not
+    /// coerced to a tuple. A stable synthetic name keeps the generated DefId
+    /// addressable by the normal type checker and later lowering stages.
+    fn materialize_enum_struct_payload(
+        &mut self,
+        enum_name: &str,
+        variant_name: &str,
+        structural: &ast::TypeStructural,
+    ) -> Result<hir::TypeExpr> {
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.qualify_name(enum_name).hash(&mut hasher);
+        variant_name.hash(&mut hasher);
+        let name = format!("__enum_payload_{:x}", hasher.finish());
+        let def_id = self.next_def_id();
+        let fields = structural
+            .fields
+            .iter()
+            .map(|field| {
+                Ok(hir::StructField {
+                    hir_id: self.next_id(),
+                    name: hir::Symbol::new(field.name.name.clone()),
+                    ty: self.transform_type_to_hir(&field.value)?,
+                    vis: hir::Visibility::Public,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let item = hir::Item {
+            hir_id: self.next_id(),
+            def_id,
+            visibility: hir::Visibility::Private,
+            kind: hir::ItemKind::Struct(hir::Struct {
+                name: hir::Symbol::new(self.qualify_name(&name)),
+                fields,
+                generics: hir::Generics::default(),
+                repr: ast::ReprOptions::default(),
+            }),
+            span: self.create_span(1),
+        };
+        self.register_type_def(&name, def_id, &ast::Visibility::Private);
+        self.synthetic_items.push(item);
+        let path = hir::Path {
+            segments: vec![hir::PathSegment {
+                name: hir::Symbol::new(self.qualify_name(&name)),
+                args: None,
+            }],
+            res: Some(hir::Res::Def(def_id)),
+        };
+        Ok(hir::TypeExpr::new(
+            self.next_id(),
+            hir::TypeExprKind::Path(path),
+            Span::new(self.current_file, 0, 0),
+        ))
+    }
+
     fn should_update_structural_def(&self, def_id: hir::DefId) -> bool {
         let Some(fields) = self.struct_field_defs.get(&def_id) else {
             return false;
@@ -2834,6 +2921,13 @@ impl HirGenerator {
                             .transpose()?;
                         let payload = match &variant.value {
                             ast::Ty::Unit(_) => None,
+                            ast::Ty::Structural(structural) => Some(
+                                self.materialize_enum_struct_payload(
+                                    &def_type.name.name,
+                                    &variant.name.name,
+                                    structural,
+                                )?,
+                            ),
                             other => Some(self.transform_type_to_hir(other)?),
                         };
 

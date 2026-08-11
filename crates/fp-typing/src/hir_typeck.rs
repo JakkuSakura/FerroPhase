@@ -452,9 +452,14 @@ impl HirTypeChecker {
                 }
                 hir::ExprKind::Struct(path, fields) => {
                     let ty = self.path_ty(path)?;
+                    let payload_ty = self.enum_struct_payload_type(path, &ty)?;
                     for field in fields {
                         let value_ty = self.check_expr(&field.expr).await?;
-                        let field_ty = self.field_ty(&ty, &field.name)?;
+                        let field_ty = if let Some(payload) = payload_ty.as_ref() {
+                            self.field_ty(payload, &field.name)?
+                        } else {
+                            self.field_ty(&ty, &field.name)?
+                        };
                         self.require_same(&value_ty, &field_ty)?;
                     }
                     ty
@@ -859,7 +864,44 @@ impl HirTypeChecker {
             };
             return Ok(self_ty);
         }
-        let Some(hir::Res::Def(def_id)) = path.res else {
+        if path.res.is_none() {
+            if let Some(name) = path.segments.last().map(|segment| segment.name.as_str()) {
+                for item in self.program.items.clone() {
+                    let hir::ItemKind::Enum(enum_def) = &item.kind else {
+                        continue;
+                    };
+                    if enum_def
+                        .variants
+                        .iter()
+                        .any(|variant| variant.name.as_str() == name)
+                    {
+                        return self.enum_item_ty(&item, path);
+                    }
+                }
+            }
+        }
+        let local_def_id = if path.segments.len() == 1 {
+            let name = path.segments[0].name.as_str();
+            self.program.items.iter().find_map(|item| match &item.kind {
+                hir::ItemKind::Struct(def)
+                    if def.name.as_str().rsplit("::").next() == Some(name) =>
+                {
+                    Some(item.def_id)
+                }
+                hir::ItemKind::Enum(def)
+                    if def.name.as_str().rsplit("::").next() == Some(name) =>
+                {
+                    Some(item.def_id)
+                }
+                _ => None,
+            })
+        } else {
+            None
+        };
+        let Some(def_id) = local_def_id.or(match path.res {
+            Some(hir::Res::Def(def_id)) => Some(def_id),
+            _ => None,
+        }) else {
             return Err(Error::from(format!(
                 "unresolved type path `{}`",
                 path.segments
@@ -871,6 +913,17 @@ impl HirTypeChecker {
         };
         if let Some(generic) = self.generic_ty(def_id) {
             return Ok(generic);
+        }
+        // A struct-like enum variant is a value constructor, but its path is
+        // also used as the scrutinee of a struct pattern. Resolve that path to
+        // the containing enum type before looking up ordinary type items.
+        for item in self.program.items.clone() {
+            let hir::ItemKind::Enum(enum_def) = &item.kind else {
+                continue;
+            };
+            if enum_def.variants.iter().any(|variant| variant.def_id == def_id) {
+                return self.enum_item_ty(&item, path);
+            }
         }
         let Some(item) = self.program.def_map.get(&def_id).cloned() else {
             return Err(Error::from(format!(
@@ -1532,8 +1585,70 @@ impl HirTypeChecker {
                     self.path_ty(path)?
                 };
                 self.require_same_adt(&ty, &struct_ty, "struct pattern")?;
+                let variant_path = match path.res {
+                    Some(hir::Res::Def(def_id)) => self
+                        .program
+                        .def_map
+                        .get(&def_id)
+                        .and_then(|item| match &item.kind {
+                            hir::ItemKind::Enum(enum_def) => path
+                                .segments
+                                .last()
+                                .and_then(|segment| {
+                                    enum_def
+                                        .variants
+                                        .iter()
+                                        .find(|variant| variant.name == segment.name)
+                                })
+                                .map(|variant| hir::Path {
+                                    res: Some(hir::Res::Def(variant.def_id)),
+                                    ..path.clone()
+                                }),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| path.clone()),
+                    _ => path.clone(),
+                };
+                let variant_path = if matches!(variant_path.res, None | Some(hir::Res::Module(_))) {
+                    self.program
+                        .items
+                        .iter()
+                        .find_map(|item| match &item.kind {
+                            hir::ItemKind::Enum(enum_def) => path
+                                .segments
+                                .last()
+                                .and_then(|segment| {
+                                    enum_def
+                                        .variants
+                                        .iter()
+                                        .find(|variant| variant.name == segment.name)
+                                })
+                                .map(|variant| hir::Path {
+                                    res: Some(hir::Res::Def(variant.def_id)),
+                                    ..path.clone()
+                                }),
+                            _ => None,
+                        })
+                        .unwrap_or(variant_path)
+                } else {
+                    variant_path
+                };
+                let payload_struct = match variant_path.res {
+                    Some(hir::Res::Def(_variant_id)) => {
+                        let (_, mut payloads) = self.variant_payload_types(&variant_path, &ty)?;
+                        payloads.pop()
+                    }
+                    _ => None,
+                };
                 for field in fields {
-                    let field_ty = self.field_ty(&struct_ty, &field.name)?;
+                    let field_ty = if let Some(payload) = payload_struct.as_ref() {
+                        self.field_ty(payload, &field.name)?
+                    } else {
+                        return Err(Error::from(format!(
+                            "missing nominal payload for enum struct pattern `{}`",
+                            path.segments.iter().map(|segment| segment.name.as_str()).collect::<Vec<_>>().join("::")
+                        )));
+                    };
                     self.bind_pattern(&field.pat, field_ty)?;
                 }
             }
@@ -1566,7 +1681,10 @@ impl HirTypeChecker {
             _ => receiver,
         };
         let TyKind::Adt(adt, args) = &receiver.kind else {
-            return Err(Error::from("field access requires a struct"));
+            return Err(Error::from(format!(
+                "field access `{field}` requires a struct, found {:?}",
+                receiver.kind
+            )));
         };
         let Some(item) = self.program.def_map.get(&adt.did).cloned() else {
             return Err(Error::from("struct definition was not found"));
@@ -1600,8 +1718,17 @@ impl HirTypeChecker {
             else {
                 continue;
             };
-            let enum_ty = self.enum_item_ty(&item, path)?;
-            self.require_same_adt(scrutinee, &enum_ty, "variant pattern")?;
+            // The variant path carries the constructor identity, not the
+            // instantiated enum arguments. The scrutinee is the authoritative
+            // enum type for generic variants such as `Option<T>::Some`.
+            let enum_ty = scrutinee.clone();
+            let matches_enum = matches!(
+                &scrutinee.kind,
+                TyKind::Adt(adt, _) if adt.did == item.def_id
+            );
+            if !matches_enum {
+                return Err(Error::from("variant pattern does not match scrutinee type"));
+            }
             let scrutinee_args = match &scrutinee.kind {
                 TyKind::Adt(_, args) => args,
                 _ => unreachable!("variant pattern ADT was checked above"),
@@ -1621,6 +1748,40 @@ impl HirTypeChecker {
             return Ok((enum_ty, payloads));
         }
         Err(Error::from("variant definition was not found"))
+    }
+
+    fn enum_struct_payload_type(&mut self, path: &hir::Path, scrutinee: &Ty) -> Result<Option<Ty>> {
+        let variant_path = self
+            .program
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::ItemKind::Enum(def) => path.segments.last().and_then(|segment| {
+                    def.variants
+                        .iter()
+                        .find(|variant| variant.name == segment.name)
+                        .map(|variant| hir::Path {
+                            res: Some(hir::Res::Def(variant.def_id)),
+                            ..path.clone()
+                        })
+                }),
+                _ => None,
+            });
+        let Some(variant_path) = variant_path else {
+            return Ok(None);
+        };
+        let (_, payloads) = self.variant_payload_types(&variant_path, scrutinee)?;
+        let Some(payload) = payloads.into_iter().next() else {
+            return Ok(None);
+        };
+        let TyKind::Adt(adt, _) = &payload.kind else {
+            return Ok(None);
+        };
+        if matches!(self.program.def_map.get(&adt.did).map(|item| &item.kind), Some(hir::ItemKind::Struct(_))) {
+            Ok(Some(payload))
+        } else {
+            Ok(None)
+        }
     }
 
     fn substitute_params(&self, ty: Ty, args: &[GenericArg]) -> Ty {

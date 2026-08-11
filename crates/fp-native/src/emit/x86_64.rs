@@ -532,15 +532,11 @@ fn build_frame_layout(
     };
     let outgoing_size = shadow_space + (extra_stack_args as i32) * 8;
     let base = local_size + outgoing_size;
-    let frame_size = if base == 0 {
-        if has_calls {
-            8
-        } else {
-            0
-        }
-    } else {
-        align16(base + 8) - 8
-    };
+    // The prologue has already pushed `rbp`, leaving `rsp` 16-byte aligned.
+    // Keep the alignment invariant after reserving locals and outgoing args;
+    // variadic libc calls may use aligned SIMD stores even when no float is
+    // present in the source-level signature.
+    let frame_size = align16(base);
 
     Ok(FrameLayout {
         data_layout: data_layout.clone(),
