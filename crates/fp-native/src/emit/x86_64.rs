@@ -369,7 +369,7 @@ fn build_frame_layout(
                 has_calls = true;
                 let mut count = 0usize;
                 for arg in args {
-                    count += call_arg_units(arg, reg_types, &local_types)?;
+                    count += call_arg_units(arg, reg_types, &local_types, data_layout)?;
                 }
                 max_call_args = max_call_args.max(count);
                 max_aggregate_scratch = max_aggregate_scratch.max(aggregate_constant_scratch_size(
@@ -387,7 +387,7 @@ fn build_frame_layout(
                 };
                 let mut count = fixed;
                 for arg in args {
-                    count += call_arg_units(arg, reg_types, &local_types)?;
+                    count += call_arg_units(arg, reg_types, &local_types, data_layout)?;
                 }
                 max_call_args = max_call_args.max(count);
                 max_aggregate_scratch = max_aggregate_scratch.max(aggregate_constant_scratch_size(
@@ -569,13 +569,14 @@ fn call_arg_units(
     arg: &AsmValue,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
+    data_layout: &LirDataLayout,
 ) -> Result<usize> {
     let ty = value_type(arg, reg_types, local_types)?;
-    if matches!(ty, AsmType::I128) {
-        Ok(2)
-    } else {
-        Ok(1)
-    }
+    Ok(match abi_pass_mode(&ty, data_layout)? {
+        AbiPassMode::Ignore => 0,
+        AbiPassMode::Direct | AbiPassMode::Indirect => 1,
+        AbiPassMode::Pair => 2,
+    })
 }
 
 fn aggregate_constant_scratch_size(
@@ -1026,6 +1027,28 @@ fn spill_arguments(
             continue;
         }
         let offset = local_offset(layout, local.id)?;
+        if matches!(abi_pass_mode(ty, &layout.data_layout)?, AbiPassMode::Pair) {
+            let load_unit = |asm: &mut Assembler,
+                             dst: Reg,
+                             int_idx: &mut usize,
+                             stack_idx: &mut usize|
+             -> Result<()> {
+                if *int_idx < arg_regs.len() {
+                    emit_mov_rr(asm, dst, arg_regs[*int_idx]);
+                    *int_idx += 1;
+                } else {
+                    let incoming = stack_base + (*stack_idx as i32) * 8;
+                    emit_mov_rm64(asm, dst, Reg::Rbp, incoming);
+                    *stack_idx += 1;
+                }
+                Ok(())
+            };
+            load_unit(asm, Reg::R10, &mut int_idx, &mut stack_idx)?;
+            load_unit(asm, Reg::R11, &mut int_idx, &mut stack_idx)?;
+            emit_mov_mr64(asm, Reg::Rbp, offset, Reg::R10);
+            emit_mov_mr64(asm, Reg::Rbp, offset + 8, Reg::R11);
+            continue;
+        }
         if is_aggregate_storage(ty, &layout.data_layout) {
             let size = size_of(ty) as i32;
             if int_idx < arg_regs.len() {
@@ -4268,6 +4291,35 @@ fn emit_call(
             continue;
         }
         let arg_ty = value_type(arg, reg_types, local_types)?;
+        if matches!(
+            abi_pass_mode(&arg_ty, &layout.data_layout)?,
+            AbiPassMode::Pair
+        ) {
+            let source = match arg {
+                AsmValue::Register(id) => {
+                    emit_mov_rm64(asm, Reg::R11, Reg::Rbp, vreg_offset(layout, *id)?);
+                    Reg::R11
+                }
+                AsmValue::Local(id) => {
+                    emit_mov_rr(asm, Reg::R11, Reg::Rbp);
+                    emit_add_ri32(asm, Reg::R11, local_offset(layout, *id)?);
+                    Reg::R11
+                }
+                _ => return Err(Error::from("pair ABI argument requires aggregate storage")),
+            };
+            emit_mov_rm64(asm, Reg::R10, source, 0);
+            emit_mov_rm64(asm, Reg::R8, source, 8);
+            push_reg_arg(
+                asm,
+                layout,
+                Reg::R10,
+                &mut int_idx,
+                &mut stack_idx,
+                arg_regs,
+            )?;
+            push_reg_arg(asm, layout, Reg::R8, &mut int_idx, &mut stack_idx, arg_regs)?;
+            continue;
+        }
         if matches!(arg_ty, AsmType::I128) {
             load_i128_value(asm, layout, arg, Reg::R10, Reg::R11, reg_types, local_types)?;
             push_reg_arg(
@@ -6683,7 +6735,10 @@ mod tests {
             packed: false,
             name: None,
         };
-        assert_eq!(abi_pass_mode(&value, &layout()).unwrap(), AbiPassMode::Indirect);
+        assert_eq!(
+            abi_pass_mode(&value, &layout()).unwrap(),
+            AbiPassMode::Indirect
+        );
     }
 
     fn minimal_program() -> AsmProgram {

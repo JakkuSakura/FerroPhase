@@ -819,7 +819,7 @@ impl MirLowering {
 
         let reachable = self.collect_reachable_def_ids(program);
 
-        for item in program.def_map.values() {
+        for item in &program.items {
             match &item.kind {
                 hir::ItemKind::Struct(def) => {
                     self.register_struct(item.def_id, def, item.span);
@@ -4952,7 +4952,7 @@ impl MirLowering {
     // Resolve field types and layouts only after every canonical ADT identity
     // has been registered; dependency definitions arrive in hash-map order.
     fn finalize_adt_definitions(&mut self, program: &hir::Program) {
-        for item in program.def_map.values() {
+        for item in &program.items {
             match &item.kind {
                 hir::ItemKind::Struct(strukt) => {
                     let mir_fields = strukt

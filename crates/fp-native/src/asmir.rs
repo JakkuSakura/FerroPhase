@@ -159,7 +159,10 @@ pub fn lower_to_x86_64(program: &AsmProgram) -> x86_64_asm::AsmX86_64Program {
                     .max()
                     .unwrap_or(0)
                     .saturating_add(1);
-                let mut ctx = PhysicalRegisterLoweringContext::new(next_virtual_id);
+                let mut ctx = PhysicalRegisterLoweringContext::new(
+                    next_virtual_id,
+                    build_operand_type_map(function),
+                );
 
                 x86_64_asm::AsmX86_64Function {
                     name: function.name.clone(),
@@ -201,7 +204,10 @@ pub fn lower_to_aarch64(program: &AsmProgram) -> aarch64_asm::AsmAarch64Program 
                     .max()
                     .unwrap_or(0)
                     .saturating_add(1);
-                let mut ctx = PhysicalRegisterLoweringContext::new(next_virtual_id);
+                let mut ctx = PhysicalRegisterLoweringContext::new(
+                    next_virtual_id,
+                    build_operand_type_map(function),
+                );
 
                 aarch64_asm::AsmAarch64Function {
                     name: function.name.clone(),
@@ -1284,14 +1290,31 @@ pub fn normalize_for_target(program: &mut AsmProgram) {
 
 fn normalize_program_generic(program: &mut AsmProgram) {
     for function in &mut program.functions {
+        let register_types = build_operand_type_map(function);
         for block in &mut function.basic_blocks {
             for instruction in &mut block.instructions {
                 instruction.opcode = AsmOpcode::Generic(generic_opcode(&instruction.kind));
-                instruction.operands =
-                    generic_operands(instruction.id, &instruction.kind, Some(&instruction.ty));
+                instruction.operands = generic_operands(
+                    instruction.id,
+                    &instruction.kind,
+                    Some(&instruction.ty),
+                    &register_types,
+                );
             }
         }
     }
+}
+
+fn build_operand_type_map(function: &AsmFunction) -> HashMap<u32, AsmType> {
+    function
+        .basic_blocks
+        .iter()
+        .flat_map(|block| block.instructions.iter())
+        .filter_map(|instruction| {
+            (!matches!(instruction.ty, AsmType::Void))
+                .then(|| (instruction.id, instruction.ty.clone()))
+        })
+        .collect()
 }
 
 fn normalize_program_for_x86_64(program: &mut AsmProgram) {
@@ -1911,14 +1934,23 @@ fn x86_call_target(
 struct PhysicalRegisterLoweringContext {
     next_virtual_id: u32,
     virtual_ids: std::collections::HashMap<(String, u16), u32>,
+    register_types: HashMap<u32, AsmType>,
 }
 
 impl PhysicalRegisterLoweringContext {
-    fn new(next_virtual_id: u32) -> Self {
+    fn new(next_virtual_id: u32, register_types: HashMap<u32, AsmType>) -> Self {
         Self {
             next_virtual_id,
             virtual_ids: std::collections::HashMap::new(),
+            register_types,
         }
+    }
+
+    fn register_type(&self, id: u32) -> AsmType {
+        self.register_types
+            .get(&id)
+            .map(backend_operand_type)
+            .unwrap_or_else(|| panic!("missing type for virtual register {id}"))
     }
 
     fn virtual_id_for(&mut self, register: &fp_core::asmir::AsmPhysicalRegister) -> u32 {
@@ -2530,12 +2562,17 @@ fn float_binop_opcode(base: &str, ty: Option<&AsmType>) -> X86Opcode {
     }
 }
 
-fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec<AsmOperand> {
+fn x86_operands(
+    id: u32,
+    kind: &AsmInstructionKind,
+    ty: Option<&AsmType>,
+    register_types: &HashMap<u32, AsmType>,
+) -> Vec<AsmOperand> {
     let mut operands = Vec::new();
     if instruction_produces_value(kind) {
         if let Some(ty) = ty {
             operands.push(register_operand(
-                virtual_register(id, ty),
+                virtual_register(id, &backend_operand_type(ty)),
                 OperandAccess::Write,
             ));
         }
@@ -2563,26 +2600,34 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
         | AsmInstructionKind::Ule(lhs, rhs)
         | AsmInstructionKind::Ugt(lhs, rhs)
         | AsmInstructionKind::Uge(lhs, rhs) => {
-            operands.push(value_operand(lhs));
-            operands.push(value_operand(rhs));
+            operands.push(value_operand(lhs, register_types));
+            operands.push(value_operand(rhs, register_types));
         }
         AsmInstructionKind::ZipLow { lhs, rhs, .. } => {
-            operands.push(value_operand(lhs));
-            operands.push(value_operand(rhs));
+            operands.push(value_operand(lhs, register_types));
+            operands.push(value_operand(rhs, register_types));
         }
         AsmInstructionKind::Not(value)
         | AsmInstructionKind::PtrToInt(value)
         | AsmInstructionKind::IntToPtr(value)
-        | AsmInstructionKind::Freeze(value) => operands.push(value_operand(value)),
-        AsmInstructionKind::Load { address, .. } => operands.push(address_operand(address, ty)),
-        AsmInstructionKind::Store { value, address, .. } => {
-            operands.push(address_operand(address, None));
-            operands.push(value_operand(value));
+        | AsmInstructionKind::Freeze(value) => operands.push(value_operand(value, register_types)),
+        AsmInstructionKind::Load { address, .. } => {
+            operands.push(address_operand(address, ty, register_types))
         }
-        AsmInstructionKind::Alloca { size, .. } => operands.push(value_operand(size)),
+        AsmInstructionKind::Store { value, address, .. } => {
+            operands.push(address_operand(address, None, register_types));
+            operands.push(value_operand(value, register_types));
+        }
+        AsmInstructionKind::Alloca { size, .. } => {
+            operands.push(value_operand(size, register_types))
+        }
         AsmInstructionKind::GetElementPtr { ptr, indices, .. } => {
-            operands.push(value_operand(ptr));
-            operands.extend(indices.iter().map(value_operand));
+            operands.push(value_operand(ptr, register_types));
+            operands.extend(
+                indices
+                    .iter()
+                    .map(|value| value_operand(value, register_types)),
+            );
         }
         AsmInstructionKind::Bitcast(value, _)
         | AsmInstructionKind::Trunc(value, _)
@@ -2594,9 +2639,11 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
         | AsmInstructionKind::FPToSI(value, _)
         | AsmInstructionKind::UIToFP(value, _)
         | AsmInstructionKind::SIToFP(value, _)
-        | AsmInstructionKind::SextOrTrunc(value, _) => operands.push(value_operand(value)),
+        | AsmInstructionKind::SextOrTrunc(value, _) => {
+            operands.push(value_operand(value, register_types))
+        }
         AsmInstructionKind::ExtractValue { aggregate, indices } => {
-            operands.push(value_operand(aggregate));
+            operands.push(value_operand(aggregate, register_types));
             operands.extend(
                 indices
                     .iter()
@@ -2608,8 +2655,8 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
             element,
             indices,
         } => {
-            operands.push(value_operand(aggregate));
-            operands.push(value_operand(element));
+            operands.push(value_operand(aggregate, register_types));
+            operands.push(value_operand(element, register_types));
             operands.extend(
                 indices
                     .iter()
@@ -2618,17 +2665,20 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
         }
         AsmInstructionKind::Call { function, .. } => {
             // Call arguments are semantic (ABI-lowered), not textual operands.
-            operands.push(call_target_operand(function));
+            operands.push(call_target_operand(function, register_types));
         }
         AsmInstructionKind::IntrinsicCall { kind, args, .. } => {
             operands.push(AsmOperand::Symbol(Name::new(
                 format!("intrinsic.{kind:?}").to_ascii_lowercase(),
             )));
-            operands.extend(args.iter().map(value_operand));
+            operands.extend(
+                args.iter()
+                    .map(|value| value_operand(value, register_types)),
+            );
         }
         AsmInstructionKind::Phi { incoming } => {
             for (value, block) in incoming {
-                operands.push(value_operand(value));
+                operands.push(value_operand(value, register_types));
                 operands.push(AsmOperand::Block(*block));
             }
         }
@@ -2637,26 +2687,36 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
             if_true,
             if_false,
         } => {
-            operands.push(value_operand(condition));
-            operands.push(value_operand(if_true));
-            operands.push(value_operand(if_false));
+            operands.push(value_operand(condition, register_types));
+            operands.push(value_operand(if_true, register_types));
+            operands.push(value_operand(if_false, register_types));
         }
         AsmInstructionKind::InlineAsm { inputs, .. } => {
-            operands.extend(inputs.iter().map(value_operand));
+            operands.extend(
+                inputs
+                    .iter()
+                    .map(|value| value_operand(value, register_types)),
+            );
         }
         AsmInstructionKind::LandingPad { personality, .. } => {
             if let Some(personality) = personality {
-                operands.push(value_operand(personality));
+                operands.push(value_operand(personality, register_types));
             }
         }
         AsmInstructionKind::Syscall { .. } => {}
         AsmInstructionKind::SysOp(_) => {}
-        AsmInstructionKind::Splat { value, .. } => operands.push(value_operand(value)),
+        AsmInstructionKind::Splat { value, .. } => {
+            operands.push(value_operand(value, register_types))
+        }
         AsmInstructionKind::BuildVector { elements } => {
-            operands.extend(elements.iter().map(value_operand));
+            operands.extend(
+                elements
+                    .iter()
+                    .map(|value| value_operand(value, register_types)),
+            );
         }
         AsmInstructionKind::ExtractLane { vector, lane } => {
-            operands.push(value_operand(vector));
+            operands.push(value_operand(vector, register_types));
             operands.push(AsmOperand::Immediate((*lane).into()));
         }
         AsmInstructionKind::InsertLane {
@@ -2664,8 +2724,8 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
             lane,
             value,
         } => {
-            operands.push(value_operand(vector));
-            operands.push(value_operand(value));
+            operands.push(value_operand(vector, register_types));
+            operands.push(value_operand(value, register_types));
             operands.push(AsmOperand::Immediate((*lane).into()));
         }
         AsmInstructionKind::SymbolAddress { symbol, .. } => {
@@ -2677,8 +2737,13 @@ fn x86_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec
     operands
 }
 
-fn generic_operands(id: u32, kind: &AsmInstructionKind, ty: Option<&AsmType>) -> Vec<AsmOperand> {
-    x86_operands(id, kind, ty)
+fn generic_operands(
+    id: u32,
+    kind: &AsmInstructionKind,
+    ty: Option<&AsmType>,
+    register_types: &HashMap<u32, AsmType>,
+) -> Vec<AsmOperand> {
+    x86_operands(id, kind, ty, register_types)
 }
 
 fn instruction_produces_value(kind: &AsmInstructionKind) -> bool {
@@ -2691,11 +2756,18 @@ fn instruction_produces_value(kind: &AsmInstructionKind) -> bool {
     )
 }
 
-fn value_operand(value: &AsmValue) -> AsmOperand {
+fn value_operand(value: &AsmValue, register_types: &HashMap<u32, AsmType>) -> AsmOperand {
     match value {
-        AsmValue::Register(id) => {
-            register_operand(virtual_register(*id, &AsmType::I64), OperandAccess::Read)
-        }
+        AsmValue::Register(id) => register_operand(
+            virtual_register(
+                *id,
+                &register_types
+                    .get(id)
+                    .map(backend_operand_type)
+                    .unwrap_or_else(|| panic!("missing type for virtual register {id}")),
+            ),
+            OperandAccess::Read,
+        ),
         AsmValue::PhysicalRegister(register) => {
             register_operand(AsmRegister::Physical(register.clone()), OperandAccess::Read)
         }
@@ -2722,7 +2794,7 @@ fn value_operand(value: &AsmValue) -> AsmOperand {
 fn x86_operand(value: &AsmValue, ctx: &mut PhysicalRegisterLoweringContext) -> X86Operand {
     match value {
         AsmValue::Register(id) => X86Operand::Register {
-            reg: x86_virtual_register(*id, &AsmType::I64),
+            reg: x86_virtual_register(*id, &ctx.register_type(*id)),
             access: OperandAccess::Read,
         },
         AsmValue::PhysicalRegister(register) => X86Operand::Register {
@@ -2800,16 +2872,20 @@ fn x86_constant_operand(constant: &AsmConstant) -> X86Operand {
     }
 }
 
-fn call_target_operand(value: &AsmValue) -> AsmOperand {
+fn call_target_operand(value: &AsmValue, register_types: &HashMap<u32, AsmType>) -> AsmOperand {
     match value {
         AsmValue::Function(name) | AsmValue::Global(name, _) => {
             AsmOperand::Symbol(Name::new(name.clone()))
         }
-        _ => value_operand(value),
+        _ => value_operand(value, register_types),
     }
 }
 
-fn address_operand(address: &AsmValue, ty: Option<&AsmType>) -> AsmOperand {
+fn address_operand(
+    address: &AsmValue,
+    ty: Option<&AsmType>,
+    register_types: &HashMap<u32, AsmType>,
+) -> AsmOperand {
     match address {
         AsmValue::Address(address) => {
             let mut memory = memory_from_address_value(address);
@@ -2845,7 +2921,7 @@ fn address_operand(address: &AsmValue, ty: Option<&AsmType>) -> AsmOperand {
         }
         AsmValue::Local(id) => AsmOperand::Symbol(Name::new(format!("frame.local.{id}"))),
         AsmValue::StackSlot(id) => AsmOperand::Symbol(Name::new(format!("frame.slot.{id}"))),
-        _ => value_operand(address),
+        _ => value_operand(address, register_types),
     }
 }
 
@@ -3050,6 +3126,15 @@ fn constant_operand(constant: &AsmConstant) -> AsmOperand {
 
 fn register_operand(reg: AsmRegister, access: OperandAccess) -> AsmOperand {
     AsmOperand::Register { reg, access }
+}
+
+/// Native aggregate values are represented by addresses of their storage.
+/// ABI expansion is handled later by the target-specific call lowering.
+fn backend_operand_type(ty: &AsmType) -> AsmType {
+    match ty {
+        AsmType::Struct { .. } | AsmType::Array(_, _) => AsmType::Ptr(Box::new(ty.clone())),
+        _ => ty.clone(),
+    }
 }
 
 fn virtual_register(id: u32, ty: &AsmType) -> AsmRegister {
