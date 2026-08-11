@@ -1218,6 +1218,24 @@ impl Default for Visibility {
 }
 
 impl LirDataLayout {
+    pub fn x86_64() -> Self {
+        Self::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+            .expect("built-in x86_64 data layout is valid")
+    }
+
+    pub fn aarch64() -> Self {
+        Self::new(
+            64,
+            8,
+            vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+        )
+            .expect("built-in aarch64 data layout is valid")
+    }
+
     pub fn new(
         pointer_size_bits: u32,
         pointer_alignment: u32,
@@ -1328,6 +1346,20 @@ mod tests {
     fn arbitrary_integer_rejects_unused_high_bits() {
         assert!(LirApInt::from_words(65, vec![0, 2]).is_none());
         assert!(LirApInt::from_words(65, vec![0, 1]).is_some());
+    }
+
+    #[test]
+    fn built_in_64_bit_layouts_define_all_native_integer_alignments() {
+        for layout in [LirDataLayout::x86_64(), LirDataLayout::aarch64()] {
+            assert_eq!(layout.pointer_size_bits, 64);
+            assert_eq!(layout.pointer_alignment, 8);
+            assert_eq!(layout.integer_alignment(1), Ok(1));
+            assert_eq!(layout.integer_alignment(8), Ok(1));
+            assert_eq!(layout.integer_alignment(16), Ok(2));
+            assert_eq!(layout.integer_alignment(32), Ok(4));
+            assert_eq!(layout.integer_alignment(64), Ok(8));
+            assert_eq!(layout.integer_alignment(128), Ok(16));
+        }
     }
 
     #[test]
