@@ -448,7 +448,7 @@ impl CompilerDriver {
         }
 
         let fqp = FullyQualifiedPath::new(package_path.clone());
-        let (mir_id, struct_layouts, full_layouts, adt_defs) =
+        let (mut mir_id, mut struct_layouts, mut full_layouts, mut adt_defs) =
             self.lower_to_mir(&hir_id, &fqp).await?;
         if let Some(package) = self
             .state
@@ -467,13 +467,46 @@ impl CompilerDriver {
         for (_dep_id, dep_package) in self.state.typing_ctx.env_ctx.crates().iter() {
             all_adt_defs.extend(dep_package.borrow().mir_adt_defs.clone());
         }
-        let lir_id = self.lower_to_lir(
+        let mut lir_id = self.lower_to_lir(
             &mir_id,
             &fqp,
             &current_package_id,
             &full_layouts,
             &all_adt_defs,
         )?;
+
+        // Executable consts are discovered while lowering. Evaluate them
+        // before publishing the unit, then lower again so runtime operands
+        // contain concrete constants instead of synthetic global paths.
+        let comptime_count = self.evaluate_comptime_lir(&lir_id, &fqp).await?;
+        if comptime_count != 0 {
+            let lowered = self.lower_to_mir(&hir_id, &fqp).await?;
+            mir_id = lowered.0;
+            struct_layouts = lowered.1;
+            full_layouts = lowered.2;
+            adt_defs = lowered.3;
+            if let Some(package) = self
+                .state
+                .typing_ctx
+                .env_ctx
+                .compiled_package(&current_package_id)
+            {
+                package.borrow_mut().mir_program = Some(self.state.mir(&mir_id)?.clone());
+                package.borrow_mut().mir_struct_fields = struct_layouts.clone();
+                package.borrow_mut().mir_adt_defs = adt_defs.clone();
+            }
+            all_adt_defs.clear();
+            for (_dep_id, dep_package) in self.state.typing_ctx.env_ctx.crates().iter() {
+                all_adt_defs.extend(dep_package.borrow().mir_adt_defs.clone());
+            }
+            lir_id = self.lower_to_lir(
+                &mir_id,
+                &fqp,
+                &current_package_id,
+                &full_layouts,
+                &all_adt_defs,
+            )?;
+        }
         let lir = self.state.lir(&lir_id)?.clone();
         Ok(vec![fp_core::lir::LirCompileUnit {
             package_id: hir_package_id,
@@ -577,10 +610,6 @@ impl CompilerDriver {
                 .insert_resolved_const_value(entry.key.clone(), constant);
             self.state
                 .insert_typing_const(entry.key.clone(), value.clone());
-            if let Some(expr_id) = Self::expr_id_from_const_key(&entry.key) {
-                self.state
-                    .insert_expr_resolution_value(expr_id, value.clone());
-            }
             last = value;
             count += 1;
         }
@@ -930,9 +959,4 @@ impl CompilerDriver {
         }
     }
 
-    fn expr_id_from_const_key(key: &str) -> Option<u64> {
-        let name = key.rsplit(':').next()?;
-        let suffix = name.strip_prefix("__fp_expr_")?;
-        suffix.parse().ok()
-    }
 }

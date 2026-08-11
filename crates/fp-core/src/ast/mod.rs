@@ -27,7 +27,6 @@ pub mod sql;
 mod value;
 
 pub use attr::*;
-pub use expr::resolution::*;
 pub use expr::*;
 pub use ident::*;
 pub use item::*;

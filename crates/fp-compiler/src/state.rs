@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use fp_core::{
-    ast::{Expr, ExprId, Value},
+    ast::Value,
     hir, lir, mir,
 };
 use fp_typing::{TypeckResults, TypingContext};
@@ -102,20 +102,6 @@ impl CompilerState {
             .borrow_mut()
             .insert(key.clone(), value);
         self.typing_ctx.wake_comptime(&key);
-    }
-
-    pub fn insert_expr_resolution_source(&mut self, expr_id: ExprId, expr: Expr) {
-        self.typing_ctx
-            .expr_resolutions
-            .borrow_mut()
-            .insert_source(expr_id, expr);
-    }
-
-    pub fn insert_expr_resolution_value(&mut self, expr_id: ExprId, value: Value) {
-        self.typing_ctx
-            .expr_resolutions
-            .borrow_mut()
-            .insert_value(expr_id, value);
     }
 
     pub fn insert_runtime_value(&mut self, value_id: RuntimeValueId, value: Value) {

@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use std::task::Poll;
 use std::task::Waker;
 
-use fp_core::ast::{ExprResolutionTable, TypeStruct, Value};
+use fp_core::ast::{TypeStruct, Value};
 use fp_core::lir::LirDataLayout;
 use fp_core::workspace::WorkspaceContext;
 
@@ -71,10 +71,6 @@ pub struct TypingContext {
     /// The typer queries this for fully-qualified symbol lookups.
     pub env_ctx: std::rc::Rc<WorkspaceContext>,
 
-    /// Expression resolution table: maps `ExprId` → source expression and
-    /// optionally a pre-evaluated comptime value.
-    pub expr_resolutions: RefCell<ExprResolutionTable>,
-
     /// Accumulated typing diagnostics (warnings + errors).
     /// Typer appends during inference; driver reads after each pass.
     pub diagnostics: RefCell<Vec<TypingDiagnostic>>,
@@ -111,7 +107,6 @@ impl TypingContext {
             resolved_consts: RefCell::new(HashMap::new()),
             resolved_types: RefCell::new(HashMap::new()),
             env_ctx,
-            expr_resolutions: RefCell::new(ExprResolutionTable::default()),
             diagnostics: RefCell::new(Vec::new()),
             comptime_wakers: RefCell::new(HashMap::new()),
             ready_generics: RefCell::new(HashMap::new()),

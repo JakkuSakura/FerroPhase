@@ -75,13 +75,9 @@ impl HirGenerator {
         let kind = match ast_expr.kind() {
             ExprKind::Value(value) => self.transform_value_to_hir(value)?,
             ExprKind::Id(expr_id) => {
-                if let Some(value) = self.expr_resolution.resolved_value(*expr_id).cloned() {
-                    self.transform_expr_to_hir(&ast::Expr::value(value))?.kind
-                } else {
-                    return Err(fp_core::error::Error::from(format!(
-                        "unresolved expression id {expr_id} during AST→HIR lowering"
-                    )));
-                }
+                return Err(fp_core::error::Error::from(format!(
+                    "unresolved expression id {expr_id} during AST→HIR lowering"
+                )));
             }
             ExprKind::Name(_) => hir::ExprKind::Path(
                 self.ast_expr_to_hir_path(ast_expr, PathResolutionScope::Value)?,
@@ -338,12 +334,6 @@ impl HirGenerator {
         ast_expr: &ast::Expr,
         const_block: &ast::ExprConstBlock,
     ) -> Result<hir::ExprKind> {
-        if let Some(value) = self.expr_resolution.resolved_value(ast_expr.id()).cloned() {
-            return self
-                .transform_expr_to_hir(&ast::Expr::value(value))
-                .map(|expr| expr.kind);
-        }
-
         let body_value = self.transform_expr_to_hir(const_block.expr.as_ref())?;
         let ty = ast_expr
             .ty()
@@ -351,7 +341,7 @@ impl HirGenerator {
             .transpose()?
             .unwrap_or_else(|| self.create_unit_type());
         let def_id = self.next_def_id();
-        let local_name = format!("__fp_expr_{}", ast_expr.id());
+        let local_name = format!("__fp_anon_const_{}", ast_expr.id());
         let qualified_path = self.qualify_path(&local_name);
         let qualified_name = qualified_path.to_key();
         let hir_const = hir::Const {

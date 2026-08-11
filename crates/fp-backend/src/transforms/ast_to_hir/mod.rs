@@ -1,6 +1,5 @@
 use fp_core::ast::Name;
 use fp_core::ast::Pattern;
-use fp_core::ast::{ExprResolution, ExprResolutionTable};
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicNormalizer;
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -63,7 +62,6 @@ pub struct HirGenerator {
     unimplemented_type_def_ids: HashSet<hir::DefId>,
     resolving_type_aliases: HashSet<String>,
     resolved_names: ResolvedNameTable,
-    expr_resolution: ExprResolutionTable,
     target_env: TargetEnv,
     respect_cfg: bool,
     lowering_config: HirLoweringConfig,
@@ -330,7 +328,6 @@ impl HirGenerator {
             unimplemented_type_def_ids: HashSet::new(),
             resolving_type_aliases: HashSet::new(),
             resolved_names: ResolvedNameTable::new(),
-            expr_resolution: ExprResolutionTable::default(),
             target_env: TargetEnv::host(),
             respect_cfg: true,
             lowering_config: HirLoweringConfig::default(),
@@ -397,10 +394,6 @@ impl HirGenerator {
         self
     }
 
-    pub fn with_expr_resolution(mut self, expr_resolution: ExprResolutionTable) -> Self {
-        self.expr_resolution = expr_resolution;
-        self
-    }
 
     pub fn set_target_triple(&mut self, target_triple: Option<&str>) {
         self.target_env = TargetEnv::from_triple(target_triple);
