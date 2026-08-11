@@ -1,3 +1,4 @@
+pub use ::std::void::void;
 pub use ::std::alloc::Vec;
 pub use ::std::option::Option;
 pub use ::std::option::Option::{None, Some};

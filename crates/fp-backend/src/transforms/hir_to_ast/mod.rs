@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use fp_core::ast::{
     self, BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprAssign, ExprBinOp, ExprBlock, ExprBreak,
-    ExprCast, ExprContinue, ExprIf, ExprIndex, ExprIntrinsicCall, ExprKwArg, ExprLet, ExprLoop,
+    ExprCast, ExprClosure, ExprContinue, ExprIf, ExprIndex, ExprIntrinsicCall, ExprKwArg, ExprLet, ExprLoop,
     ExprMatch, ExprMatchCase, ExprReference, ExprReturn, ExprSelect, ExprSelectType,
     ExprStringTemplate, ExprStruct, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp, ExprWhile, ExprWith,
     FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction, ItemDefConst, ItemDefEnum,
@@ -33,6 +33,8 @@ pub fn lift_program(program: &hir::Program, path: PathBuf) -> Result<ast::File> 
     for item in &program.items {
         items.push(lift_item(item)?);
     }
+    // Reconstruct closure expressions with typed params from lowered closure pairs
+    let items = reconstruct_closures(items, program)?;
     Ok(ast::File {
         path,
         attrs: Vec::new(),
@@ -680,5 +682,210 @@ fn lift_unop(op: &hir::UnOp) -> UnOpKind {
         hir::UnOp::Neg => UnOpKind::Neg,
         hir::UnOp::Deref => UnOpKind::Deref,
         hir::UnOp::Box => UnOpKind::Any(Ident::new("box")),
+    }
+}
+
+// ── Closure reconstruction ──────────────────────────────────────────────────
+
+/// After HIR→AST lifting, closures have been lowered to `__Closure{N}` struct
+/// + `__closure{N}_call` function pairs. This pass detects those pairs,
+/// extracts the HIR-typed parameter info from the program, and reconstructs
+/// `ExprClosure` expressions with populated `Pattern.ty` slots.
+fn reconstruct_closures(mut items: Vec<Item>, program: &hir::Program) -> Result<Vec<Item>> {
+    use std::collections::HashMap;
+
+    let mut closure_types: HashMap<String, Vec<Ty>> = HashMap::new();
+
+    for hir_item in &program.items {
+        if let hir::ItemKind::Function(func) = &hir_item.kind {
+            let name = &func.sig.name;
+            if let Some(rest) = name.strip_prefix("__closure") {
+                if let Some(num_end) = rest.find("_call") {
+                    let num = &rest[..num_end];
+                    let struct_name = format!("__Closure{}", num);
+                    let param_types: Vec<Ty> = func.sig.inputs.iter()
+                        .skip(1) // skip closure env (self)
+                        .map(|param| lift_type(&param.ty))
+                        .collect();
+                    if !param_types.is_empty() {
+                        closure_types.insert(struct_name, param_types);
+                    }
+                }
+            }
+        }
+    }
+
+    if closure_types.is_empty() {
+        return Ok(items);
+    }
+
+    for item in &mut items {
+        recon_closures_in_item(item, &closure_types);
+    }
+
+    Ok(items)
+}
+
+fn recon_closures_in_item(item: &mut Item, types: &std::collections::HashMap<String, Vec<Ty>>) {
+    match item.kind_mut() {
+        ItemKind::DefFunction(f) => {
+            for stmt in &mut f.body.stmts {
+                recon_closures_in_stmt(stmt, types);
+            }
+        }
+        ItemKind::DefConst(c) => {
+            recon_closures_in_expr(&mut c.value, types);
+        }
+        ItemKind::Module(m) => {
+            for child in &mut m.items {
+                recon_closures_in_item(child, types);
+            }
+        }
+        ItemKind::Impl(impl_) => {
+            for child in &mut impl_.items {
+                recon_closures_in_item(child, types);
+            }
+        }
+        ItemKind::Expr(e) => {
+            if let ast::ExprKind::Block(block) = e.kind_mut() {
+                for stmt in &mut block.stmts {
+                    recon_closures_in_stmt(stmt, types);
+                }
+            } else {
+                recon_closures_in_expr(e, types);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn recon_closures_in_stmt(stmt: &mut BlockStmt, types: &std::collections::HashMap<String, Vec<Ty>>) {
+    match stmt {
+        BlockStmt::Expr(se) => recon_closures_in_expr(&mut se.expr, types),
+        BlockStmt::Let(l) => {
+            if let Some(ref mut init) = l.init {
+                recon_closures_in_expr(init, types);
+            }
+        }
+        BlockStmt::Item(item) => recon_closures_in_item(item, types),
+        _ => {}
+    }
+}
+
+fn recon_closures_in_expr(expr: &mut Expr, types: &std::collections::HashMap<String, Vec<Ty>>) {
+    match expr.kind_mut() {
+        ast::ExprKind::Struct(st) => {
+            let struct_name = match st.name.kind() {
+                ast::ExprKind::Name(Name::Path(p)) => {
+                    p.segments.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join("::")
+                }
+                ast::ExprKind::Name(Name::Ident(id)) => id.name.clone(),
+                _ => { return; }
+            };
+            let last_seg = struct_name.rsplit("::").next().unwrap_or(&struct_name);
+            if let Some(param_types) = types.get(last_seg) {
+                if !param_types.is_empty() {
+                    let params: Vec<Pattern> = param_types.iter().enumerate().map(|(i, ty)| {
+                        Pattern {
+                            id: ast::fresh_pattern_id(),
+                            ty: Some(ty.clone()),
+                            kind: PatternKind::Ident(PatternIdent {
+                                ident: Ident::new(format!("__p{}", i)),
+                                mutability: None,
+                            }),
+                        }
+                    }).collect();
+                    let span = expr.span;
+                    // Replace this struct with a closure — the body is a placeholder
+                    expr.kind = ast::ExprKind::Closure(ExprClosure {
+                        span: span.unwrap_or_default(),
+                        params,
+                        ret_ty: None,
+                        movability: None,
+                        body: Box::new(Expr::unit()),
+                    });
+                    expr.ty = Some(Ty::unknown());
+                    return;
+                }
+            }
+            for field in &mut st.fields {
+                if let Some(ref mut val) = field.value {
+                    recon_closures_in_expr(val, types);
+                }
+            }
+        }
+        ast::ExprKind::Invoke(inv) => {
+            for arg in &mut inv.args {
+                recon_closures_in_expr(arg, types);
+            }
+            match &mut inv.target {
+                ast::ExprInvokeTarget::Method(sel) => recon_closures_in_expr(&mut sel.obj, types),
+                ast::ExprInvokeTarget::Expr(be) => recon_closures_in_expr(be, types),
+                _ => {}
+            }
+        }
+        ast::ExprKind::Block(block) => {
+            for stmt in &mut block.stmts {
+                recon_closures_in_stmt(stmt, types);
+            }
+        }
+        ast::ExprKind::If(if_expr) => {
+            recon_closures_in_expr(&mut if_expr.cond, types);
+            recon_closures_in_expr(&mut if_expr.then, types);
+            if let Some(ref mut elze) = if_expr.elze {
+                recon_closures_in_expr(elze, types);
+            }
+        }
+        ast::ExprKind::Match(mt) => {
+            if let Some(ref mut s) = mt.scrutinee {
+                recon_closures_in_expr(s, types);
+            }
+            for case in &mut mt.cases {
+                recon_closures_in_expr(&mut case.body, types);
+            }
+        }
+        ast::ExprKind::Let(l) => { recon_closures_in_expr(&mut l.expr, types); }
+        ast::ExprKind::Assign(a) => {
+            recon_closures_in_expr(&mut a.value, types);
+            recon_closures_in_expr(&mut a.target, types);
+        }
+        ast::ExprKind::Return(r) => {
+            if let Some(ref mut v) = r.value { recon_closures_in_expr(v, types); }
+        }
+        ast::ExprKind::BinOp(bin) => {
+            recon_closures_in_expr(&mut bin.lhs, types);
+            recon_closures_in_expr(&mut bin.rhs, types);
+        }
+        ast::ExprKind::UnOp(un) => { recon_closures_in_expr(&mut un.val, types); }
+        ast::ExprKind::Select(sel) => { recon_closures_in_expr(&mut sel.obj, types); }
+        ast::ExprKind::Index(idx) => {
+            recon_closures_in_expr(&mut idx.obj, types);
+            recon_closures_in_expr(&mut idx.index, types);
+        }
+        ast::ExprKind::Closure(cl) => { recon_closures_in_expr(&mut cl.body, types); }
+        ast::ExprKind::Cast(c) => { recon_closures_in_expr(&mut c.expr, types); }
+        ast::ExprKind::Reference(r) => { recon_closures_in_expr(&mut r.referee, types); }
+        ast::ExprKind::While(wh) => {
+            recon_closures_in_expr(&mut wh.cond, types);
+            recon_closures_in_expr(&mut wh.body, types);
+        }
+        ast::ExprKind::For(fr) => {
+            recon_closures_in_expr(&mut fr.iter, types);
+            recon_closures_in_expr(&mut fr.body, types);
+        }
+        ast::ExprKind::Loop(lp) => { recon_closures_in_expr(&mut lp.body, types); }
+        ast::ExprKind::Try(tr) => {
+            recon_closures_in_expr(&mut tr.expr, types);
+            for catch in &mut tr.catches {
+                recon_closures_in_expr(&mut catch.body, types);
+            }
+        }
+        ast::ExprKind::Array(arr) => {
+            for val in &mut arr.values { recon_closures_in_expr(val, types); }
+        }
+        ast::ExprKind::Tuple(tup) => {
+            for val in &mut tup.values { recon_closures_in_expr(val, types); }
+        }
+        _ => {}
     }
 }

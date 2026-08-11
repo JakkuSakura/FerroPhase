@@ -6,7 +6,7 @@ mod session;
 mod state;
 mod storage;
 
-pub use driver::CompilerDriver;
+pub use driver::{CompilerDriver, PipelineMode};
 pub use error::CompilerDriverError;
 pub use executor::{CompilerExecutor, ExecutorHandle};
 pub use identity::FullyQualifiedPath;

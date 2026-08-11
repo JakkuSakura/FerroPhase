@@ -1,3 +1,4 @@
+pub mod void;
 pub mod assert;
 pub mod alloc;
 pub mod any;

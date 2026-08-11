@@ -946,9 +946,60 @@ async fn compile_project(
             }
         }
 
-        // Normalize: source patterns → portable ops (MUST be last transform)
+        // Normalize: source patterns → portable ops (MUST be last transform before typing)
         for pkg_item in &mut source.items {
             fp_lang::normalization::normalize_items(std::slice::from_mut(&mut pkg_item.item), normalizer.as_ref())?;
+        }
+
+        // Typecheck: resolve types via HIR to populate AST type slots
+        // NOTE: currently disabled by default (--skip-typing) because the full
+        // HIR→MIR→LIR pipeline panics for some ADTs.
+        if !args.skip_typing {
+            for pkg_item in &mut source.items {
+                let file = File {
+                    path: PathBuf::from(pkg_item.path.segments.join("/")),
+                    attrs: vec![],
+                    collected_items: vec![],
+                    items: vec![pkg_item.item.clone()],
+                };
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    compiler::typecheck_language_target(
+                        file,
+                        package_id.as_str(),
+                        &std::path::Path::new(package_id.as_str()),
+                        LossyCompileOptions {
+                            enabled: args.lossy || fp_core::config::lossy_mode(),
+                        },
+                    )
+                })) {
+                    Ok(Ok(typed)) => {
+                        if let Some(item) = typed.items.into_iter().next() {
+                            pkg_item.item = item;
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        warn!(
+                            "typecheck failed for {}::{}: {} — falling back to untyped",
+                            package_id.as_str(),
+                            pkg_item.path.segments.join("::"),
+                            e
+                        );
+                    }
+                    Err(panic_info) => {
+                        let msg = panic_info
+                            .downcast_ref::<String>()
+                            .map(|s| s.as_str())
+                            .or_else(|| panic_info.downcast_ref::<&str>().copied())
+                            .unwrap_or("(unknown)");
+                        warn!(
+                            "typecheck panicked for {}::{}: {} — falling back to untyped",
+                            package_id.as_str(),
+                            pkg_item.path.segments.join("::"),
+                            msg
+                        );
+                    }
+                }
+            }
         }
 
         // Serialize package via language-specific serializer

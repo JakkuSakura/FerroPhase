@@ -5,6 +5,7 @@ use std::sync::Arc;
 use fp_c::CFrontend;
 use fp_compiler::{
     CompilerDriver, CompilerExecutor, CompilerSession, ConstValueId, FullyQualifiedPath, LirId,
+    PipelineMode,
 };
 use fp_core::module::path::QualifiedPath;
 use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
@@ -74,7 +75,7 @@ pub fn check_path(
 
     let executor = CompilerExecutor::new();
     let identity = CompilerIdentity::for_file(package, path);
-    let mut driver = compile_source_file(ast, &identity, compiler_workspace(), lossy, &executor)?;
+    let mut driver = compile_source_file(ast, &identity, compiler_workspace(), lossy, &executor, PipelineMode::Native)?;
     drain_driver(&mut driver, lossy)
 }
 
@@ -107,6 +108,7 @@ pub fn eval_script(script: ScriptBlock) -> Result<Value> {
         compiler_workspace(),
         LossyCompileOptions::default(),
         &executor,
+        PipelineMode::Native,
     )?;
     drain_driver(&mut driver, LossyCompileOptions::default())?;
     if let Some((_, value)) = driver
@@ -778,7 +780,7 @@ fn execute_ast(
 ) -> Result<Value> {
     let value_key = identity.path.to_key();
     let executor = CompilerExecutor::new();
-    let mut driver = compile_source_file(ast, &identity, compiler_workspace(), lossy, &executor)?;
+    let mut driver = compile_source_file(ast, &identity, compiler_workspace(), lossy, &executor, PipelineMode::Native)?;
     drain_driver(&mut driver, lossy)?;
 
     match mode {
@@ -808,7 +810,7 @@ fn lower_file(
     let ast = parse_file(path, source_language, lossy)?;
     let identity = CompilerIdentity::for_file(package, path);
     let executor = CompilerExecutor::new();
-    let mut driver = compile_source_file(ast, &identity, compiler_workspace(), lossy, &executor)?;
+    let mut driver = compile_source_file(ast, &identity, compiler_workspace(), lossy, &executor, PipelineMode::Native)?;
     drain_driver(&mut driver, lossy)?;
     let package_id =
         PackageId::new(identity.path.path().head().ok_or_else(|| {
@@ -890,8 +892,10 @@ fn compile_source_file(
     workspace: std::rc::Rc<fp_core::workspace::WorkspaceContext>,
     lossy: LossyCompileOptions,
     executor: &CompilerExecutor,
+    pipeline: PipelineMode,
 ) -> Result<CompilerDriver> {
     let mut session = CompilerSession::new(data_layout(), executor, workspace);
+    session.driver().pipeline = pipeline;
     let package_id =
         PackageId::new(identity.path.path().head().ok_or_else(|| {
             CliError::Compilation("source file has no package identity".to_string())
@@ -911,13 +915,16 @@ fn compile_source_file(
         .driver()
         .focus_package(package_id.clone())
         .map_err(|err| CliError::Compilation(err.to_string()))?;
-    executor
-        .run(session.driver().compile_package_module_native(
-            &package_id,
-            identity.path.path(),
-            "main",
-        ))
-        .map_err(|err| CliError::Compilation(err.to_string()))?;
+    // Only evaluate comptime LIR for full native compilation
+    if pipeline == PipelineMode::Native {
+        executor
+            .run(session.driver().compile_package_module_native(
+                &package_id,
+                identity.path.path(),
+                "main",
+            ))
+            .map_err(|err| CliError::Compilation(err.to_string()))?;
+    }
     Ok(session.into_driver())
 }
 
@@ -978,6 +985,7 @@ pub fn compile_file_to_lir_bundle(
         compiler_workspace(),
         lossy,
         &executor,
+        PipelineMode::Native,
     )?;
     drain_driver(&mut driver, lossy)?;
     let lowered = LoweredProgram {
@@ -1032,7 +1040,7 @@ pub fn typecheck_language_target(
 ) -> Result<File> {
     let identity = CompilerIdentity::for_file(package, path);
     let executor = CompilerExecutor::new();
-    let mut driver = compile_source_file(ast, &identity, compiler_workspace(), lossy, &executor)?;
+    let mut driver = compile_source_file(ast, &identity, compiler_workspace(), lossy, &executor, PipelineMode::TypecheckedTranspile)?;
     drain_driver(&mut driver, lossy)?;
     let hir = driver
         .state

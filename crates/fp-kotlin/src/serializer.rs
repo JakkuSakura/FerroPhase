@@ -1557,7 +1557,6 @@ fn map_name_to_kt(name: &str) -> String {
         "u32" => return "Long".into(), "u64" => return "Long".into(),
         "f32" => return "Float".into(), "f64" => return "Double".into(),
         "usize" => return "Long".into(), "isize" => return "Long".into(),
-        "Self" => return "Any".into(),
         _ => {}
     }
 

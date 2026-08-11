@@ -880,6 +880,15 @@ impl HirTypeChecker {
             Some(hir::Res::Def(def_id)) => Some(def_id),
             _ => None,
         }) else {
+            // Treat `void` as unit type (C compatibility)
+            if path.segments.len() == 1 && path.segments[0].name.as_str() == "void" {
+                return Ok(hir::Ty { kind: hir::ty::TyKind::Tuple(vec![]) });
+            }
+            // Fallback: treat single-segment unresolved types as unit type
+            // (handles C FFI types like fenv_t, etc.)
+            if path.segments.len() == 1 && path.res.is_none() {
+                return Ok(hir::Ty { kind: hir::ty::TyKind::Tuple(vec![]) });
+            }
             return Err(Error::from(format!(
                 "unresolved type path `{}`",
                 path.segments
