@@ -334,53 +334,15 @@ impl HirGenerator {
         ast_expr: &ast::Expr,
         const_block: &ast::ExprConstBlock,
     ) -> Result<hir::ExprKind> {
-        let body_value = self.transform_expr_to_hir(const_block.expr.as_ref())?;
+        let body = Box::new(self.transform_expr_to_hir(const_block.expr.as_ref())?);
         let ty = ast_expr
             .ty()
             .map(|ty| self.transform_type_to_hir(ty))
             .transpose()?
             .unwrap_or_else(|| self.create_unit_type());
-        let def_id = self.next_def_id();
-        let local_name = format!("__fp_anon_const_{}", ast_expr.id());
-        let qualified_path = self.qualify_path(&local_name);
-        let qualified_name = qualified_path.to_key();
-        let hir_const = hir::Const {
-            name: hir::Symbol::new(qualified_name.clone()),
-            ty,
-            body: hir::Body {
-                hir_id: self.next_id(),
-                params: Vec::new(),
-                value: body_value,
-            },
-        };
-        let hir_item = hir::Item {
-            hir_id: self.next_id(),
-            def_id,
-            visibility: hir::Visibility::Private,
-            kind: hir::ItemKind::Const(hir_const),
-            span: ast_expr.span(),
-        };
-        let path = hir::Path {
-            segments: qualified_path
-                .segments
-                .iter()
-                .map(|segment| self.make_path_segment(segment, None))
-                .collect(),
-            res: Some(hir::Res::Def(def_id)),
-        };
-        self.program_def_map.insert(def_id, hir_item.clone());
-
-        Ok(hir::ExprKind::Block(hir::Block {
-            hir_id: self.next_id(),
-            stmts: vec![hir::Stmt {
-                hir_id: self.next_id(),
-                kind: hir::StmtKind::Item(hir_item),
-            }],
-            expr: Some(Box::new(hir::Expr {
-                hir_id: self.next_id(),
-                kind: hir::ExprKind::Path(path),
-                span: ast_expr.span(),
-            })),
+        Ok(hir::ExprKind::ConstBlock(hir::ExprConstBlock {
+            ty: Box::new(ty),
+            body,
         }))
     }
 

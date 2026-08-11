@@ -468,6 +468,13 @@ fn lift_expr(expr: &hir::Expr) -> Result<Expr> {
                 len: Box::new(lift_expr(len)?),
             }))
         }
+        hir::ExprKind::ConstBlock(const_block) => {
+            Expr::new(ast::ExprKind::ConstBlock(ast::ExprConstBlock {
+                span: expr.span,
+                collected_items: Vec::new(),
+                expr: Box::new(lift_expr(&const_block.body)?),
+            }))
+        }
     };
     Ok(lifted.with_span(expr.span))
 }
@@ -623,6 +630,11 @@ fn lift_type(ty: &hir::TypeExpr) -> Ty {
                 .collect(),
         }),
         hir::TypeExprKind::TypeBinaryOp(_) => Ty::Unknown(ast::TypeUnknown),
+        hir::TypeExprKind::ConstBlock(body) => Ty::ConstBlock(ast::ExprConstBlock {
+            span: ty.span,
+            collected_items: Vec::new(),
+            expr: Box::new(lift_expr(body).unwrap_or_else(|_| Expr::value(Value::int(0)))),
+        }),
     }
 }
 

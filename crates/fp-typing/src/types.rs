@@ -19,6 +19,10 @@ pub struct TypeckResults {
     pub generic_method_args: HashMap<HirId, GenericCallResolution>,
     pub const_types: HashMap<hir::DefId, HirTy>,
     pub const_values: HashMap<hir::DefId, Value>,
+    /// Comptime-evaluated values of `const { ... }` blocks, keyed by the
+    /// block expression's own `HirId` (const-blocks are anonymous, so
+    /// unlike named const items they have no `DefId` to key by).
+    pub const_block_values: HashMap<HirId, Value>,
 }
 
 #[derive(Debug, Clone)]

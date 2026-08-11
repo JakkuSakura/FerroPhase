@@ -436,6 +436,12 @@ pub struct MirLowering {
     next_synthetic_hir_def_id: hir::DefId,
     typeck_type_exprs: HashMap<hir::HirId, Ty>,
     typeck_exprs: HashMap<hir::HirId, Ty>,
+    /// Comptime-evaluated `const { ... }` block values, keyed by the
+    /// block expression's own `HirId` — populated from
+    /// `TypeckResults::const_block_values`. Looked up directly when
+    /// lowering `hir::ExprKind::ConstBlock`/`TypeExprKind::ConstBlock`;
+    /// no synthetic item, no string key.
+    typeck_const_block_values: HashMap<hir::HirId, Value>,
     typeck_method_resolutions: HashMap<hir::HirId, hir::DefId>,
     typeck_generic_call_args: HashMap<hir::HirId, Vec<Ty>>,
     typeck_generic_method_args: HashMap<hir::HirId, Vec<Ty>>,
@@ -511,6 +517,7 @@ impl MirLowering {
             next_synthetic_hir_def_id: hir::DefId::local(1),
             typeck_type_exprs: HashMap::new(),
             typeck_exprs: HashMap::new(),
+            typeck_const_block_values: HashMap::new(),
             typeck_method_resolutions: HashMap::new(),
             typeck_generic_call_args: HashMap::new(),
             typeck_generic_method_args: HashMap::new(),
@@ -764,6 +771,7 @@ impl MirLowering {
             .iter()
             .map(|(id, ty)| lower_hir_ty(ty).map(|ty| (*id, ty)))
             .collect::<Result<HashMap<_, _>>>()?;
+        self.typeck_const_block_values = results.const_block_values.clone();
         self.typeck_method_resolutions = results.method_resolutions.clone();
         self.typeck_generic_call_args = results
             .generic_call_args
@@ -790,6 +798,56 @@ impl MirLowering {
             })
             .collect::<Result<HashMap<_, _>>>()?;
         Ok(self)
+    }
+
+    /// Convert a comptime-evaluated `Value` (from `const { ... }` block
+    /// resolution) into an MIR constant. Mirrors the scalar cases the
+    /// driver's own `simple_value_to_mir_constant` handles for named
+    /// consts; kept as a separate, small copy here since `fp-backend`
+    /// cannot depend on `fp-compiler`.
+    fn const_block_value_to_mir_constant(&self, value: &Value, span: Span) -> Option<mir::Constant> {
+        let (ty, literal) = match value {
+            Value::Int(value) => (
+                Ty {
+                    kind: TyKind::Int(IntTy::I64),
+                },
+                mir::ConstantKind::Int(value.value),
+            ),
+            Value::UInt(value) => (
+                Ty {
+                    kind: TyKind::Uint(UintTy::U64),
+                },
+                mir::ConstantKind::UInt(value.value),
+            ),
+            Value::Bool(value) => (Ty { kind: TyKind::Bool }, mir::ConstantKind::Bool(value.value)),
+            Value::Decimal(value) => (
+                Ty {
+                    kind: TyKind::Float(FloatTy::F64),
+                },
+                mir::ConstantKind::Float(value.value),
+            ),
+            Value::String(value) => (
+                Ty {
+                    kind: TyKind::Slice(Box::new(Ty {
+                        kind: TyKind::Int(IntTy::I8),
+                    })),
+                },
+                mir::ConstantKind::Str(value.value.clone()),
+            ),
+            Value::Null(_) => (
+                Ty {
+                    kind: TyKind::Tuple(Vec::new()),
+                },
+                mir::ConstantKind::Null,
+            ),
+            _ => return None,
+        };
+        Some(mir::Constant {
+            span,
+            ty,
+            user_ty: None,
+            literal,
+        })
     }
 
     fn const_key(&self, name: &str, span: Span) -> String {
@@ -1227,6 +1285,10 @@ impl MirLowering {
             hir::ExprKind::ArrayRepeat { elem, len } => {
                 Self::collect_def_ids_from_expr(elem, full_map, tail_map, work);
                 Self::collect_def_ids_from_expr(len, full_map, tail_map, work);
+            }
+            hir::ExprKind::ConstBlock(const_block) => {
+                Self::collect_def_ids_from_type(&const_block.ty, full_map, tail_map, work);
+                Self::collect_def_ids_from_expr(&const_block.body, full_map, tail_map, work);
             }
             _ => {}
         }
@@ -3961,6 +4023,11 @@ impl MirLowering {
             },
             hir::TypeExprKind::Infer => self.error_ty(),
             hir::TypeExprKind::Error => self.error_ty(),
+            // The typeck-resolved type for this node is looked up via
+            // `typeck_type_exprs` above (populated from the type checker's
+            // `resolve_pending_type_const_blocks`); reaching here means that
+            // lookup missed, so fall back the same way `Infer` does.
+            hir::TypeExprKind::ConstBlock(_) => self.error_ty(),
         }
     }
 
@@ -5513,6 +5580,11 @@ impl MirLowering {
             },
             hir::TypeExprKind::Infer => self.error_ty(),
             hir::TypeExprKind::Error => self.error_ty(),
+            hir::TypeExprKind::ConstBlock(_) => self
+                .typeck_type_exprs
+                .get(&ty_expr.hir_id)
+                .cloned()
+                .unwrap_or_else(|| self.error_ty()),
         }
     }
 
@@ -15091,6 +15163,31 @@ impl<'a> BodyBuilder<'a> {
                     ty: unit_ty,
                 })
             }
+            hir::ExprKind::ConstBlock(const_block) => {
+                // The value was resolved eagerly during type checking (see
+                // `HirTypeChecker::check_expr`'s `ConstBlock` arm) and handed
+                // here keyed by this expression's own `hir_id` — no
+                // synthetic item, no string key.
+                if let Some(value) = self.lowering.typeck_const_block_values.get(&expr.hir_id) {
+                    if let Some(constant) = self
+                        .lowering
+                        .const_block_value_to_mir_constant(&value.clone(), expr.span)
+                    {
+                        let ty = expected
+                            .cloned()
+                            .or_else(|| self.constant_ty_from_constant(&constant))
+                            .unwrap_or_else(|| self.lowering.error_ty());
+                        return Ok(OperandInfo {
+                            operand: mir::Operand::Constant(constant),
+                            ty,
+                        });
+                    }
+                }
+                // No comptime value available (e.g. this HIR was built
+                // directly rather than through typeck) — best effort:
+                // lower the body as ordinary code.
+                self.lower_operand(&const_block.body, expected)
+            }
             _ => {
                 // Fallback: evaluate into temporary local
                 let ty = expected.cloned().unwrap_or_else(|| Ty {
@@ -17330,7 +17427,10 @@ impl<'a> BodyBuilder<'a> {
                     self.locals[place.local as usize].ty = expected_ty.clone();
                 }
             }
-            hir::ExprKind::Literal(_) | hir::ExprKind::Path(_) | hir::ExprKind::Index(_, _) => {
+            hir::ExprKind::Literal(_)
+            | hir::ExprKind::Path(_)
+            | hir::ExprKind::Index(_, _)
+            | hir::ExprKind::ConstBlock(_) => {
                 let assignment_place = place.clone();
                 let value = self.lower_operand(expr, Some(expected_ty))?;
                 let container_kind = match &value.operand {

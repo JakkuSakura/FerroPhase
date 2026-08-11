@@ -752,6 +752,11 @@ impl HirGenerator {
                     self.struct_field_defs
                         .insert(def_id, def_structural.value.fields.clone());
                 }
+                ItemKind::OpaqueType(opaque_def) => {
+                    let def_id = self.allocate_def_id_for_item(item);
+                    self.register_type_def(&opaque_def.name.name, def_id, &opaque_def.visibility);
+                    self.struct_field_defs.insert(def_id, Vec::new());
+                }
                 ItemKind::DefEnum(def_enum) => {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_type_def(&def_enum.name.name, def_id, &def_enum.visibility);
@@ -1503,6 +1508,19 @@ impl HirGenerator {
                     self.map_visibility(&struct_def.visibility),
                 )
             }
+            ItemKind::OpaqueType(opaque_def) => {
+                self.register_type_def(&opaque_def.name.name, def_id, &opaque_def.visibility);
+                let name = hir::Symbol::new(self.qualify_name(&opaque_def.name.name));
+                (
+                    hir::ItemKind::Struct(hir::Struct {
+                        name,
+                        fields: Vec::new(),
+                        generics: hir::Generics::default(),
+                        repr: attrs_repr(&opaque_def.attrs),
+                    }),
+                    self.map_visibility(&opaque_def.visibility),
+                )
+            }
             ItemKind::DefEnum(enum_def) => {
                 self.register_type_def(&enum_def.name.name, def_id, &enum_def.visibility);
                 self.push_type_scope();
@@ -1967,20 +1985,35 @@ impl HirGenerator {
                         _ => {}
                     }
                 }
-                if let Ok(path) =
-                    self.ast_expr_to_hir_path(block.expr.as_ref(), PathResolutionScope::Type)
-                {
-                    return Ok(hir::TypeExpr::new(
-                        self.next_id(),
-                        hir::TypeExprKind::Path(path),
-                        Span::new(self.current_file, 0, 0),
-                    ));
+                // Only try path resolution for expressions that are
+                // actually path-shaped (`const { SomeType }`,
+                // `const { module::Type }`, ...) — `ast_expr_to_hir_path`
+                // falls back to an `__fp_error` placeholder `Ok(..)` rather
+                // than `Err` for anything else, which would otherwise steer
+                // every non-path const-block body (literals, arithmetic,
+                // blocks, ...) away from the comptime-resolving fallback
+                // below and into a silently-wrong error path.
+                if matches!(
+                    block.expr.kind(),
+                    ast::ExprKind::Name(_) | ast::ExprKind::Select(_) | ast::ExprKind::Invoke(_)
+                ) {
+                    if let Ok(path) =
+                        self.ast_expr_to_hir_path(block.expr.as_ref(), PathResolutionScope::Type)
+                    {
+                        return Ok(hir::TypeExpr::new(
+                            self.next_id(),
+                            hir::TypeExprKind::Path(path),
+                            Span::new(self.current_file, 0, 0),
+                        ));
+                    }
                 }
-                // Fall through — the const block will produce a type at comptime.
-                // Return an Infer type that gets refined on retry.
+                // Fall through — the const block produces a type at comptime;
+                // the type checker resolves it via `TypingContext::request_comptime`
+                // when it encounters this node.
+                let body = Box::new(self.transform_expr_to_hir(block.expr.as_ref())?);
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
-                    hir::TypeExprKind::Infer,
+                    hir::TypeExprKind::ConstBlock(body),
                     Span::new(self.current_file, 0, 0),
                 ))
             }
@@ -2504,15 +2537,43 @@ impl HirGenerator {
         self.type_aliases.insert(qualified, ty.clone());
     }
 
+    /// Look up `name` as if resolved via `use super::name` from every
+    /// enclosing module, walking from the immediate parent up to the
+    /// package root. Plain `type X = Y;` aliases (e.g. `libc`'s `void`)
+    /// are stored keyed by their *defining* module's qualified path, not
+    /// by `Res`, so they don't benefit from the normal import machinery —
+    /// this lets a submodule (e.g. `libc::macos`) find an alias declared
+    /// in an ancestor module (`libc::void`) without re-declaring it.
+    fn qualify_name_in_ancestor(&self, name: &str) -> Option<String> {
+        let segments = &self.module_path.segments;
+        for len in (0..segments.len()).rev() {
+            let candidate = fp_core::module::path::QualifiedPath::new(segments[..len].to_vec())
+                .with_segment(name.to_string())
+                .to_key();
+            if self.type_aliases.contains_key(&candidate) {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+
     fn lookup_type_alias(&self, segments: &[String]) -> Option<&ast::Ty> {
         let qualified = if segments.len() == 1 {
             self.qualify_name(&segments[0])
         } else {
             fp_core::module::path::QualifiedPath::new(segments.to_vec()).to_key()
         };
-        self.type_aliases
-            .get(&qualified)
-            .or_else(|| segments.get(0).and_then(|name| self.type_aliases.get(name)))
+        if let Some(alias) = self.type_aliases.get(&qualified) {
+            return Some(alias);
+        }
+        if segments.len() == 1 {
+            if let Some(ancestor_key) = self.qualify_name_in_ancestor(&segments[0]) {
+                if let Some(alias) = self.type_aliases.get(&ancestor_key) {
+                    return Some(alias);
+                }
+            }
+        }
+        segments.get(0).and_then(|name| self.type_aliases.get(name))
     }
 
     fn lookup_type_alias_with_key(&self, segments: &[String]) -> Option<(String, &ast::Ty)> {
@@ -2526,6 +2587,16 @@ impl HirGenerator {
                 return None;
             }
             return Some((qualified, alias));
+        }
+        if segments.len() == 1 {
+            if let Some(ancestor_key) = self.qualify_name_in_ancestor(&segments[0]) {
+                if let Some(alias) = self.type_aliases.get(&ancestor_key) {
+                    if self.ty_is_simple_path(alias, segments) {
+                        return None;
+                    }
+                    return Some((ancestor_key, alias));
+                }
+            }
         }
         if let Some(name) = segments.get(0) {
             if let Some(alias) = self.type_aliases.get(name) {
@@ -2787,42 +2858,12 @@ impl HirGenerator {
                     self.map_visibility(&def_type.visibility),
                 )
             }
-            None => {
-                if let ast::Ty::ConstBlock(const_block) = &def_type.value {
-                    let vis = self.map_visibility(&def_type.visibility);
-                    let body_expr = self.transform_expr_to_hir(const_block.expr.as_ref())?;
-                    let ty = self.transform_type_to_hir(&def_type.value)?;
-                    let hir_item_id = self.next_id();
-                    let const_def_id = self.next_def_id();
-                    let hir_const = hir::Const {
-                        name: hir::Symbol::new(format!("__fp_type_{}", def_type.name.as_str())),
-                        ty,
-                        body: hir::Body {
-                            hir_id: self.next_id(),
-                            params: Vec::new(),
-                            value: body_expr,
-                        },
-                    };
-                    self.program_def_map.insert(
-                        const_def_id,
-                        hir::Item {
-                            hir_id: hir_item_id,
-                            def_id: const_def_id,
-                            kind: hir::ItemKind::Const(hir_const.clone()),
-                            visibility: vis.clone(),
-                            span,
-                        },
-                    );
-                    return Ok(Some(hir::Item {
-                        hir_id,
-                        def_id,
-                        kind: hir::ItemKind::Const(hir_const),
-                        visibility: vis,
-                        span,
-                    }));
-                }
-                return Ok(None);
-            }
+            // `Ty::ConstBlock` (`type X = const { ... };`) and `Ty::Expr`
+            // (bare name-as-type aliases) don't materialize into a HIR item:
+            // uses of `X` are resolved by substituting `type_aliases[X]`
+            // directly (see `lookup_type_alias`), so no item — real or
+            // synthetic — is needed for either to work.
+            None => return Ok(None),
         };
 
         Ok(Some(hir::Item {

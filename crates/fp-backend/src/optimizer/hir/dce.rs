@@ -194,6 +194,10 @@ fn expr_has_unresolved_paths(expr: &hir::Expr) -> bool {
         hir::ExprKind::ArrayRepeat { elem, len } => {
             expr_has_unresolved_paths(elem) || expr_has_unresolved_paths(len)
         }
+        hir::ExprKind::ConstBlock(const_block) => {
+            type_has_unresolved_paths(&const_block.ty)
+                || expr_has_unresolved_paths(&const_block.body)
+        }
         hir::ExprKind::Literal(_)
         | hir::ExprKind::FormatString(_)
         | hir::ExprKind::Continue
@@ -237,6 +241,7 @@ fn type_has_unresolved_paths(ty: &hir::TypeExpr) -> bool {
                 .any(|input| type_has_unresolved_paths(input))
                 || type_has_unresolved_paths(&function.output)
         }
+        hir::TypeExprKind::ConstBlock(body) => expr_has_unresolved_paths(body),
         hir::TypeExprKind::Primitive(_)
         | hir::TypeExprKind::Never
         | hir::TypeExprKind::Infer
@@ -446,6 +451,10 @@ fn collect_expr_refs(
             collect_expr_refs(elem, full_map, tail_map, work);
             collect_expr_refs(len, full_map, tail_map, work);
         }
+        hir::ExprKind::ConstBlock(const_block) => {
+            collect_type_refs(&const_block.ty, full_map, tail_map, work);
+            collect_expr_refs(&const_block.body, full_map, tail_map, work);
+        }
     }
 }
 
@@ -510,6 +519,7 @@ fn collect_type_refs(
             }
             collect_type_refs(&function.output, full_map, tail_map, work);
         }
+        hir::TypeExprKind::ConstBlock(body) => collect_expr_refs(body, full_map, tail_map, work),
         hir::TypeExprKind::Primitive(_)
         | hir::TypeExprKind::Never
         | hir::TypeExprKind::Infer

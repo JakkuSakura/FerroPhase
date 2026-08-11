@@ -119,6 +119,95 @@ fn compile_normalization_runs_during_ast_to_hir_lowering() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn const_block_expr_lowers_to_dedicated_hir_node() -> Result<()> {
+    let frontend = fp_lang::FerroFrontend::new();
+    let parsed = frontend.parse_expr("const { 1 + 1 }")?;
+    let ast::ItemKind::Expr(expr) = parsed.ast.items[0].kind() else {
+        return Err(crate::error::optimization_error(
+            "expected parsed expression item".to_string(),
+        ));
+    };
+    assert!(matches!(expr.kind(), ast::ExprKind::ConstBlock(_)));
+
+    let mut generator = HirGenerator::new();
+    let lowered = generator.transform_expr_to_hir(expr)?;
+    let hir::ExprKind::ConstBlock(const_block) = lowered.kind else {
+        return Err(crate::error::optimization_error(
+            "const block must lower to a dedicated ConstBlock node, not a synthetic item"
+                .to_string(),
+        ));
+    };
+    let hir::ExprKind::Block(block) = const_block.body.kind else {
+        return Err(crate::error::optimization_error(
+            "expected const block body to lower its `{ ... }` to a HIR block".to_string(),
+        ));
+    };
+    let tail = block.expr.expect("const block has a tail expression");
+    assert!(matches!(
+        tail.kind,
+        hir::ExprKind::Binary(hir::BinOp::Add, _, _)
+    ));
+    Ok(())
+}
+
+#[test]
+fn const_block_type_alias_produces_no_synthetic_item() -> Result<()> {
+    let const_block_ty = ast::Ty::ConstBlock(ast::ExprConstBlock {
+        span: Span::null(),
+        collected_items: Vec::new(),
+        expr: Box::new(ast::Expr::value(ast::Value::int(1))),
+    });
+    let type_item = ast::Item::from(ast::ItemKind::DefType(ast::ItemDefType {
+        attrs: Vec::new(),
+        visibility: ast::Visibility::Private,
+        name: ident("X"),
+        generics_params: Vec::new(),
+        value: const_block_ty,
+    }));
+
+    let ast_file = ast::File {
+        path: "const_type_alias.fp".into(),
+        attrs: Vec::new(),
+        collected_items: Vec::new(),
+        items: vec![type_item],
+    };
+
+    let mut generator = HirGenerator::new();
+    let program = generator.transform_file(&ast_file)?;
+
+    assert!(
+        program.items.is_empty(),
+        "`type X = const {{ ... }};` must not synthesize a fake HIR item; uses of X \
+         resolve via type_aliases substitution instead: {:?}",
+        program.items
+    );
+    Ok(())
+}
+
+#[test]
+fn nested_type_position_const_block_lowers_to_dedicated_hir_node() -> Result<()> {
+    let const_block_ty = ast::Ty::ConstBlock(ast::ExprConstBlock {
+        span: Span::null(),
+        collected_items: Vec::new(),
+        expr: Box::new(ast::Expr::value(ast::Value::int(2))),
+    });
+
+    let mut generator = HirGenerator::new();
+    let lowered = generator.transform_type_to_hir(&const_block_ty)?;
+    let hir::TypeExprKind::ConstBlock(body) = lowered.kind else {
+        return Err(crate::error::optimization_error(
+            "nested type-position const block must lower to a dedicated ConstBlock node"
+                .to_string(),
+        ));
+    };
+    assert!(matches!(
+        body.kind,
+        hir::ExprKind::Literal(hir::Lit::Integer(2))
+    ));
+    Ok(())
+}
+
 fn cfg_target_os_attr(value: &str) -> ast::Attribute {
     let cfg_name = ast::Path::from_ident(ident("cfg"));
     let target_name = ast::Path::from_ident(ident("target_os"));
@@ -794,6 +883,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
                 }
             }
             hir::ExprKind::FormatString(_) => {}
+            hir::ExprKind::ConstBlock(const_block) => collect_paths(&const_block.body, out),
             hir::ExprKind::Literal(_) | hir::ExprKind::Continue => {}
         }
     }

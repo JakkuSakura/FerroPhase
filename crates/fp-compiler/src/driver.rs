@@ -421,7 +421,6 @@ impl CompilerDriver {
         let hir_id = HirId::new(format!("hir:{}", self.module_state_key(&package_path)));
         self.state.insert_hir(hir_id.clone(), hir_program);
         self.state.insert_hir_typeck(hir_id.clone(), typeck_results);
-        self.seed_typechecked_const_values(&hir_id)?;
         if let Some(package) = self
             .state
             .typing_ctx
@@ -516,72 +515,6 @@ impl CompilerDriver {
                 }
             }
         }
-    }
-
-    fn seed_typechecked_const_values(&mut self, hir_id: &HirId) -> Result<(), CompilerDriverError> {
-        let program = self.state.hir(hir_id)?.clone();
-        let results = self.state.hir_typeck(hir_id)?.clone();
-        for item in program.def_map.values() {
-            let hir::ItemKind::Const(constant) = &item.kind else {
-                continue;
-            };
-            let Some(value) = results.const_values.get(&item.def_id) else {
-                continue;
-            };
-            let Some(constant_value) = self.simple_value_to_mir_constant(value, constant.body.value.span) else {
-                continue;
-            };
-            let key = self.const_resolution_key(constant.name.as_str(), constant.body.value.span);
-            self.state.insert_resolved_const_value(key, constant_value);
-        }
-        Ok(())
-    }
-
-    fn const_resolution_key(&self, name: &str, span: Span) -> String {
-        let file = fp_core::source_map::source_map()
-            .file(span.file)
-            .map(|file| file.path.display().to_string())
-            .unwrap_or_else(|| format!("file#{}", span.file));
-        format!("{file}:{}:{}:{name}", span.lo, span.hi)
-    }
-
-    fn simple_value_to_mir_constant(
-        &self,
-        value: &Value,
-        span: Span,
-    ) -> Option<mir::Constant> {
-        let (ty, literal) = match value {
-            Value::Int(value) => (
-                mir::Ty { kind: TyKind::Int(IntTy::I64) },
-                mir::ConstantKind::Int(value.value),
-            ),
-            Value::UInt(value) => (
-                mir::Ty { kind: TyKind::Uint(UintTy::U64) },
-                mir::ConstantKind::UInt(value.value),
-            ),
-            Value::Bool(value) => (
-                mir::Ty { kind: TyKind::Bool },
-                mir::ConstantKind::Bool(value.value),
-            ),
-            Value::Decimal(value) => (
-                mir::Ty { kind: TyKind::Float(FloatTy::F64) },
-                mir::ConstantKind::Float(value.value),
-            ),
-            Value::String(value) => (
-                mir::Ty {
-                    kind: TyKind::Slice(Box::new(mir::Ty {
-                        kind: TyKind::Int(IntTy::I8),
-                    })),
-                },
-                mir::ConstantKind::Str(value.value.clone()),
-            ),
-            Value::Null(_) => (
-                mir::Ty { kind: TyKind::Tuple(Vec::new()) },
-                mir::ConstantKind::Null,
-            ),
-            _ => return None,
-        };
-        Some(mir::Constant { span, ty, user_ty: None, literal })
     }
 
     fn evaluate_hir_const_request(

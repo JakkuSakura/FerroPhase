@@ -663,6 +663,9 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
                 .unwrap_or_default()
         ),
         ExprKind::Continue => "continue".into(),
+        ExprKind::ConstBlock(const_block) => {
+            format!("const {{ {} }}", format_expr_inline(&const_block.body, ctx))
+        }
         ExprKind::Loop(_) | ExprKind::If(_, _, _) | ExprKind::Block(_) | ExprKind::While(_, _) => {
             "<control-flow>".into()
         }
@@ -880,6 +883,7 @@ fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
             let output_str = fmt_type_expr(&fn_ptr.output, ctx);
             format!("fn({}) -> {}", inputs_str, output_str)
         }
+        TypeExprKind::ConstBlock(body) => format!("const {{ {} }}", format_expr_inline(body, ctx)),
         TypeExprKind::Never => "!".into(),
         TypeExprKind::Infer => "_".into(),
         TypeExprKind::Error => "<error>".into(),

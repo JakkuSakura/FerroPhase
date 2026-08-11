@@ -221,6 +221,17 @@ pub enum ExprKind {
     With(Box<Expr>, Box<Expr>),
     Array(Vec<Expr>),
     ArrayRepeat { elem: Box<Expr>, len: Box<Expr> },
+    /// A `const { ... }` block. Structurally this node IS the const
+    /// context indicator: the type checker eagerly resolves `body`'s
+    /// value via `TypingContext::request_comptime` whenever it encounters
+    /// this variant, independent of any name.
+    ConstBlock(ExprConstBlock),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExprConstBlock {
+    pub ty: Box<TypeExpr>,
+    pub body: Box<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -395,6 +406,12 @@ pub enum TypeExprKind {
     Ptr(Box<TypeExpr>),
     Ref(Box<TypeExpr>),
     FnPtr(FnPtrType),
+    /// A `const { ... }` block appearing in type position (either the value
+    /// of a `type X = const { ... };` alias or nested inside another type,
+    /// e.g. an array length). The block's own const-ness comes purely from
+    /// appearing here structurally; its value is resolved by the type
+    /// checker via `TypingContext::request_comptime`.
+    ConstBlock(Box<Expr>),
     Never,
     Infer,
     Error,
@@ -806,6 +823,9 @@ impl ExprKind {
             ExprKind::With(context, body) => Span::union([context.span(), body.span()]),
             ExprKind::Array(exprs) => Span::union(exprs.iter().map(Expr::span)),
             ExprKind::ArrayRepeat { elem, len } => Span::union([elem.span(), len.span()]),
+            ExprKind::ConstBlock(const_block) => {
+                Span::union([const_block.ty.span(), const_block.body.span()])
+            }
         }
     }
 }
@@ -1007,6 +1027,7 @@ impl TypeExprKind {
             TypeExprKind::Ptr(ty) => ty.span(),
             TypeExprKind::Ref(ty) => ty.span(),
             TypeExprKind::FnPtr(func) => func.span(),
+            TypeExprKind::ConstBlock(body) => body.span(),
             TypeExprKind::Never | TypeExprKind::Infer | TypeExprKind::Error => Span::null(),
         }
     }

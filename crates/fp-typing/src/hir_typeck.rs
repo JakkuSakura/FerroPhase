@@ -20,6 +20,10 @@ pub struct HirTypeChecker {
     self_types: Vec<Ty>,
     typing_context: Option<Rc<TypingContext>>,
     expected_expr_types: Vec<Ty>,
+    /// Type-position `const { ... }` blocks encountered while checking
+    /// types (which is synchronous). Resolved via comptime once the main
+    /// item walk finishes; see `resolve_pending_type_const_blocks`.
+    pending_type_const_blocks: Vec<(hir::HirId, hir::Expr)>,
 }
 
 struct GenericScope<'a> {
@@ -56,6 +60,7 @@ impl HirTypeChecker {
             self_types: Vec::new(),
             typing_context: None,
             expected_expr_types: Vec::new(),
+            pending_type_const_blocks: Vec::new(),
         }
     }
 
@@ -73,7 +78,46 @@ impl HirTypeChecker {
         for item in &items {
             self.check_item(item).await?;
         }
+        self.resolve_pending_type_const_blocks().await?;
         Ok((self.program, self.results))
+    }
+
+    /// Resolve `const { ... }` blocks encountered in type position
+    /// (`check_type_expr` is synchronous, so it defers these rather than
+    /// awaiting inline). Structural, not name-based: anything queued here
+    /// got there solely by being a `TypeExprKind::ConstBlock` node.
+    async fn resolve_pending_type_const_blocks(&mut self) -> Result<()> {
+        let pending = std::mem::take(&mut self.pending_type_const_blocks);
+        for (hir_id, body) in pending {
+            let body_ty = self.check_expr(&body).await?;
+            let Some(context) = self.typing_context.clone() else {
+                continue;
+            };
+            let value = context
+                .request_comptime(crate::ComptimeRequest {
+                    program: self.program.clone(),
+                    typeck_results: self.results.clone(),
+                    block: hir::Block {
+                        hir_id,
+                        stmts: Vec::new(),
+                        expr: Some(Box::new(body)),
+                    },
+                    expression_id: hir_id,
+                    expected_ty: hir::TypeExpr {
+                        hir_id,
+                        kind: hir::TypeExprKind::Infer,
+                        span: fp_core::span::Span::null(),
+                    },
+                })
+                .await?;
+            self.results.const_block_values.insert(hir_id, value);
+            // Replace the `Infer` placeholder `check_type_expr` recorded for
+            // this node with the body's actual checked type, now that it's
+            // known — matches expression-position const-blocks, whose own
+            // type is likewise the checked type of their body.
+            self.results.record_type_expr_type(hir_id, body_ty);
+        }
+        Ok(())
     }
 
     fn check_item<'a>(&'a mut self, item: &'a hir::Item) -> crate::BoxFuture<'a, Result<()>> {
@@ -88,24 +132,6 @@ impl HirTypeChecker {
                     let body_result = self.check_body(&constant.body).await;
                     self.expected_expr_types.pop();
                     let body_ty = body_result?;
-                    if constant.name.as_str().contains("__fp_anon_const_") {
-                        if let Some(context) = self.typing_context.clone() {
-                            let value = context
-                                .request_comptime(crate::ComptimeRequest {
-                                    program: self.program.clone(),
-                                    typeck_results: self.results.clone(),
-                                    block: hir::Block {
-                                        hir_id: constant.body.hir_id,
-                                        stmts: Vec::new(),
-                                        expr: Some(Box::new(constant.body.value.clone())),
-                                    },
-                                    expression_id: constant.body.value.hir_id,
-                                    expected_ty: constant.ty.clone(),
-                                })
-                                .await?;
-                            self.results.const_values.insert(item.def_id, value);
-                        }
-                    }
                     self.results
                         .type_expr_types
                         .insert(constant.ty.hir_id, body_ty.clone());
@@ -466,6 +492,30 @@ impl HirTypeChecker {
                 hir::ExprKind::Block(block) | hir::ExprKind::Loop(block) => {
                     self.check_block(block).await?
                 }
+                hir::ExprKind::ConstBlock(const_block) => {
+                    let declared_ty = self.check_type_expr(&const_block.ty)?;
+                    self.expected_expr_types.push(declared_ty.clone());
+                    let body_result = self.check_expr(&const_block.body).await;
+                    self.expected_expr_types.pop();
+                    let body_ty = body_result?;
+                    if let Some(context) = self.typing_context.clone() {
+                        let value = context
+                            .request_comptime(crate::ComptimeRequest {
+                                program: self.program.clone(),
+                                typeck_results: self.results.clone(),
+                                block: hir::Block {
+                                    hir_id: expr.hir_id,
+                                    stmts: Vec::new(),
+                                    expr: Some(const_block.body.clone()),
+                                },
+                                expression_id: expr.hir_id,
+                                expected_ty: (*const_block.ty).clone(),
+                            })
+                            .await?;
+                        self.results.const_block_values.insert(expr.hir_id, value);
+                    }
+                    body_ty
+                }
                 hir::ExprKind::While(condition, block) => {
                     let condition_ty = self.check_expr(condition).await?;
                     self.require_same(&condition_ty, &Ty::bool())?;
@@ -769,6 +819,13 @@ impl HirTypeChecker {
             hir::TypeExprKind::Infer => Ty {
                 kind: TyKind::Infer(ty::InferTy::FreshTy(expr.hir_id)),
             },
+            hir::TypeExprKind::ConstBlock(body) => {
+                self.pending_type_const_blocks
+                    .push((expr.hir_id, (**body).clone()));
+                Ty {
+                    kind: TyKind::Infer(ty::InferTy::FreshTy(expr.hir_id)),
+                }
+            }
             hir::TypeExprKind::Error => {
                 return Err(Error::from("invalid type expression"));
             }
