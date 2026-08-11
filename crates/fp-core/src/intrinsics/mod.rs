@@ -267,7 +267,7 @@ pub enum StdIntrinsic {
 pub mod calls;
 mod lang_intrinsic;
 
-pub use calls::{CallKind, IntrinsicKind, OpKind};
+pub use calls::{CallKind, IntrinsicKind, KnownClass, KnownPackage, OpKind};
 pub use lang_intrinsic::{
     LangIntrinsic, LangIntrinsicCapability, LangIntrinsicSpec, lang_intrinsic_call_kind,
     lang_intrinsic_capability, lang_intrinsic_for_lang_item, lang_intrinsic_lang_item,

@@ -64,6 +64,69 @@ pub enum OpKind {
     Import(KnownPackage),
 }
 
+/// Known type descriptors that serializers map to target-ecosystem equivalents.
+/// Each variant represents a semantic type category that has a well-known
+/// portable representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum KnownClass {
+    /// A filesystem path (PathBuf, Path, OsStr, CStr)
+    Path,
+    /// A timestamp (Instant)
+    Instant,
+    /// A timespan (Duration)
+    Duration,
+    /// A local wall-clock datetime
+    LocalDateTime,
+    /// A UTC datetime
+    UtcDateTime,
+    /// A calendar date
+    Date,
+    /// An IPv4/v6 address
+    IpAddr,
+    /// A TCP stream socket
+    TcpStream,
+    /// A TCP listen socket
+    TcpListener,
+    /// A UDP datagram socket
+    UdpSocket,
+    /// A filesystem file handle
+    FileHandle,
+    /// A standard I/O stream
+    IoStream,
+    /// A child process handle
+    ChildProcess,
+    /// A process exit code (integer)
+    ExitCode,
+}
+
+impl KnownClass {
+    /// Resolve a source-language type name to its portable KnownClass.
+    /// This is the bridge between source-specific type names (like PathBuf)
+    /// and portable type descriptors. Implemented in fp-core because it
+    /// encodes source-language knowledge.
+    pub fn from_source_type(name: &str) -> Option<Self> {
+        use KnownClass::*;
+        match name {
+            "PathBuf" | "Path" | "OsString" | "OsStr" | "CString" | "CStr" => Some(Path),
+            "Instant" => Some(Instant),
+            "Duration" => Some(Duration),
+            "Local" => Some(LocalDateTime),
+            "Utc" => Some(UtcDateTime),
+            "NaiveDate" => Some(Date),
+            "NaiveDateTime" => Some(LocalDateTime),
+            "Ipv4Addr" | "Ipv6Addr" | "SocketAddr" => Some(IpAddr),
+            "TcpStream" => Some(TcpStream),
+            "TcpListener" => Some(TcpListener),
+            "UdpSocket" => Some(UdpSocket),
+            "File" => Some(FileHandle),
+            "Stdin" | "Stdout" | "Stderr" => Some(IoStream),
+            "Child" => Some(ChildProcess),
+            "ExitStatus" | "Output" => Some(ExitCode),
+            _ => None,
+        }
+    }
+}
+
 /// Commonly known middle-layer packages that serializers can map to
 /// their target ecosystem. Only used in transpile mode (ops enabled).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -88,6 +151,14 @@ pub enum KnownPackage {
     Serde,
     /// winnow → skip (parser combinator lib)
     Winnow,
+    /// thiserror → skip (derive macro crate, no runtime dependency)
+    ThisError,
+    /// tracing → skip (structured logging, handled by target-native logging)
+    Tracing,
+    /// async_trait → skip (syntax extension, normalised away)
+    AsyncTrait,
+    /// anyhow → skip (error-handling, normalised to exceptions)
+    Anyhow,
     /// Local/unknown package — name is the portable path
     Other,
 }
@@ -437,6 +508,10 @@ impl CallKind {
             Self::Op(OpKind::Import(KnownPackage::StdOption)) => "import_std_option",
             Self::Op(OpKind::Import(KnownPackage::Serde)) => "import_serde",
             Self::Op(OpKind::Import(KnownPackage::Winnow)) => "import_winnow",
+            Self::Op(OpKind::Import(KnownPackage::ThisError)) => "import_thiserror",
+            Self::Op(OpKind::Import(KnownPackage::Tracing)) => "import_tracing",
+            Self::Op(OpKind::Import(KnownPackage::AsyncTrait)) => "import_async_trait",
+            Self::Op(OpKind::Import(KnownPackage::Anyhow)) => "import_anyhow",
             Self::Op(OpKind::Import(KnownPackage::Other)) => "import_other",
         }
     }

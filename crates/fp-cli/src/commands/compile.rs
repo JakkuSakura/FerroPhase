@@ -994,14 +994,13 @@ async fn compile_project(
         let settings = format!(
             "rootProject.name = \"skln\"\n\n{}\n",
             pkg_names.iter()
-                .map(|n| format!("include(\":{}\")", n.replace('-', "_")))
+                .map(|n| format!("include(\":{}\")", n))
                 .collect::<Vec<_>>().join("\n")
         );
         std::fs::write(output.join("settings.gradle.kts"), &settings).map_err(CliError::Io)?;
         std::fs::write(output.join("build.gradle.kts"),
             "plugins {\n    kotlin(\"jvm\") version \"2.1.0\" apply false\n}\n\n\
-             allprojects {\n    repositories { mavenCentral() }\n}\n\n\
-             subprojects {\n    apply(plugin = \"org.jetbrains.kotlin.jvm\")\n    kotlin { jvmToolchain(21) }\n}\n"
+             allprojects {\n    repositories { mavenCentral() }\n}\n"
         ).map_err(CliError::Io)?;
     }
 

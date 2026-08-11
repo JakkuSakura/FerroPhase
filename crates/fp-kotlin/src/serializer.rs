@@ -1,16 +1,17 @@
 use std::collections::BTreeSet;
+use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use fp_core::ast::{
     AstSerializer, BlockStmt, Expr, ExprKind, File, Item,
     ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemImport, ItemKind, ItemDefConst,
-    Ty, TypeInt, TypePrimitive, StructuralField,
+    Ty, TypeInt, TypePrimitive, StructuralField, TySlot,
     EnumTypeVariant, FunctionParam, FormatTemplatePart,
     Value, ExprInvokeTarget,
     StmtLet, BExpr, Pattern, PatternKind,
 };
 use fp_core::ops::{BinOpKind, UnOpKind};
-use fp_core::intrinsics::calls::{CallKind, KnownPackage, OpKind};
+use fp_core::intrinsics::calls::{CallKind, KnownClass, KnownPackage, OpKind};
 use fp_core::package::{PackageItem, PackageSource};
 use eyre::{bail, Result};
 
@@ -19,10 +20,17 @@ use eyre::{bail, Result};
 struct KotlinEmitter {
     code: String,
     indent: usize,
+    var_counter: usize,
+    stub_names: HashSet<String>,
 }
 
 impl KotlinEmitter {
-    fn new() -> Self { Self { code: String::new(), indent: 0 } }
+    fn new() -> Self { Self { code: String::new(), indent: 0, var_counter: 0, stub_names: HashSet::new() } }
+
+    fn fresh_var(&mut self, base: &str) -> String {
+        self.var_counter += 1;
+        if self.var_counter == 1 { base.to_string() } else { format!("{}{}", base, self.var_counter) }
+    }
 
     fn push_line(&mut self, line: &str) {
         for _ in 0..self.indent { self.code.push_str("    "); }
@@ -62,7 +70,7 @@ impl KotlinSerializer {
         let mut files = Vec::new();
 
         // Collect cross-package dependencies from imports
-        let deps = collect_workspace_deps(&source.items);
+        let deps = collect_workspace_deps(&source.items, pkg_name);
 
         // Gradle manifest
         files.push(("settings.gradle.kts".into(), settings_gradle(pkg_name)));
@@ -92,7 +100,11 @@ fn settings_gradle(name: &str) -> String {
 fn build_gradle(name: &str, deps: &[String]) -> String {
     let group = format!("com.{}", name.replace('-', "."));
     let dep_lines: String = deps.iter()
-        .map(|d| format!("    implementation(project(\":{}\"))\n", d.replace('-', "_")))
+        .map(|d| {
+            // Rust crate names use underscores, project dirs use hyphens
+            let dir_name = d.replace('_', "-");
+            format!("    implementation(project(\":{}\"))\n", dir_name)
+        })
         .collect();
     format!(
         "plugins {{\n    kotlin(\"jvm\") version \"2.1.0\"\n}}\n\n\
@@ -105,17 +117,20 @@ fn build_gradle(name: &str, deps: &[String]) -> String {
     )
 }
 
-fn collect_workspace_deps(items: &[PackageItem]) -> Vec<String> {
+fn collect_workspace_deps(items: &[PackageItem], pkg_name: &str) -> Vec<String> {
     use std::collections::BTreeSet;
     let mut deps = BTreeSet::new();
     for pkg_item in items {
         collect_deps_from_item(&pkg_item.item, &mut deps);
     }
-    // Only return deps that reference known workspace packages (multi-segment paths
-    // that start with a workspace package name like skln_core, skln_git)
-    let known_workspace: &[&str] = &["skln_core", "skln_git"];
+    let known_workspace: &[&str] = &["skln-core", "skln-git", "skln_core", "skln_git"];
     deps.into_iter()
-        .filter(|d| known_workspace.contains(&d.as_str()))
+        .filter(|d| {
+            if d.as_str() == pkg_name { return false; }
+            // Accept if it matches a known workspace package (with or without hyphens)
+            known_workspace.contains(&d.as_str()) 
+                || known_workspace.contains(&d.replace('_', "-").as_str())
+        })
         .collect()
 }
 
@@ -124,11 +139,17 @@ fn collect_deps_from_item(item: &Item, deps: &mut BTreeSet<String>) {
     match item.kind() {
         ItemKind::Import(imp) => {
             let path = flatten_import_tree(&imp.tree);
-            // Skip std, serde, winnow, relative imports, java
-            if !path.starts_with("std.") && !path.starts_with("serde") 
+            if !path.starts_with("std.") && !path.starts_with("serde")
                 && !path.starts_with("winnow") && !path.starts_with('.')
                 && !path.is_empty()
                 && !path.starts_with("java")
+                && !path.starts_with("thiserror")
+                && !path.starts_with("tracing")
+                && !path.starts_with("async_trait")
+                && !path.starts_with("anyhow")
+                && !path.starts_with("toml")
+                && !path.starts_with("serde_json")
+                && !path.starts_with("tokio")
             {
                 let pkg = path.split('.').next().unwrap_or(&path);
                 deps.insert(pkg.to_string());
@@ -182,7 +203,20 @@ fn emit_item(item: &Item, e: &mut KotlinEmitter) -> Result<()> {
             e.push_line(&format!("val {} = {}", name, val));
             Ok(())
         }
-        ItemKind::DefTrait(_) | ItemKind::Impl(_) | ItemKind::Macro(_) | ItemKind::DefStructural(_) => Ok(()),
+        ItemKind::DefTrait(_) | ItemKind::Macro(_) | ItemKind::DefStructural(_) => Ok(()),
+        ItemKind::Impl(impl_block) => {
+            let self_name = expr_to_name(&impl_block.self_ty);
+            for item in &impl_block.items {
+                if let ItemKind::DefFunction(f) = item.kind() {
+                    if f.sig.receiver.is_none() {
+                        // Static method → top-level stub
+                        emit_impl_static_stub(f, &self_name, e)?;
+                    }
+                    // Instance methods with receiver → skip for now
+                }
+            }
+            Ok(())
+        }
         ItemKind::Expr(expr) => {
             if let ExprKind::Block(block) = expr.kind() {
                 for stmt in &block.stmts { emit_stmt(stmt, e, false)?; }
@@ -213,16 +247,104 @@ fn emit_struct(s: &ItemDefStruct, e: &mut KotlinEmitter) -> Result<()> {
 fn emit_enum(en: &ItemDefEnum, e: &mut KotlinEmitter) -> Result<()> {
     let name = en.name.name.as_str();
     let variants = &en.value.variants;
-    e.push_line(&format!("enum class {} {{", name));
-    for (i, variant) in variants.iter().enumerate() {
-        let comma = if i < variants.len() - 1 { "," } else { "" };
-        e.push_line(&format!("    {}{}", variant.name.name.to_uppercase(), comma));
+    let has_data = variants.iter().any(|v| !matches!(v.value, Ty::Unit(_)));
+
+    if has_data {
+        e.push_line(&format!("sealed class {} {{", name));
+        for (i, variant) in variants.iter().enumerate() {
+            let vname = variant.name.name.to_uppercase();
+            match &variant.value {
+                Ty::Unit(_) | Ty::Nothing(_) => {
+                    e.push_line(&format!("    object {} : {}()", vname, name));
+                }
+                Ty::Struct(s) => {
+                    let fields: Vec<String> = s.fields.iter()
+                        .map(|f| format!("val {}: {}", f.name.name, kotlin_type_from_ty(&f.value, e)))
+                        .collect();
+                    e.push_line(&format!("    data class {}({}) : {}()",
+                        vname, fields.join(", "), name));
+                }
+                Ty::Structural(s) => {
+                    let fields: Vec<String> = s.fields.iter()
+                        .map(|f| format!("val {}: {}", f.name.name, kotlin_type_from_ty(&f.value, e)))
+                        .collect();
+                    e.push_line(&format!("    data class {}({}) : {}()",
+                        vname, fields.join(", "), name));
+                }
+                Ty::Expr(expr) => {
+                    let ty_str = kotlin_type_from_ty(&Ty::Expr(expr.clone()), e);
+                    e.push_line(&format!("    data class {}(val __data: {}) : {}()",
+                        vname, ty_str, name));
+                }
+                _ => {
+                    e.push_line(&format!("    data class {}(vararg __data: Any?) : {}()", vname, name));
+                }
+            }
+            if i < variants.len() - 1 { e.push_line(""); }
+        }
+        e.push_line("}\n");
+    } else {
+        e.push_line(&format!("enum class {} {{", name));
+        for (i, variant) in variants.iter().enumerate() {
+            let comma = if i < variants.len() - 1 { "," } else { "" };
+            e.push_line(&format!("    {}{}", variant.name.name.to_uppercase(), comma));
+        }
+        e.push_line("}\n");
     }
-    e.push_line("}\n");
     Ok(())
 }
 
 // ── Function ─────────────────────────────────────────────────────────────────
+
+fn emit_impl_static_stub(f: &ItemDefFunction, self_name: &str, e: &mut KotlinEmitter) -> Result<()> {
+    let name = f.name.name.as_str();
+    if !e.stub_names.insert(name.to_string()) {
+        return Ok(()); // already emitted
+    }
+    let params = f.sig.params.iter()
+        .map(|p| format!("{}: {}", p.name.name, kotlin_type_from_ty(&p.ty, e)))
+        .collect::<Vec<_>>().join(", ");
+    let ret = f.sig.ret_ty.as_ref()
+        .map(|ty| {
+            let raw = kotlin_type_from_ty(ty, e);
+            if raw == "Self" { self_name.to_string() } else { raw }
+        })
+        .map(|ty| format!(": {}", ty))
+        .unwrap_or_else(|| ": Unit".to_string());
+
+    e.push_line(&format!("fun {}({}){} = throw NotImplementedError(\"impl stub for {}::{}\")",
+        name, params, ret, self_name, name));
+    e.push_line("");
+    Ok(())
+}
+
+fn emit_impl_function(f: &ItemDefFunction, self_name: &str, e: &mut KotlinEmitter) -> Result<()> {
+    let name = f.name.name.as_str();
+    // Skip the first param (self) — Kotlin extension functions have implicit receiver
+    let params = f.sig.params.iter()
+        .map(|p| format!("{}: {}", p.name.name, kotlin_type_from_ty(&p.ty, e)))
+        .collect::<Vec<_>>().join(", ");
+    let ret = f.sig.ret_ty.as_ref()
+        .map(|ty| format!(": {}", kotlin_type_from_ty(ty, e)))
+        .unwrap_or_else(|| ": Unit".to_string());
+
+    e.push_line(&format!("fun {}.{}({}){} {{", self_name, name, params, ret));
+    e.indent += 1;
+    if is_winnow_parser(&f.body.stmts) {
+        e.push_line("throw NotImplementedError(\"parser function not transpilable\")");
+    } else if is_async_tokio_fn(&f.body.stmts) {
+        e.push_line("throw NotImplementedError(\"async function not transpilable\")");
+    } else {
+        let len = f.body.stmts.len();
+        for (i, stmt) in f.body.stmts.iter().enumerate() {
+            let is_tail = i == len - 1 && f.sig.ret_ty.is_some();
+            emit_stmt(stmt, e, is_tail)?;
+        }
+    }
+    e.indent -= 1;
+    e.push_line("}\n");
+    Ok(())
+}
 
 fn emit_function(f: &ItemDefFunction, e: &mut KotlinEmitter) -> Result<()> {
     let name = f.name.name.as_str();
@@ -235,10 +357,158 @@ fn emit_function(f: &ItemDefFunction, e: &mut KotlinEmitter) -> Result<()> {
 
     e.push_line(&format!("fun {}({}){} {{", name, params, ret));
     e.indent += 1;
-    for stmt in &f.body.stmts { emit_stmt(stmt, e, false)?; }
+    if is_winnow_parser(&f.body.stmts) {
+        e.push_line("throw NotImplementedError(\"parser function not transpilable\")");
+    } else if is_async_tokio_fn(&f.body.stmts) {
+        e.push_line("throw NotImplementedError(\"async function not transpilable\")");
+    } else {
+        let len = f.body.stmts.len();
+        for (i, stmt) in f.body.stmts.iter().enumerate() {
+            let is_tail = i == len - 1 && f.sig.ret_ty.is_some();
+            emit_stmt(stmt, e, is_tail)?;
+        }
+    }
     e.indent -= 1;
     e.push_line("}\n");
     Ok(())
+}
+
+/// Detect async functions that use tokio/await/futures patterns.
+fn is_async_tokio_fn(stmts: &[BlockStmt]) -> bool {
+    for stmt in stmts {
+        if stmt_contains_tokio(stmt) { return true; }
+    }
+    false
+}
+
+fn stmt_contains_tokio(stmt: &BlockStmt) -> bool {
+    match stmt {
+        BlockStmt::Expr(se) => expr_contains_tokio(&se.expr),
+        BlockStmt::Let(l) => {
+            if let Some(init) = &l.init { expr_contains_tokio(init) } else { false }
+        }
+        BlockStmt::Item(item) => item_contains_tokio(item),
+        _ => false,
+    }
+}
+
+fn item_contains_tokio(item: &Item) -> bool {
+    match item.kind() {
+        ItemKind::Import(imp) => {
+            let path = flatten_import_tree(&imp.tree);
+            path.starts_with("tokio") || path.starts_with("futures")
+        }
+        ItemKind::DefFunction(f) => is_async_tokio_fn(&f.body.stmts),
+        _ => false,
+    }
+}
+
+fn expr_contains_tokio(expr: &Expr) -> bool {
+    match expr.kind() {
+        ExprKind::Invoke(inv) => {
+            let method = match &inv.target {
+                ExprInvokeTarget::Method(sel) => sel.field.name.as_str().to_string(),
+                ExprInvokeTarget::Function(name) => {
+                    let s = name.to_string();
+                    s.rsplit("::").next().unwrap_or(&s).to_string()
+                }
+                _ => return false,
+            };
+            if method == "await" { return true; }
+            for arg in &inv.args { if expr_contains_tokio(arg) { return true; } }
+            false
+        }
+        ExprKind::Await(_) => true,
+        ExprKind::Select(sel) => expr_contains_tokio(&sel.obj),
+        ExprKind::Closure(cl) => expr_contains_tokio(&cl.body),
+        ExprKind::Block(block) => {
+            for s in &block.stmts { if stmt_contains_tokio(s) { return true; } }
+            false
+        }
+        ExprKind::BinOp(bin) => expr_contains_tokio(&bin.lhs) || expr_contains_tokio(&bin.rhs),
+        ExprKind::UnOp(un) => expr_contains_tokio(&un.val),
+        ExprKind::If(if_expr) => {
+            expr_contains_tokio(&if_expr.cond)
+                || expr_contains_tokio(&if_expr.then)
+                || if_expr.elze.as_ref().map_or(false, |e| expr_contains_tokio(e))
+        }
+        ExprKind::Match(mt) => {
+            mt.scrutinee.as_ref().map_or(false, |s| expr_contains_tokio(s))
+                || mt.cases.iter().any(|c| expr_contains_tokio(&c.body))
+        }
+        ExprKind::While(wh) => expr_contains_tokio(&wh.cond) || expr_contains_tokio(&wh.body),
+        ExprKind::For(fr) => expr_contains_tokio(&fr.iter) || expr_contains_tokio(&fr.body),
+        ExprKind::Loop(lp) => expr_contains_tokio(&lp.body),
+        ExprKind::Assign(a) => expr_contains_tokio(&a.value) || expr_contains_tokio(&a.target),
+        ExprKind::Let(l) => expr_contains_tokio(&l.expr),
+        ExprKind::Return(r) => r.value.as_ref().map_or(false, |v| expr_contains_tokio(v)),
+        ExprKind::Async(_) => true,
+        _ => false,
+    }
+}
+
+/// Detect parser combinator functions that rely on winnow/nom patterns.
+fn is_winnow_parser(stmts: &[BlockStmt]) -> bool {
+    for stmt in stmts {
+        if stmt_contains_winnow(stmt) { return true; }
+    }
+    false
+}
+
+fn stmt_contains_winnow(stmt: &BlockStmt) -> bool {
+    match stmt {
+        BlockStmt::Expr(se) => expr_contains_winnow(&se.expr),
+        BlockStmt::Let(l) => {
+            if let Some(init) = &l.init { expr_contains_winnow(init) } else { false }
+        }
+        BlockStmt::Item(item) => item_contains_winnow(item),
+        _ => false,
+    }
+}
+
+fn item_contains_winnow(item: &Item) -> bool {
+    match item.kind() {
+        ItemKind::DefFunction(f) => is_winnow_parser(&f.body.stmts),
+        _ => false,
+    }
+}
+
+fn expr_contains_winnow(expr: &Expr) -> bool {
+    match expr.kind() {
+        ExprKind::Invoke(inv) => {
+            let method = match &inv.target {
+                ExprInvokeTarget::Method(sel) => sel.field.name.as_str().to_string(),
+                ExprInvokeTarget::Function(name) => {
+                    let s = name.to_string();
+                    s.rsplit("::").next().unwrap_or(&s).to_string()
+                }
+                _ => return false,
+            };
+            let winnow_methods = &["parse_next", "take_while", "verify", "alt", "preceded",
+                "delimited", "terminated", "separated_pair", "tuple", "many0", "many1"];
+            if winnow_methods.contains(&method.as_str()) { return true; }
+            for arg in &inv.args { if expr_contains_winnow(arg) { return true; } }
+            false
+        }
+        ExprKind::Select(sel) => expr_contains_winnow(&sel.obj),
+        ExprKind::Closure(cl) => expr_contains_winnow(&cl.body),
+        ExprKind::Block(block) => {
+            for s in &block.stmts { if stmt_contains_winnow(s) { return true; } }
+            false
+        }
+        ExprKind::BinOp(bin) => expr_contains_winnow(&bin.lhs) || expr_contains_winnow(&bin.rhs),
+        ExprKind::UnOp(un) => expr_contains_winnow(&un.val),
+        ExprKind::If(if_expr) => {
+            expr_contains_winnow(&if_expr.cond)
+                || expr_contains_winnow(&if_expr.then)
+                || if_expr.elze.as_ref().map_or(false, |e| expr_contains_winnow(e))
+        }
+        ExprKind::Match(mt) => {
+            mt.scrutinee.as_ref().map_or(false, |s| expr_contains_winnow(s))
+                || mt.cases.iter().any(|c| expr_contains_winnow(&c.body))
+        }
+        _ => false,
+    }
 }
 
 // ── Import ───────────────────────────────────────────────────────────────────
@@ -276,24 +546,34 @@ fn known_package(path: &str) -> KnownPackage {
         p if p.starts_with("std.io") => StdIo,
         p if p.starts_with("std.str") => StdStr,
         p if p.starts_with("std.option") => StdOption,
+        p if p.starts_with("std.time") => StdSync, // skip Duration/Instant in expressions
         p if p.starts_with("serde") => Serde,
         p if p.starts_with("winnow") => Winnow,
+        p if p.starts_with("thiserror") => ThisError,
+        p if p.starts_with("tracing") => Tracing,
+        p if p.starts_with("async_trait") => AsyncTrait,
+        p if p.starts_with("anyhow") => Anyhow,
         _ => Other,
     }
 }
 
 fn kt_import_for(pkg: KnownPackage, path: &str) -> Option<String> {
     use fp_core::intrinsics::calls::KnownPackage::*;
+    // Silent skip for language-internal packages
+    if matches!(pkg, ThisError | Tracing | AsyncTrait | Anyhow) { return None; }
+    // Relative imports not valid in Kotlin
+    if path.starts_with('.') { return None; }
     match pkg {
-        // Built-in — skip
-        StdCollections | StdSync | StdStr | StdOption | Serde | Winnow => None,
-        // Mapped
+        StdCollections | StdSync | StdStr | StdOption | Serde | Winnow
+        | ThisError | Tracing | AsyncTrait | Anyhow => None,
         StdPath => Some("java.nio.file.Path".into()),
         StdProcess => Some("java.lang.ProcessBuilder".into()),
-        StdFs => Some("java.io.File".into()),
+        StdFs => Some("java.nio.file.Path".into()),
         StdIo => Some("java.io.*".into()),
-        // Local package — preserve as-is
-        Other => Some(path.to_string()),
+        Other => {
+            let clean = path.trim_start_matches("crate.").trim_start_matches("self.");
+            if clean.is_empty() { None } else { Some(clean.to_string()) }
+        }
     }
 }
 
@@ -315,6 +595,7 @@ fn emit_stmt(stmt: &BlockStmt, e: &mut KotlinEmitter, is_tail: bool) -> Result<(
     match stmt {
         BlockStmt::Let(l) => {
             let var_name = ident_from_pattern(&l.pat);
+            let type_ann = extract_type_annotation(&l.pat, e);
             if var_name == "_" {
                 if let Some(init) = &l.init {
                     let val = render_expr(init, e)?;
@@ -322,9 +603,17 @@ fn emit_stmt(stmt: &BlockStmt, e: &mut KotlinEmitter, is_tail: bool) -> Result<(
                 }
             } else if let Some(init) = &l.init {
                 let val = render_expr(init, e)?;
-                e.push_line(&format!("val {} = {}", var_name, val));
+                if let Some(ref ty) = type_ann {
+                    e.push_line(&format!("val {} : {} = {}", var_name, ty, val));
+                } else {
+                    e.push_line(&format!("val {} = {}", var_name, val));
+                }
             } else {
-                e.push_line(&format!("val {} = null", var_name));
+                if let Some(ref ty) = type_ann {
+                    e.push_line(&format!("val {} : {} = null", var_name, ty));
+                } else {
+                    e.push_line(&format!("val {} = null", var_name));
+                }
             }
         }
         BlockStmt::Expr(se) => emit_stmt_expr(&se.expr, e, is_tail)?,
@@ -412,9 +701,29 @@ fn emit_box_body(body: &BExpr, e: &mut KotlinEmitter) -> Result<()> {
     Ok(())
 }
 
+/// Extract a Kotlin type string from a pattern's type annotation (PatternKind::Type).
+fn extract_type_annotation(pat: &Pattern, e: &KotlinEmitter) -> Option<String> {
+    match &pat.kind {
+        PatternKind::Type(pt) => {
+            Some(kotlin_type_from_ty(&pt.ty, e))
+        }
+        _ => None,
+    }
+}
+
 fn ident_from_pattern(pat: &Pattern) -> String {
     match &pat.kind {
-        PatternKind::Ident(id) => id.ident.name.clone(),
+        PatternKind::Ident(id) => {
+            let name = id.ident.name.as_str();
+            if matches!(name, "else" | "when" | "in" | "is" | "as" | "object") {
+                format!("`{}`", name)
+            } else if name == "_" {
+                "__p".to_string()
+            } else {
+                name.to_string()
+            }
+        }
+        PatternKind::Type(pt) => ident_from_pattern(&pt.pat),
         PatternKind::Tuple(t) => {
             let names: Vec<String> = t.patterns.iter().map(|p| ident_from_pattern(p)).collect();
             format!("({})", names.join(", "))
@@ -428,30 +737,56 @@ fn ident_from_pattern(pat: &Pattern) -> String {
 fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
     match expr.kind() {
         ExprKind::Value(val) => Ok(render_value(val)),
-        ExprKind::Name(name) => Ok(name.to_string().replace("::", ".")),
+        ExprKind::Name(name) => {
+            let raw = name.to_string();
+            let dotted = raw.replace("::", ".");
+            // Uppercase enum variant references in qualified paths
+            Ok(uppercase_last_segment(&dotted))
+        }
         ExprKind::Id(id) => Ok(id.to_string()),
 
         ExprKind::Invoke(inv) => {
             match &inv.target {
                 ExprInvokeTarget::Method(sel) => {
                     let obj = render_expr(&sel.obj, e)?;
+                    let method_name = map_kt_method(sel.field.name.as_str());
                     let args: Vec<String> = inv.args.iter()
                         .map(|a| render_expr(a, e))
                         .collect::<Result<Vec<_>>>()?;
-                    Ok(format!("{}.{}({})", obj, sel.field.name, args.join(", ")))
+                    if method_name.is_empty() {
+                        Ok(obj)
+                    } else if method_name == "!!" {
+                        Ok(format!("{}!!", obj))
+                    } else if args.is_empty() {
+                        Ok(format!("{}.{}", obj, method_name))
+                    } else if method_name.ends_with("()") {
+                        let base = &method_name[..method_name.len() - 2];
+                        Ok(format!("{}.{}({})", obj, base, args.join(", ")))
+                    } else {
+                        Ok(format!("{}.{}({})", obj, method_name, args.join(", ")))
+                    }
                 }
                 _ => {
-                    let func = map_kt_method(&invoke_name(&inv.target));
+                    let name = invoke_name(&inv.target);
+                    // Rewrite type prefix in function paths like `PathBuf::from` → `Path.of`
+                    let mapped = map_kt_path(&name);
                     let args: Vec<String> = inv.args.iter()
                         .map(|a| render_expr(a, e))
                         .collect::<Result<Vec<_>>>()?;
-                    Ok(format!("{}({})", func, args.join(", ")))
+                    Ok(format!("{}({})", mapped, args.join(", ")))
                 }
             }
         }
 
         ExprKind::Select(sel) => {
-            Ok(format!("{}.{}", render_expr(&sel.obj, e)?, sel.field.name))
+            let obj = render_expr(&sel.obj, e)?;
+            if obj == "self" {
+                let field = map_kt_field(sel.field.name.as_str());
+                Ok(field)
+            } else {
+                let field = map_kt_field(sel.field.name.as_str());
+                Ok(format!("{}.{}", obj, field))
+            }
         }
 
         ExprKind::Index(idx) => {
@@ -481,22 +816,79 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                 .map(|s| render_expr(s, e)).transpose()?
                 .unwrap_or_else(|| "null".to_string());
 
-            // Single non-wildcard arm → if (x) { body }
-            if mt.cases.len() == 1 && !matches!(mt.cases[0].pat.as_ref().map(|p| &p.kind), Some(PatternKind::Wildcard(_))) {
+            // Single non-wildcard arm OR 2-arm match (Some/Ok + else) → val + if
+            let is_single_arm = mt.cases.len() == 1 && !matches!(mt.cases[0].pat.as_ref().map(|p| &p.kind), Some(PatternKind::Wildcard(_)));
+            let is_two_arm = mt.cases.len() == 2 && is_else_arm(&mt.cases[1].pat);
+
+            if is_single_arm || is_two_arm {
                 let case = &mt.cases[0];
-                let pat_var = match_case_binding(&case.pat);
                 let body = render_expr(&case.body, e)?;
-                if let Some(var) = pat_var {
-                    Ok(format!("if ({0} != null) {{ val {1} = {0}!!; {2} }}", scrutinee, var, body))
+                let multiline = body.contains('\n');
+                let effective_var = if is_two_arm {
+                    stripped_tuple_binding(&case.pat).or_else(|| match_case_binding(&case.pat))
                 } else {
-                    Ok(format!("if ({}) {{ {} }}", scrutinee, body))
+                    match_case_binding(&case.pat)
+                };
+                let else_body = if mt.cases.len() > 1 {
+                    Some(render_expr(&mt.cases[1].body, e)?)
+                } else {
+                    None
+                };
+                match effective_var {
+                    Some(var) => {
+                        if let Some(ref eb) = else_body {
+                            let eb_trim = eb.trim();
+                            let rendered_body = if multiline {
+                                let indented: String = body.lines()
+                                    .map(|l| format!("            {}", l))
+                                    .collect::<Vec<_>>().join("\n");
+                                format!("{{\n{}\n        }}", indented)
+                            } else {
+                                body.clone()
+                            };
+                            if eb_trim.is_empty() {
+                                Ok(format!("run {{\n    val {0} = {1}\n    if ({0} != null) {2}\n}}",
+                                    var, scrutinee, rendered_body))
+                            } else {
+                                Ok(format!("run {{\n    val {0} = {1}\n    if ({0} != null) {2} else {{\n            {3}\n        }}\n}}",
+                                    var, scrutinee, rendered_body, eb))
+                            }
+                        } else {
+                            if multiline {
+                                let indented: String = body.lines()
+                                    .map(|l| format!("        {}", l))
+                                    .collect::<Vec<_>>().join("\n");
+                                Ok(format!("run {{\n    val {0} = {1}\n    if ({0} != null) {{\n{2}\n    }} else {{\n        null\n    }}\n}}",
+                                    var, scrutinee, indented))
+                            } else {
+                                Ok(format!("run {{\n    val {0} = {1}\n    if ({0} != null) {{ {2} }} else {{ null }}\n}}", var, scrutinee, body))
+                            }
+                        }
+                    }
+                    None => {
+                        if multiline {
+                            let indented: String = body.lines()
+                                .map(|l| format!("        {}", l))
+                                .collect::<Vec<_>>().join("\n");
+                            Ok(format!("if ({0}) {{\n{1}\n}}", scrutinee, indented))
+                        } else {
+                            Ok(format!("if ({0}) {{ {1} }}", scrutinee, body))
+                        }
+                    }
                 }
             } else {
                 let mut buf = format!("when ({}) {{\n", scrutinee);
                 for case in &mt.cases {
                     let pat = render_match_pat(&case.pat);
                     let body = render_expr(&case.body, e)?;
-                    let _ = writeln!(buf, "        {} -> {}", pat, body);
+                    if body.contains('\n') {
+                        let indented: String = body.lines()
+                            .map(|l| format!("            {}", l))
+                            .collect::<Vec<_>>().join("\n");
+                        let _ = writeln!(buf, "        {} -> {{\n{}\n        }}", pat, indented);
+                    } else {
+                        let _ = writeln!(buf, "        {} -> {}", pat, body);
+                    }
                 }
                 for _ in 0..e.indent { buf.push_str("    "); }
                 buf.push('}');
@@ -523,11 +915,12 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
 
         ExprKind::Struct(st) => {
             let name = render_expr(&st.name, e)?;
+            let variant_name = uppercase_last_segment(&name);
             let fields: Vec<String> = st.fields.iter().map(|f| {
                 let val = match &f.value { Some(v) => render_expr(v, e)?, None => "null".to_string() };
                 Ok(format!("{} = {}", f.name.name, val))
             }).collect::<Result<Vec<_>>>()?;
-            Ok(format!("{}({})", name, fields.join(", ")))
+            Ok(format!("{}({})", variant_name, fields.join(", ")))
         }
 
         ExprKind::Array(arr) => {
@@ -548,7 +941,14 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
         ExprKind::Closure(cl) => {
             let params: Vec<String> = cl.params.iter().map(|p| {
                 let n = ident_from_pattern(p);
-                if n == "_" { "it".to_string() } else { n }
+                let ty_str = kotlin_type_from_ty_slot(&p.ty, e);
+                if n == "_" {
+                    if let Some(ty) = ty_str { format!("it: {}", ty) } else { "it: Any?".to_string() }
+                } else if let Some(ty) = ty_str {
+                    format!("{}: {}", n, ty)
+                } else {
+                    format!("{}: Any?", n)
+                }
             }).collect();
             Ok(format!("{{ {} -> {} }}", params.join(", "), render_expr_single(&cl.body, e)?))
         }
@@ -637,7 +1037,24 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
 
         ExprKind::Break(_) => Ok("break".to_string()),
         ExprKind::Continue(_) => Ok("continue".to_string()),
-        _ => Ok(String::new()),
+
+        ExprKind::Try(t) => {
+            // `?` operator → just render inner expr (error handling is implicit)
+            render_expr(&t.expr, e)
+        }
+        ExprKind::Macro(_m) => {
+            Ok("null".to_string())
+        }
+        ExprKind::ConstBlock(_) => Ok("null".to_string()),
+        ExprKind::ArrayRepeat(ar) => {
+            let elem = render_expr(&ar.elem, e)?;
+            Ok(format!("listOf({})", elem))
+        }
+        ExprKind::Await(a) => {
+            render_expr(&a.base, e)
+        }
+
+        _ => Ok(format!("/* unreachable: {:?} */", std::mem::discriminant(expr.kind()))),
     }
 }
 
@@ -670,18 +1087,70 @@ fn invoke_name(target: &ExprInvokeTarget) -> String {
     }
 }
 
-fn map_kt_method(name: &str) -> String {
+/// Map a field/function name in a select expression to Kotlin equivalent.
+fn map_kt_field(name: &str) -> String {
     match name {
+        "var" => "getenv".into(),
+        "current_dir" => "getProperty".into(),
+        _ => name.to_string(),
+    }
+}
+
+/// Map a path-style function call (e.g., `PathBuf::from` or `std::path::PathBuf::from`)
+/// to its Kotlin approximation by resolving type prefixes through KnownClass.
+fn map_kt_path(name: &str) -> String {
+    // Type-qualified paths use `::` or `.` as separators
+    if let Some(pos) = name.rfind("::") {
+        let (prefix, method) = name.split_at(pos);
+        let method = &method[2..];
+        let normalized = prefix.replace("::", ".");
+        let pkg = known_package(&normalized);
+        // Drop prefix only for language-internal crates (not serialization libs)
+        let skip_prefix = matches!(pkg,
+            KnownPackage::ThisError | KnownPackage::Tracing
+            | KnownPackage::AsyncTrait | KnownPackage::Anyhow);
+        if skip_prefix {
+            let kt_method = map_kt_method(method);
+            if method.chars().next().map_or(false, |c| c.is_uppercase()) {
+                return method.to_uppercase();
+            }
+            if kt_method.is_empty() {
+                return String::new();
+            }
+            return kt_method;
+        }
+        let kt_prefix = map_name_to_kt(prefix);
+        // Drop PascalCase type prefix for local-type static methods not in known mappings
+        let is_local_type = prefix.chars().next().map_or(false, |c| c.is_uppercase())
+            && !prefix.contains("::")
+            && method.chars().next().map_or(false, |c| c.is_lowercase());
+        let known_method = is_local_type && map_kt_method(method) == method;
+        if is_local_type && known_method {
+            return method.to_string();
+        }
+        if method.chars().next().map_or(false, |c| c.is_uppercase()) {
+            return format!("{}.{}", kt_prefix, method.to_uppercase());
+        }
+        let kt_method = map_kt_method(method);
+        return format!("{}.{}", kt_prefix, kt_method);
+    }
+    map_kt_method(name)
+}
+
+fn map_kt_method(name: &str) -> String {
+    // Portable method mappings (no Rust-specific names)
+    match name {
+        // Collecion constructors (portable)
         "Vec::new" | "Vec" => "mutableListOf".into(),
         "HashSet::new" => "mutableSetOf".into(),
         "HashMap::new" => "mutableMapOf".into(),
+        // Collection operations (portable names)
         "unwrap" | "expect" => "!!".into(),
         "is_empty" => "isEmpty()".into(),
         "push" => "add".into(),
         "pop" => "removeLast()".into(),
-        "remove" => "removeAt".into(),
         "insert" => "add".into(),
-        "len" => "size".into(),
+        "len" => "length".into(),
         "lines" => "lines()".into(),
         "split" => "split".into(),
         "contains" => "contains".into(),
@@ -691,12 +1160,81 @@ fn map_kt_method(name: &str) -> String {
         "to_lowercase" => "lowercase()".into(),
         "starts_with" => "startsWith".into(),
         "ends_with" => "endsWith".into(),
-        "strip_prefix" => "removePrefix".into(),
-        "strip_suffix" => "removeSuffix".into(),
         "parse" => "toLong()".into(),
         "rfind" => "lastIndexOf".into(),
         "clone" => "copy()".into(),
+        "from" => "of".into(),
+        "new" => "of".into(),
+        "into" => "".into(),
+        "var" => "getenv".into(),
+        "current_dir" => "currentDir()".into(),
+        "to_string_lossy" => "toString()".into(),
+        "to_string" => "toString()".into(),
+        "unwrap_or_else" => "let".into(),
+        "split_once" => "split".into(),
+        "or_else" => "run".into(),
+        "display" => "toString()".into(),
+        "file_name" => "fileName()".into(),
+        "to_str" => "toString()".into(),
+        "join" => "resolve".into(),
+        "strip_prefix" => "removePrefix".into(),
+        "strip_suffix" => "removeSuffix".into(),
+        "trim_end_matches" => "removeSuffix".into(),
+        "unwrap_or" => "".into(),
+        "as_bytes" => "toByteArray()".into(),
+        "map" => "let".into(),
+        "parse_next" => "parse".into(),
+        "verify" => "also".into(),
+        "take_while" => "filter".into(),
+        "is_ascii_alphanumeric" => "isLetterOrDigit()".into(),
+        "is_ascii_hexdigit" => "isDigit()".into(),
+        "is_whitespace" => "isWhitespace()".into(),
+        "all" => "all".into(),
+        "chars" => "chars()".into(),
+        "from_millis" => "ofMillis".into(),
+        "from_secs" => "ofSeconds".into(),
+        "is_ascii_alphabetic" => "isLetter".into(),
+        "is_ascii_digit" => "isDigit".into(),
+        "wrapping_mul" => "mul".into(),
+        "write_all" => "write".into(),
+        "read_to_string" => "readText".into(),
+        "remove_file" => "delete".into(),
+        "is_alive" => "isAlive".into(),
+        "kill_process" => "destroy".into(),
+        "sleep" => "Thread.sleep".into(),
+        "next" => "".into(),
         _ => name.replace("::", "."),
+    }
+}
+
+/// Check if a pattern is a wildcard/default (else) arm.
+fn is_else_arm(pat: &Option<fp_core::ast::BPattern>) -> bool {
+    match pat {
+        None => true,
+        Some(p) => match &p.kind {
+            PatternKind::Wildcard(_) => true,
+            // Err(_) is also a catch-all arm
+            PatternKind::TupleStruct(ts) => {
+                let raw = ts.name.to_string();
+                let simple = raw.rsplit("::").next().unwrap_or(&raw);
+                (simple == "Err" || simple == "None")
+                    && ts.patterns.iter().all(|inner| matches!(&inner.kind, PatternKind::Wildcard(_)))
+            }
+            _ => false,
+        },
+    }
+}
+
+/// Uppercase the last path segment for Kotlin enum constant references.
+fn uppercase_last_segment(name: &str) -> String {
+    if let Some(pos) = name.rfind('.') {
+        let (prefix, variant) = name.split_at(pos + 1);
+        format!("{}{}", prefix, variant.to_uppercase())
+    } else if let Some(pos) = name.rfind("::") {
+        let (prefix, variant) = name.split_at(pos + 2);
+        format!("{}{}", prefix, variant.to_uppercase())
+    } else {
+        name.to_string()
     }
 }
 
@@ -712,14 +1250,62 @@ fn render_match_pat(pat: &Option<fp_core::ast::BPattern>) -> String {
                 .map(|p| render_match_pat(&Some(Box::new(p.clone()))))
                 .collect::<Vec<_>>().join(", "),
             PatternKind::TupleStruct(ts) => {
+                let raw_name = ts.name.to_string();
+                let simple_name = raw_name.rsplit("::").next().unwrap_or(&raw_name);
+                // Portable monadic wrappers (Option/Result) — strip to just the binding
+                if matches!(simple_name, "Ok" | "Err" | "Some" | "None") {
+                    if ts.patterns.is_empty() {
+                        return "null".to_string();
+                    }
+                    return ts.patterns.iter()
+                        .map(|p| render_match_pat(&Some(Box::new(p.clone()))))
+                        .collect::<Vec<_>>().join(", ");
+                }
+                let variant_name = uppercase_last_segment(&raw_name);
                 let inner = ts.patterns.iter()
                     .map(|p| render_match_pat(&Some(Box::new(p.clone()))))
                     .collect::<Vec<_>>().join(", ");
-                format!("{}({})", ts.name.to_string(), inner)
+                format!("{}({})", variant_name, inner)
             }
             _ => "else".to_string(),
         },
         None => "else".to_string(),
+    }
+}
+
+/// Check if a pattern is a TupleStruct with a matching name (Some, Ok, Err).
+fn is_tuple_struct_binding(pat: &Option<fp_core::ast::BPattern>, names: &[&str]) -> bool {
+    match pat {
+        Some(p) => match &p.kind {
+            PatternKind::TupleStruct(ts) => {
+                let raw = ts.name.to_string();
+                let simple = raw.rsplit("::").next().unwrap_or(&raw);
+                names.contains(&simple) && ts.patterns.len() == 1
+                    && matches!(&ts.patterns[0].kind, PatternKind::Ident(_))
+            }
+            _ => false,
+        },
+        None => false,
+    }
+}
+
+/// Extract the inner binding name from a Some/Ok/Err TupleStruct pattern.
+fn stripped_tuple_binding(pat: &Option<fp_core::ast::BPattern>) -> Option<String> {
+    match pat {
+        Some(p) => match &p.kind {
+            PatternKind::TupleStruct(ts) => {
+                if ts.patterns.len() == 1 {
+                    match &ts.patterns[0].kind {
+                        PatternKind::Ident(id) => Some(id.ident.name.clone()),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        },
+        None => None,
     }
 }
 
@@ -745,8 +1331,8 @@ fn render_value(val: &Value) -> String {
         Value::BigInt(v) => v.value.to_string(),
         Value::Decimal(v) => v.value.to_string(),
         Value::BigDecimal(v) => v.value.to_string(),
-        Value::Char(v) => format!("'{}'", v.value),
-        Value::String(v) => format!("\"{}\"", v.value.escape_default()),
+        Value::Char(v) => format!("'{}'", escape_char_for_kt(v.value)),
+        Value::String(v) => format!("\"{}\"", escape_str_for_kt(&v.value)),
         Value::Unit(_) | Value::Null(_) | Value::None(_) => "null".to_string(),
         Value::Some(v) => render_value(&v.value),
         Value::Option(v) => v.value.as_ref().map(|i| render_value(i)).unwrap_or_else(|| "null".to_string()),
@@ -766,6 +1352,37 @@ fn render_value(val: &Value) -> String {
         }
         _ => "null".to_string(),
     }
+}
+
+fn escape_char_for_kt(c: char) -> String {
+    match c {
+        '\'' => "\\'".to_string(),
+        '\\' => "\\\\".to_string(),
+        '\n' => "\\n".to_string(),
+        '\r' => "\\r".to_string(),
+        '\t' => "\\t".to_string(),
+        c if c.is_ascii_graphic() || c == ' ' => c.to_string(),
+        c => format!("\\u{:04X}", c as u32),
+    }
+}
+
+fn escape_str_for_kt(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            // Unicode escapes: convert raw unicode chars to Kotlin \\uXXXX
+            c if !c.is_ascii_graphic() && c != ' ' => {
+                out.push_str(&format!("\\u{:04X}", c as u32));
+            }
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 // ── Operators ────────────────────────────────────────────────────────────────
@@ -814,8 +1431,8 @@ fn kotlin_type_from_ty(ty: &Ty, _e: &KotlinEmitter) -> String {
             TypePrimitive::Int(int_ty) => match int_ty {
                 TypeInt::I8 => "Byte".into(), TypeInt::I16 => "Short".into(),
                 TypeInt::I32 => "Int".into(), TypeInt::I64 => "Long".into(),
-                TypeInt::U8 => "UByte".into(), TypeInt::U16 => "UShort".into(),
-                TypeInt::U32 => "UInt".into(), TypeInt::U64 => "ULong".into(),
+                TypeInt::U8 => "Int".into(), TypeInt::U16 => "Int".into(),
+                TypeInt::U32 => "Long".into(), TypeInt::U64 => "Long".into(),
                 _ => "Int".into(),
             },
             TypePrimitive::Decimal(d) => match d {
@@ -871,7 +1488,39 @@ fn name_to_string(name: &fp_core::ast::Name) -> String {
     }
 }
 
+fn kotlin_type_from_ty_slot(ty: &TySlot, e: &KotlinEmitter) -> Option<String> {
+    match ty {
+        Some(t) => {
+            let raw = kotlin_type_from_ty(t, e);
+            if raw == "Any" || raw == "Nothing" || raw == "Unit" { None } else { Some(raw) }
+        }
+        None => None,
+    }
+}
+
 fn map_name_to_kt(name: &str) -> String {
+    // Normalize :: separators to dots for path resolution
+    let dot_name = name.replace("::", ".");
+    let last_seg = dot_name.rsplit('.').next().unwrap_or(&dot_name);
+
+    if dot_name.starts_with("std.env") {
+        return "System".into();
+    }
+
+    // KnownPackage-based resolution (skips language-internal crates)
+    match known_package(&dot_name) {
+        KnownPackage::StdPath => return kt_type_for_class(KnownClass::Path),
+        KnownPackage::StdProcess => return "ProcessBuilder".into(),
+        KnownPackage::StdFs => return "Path".into(),
+        KnownPackage::StdIo => return "java.io.*".into(),
+        KnownPackage::StdCollections | KnownPackage::StdStr | KnownPackage::StdOption
+        | KnownPackage::StdSync | KnownPackage::Serde | KnownPackage::Winnow
+        | KnownPackage::ThisError | KnownPackage::Tracing | KnownPackage::AsyncTrait
+        | KnownPackage::Anyhow => return "Any".into(),
+        _ => {}
+    }
+
+    // Generic wrapper simplifications
     if let Some(inner) = name.strip_prefix("Vec<").and_then(|s| s.strip_suffix(">")) {
         return format!("MutableList<{}>", map_name_to_kt(inner));
     }
@@ -881,26 +1530,58 @@ fn map_name_to_kt(name: &str) -> String {
     if let Some(inner) = name.strip_prefix("Arc<").and_then(|s| s.strip_suffix(">")) {
         return map_name_to_kt(inner);
     }
-    if let Some(inner) = name.strip_prefix("ModalResult<").and_then(|s| s.strip_suffix(">")) {
-        return map_name_to_kt(inner);
-    }
     if let Some(inner) = name.strip_prefix("Box<").and_then(|s| s.strip_suffix(">")) {
         return map_name_to_kt(inner);
     }
-    match name {
-        "str" | "String" => "String".into(),
-        "char" => "Char".into(),
-        "bool" => "Boolean".into(),
-        "i8" => "Byte".into(), "i16" => "Short".into(),
-        "i32" => "Int".into(), "i64" => "Long".into(),
-        "u8" => "UByte".into(), "u16" => "UShort".into(),
-        "u32" => "UInt".into(), "u64" => "ULong".into(),
-        "f32" => "Float".into(), "f64" => "Double".into(),
-        "usize" => "Long".into(), "isize" => "Long".into(),
-        "PathBuf" | "Path" => "java.nio.file.Path".into(),
-        "Arc" => "Any".into(),
-        "ModalResult" => "Any".into(),
-        "Box" => "Any".into(),
-        _ => name.to_string(),
+    if let Some(inner) = name.strip_prefix("Result<").and_then(|s| {
+        // Result<T, E> → just T
+        let comma = s.find(',')?;
+        Some(&s[..comma])
+    }) {
+        return map_name_to_kt(inner);
+    }
+
+    // KnownClass resolution (portable type descriptors from fp-core)
+    if let Some(kc) = KnownClass::from_source_type(last_seg) {
+        return kt_type_for_class(kc);
+    }
+
+    // Primitive type resolution
+    match last_seg {
+        "str" | "String" => return "String".into(),
+        "char" => return "Char".into(),
+        "bool" => return "Boolean".into(),
+        "i8" => return "Byte".into(), "i16" => return "Short".into(),
+        "i32" => return "Int".into(), "i64" => return "Long".into(),
+        "u8" => return "Int".into(), "u16" => return "Int".into(),
+        "u32" => return "Long".into(), "u64" => return "Long".into(),
+        "f32" => return "Float".into(), "f64" => return "Double".into(),
+        "usize" => return "Long".into(), "isize" => return "Long".into(),
+        "Self" => return "Any".into(),
+        _ => {}
+    }
+
+    // Preserve path structure for workspace packages and unresolved names
+    name.to_string()
+}
+
+/// Map a KnownClass descriptor to its Kotlin type representation.
+fn kt_type_for_class(kc: KnownClass) -> String {
+    use KnownClass::*;
+    match kc {
+        Path => "Path".into(),
+        Instant => "java.time.Instant".into(),
+        Duration => "java.time.Duration".into(),
+        LocalDateTime => "java.time.LocalDateTime".into(),
+        UtcDateTime => "java.time.ZonedDateTime".into(),
+        Date => "java.time.LocalDate".into(),
+        IpAddr => "java.net.InetAddress".into(),
+        TcpStream => "java.net.Socket".into(),
+        TcpListener => "java.net.ServerSocket".into(),
+        UdpSocket => "java.net.DatagramSocket".into(),
+        FileHandle => "Path".into(),
+        IoStream => "java.io.InputStream".into(),
+        ChildProcess => "java.lang.Process".into(),
+        ExitCode => "Int".into(),
     }
 }
