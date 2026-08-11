@@ -3430,27 +3430,35 @@ fn emit_cmp(
         )?;
         return Ok(());
     }
-    match (lhs, rhs) {
-        (AsmValue::Register(_), AsmValue::Register(_))
-        | (AsmValue::Register(_), AsmValue::Constant(_))
-        | (AsmValue::Constant(_), AsmValue::Register(_))
-        | (AsmValue::Constant(_), AsmValue::Constant(_)) => {}
-        _ => return Err(Error::from("unsupported compare operands")),
+    let rhs_ty = value_type(rhs, reg_types, local_types)?;
+    let is_scalar = |ty: &AsmType| {
+        is_integer_type(ty) || matches!(ty, AsmType::Ptr(_) | AsmType::Function { .. })
+    };
+    if !is_scalar(&lhs_ty) || !is_scalar(&rhs_ty) {
+        return Err(Error::from(format!(
+            "unsupported compare operand types: lhs={lhs_ty:?}, rhs={rhs_ty:?}"
+        )));
     }
 
     load_value(asm, layout, lhs, Reg::R10, reg_types, local_types)?;
     match rhs {
-        AsmValue::Register(_) => {
+        AsmValue::Constant(constant) => {
+            if let Ok(imm) = constant_to_i64(constant, &layout.data_layout) {
+                if let Ok(imm32) = i32::try_from(imm) {
+                    emit_cmp_imm32(asm, Reg::R10, imm32);
+                } else {
+                    load_value(asm, layout, rhs, Reg::R11, reg_types, local_types)?;
+                    emit_cmp_rr(asm, Reg::R10, Reg::R11);
+                }
+            } else {
+                load_value(asm, layout, rhs, Reg::R11, reg_types, local_types)?;
+                emit_cmp_rr(asm, Reg::R10, Reg::R11);
+            }
+        }
+        _ => {
             load_value(asm, layout, rhs, Reg::R11, reg_types, local_types)?;
             emit_cmp_rr(asm, Reg::R10, Reg::R11);
         }
-        AsmValue::Constant(constant) => {
-            let imm = constant_to_i64(constant, &layout.data_layout)?;
-            let imm32 = i32::try_from(imm)
-                .map_err(|_| Error::from(format!("cmp immediate out of range: {imm}")))?;
-            emit_cmp_imm32(asm, Reg::R10, imm32);
-        }
-        _ => {}
     }
 
     let cc = match kind {
@@ -3630,9 +3638,7 @@ struct Assembler {
 
 fn emit_prologue(asm: &mut Assembler, layout: &FrameLayout) -> Result<()> {
     asm.push(0x55);
-    emit_rex(asm, true, Reg::Rbp.id(), Reg::Rsp.id());
-    asm.push(0x89);
-    emit_modrm(asm, 0b11, Reg::Rbp.id(), Reg::Rsp.id());
+    emit_mov_rr(asm, Reg::Rbp, Reg::Rsp);
 
     if layout.frame_size > 0 {
         emit_sub_ri32(asm, Reg::Rsp, layout.frame_size);

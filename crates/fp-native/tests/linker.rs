@@ -3,8 +3,9 @@ use fp_core::lir::{
     LirInstruction, LirInstructionKind, LirInteger, LirIntrinsicKind, LirProgram, LirRegister,
     LirTerminator, LirType, LirValue, Name,
 };
-use fp_native::emit::{self, RelocKind, TargetArch, TargetFormat};
+use fp_native::emit::{self, RelocKind, RelocSection, Relocation, TargetArch, TargetFormat};
 use fp_native::link::dump::dump_macho;
+use std::collections::HashMap;
 fn host_arch() -> TargetArch {
     if cfg!(target_arch = "x86_64") {
         TargetArch::X86_64
@@ -860,7 +861,19 @@ fn elf_executable_runs_printf() {
     let out_dir = tempfile::tempdir().unwrap();
     let exe = out_dir.path().join("printf-run.elf");
     emit::write_executable(&exe, &plan).unwrap();
+    let bytes = std::fs::read(&exe).unwrap();
+    let elf = goblin::elf::Elf::parse(&bytes).unwrap();
+    assert_eq!(elf.dynsyms.len(), 3);
+    assert_eq!(
+        elf.dynstrtab.get_at(elf.dynsyms.get(1).unwrap().st_name),
+        Some("printf")
+    );
     let output = Command::new(&exe).output().unwrap();
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "ELF executable failed: status={:?}, stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert_eq!(output.stdout, b"hello from native\n");
 }

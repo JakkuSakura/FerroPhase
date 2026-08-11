@@ -60,6 +60,15 @@ fn collect_external_symbols(plan: &EmitPlan, plt_stub_size: usize) -> Vec<Extern
         });
     }
 
+    if !seen.contains_key("exit") {
+        seen.insert("exit".to_string(), externs.len());
+        externs.push(ExternSymbol {
+            name: "exit".to_string(),
+            got_offset: 0,
+            plt_offset: 0,
+        });
+    }
+
     for (idx, sym) in externs.iter_mut().enumerate() {
         sym.got_offset = (idx * 8) as u64;
         sym.plt_offset = (idx * plt_stub_size) as u64;
@@ -68,8 +77,8 @@ fn collect_external_symbols(plan: &EmitPlan, plt_stub_size: usize) -> Vec<Extern
 }
 
 fn dynamic_table_size(extern_count: usize, rela_count: usize) -> usize {
-    let mut entries = 1 + 4 + 1; // DT_NEEDED + STRTAB/STRSZ/SYMTAB/SYMENT + DT_NULL
-    entries += 2; // DT_DEBUG/DT_FLAGS_1
+    let mut entries = 1 + 5 + 1; // DT_NEEDED + STRTAB/STRSZ/SYMTAB/SYMENT/HASH + DT_NULL
+    entries += 1; // DT_DEBUG
     if rela_count > 0 {
         entries += 3; // DT_RELA/DT_RELASZ/DT_RELAENT
     }
@@ -77,6 +86,24 @@ fn dynamic_table_size(extern_count: usize, rela_count: usize) -> usize {
         entries += 1; // DT_PLTGOT
     }
     entries * 16
+}
+
+fn build_sysv_hash(symbol_count: usize) -> Vec<u8> {
+    let bucket_count = 1u32;
+    let mut out = Vec::with_capacity(8 + 4 + symbol_count * 4);
+    put_u32(&mut out, bucket_count);
+    put_u32(&mut out, symbol_count as u32);
+    put_u32(&mut out, u32::from(symbol_count > 1));
+    put_u32(&mut out, 0); // The null symbol never participates in a chain.
+    for symbol_index in 1..symbol_count {
+        let next = if symbol_index + 1 < symbol_count {
+            (symbol_index + 1) as u32
+        } else {
+            0
+        };
+        put_u32(&mut out, next);
+    }
+    out
 }
 
 fn build_dynstr(externs: &[ExternSymbol]) -> (Vec<u8>, HashMap<String, usize>) {
@@ -133,6 +160,60 @@ fn build_plt_stubs(
     }
 }
 
+fn elf_entry_stub_size(arch: TargetArch) -> usize {
+    match arch {
+        TargetArch::X86_64 => 19,
+        TargetArch::Aarch64 => 12,
+    }
+}
+
+fn build_elf_entry_stub(
+    arch: TargetArch,
+    entry_addr: u64,
+    main_addr: u64,
+    exit_addr: u64,
+) -> Result<Vec<u8>> {
+    match arch {
+        TargetArch::X86_64 => {
+            let call_site = entry_addr + 5;
+            let displacement = main_addr as i64 - (call_site as i64 + 4);
+            let displacement = i32::try_from(displacement)
+                .map_err(|_| Error::from("ELF entrypoint call target out of range"))?;
+            let exit_call_site = entry_addr + 13;
+            let exit_displacement = exit_addr as i64 - (exit_call_site as i64 + 4);
+            let exit_displacement = i32::try_from(exit_displacement)
+                .map_err(|_| Error::from("ELF exit call target out of range"))?;
+            let mut out = vec![0x48, 0x83, 0xE4, 0xF0, 0xE8]; // and rsp, -16; call main
+            out.extend_from_slice(&displacement.to_le_bytes());
+            out.extend_from_slice(&[0x48, 0x89, 0xC7, 0xE8]); // mov rdi, rax; call exit
+            out.extend_from_slice(&exit_displacement.to_le_bytes());
+            out.extend_from_slice(&[0x0F, 0x0B]); // ud2 if exit unexpectedly returns
+            Ok(out)
+        }
+        TargetArch::Aarch64 => {
+            let main_delta = main_addr as i64 - entry_addr as i64;
+            let exit_delta = exit_addr as i64 - (entry_addr as i64 + 4);
+            if main_delta % 4 != 0 || exit_delta % 4 != 0 {
+                return Err(Error::from("unaligned Aarch64 ELF entrypoint"));
+            }
+            let main_immediate = main_delta / 4;
+            let exit_immediate = exit_delta / 4;
+            if !(-(1 << 25)..(1 << 25)).contains(&main_immediate)
+                || !(-(1 << 25)..(1 << 25)).contains(&exit_immediate)
+            {
+                return Err(Error::from("ELF entrypoint call target out of range"));
+            }
+            let main_bl = 0x9400_0000u32 | (main_immediate as u32 & 0x03ff_ffff);
+            let exit_bl = 0x9400_0000u32 | (exit_immediate as u32 & 0x03ff_ffff);
+            let mut out = Vec::with_capacity(12);
+            out.extend_from_slice(&main_bl.to_le_bytes());
+            out.extend_from_slice(&exit_bl.to_le_bytes());
+            out.extend_from_slice(&0xD420_0000u32.to_le_bytes()); // brk #0 if exit unexpectedly returns
+            Ok(out)
+        }
+    }
+}
+
 fn emit_adrp(out: &mut Vec<u8>, rd: u32, pc: u64, target: u64) {
     let pc_page = pc & !0xfffu64;
     let target_page = target & !0xfffu64;
@@ -165,7 +246,7 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     const ELFCLASS64: u8 = 2;
     const ELFDATA2LSB: u8 = 1;
     const EV_CURRENT: u8 = 1;
-    const ET_DYN: u16 = 3;
+    const ET_EXEC: u16 = 2;
     const PT_LOAD: u32 = 1;
     const PT_PHDR: u32 = 6;
     const PT_DYNAMIC: u32 = 2;
@@ -178,20 +259,17 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     const DT_NEEDED: u64 = 1;
     const DT_STRTAB: u64 = 5;
     const DT_SYMTAB: u64 = 6;
+    const DT_HASH: u64 = 4;
     const DT_STRSZ: u64 = 10;
     const DT_SYMENT: u64 = 11;
     const DT_RELA: u64 = 7;
     const DT_RELASZ: u64 = 8;
     const DT_RELAENT: u64 = 9;
     const DT_DEBUG: u64 = 21;
-    const DT_FLAGS_1: u64 = 0x6ffffffb;
     const DT_PLTGOT: u64 = 3;
-    const DF_1_PIE: u64 = 0x08000000;
 
     const R_X86_64_GLOB_DAT: u32 = 6;
-    const R_X86_64_RELATIVE: u32 = 8;
     const R_AARCH64_GLOB_DAT: u32 = 1025;
-    const R_AARCH64_RELATIVE: u32 = 1027;
 
     let interpreter = match arch {
         TargetArch::X86_64 => b"/lib64/ld-linux-x86-64.so.2\0".as_slice(),
@@ -211,35 +289,32 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
         0
     };
     let externs = collect_external_symbols(plan, plt_stub_size);
-    let relative_relocs_count = plan
-        .relocs
-        .iter()
-        .chain(&plan.section_relocs)
-        .filter(|reloc| reloc.kind == RelocKind::Abs64)
-        .count();
-
     let ehdr_size = 64usize;
     let phdr_size = 56usize;
     let phnum = 5usize;
     let header_size = ehdr_size + phdr_size * phnum;
     let interp_offset = align_up(header_size, 1);
     let text_offset = align_up(interp_offset + interpreter.len(), 16);
-    let rodata_offset = align_up(text_offset + plan.text.len(), 16);
+    let entry_stub_size = elf_entry_stub_size(arch);
+    let program_text_offset = text_offset + entry_stub_size;
+    let rodata_offset = align_up(program_text_offset + plan.text.len(), 16);
     let plt_offset = align_up(rodata_offset + plan.rodata.len(), 16);
     let plt_size = plt_stub_size * externs.len();
     let rx_end = plt_offset + plt_size;
 
     let data_offset = align_up(rx_end, 0x1000);
     let dynsym_offset = align_up(
-        data_offset + dynamic_table_size(externs.len(), externs.len() + relative_relocs_count),
+        data_offset + dynamic_table_size(externs.len(), externs.len()),
         8,
     );
     let dynsym_size = 24usize * (externs.len() + 1);
     let dynstr_offset = align_up(dynsym_offset + dynsym_size, 1);
     let (dynstr, dynstr_offsets) = build_dynstr(&externs);
     let dynstr_size = dynstr.len();
-    let rela_offset = align_up(dynstr_offset + dynstr_size, 8);
-    let rela_size = 24usize * (externs.len() + relative_relocs_count);
+    let hash = build_sysv_hash(externs.len() + 1);
+    let hash_offset = align_up(dynstr_offset + dynstr_size, 4);
+    let rela_offset = align_up(hash_offset + hash.len(), 8);
+    let rela_size = 24usize * externs.len();
     let got_offset = align_up(rela_offset + rela_size, 8);
     let got_size = 8usize * externs.len();
     let static_data_offset = align_up(got_offset + got_size, 8);
@@ -247,8 +322,8 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
 
     let _file_size = data_end;
 
-    let base_addr: u64 = 0;
-    let entry_addr = text_offset as u64 + plan.entry_offset;
+    let base_addr: u64 = 0x400000;
+    let entry_addr = base_addr + text_offset as u64;
 
     let mut out = Vec::new();
     out.extend_from_slice(&ELF_MAGIC);
@@ -258,7 +333,7 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     put_u8(&mut out, 0); // EI_OSABI
     out.resize(16, 0);
 
-    put_u16(&mut out, ET_DYN);
+    put_u16(&mut out, ET_EXEC);
     put_u16(&mut out, elf_machine(arch));
     put_u32(&mut out, 1);
     put_u64(&mut out, entry_addr);
@@ -277,8 +352,7 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     let data_filesz = data_end - data_offset;
     let data_memsz = data_filesz;
     let dynamic_addr = base_addr + data_offset as u64;
-    let dynamic_size =
-        dynamic_table_size(externs.len(), externs.len() + relative_relocs_count) as u64;
+    let dynamic_size = dynamic_table_size(externs.len(), externs.len()) as u64;
     let interp_addr = base_addr + interp_offset as u64;
 
     // PT_PHDR
@@ -338,16 +412,25 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     out.resize(interp_offset, 0);
     out.extend_from_slice(interpreter);
     out.resize(text_offset, 0);
+    let plt_addr = base_addr + plt_offset as u64;
+    let got_addr = base_addr + got_offset as u64;
+    let main_addr = base_addr + program_text_offset as u64 + plan.entry_offset;
+    let exit = externs
+        .iter()
+        .find(|symbol| symbol.name == "exit")
+        .ok_or_else(|| Error::from("missing ELF exit symbol"))?;
+    let exit_addr = plt_addr + exit.plt_offset;
+    out.extend_from_slice(&build_elf_entry_stub(
+        arch, entry_addr, main_addr, exit_addr,
+    )?);
     out.extend_from_slice(&plan.text);
     out.resize(rodata_offset, 0);
     out.extend_from_slice(&plan.rodata);
     out.resize(plt_offset, 0);
-    let plt_addr = base_addr + plt_offset as u64;
-    let got_addr = base_addr + got_offset as u64;
     out.extend_from_slice(&build_plt_stubs(arch, &externs, plt_addr, got_addr));
     out.resize(data_offset, 0);
 
-    let text_addr = base_addr + text_offset as u64;
+    let text_addr = base_addr + program_text_offset as u64;
     let rodata_addr = base_addr + rodata_offset as u64;
     let data_addr = base_addr + static_data_offset as u64;
     let resolve_symbol = |name: &str, addend: i64| -> Result<u64> {
@@ -368,22 +451,10 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
         }
     };
 
-    let mut relative_relocs = Vec::new();
-    for reloc in plan.relocs.iter().chain(&plan.section_relocs) {
-        if reloc.kind == RelocKind::Abs64 {
-            let value = resolve_symbol(&reloc.symbol, reloc.addend)?;
-            let r_offset = match reloc.section {
-                crate::emit::RelocSection::Text => text_addr + reloc.offset,
-                crate::emit::RelocSection::Rdata => rodata_addr + reloc.offset,
-                crate::emit::RelocSection::Data => data_addr + reloc.offset,
-            };
-            relative_relocs.push((r_offset, value));
-        }
-    }
-
     // .dynamic
     let dynstr_addr = base_addr + dynstr_offset as u64;
     let dynsym_addr = base_addr + dynsym_offset as u64;
+    let hash_addr = base_addr + hash_offset as u64;
     let rela_addr = base_addr + rela_offset as u64;
     let mut dynamic = Vec::new();
     let libc_offset = dynstr_offsets
@@ -395,9 +466,9 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     put_dyn(&mut dynamic, DT_STRSZ, dynstr_size as u64);
     put_dyn(&mut dynamic, DT_SYMTAB, dynsym_addr);
     put_dyn(&mut dynamic, DT_SYMENT, 24);
+    put_dyn(&mut dynamic, DT_HASH, hash_addr);
     put_dyn(&mut dynamic, DT_DEBUG, 0);
-    put_dyn(&mut dynamic, DT_FLAGS_1, DF_1_PIE);
-    if !relative_relocs.is_empty() || !externs.is_empty() {
+    if !externs.is_empty() {
         put_dyn(&mut dynamic, DT_RELA, rela_addr);
         put_dyn(&mut dynamic, DT_RELASZ, rela_size as u64);
         put_dyn(&mut dynamic, DT_RELAENT, 24);
@@ -429,6 +500,10 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     out.resize(dynstr_offset, 0);
     out.extend_from_slice(&dynstr);
 
+    // .hash
+    out.resize(hash_offset, 0);
+    out.extend_from_slice(&hash);
+
     // .rela.dyn
     out.resize(rela_offset, 0);
     let glob_dat_type = match arch {
@@ -443,19 +518,6 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
         put_u64(&mut out, r_info);
         put_u64(&mut out, 0);
     }
-    if !relative_relocs.is_empty() {
-        let relative_type = match arch {
-            TargetArch::X86_64 => R_X86_64_RELATIVE,
-            TargetArch::Aarch64 => R_AARCH64_RELATIVE,
-        } as u64;
-        for (r_offset, addend) in &relative_relocs {
-            let r_info = relative_type;
-            put_u64(&mut out, *r_offset);
-            put_u64(&mut out, r_info);
-            put_u64(&mut out, *addend);
-        }
-    }
-
     // .got
     out.resize(got_offset, 0);
     out.extend_from_slice(&vec![0u8; got_size]);
@@ -470,7 +532,7 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
         match reloc.kind {
             crate::emit::RelocKind::Abs64 => {
                 let value = resolve_symbol(&reloc.symbol, reloc.addend)?;
-                let offset = text_offset + reloc.offset as usize;
+                let offset = program_text_offset + reloc.offset as usize;
                 if offset + 8 > out.len() {
                     return Err(Error::from("relocation offset out of range"));
                 }
@@ -481,9 +543,9 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
                     .iter()
                     .find(|sym| sym.name == reloc.symbol)
                     .ok_or_else(|| Error::from("missing external symbol for relocation"))?;
-                let call_site = text_offset as i64 + reloc.offset as i64;
+                let call_site = program_text_offset as i64 + reloc.offset as i64;
                 let stub_addr = (base_addr + plt_offset as u64 + target.plt_offset as u64) as i64;
-                let offset = text_offset + reloc.offset as usize;
+                let offset = program_text_offset + reloc.offset as usize;
                 match arch {
                     TargetArch::X86_64 => {
                         let rel = stub_addr - (base_addr as i64 + call_site + 4);
@@ -517,7 +579,7 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
                 let imm = delta_pages as u32;
                 let immlo = imm & 0x3;
                 let immhi = (imm >> 2) & 0x7ffff;
-                let adrp_offset = text_offset + reloc.offset as usize;
+                let adrp_offset = program_text_offset + reloc.offset as usize;
                 let mut adrp = u32::from_le_bytes(
                     out[adrp_offset..adrp_offset + 4]
                         .try_into()
