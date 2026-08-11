@@ -507,8 +507,8 @@ fn build_frame_layout(
         let size = align8(size).max(8);
         let align = align.max(8);
         offset = align_to(offset, align);
-        alloca_offsets.insert(id, -offset);
         offset += size;
+        alloca_offsets.insert(id, -offset);
     }
 
     let aggregate_scratch_offset = if max_aggregate_scratch == 0 {
