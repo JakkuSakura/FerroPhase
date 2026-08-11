@@ -1045,8 +1045,8 @@ pub fn typecheck_language_target(
     let hir = driver
         .state
         .hir(&fp_compiler::HirId::new(format!(
-            "hir:{}",
-            identity.path.to_key()
+            "hir:{}:",
+            package
         )))
         .map_err(|err| CliError::Compilation(err.to_string()))?;
     fp_backend::transforms::hir_to_ast::lift_program(hir, path.to_path_buf())
