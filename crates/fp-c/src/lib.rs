@@ -12,7 +12,8 @@ use fp_core::ast::{
     Abi, ExprKind, FunctionParam, FunctionSignature, Ident, Name, Ty, TypeInt, TypePrimitive,
 };
 use fp_core::ast::{
-    AstSerializer, File, Item, ItemDeclFunction, ItemDefType, ItemKind, Visibility,
+    AstSerializer, File, Item, ItemDeclFunction, ItemDefType, ItemKind, ItemOpaqueType,
+    Visibility,
 };
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
@@ -169,6 +170,39 @@ fn shared_ast_from_translation_unit(unit: &TranslationUnit, path: &Path) -> File
             value,
         })));
     }
+    // C struct/union tags are never emitted as their own declarations below
+    // (we don't attempt to translate field layouts), but they're referenced
+    // by name from typedefs and function signatures. Give every referenced
+    // tag a real opaque definition so those references resolve — including
+    // the common `typedef struct { ... } name;` pattern, where Clang gives
+    // the anonymous record the typedef's own name, which would otherwise
+    // surface as a self-referential `pub type name = name;` alias below.
+    let mut struct_union_names = std::collections::HashSet::new();
+    for declaration in &unit.declarations {
+        match declaration {
+            ast::Declaration::Typedef(typedef) => {
+                collect_struct_union_names(&typedef.aliased_type, &mut struct_union_names);
+            }
+            ast::Declaration::Function(function) => {
+                collect_struct_union_names(&function.return_type, &mut struct_union_names);
+                for parameter in &function.parameters {
+                    collect_struct_union_names(&parameter.param_type, &mut struct_union_names);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut struct_union_names: Vec<_> = struct_union_names.into_iter().collect();
+    struct_union_names.sort();
+    for name in struct_union_names {
+        if aliases.insert(name.clone()) {
+            items.push(Item::new(ItemKind::OpaqueType(ItemOpaqueType {
+                attrs: Vec::new(),
+                visibility: Visibility::Public,
+                name: Ident::new(name),
+            })));
+        }
+    }
     for declaration in &unit.declarations {
         let ast::Declaration::Typedef(typedef) = declaration else {
             continue;
@@ -186,11 +220,48 @@ fn shared_ast_from_translation_unit(unit: &TranslationUnit, path: &Path) -> File
             })));
         }
     }
+    // Some type references never get a definition above: compiler builtins
+    // (e.g. `__builtin_va_list`) and typedef targets that Clang never
+    // exposed a `TypedefDecl`/`RecordDecl` for in this translation unit.
+    // Fall back to an opaque definition for anything still dangling so
+    // function signatures that mention it can resolve.
+    let mut referenced_names = std::collections::HashSet::new();
+    for declaration in &unit.declarations {
+        match declaration {
+            ast::Declaration::Typedef(typedef) => {
+                collect_referenced_type_names(&typedef.aliased_type, &mut referenced_names);
+            }
+            ast::Declaration::Function(function) => {
+                collect_referenced_type_names(&function.return_type, &mut referenced_names);
+                for parameter in &function.parameters {
+                    collect_referenced_type_names(&parameter.param_type, &mut referenced_names);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut referenced_names: Vec<_> = referenced_names.into_iter().collect();
+    referenced_names.sort();
+    for name in referenced_names {
+        if aliases.insert(name.clone()) {
+            items.push(Item::new(ItemKind::OpaqueType(ItemOpaqueType {
+                attrs: Vec::new(),
+                visibility: Visibility::Public,
+                name: Ident::new(name),
+            })));
+        }
+    }
+    let mut declared_functions = std::collections::HashSet::new();
     for declaration in &unit.declarations {
         let ast::Declaration::Function(function) = declaration else {
             continue;
         };
         if function.is_variadic || function.name.is_empty() {
+            continue;
+        }
+        // Headers commonly re-declare the same function (prototypes pulled
+        // in via multiple includes); only emit it once.
+        if !declared_functions.insert(function.name.clone()) {
             continue;
         }
         let Some(ret) = shared_type(&function.return_type, false) else {
@@ -237,6 +308,52 @@ fn shared_ast_from_translation_unit(unit: &TranslationUnit, path: &Path) -> File
         attrs: Vec::new(),
         collected_items: Vec::new(),
         items,
+    }
+}
+
+fn collect_struct_union_names(ty: &ast::Type, out: &mut std::collections::HashSet<String>) {
+    match ty {
+        ast::Type::Struct(name) | ast::Type::Union(name) => {
+            out.insert(name.clone());
+        }
+        ast::Type::Pointer(inner) => collect_struct_union_names(inner, out),
+        ast::Type::Qualified { base, .. } => collect_struct_union_names(base, out),
+        ast::Type::Array(inner, _) => collect_struct_union_names(inner, out),
+        ast::Type::Reference { base, .. } => collect_struct_union_names(base, out),
+        ast::Type::Function {
+            return_type,
+            params,
+            ..
+        } => {
+            collect_struct_union_names(return_type, out);
+            for param in params {
+                collect_struct_union_names(param, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_referenced_type_names(ty: &ast::Type, out: &mut std::collections::HashSet<String>) {
+    match ty {
+        ast::Type::Typedef(name) | ast::Type::Struct(name) | ast::Type::Union(name) => {
+            out.insert(name.clone());
+        }
+        ast::Type::Pointer(inner) => collect_referenced_type_names(inner, out),
+        ast::Type::Qualified { base, .. } => collect_referenced_type_names(base, out),
+        ast::Type::Array(inner, _) => collect_referenced_type_names(inner, out),
+        ast::Type::Reference { base, .. } => collect_referenced_type_names(base, out),
+        ast::Type::Function {
+            return_type,
+            params,
+            ..
+        } => {
+            collect_referenced_type_names(return_type, out);
+            for param in params {
+                collect_referenced_type_names(param, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -319,6 +436,7 @@ impl AstSerializer for CSerializer {
                 def.name,
                 self.serialize_type(&def.value)?
             )),
+            ItemKind::OpaqueType(def) => Ok(format!("pub opaque type {};", def.name)),
             ItemKind::DeclFunction(decl) => {
                 let params = decl
                     .sig
