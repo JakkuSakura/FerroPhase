@@ -11,6 +11,8 @@ use fp_lang::FerroIntrinsicNormalizer;
 use fp_typing::{HirTypeChecker, TypingContext};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::task::{Context, Poll, Waker};
 use std::rc::Rc;
 
 use crate::{
@@ -396,9 +398,8 @@ impl CompilerDriver {
                 package.borrow_mut().hir_exports.extend(package_exports);
             }
         }
-        let (hir_program, typeck_results) = HirTypeChecker::new(hir_program)
-            .with_context(self.state.typing_ctx.clone())
-            .check()
+        let (hir_program, typeck_results) = self
+            .type_check_program(hir_program)
             .await
             .map_err(|error| {
                 CompilerDriverError::InternalCompilerError(format!(
@@ -420,6 +421,7 @@ impl CompilerDriver {
         let hir_id = HirId::new(format!("hir:{}", self.module_state_key(&package_path)));
         self.state.insert_hir(hir_id.clone(), hir_program);
         self.state.insert_hir_typeck(hir_id.clone(), typeck_results);
+        self.seed_typechecked_const_values(&hir_id)?;
         if let Some(package) = self
             .state
             .typing_ctx
@@ -448,7 +450,7 @@ impl CompilerDriver {
         }
 
         let fqp = FullyQualifiedPath::new(package_path.clone());
-        let (mut mir_id, mut struct_layouts, mut full_layouts, mut adt_defs) =
+        let (mir_id, struct_layouts, full_layouts, adt_defs) =
             self.lower_to_mir(&hir_id, &fqp).await?;
         if let Some(package) = self
             .state
@@ -467,7 +469,7 @@ impl CompilerDriver {
         for (_dep_id, dep_package) in self.state.typing_ctx.env_ctx.crates().iter() {
             all_adt_defs.extend(dep_package.borrow().mir_adt_defs.clone());
         }
-        let mut lir_id = self.lower_to_lir(
+        let lir_id = self.lower_to_lir(
             &mir_id,
             &fqp,
             &current_package_id,
@@ -475,44 +477,229 @@ impl CompilerDriver {
             &all_adt_defs,
         )?;
 
-        // Executable consts are discovered while lowering. Evaluate them
-        // before publishing the unit, then lower again so runtime operands
-        // contain concrete constants instead of synthetic global paths.
-        let comptime_count = self.evaluate_comptime_lir(&lir_id, &fqp).await?;
-        if comptime_count != 0 {
-            let lowered = self.lower_to_mir(&hir_id, &fqp).await?;
-            mir_id = lowered.0;
-            struct_layouts = lowered.1;
-            full_layouts = lowered.2;
-            adt_defs = lowered.3;
-            if let Some(package) = self
-                .state
-                .typing_ctx
-                .env_ctx
-                .compiled_package(&current_package_id)
-            {
-                package.borrow_mut().mir_program = Some(self.state.mir(&mir_id)?.clone());
-                package.borrow_mut().mir_struct_fields = struct_layouts.clone();
-                package.borrow_mut().mir_adt_defs = adt_defs.clone();
-            }
-            all_adt_defs.clear();
-            for (_dep_id, dep_package) in self.state.typing_ctx.env_ctx.crates().iter() {
-                all_adt_defs.extend(dep_package.borrow().mir_adt_defs.clone());
-            }
-            lir_id = self.lower_to_lir(
-                &mir_id,
-                &fqp,
-                &current_package_id,
-                &full_layouts,
-                &all_adt_defs,
-            )?;
-        }
         let lir = self.state.lir(&lir_id)?.clone();
         Ok(vec![fp_core::lir::LirCompileUnit {
             package_id: hir_package_id,
             module_path: package_path,
             program: lir,
         }])
+    }
+
+    async fn type_check_program(
+        &mut self,
+        program: hir::Program,
+    ) -> fp_core::Result<(hir::Program, fp_typing::TypeckResults)> {
+        let mut future = Box::pin(
+            HirTypeChecker::new(program)
+                .with_context(self.state.typing_ctx.clone())
+                .check(),
+        );
+        loop {
+            let poll = {
+                let waker = Waker::noop();
+                let mut cx = Context::from_waker(waker);
+                future.as_mut().poll(&mut cx)
+            };
+            match poll {
+                Poll::Ready(result) => return result,
+                Poll::Pending => {
+                    let requests = self.state.typing_ctx.take_comptime_requests();
+                    if requests.is_empty() {
+                        return Err(fp_core::error::Error::from(
+                            "HIR type checking suspended without a comptime request",
+                        ));
+                    }
+                    for request in requests {
+                        let result = self.evaluate_hir_const_request(request.request());
+                        request.complete(result);
+                    }
+                }
+            }
+        }
+    }
+
+    fn seed_typechecked_const_values(&mut self, hir_id: &HirId) -> Result<(), CompilerDriverError> {
+        let program = self.state.hir(hir_id)?.clone();
+        let results = self.state.hir_typeck(hir_id)?.clone();
+        for item in program.def_map.values() {
+            let hir::ItemKind::Const(constant) = &item.kind else {
+                continue;
+            };
+            let Some(value) = results.const_values.get(&item.def_id) else {
+                continue;
+            };
+            let Some(constant_value) = self.simple_value_to_mir_constant(value, constant.body.value.span) else {
+                continue;
+            };
+            let key = self.const_resolution_key(constant.name.as_str(), constant.body.value.span);
+            self.state.insert_resolved_const_value(key, constant_value);
+        }
+        Ok(())
+    }
+
+    fn const_resolution_key(&self, name: &str, span: Span) -> String {
+        let file = fp_core::source_map::source_map()
+            .file(span.file)
+            .map(|file| file.path.display().to_string())
+            .unwrap_or_else(|| format!("file#{}", span.file));
+        format!("{file}:{}:{}:{name}", span.lo, span.hi)
+    }
+
+    fn simple_value_to_mir_constant(
+        &self,
+        value: &Value,
+        span: Span,
+    ) -> Option<mir::Constant> {
+        let (ty, literal) = match value {
+            Value::Int(value) => (
+                mir::Ty { kind: TyKind::Int(IntTy::I64) },
+                mir::ConstantKind::Int(value.value),
+            ),
+            Value::UInt(value) => (
+                mir::Ty { kind: TyKind::Uint(UintTy::U64) },
+                mir::ConstantKind::UInt(value.value),
+            ),
+            Value::Bool(value) => (
+                mir::Ty { kind: TyKind::Bool },
+                mir::ConstantKind::Bool(value.value),
+            ),
+            Value::Decimal(value) => (
+                mir::Ty { kind: TyKind::Float(FloatTy::F64) },
+                mir::ConstantKind::Float(value.value),
+            ),
+            Value::String(value) => (
+                mir::Ty {
+                    kind: TyKind::Slice(Box::new(mir::Ty {
+                        kind: TyKind::Int(IntTy::I8),
+                    })),
+                },
+                mir::ConstantKind::Str(value.value.clone()),
+            ),
+            Value::Null(_) => (
+                mir::Ty { kind: TyKind::Tuple(Vec::new()) },
+                mir::ConstantKind::Null,
+            ),
+            _ => return None,
+        };
+        Some(mir::Constant { span, ty, user_ty: None, literal })
+    }
+
+    fn evaluate_hir_const_request(
+        &self,
+        request: &fp_typing::ComptimeRequest,
+    ) -> fp_core::Result<Value> {
+        let expr = request
+            .block
+            .expr
+            .as_deref()
+            .ok_or_else(|| fp_core::error::Error::from("const block has no value"))?;
+        Self::evaluate_hir_const_expr(&request.program, expr)
+    }
+
+    fn evaluate_hir_const_expr(
+        program: &hir::Program,
+        expr: &hir::Expr,
+    ) -> fp_core::Result<Value> {
+        match &expr.kind {
+            hir::ExprKind::Literal(literal) => Ok(match literal {
+                hir::Lit::Bool(value) => Value::bool(*value),
+                hir::Lit::Integer(value) => Value::int(*value),
+                hir::Lit::Float(value) => Value::decimal(*value),
+                hir::Lit::Str(value) => Value::string(value.clone()),
+                hir::Lit::Char(value) => Value::string(value.to_string()),
+                hir::Lit::Null => Value::null(),
+            }),
+            hir::ExprKind::Path(path) => {
+                let name = path
+                    .segments
+                    .last()
+                    .map(|segment| segment.name.as_str())
+                    .ok_or_else(|| fp_core::error::Error::from("empty const path"))?;
+                let item = program.def_map.values().find(|item| match &item.kind {
+                    hir::ItemKind::Const(constant) => constant.name.as_str().ends_with(name),
+                    _ => false,
+                });
+                let Some(item) = item else {
+                    return Err(fp_core::error::Error::from(format!(
+                        "const path `{name}` is not available during comptime evaluation"
+                    )));
+                };
+                let hir::ItemKind::Const(constant) = &item.kind else {
+                    unreachable!();
+                };
+                Self::evaluate_hir_const_expr(program, &constant.body.value)
+            }
+            hir::ExprKind::Binary(op, lhs, rhs) => {
+                let lhs = Self::evaluate_hir_const_expr(program, lhs)?;
+                let rhs = Self::evaluate_hir_const_expr(program, rhs)?;
+                Self::evaluate_hir_binary(op, lhs, rhs)
+            }
+            hir::ExprKind::If(condition, then_expr, else_expr) => {
+                let condition = Self::evaluate_hir_const_expr(program, condition)?;
+                let Value::Bool(condition) = condition else {
+                    return Err(fp_core::error::Error::from(
+                        "const-if condition must evaluate to bool",
+                    ));
+                };
+                if condition.value {
+                    Self::evaluate_hir_const_expr(program, then_expr)
+                } else if let Some(else_expr) = else_expr {
+                    Self::evaluate_hir_const_expr(program, else_expr)
+                } else {
+                    Ok(Value::unit())
+                }
+            }
+            hir::ExprKind::Block(block) => block
+                .expr
+                .as_deref()
+                .map(|expr| Self::evaluate_hir_const_expr(program, expr))
+                .unwrap_or_else(|| Ok(Value::unit())),
+            _ => Err(fp_core::error::Error::from(
+                "const expression is not supported by the type-check-time evaluator",
+            )),
+        }
+    }
+
+    fn evaluate_hir_binary(
+        op: &hir::BinOp,
+        lhs: Value,
+        rhs: Value,
+    ) -> fp_core::Result<Value> {
+        let lhs_int = || match lhs.clone() {
+            Value::Int(value) => Ok(value.value),
+            Value::UInt(value) => i64::try_from(value.value)
+                .map_err(|_| fp_core::error::Error::from("integer overflow during comptime")),
+            _ => Err(fp_core::error::Error::from("integer operands required")),
+        };
+        let rhs_int = || match rhs.clone() {
+            Value::Int(value) => Ok(value.value),
+            Value::UInt(value) => i64::try_from(value.value)
+                .map_err(|_| fp_core::error::Error::from("integer overflow during comptime")),
+            _ => Err(fp_core::error::Error::from("integer operands required")),
+        };
+        match op {
+            hir::BinOp::Add => Ok(Value::int(lhs_int()? + rhs_int()?)),
+            hir::BinOp::Sub => Ok(Value::int(lhs_int()? - rhs_int()?)),
+            hir::BinOp::Mul => Ok(Value::int(lhs_int()? * rhs_int()?)),
+            hir::BinOp::Div => Ok(Value::int(lhs_int()? / rhs_int()?)),
+            hir::BinOp::Rem => Ok(Value::int(lhs_int()? % rhs_int()?)),
+            hir::BinOp::Eq => Ok(Value::bool(lhs == rhs)),
+            hir::BinOp::Ne => Ok(Value::bool(lhs != rhs)),
+            hir::BinOp::Gt | hir::BinOp::Ge | hir::BinOp::Lt | hir::BinOp::Le => {
+                let lhs = lhs_int()?;
+                let rhs = rhs_int()?;
+                Ok(Value::bool(match op {
+                    hir::BinOp::Gt => lhs > rhs,
+                    hir::BinOp::Ge => lhs >= rhs,
+                    hir::BinOp::Lt => lhs < rhs,
+                    hir::BinOp::Le => lhs <= rhs,
+                    _ => unreachable!(),
+                }))
+            }
+            _ => Err(fp_core::error::Error::from(
+                "binary operator is not supported during comptime",
+            )),
+        }
     }
 
     async fn evaluate_comptime_lir(

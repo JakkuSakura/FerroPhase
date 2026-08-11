@@ -88,6 +88,24 @@ impl HirTypeChecker {
                     let body_result = self.check_body(&constant.body).await;
                     self.expected_expr_types.pop();
                     let body_ty = body_result?;
+                    if constant.name.as_str().contains("__fp_anon_const_") {
+                        if let Some(context) = self.typing_context.clone() {
+                            let value = context
+                                .request_comptime(crate::ComptimeRequest {
+                                    program: self.program.clone(),
+                                    typeck_results: self.results.clone(),
+                                    block: hir::Block {
+                                        hir_id: constant.body.hir_id,
+                                        stmts: Vec::new(),
+                                        expr: Some(Box::new(constant.body.value.clone())),
+                                    },
+                                    expression_id: constant.body.value.hir_id,
+                                    expected_ty: constant.ty.clone(),
+                                })
+                                .await?;
+                            self.results.const_values.insert(item.def_id, value);
+                        }
+                    }
                     self.results
                         .type_expr_types
                         .insert(constant.ty.hir_id, body_ty.clone());
