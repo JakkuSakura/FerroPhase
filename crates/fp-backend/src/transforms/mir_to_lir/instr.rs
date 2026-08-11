@@ -5211,11 +5211,19 @@ impl LirGenerator {
             .locals
             .iter()
             .enumerate()
-            .map(|(idx, decl)| lir::LirLocal {
-                id: idx as u32,
-                ty: self.lir_type_from_ty(&decl.ty),
-                name: None,
-                is_argument: idx > 0 && idx <= arg_count,
+            .map(|(idx, decl)| {
+                if matches!(decl.ty.kind, mir::ty::TyKind::Infer(_)) {
+                    panic!(
+                        "MIR-to-LIR ICE: unresolved local type at local {idx}: {:?}",
+                        decl.ty
+                    );
+                }
+                lir::LirLocal {
+                    id: idx as u32,
+                    ty: self.lir_type_from_ty(&decl.ty),
+                    name: None,
+                    is_argument: idx > 0 && idx <= arg_count,
+                }
             })
             .collect()
     }
@@ -5827,12 +5835,12 @@ impl LirGenerator {
                     fields: fields
                         .iter()
                         .map(|field| {
-                        field.clone().unwrap_or_else(|| {
-                            panic!(
-                                "MIR-to-LIR ICE: missing layout for field of ADT {}",
-                                adt.did
-                            )
-                        })
+                            field.clone().unwrap_or_else(|| {
+                                panic!(
+                                    "MIR-to-LIR ICE: missing layout for field of ADT {}",
+                                    adt.did
+                                )
+                            })
                         })
                         .collect(),
                     packed: false,
@@ -5840,6 +5848,18 @@ impl LirGenerator {
                 }
             }
             TyKind::Adt(adt, substs) if self.mir_layouts.contains_key(&adt.did) => {
+                if substs.iter().any(|arg| {
+                    matches!(
+                        arg,
+                        mir::ty::GenericArg::Type(ty)
+                            if matches!(ty.kind, TyKind::Infer(_))
+                    )
+                }) {
+                    panic!(
+                        "MIR-to-LIR ICE: unresolved ADT substitution for {}: {:?}",
+                        adt.did, ty
+                    );
+                }
                 let field_tys = self.mir_layouts.get(&adt.did).unwrap().clone();
                 let fields: Vec<Option<lir::LirType>> = field_tys
                     .iter()
@@ -5859,8 +5879,8 @@ impl LirGenerator {
                     let substs_types: Vec<mir::Ty> = substs
                         .iter()
                         .filter_map(|a| match a {
-                        mir::ty::GenericArg::Type(t) => Some(t.clone()),
-                        _ => None,
+                            mir::ty::GenericArg::Type(t) => Some(t.clone()),
+                            _ => None,
                         })
                         .collect();
                     (adt.did, substs_types)

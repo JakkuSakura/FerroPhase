@@ -49,6 +49,8 @@ pub struct HirGenerator {
     module_visibility: Vec<bool>,
     global_value_defs: HashMap<String, SymbolEntry>,
     global_type_defs: HashMap<String, SymbolEntry>,
+    prelude_value_defs: HashMap<String, hir::Res>,
+    prelude_type_defs: HashMap<String, hir::Res>,
     preassigned_def_ids: HashMap<u64, hir::DefId>,
     enum_variant_def_ids: HashMap<String, hir::DefId>,
     type_aliases: HashMap<String, ast::Ty>,
@@ -315,6 +317,8 @@ impl HirGenerator {
             module_visibility: vec![true],
             global_value_defs: HashMap::new(),
             global_type_defs: HashMap::new(),
+            prelude_value_defs: HashMap::new(),
+            prelude_type_defs: HashMap::new(),
             preassigned_def_ids: HashMap::new(),
             enum_variant_def_ids: HashMap::new(),
             type_aliases: HashMap::new(),
@@ -393,7 +397,6 @@ impl HirGenerator {
         self.resolved_names = resolved_names;
         self
     }
-
 
     pub fn set_target_triple(&mut self, target_triple: Option<&str>) {
         self.target_env = TargetEnv::from_triple(target_triple);
@@ -647,10 +650,12 @@ impl HirGenerator {
         self.const_list_length_scopes.push(HashMap::new());
         self.synthetic_items.clear();
         self.module_defs.clear();
+        self.prelude_value_defs.clear();
+        self.prelude_type_defs.clear();
         // Keep predeclared struct fields available for struct update lowering.
     }
 
-    fn insert_default_prelude_aliases(&mut self) {
+    fn load_default_prelude_defs(&mut self) {
         let prelude_prefix = "std::prelude::";
         let type_aliases: Vec<_> = self
             .global_type_defs
@@ -670,12 +675,8 @@ impl HirGenerator {
                     .map(|name| (name.to_owned(), entry.res.clone()))
             })
             .collect();
-        for (alias, res) in type_aliases {
-            self.type_scopes[0].entry(alias).or_insert(res);
-        }
-        for (alias, res) in value_aliases {
-            self.value_scopes[0].entry(alias).or_insert(res);
-        }
+        self.prelude_type_defs = type_aliases.into_iter().collect();
+        self.prelude_value_defs = value_aliases.into_iter().collect();
     }
 
     fn seed_workspace_definitions(&mut self, program: &mut hir::Program) {
@@ -692,14 +693,18 @@ impl HirGenerator {
             program.def_map.extend(hir_program.def_map);
             for (path_str, res) in exports {
                 let path = fp_core::module::path::QualifiedPath::new(
-                    path_str.split("::").map(|s| s.to_owned()).collect::<Vec<_>>(),
+                    path_str
+                        .split("::")
+                        .map(|s| s.to_owned())
+                        .collect::<Vec<_>>(),
                 );
                 let entry = SymbolEntry {
                     res,
                     export: SymbolExport::Public,
                     path: Some(path),
                 };
-                self.global_value_defs.insert(path_str.clone(), entry.clone());
+                self.global_value_defs
+                    .insert(path_str.clone(), entry.clone());
                 self.global_type_defs.insert(path_str, entry);
             }
         }
@@ -733,6 +738,7 @@ impl HirGenerator {
                 ItemKind::DefStruct(def_struct) => {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_type_def(&def_struct.name.name, def_id, &def_struct.visibility);
+                    self.register_value_def(&def_struct.name.name, def_id, &def_struct.visibility);
                     if attrs_has_name(&def_struct.attrs, "unimplemented") {
                         self.unimplemented_type_def_ids.insert(def_id);
                     }
@@ -742,6 +748,11 @@ impl HirGenerator {
                 ItemKind::DefStructural(def_structural) => {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_type_def(
+                        &def_structural.name.name,
+                        def_id,
+                        &def_structural.visibility,
+                    );
+                    self.register_value_def(
                         &def_structural.name.name,
                         def_id,
                         &def_structural.visibility,
@@ -941,21 +952,7 @@ impl HirGenerator {
                 let qualified = self.module_path.with_segment(name.to_string());
                 self.lookup_symbol(&qualified.to_key(), &self.global_type_defs)
             })
-            .or_else(|| {
-                let mut candidates = self
-                    .global_type_defs
-                    .iter()
-                    .filter(|(key, entry)| {
-                        key.rsplit("::").next() == Some(name)
-                            && matches!(
-                                entry.res,
-                                hir::Res::Def(def_id) if def_id.package_id == self.package_id
-                            )
-                    })
-                    .filter_map(|(_, entry)| entry.export.can_access(&self.module_path.segments).then(|| entry.res.clone()));
-                let first = candidates.next();
-                first.filter(|_| candidates.next().is_none())
-            })
+            .or_else(|| self.prelude_type_defs.get(name).cloned())
             .or_else(|| self.lookup_symbol(name, &self.global_type_defs))
     }
 
@@ -968,6 +965,7 @@ impl HirGenerator {
                 let qualified = self.module_path.with_segment(name.to_string());
                 self.lookup_symbol(&qualified.to_key(), &self.global_value_defs)
             })
+            .or_else(|| self.prelude_value_defs.get(name).cloned())
             .or_else(|| self.lookup_symbol(name, &self.global_value_defs))
     }
 
@@ -1019,8 +1017,8 @@ impl HirGenerator {
         }
         self.reset_file_context("<expr>");
         self.prepare_lowering_state();
+        self.load_default_prelude_defs();
         self.predeclare_items(&generated_items)?;
-        self.insert_default_prelude_aliases();
 
         let mut hir_program = hir::Program::new();
         self.program_def_map = HashMap::new();
@@ -1120,7 +1118,7 @@ impl HirGenerator {
 
         let mut program = hir::Program::new();
         self.seed_workspace_definitions(&mut program);
-        self.insert_default_prelude_aliases();
+        self.load_default_prelude_defs();
 
         for package_item in &package.items {
             self.with_module_scope(&package_item.path, |this| {
@@ -1152,7 +1150,7 @@ impl HirGenerator {
         let file_name = query.name.as_deref().unwrap_or("<query>");
         self.reset_file_context(file_name);
         self.prepare_lowering_state();
-        self.insert_default_prelude_aliases();
+        self.load_default_prelude_defs();
         self.program_def_map = HashMap::new();
 
         let ir = self.resolve_query_ir(query)?;
@@ -1188,8 +1186,8 @@ impl HirGenerator {
         self.module_path = module_path.clone();
         let mut program = hir::Program::new();
         self.seed_workspace_definitions(&mut program);
+        self.load_default_prelude_defs();
         self.predeclare_items(items)?;
-        self.insert_default_prelude_aliases();
         self.program_def_map = program.def_map.clone();
         for item in &self.synthetic_items {
             self.program_def_map.insert(item.def_id, item.clone());
@@ -1476,6 +1474,7 @@ impl HirGenerator {
             }
             ItemKind::DefStruct(struct_def) => {
                 self.register_type_def(&struct_def.name.name, def_id, &struct_def.visibility);
+                self.register_value_def(&struct_def.name.name, def_id, &struct_def.visibility);
                 self.push_type_scope();
                 let generics = self.transform_generics(&struct_def.value.generics_params);
                 let name = hir::Symbol::new(self.qualify_name(&struct_def.name.name));
@@ -1506,6 +1505,7 @@ impl HirGenerator {
             }
             ItemKind::DefStructural(struct_def) => {
                 self.register_type_def(&struct_def.name.name, def_id, &struct_def.visibility);
+                self.register_value_def(&struct_def.name.name, def_id, &struct_def.visibility);
                 let name = hir::Symbol::new(self.qualify_name(&struct_def.name.name));
                 let fields = struct_def
                     .value
@@ -1604,13 +1604,13 @@ impl HirGenerator {
                                     None
                                 }
                             }
-                            ast::Ty::Structural(structural) => Some(
-                                self.materialize_enum_struct_payload(
+                            ast::Ty::Structural(structural) => {
+                                Some(self.materialize_enum_struct_payload(
                                     &enum_def.name.name,
                                     &variant.name.name,
                                     structural,
-                                )?,
-                            ),
+                                )?)
+                            }
                             other => Some(self.transform_type_to_hir(other)?),
                         };
 
@@ -2921,13 +2921,13 @@ impl HirGenerator {
                             .transpose()?;
                         let payload = match &variant.value {
                             ast::Ty::Unit(_) => None,
-                            ast::Ty::Structural(structural) => Some(
-                                self.materialize_enum_struct_payload(
+                            ast::Ty::Structural(structural) => {
+                                Some(self.materialize_enum_struct_payload(
                                     &def_type.name.name,
                                     &variant.name.name,
                                     structural,
-                                )?,
-                            ),
+                                )?)
+                            }
                             other => Some(self.transform_type_to_hir(other)?),
                         };
 

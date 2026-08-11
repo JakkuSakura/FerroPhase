@@ -1,5 +1,5 @@
 use super::*;
-use fp_core::module::path::{parse_path, resolve_item_path, ParsedPath, PathPrefix, QualifiedPath};
+use fp_core::module::path::{ParsedPath, PathPrefix, QualifiedPath, parse_path, resolve_item_path};
 
 impl HirGenerator {
     fn resolved_name_to_hir_path(

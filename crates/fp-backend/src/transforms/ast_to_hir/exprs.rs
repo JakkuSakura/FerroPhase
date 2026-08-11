@@ -673,7 +673,7 @@ impl HirGenerator {
         struct_expr: &ast::ExprStruct,
     ) -> Result<hir::ExprKind> {
         let path =
-            self.ast_expr_to_hir_path(struct_expr.name.as_ref(), PathResolutionScope::Type)?;
+            self.ast_expr_to_hir_path(struct_expr.name.as_ref(), PathResolutionScope::Value)?;
         let struct_span = struct_expr.span();
 
         let mut explicit_names = std::collections::HashSet::new();

@@ -95,7 +95,7 @@ impl HirGenerator {
             PatternKind::Struct(struct_pat) => {
                 let path = self.name_to_hir_path_with_scope(
                     &Name::Ident(struct_pat.name.clone()),
-                    PathResolutionScope::Type,
+                    PathResolutionScope::Value,
                 )?;
                 let fields = struct_pat
                     .fields
