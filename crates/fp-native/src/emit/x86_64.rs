@@ -1,7 +1,7 @@
 use fp_core::asmir::{
     AsmArchitecture, AsmBlock, AsmBlockId as BasicBlockId, AsmConditionCode, AsmConstant,
-    AsmFunction, AsmInstructionKind, AsmIntrinsicKind, AsmProgram, AsmSyscallConvention,
-    AsmTerminator, AsmType, AsmValue,
+    AsmFunction, AsmFunctionSignature, AsmInstructionKind, AsmIntrinsicKind, AsmProgram,
+    AsmSyscallConvention, AsmTerminator, AsmType, AsmValue,
 };
 use fp_core::container::ContainerKind;
 use fp_core::error::{Error, Result};
@@ -478,14 +478,17 @@ fn build_frame_layout(
         local_offsets.insert(local.id, -offset);
     }
 
-    if returns_aggregate(&func.signature.return_type, data_layout) {
+    if matches!(
+        abi_pass_mode(&func.signature.return_type, data_layout)?,
+        AbiPassMode::Indirect
+    ) {
         offset += 8;
         sret_offset = Some(-offset);
     }
 
     for id in &vreg_ids {
         if let Some(ty) = reg_types.get(id) {
-            if is_large_aggregate(ty, data_layout) {
+            if is_aggregate_storage(ty, data_layout) {
                 let size = align8(
                     data_layout
                         .size_of(ty)
@@ -530,7 +533,11 @@ fn build_frame_layout(
     let outgoing_size = shadow_space + (extra_stack_args as i32) * 8;
     let base = local_size + outgoing_size;
     let frame_size = if base == 0 {
-        if has_calls { 8 } else { 0 }
+        if has_calls {
+            8
+        } else {
+            0
+        }
     } else {
         align16(base + 8) - 8
     };
@@ -580,7 +587,7 @@ fn aggregate_constant_scratch_size(
     let mut size = 0i32;
     for arg in args {
         let ty = value_type(arg, reg_types, local_types)?;
-        if !is_large_aggregate(&ty, data_layout)
+        if !is_aggregate_storage(&ty, data_layout)
             || !matches!(
                 arg,
                 AsmValue::Constant(AsmConstant::Struct(_, _) | AsmConstant::Array(_, _))
@@ -606,7 +613,7 @@ fn vreg_slot_spec(
     let Some(ty) = reg_types.get(&id) else {
         return (8, 8);
     };
-    if is_large_aggregate(ty, data_layout) {
+    if is_aggregate_storage(ty, data_layout) {
         return (8, 8);
     }
     if matches!(ty, AsmType::I128) {
@@ -618,7 +625,10 @@ fn vreg_slot_spec(
     (8, 8)
 }
 
-fn build_reg_types(func: &AsmFunction) -> HashMap<u32, AsmType> {
+fn build_reg_types(
+    func: &AsmFunction,
+    signatures: &HashMap<String, AsmFunctionSignature>,
+) -> HashMap<u32, AsmType> {
     let mut map = HashMap::new();
     for block in &func.basic_blocks {
         for inst in &block.instructions {
@@ -635,6 +645,15 @@ fn build_reg_types(func: &AsmFunction) -> HashMap<u32, AsmType> {
 
     for block in &func.basic_blocks {
         for inst in &block.instructions {
+            if let AsmInstructionKind::Call {
+                function: AsmValue::Function(name),
+                ..
+            } = &inst.kind
+            {
+                if let Some(signature) = signatures.get(name) {
+                    map.insert(inst.id, signature.return_type.clone());
+                }
+            }
             if map.contains_key(&inst.id) {
                 continue;
             }
@@ -679,6 +698,11 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
     }
 
     let mut func_map = build_function_map(program)?;
+    let signatures: HashMap<String, AsmFunctionSignature> = program
+        .functions
+        .iter()
+        .map(|func| (func.name.to_string(), func.signature.clone()))
+        .collect();
     let needs_panic_stub = program_uses_fp_panic(program) && !func_map.contains_key("fp_panic");
     let panic_id = if needs_panic_stub {
         let id = func_map.len() as u32;
@@ -730,7 +754,7 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
             continue;
         }
 
-        let reg_types = build_reg_types(func);
+        let reg_types = build_reg_types(func, &signatures);
         let layout = build_frame_layout(func, format, &reg_types, &program.data_layout)?;
         let local_types = build_local_types(func);
         asm.needs_frame = layout.frame_size > 0;
@@ -745,6 +769,7 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
                 block,
                 format,
                 &func_map,
+                &signatures,
                 &layout,
                 &reg_types,
                 &local_types,
@@ -1001,7 +1026,7 @@ fn spill_arguments(
             continue;
         }
         let offset = local_offset(layout, local.id)?;
-        if is_large_aggregate(ty, &layout.data_layout) {
+        if is_aggregate_storage(ty, &layout.data_layout) {
             let size = size_of(ty) as i32;
             if int_idx < arg_regs.len() {
                 copy_reg_to_sp(asm, arg_regs[int_idx], offset, size)?;
@@ -1460,8 +1485,8 @@ fn emit_freeze(
         store_i128_value(asm, layout, dst_id, Reg::R10, Reg::R11)?;
         return Ok(());
     }
-    if is_large_aggregate(&value_ty, &layout.data_layout) {
-        return Err(Error::from("freeze does not support large aggregates"));
+    if is_aggregate_storage(&value_ty, &layout.data_layout) {
+        return Err(Error::from("freeze does not support aggregate values"));
     }
     load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
     store_vreg(asm, layout, dst_id, Reg::R10)?;
@@ -1488,8 +1513,8 @@ fn emit_inline_asm(
             store_i128_value(asm, layout, dst_id, Reg::R10, Reg::R11)?;
             Ok(())
         }
-        ty if is_large_aggregate(ty, &layout.data_layout) => {
-            Err(Error::from("inline asm output too large"))
+        ty if is_aggregate_storage(ty, &layout.data_layout) => {
+            Err(Error::from("inline asm does not support aggregate outputs"))
         }
         _ => {
             emit_mov_imm64(asm, Reg::R10, 0);
@@ -1607,7 +1632,7 @@ fn load_value(
         AsmValue::Register(id) => {
             let offset = vreg_offset(layout, *id)?;
             let ty = value_type(value, reg_types, local_types)?;
-            if is_aggregate_type(&ty) && size_of(&ty) > 8 {
+            if is_aggregate_type(&ty) {
                 emit_mov_rm64(asm, dst, Reg::Rbp, offset);
                 return Ok(());
             }
@@ -1622,9 +1647,6 @@ fn load_value(
                 AsmType::I64 | AsmType::Ptr(_) | AsmType::Function { .. } => {
                     emit_mov_rm64(asm, dst, Reg::Rbp, offset);
                 }
-                _ if is_aggregate_type(&ty) && size_of(&ty) <= 8 => {
-                    emit_mov_rm64(asm, dst, Reg::Rbp, offset);
-                }
                 _ => {
                     return Err(Error::from(format!(
                         "unsupported value type for x86_64 load: {:?}",
@@ -1637,7 +1659,7 @@ fn load_value(
         AsmValue::Local(id) => {
             let offset = local_offset(layout, *id)?;
             let ty = value_type(value, reg_types, local_types)?;
-            if is_aggregate_type(&ty) && size_of(&ty) > 8 {
+            if is_aggregate_type(&ty) {
                 emit_mov_rr(asm, dst, Reg::Rbp);
                 emit_add_ri32(asm, dst, offset);
                 return Ok(());
@@ -1651,9 +1673,6 @@ fn load_value(
                 AsmType::I16 => emit_movsx_rm16(asm, dst, Reg::Rbp, offset),
                 AsmType::I32 => emit_movsxd_rm32(asm, dst, Reg::Rbp, offset),
                 AsmType::I64 | AsmType::Ptr(_) | AsmType::Function { .. } => {
-                    emit_mov_rm64(asm, dst, Reg::Rbp, offset);
-                }
-                _ if is_aggregate_type(&ty) && size_of(&ty) <= 8 => {
                     emit_mov_rm64(asm, dst, Reg::Rbp, offset);
                 }
                 _ => {
@@ -1693,7 +1712,7 @@ fn load_value(
             Ok(())
         }
         AsmValue::Global(name, ty) => {
-            if is_aggregate_type(ty) && size_of(ty) > 8 {
+            if is_aggregate_type(ty) {
                 emit_mov_symbol_addr(asm, dst, name, 0)?;
                 return Ok(());
             }
@@ -1704,9 +1723,6 @@ fn load_value(
                 AsmType::I16 => emit_movsx_rm16(asm, dst, Reg::R11, 0),
                 AsmType::I32 => emit_movsxd_rm32(asm, dst, Reg::R11, 0),
                 AsmType::I64 | AsmType::Ptr(_) | AsmType::Function { .. } => {
-                    emit_mov_rm64(asm, dst, Reg::R11, 0)
-                }
-                _ if is_aggregate_type(ty) && size_of(ty) <= 8 => {
                     emit_mov_rm64(asm, dst, Reg::R11, 0)
                 }
                 _ => {
@@ -1816,6 +1832,50 @@ fn store_i128_value(
     emit_mov_mr64(asm, Reg::Rbp, offset, lo);
     emit_mov_mr64(asm, Reg::Rbp, offset + 8, hi);
     Ok(())
+}
+
+fn load_aggregate_pair(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    value: &AsmValue,
+    lo: Reg,
+    hi: Reg,
+) -> Result<()> {
+    match value {
+        AsmValue::Register(id) => {
+            let offset = vreg_offset(layout, *id)?;
+            emit_mov_rm64(asm, Reg::R11, Reg::Rbp, offset);
+            emit_mov_rm64(asm, lo, Reg::R11, 0);
+            emit_mov_rm64(asm, hi, Reg::R11, 8);
+        }
+        AsmValue::Local(id) => {
+            let offset = local_offset(layout, *id)?;
+            emit_mov_rm64(asm, lo, Reg::Rbp, offset);
+            emit_mov_rm64(asm, hi, Reg::Rbp, offset + 8);
+        }
+        AsmValue::StackSlot(id) => {
+            let offset = stack_slot_offset(layout, *id)?;
+            emit_mov_rm64(asm, lo, Reg::Rbp, offset);
+            emit_mov_rm64(asm, hi, Reg::Rbp, offset + 8);
+        }
+        _ => return Err(Error::from("unsupported aggregate pair value")),
+    }
+    Ok(())
+}
+
+fn store_aggregate_pair(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    lo: Reg,
+    hi: Reg,
+) -> Result<()> {
+    let offset = agg_offset(layout, dst_id)?;
+    emit_mov_mr64(asm, Reg::Rbp, offset, lo);
+    emit_mov_mr64(asm, Reg::Rbp, offset + 8, hi);
+    emit_mov_rr(asm, Reg::R10, Reg::Rbp);
+    emit_add_ri32(asm, Reg::R10, offset);
+    store_vreg(asm, layout, dst_id, Reg::R10)
 }
 
 fn emit_i128_binop(
@@ -2145,17 +2205,58 @@ fn is_aggregate_type(ty: &AsmType) -> bool {
     matches!(ty, AsmType::Struct { .. } | AsmType::Array(_, _))
 }
 
+fn is_aggregate_storage(ty: &AsmType, _data_layout: &LirDataLayout) -> bool {
+    is_aggregate_type(ty)
+}
+
 #[allow(dead_code)]
 fn is_vector_type(ty: &AsmType) -> bool {
     matches!(ty, AsmType::Vector(_, _))
 }
 
-fn is_large_aggregate(ty: &AsmType, data_layout: &LirDataLayout) -> bool {
-    is_aggregate_type(ty) && data_layout.size_of(ty).expect("layout query failed") > 8
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AbiPassMode {
+    Ignore,
+    Direct,
+    Pair,
+    Indirect,
 }
 
-fn returns_aggregate(ty: &AsmType, data_layout: &LirDataLayout) -> bool {
-    is_large_aggregate(ty, data_layout)
+fn abi_pass_mode(ty: &AsmType, data_layout: &LirDataLayout) -> Result<AbiPassMode> {
+    if matches!(ty, AsmType::Void) {
+        return Ok(AbiPassMode::Ignore);
+    }
+    if !is_aggregate_type(ty) {
+        return Ok(if matches!(ty, AsmType::I128) {
+            AbiPassMode::Pair
+        } else {
+            AbiPassMode::Direct
+        });
+    }
+    let size = data_layout
+        .size_of(ty)
+        .map_err(|error| Error::from(error.to_string()))?;
+    if size == 0 {
+        return Ok(AbiPassMode::Ignore);
+    }
+    if let AsmType::Struct { fields, .. } = ty {
+        let pair = fields.len() == 2
+            && fields.iter().all(|field| {
+                matches!(
+                    field,
+                    AsmType::I1
+                        | AsmType::I8
+                        | AsmType::I16
+                        | AsmType::I32
+                        | AsmType::I64
+                        | AsmType::Ptr(_)
+                ) && data_layout.size_of(field).ok() == Some(8)
+            });
+        if pair && size == 16 {
+            return Ok(AbiPassMode::Pair);
+        }
+    }
+    Ok(AbiPassMode::Indirect)
 }
 
 fn is_integer_type(ty: &AsmType) -> bool {
@@ -2267,8 +2368,8 @@ fn pack_small_aggregate(
 ) -> Result<u64> {
     let size_of = |ty: &LirType| data_layout.size_of(ty).expect("layout query failed");
     let struct_layout = |ty: &LirType| data_layout.struct_layout(ty).expect("layout query failed");
-    if size_of(ty) > 8 {
-        return Err(Error::from("aggregate too large to pack"));
+    if !matches!(abi_pass_mode(ty, data_layout)?, AbiPassMode::Direct) {
+        return Err(Error::from("aggregate is not a direct word value"));
     }
     match (constant, ty) {
         (AsmConstant::Struct(values, _), AsmType::Struct { fields, .. }) => {
@@ -2621,6 +2722,7 @@ fn emit_block(
     block: &AsmBlock,
     format: TargetFormat,
     func_map: &HashMap<String, u32>,
+    signatures: &HashMap<String, AsmFunctionSignature>,
     layout: &FrameLayout,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -3064,6 +3166,7 @@ fn emit_block(
                     function,
                     args,
                     func_map,
+                    signatures,
                     &ty,
                     reg_types,
                     local_types,
@@ -3266,7 +3369,10 @@ fn emit_block(
         }
         AsmTerminator::Return(Some(value)) => {
             let mut exit_reg = None;
-            if returns_aggregate(return_ty, &layout.data_layout) {
+            if matches!(
+                abi_pass_mode(return_ty, &layout.data_layout)?,
+                AbiPassMode::Indirect
+            ) {
                 let sret_offset = layout
                     .sret_offset
                     .ok_or_else(|| Error::from("missing sret pointer for aggregate return"))?;
@@ -3299,7 +3405,14 @@ fn emit_block(
                 emit_ret(asm);
                 return Ok(());
             }
-            if matches!(return_ty, AsmType::I128) {
+            if matches!(
+                abi_pass_mode(return_ty, &layout.data_layout)?,
+                AbiPassMode::Pair
+            ) && is_aggregate_type(return_ty)
+            {
+                load_aggregate_pair(asm, layout, value, Reg::Rax, Reg::Rdx)?;
+                exit_reg = Some(Reg::Rax);
+            } else if matches!(return_ty, AsmType::I128) {
                 load_i128_value(
                     asm,
                     layout,
@@ -3366,6 +3479,7 @@ fn emit_block(
                 function,
                 args,
                 func_map,
+                signatures,
                 &AsmType::Void,
                 reg_types,
                 local_types,
@@ -3850,7 +3964,7 @@ fn emit_load(
         store_i128_value(asm, layout, dst_id, Reg::R10, Reg::R11)?;
         return Ok(());
     }
-    if is_large_aggregate(ty, &layout.data_layout) {
+    if is_aggregate_storage(ty, &layout.data_layout) {
         let size = size_of(ty) as i32;
         if size == 0 {
             return Ok(());
@@ -3893,9 +4007,6 @@ fn emit_load(
                     AsmType::I64 | AsmType::Ptr(_) | AsmType::Function { .. } => {
                         emit_mov_rm64(asm, Reg::R10, Reg::Rbp, offset);
                     }
-                    _ if is_aggregate_type(ty) && size_of(ty) <= 8 => {
-                        emit_mov_rm64(asm, Reg::R10, Reg::Rbp, offset);
-                    }
                     _ => {
                         return Err(Error::from(format!(
                             "unsupported load type for x86_64: {:?}",
@@ -3922,9 +4033,6 @@ fn emit_load(
                     AsmType::I64 | AsmType::Ptr(_) | AsmType::Function { .. } => {
                         emit_mov_rm64(asm, Reg::R10, Reg::R11, 0);
                     }
-                    _ if is_aggregate_type(ty) && size_of(ty) <= 8 => {
-                        emit_mov_rm64(asm, Reg::R10, Reg::R11, 0);
-                    }
                     _ => {
                         return Err(Error::from(format!(
                             "unsupported load type for x86_64: {:?}",
@@ -3949,9 +4057,6 @@ fn emit_load(
                     AsmType::I16 => emit_movsx_rm16(asm, Reg::R10, Reg::R11, 0),
                     AsmType::I32 => emit_movsxd_rm32(asm, Reg::R10, Reg::R11, 0),
                     AsmType::I64 | AsmType::Ptr(_) | AsmType::Function { .. } => {
-                        emit_mov_rm64(asm, Reg::R10, Reg::R11, 0);
-                    }
-                    _ if is_aggregate_type(ty) && size_of(ty) <= 8 => {
                         emit_mov_rm64(asm, Reg::R10, Reg::R11, 0);
                     }
                     _ => {
@@ -4090,6 +4195,7 @@ fn emit_call(
     function: &AsmValue,
     args: &[AsmValue],
     func_map: &HashMap<String, u32>,
+    signatures: &HashMap<String, AsmFunctionSignature>,
     ret_ty: &AsmType,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -4109,7 +4215,15 @@ fn emit_call(
 
     let (arg_regs, float_regs, use_al) = call_abi(format);
 
-    let needs_sret = returns_aggregate(ret_ty, &layout.data_layout);
+    let effective_ret_ty = match function {
+        AsmValue::Function(name) => signatures
+            .get(name)
+            .map(|signature| &signature.return_type)
+            .unwrap_or(ret_ty),
+        _ => ret_ty,
+    };
+    let return_mode = abi_pass_mode(effective_ret_ty, &layout.data_layout)?;
+    let needs_sret = matches!(return_mode, AbiPassMode::Indirect);
     let mut int_idx = 0usize;
     let mut float_idx = 0usize;
     let mut stack_idx = 0usize;
@@ -4220,6 +4334,8 @@ fn emit_call(
             emit_add_ri32(asm, Reg::R10, agg_off);
             store_vreg(asm, layout, dst_id, Reg::R10)?;
         }
+    } else if matches!(return_mode, AbiPassMode::Pair) && is_aggregate_type(effective_ret_ty) {
+        store_aggregate_pair(asm, layout, dst_id, Reg::Rax, Reg::Rdx)?;
     } else if matches!(ret_ty, AsmType::I128) {
         store_i128_value(asm, layout, dst_id, Reg::Rax, Reg::Rdx)?;
     } else if !matches!(ret_ty, AsmType::Void) {
@@ -4511,7 +4627,7 @@ fn push_aggregate_constant_arg(
     rodata_pool: &mut HashMap<String, u64>,
 ) -> Result<bool> {
     let ty = value_type(arg, reg_types, local_types)?;
-    if !is_large_aggregate(&ty, &layout.data_layout)
+    if !is_aggregate_storage(&ty, &layout.data_layout)
         || !matches!(
             arg,
             AsmValue::Constant(AsmConstant::Struct(_, _) | AsmConstant::Array(_, _))
@@ -4710,7 +4826,7 @@ fn emit_store(
             other => other,
         };
         let elem_size = size_of(elem_ty) as i32;
-        if is_large_aggregate(elem_ty, &layout.data_layout) {
+        if is_aggregate_storage(elem_ty, &layout.data_layout) {
             match address {
                 AsmValue::StackSlot(id) => {
                     let dst_offset = stack_slot_offset(layout, *id)?;
@@ -4915,8 +5031,10 @@ fn emit_store(
         if matches!(
             constant,
             AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)
-        ) && size_of(&value_ty) <= 8
-        {
+        ) && matches!(
+            abi_pass_mode(&value_ty, &layout.data_layout)?,
+            AbiPassMode::Direct
+        ) {
             let bits = pack_small_aggregate(constant, &value_ty, &layout.data_layout)?;
             emit_mov_imm64(asm, Reg::R10, bits);
             match address {
@@ -4939,7 +5057,7 @@ fn emit_store(
             return Ok(());
         }
     }
-    if is_large_aggregate(&value_ty, &layout.data_layout) {
+    if is_aggregate_storage(&value_ty, &layout.data_layout) {
         let size = size_of(&value_ty) as i32;
         if let AsmValue::Constant(AsmConstant::GlobalRef(name, _, indices)) = value {
             let addend = indices.iter().map(|index| *index as i64).sum();
@@ -5174,9 +5292,6 @@ fn emit_store(
                     AsmType::I64 | AsmType::Ptr(_) | AsmType::Function { .. } => {
                         emit_mov_mr64(asm, Reg::Rbp, offset, Reg::R10);
                     }
-                    _ if is_aggregate_type(&value_ty) && size_of(&value_ty) <= 8 => {
-                        emit_mov_mr64(asm, Reg::Rbp, offset, Reg::R10);
-                    }
                     _ => {
                         return Err(Error::from(format!(
                             "unsupported store type for x86_64: {:?}",
@@ -5200,9 +5315,6 @@ fn emit_store(
                     AsmType::I64 | AsmType::Ptr(_) | AsmType::Function { .. } => {
                         emit_mov_mr64(asm, Reg::R11, 0, Reg::R10);
                     }
-                    _ if is_aggregate_type(&value_ty) && size_of(&value_ty) <= 8 => {
-                        emit_mov_mr64(asm, Reg::R11, 0, Reg::R10);
-                    }
                     _ => {
                         return Err(Error::from(format!(
                             "unsupported store type for x86_64: {:?}",
@@ -5224,9 +5336,6 @@ fn emit_store(
                     AsmType::I16 => emit_mov_mr16(asm, Reg::R11, 0, Reg::R10),
                     AsmType::I32 => emit_mov_mr32(asm, Reg::R11, 0, Reg::R10),
                     AsmType::I64 | AsmType::Ptr(_) | AsmType::Function { .. } => {
-                        emit_mov_mr64(asm, Reg::R11, 0, Reg::R10);
-                    }
-                    _ if is_aggregate_type(&value_ty) && size_of(&value_ty) <= 8 => {
                         emit_mov_mr64(asm, Reg::R11, 0, Reg::R10);
                     }
                     _ => {
@@ -6047,7 +6156,7 @@ fn store_constant_aggregate_to_reg(
                     .get(idx)
                     .ok_or_else(|| Error::from("aggregate field out of range"))?;
                 let field_size = size_of(field_ty);
-                if is_large_aggregate(field_ty, data_layout) {
+                if is_aggregate_storage(field_ty, data_layout) {
                     emit_mov_rr(asm, Reg::R9, base);
                     emit_add_ri32(asm, Reg::R9, field_offset as i32);
                     store_constant_aggregate_to_reg(
@@ -6105,7 +6214,7 @@ fn store_constant_aggregate_to_reg(
             }
             for (idx, elem) in values.iter().enumerate() {
                 let offset = (idx as i32) * elem_size;
-                if is_large_aggregate(elem_ty, data_layout) {
+                if is_aggregate_storage(elem_ty, data_layout) {
                     emit_mov_rr(asm, Reg::R9, base);
                     emit_add_ri32(asm, Reg::R9, offset);
                     store_constant_aggregate_to_reg(
@@ -6176,7 +6285,12 @@ fn emit_bitcast(
     let src_ty = value_type(value, reg_types, local_types)?;
     let src_size = size_of(&src_ty);
     let dst_size = size_of(dst_ty);
-    if src_size != dst_size || src_size > 8 {
+    if src_size != dst_size
+        || !matches!(
+            abi_pass_mode(&src_ty, &layout.data_layout)?,
+            AbiPassMode::Direct
+        )
+    {
         return Err(Error::from("unsupported bitcast size for x86_64"));
     }
     if src_size == 0 {
@@ -6213,7 +6327,7 @@ fn emit_insert_value(
             .expect("layout query failed")
     };
     let agg_ty = value_type(aggregate, reg_types, local_types)?;
-    if !is_large_aggregate(&agg_ty, &layout.data_layout) {
+    if !is_aggregate_storage(&agg_ty, &layout.data_layout) {
         return Err(Error::from("InsertValue expects aggregate"));
     }
     let size = size_of(&agg_ty) as i32;
@@ -6235,7 +6349,7 @@ fn emit_insert_value(
 
     let (field_offset, field_ty) = aggregate_field_offset(&agg_ty, indices, &layout.data_layout)?;
     let store_offset = dst_offset + field_offset as i32;
-    if is_large_aggregate(&field_ty, &layout.data_layout) {
+    if is_aggregate_storage(&field_ty, &layout.data_layout) {
         let field_size = size_of(&field_ty) as i32;
         if field_size == 0 {
             return Ok(());
@@ -6324,9 +6438,6 @@ fn emit_insert_value(
                 AsmType::I64 | AsmType::Ptr(_) | AsmType::Function { .. } => {
                     emit_mov_mr64(asm, Reg::Rbp, store_offset, Reg::R10);
                 }
-                _ if is_aggregate_type(&field_ty) && size_of(&field_ty) <= 8 => {
-                    emit_mov_mr64(asm, Reg::Rbp, store_offset, Reg::R10);
-                }
                 _ => {
                     return Err(Error::from(format!(
                         "unsupported InsertValue element type for x86_64: {:?}",
@@ -6341,9 +6452,6 @@ fn emit_insert_value(
                 AsmType::I16 => emit_mov_mr16(asm, Reg::Rbp, store_offset, Reg::R10),
                 AsmType::I32 => emit_mov_mr32(asm, Reg::Rbp, store_offset, Reg::R10),
                 AsmType::I64 | AsmType::Ptr(_) | AsmType::Function { .. } => {
-                    emit_mov_mr64(asm, Reg::Rbp, store_offset, Reg::R10);
-                }
-                _ if is_aggregate_type(&field_ty) && size_of(&field_ty) <= 8 => {
                     emit_mov_mr64(asm, Reg::Rbp, store_offset, Reg::R10);
                 }
                 _ => {
@@ -6385,7 +6493,7 @@ fn emit_extract_value(
             .expect("layout query failed")
     };
     let agg_ty = value_type(aggregate, reg_types, local_types)?;
-    if !is_large_aggregate(&agg_ty, &layout.data_layout) {
+    if !is_aggregate_storage(&agg_ty, &layout.data_layout) {
         return Err(Error::from("ExtractValue expects aggregate"));
     }
     let size = size_of(&agg_ty) as i32;
@@ -6402,7 +6510,7 @@ fn emit_extract_value(
         .get(&dst_id)
         .cloned()
         .ok_or_else(|| Error::from("missing result type for extractvalue"))?;
-    if is_large_aggregate(&result_ty, &layout.data_layout) {
+    if is_aggregate_storage(&result_ty, &layout.data_layout) {
         let field_size = size_of(&result_ty) as i32;
         if field_size == 0 {
             return Ok(());
@@ -6429,9 +6537,6 @@ fn emit_extract_value(
             AsmType::I16 => emit_movsx_rm16(asm, Reg::R10, Reg::Rbp, load_offset),
             AsmType::I32 => emit_movsxd_rm32(asm, Reg::R10, Reg::Rbp, load_offset),
             AsmType::I64 | AsmType::Ptr(_) | AsmType::Function { .. } => {
-                emit_mov_rm64(asm, Reg::R10, Reg::Rbp, load_offset);
-            }
-            _ if is_aggregate_type(&result_ty) && size_of(&result_ty) <= 8 => {
                 emit_mov_rm64(asm, Reg::R10, Reg::Rbp, load_offset);
             }
             _ => {
@@ -6469,7 +6574,7 @@ fn emit_landingpad(
     if size == 0 {
         return Ok(());
     }
-    if is_large_aggregate(result_ty, &layout.data_layout) {
+    if is_aggregate_storage(result_ty, &layout.data_layout) {
         let dst_offset = agg_offset(layout, dst_id)?;
         zero_sp_range(asm, dst_offset, size)?;
         emit_mov_rr(asm, Reg::R10, Reg::Rbp);
@@ -6513,7 +6618,7 @@ fn emit_idiv_reg(asm: &mut Assembler, divisor: Reg) {
 
 #[cfg(test)]
 mod tests {
-    use super::emit_text_from_asmir;
+    use super::{abi_pass_mode, emit_text_from_asmir, is_aggregate_storage, AbiPassMode};
     use crate::emit::TargetFormat;
     use fp_core::asmir::{
         AsmArchitecture, AsmBlock, AsmEndianness, AsmFunction, AsmFunctionSignature,
@@ -6558,6 +6663,27 @@ mod tests {
     fn x86_64_emitter_accepts_minimal_asmir_program() {
         let output = emit_text_from_asmir(&minimal_program(), TargetFormat::Elf).unwrap();
         assert!(!output.text.is_empty());
+    }
+
+    #[test]
+    fn sysv_classifies_two_word_aggregate_as_pair_without_storage_threshold() {
+        let point = AsmType::Struct {
+            fields: vec![AsmType::I64, AsmType::I64],
+            packed: false,
+            name: None,
+        };
+        assert_eq!(abi_pass_mode(&point, &layout()).unwrap(), AbiPassMode::Pair);
+        assert!(is_aggregate_storage(&point, &layout()));
+    }
+
+    #[test]
+    fn sysv_classifies_larger_aggregate_as_indirect() {
+        let value = AsmType::Struct {
+            fields: vec![AsmType::I64, AsmType::I64, AsmType::I64],
+            packed: false,
+            name: None,
+        };
+        assert_eq!(abi_pass_mode(&value, &layout()).unwrap(), AbiPassMode::Indirect);
     }
 
     fn minimal_program() -> AsmProgram {
