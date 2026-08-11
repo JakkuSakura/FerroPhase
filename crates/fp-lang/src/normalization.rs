@@ -224,6 +224,52 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 .with_ty_slot(ty_slot);
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
+            if macro_name == "matches" {
+                // `matches!(scrutinee, pat)` — only the common literal-alternation shape
+                // (`matches!(c, 'a' | 'b' | 'c')`) is rewritten here, to
+                // `scrutinee == 'a' || scrutinee == 'b' || ...`. The pattern half isn't
+                // valid expression syntax in general (guards, destructuring, ranges), so
+                // anything else is left as `Ignored` — no worse than the previous
+                // behavior of silently rendering as `null`.
+                if let Ok(args) = parse_expr_macro_tokens(&macro_expr.invocation.token_trees) {
+                    if args.len() == 2 {
+                        let mut iter = args.into_iter();
+                        let scrutinee = iter.next().unwrap();
+                        let pattern = iter.next().unwrap();
+                        if let Some(alts) = flatten_or_literal_pattern(&pattern) {
+                            let mut alts = alts.into_iter();
+                            let mut replacement = Expr::new(ExprKind::BinOp(ExprBinOp {
+                                span: Span::default(),
+                                kind: BinOpKind::Eq,
+                                lhs: Box::new(scrutinee.clone()),
+                                rhs: Box::new(alts.next().unwrap()),
+                            }));
+                            for alt in alts {
+                                replacement = Expr::new(ExprKind::BinOp(ExprBinOp {
+                                    span: Span::default(),
+                                    kind: BinOpKind::Or,
+                                    lhs: Box::new(replacement),
+                                    rhs: Box::new(Expr::new(ExprKind::BinOp(ExprBinOp {
+                                        span: Span::default(),
+                                        kind: BinOpKind::Eq,
+                                        lhs: Box::new(scrutinee.clone()),
+                                        rhs: Box::new(alt),
+                                    }))),
+                                }));
+                            }
+                            return Ok(NormalizeOutcome::Normalized(
+                                replacement.with_ty_slot(ty_slot),
+                            ));
+                        }
+                    }
+                }
+                return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                    id,
+                    ty_slot,
+                    span,
+                    ExprKind::Macro(macro_expr),
+                )));
+            }
             if macro_name == "panic" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 let replacement = panic_macro(args).with_ty_slot(ty_slot);
@@ -874,6 +920,22 @@ fn parse_expr_macro_tokens(tokens: &[MacroTokenTree]) -> Result<Vec<Expr>> {
         args.push(expr);
     }
     Ok(args)
+}
+
+/// Flatten a `'a' | 'b' | 'c'`-shaped expression (parsed from a `matches!` pattern
+/// position, where `|` is really pattern alternation but parses as bitwise-or) into
+/// its literal alternatives. Returns `None` if any leaf isn't a literal value.
+fn flatten_or_literal_pattern(expr: &Expr) -> Option<Vec<Expr>> {
+    match expr.kind() {
+        ExprKind::BinOp(bin) if bin.kind == BinOpKind::BitOr => {
+            let mut lhs = flatten_or_literal_pattern(&bin.lhs)?;
+            let rhs = flatten_or_literal_pattern(&bin.rhs)?;
+            lhs.extend(rhs);
+            Some(lhs)
+        }
+        ExprKind::Value(_) => Some(vec![expr.clone()]),
+        _ => None,
+    }
 }
 
 fn parse_vec_macro_tokens(tokens: &[MacroTokenTree], span: Span) -> Result<Expr> {

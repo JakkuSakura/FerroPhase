@@ -159,6 +159,10 @@ pub enum KnownPackage {
     AsyncTrait,
     /// anyhow → skip (error-handling, normalised to exceptions)
     Anyhow,
+    /// Crate with no safe target-language equivalent without a real runtime
+    /// dependency (e.g. toml, serde_json, tokio) — calls into it should render as
+    /// an explicit unsupported-call stub rather than a broken identifier reference.
+    Unsupported,
     /// Local/unknown package — name is the portable path
     Other,
 }
@@ -512,6 +516,7 @@ impl CallKind {
             Self::Op(OpKind::Import(KnownPackage::Tracing)) => "import_tracing",
             Self::Op(OpKind::Import(KnownPackage::AsyncTrait)) => "import_async_trait",
             Self::Op(OpKind::Import(KnownPackage::Anyhow)) => "import_anyhow",
+            Self::Op(OpKind::Import(KnownPackage::Unsupported)) => "import_unsupported",
             Self::Op(OpKind::Import(KnownPackage::Other)) => "import_other",
         }
     }
