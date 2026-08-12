@@ -874,7 +874,18 @@ fn emit_stmt(stmt: &BlockStmt, e: &mut KotlinEmitter, is_tail: bool) -> Result<(
     match stmt {
         BlockStmt::Let(l) => {
             let var_name = ident_from_pattern(&l.pat);
-            let type_ann = extract_type_annotation(&l.pat, e);
+            let mut type_ann = extract_type_annotation(&l.pat, e);
+            // Kotlin's `String.split(...)` returns a plain (immutable) `List`,
+            // never a `MutableList` — a Rust `Vec<T>` annotation on a
+            // `let x: Vec<T> = s.split(...).collect();` binding (the `.collect()`
+            // itself is dropped as redundant, see below) would otherwise be a
+            // declared-vs-actual type mismatch.
+            let init_is_split = l.init.as_ref().is_some_and(|init| method_chain_contains(init, "split"));
+            if init_is_split {
+                if let Some(t) = type_ann.as_deref().and_then(|t| t.strip_prefix("Mutable")) {
+                    type_ann = Some(t.to_string());
+                }
+            }
             let decl_kw = if is_mut_pattern(&l.pat) { "var" } else { "val" };
             if var_name != "_" {
                 e.declare_name(&var_name);
@@ -1105,6 +1116,19 @@ fn is_mut_pattern(pat: &Pattern) -> bool {
         PatternKind::Tuple(t) => t.patterns.iter().any(is_mut_pattern),
         _ => false,
     }
+}
+
+/// True if `expr` is (or is a `.method()` chain built on top of) a call to
+/// `<obj>.<name>(...)`  — e.g. `s.split(' ').collect()` contains `"split"`
+/// even though the outermost call is `.collect()`.
+fn method_chain_contains(expr: &Expr, name: &str) -> bool {
+    let ExprKind::Invoke(inv) = expr.kind() else {
+        return false;
+    };
+    let ExprInvokeTarget::Method(sel) = &inv.target else {
+        return false;
+    };
+    sel.field.name.as_str() == name || method_chain_contains(&sel.obj, name)
 }
 
 // ── Expressions ──────────────────────────────────────────────────────────────
