@@ -386,7 +386,7 @@ mod tests {
 }
 
 pub mod ast;
-pub mod cargo_provider;
+pub mod magnet_provider;
 pub mod embedded_std;
 pub mod project;
 pub mod lexer;

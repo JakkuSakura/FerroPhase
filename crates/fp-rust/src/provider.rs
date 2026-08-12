@@ -18,12 +18,13 @@ use fp_lang::{FerroFrontend, project};
 use crate::RustFrontend;
 
 /// `PackageProvider` for real `.rs`/Cargo-based projects (as opposed to
-/// `fp_lang::cargo_provider::CargoWorkspaceProvider`'s own `.fp` dialect).
+/// `fp_lang::magnet_provider::MagnetWorkspaceProvider`'s own `.fp`/Magnet
+/// dialect).
 ///
 /// Workspace discovery reuses `fp_lang::project` (the same Cargo/Magnet
-/// manifest walking `CargoWorkspaceProvider` uses), but parsing goes through
+/// manifest walking `MagnetWorkspaceProvider` uses), but parsing goes through
 /// `RustFrontend` specifically — kept as its own path (rather than
-/// delegating to `CargoWorkspaceProvider` wholesale) so Rust-specific parsing
+/// delegating to `MagnetWorkspaceProvider` wholesale) so Rust-specific parsing
 /// work has a real seam to land in without touching `.fp`-dialect behavior.
 pub struct RustPackageProvider {
     root: PathBuf,
@@ -134,7 +135,11 @@ impl PackageProvider for RustPackageProvider {
     }
 }
 
-fn rs_relative_to_module_path(rel: &str) -> QualifiedPath {
+/// Computes the flat, file-derived `PackageItem` path tag for a source file
+/// relative to a package's source root (e.g. `"config.rs"` → `["config"]`).
+/// Exported so callers outside this module (e.g. a single-file compile that
+/// wants to match a real package's own tagging) can compute the same tag.
+pub fn rs_relative_to_module_path(rel: &str) -> QualifiedPath {
     // The crate root file (`lib.rs`/`main.rs`, never nested in a
     // subdirectory) defines crate-root-level items directly, not a `lib::`/
     // `main::` submodule — tag it with an empty path so

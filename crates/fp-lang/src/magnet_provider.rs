@@ -13,14 +13,18 @@ use fp_core::vfs::VirtualPath;
 use crate::FerroFrontend;
 use crate::project;
 
-pub struct CargoWorkspaceProvider {
+/// `PackageProvider` for ferrophase/`.fp` projects organized in a
+/// Magnet-workspace layout — Magnet is FerroPhase's own package manager,
+/// the `.fp` analog of Cargo for real Rust projects (see `RustPackageProvider`
+/// in `fp-rust` for that side). Parses `.fp` sources via `FerroFrontend`.
+pub struct MagnetWorkspaceProvider {
     #[allow(dead_code)]
     root: PathBuf,
     members: Vec<(String, PathBuf)>,
     cache: std::sync::RwLock<HashMap<String, Vec<PackageItem>>>,
 }
 
-impl CargoWorkspaceProvider {
+impl MagnetWorkspaceProvider {
     pub fn discover(start: &Path) -> ProviderResult<Self> {
         let root = project::find_manifest(start)
             .ok_or_else(|| ProviderError::other("no Cargo.toml or Magnet.toml found"))?;
@@ -33,7 +37,7 @@ impl CargoWorkspaceProvider {
     }
 }
 
-impl PackageProvider for CargoWorkspaceProvider {
+impl PackageProvider for MagnetWorkspaceProvider {
     fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
         Ok(self
             .members
@@ -99,7 +103,7 @@ impl PackageProvider for CargoWorkspaceProvider {
     }
 }
 
-impl CargoWorkspaceProvider {
+impl MagnetWorkspaceProvider {
     fn resolve_dir(&self, id: &PackageId) -> ProviderResult<PathBuf> {
         self.members
             .iter()
@@ -109,7 +113,11 @@ impl CargoWorkspaceProvider {
     }
 }
 
-fn module_path_from_relative(rel: &str) -> QualifiedPath {
+/// Computes the flat, file-derived `PackageItem` path tag for a source file
+/// relative to a package's source root (e.g. `"config.fp"` → `["config"]`).
+/// Exported so callers outside this module can compute the same tag a
+/// discovered package's items are already tagged with.
+pub fn module_path_from_relative(rel: &str) -> QualifiedPath {
     let stem = rel.trim_end_matches(".rs").trim_end_matches(".fp");
     let parts: Vec<String> = stem.split('/').map(|s| s.to_string()).collect();
     QualifiedPath::new(parts)
