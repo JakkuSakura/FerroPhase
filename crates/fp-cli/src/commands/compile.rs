@@ -935,6 +935,18 @@ async fn compile_project(
         &crate::languages::backend::output_extension_for(target)
     );
 
+    // Wrap the real provider so `load_package_source` also applies the
+    // target-language materialize + normalize transforms. Registered
+    // as-is (not pre-resolved into a single snapshot) with the typechecker
+    // below, so the driver can still do genuine resolution for any package
+    // id it asks about (e.g. `std`), not just the one being typechecked.
+    let materializing_provider: std::sync::Arc<dyn fp_core::package::provider::PackageProvider> =
+        std::sync::Arc::new(compiler::MaterializingPackageProvider::new(
+            provider.clone(),
+            materializer,
+            normalizer,
+        ));
+
     // Phase 1: load + materialize + normalize + typecheck every package before
     // serializing any of them. A struct's fields can be defined in one
     // package and mutated through a `&mut` reference in another (e.g.
@@ -946,32 +958,6 @@ async fn compile_project(
     let mut prepared: Vec<(PackageId, PackageSource)> = Vec::with_capacity(packages.len());
 
     for package_id in &packages {
-        let mut source = provider
-            .load_package_source(package_id)
-            .map_err(|e| CliError::Compilation(e.to_string()))?;
-
-        // Materialize: portable ops → target-language idioms (optional)
-        if let Some(ref mat) = materializer {
-            for pkg_item in &mut source.items {
-                let file = File {
-                    path: PathBuf::new(),
-                    attrs: vec![],
-                    collected_items: vec![],
-                    items: vec![pkg_item.item.clone()],
-                };
-                let file = crate::materialize::materialize_file(file, mat.as_ref())
-                    .map_err(|e| CliError::Compilation(e.to_string()))?;
-                if let Some(item) = file.items.into_iter().next() {
-                    pkg_item.item = item;
-                }
-            }
-        }
-
-        // Normalize: source patterns → portable ops (MUST be last transform before typing)
-        for pkg_item in &mut source.items {
-            fp_lang::normalization::normalize_items(std::slice::from_mut(&mut pkg_item.item), normalizer.as_ref())?;
-        }
-
         // Typecheck: resolve types via HIR to populate AST type slots.
         //
         // Batched by whole *package*, not per-file: a package's `impl SomeType`
@@ -984,46 +970,31 @@ async fn compile_project(
         // coarser fault isolation (one bad item anywhere in the package falls
         // the *whole* package back to untyped, not just its one file) — still
         // safe either way, since the call is wrapped in `catch_unwind` below.
-        if !args.skip_typing && !source.items.is_empty() {
-            let file = File {
-                path: PathBuf::from(package_id.as_str()),
-                attrs: vec![],
-                collected_items: vec![],
-                items: source.items.iter().map(|pkg_item| pkg_item.item.clone()).collect(),
+        let source = if !args.skip_typing {
+            let provider_for_typecheck = materializing_provider.clone();
+            let package_id_for_typecheck = package_id.clone();
+            let lossy = LossyCompileOptions {
+                enabled: args.lossy || fp_core::config::lossy_mode(),
             };
-            let expected_len = source.items.len();
+            let lang = lang.to_string();
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                compiler::typecheck_language_target(
-                    file,
-                    package_id.as_str(),
-                    &std::path::Path::new(package_id.as_str()),
-                    LossyCompileOptions {
-                        enabled: args.lossy || fp_core::config::lossy_mode(),
-                    },
-                    lang,
+                compiler::typecheck_package(
+                    provider_for_typecheck,
+                    &package_id_for_typecheck,
+                    lossy,
+                    &lang,
                 )
             })) {
-                Ok(Ok(typed)) => {
-                    let typed_items: Vec<Item> = typed.items.into_iter().collect();
-                    if typed_items.len() == expected_len {
-                        for (pkg_item, item) in source.items.iter_mut().zip(typed_items) {
-                            pkg_item.item = item;
-                        }
-                    } else {
-                        warn!(
-                            "typecheck for {} returned {} item(s), expected {} — falling back to untyped",
-                            package_id.as_str(),
-                            typed_items.len(),
-                            expected_len
-                        );
-                    }
-                }
+                Ok(Ok(typed_source)) => typed_source,
                 Ok(Err(e)) => {
                     warn!(
                         "typecheck failed for {}: {} — falling back to untyped",
                         package_id.as_str(),
                         e
                     );
+                    materializing_provider
+                        .load_package_source(package_id)
+                        .map_err(|e| CliError::Compilation(e.to_string()))?
                 }
                 Err(panic_info) => {
                     let msg = panic_info
@@ -1036,9 +1007,16 @@ async fn compile_project(
                         package_id.as_str(),
                         msg
                     );
+                    materializing_provider
+                        .load_package_source(package_id)
+                        .map_err(|e| CliError::Compilation(e.to_string()))?
                 }
             }
-        }
+        } else {
+            materializing_provider
+                .load_package_source(package_id)
+                .map_err(|e| CliError::Compilation(e.to_string()))?
+        };
 
         prepared.push((package_id.clone(), source));
     }

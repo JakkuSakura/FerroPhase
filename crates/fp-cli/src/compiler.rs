@@ -7,6 +7,7 @@ use fp_compiler::{
     CompilerDriver, CompilerExecutor, CompilerSession, ConstValueId, FullyQualifiedPath, LirId,
     PipelineMode,
 };
+use fp_core::intrinsics::{IntrinsicMaterializer, IntrinsicNormalizer};
 use fp_core::module::path::QualifiedPath;
 use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::package::{PackageDescriptor, PackageId, PackageSource};
@@ -1045,6 +1046,150 @@ pub fn prepare_language_target(
     register_threadlocal_serializer(parsed.serializer.clone());
     let _ = ast;
     Ok(())
+}
+
+/// Wraps a real, already-discovered `PackageProvider` (e.g. `RustPackageProvider`,
+/// covering an entire workspace) and applies the target-language materialize
+/// + source-normalize transforms to every item `load_package_source` returns.
+///
+/// Exists so whole-package typechecking (`typecheck_package` below) can
+/// register a provider that does genuine resolution for *any* package id —
+/// including `std`/dependencies the driver asks about internally — instead
+/// of a one-off shim that only knows how to answer for a single pre-baked
+/// `PackageSource` snapshot. `list_packages`/`load_package_metadata`/`refresh`
+/// delegate straight through; only `load_package_source` adds work.
+pub struct MaterializingPackageProvider {
+    inner: Arc<dyn PackageProvider>,
+    materializer: Option<Arc<dyn IntrinsicMaterializer>>,
+    normalizer: Arc<dyn IntrinsicNormalizer>,
+}
+
+impl MaterializingPackageProvider {
+    pub fn new(
+        inner: Arc<dyn PackageProvider>,
+        materializer: Option<Arc<dyn IntrinsicMaterializer>>,
+        normalizer: Arc<dyn IntrinsicNormalizer>,
+    ) -> Self {
+        Self {
+            inner,
+            materializer,
+            normalizer,
+        }
+    }
+}
+
+impl PackageProvider for MaterializingPackageProvider {
+    fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        self.inner.list_packages()
+    }
+
+    fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
+        self.inner.load_package_metadata(id)
+    }
+
+    fn refresh(&self) -> ProviderResult<()> {
+        self.inner.refresh()
+    }
+
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
+        let mut source = self.inner.load_package_source(id)?;
+
+        if let Some(ref mat) = self.materializer {
+            for pkg_item in &mut source.items {
+                let file = File {
+                    path: PathBuf::new(),
+                    attrs: vec![],
+                    collected_items: vec![],
+                    items: vec![pkg_item.item.clone()],
+                };
+                let file = crate::materialize::materialize_file(file, mat.as_ref())
+                    .map_err(|e| ProviderError::other(e.to_string()))?;
+                if let Some(item) = file.items.into_iter().next() {
+                    pkg_item.item = item;
+                }
+            }
+        }
+
+        for pkg_item in &mut source.items {
+            fp_lang::normalization::normalize_items(
+                std::slice::from_mut(&mut pkg_item.item),
+                self.normalizer.as_ref(),
+            )
+            .map_err(|e| ProviderError::other(e.to_string()))?;
+        }
+
+        Ok(source)
+    }
+}
+
+/// Typecheck a whole package by registering its real `PackageProvider` with
+/// a fresh `CompilerDriver` under `PipelineMode::TypecheckedTranspile`,
+/// instead of flattening the package's items into a single tag-less `File`
+/// and routing it through `InputPackageProvider`/`FerroModuleSourceResolver`
+/// (which only knows how to *discover* sibling modules from disk — the
+/// wrong tool when a real provider has already parsed and tagged every
+/// item). `HirGenerator::transform_package` reads each item's real
+/// `PackageItem.path` tag to build correct module scoping, so this needs no
+/// AST-level module nesting at all.
+///
+/// Returns the package's items with real resolved types spliced in where
+/// typing succeeded (module declarations, which HIR has no representation
+/// for, pass through untouched).
+pub fn typecheck_package(
+    provider: Arc<dyn PackageProvider>,
+    package_id: &PackageId,
+    lossy: LossyCompileOptions,
+    language: &str,
+) -> Result<PackageSource> {
+    let executor = CompilerExecutor::new();
+    let workspace = compiler_workspace_for(language);
+    workspace.register_provider(provider);
+    let mut session = CompilerSession::new(data_layout(), &executor, workspace);
+    session.driver().pipeline = PipelineMode::TypecheckedTranspile;
+    session.driver().state.set_lossy(lossy.enabled);
+    let package = executor
+        .run(session.driver().compile_package(package_id))
+        .map_err(|err| CliError::Compilation(err.to_string()))?;
+
+    let package = package.borrow();
+    let mut items = package.items.clone();
+    if let Some(lifted) = &package.lifted_ast {
+        let mut typed_iter = lifted.items.iter().cloned();
+        let mut mismatched = false;
+        let mut typed_items = Vec::with_capacity(items.len());
+        for pkg_item in &items {
+            if matches!(pkg_item.item.kind(), ItemKind::Module(_)) {
+                typed_items.push(pkg_item.item.clone());
+                continue;
+            }
+            match typed_iter.next() {
+                Some(typed) => typed_items.push(typed),
+                None => {
+                    mismatched = true;
+                    break;
+                }
+            }
+        }
+        if !mismatched && typed_iter.next().is_none() {
+            for (pkg_item, typed) in items.iter_mut().zip(typed_items) {
+                pkg_item.item = typed;
+            }
+        } else {
+            return Err(CliError::Compilation(format!(
+                "typecheck for {} produced a mismatched item count — falling back to untyped",
+                package_id.as_str()
+            )));
+        }
+    }
+
+    let source = PackageSource {
+        package_id: package_id.clone(),
+        name: package.name.clone(),
+        graph: package.graph.clone(),
+        module_paths: package.module_paths.clone(),
+        items,
+    };
+    Ok(source)
 }
 
 /// Run the shared AST through HIR generation and typing, then lift the typed
