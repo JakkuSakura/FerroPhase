@@ -214,12 +214,29 @@ fn validate_asmir(program: &AsmProgram, stage: &str) -> Result<()> {
     })
 }
 
+/// Rejects structurally malformed LIR (duplicate/undefined registers,
+/// conflicting types) before selection, with a structured error naming the
+/// function/block/instruction/register -- rather than letting a dangling
+/// register reference surface as an unrelated panic partway through
+/// selection.
+fn validate_lir(program: &LirProgram) -> Result<()> {
+    program.validate().map_err(|errors| {
+        let details = errors
+            .iter()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+        Error::from(format!("malformed LIR before selection: {details}"))
+    })
+}
+
 pub fn emit_plan(
     lir_program: &LirProgram,
     format: TargetFormat,
     arch: TargetArch,
 ) -> Result<EmitPlan> {
     let lowered_lir = codegen::lower_program_for_native(lir_program)?;
+    validate_lir(&lowered_lir)?;
     let asmir = asmir::select_program(&lowered_lir, format, arch)?;
     validate_asmir(&asmir, "selection")?;
     let mut asmir = asmir;
