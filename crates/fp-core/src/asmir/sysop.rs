@@ -1,4 +1,4 @@
-use super::AsmValue;
+use super::AsmOperand;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PosixFlagStyle {
@@ -15,84 +15,84 @@ pub enum PosixDirentStyle {
 #[derive(Debug, Clone, PartialEq)]
 pub enum AsmSysOp {
     Exit {
-        code: AsmValue,
+        code: AsmOperand,
     },
     GetPid,
     GetTid,
     Dlopen {
-        path: AsmValue,
-        flags: AsmValue,
+        path: AsmOperand,
+        flags: AsmOperand,
     },
     Dlsym {
-        handle: AsmValue,
-        symbol: AsmValue,
+        handle: AsmOperand,
+        symbol: AsmOperand,
     },
     Dlclose {
-        handle: AsmValue,
+        handle: AsmOperand,
     },
     Unlink {
-        path: AsmValue,
+        path: AsmOperand,
     },
     Mkdir {
-        path: AsmValue,
-        mode: AsmValue,
+        path: AsmOperand,
+        mode: AsmOperand,
     },
     Rmdir {
-        path: AsmValue,
+        path: AsmOperand,
     },
     Rename {
-        from: AsmValue,
-        to: AsmValue,
+        from: AsmOperand,
+        to: AsmOperand,
     },
     Access {
-        path: AsmValue,
-        mode: AsmValue,
+        path: AsmOperand,
+        mode: AsmOperand,
     },
     Write {
-        fd: AsmValue,
-        buffer: AsmValue,
-        len: AsmValue,
+        fd: AsmOperand,
+        buffer: AsmOperand,
+        len: AsmOperand,
     },
     Read {
-        fd: AsmValue,
-        buffer: AsmValue,
-        len: AsmValue,
+        fd: AsmOperand,
+        buffer: AsmOperand,
+        len: AsmOperand,
     },
     Close {
-        fd: AsmValue,
+        fd: AsmOperand,
     },
     Open {
-        path: AsmValue,
-        flags: AsmValue,
-        mode: AsmValue,
+        path: AsmOperand,
+        flags: AsmOperand,
+        mode: AsmOperand,
         flag_style: PosixFlagStyle,
     },
     Seek {
-        fd: AsmValue,
-        offset: AsmValue,
-        whence: AsmValue,
+        fd: AsmOperand,
+        offset: AsmOperand,
+        whence: AsmOperand,
     },
     Mmap {
-        addr: AsmValue,
-        len: AsmValue,
-        prot: AsmValue,
-        flags: AsmValue,
-        fd: AsmValue,
-        offset: AsmValue,
+        addr: AsmOperand,
+        len: AsmOperand,
+        prot: AsmOperand,
+        flags: AsmOperand,
+        fd: AsmOperand,
+        offset: AsmOperand,
     },
     Munmap {
-        addr: AsmValue,
-        len: AsmValue,
+        addr: AsmOperand,
+        len: AsmOperand,
     },
 
     Opendir {
-        path: AsmValue,
+        path: AsmOperand,
     },
     Readdir {
-        dir: AsmValue,
+        dir: AsmOperand,
         dirent_style: PosixDirentStyle,
     },
     Closedir {
-        dir: AsmValue,
+        dir: AsmOperand,
     },
 }

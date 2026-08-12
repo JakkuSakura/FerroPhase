@@ -5,6 +5,8 @@ use crate::container::ContainerFile;
 use crate::lir::{
     CallingConvention, DebugInfo, Linkage, LirDataLayout, Name, StackSlot, Ty, Visibility,
 };
+use std::collections::BTreeMap;
+
 pub use sysop::{AsmSysOp, PosixDirentStyle, PosixFlagStyle};
 
 pub type AsmBlockId = u32;
@@ -135,6 +137,18 @@ pub struct AsmFunction {
     pub calling_convention: Option<CallingConvention>,
     pub section: Option<String>,
     pub is_declaration: bool,
+    /// Canonical type/bank/width for every virtual register this function
+    /// defines. `AsmRegister::Virtual` carries only an id; this table is the
+    /// sole source of truth for what that id means.
+    pub virtual_registers: BTreeMap<AsmVirtualRegId, AsmVirtualRegister>,
+    next_virtual_reg: AsmVirtualRegId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AsmVirtualRegister {
+    pub ty: AsmType,
+    pub bank: AsmRegisterBank,
+    pub bits: u16,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -167,8 +181,6 @@ pub struct AsmBlock {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AsmInstruction {
     pub id: AsmInstrId,
-    pub kind: AsmInstructionKind,
-    pub ty: AsmType,
     pub opcode: AsmOpcode,
     pub operands: Vec<AsmOperand>,
     pub implicit_uses: Vec<AsmRegister>,
@@ -176,6 +188,31 @@ pub struct AsmInstruction {
     pub encoding: Option<Vec<u8>>,
     pub debug_info: Option<DebugInfo>,
     pub annotations: Vec<AsmAnnotation>,
+}
+
+impl AsmInstruction {
+    pub fn new(id: AsmInstrId, opcode: AsmOpcode, operands: Vec<AsmOperand>) -> Self {
+        Self {
+            id,
+            opcode,
+            operands,
+            implicit_uses: Vec::new(),
+            implicit_defs: Vec::new(),
+            encoding: None,
+            debug_info: None,
+            annotations: Vec::new(),
+        }
+    }
+
+    /// The register written by this instruction, if any. An instruction
+    /// defines at most one value; that value is always a `Write` (or
+    /// `ReadWrite`, for tied target operands) register operand.
+    pub fn result_register(&self) -> Option<&AsmRegister> {
+        self.operands.iter().find_map(|operand| match operand {
+            AsmOperand::Register { reg, access } if *access != OperandAccess::Read => Some(reg),
+            _ => None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -194,9 +231,50 @@ pub enum AsmOperand {
         reg: AsmRegister,
         inverted: bool,
     },
+    /// Reference to a function-local stack local, by id (see `AsmFunction::locals`).
+    Local(u32),
+    /// Reference to a function-local stack slot, by id (see `AsmFunction::stack_slots`).
+    StackSlot(u32),
+    /// A type payload for opcodes whose semantics depend on a type that
+    /// isn't recoverable from any register in the operand list (e.g. the
+    /// type of an `undef`/`null` literal, which has no defining register).
+    Type(AsmType),
+    /// A condition code, e.g. the third operand of a decomposed comparison
+    /// (`lhs`, `rhs`, `Condition(cc)`).
+    Condition(AsmConditionCode),
+    Undef(AsmType),
+    Null(AsmType),
+    /// Free-form string data (inline-asm text/constraints, intrinsic format
+    /// strings) that has no register or symbol identity of its own.
+    StringData(String),
+    SysOp(Box<AsmSysOp>),
+    /// Non-def/use instruction metadata (alignment, volatility, calling
+    /// convention, tail-call, landing-pad clause tags, ...). Kept as
+    /// operands rather than instruction fields so `operands` remains the
+    /// single source of truth for everything the instruction carries.
+    Attr(AsmAttr),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum AsmAttr {
+    Alignment(u32),
+    Volatile,
+    Inbounds,
+    TailCall,
+    SideEffects,
+    AlignStack,
+    Cleanup,
+    CallingConv(CallingConvention),
+    SyscallConvention(AsmSyscallConvention),
+    Intrinsic(AsmIntrinsicKind),
+    SymbolAddressKind(AsmSymbolAddressKind),
+    /// Tags one value operand as a landing-pad `catch` clause.
+    LandingPadCatch,
+    /// Tags the following `n` value operands as one landing-pad `filter` clause.
+    LandingPadFilter(u32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperandAccess {
     Read,
     Write,
@@ -206,11 +284,7 @@ pub enum OperandAccess {
 #[derive(Debug, Clone, PartialEq)]
 pub enum AsmRegister {
     Physical(AsmPhysicalRegister),
-    Virtual {
-        id: AsmVirtualRegId,
-        bank: AsmRegisterBank,
-        size_bits: u16,
-    },
+    Virtual(AsmVirtualRegId),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -226,6 +300,9 @@ pub enum AsmRegisterBank {
     Float,
     Vector,
     Predicate,
+    /// Condition-code / flags register produced by compare-like opcodes and
+    /// consumed by conditional branches/selects.
+    Flags,
     Special,
     Custom(String),
 }
@@ -394,6 +471,23 @@ impl AsmGenericOpcode {
             AsmGenericOpcode::SymbolAddress => "symbol_address",
         }
     }
+
+    /// Whether this opcode always defines a result when selected. `Call`,
+    /// `IntrinsicCall`, `Syscall`, and `InlineAsm` are excluded because
+    /// voidness is data-driven (a call may or may not have a destination),
+    /// not implied by the opcode alone.
+    pub fn always_defines_result(&self) -> bool {
+        !matches!(
+            self,
+            AsmGenericOpcode::Nop
+                | AsmGenericOpcode::Store
+                | AsmGenericOpcode::Unreachable
+                | AsmGenericOpcode::Call
+                | AsmGenericOpcode::IntrinsicCall
+                | AsmGenericOpcode::Syscall
+                | AsmGenericOpcode::InlineAsm
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -402,158 +496,6 @@ pub enum AsmSyscallConvention {
     LinuxAarch64,
     DarwinX86_64,
     DarwinAarch64,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum AsmInstructionKind {
-    Nop,
-    Add(AsmValue, AsmValue),
-    Sub(AsmValue, AsmValue),
-    Mul(AsmValue, AsmValue),
-    Div(AsmValue, AsmValue),
-    Rem(AsmValue, AsmValue),
-    And(AsmValue, AsmValue),
-    Or(AsmValue, AsmValue),
-    Xor(AsmValue, AsmValue),
-    Shl(AsmValue, AsmValue),
-    Shr(AsmValue, AsmValue),
-    Not(AsmValue),
-    Eq(AsmValue, AsmValue),
-    Ne(AsmValue, AsmValue),
-    Lt(AsmValue, AsmValue),
-    Le(AsmValue, AsmValue),
-    Gt(AsmValue, AsmValue),
-    Ge(AsmValue, AsmValue),
-    Ult(AsmValue, AsmValue),
-    Ule(AsmValue, AsmValue),
-    Ugt(AsmValue, AsmValue),
-    Uge(AsmValue, AsmValue),
-    Load {
-        address: AsmValue,
-        alignment: Option<u32>,
-        volatile: bool,
-    },
-    Store {
-        value: AsmValue,
-        address: AsmValue,
-        alignment: Option<u32>,
-        volatile: bool,
-    },
-    Alloca {
-        size: AsmValue,
-        alignment: u32,
-    },
-    GetElementPtr {
-        ptr: AsmValue,
-        indices: Vec<AsmValue>,
-        inbounds: bool,
-    },
-    Bitcast(AsmValue, AsmType),
-    PtrToInt(AsmValue),
-    IntToPtr(AsmValue),
-    Trunc(AsmValue, AsmType),
-    ZExt(AsmValue, AsmType),
-    SExt(AsmValue, AsmType),
-    FPExt(AsmValue, AsmType),
-    FPTrunc(AsmValue, AsmType),
-    FPToUI(AsmValue, AsmType),
-    FPToSI(AsmValue, AsmType),
-    UIToFP(AsmValue, AsmType),
-    SIToFP(AsmValue, AsmType),
-    ExtractValue {
-        aggregate: AsmValue,
-        indices: Vec<u32>,
-    },
-    InsertValue {
-        aggregate: AsmValue,
-        element: AsmValue,
-        indices: Vec<u32>,
-    },
-    Call {
-        function: AsmValue,
-        args: Vec<AsmValue>,
-        calling_convention: CallingConvention,
-        tail_call: bool,
-    },
-    IntrinsicCall {
-        kind: AsmIntrinsicKind,
-        format: String,
-        args: Vec<AsmValue>,
-    },
-    SextOrTrunc(AsmValue, AsmType),
-    Phi {
-        incoming: Vec<(AsmValue, AsmBlockId)>,
-    },
-    Select {
-        condition: AsmValue,
-        if_true: AsmValue,
-        if_false: AsmValue,
-    },
-    InlineAsm {
-        asm_string: String,
-        constraints: String,
-        inputs: Vec<AsmValue>,
-        output_type: AsmType,
-        side_effects: bool,
-        align_stack: bool,
-    },
-    LandingPad {
-        result_type: AsmType,
-        personality: Option<AsmValue>,
-        cleanup: bool,
-        clauses: Vec<AsmLandingPadClause>,
-    },
-    Unreachable,
-    Freeze(AsmValue),
-    Syscall {
-        convention: AsmSyscallConvention,
-        number: AsmValue,
-        args: Vec<AsmValue>,
-    },
-    SysOp(AsmSysOp),
-    /// Replicates a scalar value into all lanes of a vector.
-    ///
-    /// `lane_bits * lanes` must match the destination vector size.
-    Splat {
-        value: AsmValue,
-        lane_bits: u16,
-        lanes: u16,
-    },
-    /// Constructs a vector value from explicit lane values.
-    ///
-    /// Lane types are derived from the destination instruction `ty`.
-    BuildVector {
-        elements: Vec<AsmValue>,
-    },
-    /// Extract a lane (0-based) from a vector value.
-    ExtractLane {
-        vector: AsmValue,
-        lane: u16,
-    },
-    /// Produces a new vector with one lane overwritten.
-    InsertLane {
-        vector: AsmValue,
-        lane: u16,
-        value: AsmValue,
-    },
-    /// Interleaves low lanes from two vectors.
-    ///
-    /// For example with `lane_bits=16`, the result is the equivalent of:
-    /// `zip1 vD.8h, vLhs.8h, vRhs.8h` on AArch64 or `punpcklwd` on x86_64.
-    ZipLow {
-        lhs: AsmValue,
-        rhs: AsmValue,
-        lane_bits: u16,
-    },
-
-    /// Produces the address of a symbol.
-    ///
-    /// This is used to represent ELF GOT/PLT indirections explicitly during
-    /// cross-format transpilation.
-    SymbolAddress {
-        symbol: String,
-        kind: AsmSymbolAddressKind,
-    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -572,71 +514,47 @@ pub enum AsmIntrinsicKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AsmTerminator {
-    Return(Option<AsmValue>),
+    Return(Option<AsmOperand>),
     Br(AsmBlockId),
     CondBr {
-        condition: AsmValue,
+        condition: AsmOperand,
         if_true: AsmBlockId,
         if_false: AsmBlockId,
     },
     Switch {
-        value: AsmValue,
+        value: AsmOperand,
         default: AsmBlockId,
         cases: Vec<(u64, AsmBlockId)>,
     },
     IndirectBr {
-        address: AsmValue,
+        address: AsmOperand,
         destinations: Vec<AsmBlockId>,
     },
     Invoke {
-        function: AsmValue,
-        args: Vec<AsmValue>,
+        function: AsmOperand,
+        args: Vec<AsmOperand>,
         normal_dest: AsmBlockId,
         unwind_dest: AsmBlockId,
         calling_convention: CallingConvention,
     },
-    Resume(AsmValue),
+    Resume(AsmOperand),
     Unreachable,
     CleanupRet {
-        cleanup_pad: AsmValue,
+        cleanup_pad: AsmOperand,
         unwind_dest: Option<AsmBlockId>,
     },
     CatchRet {
-        catch_pad: AsmValue,
+        catch_pad: AsmOperand,
         successor: AsmBlockId,
     },
     CatchSwitch {
-        parent_pad: Option<AsmValue>,
+        parent_pad: Option<AsmOperand>,
         handlers: Vec<AsmBlockId>,
         unwind_dest: Option<AsmBlockId>,
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum AsmValue {
-    Register(u32),
-    PhysicalRegister(AsmPhysicalRegister),
-    Address(Box<AsmAddressValue>),
-    Condition(AsmConditionCode),
-    Comparison(Box<AsmComparisonValue>),
-    Flags(u32),
-    Constant(AsmConstant),
-    Global(String, AsmType),
-    Function(String),
-    Local(u32),
-    StackSlot(u32),
-    Undef(AsmType),
-    Null(AsmType),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct AsmComparisonValue {
-    pub lhs: AsmValue,
-    pub rhs: AsmValue,
-    pub condition: AsmConditionCode,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AsmConditionCode {
     Eq,
     Ne,
@@ -651,13 +569,17 @@ pub enum AsmConditionCode {
     Nz,
 }
 
+/// An address computed from operand-like parts, used internally while
+/// selection/GEP-folding builds up an effective address before it is
+/// finalized into an `AsmOperand::Memory` (or a plain register/local/stack
+/// operand, if it never needed a full addressing mode).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AsmAddressValue {
-    pub base: Option<Box<AsmValue>>,
-    pub index: Option<Box<AsmValue>>,
+    pub base: Option<Box<AsmOperand>>,
+    pub index: Option<Box<AsmOperand>>,
     pub scale: u8,
     pub displacement: i64,
-    pub segment: Option<Box<AsmValue>>,
+    pub segment: Option<Box<AsmOperand>>,
     pub size_bytes: Option<u16>,
     pub address_space: Option<u32>,
     pub pre_indexed: bool,
@@ -696,11 +618,34 @@ pub struct AsmLocal {
 
 pub type AsmStackSlot = StackSlot;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum AsmLandingPadClause {
-    Catch(AsmValue),
-    Filter(Vec<AsmValue>),
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AsmValidationError {
+    pub function: Name,
+    pub block: Option<AsmBlockId>,
+    pub instruction: Option<AsmInstrId>,
+    pub operand_index: Option<usize>,
+    pub register: Option<AsmVirtualRegId>,
+    pub message: String,
 }
+
+impl std::fmt::Display for AsmValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.function, self.message)?;
+        if let Some(block) = self.block {
+            write!(f, " (block bb{block}")?;
+            if let Some(instruction) = self.instruction {
+                write!(f, ", instruction #{instruction}")?;
+            }
+            if let Some(idx) = self.operand_index {
+                write!(f, ", operand {idx}")?;
+            }
+            write!(f, ")")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for AsmValidationError {}
 
 impl AsmProgram {
     pub fn new(target: AsmTarget, data_layout: LirDataLayout) -> Self {
@@ -736,9 +681,157 @@ impl AsmGlobal {
     }
 }
 
+impl AsmFunction {
+    /// Constructs an empty function declaration. `virtual_registers` starts
+    /// empty and its allocator id space is private to this `AsmFunction` —
+    /// callers must use `alloc_virtual_register` rather than assembling
+    /// `AsmRegister::Virtual` ids by hand.
+    pub fn new(name: Name, signature: AsmFunctionSignature) -> Self {
+        Self {
+            name,
+            signature,
+            basic_blocks: Vec::new(),
+            locals: Vec::new(),
+            stack_slots: Vec::new(),
+            frame: None,
+            linkage: Linkage::External,
+            visibility: Visibility::Default,
+            calling_convention: None,
+            section: None,
+            is_declaration: false,
+            virtual_registers: BTreeMap::new(),
+            next_virtual_reg: 0,
+        }
+    }
+
+    /// Allocates a fresh virtual register id, independent of any
+    /// `AsmInstrId` space, and records its canonical type/bank/width.
+    pub fn alloc_virtual_register(
+        &mut self,
+        ty: AsmType,
+        bank: AsmRegisterBank,
+        bits: u16,
+    ) -> AsmVirtualRegId {
+        let id = self.next_virtual_reg;
+        self.next_virtual_reg = self
+            .next_virtual_reg
+            .checked_add(1)
+            .expect("AsmFunction virtual register id space exhausted");
+        self.virtual_registers
+            .insert(id, AsmVirtualRegister { ty, bank, bits });
+        id
+    }
+
+    pub fn virtual_register(&self, id: AsmVirtualRegId) -> Option<&AsmVirtualRegister> {
+        self.virtual_registers.get(&id)
+    }
+
+    /// Structural well-formedness checks over this function's canonical
+    /// AsmIR: every virtual-register use resolves to a declared register,
+    /// every write is to a declared register, and every opcode that always
+    /// defines a result actually has one. This does not (yet) enforce a
+    /// full per-opcode operand arity/kind schema.
+    pub fn validate(&self) -> Result<(), Vec<AsmValidationError>> {
+        let mut errors = Vec::new();
+
+        for (id, _) in &self.virtual_registers {
+            if *id >= self.next_virtual_reg {
+                errors.push(AsmValidationError {
+                    function: self.name.clone(),
+                    block: None,
+                    instruction: None,
+                    operand_index: None,
+                    register: Some(*id),
+                    message: format!(
+                        "virtual register v{id} is declared past the allocator's next id (v{})",
+                        self.next_virtual_reg
+                    ),
+                });
+            }
+        }
+
+        for block in &self.basic_blocks {
+            for instruction in &block.instructions {
+                let mut has_result = false;
+                for (idx, operand) in instruction.operands.iter().enumerate() {
+                    let (reg, access) = match operand {
+                        AsmOperand::Register { reg, access } => (reg, Some(*access)),
+                        AsmOperand::Predicate { reg, .. } => (reg, None),
+                        _ => continue,
+                    };
+                    let AsmRegister::Virtual(id) = reg else {
+                        continue;
+                    };
+                    if !self.virtual_registers.contains_key(id) {
+                        errors.push(AsmValidationError {
+                            function: self.name.clone(),
+                            block: Some(block.id),
+                            instruction: Some(instruction.id),
+                            operand_index: Some(idx),
+                            register: Some(*id),
+                            message: format!("use of undeclared virtual register v{id}"),
+                        });
+                    }
+                    if matches!(access, Some(OperandAccess::Write) | Some(OperandAccess::ReadWrite)) {
+                        has_result = true;
+                    }
+                }
+
+                if let AsmOpcode::Generic(opcode) = &instruction.opcode {
+                    if opcode.always_defines_result() && !has_result {
+                        errors.push(AsmValidationError {
+                            function: self.name.clone(),
+                            block: Some(block.id),
+                            instruction: Some(instruction.id),
+                            operand_index: None,
+                            register: None,
+                            message: format!(
+                                "opcode {} always defines a result but instruction has no write operand",
+                                opcode.mnemonic()
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_function() -> AsmFunction {
+        AsmFunction {
+            name: Name::new("main"),
+            signature: AsmFunctionSignature {
+                params: Vec::new(),
+                return_type: Ty::I32,
+                is_variadic: false,
+            },
+            basic_blocks: Vec::new(),
+            locals: Vec::new(),
+            stack_slots: Vec::new(),
+            frame: Some(AsmStackFrame {
+                stack_size: 0,
+                stack_alignment: 16,
+                callee_saved: Vec::new(),
+            }),
+            linkage: Linkage::External,
+            visibility: Visibility::Default,
+            calling_convention: Some(CallingConvention::X86_64SysV),
+            section: Some(".text".to_string()),
+            is_declaration: false,
+            virtual_registers: BTreeMap::new(),
+            next_virtual_reg: 0,
+        }
+    }
 
     #[test]
     fn asmir_program_construction_is_stable() {
@@ -756,70 +849,86 @@ mod tests {
             flags: vec![AsmSectionFlag::Allocate, AsmSectionFlag::Execute],
             alignment: Some(16),
         });
-        program.functions.push(AsmFunction {
-            name: Name::new("main"),
-            signature: AsmFunctionSignature {
-                params: Vec::new(),
-                return_type: Ty::I32,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: Some(Name::new("entry")),
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    kind: AsmInstructionKind::Freeze(AsmValue::Constant(AsmConstant::Int(
-                        0,
-                        Ty::I32,
-                    ))),
-                    ty: Ty::I32,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Freeze),
-                    operands: vec![
-                        AsmOperand::Register {
-                            reg: AsmRegister::Physical(AsmPhysicalRegister {
-                                name: "rax".to_string(),
-                                bank: AsmRegisterBank::General,
-                                size_bits: 64,
-                            }),
-                            access: OperandAccess::Write,
-                        },
-                        AsmOperand::Immediate(0),
-                    ],
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: vec![AsmAnnotation {
-                        key: "selected_from".to_string(),
-                        value: "lir.return".to_string(),
-                    }],
-                }],
-                terminator: AsmTerminator::Return(Some(AsmValue::Constant(AsmConstant::Int(
-                    0,
-                    Ty::I32,
-                )))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: Some(AsmStackFrame {
-                stack_size: 0,
-                stack_alignment: 16,
-                callee_saved: Vec::new(),
-            }),
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::X86_64SysV),
-            section: Some(".text".to_string()),
-            is_declaration: false,
+
+        let mut function = sample_function();
+        let dest = function.alloc_virtual_register(Ty::I32, AsmRegisterBank::General, 32);
+        function.basic_blocks.push(AsmBlock {
+            id: 0,
+            label: Some(Name::new("entry")),
+            instructions: vec![AsmInstruction::new(
+                0,
+                AsmOpcode::Generic(AsmGenericOpcode::Freeze),
+                vec![
+                    AsmOperand::Register {
+                        reg: AsmRegister::Virtual(dest),
+                        access: OperandAccess::Write,
+                    },
+                    AsmOperand::Immediate(0),
+                ],
+            )],
+            terminator: AsmTerminator::Return(Some(AsmOperand::Register {
+                reg: AsmRegister::Virtual(dest),
+                access: OperandAccess::Read,
+            })),
+            terminator_encoding: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
         });
+        program.functions.push(function);
 
         assert_eq!(program.functions.len(), 1);
         assert_eq!(
             program.functions[0].basic_blocks[0].instructions[0].opcode,
             AsmOpcode::Generic(AsmGenericOpcode::Freeze)
         );
+        assert!(program.functions[0].validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_undeclared_virtual_register() {
+        let mut function = sample_function();
+        function.basic_blocks.push(AsmBlock {
+            id: 0,
+            label: None,
+            instructions: vec![AsmInstruction::new(
+                0,
+                AsmOpcode::Generic(AsmGenericOpcode::Freeze),
+                vec![
+                    AsmOperand::Register {
+                        reg: AsmRegister::Virtual(0),
+                        access: OperandAccess::Write,
+                    },
+                    AsmOperand::Immediate(0),
+                ],
+            )],
+            terminator: AsmTerminator::Unreachable,
+            terminator_encoding: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        });
+
+        let errors = function.validate().expect_err("undeclared register");
+        assert!(errors.iter().any(|e| e.register == Some(0)));
+    }
+
+    #[test]
+    fn validate_rejects_missing_result_for_result_opcode() {
+        let mut function = sample_function();
+        function.basic_blocks.push(AsmBlock {
+            id: 0,
+            label: None,
+            instructions: vec![AsmInstruction::new(
+                0,
+                AsmOpcode::Generic(AsmGenericOpcode::Add),
+                vec![AsmOperand::Immediate(1), AsmOperand::Immediate(2)],
+            )],
+            terminator: AsmTerminator::Unreachable,
+            terminator_encoding: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        });
+
+        let errors = function.validate().expect_err("missing result");
+        assert!(errors.iter().any(|e| e.message.contains("always defines a result")));
     }
 }

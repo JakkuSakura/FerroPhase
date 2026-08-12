@@ -1,7 +1,4 @@
-use crate::asmir::{
-    AsmConstant, AsmInstructionKind, AsmOperand, AsmProgram, AsmSymbolAddressKind, AsmTerminator,
-    AsmValue,
-};
+use crate::asmir::{AsmAttr, AsmOperand, AsmProgram, AsmTerminator};
 
 pub fn format_program(program: &AsmProgram) -> String {
     let mut out = String::new();
@@ -36,106 +33,22 @@ pub fn format_program(program: &AsmProgram) -> String {
                 block.label.as_ref().map(|n| n.as_str()).unwrap_or("")
             ));
             for instruction in &block.instructions {
-                match &instruction.kind {
-                    AsmInstructionKind::Call {
-                        function,
-                        args,
-                        calling_convention,
-                        tail_call,
-                    } => {
-                        let rendered_args =
-                            args.iter().map(format_value).collect::<Vec<_>>().join(", ");
-                        out.push_str(&format!(
-                            "    call {}({}) cc={:?} tail={}\n",
-                            format_value(function),
-                            rendered_args,
-                            calling_convention,
-                            tail_call
-                        ));
-                    }
-                    AsmInstructionKind::SymbolAddress { symbol, kind } => {
-                        let kind = match kind {
-                            AsmSymbolAddressKind::Direct => "direct",
-                            AsmSymbolAddressKind::Got => "got",
-                        };
-                        out.push_str(&format!("    symaddr.{kind} {symbol}\n"));
-                    }
-                    _ => {
-                        out.push_str(&format!(
-                            "    {} {}\n",
-                            instruction.opcode.mnemonic(),
-                            instruction
-                                .operands
-                                .iter()
-                                .map(format_operand)
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ));
-                    }
-                }
+                out.push_str(&format!(
+                    "    {} {}\n",
+                    instruction.opcode.mnemonic(),
+                    instruction
+                        .operands
+                        .iter()
+                        .map(format_operand)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
             }
             out.push_str(&format!("    {}\n", terminator_name(&block.terminator)));
         }
     }
 
     out
-}
-
-fn format_value(value: &AsmValue) -> String {
-    match value {
-        AsmValue::Register(id) => format!("v{id}"),
-        AsmValue::PhysicalRegister(reg) => format!("{reg:?}"),
-        AsmValue::Address(addr) => format!("addr({})", format_address(addr)),
-        AsmValue::Condition(cond) => format!("cond({cond:?})"),
-        AsmValue::Comparison(cmp) => format!(
-            "cmp({}, {}, {:?})",
-            format_value(&cmp.lhs),
-            format_value(&cmp.rhs),
-            cmp.condition
-        ),
-        AsmValue::Flags(id) => format!("flags.{id}"),
-        AsmValue::Constant(constant) => format_constant(constant),
-        AsmValue::Global(name, _) => format!("symbol({name})"),
-        AsmValue::Function(name) => format!("symbol({name})"),
-        AsmValue::Local(id) => format!("local.{id}"),
-        AsmValue::StackSlot(id) => format!("stack.{id}"),
-        AsmValue::Undef(_) => "undef".to_string(),
-        AsmValue::Null(_) => "null".to_string(),
-    }
-}
-
-fn format_constant(constant: &AsmConstant) -> String {
-    match constant {
-        AsmConstant::Int(value, _) => value.to_string(),
-        AsmConstant::UInt(value, _) => value.to_string(),
-        AsmConstant::Float(value, _) => value.to_string(),
-        AsmConstant::Bool(value) => value.to_string(),
-        AsmConstant::String(value) => format!("\"{}\"", value.escape_default()),
-        AsmConstant::Bytes(value) => format!("bytes(len={})", value.len()),
-        AsmConstant::Array(values, _) => format!("array(len={})", values.len()),
-        AsmConstant::Struct(values, _) => format!("struct(len={})", values.len()),
-        AsmConstant::GlobalRef(name, _, _) => format!("symbol({name})"),
-        AsmConstant::FunctionRef(name, _) => format!("symbol({name})"),
-        AsmConstant::Null(_) => "null".to_string(),
-        AsmConstant::Undef(_) => "undef".to_string(),
-    }
-}
-
-fn format_address(addr: &crate::asmir::AsmAddressValue) -> String {
-    let base = addr
-        .base
-        .as_ref()
-        .map(|value| format_value(value))
-        .unwrap_or_else(|| "-".to_string());
-    let index = addr
-        .index
-        .as_ref()
-        .map(|value| format_value(value))
-        .unwrap_or_else(|| "-".to_string());
-    format!(
-        "base={base} index={index} scale={} disp={} size={:?}",
-        addr.scale, addr.displacement, addr.size_bytes
-    )
 }
 
 fn terminator_name(term: &AsmTerminator) -> &'static str {
@@ -171,6 +84,33 @@ fn format_operand(operand: &AsmOperand) -> String {
         AsmOperand::Predicate { reg, inverted } => {
             format!("pred({:?}, inverted={})", reg, inverted)
         }
+        AsmOperand::Local(id) => format!("local.{id}"),
+        AsmOperand::StackSlot(id) => format!("stack.{id}"),
+        AsmOperand::Type(ty) => format!("ty({:?})", ty),
+        AsmOperand::Condition(cond) => format!("cond({:?})", cond),
+        AsmOperand::Undef(_) => "undef".to_string(),
+        AsmOperand::Null(_) => "null".to_string(),
+        AsmOperand::StringData(text) => format!("\"{}\"", text.escape_default()),
+        AsmOperand::SysOp(op) => format!("sysop({:?})", op),
+        AsmOperand::Attr(attr) => format_attr(attr),
+    }
+}
+
+fn format_attr(attr: &AsmAttr) -> String {
+    match attr {
+        AsmAttr::Alignment(align) => format!("align={align}"),
+        AsmAttr::Volatile => "volatile".to_string(),
+        AsmAttr::Inbounds => "inbounds".to_string(),
+        AsmAttr::TailCall => "tail".to_string(),
+        AsmAttr::SideEffects => "side_effects".to_string(),
+        AsmAttr::AlignStack => "align_stack".to_string(),
+        AsmAttr::Cleanup => "cleanup".to_string(),
+        AsmAttr::CallingConv(cc) => format!("cc={:?}", cc),
+        AsmAttr::SyscallConvention(cc) => format!("syscall_cc={:?}", cc),
+        AsmAttr::Intrinsic(kind) => format!("intrinsic={:?}", kind),
+        AsmAttr::SymbolAddressKind(kind) => format!("symaddr={:?}", kind),
+        AsmAttr::LandingPadCatch => "catch".to_string(),
+        AsmAttr::LandingPadFilter(count) => format!("filter({count})"),
     }
 }
 
@@ -179,10 +119,11 @@ mod tests {
     use super::format_program;
     use crate::asmir::{
         AsmArchitecture, AsmEndianness, AsmFunction, AsmFunctionSignature, AsmGenericOpcode,
-        AsmInstruction, AsmInstructionKind, AsmObjectFormat, AsmOpcode, AsmOperand, AsmProgram,
-        AsmSection, AsmSectionKind, AsmTarget, AsmTerminator,
+        AsmInstruction, AsmObjectFormat, AsmOpcode, AsmOperand, AsmProgram, AsmSection,
+        AsmSectionKind, AsmTarget, AsmTerminator,
     };
     use crate::lir::{Linkage, Name, Visibility};
+    use std::collections::BTreeMap;
 
     #[test]
     fn pretty_print_includes_target_and_opcode() {
@@ -210,20 +151,11 @@ mod tests {
             basic_blocks: vec![crate::asmir::AsmBlock {
                 id: 0,
                 label: Some(Name::new("entry")),
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    kind: AsmInstructionKind::Freeze(crate::asmir::AsmValue::Constant(
-                        crate::asmir::AsmConstant::Int(0, crate::lir::Ty::I32),
-                    )),
-                    ty: crate::lir::Ty::I32,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Freeze),
-                    operands: vec![AsmOperand::Immediate(0)],
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
+                instructions: vec![AsmInstruction::new(
+                    0,
+                    AsmOpcode::Generic(AsmGenericOpcode::Freeze),
+                    vec![AsmOperand::Immediate(0)],
+                )],
                 terminator: AsmTerminator::Return(None),
                 terminator_encoding: None,
                 predecessors: Vec::new(),
@@ -237,6 +169,8 @@ mod tests {
             calling_convention: None,
             section: Some(".text".to_string()),
             is_declaration: false,
+            virtual_registers: BTreeMap::new(),
+            next_virtual_reg: 0,
         });
 
         let rendered = format_program(&program);
