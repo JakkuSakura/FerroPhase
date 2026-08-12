@@ -1156,7 +1156,19 @@ pub(crate) fn parse_block_stmt_entry(input: &mut &[Token], file: FileId) -> Moda
         }));
     }
 
-    let expr = parse_expr_winnow(input, file)?;
+    // A statement that *starts* with a block-like expression (`if`, `match`,
+    // `loop`, `while`, `for`, `unsafe { }`, a bare block, ...) is a complete
+    // statement on its own — same rule as real Rust. Parsing it through the
+    // general postfix-continuing expression parser would let a following
+    // `(...)` or `[...]` get misread as a call/index on it (e.g. `if c {}
+    // (a, b)` — two statements — would otherwise become one `Invoke` whose
+    // "callee" is the if-expression), silently swallowing the next
+    // statement into bogus call arguments.
+    let expr = if starts_block_like_stmt_expr(*input) {
+        parse_primary(input, file)?
+    } else {
+        parse_expr_winnow(input, file)?
+    };
     let mut semicolon = false;
     let mut probe = *input;
     if expect_symbol(&mut probe, ";").is_ok() {
@@ -1171,6 +1183,35 @@ pub(crate) fn parse_block_stmt_entry(input: &mut &[Token], file: FileId) -> Moda
     Ok(BlockStmt::Expr(
         BlockStmtExpr::new(expr).with_semicolon(semicolon),
     ))
+}
+
+/// See `parse_block_stmt_entry`'s use of this: a leading token that starts a
+/// block-like expression means the *whole* statement is just that
+/// expression, parsed via `parse_primary` (no postfix/binary continuation),
+/// mirroring real Rust's statement-boundary rule for `ExpressionWithBlock`.
+fn starts_block_like_stmt_expr(input: &[Token]) -> bool {
+    match input {
+        [first, ..] if first.lexeme == "{" => true,
+        [first, second, ..]
+            if matches!(first.kind, TokenKind::Keyword(Keyword::Const | Keyword::Async))
+                && second.lexeme == "{" =>
+        {
+            true
+        }
+        [first, ..] => matches!(
+            first.kind,
+            TokenKind::Keyword(
+                Keyword::If
+                    | Keyword::Match
+                    | Keyword::Loop
+                    | Keyword::While
+                    | Keyword::For
+                    | Keyword::Unsafe
+                    | Keyword::With
+            )
+        ),
+        [] => false,
+    }
 }
 
 fn expr_can_omit_semicolon_in_block(expr: &Expr) -> bool {
