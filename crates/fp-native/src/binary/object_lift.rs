@@ -1,10 +1,10 @@
 use crate::binary::{DataRegion, RipSymbol, RipSymbolKind, TextRelocation, aarch64, x86_64};
 use crate::container::container_kind_for_object_kind;
 use fp_core::asmir::{
-    AsmArchitecture, AsmConstant, AsmEndianness, AsmFunction, AsmFunctionSignature, AsmGlobal,
-    AsmGlobalRelocation, AsmLocal, AsmObjectFormat, AsmProgram, AsmRelocationKind, AsmSection,
-    AsmSectionFlag, AsmSectionKind, AsmStackFrame, AsmSyscallConvention, AsmTarget, AsmTerminator,
-    AsmType,
+    AsmArchitecture, AsmAttr, AsmConstant, AsmEndianness, AsmFunction, AsmFunctionSignature,
+    AsmGenericOpcode, AsmGlobal, AsmGlobalRelocation, AsmLocal, AsmObjectFormat, AsmOpcode,
+    AsmOperand, AsmProgram, AsmRelocationKind, AsmSection, AsmSectionFlag, AsmSectionKind,
+    AsmStackFrame, AsmSyscallConvention, AsmTarget, AsmTerminator, AsmType,
 };
 use fp_core::container::{
     ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerRelocation,
@@ -862,6 +862,15 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
 
             let is_entry = name.as_str() == "fp_lifted_main";
 
+            let mut function = AsmFunction::new(
+                name.clone(),
+                AsmFunctionSignature {
+                    params: Vec::new(),
+                    return_type: AsmType::Void,
+                    is_variadic: false,
+                },
+            );
+
             let mut lifted = x86_64::lift_function_bytes_with_symbols(
                 text_bytes,
                 relocs.as_slice(),
@@ -875,6 +884,7 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
                 entry_offset,
                 is_entry,
                 true,
+                &mut function,
             )?;
 
             // Ensure stable parameter mapping across lifted SysV functions.
@@ -885,19 +895,7 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
                 canonicalize_x86_sysv_argument_locals(&mut lifted.locals);
             }
 
-            for block in &mut lifted.basic_blocks {
-                for inst in &mut block.instructions {
-                    if let fp_core::asmir::AsmInstructionKind::Call {
-                        calling_convention: cc,
-                        ..
-                    } = &mut inst.kind
-                    {
-                        if !matches!(cc, CallingConvention::FpLiftedX86_64RegFile) {
-                            *cc = calling_convention.clone();
-                        }
-                    }
-                }
-            }
+            rewrite_call_calling_convention(&mut lifted.basic_blocks, &calling_convention);
 
             let return_type = lifted
                 .basic_blocks
@@ -912,23 +910,17 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
 
             let direct_calls = std::mem::take(&mut lifted.direct_call_targets);
 
-            program.functions.push(AsmFunction {
-                name: name.clone(),
-                signature: AsmFunctionSignature {
-                    params: Vec::new(),
-                    return_type,
-                    is_variadic: false,
-                },
-                basic_blocks: lifted.basic_blocks,
-                locals: lifted.locals,
-                stack_slots: lifted.stack_slots,
-                frame,
-                linkage: Linkage::External,
-                visibility: Visibility::Default,
-                calling_convention: None,
-                section: Some(".text".to_string()),
-                is_declaration: false,
-            });
+            function.signature.return_type = return_type;
+            function.basic_blocks = lifted.basic_blocks;
+            function.locals = lifted.locals;
+            function.stack_slots = lifted.stack_slots;
+            function.frame = frame;
+            function.linkage = Linkage::External;
+            function.visibility = Visibility::Default;
+            function.calling_convention = None;
+            function.section = Some(".text".to_string());
+            function.is_declaration = false;
+            program.functions.push(function);
 
             for target in direct_calls {
                 if target >= text_bytes.len() as u64 {
@@ -997,10 +989,22 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
             0
         };
 
+        let mut function = AsmFunction::new(
+            name.clone(),
+            AsmFunctionSignature {
+                params: Vec::new(),
+                return_type: AsmType::Void,
+                is_variadic: false,
+            },
+        );
+
         let mut lifted = match &architecture {
-            AsmArchitecture::Aarch64 => {
-                aarch64::lift_function_bytes(code, symbol_relocs.as_slice(), syscall_convention)?
-            }
+            AsmArchitecture::Aarch64 => aarch64::lift_function_bytes(
+                code,
+                symbol_relocs.as_slice(),
+                syscall_convention,
+                &mut function,
+            )?,
             AsmArchitecture::X86_64 => x86_64::lift_function_bytes_with_symbols(
                 code,
                 symbol_relocs.as_slice(),
@@ -1014,6 +1018,7 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
                 entry_offset,
                 false,
                 false,
+                &mut function,
             )?,
             _ => {
                 return Err(Error::from(
@@ -1034,19 +1039,7 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
             (AsmArchitecture::Aarch64, _) => CallingConvention::AAPCS,
             _ => CallingConvention::C,
         };
-        for block in &mut lifted.basic_blocks {
-            for inst in &mut block.instructions {
-                if let fp_core::asmir::AsmInstructionKind::Call {
-                    calling_convention: cc,
-                    ..
-                } = &mut inst.kind
-                {
-                    if !matches!(cc, CallingConvention::FpLiftedX86_64RegFile) {
-                        *cc = calling_convention.clone();
-                    }
-                }
-            }
-        }
+        rewrite_call_calling_convention(&mut lifted.basic_blocks, &calling_convention);
 
         let return_type = lifted
             .basic_blocks
@@ -1059,23 +1052,21 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
 
         let frame = infer_stack_frame(&architecture, &lifted);
 
-        program.functions.push(AsmFunction {
-            name,
-            signature: AsmFunctionSignature {
-                params: Vec::new(),
-                return_type,
-                is_variadic: false,
-            },
-            basic_blocks: lifted.basic_blocks,
-            locals: lifted.locals,
-            stack_slots: lifted.stack_slots,
-            frame,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: None,
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        });
+        function.signature = AsmFunctionSignature {
+            params: Vec::new(),
+            return_type,
+            is_variadic: false,
+        };
+        function.basic_blocks = lifted.basic_blocks;
+        function.locals = lifted.locals;
+        function.stack_slots = lifted.stack_slots;
+        function.frame = frame;
+        function.linkage = Linkage::External;
+        function.visibility = Visibility::Default;
+        function.calling_convention = None;
+        function.section = Some(".text".to_string());
+        function.is_declaration = false;
+        program.functions.push(function);
     }
 
     Ok(program)
@@ -1322,14 +1313,20 @@ fn infer_stack_frame(
 
     let entry = lifted.basic_blocks.first()?;
     for inst in &entry.instructions {
-        let fp_core::asmir::AsmInstructionKind::Sub(lhs, rhs) = &inst.kind else {
-            continue;
-        };
-        if !matches!(lhs, fp_core::asmir::AsmValue::Local(id) if *id == sp_local) {
+        if !matches!(inst.opcode, AsmOpcode::Generic(AsmGenericOpcode::Sub)) {
             continue;
         }
-        let fp_core::asmir::AsmValue::Constant(fp_core::asmir::AsmConstant::Int(size, _)) = rhs
-        else {
+        // Canonical `Sub` operand schema: `[Write dest, Read lhs, Read rhs]`.
+        let Some(lhs) = inst.operands.get(1) else {
+            continue;
+        };
+        let Some(rhs) = inst.operands.get(2) else {
+            continue;
+        };
+        if !matches!(lhs, AsmOperand::Local(id) if *id == sp_local) {
+            continue;
+        }
+        let AsmOperand::Constant(AsmConstant::Int(size, _)) = rhs else {
             continue;
         };
         if *size <= 0 {
@@ -1343,4 +1340,29 @@ fn infer_stack_frame(
     }
 
     None
+}
+
+/// Rewrites every lifted `Call` instruction's `Attr(CallingConv(_))` operand
+/// to `calling_convention`, unless it was already tagged
+/// `FpLiftedX86_64RegFile` (a synthetic convention used internally to model
+/// register-file passthrough between lifted functions, which must not be
+/// overwritten).
+fn rewrite_call_calling_convention(
+    basic_blocks: &mut [fp_core::asmir::AsmBlock],
+    calling_convention: &CallingConvention,
+) {
+    for block in basic_blocks {
+        for inst in &mut block.instructions {
+            if !matches!(inst.opcode, AsmOpcode::Generic(AsmGenericOpcode::Call)) {
+                continue;
+            }
+            for operand in &mut inst.operands {
+                if let AsmOperand::Attr(AsmAttr::CallingConv(cc)) = operand {
+                    if !matches!(cc, CallingConvention::FpLiftedX86_64RegFile) {
+                        *cc = calling_convention.clone();
+                    }
+                }
+            }
+        }
+    }
 }

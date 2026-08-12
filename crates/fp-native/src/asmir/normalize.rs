@@ -1,8 +1,9 @@
 use fp_core::asmir::{
     AsmArchitecture, AsmAttr, AsmConstant, AsmGenericOpcode, AsmGlobal, AsmOpcode, AsmOperand,
     AsmProgram, AsmRegister, AsmSyscallConvention, AsmTarget, AsmTerminator, AsmType,
-    AsmVirtualRegId, Linkage, Name, OperandAccess, Visibility,
+    AsmVirtualRegId, OperandAccess,
 };
+use fp_core::lir::{Linkage, Name, Visibility};
 use std::collections::HashMap;
 
 pub fn normalize_for_target(program: &mut AsmProgram) {

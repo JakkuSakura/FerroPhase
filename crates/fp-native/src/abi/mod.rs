@@ -1,6 +1,6 @@
 use fp_core::asmir::{
-    AsmArchitecture, AsmFunction, AsmInstructionKind, AsmObjectFormat, AsmPhysicalRegister,
-    AsmRegisterBank, AsmValue,
+    AsmArchitecture, AsmFunction, AsmGenericOpcode, AsmObjectFormat, AsmOpcode, AsmOperand,
+    AsmPhysicalRegister, AsmRegister, AsmRegisterBank, OperandAccess,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,9 +20,10 @@ pub fn raise_implicit_return_value(function: &mut AsmFunction, abi: Abi) {
         let fp_core::asmir::AsmTerminator::Return(None) = &block.terminator else {
             continue;
         };
-        block.terminator = fp_core::asmir::AsmTerminator::Return(Some(AsmValue::PhysicalRegister(
-            abi_register(ret_reg),
-        )));
+        block.terminator = fp_core::asmir::AsmTerminator::Return(Some(AsmOperand::Register {
+            reg: AsmRegister::Physical(abi_register(ret_reg)),
+            access: OperandAccess::Read,
+        }));
     }
 }
 
@@ -52,20 +53,42 @@ pub fn abi_int_return_register(abi: Abi) -> &'static str {
     }
 }
 
+/// The operand index of a `Call` instruction's target, if `inst` is a
+/// `Call`-opcode instruction (mirrors `AsmInstruction::call_target_and_args`,
+/// but returns just the index so callers can inspect/extend `operands` in
+/// place).
+fn call_target_index(operands: &[AsmOperand]) -> Option<usize> {
+    operands.iter().position(|op| {
+        !matches!(op, AsmOperand::Attr(_))
+            && !matches!(
+                op,
+                AsmOperand::Register {
+                    access: OperandAccess::Write,
+                    ..
+                }
+            )
+    })
+}
+
 pub fn raise_implicit_call_arguments(function: &mut AsmFunction, abi: Abi) {
     let arg_regs = abi_int_arg_registers(abi);
     for block in &mut function.basic_blocks {
         for inst in &mut block.instructions {
-            let AsmInstructionKind::Call { args, .. } = &mut inst.kind else {
-                continue;
-            };
-            if !args.is_empty() {
+            if !matches!(inst.opcode, AsmOpcode::Generic(AsmGenericOpcode::Call)) {
                 continue;
             }
-            *args = arg_regs
-                .iter()
-                .map(|name| AsmValue::PhysicalRegister(abi_register(name)))
-                .collect();
+            let Some(target_idx) = call_target_index(&inst.operands) else {
+                continue;
+            };
+            // Only fill in argument operands when none are present yet.
+            if inst.operands.len() != target_idx + 1 {
+                continue;
+            }
+            inst.operands
+                .extend(arg_regs.iter().map(|name| AsmOperand::Register {
+                    reg: AsmRegister::Physical(abi_register(name)),
+                    access: OperandAccess::Read,
+                }));
         }
     }
 }

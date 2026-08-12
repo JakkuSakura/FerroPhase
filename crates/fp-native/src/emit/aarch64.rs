@@ -1,6 +1,7 @@
 use fp_core::asmir::{
-    AsmBlock, AsmBlockId as BasicBlockId, AsmConstant, AsmFunction, AsmInstructionKind,
-    AsmIntrinsicKind, AsmProgram, AsmSyscallConvention, AsmTerminator, AsmType, AsmValue,
+    AsmAttr, AsmBlock, AsmBlockId as BasicBlockId, AsmConstant, AsmFunction, AsmGenericOpcode,
+    AsmInstruction, AsmIntrinsicKind, AsmOpcode, AsmOperand, AsmProgram, AsmRegister,
+    AsmSyscallConvention, AsmTerminator, AsmType, AsmVirtualRegId,
 };
 use fp_core::container::ContainerKind;
 use fp_core::error::{Error, Result};
@@ -9,6 +10,217 @@ use fp_core::lir::{CallingConvention, LirType};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::emit::{CodegenOutput, RelocKind, Relocation, TargetFormat};
+
+/// The virtual-register id this instruction writes to, if any. Panics-free:
+/// returns `None` for opcodes with no destination (e.g. `Store`) and for
+/// void-typed `Call`/`Syscall`/`IntrinsicCall`/`InlineAsm`.
+fn dest_vreg(inst: &AsmInstruction) -> Option<AsmVirtualRegId> {
+    match inst.result_register() {
+        Some(AsmRegister::Virtual(id)) => Some(*id),
+        _ => None,
+    }
+}
+
+/// Like [`dest_vreg`], but for call-like instructions whose downstream
+/// helper only touches the id when the result type isn't `Void`. Using a
+/// sentinel here keeps those helper signatures unchanged.
+fn dest_vreg_or_sentinel(inst: &AsmInstruction) -> u32 {
+    dest_vreg(inst).unwrap_or(u32::MAX)
+}
+
+/// The `Write`/`ReadWrite` register operand's id, required (returns an
+/// error if the instruction has none).
+fn require_dest_vreg(inst: &AsmInstruction) -> Result<AsmVirtualRegId> {
+    dest_vreg(inst).ok_or_else(|| {
+        Error::from(format!(
+            "instruction {:?} expected a destination register but has none",
+            inst.opcode
+        ))
+    })
+}
+
+/// Extracts the two `Read` operands of a binary-op-shaped instruction whose
+/// operand layout is `[Write dest, Read lhs, Read rhs]`.
+fn binop_operands(inst: &AsmInstruction) -> Result<(&AsmOperand, &AsmOperand)> {
+    match inst.operands.as_slice() {
+        [_, lhs, rhs] => Ok((lhs, rhs)),
+        other => Err(Error::from(format!(
+            "expected binop operand shape [dest, lhs, rhs], got {other:?}"
+        ))),
+    }
+}
+
+/// Extracts the single `Read` operand of a unary-op-shaped instruction whose
+/// operand layout is `[Write dest, Read src]`.
+fn unary_operand(inst: &AsmInstruction) -> Result<&AsmOperand> {
+    match inst.operands.as_slice() {
+        [_, src] => Ok(src),
+        other => Err(Error::from(format!(
+            "expected unary operand shape [dest, src], got {other:?}"
+        ))),
+    }
+}
+
+/// Finds the first `Attr` operand payload matching `pattern`, e.g.
+/// `find_attr!(inst, AsmAttr::Alignment(align) => *align)`.
+macro_rules! find_attr {
+    ($inst:expr, $pattern:pat => $out:expr) => {
+        $inst.operands.iter().find_map(|op| match op {
+            AsmOperand::Attr($pattern) => Some($out),
+            _ => None,
+        })
+    };
+}
+
+/// `Load`: `[Write dest, Read address, Attr(Alignment)?, Attr(Volatile)?]`.
+fn load_address(inst: &AsmInstruction) -> Result<&AsmOperand> {
+    inst.operands
+        .get(1)
+        .ok_or_else(|| Error::from("Load missing address operand"))
+}
+
+/// `Store`: `[Read value, Read address, Attr(Alignment)?, Attr(Volatile)?]`.
+fn store_operands(inst: &AsmInstruction) -> Result<(&AsmOperand, &AsmOperand)> {
+    match inst.operands.first_chunk::<2>() {
+        Some([value, address]) => Ok((value, address)),
+        None => Err(Error::from("Store expects [value, address, ...]")),
+    }
+}
+
+/// `Alloca`: `[Write dest, Read size, Attr(Alignment(n))]`.
+fn alloca_parts(inst: &AsmInstruction) -> Result<(&AsmOperand, u32)> {
+    let size = inst
+        .operands
+        .get(1)
+        .ok_or_else(|| Error::from("Alloca missing size operand"))?;
+    let align = find_attr!(inst, AsmAttr::Alignment(n) => *n)
+        .ok_or_else(|| Error::from("Alloca missing alignment attr"))?;
+    Ok((size, align))
+}
+
+/// `GetElementPtr`: `[Write dest, Read ptr, Attr(Inbounds)?, Read index...]`.
+fn gep_parts(inst: &AsmInstruction) -> Result<(&AsmOperand, &[AsmOperand])> {
+    let ptr = inst
+        .operands
+        .get(1)
+        .ok_or_else(|| Error::from("GetElementPtr missing ptr operand"))?;
+    let indices_start = if matches!(inst.operands.get(2), Some(AsmOperand::Attr(AsmAttr::Inbounds))) {
+        3
+    } else {
+        2
+    };
+    Ok((ptr, &inst.operands[indices_start.min(inst.operands.len())..]))
+}
+
+fn immediate_indices(operands: &[AsmOperand]) -> Result<Vec<u32>> {
+    operands
+        .iter()
+        .map(|op| match op {
+            AsmOperand::Immediate(value) => Ok(*value as u32),
+            other => Err(Error::from(format!(
+                "expected an Immediate index operand, got {other:?}"
+            ))),
+        })
+        .collect()
+}
+
+/// `ExtractValue`: `[Write dest, Read aggregate, Immediate(index)...]`.
+fn extract_value_parts(inst: &AsmInstruction) -> Result<(&AsmOperand, Vec<u32>)> {
+    let aggregate = inst
+        .operands
+        .get(1)
+        .ok_or_else(|| Error::from("ExtractValue missing aggregate operand"))?;
+    Ok((aggregate, immediate_indices(&inst.operands[2..])?))
+}
+
+/// `InsertValue`: `[Write dest, Read aggregate, Read element, Immediate(index)...]`.
+fn insert_value_parts(inst: &AsmInstruction) -> Result<(&AsmOperand, &AsmOperand, Vec<u32>)> {
+    match inst.operands.as_slice() {
+        [_, aggregate, element, indices @ ..] => {
+            Ok((aggregate, element, immediate_indices(indices)?))
+        }
+        other => Err(Error::from(format!(
+            "unexpected InsertValue operand shape: {other:?}"
+        ))),
+    }
+}
+
+/// `Select`: `[Write dest, Read condition, Read if_true, Read if_false]`.
+fn select_parts(inst: &AsmInstruction) -> Result<(&AsmOperand, &AsmOperand, &AsmOperand)> {
+    match inst.operands.as_slice() {
+        [_, condition, if_true, if_false] => Ok((condition, if_true, if_false)),
+        other => Err(Error::from(format!(
+            "unexpected Select operand shape: {other:?}"
+        ))),
+    }
+}
+
+/// `SymbolAddress`: `[Write dest, Symbol(name), Attr(SymbolAddressKind(kind))]`.
+fn symbol_address_parts(
+    inst: &AsmInstruction,
+) -> Result<(&fp_core::lir::Name, fp_core::asmir::AsmSymbolAddressKind)> {
+    match inst.operands.as_slice() {
+        [_, AsmOperand::Symbol(name), AsmOperand::Attr(AsmAttr::SymbolAddressKind(kind))] => {
+            Ok((name, *kind))
+        }
+        other => Err(Error::from(format!(
+            "unexpected SymbolAddress operand shape: {other:?}"
+        ))),
+    }
+}
+
+/// `Syscall`: `[Write dest?, Attr(SyscallConvention(cc)), Read number, Read arg...]`.
+fn syscall_parts(
+    inst: &AsmInstruction,
+) -> Result<(AsmSyscallConvention, &AsmOperand, &[AsmOperand])> {
+    let cc_idx = inst
+        .operands
+        .iter()
+        .position(|op| matches!(op, AsmOperand::Attr(AsmAttr::SyscallConvention(_))))
+        .ok_or_else(|| Error::from("Syscall missing calling-convention attr"))?;
+    let convention = match &inst.operands[cc_idx] {
+        AsmOperand::Attr(AsmAttr::SyscallConvention(cc)) => *cc,
+        _ => unreachable!(),
+    };
+    let number = inst
+        .operands
+        .get(cc_idx + 1)
+        .ok_or_else(|| Error::from("Syscall missing number operand"))?;
+    let args = &inst.operands[(cc_idx + 2).min(inst.operands.len())..];
+    Ok((convention, number, args))
+}
+
+/// `IntrinsicCall`: `[Write dest?, Attr(Format(s)), Attr(Intrinsic(kind)), arg...]`.
+fn intrinsic_call_parts(inst: &AsmInstruction) -> Result<(&AsmIntrinsicKind, &str, &[AsmOperand])> {
+    let format = find_attr!(inst, AsmAttr::Format(s) => s.as_str())
+        .ok_or_else(|| Error::from("IntrinsicCall missing format attr"))?;
+    let kind_idx = inst
+        .operands
+        .iter()
+        .position(|op| matches!(op, AsmOperand::Attr(AsmAttr::Intrinsic(_))))
+        .ok_or_else(|| Error::from("IntrinsicCall missing intrinsic attr"))?;
+    let kind = match &inst.operands[kind_idx] {
+        AsmOperand::Attr(AsmAttr::Intrinsic(kind)) => kind,
+        _ => unreachable!(),
+    };
+    let args = &inst.operands[(kind_idx + 1).min(inst.operands.len())..];
+    Ok((kind, format, args))
+}
+
+/// `Call`: calling convention + tail-call flag alongside `call_target_and_args()`.
+fn call_calling_convention(inst: &AsmInstruction) -> Result<&CallingConvention> {
+    find_attr!(inst, AsmAttr::CallingConv(cc) => cc)
+        .ok_or_else(|| Error::from("Call missing calling-convention attr"))
+}
+
+/// Returns `Some(opcode)` for `AsmOpcode::Generic` instructions, `None` for
+/// target-specific (`AsmOpcode::Custom`) opcodes.
+fn generic_opcode(inst: &AsmInstruction) -> Option<&AsmGenericOpcode> {
+    match &inst.opcode {
+        AsmOpcode::Generic(opcode) => Some(opcode),
+        AsmOpcode::Custom(_) => None,
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Reg {
@@ -134,8 +346,8 @@ fn initialize_lifted_x86_regfile(
 fn emit_darwin_variadic_format_call(
     asm: &mut Assembler,
     layout: &FrameLayout,
-    function: &AsmValue,
-    args: &[AsmValue],
+    function: &AsmOperand,
+    args: &[AsmOperand],
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
     rodata: &mut Vec<u8>,
@@ -148,19 +360,21 @@ fn emit_darwin_variadic_format_call(
     // Apple arm64 ABI: variadic arguments are passed via the stack argument
     // area even when they would normally fit in registers.
     match (function, vararg_start) {
-        (AsmValue::Function(name), 1) if name == "printf" => {
+        (AsmOperand::Symbol(name), 1) if name.as_str() == "printf" => {
             let format_arg = &args[0];
-            if let AsmValue::Constant(AsmConstant::String(text)) = format_arg {
+            if let AsmOperand::Constant(AsmConstant::String(text)) = format_arg {
                 let offset = intern_cstring(rodata, rodata_pool, text);
                 emit_load_rodata_addr(asm, Reg::X0, offset as i64)?;
             } else {
                 load_value(asm, layout, format_arg, Reg::X0, reg_types, local_types)?;
             }
         }
-        (AsmValue::Function(name), 2) if name == "fprintf" || name == "dprintf" => {
+        (AsmOperand::Symbol(name), 2)
+            if name.as_str() == "fprintf" || name.as_str() == "dprintf" =>
+        {
             load_value(asm, layout, &args[0], Reg::X0, reg_types, local_types)?;
             let format_arg = &args[1];
-            if let AsmValue::Constant(AsmConstant::String(text)) = format_arg {
+            if let AsmOperand::Constant(AsmConstant::String(text)) = format_arg {
                 let offset = intern_cstring(rodata, rodata_pool, text);
                 emit_load_rodata_addr(asm, Reg::X1, offset as i64)?;
             } else {
@@ -174,7 +388,7 @@ fn emit_darwin_variadic_format_call(
 
     let mut stack_offset = 0i32;
     for arg in args.iter().skip(vararg_start) {
-        if let AsmValue::Constant(AsmConstant::String(text)) = arg {
+        if let AsmOperand::Constant(AsmConstant::String(text)) = arg {
             let offset = intern_cstring(rodata, rodata_pool, text);
             emit_load_rodata_addr(asm, Reg::X16, offset as i64)?;
             emit_store_to_sp(asm, Reg::X16, stack_offset);
@@ -196,7 +410,7 @@ fn emit_darwin_variadic_format_call(
 
     if abi_debug_enabled() {
         let name = match function {
-            AsmValue::Function(name) => name.as_str(),
+            AsmOperand::Symbol(name) => name.as_str(),
             _ => "<unknown>",
         };
         abi_log(&format!(
@@ -212,8 +426,8 @@ fn emit_syscall(
     layout: &FrameLayout,
     dst_id: u32,
     convention: AsmSyscallConvention,
-    number: &AsmValue,
-    args: &[AsmValue],
+    number: &AsmOperand,
+    args: &[AsmOperand],
     ret_ty: &AsmType,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -376,7 +590,10 @@ fn build_frame_layout(
     use_x86_regfile: bool,
     data_layout: &LirDataLayout,
 ) -> Result<FrameLayout> {
-    let mut vreg_ids = BTreeSet::new();
+    // Every value this function can produce gets a stack slot, keyed by its
+    // canonical virtual-register id (not by instruction id — the two id
+    // spaces are independent).
+    let vreg_ids: BTreeSet<u32> = func.virtual_registers.keys().copied().collect();
     let mut max_call_args = 0usize;
     let mut max_vararg_stack = 0usize;
     let mut has_calls = false;
@@ -396,88 +613,110 @@ fn build_frame_layout(
 
     for block in &func.basic_blocks {
         for inst in &block.instructions {
-            vreg_ids.insert(inst.id);
-            if let AsmInstructionKind::Call { function, args, .. } = &inst.kind {
-                has_calls = true;
-                let mut count = 0usize;
-                for arg in args {
-                    count += call_arg_units(arg, reg_types, &local_types)?;
-                    if let AsmValue::Constant(
-                        AsmConstant::Struct(_, _) | AsmConstant::Array(_, _),
-                    ) = arg
-                    {
-                        let ty = value_type(arg, reg_types, &local_types)?;
-                        if is_large_aggregate(&ty, data_layout) {
-                            let size = data_layout
-                                .size_of(&ty)
-                                .map_err(|error| Error::from(error.to_string()))?
-                                as i32;
-                            const_agg_scratch_size = const_agg_scratch_size.max(align8(size));
+            let Some(opcode) = generic_opcode(inst) else {
+                continue;
+            };
+            match opcode {
+                AsmGenericOpcode::Call => {
+                    let (function, args) = inst
+                        .call_target_and_args()
+                        .ok_or_else(|| Error::from("malformed Call instruction"))?;
+                    has_calls = true;
+                    let mut count = 0usize;
+                    for arg in args {
+                        count += call_arg_units(arg, reg_types, &local_types)?;
+                        if let AsmOperand::Constant(
+                            AsmConstant::Struct(_, _) | AsmConstant::Array(_, _),
+                        ) = arg
+                        {
+                            let ty = value_type(arg, reg_types, &local_types)?;
+                            if is_large_aggregate(&ty, data_layout) {
+                                let size = data_layout
+                                    .size_of(&ty)
+                                    .map_err(|error| Error::from(error.to_string()))?
+                                    as i32;
+                                const_agg_scratch_size = const_agg_scratch_size.max(align8(size));
+                            }
                         }
                     }
+                    max_call_args = max_call_args.max(count);
+                    if let Some(start) = darwin_variadic_format_start(function, args) {
+                        let bytes = vararg_outgoing_size(
+                            args,
+                            start,
+                            reg_types,
+                            &local_types,
+                            data_layout,
+                        )?;
+                        max_vararg_stack = max_vararg_stack.max(bytes);
+                    }
                 }
-                max_call_args = max_call_args.max(count);
-                if let Some(start) = darwin_variadic_format_start(function, args) {
+                AsmGenericOpcode::IntrinsicCall => {
+                    let (kind, _format, args) = intrinsic_call_parts(inst)?;
+                    has_calls = true;
+                    let fixed = if matches!(kind, AsmIntrinsicKind::Format) {
+                        3
+                    } else {
+                        1
+                    };
+                    let mut count = fixed;
+                    for arg in args {
+                        count += call_arg_units(arg, reg_types, &local_types)?;
+                    }
+                    max_call_args = max_call_args.max(count);
                     let bytes =
-                        vararg_outgoing_size(args, start, reg_types, &local_types, data_layout)?;
+                        vararg_outgoing_size(args, 0, reg_types, &local_types, data_layout)?;
                     max_vararg_stack = max_vararg_stack.max(bytes);
                 }
-            } else if let AsmInstructionKind::IntrinsicCall { kind, args, .. } = &inst.kind {
-                has_calls = true;
-                let fixed = if matches!(kind, AsmIntrinsicKind::Format) {
-                    3
-                } else {
-                    1
-                };
-                let mut count = fixed;
-                for arg in args {
-                    count += call_arg_units(arg, reg_types, &local_types)?;
+                AsmGenericOpcode::Mul
+                | AsmGenericOpcode::Div
+                | AsmGenericOpcode::Rem
+                | AsmGenericOpcode::Shl
+                | AsmGenericOpcode::Shr => {
+                    let dst_ty = dest_vreg(inst).and_then(|id| reg_types.get(&id));
+                    if matches!(dst_ty, Some(AsmType::I128)) {
+                        has_calls = true;
+                        let args = match opcode {
+                            AsmGenericOpcode::Shl | AsmGenericOpcode::Shr => 3,
+                            _ => 4,
+                        };
+                        max_call_args = max_call_args.max(args);
+                    }
                 }
-                max_call_args = max_call_args.max(count);
-                let bytes = vararg_outgoing_size(args, 0, reg_types, &local_types, data_layout)?;
-                max_vararg_stack = max_vararg_stack.max(bytes);
-            } else if matches!(
-                inst.kind,
-                AsmInstructionKind::Mul(_, _)
-                    | AsmInstructionKind::Div(_, _)
-                    | AsmInstructionKind::Rem(_, _)
-                    | AsmInstructionKind::Shl(_, _)
-                    | AsmInstructionKind::Shr(_, _)
-            ) {
-                if matches!(inst.ty, AsmType::I128) {
-                    has_calls = true;
-                    let args = match inst.kind {
-                        AsmInstructionKind::Shl(_, _) | AsmInstructionKind::Shr(_, _) => 3,
-                        _ => 4,
+                AsmGenericOpcode::Alloca => {
+                    let dst_id = require_dest_vreg(inst)?;
+                    let (size, alignment) = alloca_parts(inst)?;
+                    let ty = reg_types
+                        .get(&dst_id)
+                        .cloned()
+                        .ok_or_else(|| Error::from("alloca requires a concrete type"))?;
+                    if matches!(ty, AsmType::Void) {
+                        return Err(Error::from("alloca requires a concrete type"));
+                    }
+                    let AsmType::Ptr(inner) = ty else {
+                        return Err(Error::from("alloca expects pointer type"));
                     };
-                    max_call_args = max_call_args.max(args);
+                    let count = match size {
+                        AsmOperand::Constant(constant) => constant_to_i64(constant, data_layout)?,
+                        _ => return Err(Error::from("alloca size must be constant")),
+                    };
+                    if count < 0 {
+                        return Err(Error::from("alloca size must be non-negative"));
+                    }
+                    let elem_size = data_layout
+                        .size_of(&inner)
+                        .map_err(|error| Error::from(error.to_string()))?
+                        as i64;
+                    let bytes = elem_size
+                        .checked_mul(count)
+                        .ok_or_else(|| Error::from("alloca size overflow"))?;
+                    let bytes = i32::try_from(bytes).map_err(|e| {
+                        Error::from(format!("alloca size too large: {bytes}: {e}"))
+                    })?;
+                    let align = alignment.max(1) as i32;
+                    alloca_info.push((dst_id, bytes, align));
                 }
-            } else if let AsmInstructionKind::Alloca { size, alignment } = &inst.kind {
-                let ty = inst.ty.clone();
-                if matches!(ty, AsmType::Void) {
-                    return Err(Error::from("alloca requires a concrete type"));
-                }
-                let AsmType::Ptr(inner) = ty else {
-                    return Err(Error::from("alloca expects pointer type"));
-                };
-                let count = match size {
-                    AsmValue::Constant(constant) => constant_to_i64(constant, data_layout)?,
-                    _ => return Err(Error::from("alloca size must be constant")),
-                };
-                if count < 0 {
-                    return Err(Error::from("alloca size must be non-negative"));
-                }
-                let elem_size = data_layout
-                    .size_of(&inner)
-                    .map_err(|error| Error::from(error.to_string()))?
-                    as i64;
-                let bytes = elem_size
-                    .checked_mul(count)
-                    .ok_or_else(|| Error::from("alloca size overflow"))?;
-                let bytes = i32::try_from(bytes)
-                    .map_err(|e| Error::from(format!("alloca size too large: {bytes}: {e}")))?;
-                let align = (*alignment).max(1) as i32;
-                alloca_info.push((inst.id, bytes, align));
+                _ => {}
             }
         }
     }
@@ -672,7 +911,7 @@ fn build_frame_layout(
 }
 
 fn call_arg_units(
-    arg: &AsmValue,
+    arg: &AsmOperand,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<usize> {
@@ -705,7 +944,7 @@ fn vreg_slot_spec(
 }
 
 fn vararg_outgoing_size(
-    args: &[AsmValue],
+    args: &[AsmOperand],
     start: usize,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -720,8 +959,8 @@ fn vararg_outgoing_size(
     Ok(stack_bytes as usize)
 }
 
-fn darwin_variadic_format_start(function: &AsmValue, args: &[AsmValue]) -> Option<usize> {
-    let AsmValue::Function(name) = function else {
+fn darwin_variadic_format_start(function: &AsmOperand, args: &[AsmOperand]) -> Option<usize> {
+    let AsmOperand::Symbol(name) = function else {
         return None;
     };
     match name.as_str() {
@@ -732,36 +971,15 @@ fn darwin_variadic_format_start(function: &AsmValue, args: &[AsmValue]) -> Optio
     }
 }
 
+/// The canonical type of every virtual register this function defines,
+/// keyed by `AsmVirtualRegId`. `AsmFunction::virtual_registers` is the sole
+/// source of truth for this (populated at selection time from each LIR
+/// result's type) — no per-instruction inference is needed or correct here.
 fn build_reg_types(func: &AsmFunction) -> HashMap<u32, AsmType> {
-    let mut map = HashMap::new();
-    for block in &func.basic_blocks {
-        for inst in &block.instructions {
-            if !matches!(inst.ty, AsmType::Void) {
-                map.insert(inst.id, inst.ty.clone());
-            }
-        }
-    }
-
-    let mut local_types = HashMap::new();
-    for local in &func.locals {
-        local_types.insert(local.id, local.ty.clone());
-    }
-
-    for block in &func.basic_blocks {
-        for inst in &block.instructions {
-            if map.contains_key(&inst.id) {
-                continue;
-            }
-            if let AsmInstructionKind::ExtractValue { aggregate, indices } = &inst.kind {
-                if let Ok(aggregate_ty) = value_type(aggregate, &map, &local_types) {
-                    if let Ok(field_ty) = extract_value_type(&aggregate_ty, indices) {
-                        map.insert(inst.id, field_ty);
-                    }
-                }
-            }
-        }
-    }
-    map
+    func.virtual_registers
+        .iter()
+        .map(|(id, vreg)| (*id, vreg.ty.clone()))
+        .collect()
 }
 
 fn build_local_types(func: &AsmFunction) -> HashMap<u32, AsmType> {
@@ -983,11 +1201,15 @@ fn collect_preserved_single_block_bytes(
 
     let mut out = Vec::new();
     for inst in &block.instructions {
-        if matches!(inst.kind, AsmInstructionKind::Nop) {
+        let opcode = generic_opcode(inst);
+        if matches!(opcode, Some(AsmGenericOpcode::Nop)) {
             out.extend_from_slice(default_nop.as_slice());
             continue;
         }
-        if let AsmInstructionKind::Syscall { convention, .. } = inst.kind {
+        if matches!(opcode, Some(AsmGenericOpcode::Syscall)) {
+            let Ok((convention, _number, _args)) = syscall_parts(inst) else {
+                return None;
+            };
             let imm16 = match convention {
                 AsmSyscallConvention::LinuxAarch64 => 0u16,
                 AsmSyscallConvention::DarwinAarch64 => 0x80u16,
@@ -999,8 +1221,8 @@ fn collect_preserved_single_block_bytes(
         }
 
         if matches!(
-            inst.kind,
-            AsmInstructionKind::Add(_, _) | AsmInstructionKind::Sub(_, _)
+            opcode,
+            Some(AsmGenericOpcode::Add) | Some(AsmGenericOpcode::Sub)
         ) {
             let dst = annotation_value(&inst.annotations, "fp.preserve.aarch64.dst_gpr").and_then(
                 |value| {
@@ -1038,9 +1260,9 @@ fn collect_preserved_single_block_bytes(
                 if imm > 4095 {
                     return None;
                 }
-                let opcode_base = match inst.kind {
-                    AsmInstructionKind::Add(_, _) => 0x9100_0000u32,
-                    AsmInstructionKind::Sub(_, _) => 0xD100_0000u32,
+                let opcode_base = match opcode {
+                    Some(AsmGenericOpcode::Add) => 0x9100_0000u32,
+                    Some(AsmGenericOpcode::Sub) => 0xD100_0000u32,
                     _ => return None,
                 };
                 let word = opcode_base | ((imm as u32) << 10) | ((src as u32) << 5) | (dst as u32);
@@ -1145,11 +1367,13 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
             return true;
         }
         func.basic_blocks.iter().any(|block| {
-            block.instructions.iter().any(|inst| match &inst.kind {
-                AsmInstructionKind::Call {
-                    calling_convention, ..
-                } => matches!(calling_convention, CallingConvention::FpLiftedX86_64RegFile),
-                _ => false,
+            block.instructions.iter().any(|inst| {
+                matches!(
+                    inst.opcode,
+                    AsmOpcode::Generic(AsmGenericOpcode::Call)
+                ) && call_calling_convention(inst)
+                    .map(|cc| matches!(cc, CallingConvention::FpLiftedX86_64RegFile))
+                    .unwrap_or(false)
             }) || matches!(
                 block.terminator,
                 AsmTerminator::Invoke {
@@ -1588,8 +1812,8 @@ fn emit_bitwise_binop(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    lhs: &AsmValue,
-    rhs: &AsmValue,
+    lhs: &AsmOperand,
+    rhs: &AsmOperand,
     op: BitOp,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -1630,8 +1854,8 @@ fn emit_shift(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    lhs: &AsmValue,
-    rhs: &AsmValue,
+    lhs: &AsmOperand,
+    rhs: &AsmOperand,
     kind: ShiftKind,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -1654,7 +1878,7 @@ fn emit_not(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    value: &AsmValue,
+    value: &AsmOperand,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
@@ -1688,7 +1912,7 @@ fn emit_zext(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    value: &AsmValue,
+    value: &AsmOperand,
     dst_ty: &AsmType,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -1728,7 +1952,7 @@ fn emit_trunc(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    value: &AsmValue,
+    value: &AsmOperand,
     dst_ty: &AsmType,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -1761,7 +1985,7 @@ fn emit_sext(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    value: &AsmValue,
+    value: &AsmOperand,
     dst_ty: &AsmType,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -1795,7 +2019,7 @@ fn emit_sext_or_trunc(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    value: &AsmValue,
+    value: &AsmOperand,
     dst_ty: &AsmType,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -1816,7 +2040,7 @@ fn emit_ptr_to_int(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    value: &AsmValue,
+    value: &AsmOperand,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
@@ -1843,7 +2067,7 @@ fn emit_int_to_ptr(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    value: &AsmValue,
+    value: &AsmOperand,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
@@ -1875,7 +2099,7 @@ fn emit_freeze(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    value: &AsmValue,
+    value: &AsmOperand,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
@@ -1934,8 +2158,8 @@ fn emit_binop(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    lhs: &AsmValue,
-    rhs: &AsmValue,
+    lhs: &AsmOperand,
+    rhs: &AsmOperand,
     op: BinOp,
     ty: &AsmType,
     reg_types: &HashMap<u32, AsmType>,
@@ -1958,7 +2182,7 @@ fn emit_binop(
 
     load_value(asm, layout, lhs, Reg::X16, reg_types, local_types)?;
     match rhs {
-        AsmValue::Register(_) => {
+        AsmOperand::Register { .. } => {
             load_value(asm, layout, rhs, Reg::X17, reg_types, local_types)?;
             match op {
                 BinOp::Add => emit_add_reg(asm, Reg::X16, Reg::X16, Reg::X17),
@@ -1966,7 +2190,7 @@ fn emit_binop(
                 BinOp::Mul => emit_mul_reg(asm, Reg::X16, Reg::X16, Reg::X17),
             }
         }
-        AsmValue::Constant(constant) => {
+        AsmOperand::Constant(constant) => {
             if matches!(
                 constant,
                 AsmConstant::GlobalRef(_, _, _) | AsmConstant::FunctionRef(_, _)
@@ -2026,7 +2250,7 @@ fn emit_binop(
 fn load_value(
     asm: &mut Assembler,
     layout: &FrameLayout,
-    value: &AsmValue,
+    value: &AsmOperand,
     dst: Reg,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -2050,7 +2274,7 @@ fn load_value(
         return Ok(());
     }
     match value {
-        AsmValue::Register(id) => {
+        AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
             let offset = vreg_offset(layout, *id)?;
             if is_aggregate_type(&ty) && size_of(&ty) > 8 {
                 emit_load_from_sp(asm, dst, offset);
@@ -2079,7 +2303,7 @@ fn load_value(
             }
             Ok(())
         }
-        AsmValue::Local(id) => {
+        AsmOperand::Local(id) => {
             let offset = local_offset(layout, *id)?;
             if is_aggregate_type(&ty) && size_of(&ty) > 8 {
                 emit_mov_reg(asm, dst, Reg::X31);
@@ -2109,7 +2333,7 @@ fn load_value(
             }
             Ok(())
         }
-        AsmValue::Constant(constant) => {
+        AsmOperand::Constant(constant) => {
             if size_of(&ty) == 0 {
                 emit_mov_imm16(asm, dst, 0);
                 return Ok(());
@@ -2130,15 +2354,7 @@ fn load_value(
             }
             Ok(())
         }
-        AsmValue::Null(_) | AsmValue::Undef(_) => {
-            emit_mov_imm16(asm, dst, 0);
-            Ok(())
-        }
-        AsmValue::Global(name, _) => {
-            emit_load_symbol_addr(asm, dst, name, 0)?;
-            Ok(())
-        }
-        AsmValue::Function(name) => {
+        AsmOperand::Symbol(name) => {
             emit_load_symbol_addr(asm, dst, name, 0)?;
             Ok(())
         }
@@ -2172,40 +2388,35 @@ fn i128_parts_from_const(constant: &AsmConstant) -> Result<(u64, u64)> {
 fn load_i128_value(
     asm: &mut Assembler,
     layout: &FrameLayout,
-    value: &AsmValue,
+    value: &AsmOperand,
     lo: Reg,
     hi: Reg,
     _reg_types: &HashMap<u32, AsmType>,
     _local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
     match value {
-        AsmValue::Register(id) => {
+        AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
             let offset = vreg_offset(layout, *id)?;
             emit_load_from_sp(asm, lo, offset);
             emit_load_from_sp(asm, hi, offset + 8);
             Ok(())
         }
-        AsmValue::Local(id) => {
+        AsmOperand::Local(id) => {
             let offset = local_offset(layout, *id)?;
             emit_load_from_sp(asm, lo, offset);
             emit_load_from_sp(asm, hi, offset + 8);
             Ok(())
         }
-        AsmValue::StackSlot(id) => {
+        AsmOperand::StackSlot(id) => {
             let (base, offset) = stack_slot_base_and_offset(layout, *id)?;
             emit_load_from_base(asm, lo, base, offset);
             emit_load_from_base(asm, hi, base, offset + 8);
             Ok(())
         }
-        AsmValue::Constant(constant) => {
+        AsmOperand::Constant(constant) => {
             let (lo_val, hi_val) = i128_parts_from_const(constant)?;
             emit_mov_imm64(asm, lo, lo_val);
             emit_mov_imm64(asm, hi, hi_val);
-            Ok(())
-        }
-        AsmValue::Null(_) | AsmValue::Undef(_) => {
-            emit_mov_imm16(asm, lo, 0);
-            emit_mov_imm16(asm, hi, 0);
             Ok(())
         }
         _ => Err(Error::from("unsupported i128 value")),
@@ -2229,8 +2440,8 @@ fn emit_i128_binop(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    lhs: &AsmValue,
-    rhs: &AsmValue,
+    lhs: &AsmOperand,
+    rhs: &AsmOperand,
     op: BinOp,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -2271,8 +2482,8 @@ fn emit_i128_shift(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    lhs: &AsmValue,
-    rhs: &AsmValue,
+    lhs: &AsmOperand,
+    rhs: &AsmOperand,
     kind: ShiftKind,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -2298,8 +2509,8 @@ fn emit_i128_divrem(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    lhs: &AsmValue,
-    rhs: &AsmValue,
+    lhs: &AsmOperand,
+    rhs: &AsmOperand,
     want_rem: bool,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -2323,9 +2534,9 @@ fn emit_i128_libcall(
     layout: &FrameLayout,
     dst_id: u32,
     symbol: &str,
-    lhs: &AsmValue,
-    rhs: Option<&AsmValue>,
-    shift: Option<&AsmValue>,
+    lhs: &AsmOperand,
+    rhs: Option<&AsmOperand>,
+    shift: Option<&AsmOperand>,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
@@ -2422,7 +2633,7 @@ fn push_int_arg(
 fn load_value_float(
     asm: &mut Assembler,
     layout: &FrameLayout,
-    value: &AsmValue,
+    value: &AsmOperand,
     dst: FReg,
     ty: &AsmType,
     reg_types: &HashMap<u32, AsmType>,
@@ -2442,26 +2653,17 @@ fn load_value_float(
             .expect("layout query failed")
     };
     match value {
-        AsmValue::Register(id) => {
+        AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
             let offset = vreg_offset(layout, *id)?;
             emit_load_float_from_sp(asm, dst, offset, ty);
             Ok(())
         }
-        AsmValue::Local(id) => {
+        AsmOperand::Local(id) => {
             let offset = local_offset(layout, *id)?;
             emit_load_float_from_sp(asm, dst, offset, ty);
             Ok(())
         }
-        AsmValue::Undef(_) | AsmValue::Null(_) => {
-            emit_mov_imm16(asm, Reg::X16, 0);
-            if matches!(ty, AsmType::F32) {
-                emit_fmov_s_from_w(asm, dst, Reg::X16);
-            } else {
-                emit_fmov_d_from_x(asm, dst, Reg::X16);
-            }
-            Ok(())
-        }
-        AsmValue::Constant(AsmConstant::Float(value, _)) => {
+        AsmOperand::Constant(AsmConstant::Float(value, _)) => {
             if matches!(ty, AsmType::F32) {
                 let bits = (*value as f32).to_bits();
                 emit_mov_imm16(asm, Reg::X16, (bits & 0xffff) as u16);
@@ -2477,7 +2679,7 @@ fn load_value_float(
             }
             Ok(())
         }
-        AsmValue::Constant(AsmConstant::Null(_)) | AsmValue::Constant(AsmConstant::Undef(_)) => {
+        AsmOperand::Constant(AsmConstant::Null(_)) | AsmOperand::Constant(AsmConstant::Undef(_)) => {
             emit_mov_imm16(asm, Reg::X16, 0);
             if matches!(ty, AsmType::F32) {
                 emit_fmov_s_from_w(asm, dst, Reg::X16);
@@ -2536,7 +2738,7 @@ fn emit_load(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    address: &AsmValue,
+    address: &AsmOperand,
     ty: &AsmType,
 ) -> Result<()> {
     let size_of = |ty: &LirType| layout.data_layout.size_of(ty).expect("layout query failed");
@@ -2554,19 +2756,19 @@ fn emit_load(
     };
     if matches!(ty, AsmType::I128) {
         match address {
-            AsmValue::StackSlot(id) => {
+            AsmOperand::StackSlot(id) => {
                 let (base, offset) = stack_slot_base_and_offset(layout, *id)?;
                 emit_load_from_base(asm, Reg::X16, base, offset);
                 emit_load_from_base(asm, Reg::X17, base, offset + 8);
             }
-            AsmValue::Register(id) => {
+            AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
                 let offset = vreg_offset(layout, *id)?;
                 emit_load_from_sp(asm, Reg::X9, offset);
                 emit_load_from_reg(asm, Reg::X16, Reg::X9);
                 add_immediate_offset(asm, Reg::X9, 8);
                 emit_load_from_reg(asm, Reg::X17, Reg::X9);
             }
-            AsmValue::Local(id) => {
+            AsmOperand::Local(id) => {
                 let offset = local_offset(layout, *id)?;
                 emit_load_from_sp(asm, Reg::X9, offset);
                 emit_load_from_reg(asm, Reg::X16, Reg::X9);
@@ -2585,19 +2787,19 @@ fn emit_load(
         }
         let dst_offset = agg_offset(layout, dst_id)?;
         match address {
-            AsmValue::StackSlot(id) => {
+            AsmOperand::StackSlot(id) => {
                 let (base, src_offset) = stack_slot_base_and_offset(layout, *id)?;
                 if base != Reg::X31 {
                     return Err(Error::from("unsupported aggregate load from regfile slot"));
                 }
                 copy_sp_to_sp(asm, src_offset, dst_offset, size)?;
             }
-            AsmValue::Register(id) => {
+            AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
                 let addr_offset = vreg_offset(layout, *id)?;
                 emit_load_from_sp(asm, Reg::X17, addr_offset);
                 copy_reg_to_sp(asm, Reg::X17, dst_offset, size)?;
             }
-            AsmValue::Local(id) => {
+            AsmOperand::Local(id) => {
                 let addr_offset = local_offset(layout, *id)?;
                 emit_load_from_sp(asm, Reg::X17, addr_offset);
                 copy_reg_to_sp(asm, Reg::X17, dst_offset, size)?;
@@ -2611,7 +2813,7 @@ fn emit_load(
         return Ok(());
     }
     match address {
-        AsmValue::StackSlot(id) => {
+        AsmOperand::StackSlot(id) => {
             let (base, offset) = stack_slot_base_and_offset(layout, *id)?;
             if is_freg_type(ty, &layout.data_layout) {
                 if base != Reg::X31 {
@@ -2642,7 +2844,7 @@ fn emit_load(
             }
             Ok(())
         }
-        AsmValue::Register(id) => {
+        AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
             let offset = vreg_offset(layout, *id)?;
             emit_load_from_sp(asm, Reg::X16, offset);
             if is_freg_type(ty, &layout.data_layout) {
@@ -2671,7 +2873,7 @@ fn emit_load(
             }
             Ok(())
         }
-        AsmValue::Local(id) => {
+        AsmOperand::Local(id) => {
             let offset = local_offset(layout, *id)?;
             emit_load_from_sp(asm, Reg::X16, offset);
             if is_freg_type(ty, &layout.data_layout) {
@@ -2707,8 +2909,8 @@ fn emit_load(
 fn emit_store(
     asm: &mut Assembler,
     layout: &FrameLayout,
-    value: &AsmValue,
-    address: &AsmValue,
+    value: &AsmOperand,
+    address: &AsmOperand,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
     rodata: &mut Vec<u8>,
@@ -2727,27 +2929,27 @@ fn emit_store(
             .struct_layout(ty)
             .expect("layout query failed")
     };
-    if let AsmValue::Constant(AsmConstant::String(text)) = value {
+    if let AsmOperand::Constant(AsmConstant::String(text)) = value {
         let offset = intern_cstring(rodata, rodata_pool, text);
         match address {
-            AsmValue::StackSlot(id) => {
+            AsmOperand::StackSlot(id) => {
                 let (base, dst_offset) = stack_slot_base_and_offset(layout, *id)?;
                 emit_load_rodata_addr(asm, Reg::X16, offset as i64)?;
                 emit_store_to_base(asm, Reg::X16, base, dst_offset);
             }
-            AsmValue::Register(id) => {
+            AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
                 let addr_offset = vreg_offset(layout, *id)?;
                 emit_load_from_sp(asm, Reg::X17, addr_offset);
                 emit_load_rodata_addr(asm, Reg::X16, offset as i64)?;
                 emit_store_to_reg(asm, Reg::X16, Reg::X17);
             }
-            AsmValue::Local(id) => {
+            AsmOperand::Local(id) => {
                 let addr_offset = local_offset(layout, *id)?;
                 emit_load_from_sp(asm, Reg::X17, addr_offset);
                 emit_load_rodata_addr(asm, Reg::X16, offset as i64)?;
                 emit_store_to_reg(asm, Reg::X16, Reg::X17);
             }
-            AsmValue::Global(name, _) => {
+            AsmOperand::Symbol(name) => {
                 emit_load_symbol_addr(asm, Reg::X17, name, 0)?;
                 emit_load_rodata_addr(asm, Reg::X16, offset as i64)?;
                 emit_store_to_reg(asm, Reg::X16, Reg::X17);
@@ -2756,7 +2958,7 @@ fn emit_store(
         }
         return Ok(());
     }
-    if let AsmValue::Constant(AsmConstant::Array(values, elem_ty)) = value {
+    if let AsmOperand::Constant(AsmConstant::Array(values, elem_ty)) = value {
         if values.is_empty() {
             return Ok(());
         }
@@ -2803,7 +3005,7 @@ fn emit_store(
             }
         };
         match address {
-            AsmValue::StackSlot(id) => {
+            AsmOperand::StackSlot(id) => {
                 let (base, dst_offset) = stack_slot_base_and_offset(layout, *id)?;
                 if base != Reg::X31 {
                     return Err(Error::from("unsupported array store into regfile slot"));
@@ -2840,7 +3042,7 @@ fn emit_store(
                     store_elem_sp(asm, offset)?;
                 }
             }
-            AsmValue::Register(id) => {
+            AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
                 let addr_offset = vreg_offset(layout, *id)?;
                 emit_load_from_sp(asm, Reg::X17, addr_offset);
                 for (idx, elem) in values.iter().enumerate() {
@@ -2877,7 +3079,7 @@ fn emit_store(
                     store_elem_reg(asm)?;
                 }
             }
-            AsmValue::Local(id) => {
+            AsmOperand::Local(id) => {
                 let addr_offset = local_offset(layout, *id)?;
                 emit_load_from_sp(asm, Reg::X17, addr_offset);
                 for (idx, elem) in values.iter().enumerate() {
@@ -2914,7 +3116,7 @@ fn emit_store(
                     store_elem_reg(asm)?;
                 }
             }
-            AsmValue::Global(name, _) => {
+            AsmOperand::Symbol(name) => {
                 emit_load_symbol_addr(asm, Reg::X17, name, 0)?;
                 for (idx, elem) in values.iter().enumerate() {
                     let offset = (idx as i32) * elem_size;
@@ -2966,26 +3168,26 @@ fn emit_store(
             local_types,
         )?;
         match address {
-            AsmValue::StackSlot(id) => {
+            AsmOperand::StackSlot(id) => {
                 let (base, dst_offset) = stack_slot_base_and_offset(layout, *id)?;
                 emit_store_to_base(asm, Reg::X16, base, dst_offset);
                 emit_store_to_base(asm, Reg::X17, base, dst_offset + 8);
             }
-            AsmValue::Register(id) => {
+            AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
                 let addr_offset = vreg_offset(layout, *id)?;
                 emit_load_from_sp(asm, Reg::X9, addr_offset);
                 emit_store_to_reg(asm, Reg::X16, Reg::X9);
                 add_immediate_offset(asm, Reg::X9, 8);
                 emit_store_to_reg(asm, Reg::X17, Reg::X9);
             }
-            AsmValue::Local(id) => {
+            AsmOperand::Local(id) => {
                 let addr_offset = local_offset(layout, *id)?;
                 emit_load_from_sp(asm, Reg::X9, addr_offset);
                 emit_store_to_reg(asm, Reg::X16, Reg::X9);
                 add_immediate_offset(asm, Reg::X9, 8);
                 emit_store_to_reg(asm, Reg::X17, Reg::X9);
             }
-            AsmValue::Global(name, _) => {
+            AsmOperand::Symbol(name) => {
                 emit_load_symbol_addr(asm, Reg::X9, name, 0)?;
                 emit_store_to_reg(asm, Reg::X16, Reg::X9);
                 add_immediate_offset(asm, Reg::X9, 8);
@@ -2995,13 +3197,13 @@ fn emit_store(
         }
         return Ok(());
     }
-    if matches!(value, AsmValue::Constant(AsmConstant::Array(values, _)) if values.is_empty()) {
+    if matches!(value, AsmOperand::Constant(AsmConstant::Array(values, _)) if values.is_empty()) {
         return Ok(());
     }
     if size_of(&value_ty) == 0 {
         return Ok(());
     }
-    if let AsmValue::Constant(constant) = value {
+    if let AsmOperand::Constant(constant) = value {
         if matches!(
             constant,
             AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)
@@ -3010,16 +3212,16 @@ fn emit_store(
             let bits = pack_small_aggregate(constant, &value_ty, &layout.data_layout)?;
             emit_mov_imm64(asm, Reg::X16, bits);
             match address {
-                AsmValue::StackSlot(id) => {
+                AsmOperand::StackSlot(id) => {
                     let (base, dst_offset) = stack_slot_base_and_offset(layout, *id)?;
                     emit_store_to_base(asm, Reg::X16, base, dst_offset);
                 }
-                AsmValue::Register(id) => {
+                AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
                     let addr_offset = vreg_offset(layout, *id)?;
                     emit_load_from_sp(asm, Reg::X17, addr_offset);
                     emit_store_to_reg(asm, Reg::X16, Reg::X17);
                 }
-                AsmValue::Local(id) => {
+                AsmOperand::Local(id) => {
                     let addr_offset = local_offset(layout, *id)?;
                     emit_load_from_sp(asm, Reg::X17, addr_offset);
                     emit_store_to_reg(asm, Reg::X16, Reg::X17);
@@ -3031,7 +3233,7 @@ fn emit_store(
     }
     if is_large_aggregate(&value_ty, &layout.data_layout) {
         let size = size_of(&value_ty) as i32;
-        if let AsmValue::Constant(AsmConstant::Struct(values, ty)) = value {
+        if let AsmOperand::Constant(AsmConstant::Struct(values, ty)) = value {
             let fields = match ty {
                 AsmType::Struct { fields, .. } => fields,
                 _ => return Err(Error::from("expected struct type for constant store")),
@@ -3039,7 +3241,7 @@ fn emit_store(
             let struct_layout = struct_layout(ty)
                 .ok_or_else(|| Error::from("missing struct layout for aggregate store"))?;
             match address {
-                AsmValue::StackSlot(id) => {
+                AsmOperand::StackSlot(id) => {
                     let (base, dst_offset) = stack_slot_base_and_offset(layout, *id)?;
                     if base != Reg::X31 {
                         return Err(Error::from("unsupported aggregate store into regfile slot"));
@@ -3113,7 +3315,7 @@ fn emit_store(
                         }
                     }
                 }
-                AsmValue::Register(id) => {
+                AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
                     let addr_offset = vreg_offset(layout, *id)?;
                     emit_load_from_sp(asm, Reg::X17, addr_offset);
                     emit_mov_reg(asm, Reg::X11, Reg::X17);
@@ -3184,7 +3386,7 @@ fn emit_store(
                         }
                     }
                 }
-                AsmValue::Local(id) => {
+                AsmOperand::Local(id) => {
                     let addr_offset = local_offset(layout, *id)?;
                     emit_load_from_sp(asm, Reg::X17, addr_offset);
                     emit_mov_reg(asm, Reg::X11, Reg::X17);
@@ -3259,21 +3461,21 @@ fn emit_store(
             }
             return Ok(());
         }
-        if matches!(value, AsmValue::Constant(AsmConstant::Undef(_))) {
+        if matches!(value, AsmOperand::Constant(AsmConstant::Undef(_))) {
             match address {
-                AsmValue::StackSlot(id) => {
+                AsmOperand::StackSlot(id) => {
                     let (base, dst_offset) = stack_slot_base_and_offset(layout, *id)?;
                     if base != Reg::X31 {
                         return Err(Error::from("unsupported undef store into regfile slot"));
                     }
                     zero_sp_range(asm, dst_offset, size)?;
                 }
-                AsmValue::Register(id) => {
+                AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
                     let addr_offset = vreg_offset(layout, *id)?;
                     emit_load_from_sp(asm, Reg::X17, addr_offset);
                     zero_reg_range(asm, Reg::X17, size)?;
                 }
-                AsmValue::Local(id) => {
+                AsmOperand::Local(id) => {
                     let addr_offset = local_offset(layout, *id)?;
                     emit_load_from_sp(asm, Reg::X17, addr_offset);
                     zero_reg_range(asm, Reg::X17, size)?;
@@ -3283,8 +3485,8 @@ fn emit_store(
             return Ok(());
         }
         let src_offset = match value {
-            AsmValue::Register(id) => agg_offset(layout, *id)?,
-            AsmValue::Local(id) => local_offset(layout, *id)?,
+            AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => agg_offset(layout, *id)?,
+            AsmOperand::Local(id) => local_offset(layout, *id)?,
             _ => {
                 return Err(Error::from(format!(
                     "unsupported aggregate store value: {:?}",
@@ -3293,14 +3495,14 @@ fn emit_store(
             }
         };
         match address {
-            AsmValue::StackSlot(id) => {
+            AsmOperand::StackSlot(id) => {
                 let (base, dst_offset) = stack_slot_base_and_offset(layout, *id)?;
                 if base != Reg::X31 {
                     return Err(Error::from("unsupported aggregate store into regfile slot"));
                 }
                 copy_sp_to_sp(asm, src_offset, dst_offset, size)?;
             }
-            AsmValue::Register(id) => {
+            AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
                 if let Some(offset) = asm.vreg_sp_offset(*id) {
                     asm.log_stack_write(offset, size, "store-agg-via-reg");
                 }
@@ -3308,7 +3510,7 @@ fn emit_store(
                 emit_load_from_sp(asm, Reg::X17, addr_offset);
                 copy_sp_to_reg(asm, src_offset, Reg::X17, size)?;
             }
-            AsmValue::Local(id) => {
+            AsmOperand::Local(id) => {
                 let addr_offset = local_offset(layout, *id)?;
                 asm.log_stack_write(addr_offset, size, "store-agg-via-local");
                 let addr_offset = local_offset(layout, *id)?;
@@ -3320,7 +3522,7 @@ fn emit_store(
         return Ok(());
     }
     match address {
-        AsmValue::StackSlot(id) => {
+        AsmOperand::StackSlot(id) => {
             let (base, offset) = stack_slot_base_and_offset(layout, *id)?;
             if is_freg_type(&value_ty, &layout.data_layout) {
                 if base != Reg::X31 {
@@ -3387,7 +3589,7 @@ fn emit_store(
             }
             Ok(())
         }
-        AsmValue::Register(id) => {
+        AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
             let store_size = size_of(&value_ty) as i32;
             if let Some(offset) = asm.vreg_sp_offset(*id) {
                 asm.log_stack_write(offset, store_size, "store-via-reg");
@@ -3427,7 +3629,7 @@ fn emit_store(
             }
             Ok(())
         }
-        AsmValue::Local(id) => {
+        AsmOperand::Local(id) => {
             let store_size = size_of(&value_ty) as i32;
             let addr_offset = local_offset(layout, *id)?;
             asm.log_stack_write(addr_offset, store_size, "store-via-local");
@@ -3465,7 +3667,7 @@ fn emit_store(
             }
             Ok(())
         }
-        AsmValue::Global(name, _) => {
+        AsmOperand::Symbol(name) => {
             emit_load_symbol_addr(asm, Reg::X17, name, 0)?;
             if is_freg_type(&value_ty, &layout.data_layout) {
                 load_value_float(
@@ -3508,8 +3710,8 @@ fn emit_divrem(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    lhs: &AsmValue,
-    rhs: &AsmValue,
+    lhs: &AsmOperand,
+    rhs: &AsmOperand,
     want_rem: bool,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -3566,8 +3768,8 @@ fn emit_call(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    function: &AsmValue,
-    args: &[AsmValue],
+    function: &AsmOperand,
+    args: &[AsmOperand],
     calling_convention: &CallingConvention,
     func_map: &HashMap<String, u32>,
     ret_ty: &AsmType,
@@ -3612,8 +3814,8 @@ fn emit_call(
 
         emit_mov_reg(asm, Reg::X0, Reg::X19);
         match function {
-            AsmValue::Function(name) => {
-                if let Some(id) = func_map.get(name).copied() {
+            AsmOperand::Symbol(name) => {
+                if let Some(id) = func_map.get(name.as_str()).copied() {
                     asm.emit_bl(Label::Function(id));
                 } else {
                     return Err(Error::from("lifted regfile calls must be internal"));
@@ -3638,11 +3840,11 @@ fn emit_call(
     }
 
     let target = match function {
-        AsmValue::Function(name) => func_map
-            .get(name)
+        AsmOperand::Symbol(name) => func_map
+            .get(name.as_str())
             .copied()
             .map(CallTarget::Internal)
-            .unwrap_or_else(|| CallTarget::External(name.clone())),
+            .unwrap_or_else(|| CallTarget::External(name.to_string())),
         _ => CallTarget::Indirect,
     };
 
@@ -3687,7 +3889,7 @@ fn emit_call(
 
     if abi_debug_enabled() {
         let name = match function {
-            AsmValue::Function(name) => name.as_str(),
+            AsmOperand::Symbol(name) => name.as_str(),
             _ => "<unknown>",
         };
         let sp_aligned = layout.frame_size % 16 == 0;
@@ -3713,7 +3915,7 @@ fn emit_call(
         )?;
     } else {
         for arg in args {
-            if let AsmValue::Constant(AsmConstant::String(text)) = arg {
+            if let AsmOperand::Constant(AsmConstant::String(text)) = arg {
                 let offset = intern_cstring(rodata, rodata_pool, text);
                 if int_idx < arg_regs.len() {
                     emit_load_rodata_addr(asm, arg_regs[int_idx], offset as i64)?;
@@ -3769,7 +3971,7 @@ fn emit_call(
             // has no such backing memory of its own — materialize it into
             // this function's reserved scratch slot, then pass that slot's
             // address like any other large-aggregate argument.
-            if let AsmValue::Constant(
+            if let AsmOperand::Constant(
                 constant @ (AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)),
             ) = arg
             {
@@ -3911,7 +4113,7 @@ fn emit_intrinsic_call(
     dst_id: u32,
     kind: &AsmIntrinsicKind,
     format: &str,
-    args: &[AsmValue],
+    args: &[AsmOperand],
     result_ty: &AsmType,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -3969,7 +4171,7 @@ fn emit_intrinsic_call(
                     stack_offset += size;
                     continue;
                 }
-                if let AsmValue::Constant(AsmConstant::String(text)) = arg {
+                if let AsmOperand::Constant(AsmConstant::String(text)) = arg {
                     let offset = intern_cstring(rodata, rodata_pool, text);
                     if int_idx < arg_regs.len() {
                         emit_load_rodata_addr(asm, arg_regs[int_idx], offset as i64)?;
@@ -4039,7 +4241,7 @@ fn emit_intrinsic_call(
                     stack_offset += size;
                     continue;
                 }
-                if let AsmValue::Constant(AsmConstant::String(text)) = arg {
+                if let AsmOperand::Constant(AsmConstant::String(text)) = arg {
                     let offset = intern_cstring(rodata, rodata_pool, text);
                     if int_idx < arg_regs.len() {
                         emit_load_rodata_addr(asm, arg_regs[int_idx], offset as i64)?;
@@ -4152,7 +4354,7 @@ fn emit_intrinsic_call(
             stack_offset += size;
             continue;
         }
-        if let AsmValue::Constant(AsmConstant::String(text)) = arg {
+        if let AsmOperand::Constant(AsmConstant::String(text)) = arg {
             let offset = intern_cstring(rodata, rodata_pool, text);
             if int_idx < arg_regs.len() {
                 emit_load_rodata_addr(asm, arg_regs[int_idx], offset as i64)?;
@@ -4226,7 +4428,7 @@ fn emit_int_to_float(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    value: &AsmValue,
+    value: &AsmOperand,
     dst_ty: &AsmType,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -4246,7 +4448,7 @@ fn emit_float_to_int(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    value: &AsmValue,
+    value: &AsmOperand,
     dst_ty: &AsmType,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -4277,7 +4479,7 @@ fn emit_fp_trunc(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    value: &AsmValue,
+    value: &AsmOperand,
     dst_ty: &AsmType,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -4304,7 +4506,7 @@ fn emit_fp_ext(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    value: &AsmValue,
+    value: &AsmOperand,
     dst_ty: &AsmType,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -4331,8 +4533,8 @@ fn emit_gep(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    ptr: &AsmValue,
-    indices: &[AsmValue],
+    ptr: &AsmOperand,
+    indices: &[AsmOperand],
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
@@ -4354,7 +4556,7 @@ fn emit_gep(
         AsmType::Ptr(inner) => *inner,
         _ => return Err(Error::from("GEP expects pointer base type")),
     };
-    let mut const_offset = if let AsmValue::Register(id) = ptr {
+    let mut const_offset = if let AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } = ptr {
         asm.vreg_sp_offset(*id).map(|offset| offset as i64)
     } else {
         None
@@ -4365,7 +4567,7 @@ fn emit_gep(
         match &current_ty {
             AsmType::Struct { fields, .. } => {
                 let idx = match index {
-                    AsmValue::Constant(constant) => {
+                    AsmOperand::Constant(constant) => {
                         let raw = constant_to_i64(constant, &layout.data_layout)?;
                         usize::try_from(raw).map_err(|e| {
                             Error::from(format!("GEP struct index out of range: {e}"))
@@ -4390,7 +4592,7 @@ fn emit_gep(
             }
             AsmType::Array(elem, _) | AsmType::Vector(elem, _) => {
                 match index {
-                    AsmValue::Constant(constant) => {
+                    AsmOperand::Constant(constant) => {
                         if let Some(base) = const_offset.as_mut() {
                             let idx = constant_to_i64(constant, &layout.data_layout)?;
                             *base += idx * size_of(elem) as i64;
@@ -4410,7 +4612,7 @@ fn emit_gep(
             }
             _ => {
                 match index {
-                    AsmValue::Constant(constant) => {
+                    AsmOperand::Constant(constant) => {
                         if let Some(base) = const_offset.as_mut() {
                             let idx = constant_to_i64(constant, &layout.data_layout)?;
                             *base += idx * size_of(&current_ty) as i64;
@@ -4442,7 +4644,7 @@ fn emit_gep(
 fn emit_scaled_index(
     asm: &mut Assembler,
     layout: &FrameLayout,
-    index: &AsmValue,
+    index: &AsmOperand,
     elem_size: u64,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -4492,25 +4694,6 @@ fn add_immediate_offset(asm: &mut Assembler, base: Reg, offset: i64) {
         emit_mov_imm64(asm, scratch, offset as u64);
         emit_add_reg(asm, base, base, scratch);
     }
-}
-
-fn extract_value_type(ty: &AsmType, indices: &[u32]) -> Result<AsmType> {
-    let mut current_ty = ty.clone();
-    for idx in indices {
-        match &current_ty {
-            AsmType::Struct { fields, .. } => {
-                current_ty = fields
-                    .get(*idx as usize)
-                    .cloned()
-                    .ok_or_else(|| Error::from("ExtractValue field out of range"))?;
-            }
-            AsmType::Array(elem, _) | AsmType::Vector(elem, _) => {
-                current_ty = *elem.clone();
-            }
-            _ => return Err(Error::from("ExtractValue expects aggregate type")),
-        }
-    }
-    Ok(current_ty)
 }
 
 fn aggregate_field_offset(
@@ -4935,7 +5118,7 @@ fn emit_bitcast(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    value: &AsmValue,
+    value: &AsmOperand,
     dst_ty: &AsmType,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -5012,8 +5195,8 @@ fn emit_insert_value(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    aggregate: &AsmValue,
-    element: &AsmValue,
+    aggregate: &AsmOperand,
+    element: &AsmOperand,
     indices: &[u32],
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -5060,11 +5243,11 @@ fn emit_insert_value(
     let dst_offset = agg_offset(layout, dst_id)?;
 
     match aggregate {
-        AsmValue::Register(id) => {
+        AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
             let src_offset = agg_offset(layout, *id)?;
             copy_sp_to_sp(asm, src_offset, dst_offset, size)?;
         }
-        AsmValue::Constant(AsmConstant::Undef(_)) => {
+        AsmOperand::Constant(AsmConstant::Undef(_)) => {
             zero_sp_range(asm, dst_offset, size)?;
         }
         _ => return Err(Error::from("unsupported InsertValue aggregate source")),
@@ -5078,15 +5261,15 @@ fn emit_insert_value(
             return Ok(());
         }
         match element {
-            AsmValue::Register(id) => {
+            AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
                 let src_offset = agg_offset(layout, *id)?;
                 copy_sp_to_sp(asm, src_offset, store_offset, field_size)?;
             }
-            AsmValue::Local(id) => {
+            AsmOperand::Local(id) => {
                 let src_offset = local_offset(layout, *id)?;
                 copy_sp_to_sp(asm, src_offset, store_offset, field_size)?;
             }
-            AsmValue::Constant(AsmConstant::Struct(values, ty)) => {
+            AsmOperand::Constant(AsmConstant::Struct(values, ty)) => {
                 let fields = match ty {
                     AsmType::Struct { fields, .. } => fields,
                     _ => return Err(Error::from("expected struct type for InsertValue")),
@@ -5129,7 +5312,7 @@ fn emit_insert_value(
                     }
                 }
             }
-            AsmValue::Constant(AsmConstant::Undef(_)) => {
+            AsmOperand::Constant(AsmConstant::Undef(_)) => {
                 zero_sp_range(asm, store_offset, field_size)?;
             }
             _ => return Err(Error::from("unsupported InsertValue aggregate element")),
@@ -5151,7 +5334,7 @@ fn emit_insert_value(
         )?;
         emit_store_float_to_sp(asm, FReg::V0, store_offset, &field_ty);
     } else {
-        if let AsmValue::Constant(AsmConstant::String(text)) = element {
+        if let AsmOperand::Constant(AsmConstant::String(text)) = element {
             let offset = intern_cstring(rodata, rodata_pool, text);
             emit_load_rodata_addr(asm, Reg::X16, offset as i64)?;
             match field_ty {
@@ -5204,7 +5387,7 @@ fn emit_extract_value(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    aggregate: &AsmValue,
+    aggregate: &AsmOperand,
     indices: &[u32],
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -5231,7 +5414,7 @@ fn emit_extract_value(
         return Ok(());
     }
     let src_offset = match aggregate {
-        AsmValue::Register(id) => agg_offset(layout, *id)?,
+        AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => agg_offset(layout, *id)?,
         _ => return Err(Error::from("unsupported ExtractValue aggregate source")),
     };
     let (field_offset, _field_ty) = aggregate_field_offset(&agg_ty, indices, &layout.data_layout)?;
@@ -5439,7 +5622,7 @@ fn store_outgoing_arg(
     asm: &mut Assembler,
     layout: &FrameLayout,
     offset: i32,
-    value: &AsmValue,
+    value: &AsmOperand,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
@@ -5461,7 +5644,7 @@ fn store_vararg_value(
     asm: &mut Assembler,
     layout: &FrameLayout,
     offset: i32,
-    value: &AsmValue,
+    value: &AsmOperand,
     ty: &AsmType,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -5491,7 +5674,7 @@ fn store_vararg_value(
         return Ok(size);
     }
     match value {
-        AsmValue::Register(id) => {
+        AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
             let src_offset = agg_offset(layout, *id)?;
             copy_sp_to_sp(asm, src_offset, offset, size)?;
             Ok(size)
@@ -5686,35 +5869,39 @@ fn constant_type(constant: &AsmConstant) -> AsmType {
 }
 
 fn value_type(
-    value: &AsmValue,
+    value: &AsmOperand,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<AsmType> {
     match value {
-        AsmValue::Register(id) => reg_types
+        AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => reg_types
             .get(id)
             .cloned()
             .ok_or_else(|| Error::from("missing register type")),
-        AsmValue::PhysicalRegister(register) => Ok(match register.size_bits {
-            0..=8 => AsmType::I8,
-            9..=16 => AsmType::I16,
-            17..=32 => AsmType::I32,
-            33..=64 => AsmType::I64,
-            _ => AsmType::I128,
-        }),
-        AsmValue::Address(_) => Ok(AsmType::Ptr(Box::new(AsmType::I8))),
-        AsmValue::Condition(_) => Ok(AsmType::I1),
-        AsmValue::Comparison(_) => Ok(AsmType::I1),
-        AsmValue::Flags(_) => Ok(AsmType::I1),
-        AsmValue::Constant(constant) => Ok(constant_type(constant)),
-        AsmValue::Null(ty) | AsmValue::Undef(ty) => Ok(ty.clone()),
-        AsmValue::StackSlot(_) => Ok(AsmType::Ptr(Box::new(AsmType::I8))),
-        AsmValue::Local(id) => local_types
+        AsmOperand::Register { reg: AsmRegister::Physical(register), .. } => {
+            Ok(match register.size_bits {
+                0..=8 => AsmType::I8,
+                9..=16 => AsmType::I16,
+                17..=32 => AsmType::I32,
+                33..=64 => AsmType::I64,
+                _ => AsmType::I128,
+            })
+        }
+        AsmOperand::Condition(_) | AsmOperand::Predicate { .. } => Ok(AsmType::I1),
+        AsmOperand::Constant(constant) => Ok(constant_type(constant)),
+        AsmOperand::StackSlot(_) => Ok(AsmType::Ptr(Box::new(AsmType::I8))),
+        AsmOperand::Local(id) => local_types
             .get(id)
             .cloned()
             .ok_or_else(|| Error::from("missing local type")),
-        AsmValue::Global(_, ty) => Ok(ty.clone()),
-        AsmValue::Function(_) => Ok(AsmType::Ptr(Box::new(AsmType::I8))),
+        // A bare global/function symbol used directly as a value always
+        // decays to a generic pointer; the load-path (SymbolAddress / Load)
+        // is what carries the precise pointee type.
+        AsmOperand::Symbol(_) => Ok(AsmType::Ptr(Box::new(AsmType::I8))),
+        other => Err(Error::from(format!(
+            "unsupported AsmOperand for aarch64 value_type: {:?}",
+            other
+        ))),
     }
 }
 
@@ -6657,19 +6844,30 @@ fn emit_block(
             .expect("layout query failed")
     };
     for inst in &block.instructions {
-        match &inst.kind {
-            AsmInstructionKind::Nop => {
+        let Some(opcode) = generic_opcode(inst) else {
+            return Err(Error::from(format!(
+                "unsupported custom AsmIR opcode for aarch64: {:?}",
+                inst.opcode
+            )));
+        };
+        match opcode {
+            AsmGenericOpcode::Nop => {
                 asm.emit_u32(0xD503201F);
             }
-            AsmInstructionKind::Add(lhs, rhs) => {
-                let ty = inst.ty.clone();
+            AsmGenericOpcode::Add => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                let ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("add requires a concrete type"))?;
                 if matches!(ty, AsmType::Void) {
                     return Err(Error::from("add requires a concrete type"));
                 }
                 if matches!(ty, AsmType::Ptr(_)) {
                     if let (
-                        AsmValue::Constant(AsmConstant::String(lhs_text)),
-                        AsmValue::Constant(AsmConstant::String(rhs_text)),
+                        AsmOperand::Constant(AsmConstant::String(lhs_text)),
+                        AsmOperand::Constant(AsmConstant::String(rhs_text)),
                     ) = (lhs, rhs)
                     {
                         let mut combined = String::with_capacity(lhs_text.len() + rhs_text.len());
@@ -6677,14 +6875,14 @@ fn emit_block(
                         combined.push_str(rhs_text);
                         let offset = intern_cstring(rodata, rodata_pool, &combined);
                         emit_load_rodata_addr(asm, Reg::X16, offset as i64)?;
-                        store_vreg(asm, layout, inst.id, Reg::X16)?;
+                        store_vreg(asm, layout, dst_id, Reg::X16)?;
                         continue;
                     }
                 }
                 emit_binop(
                     asm,
                     layout,
-                    inst.id,
+                    dst_id,
                     lhs,
                     rhs,
                     BinOp::Add,
@@ -6693,15 +6891,20 @@ fn emit_block(
                     local_types,
                 )?
             }
-            AsmInstructionKind::Sub(lhs, rhs) => {
-                let ty = inst.ty.clone();
+            AsmGenericOpcode::Sub => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                let ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("sub requires a concrete type"))?;
                 if matches!(ty, AsmType::Void) {
                     return Err(Error::from("sub requires a concrete type"));
                 }
                 emit_binop(
                     asm,
                     layout,
-                    inst.id,
+                    dst_id,
                     lhs,
                     rhs,
                     BinOp::Sub,
@@ -6710,15 +6913,20 @@ fn emit_block(
                     local_types,
                 )?
             }
-            AsmInstructionKind::Mul(lhs, rhs) => {
-                let ty = inst.ty.clone();
+            AsmGenericOpcode::Mul => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                let ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("mul requires a concrete type"))?;
                 if matches!(ty, AsmType::Void) {
                     return Err(Error::from("mul requires a concrete type"));
                 }
                 emit_binop(
                     asm,
                     layout,
-                    inst.id,
+                    dst_id,
                     lhs,
                     rhs,
                     BinOp::Mul,
@@ -6727,12 +6935,20 @@ fn emit_block(
                     local_types,
                 )?
             }
-            AsmInstructionKind::Splat {
-                value,
-                lane_bits,
-                lanes,
-            } => {
-                let result_ty = inst.ty.clone();
+            AsmGenericOpcode::Splat => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (value, lane_bits, lanes) = match inst.operands.as_slice() {
+                    [_, value, AsmOperand::Immediate(lane_bits), AsmOperand::Immediate(lanes)] => {
+                        (value, *lane_bits as u16, *lanes as u16)
+                    }
+                    other => {
+                        return Err(Error::from(format!("unexpected Splat operands: {other:?}")))
+                    }
+                };
+                let result_ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("splat requires a concrete result type"))?;
                 if matches!(result_ty, AsmType::Void) {
                     return Err(Error::from("splat requires a concrete result type"));
                 }
@@ -6741,11 +6957,16 @@ fn emit_block(
                 }
 
                 load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
-                emit_dup_from_gpr(asm, FReg::V0, Reg::X16, *lane_bits, *lanes)?;
-                store_vreg_float(asm, layout, inst.id, FReg::V0, &result_ty)?;
+                emit_dup_from_gpr(asm, FReg::V0, Reg::X16, lane_bits, lanes)?;
+                store_vreg_float(asm, layout, dst_id, FReg::V0, &result_ty)?;
             }
-            AsmInstructionKind::BuildVector { elements } => {
-                let result_ty = inst.ty.clone();
+            AsmGenericOpcode::BuildVector => {
+                let dst_id = require_dest_vreg(inst)?;
+                let elements = &inst.operands[1..];
+                let result_ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("build_vector requires a concrete result type"))?;
                 if matches!(result_ty, AsmType::Void) {
                     return Err(Error::from("build_vector requires a concrete result type"));
                 }
@@ -6768,10 +6989,22 @@ fn emit_block(
                 asm.emit_u32(0x6F00_E400u32 | FReg::V0.id());
                 asm.emit_u32(0x4E08_1E00u32 | (Reg::X16.id() << 5) | FReg::V0.id());
                 asm.emit_u32(0x4E18_1E00u32 | (Reg::X17.id() << 5) | FReg::V0.id());
-                store_vreg_float(asm, layout, inst.id, FReg::V0, &result_ty)?;
+                store_vreg_float(asm, layout, dst_id, FReg::V0, &result_ty)?;
             }
-            AsmInstructionKind::ExtractLane { vector, lane } => {
-                let result_ty = inst.ty.clone();
+            AsmGenericOpcode::ExtractLane => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (vector, lane) = match inst.operands.as_slice() {
+                    [_, vector, AsmOperand::Immediate(lane)] => (vector, *lane as u32),
+                    other => {
+                        return Err(Error::from(format!(
+                            "unexpected ExtractLane operands: {other:?}"
+                        )))
+                    }
+                };
+                let result_ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("extract_lane requires a concrete result type"))?;
                 if matches!(result_ty, AsmType::Void) {
                     return Err(Error::from("extract_lane requires a concrete result type"));
                 }
@@ -6782,8 +7015,7 @@ fn emit_block(
                 if !matches!(vector_ty, AsmType::Vector(_, _) if size_of(&vector_ty) == 16) {
                     return Err(Error::from("extract_lane expects 128-bit vector input"));
                 }
-                let lane_index = *lane;
-                if lane_index > 1 {
+                if lane > 1 {
                     return Err(Error::from("extract_lane lane out of range"));
                 }
                 load_value_float(
@@ -6795,27 +7027,35 @@ fn emit_block(
                     reg_types,
                     local_types,
                 )?;
-                let base = if lane_index == 0 {
+                let base = if lane == 0 {
                     0x4E08_3C00u32
                 } else {
                     0x4E18_3C00u32
                 };
                 asm.emit_u32(base | (FReg::V0.id() << 5) | Reg::X16.id());
-                store_vreg(asm, layout, inst.id, Reg::X16)?;
+                store_vreg(asm, layout, dst_id, Reg::X16)?;
             }
-            AsmInstructionKind::InsertLane {
-                vector,
-                lane,
-                value,
-            } => {
-                let result_ty = inst.ty.clone();
+            AsmGenericOpcode::InsertLane => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (vector, lane, value) = match inst.operands.as_slice() {
+                    [_, vector, AsmOperand::Immediate(lane), value] => (vector, *lane as u32, value),
+                    other => {
+                        return Err(Error::from(format!(
+                            "unexpected InsertLane operands: {other:?}"
+                        )))
+                    }
+                };
+                let result_ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("insert_lane requires a concrete result type"))?;
                 if matches!(result_ty, AsmType::Void) {
                     return Err(Error::from("insert_lane requires a concrete result type"));
                 }
                 if !matches!(result_ty, AsmType::Vector(_, _) if size_of(&result_ty) == 16) {
                     return Err(Error::from("insert_lane expects 128-bit vector result"));
                 }
-                if *lane > 1 {
+                if lane > 1 {
                     return Err(Error::from("insert_lane lane out of range"));
                 }
 
@@ -6831,27 +7071,33 @@ fn emit_block(
                 )?;
                 load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
 
-                let base = if *lane == 0 {
+                let base = if lane == 0 {
                     0x4E08_1E00u32
                 } else {
                     0x4E18_1E00u32
                 };
                 asm.emit_u32(base | (Reg::X16.id() << 5) | FReg::V0.id());
-                store_vreg_float(asm, layout, inst.id, FReg::V0, &result_ty)?;
+                store_vreg_float(asm, layout, dst_id, FReg::V0, &result_ty)?;
             }
-            AsmInstructionKind::ZipLow {
-                lhs,
-                rhs,
-                lane_bits,
-            } => {
-                let result_ty = inst.ty.clone();
+            AsmGenericOpcode::ZipLow => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs, lane_bits) = match inst.operands.as_slice() {
+                    [_, lhs, rhs, AsmOperand::Immediate(lane_bits)] => (lhs, rhs, *lane_bits),
+                    other => {
+                        return Err(Error::from(format!("unexpected ZipLow operands: {other:?}")))
+                    }
+                };
+                let result_ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("zip_low requires a concrete result type"))?;
                 if matches!(result_ty, AsmType::Void) {
                     return Err(Error::from("zip_low requires a concrete result type"));
                 }
                 if !matches!(result_ty, AsmType::Vector(_, _) if size_of(&result_ty) == 16) {
                     return Err(Error::from("zip_low expects 128-bit vector result"));
                 }
-                let base = match *lane_bits {
+                let base = match lane_bits {
                     16 => 0x4E40_3800u32,
                     32 => 0x4E80_3800u32,
                     64 => 0x4EC0_3800u32,
@@ -6870,188 +7116,120 @@ fn emit_block(
                 // zip1 v0.(lanes), v0.(lanes), v1.(lanes)
                 asm.emit_u32(base | (FReg::V1.id() << 16) | (FReg::V0.id() << 5) | FReg::V0.id());
 
-                store_vreg_float(asm, layout, inst.id, FReg::V0, &result_ty)?;
+                store_vreg_float(asm, layout, dst_id, FReg::V0, &result_ty)?;
             }
-            AsmInstructionKind::And(lhs, rhs) => emit_bitwise_binop(
-                asm,
-                layout,
-                inst.id,
-                lhs,
-                rhs,
-                BitOp::And,
-                reg_types,
-                local_types,
-            )?,
-            AsmInstructionKind::Or(lhs, rhs) => emit_bitwise_binop(
-                asm,
-                layout,
-                inst.id,
-                lhs,
-                rhs,
-                BitOp::Or,
-                reg_types,
-                local_types,
-            )?,
-            AsmInstructionKind::Xor(lhs, rhs) => emit_bitwise_binop(
-                asm,
-                layout,
-                inst.id,
-                lhs,
-                rhs,
-                BitOp::Xor,
-                reg_types,
-                local_types,
-            )?,
-            AsmInstructionKind::Shl(lhs, rhs) => emit_shift(
-                asm,
-                layout,
-                inst.id,
-                lhs,
-                rhs,
-                ShiftKind::Left,
-                reg_types,
-                local_types,
-            )?,
-            AsmInstructionKind::Shr(lhs, rhs) => emit_shift(
-                asm,
-                layout,
-                inst.id,
-                lhs,
-                rhs,
-                ShiftKind::Right,
-                reg_types,
-                local_types,
-            )?,
-            AsmInstructionKind::Eq(lhs, rhs) => emit_cmp(
-                asm,
-                layout,
-                inst.id,
-                lhs,
-                rhs,
-                CmpKind::Eq,
-                reg_types,
-                local_types,
-            )?,
-            AsmInstructionKind::Ne(lhs, rhs) => emit_cmp(
-                asm,
-                layout,
-                inst.id,
-                lhs,
-                rhs,
-                CmpKind::Ne,
-                reg_types,
-                local_types,
-            )?,
-            AsmInstructionKind::Lt(lhs, rhs) => emit_cmp(
-                asm,
-                layout,
-                inst.id,
-                lhs,
-                rhs,
-                CmpKind::Lt,
-                reg_types,
-                local_types,
-            )?,
-            AsmInstructionKind::Le(lhs, rhs) => emit_cmp(
-                asm,
-                layout,
-                inst.id,
-                lhs,
-                rhs,
-                CmpKind::Le,
-                reg_types,
-                local_types,
-            )?,
-            AsmInstructionKind::Gt(lhs, rhs) => emit_cmp(
-                asm,
-                layout,
-                inst.id,
-                lhs,
-                rhs,
-                CmpKind::Gt,
-                reg_types,
-                local_types,
-            )?,
-            AsmInstructionKind::Ge(lhs, rhs) => emit_cmp(
-                asm,
-                layout,
-                inst.id,
-                lhs,
-                rhs,
-                CmpKind::Ge,
-                reg_types,
-                local_types,
-            )?,
-            AsmInstructionKind::Ult(lhs, rhs) => emit_cmp(
-                asm,
-                layout,
-                inst.id,
-                lhs,
-                rhs,
-                CmpKind::Ult,
-                reg_types,
-                local_types,
-            )?,
-            AsmInstructionKind::Ule(lhs, rhs) => emit_cmp(
-                asm,
-                layout,
-                inst.id,
-                lhs,
-                rhs,
-                CmpKind::Ule,
-                reg_types,
-                local_types,
-            )?,
-            AsmInstructionKind::Ugt(lhs, rhs) => emit_cmp(
-                asm,
-                layout,
-                inst.id,
-                lhs,
-                rhs,
-                CmpKind::Ugt,
-                reg_types,
-                local_types,
-            )?,
-            AsmInstructionKind::Uge(lhs, rhs) => emit_cmp(
-                asm,
-                layout,
-                inst.id,
-                lhs,
-                rhs,
-                CmpKind::Uge,
-                reg_types,
-                local_types,
-            )?,
-            AsmInstructionKind::Div(lhs, rhs) => emit_divrem(
-                asm,
-                layout,
-                inst.id,
-                lhs,
-                rhs,
-                false,
-                reg_types,
-                local_types,
-            )?,
-            AsmInstructionKind::Rem(lhs, rhs) => {
-                emit_divrem(asm, layout, inst.id, lhs, rhs, true, reg_types, local_types)?
+            AsmGenericOpcode::And => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                emit_bitwise_binop(asm, layout, dst_id, lhs, rhs, BitOp::And, reg_types, local_types)?
             }
-            AsmInstructionKind::Not(value) => {
-                emit_not(asm, layout, inst.id, value, reg_types, local_types)?;
+            AsmGenericOpcode::Or => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                emit_bitwise_binop(asm, layout, dst_id, lhs, rhs, BitOp::Or, reg_types, local_types)?
             }
-            AsmInstructionKind::Alloca { .. } => {
-                let offset = alloca_offset(layout, inst.id)?;
+            AsmGenericOpcode::Xor => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                emit_bitwise_binop(asm, layout, dst_id, lhs, rhs, BitOp::Xor, reg_types, local_types)?
+            }
+            AsmGenericOpcode::Shl => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                emit_shift(asm, layout, dst_id, lhs, rhs, ShiftKind::Left, reg_types, local_types)?
+            }
+            AsmGenericOpcode::Shr => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                emit_shift(asm, layout, dst_id, lhs, rhs, ShiftKind::Right, reg_types, local_types)?
+            }
+            AsmGenericOpcode::Eq => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                emit_cmp(asm, layout, dst_id, lhs, rhs, CmpKind::Eq, reg_types, local_types)?
+            }
+            AsmGenericOpcode::Ne => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                emit_cmp(asm, layout, dst_id, lhs, rhs, CmpKind::Ne, reg_types, local_types)?
+            }
+            AsmGenericOpcode::Lt => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                emit_cmp(asm, layout, dst_id, lhs, rhs, CmpKind::Lt, reg_types, local_types)?
+            }
+            AsmGenericOpcode::Le => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                emit_cmp(asm, layout, dst_id, lhs, rhs, CmpKind::Le, reg_types, local_types)?
+            }
+            AsmGenericOpcode::Gt => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                emit_cmp(asm, layout, dst_id, lhs, rhs, CmpKind::Gt, reg_types, local_types)?
+            }
+            AsmGenericOpcode::Ge => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                emit_cmp(asm, layout, dst_id, lhs, rhs, CmpKind::Ge, reg_types, local_types)?
+            }
+            AsmGenericOpcode::Ult => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                emit_cmp(asm, layout, dst_id, lhs, rhs, CmpKind::Ult, reg_types, local_types)?
+            }
+            AsmGenericOpcode::Ule => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                emit_cmp(asm, layout, dst_id, lhs, rhs, CmpKind::Ule, reg_types, local_types)?
+            }
+            AsmGenericOpcode::Ugt => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                emit_cmp(asm, layout, dst_id, lhs, rhs, CmpKind::Ugt, reg_types, local_types)?
+            }
+            AsmGenericOpcode::Uge => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                emit_cmp(asm, layout, dst_id, lhs, rhs, CmpKind::Uge, reg_types, local_types)?
+            }
+            AsmGenericOpcode::Div => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                emit_divrem(asm, layout, dst_id, lhs, rhs, false, reg_types, local_types)?
+            }
+            AsmGenericOpcode::Rem => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (lhs, rhs) = binop_operands(inst)?;
+                emit_divrem(asm, layout, dst_id, lhs, rhs, true, reg_types, local_types)?
+            }
+            AsmGenericOpcode::Not => {
+                let dst_id = require_dest_vreg(inst)?;
+                let value = unary_operand(inst)?;
+                emit_not(asm, layout, dst_id, value, reg_types, local_types)?;
+            }
+            AsmGenericOpcode::Alloca => {
+                let dst_id = require_dest_vreg(inst)?;
+                let offset = alloca_offset(layout, dst_id)?;
                 emit_mov_reg(asm, Reg::X16, Reg::X31);
                 add_immediate_offset(asm, Reg::X16, offset as i64);
-                store_vreg(asm, layout, inst.id, Reg::X16)?;
-                asm.record_vreg_sp_offset(inst.id, offset);
+                store_vreg(asm, layout, dst_id, Reg::X16)?;
+                asm.record_vreg_sp_offset(dst_id, offset);
             }
-            AsmInstructionKind::Load { address, .. } => {
-                if matches!(inst.ty, AsmType::Void) {
+            AsmGenericOpcode::Load => {
+                let dst_id = require_dest_vreg(inst)?;
+                let address = load_address(inst)?;
+                let ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("load requires a concrete type"))?;
+                if matches!(ty, AsmType::Void) {
                     return Err(Error::from("load requires a concrete type"));
                 }
-                emit_load(asm, layout, inst.id, address, &inst.ty)?;
+                emit_load(asm, layout, dst_id, address, &ty)?;
             }
-            AsmInstructionKind::Store { value, address, .. } => {
+            AsmGenericOpcode::Store => {
+                let (value, address) = store_operands(inst)?;
                 emit_store(
                     asm,
                     layout,
@@ -7063,24 +7241,31 @@ fn emit_block(
                     rodata_pool,
                 )?;
             }
-            AsmInstructionKind::GetElementPtr { ptr, indices, .. } => {
-                emit_gep(asm, layout, inst.id, ptr, indices, reg_types, local_types)?;
+            AsmGenericOpcode::GetElementPtr => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (ptr, indices) = gep_parts(inst)?;
+                emit_gep(asm, layout, dst_id, ptr, indices, reg_types, local_types)?;
             }
-            AsmInstructionKind::SymbolAddress { symbol, kind } => {
-                emit_load_symbol_addr_explicit(asm, Reg::X16, symbol.as_str(), *kind)?;
-                store_vreg(asm, layout, inst.id, Reg::X16)?;
+            AsmGenericOpcode::SymbolAddress => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (symbol, kind) = symbol_address_parts(inst)?;
+                emit_load_symbol_addr_explicit(asm, Reg::X16, symbol.as_str(), kind)?;
+                store_vreg(asm, layout, dst_id, Reg::X16)?;
             }
-            AsmInstructionKind::Call {
-                function,
-                args,
-                calling_convention,
-                ..
-            } => {
-                let ty = inst.ty.clone();
+            AsmGenericOpcode::Call => {
+                let dst_id = dest_vreg_or_sentinel(inst);
+                let (function, args) = inst
+                    .call_target_and_args()
+                    .ok_or_else(|| Error::from("malformed Call instruction"))?;
+                let calling_convention = call_calling_convention(inst)?;
+                let ty = dest_vreg(inst)
+                    .and_then(|id| reg_types.get(&id))
+                    .cloned()
+                    .unwrap_or(AsmType::Void);
                 emit_call(
                     asm,
                     layout,
-                    inst.id,
+                    dst_id,
                     function,
                     args,
                     calling_convention,
@@ -7093,17 +7278,18 @@ fn emit_block(
                     rodata_pool,
                 )?;
             }
-            AsmInstructionKind::Syscall {
-                convention,
-                number,
-                args,
-            } => {
-                let ty = inst.ty.clone();
+            AsmGenericOpcode::Syscall => {
+                let dst_id = dest_vreg_or_sentinel(inst);
+                let (convention, number, args) = syscall_parts(inst)?;
+                let ty = dest_vreg(inst)
+                    .and_then(|id| reg_types.get(&id))
+                    .cloned()
+                    .unwrap_or(AsmType::Void);
                 emit_syscall(
                     asm,
                     layout,
-                    inst.id,
-                    *convention,
+                    dst_id,
+                    convention,
                     number,
                     args,
                     &ty,
@@ -7112,16 +7298,17 @@ fn emit_block(
                     format,
                 )?;
             }
-            AsmInstructionKind::IntrinsicCall {
-                kind,
-                format: format_str,
-                args,
-            } => {
-                let ty = inst.ty.clone();
+            AsmGenericOpcode::IntrinsicCall => {
+                let dst_id = dest_vreg_or_sentinel(inst);
+                let (kind, format_str, args) = intrinsic_call_parts(inst)?;
+                let ty = dest_vreg(inst)
+                    .and_then(|id| reg_types.get(&id))
+                    .cloned()
+                    .unwrap_or(AsmType::Void);
                 emit_intrinsic_call(
                     asm,
                     layout,
-                    inst.id,
+                    dst_id,
                     kind,
                     format_str,
                     args,
@@ -7133,119 +7320,143 @@ fn emit_block(
                     format,
                 )?;
             }
-            AsmInstructionKind::SIToFP(value, ty) => {
-                emit_int_to_float(
-                    asm,
-                    layout,
-                    inst.id,
-                    value,
-                    ty,
-                    reg_types,
-                    local_types,
-                    true,
-                )?;
+            AsmGenericOpcode::SIToFP => {
+                let dst_id = require_dest_vreg(inst)?;
+                let value = unary_operand(inst)?;
+                let ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("missing type for sitofp"))?;
+                emit_int_to_float(asm, layout, dst_id, value, &ty, reg_types, local_types, true)?;
             }
-            AsmInstructionKind::UIToFP(value, ty) => {
-                emit_int_to_float(
-                    asm,
-                    layout,
-                    inst.id,
-                    value,
-                    ty,
-                    reg_types,
-                    local_types,
-                    false,
-                )?;
+            AsmGenericOpcode::UIToFP => {
+                let dst_id = require_dest_vreg(inst)?;
+                let value = unary_operand(inst)?;
+                let ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("missing type for uitofp"))?;
+                emit_int_to_float(asm, layout, dst_id, value, &ty, reg_types, local_types, false)?;
             }
-            AsmInstructionKind::Trunc(value, ty) => {
-                emit_trunc(asm, layout, inst.id, value, ty, reg_types, local_types)?;
+            AsmGenericOpcode::Trunc => {
+                let dst_id = require_dest_vreg(inst)?;
+                let value = unary_operand(inst)?;
+                let ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("missing type for trunc"))?;
+                emit_trunc(asm, layout, dst_id, value, &ty, reg_types, local_types)?;
             }
-            AsmInstructionKind::ZExt(value, ty) => {
-                emit_zext(asm, layout, inst.id, value, ty, reg_types, local_types)?;
+            AsmGenericOpcode::ZExt => {
+                let dst_id = require_dest_vreg(inst)?;
+                let value = unary_operand(inst)?;
+                let ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("missing type for zext"))?;
+                emit_zext(asm, layout, dst_id, value, &ty, reg_types, local_types)?;
             }
-            AsmInstructionKind::FPToSI(value, ty) => {
-                emit_float_to_int(
-                    asm,
-                    layout,
-                    inst.id,
-                    value,
-                    ty,
-                    reg_types,
-                    local_types,
-                    true,
-                )?;
+            AsmGenericOpcode::FPToSI => {
+                let dst_id = require_dest_vreg(inst)?;
+                let value = unary_operand(inst)?;
+                let ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("missing type for fptosi"))?;
+                emit_float_to_int(asm, layout, dst_id, value, &ty, reg_types, local_types, true)?;
             }
-            AsmInstructionKind::FPToUI(value, ty) => {
-                emit_float_to_int(
-                    asm,
-                    layout,
-                    inst.id,
-                    value,
-                    ty,
-                    reg_types,
-                    local_types,
-                    false,
-                )?;
+            AsmGenericOpcode::FPToUI => {
+                let dst_id = require_dest_vreg(inst)?;
+                let value = unary_operand(inst)?;
+                let ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("missing type for fptoui"))?;
+                emit_float_to_int(asm, layout, dst_id, value, &ty, reg_types, local_types, false)?;
             }
-            AsmInstructionKind::FPTrunc(value, ty) => {
-                emit_fp_trunc(asm, layout, inst.id, value, ty, reg_types, local_types)?;
+            AsmGenericOpcode::FPTrunc => {
+                let dst_id = require_dest_vreg(inst)?;
+                let value = unary_operand(inst)?;
+                let ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("missing type for fptrunc"))?;
+                emit_fp_trunc(asm, layout, dst_id, value, &ty, reg_types, local_types)?;
             }
-            AsmInstructionKind::FPExt(value, ty) => {
-                emit_fp_ext(asm, layout, inst.id, value, ty, reg_types, local_types)?;
+            AsmGenericOpcode::FPExt => {
+                let dst_id = require_dest_vreg(inst)?;
+                let value = unary_operand(inst)?;
+                let ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("missing type for fpext"))?;
+                emit_fp_ext(asm, layout, dst_id, value, &ty, reg_types, local_types)?;
             }
-            AsmInstructionKind::SExt(value, ty) => {
-                emit_sext(asm, layout, inst.id, value, ty, reg_types, local_types)?;
+            AsmGenericOpcode::SExt => {
+                let dst_id = require_dest_vreg(inst)?;
+                let value = unary_operand(inst)?;
+                let ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("missing type for sext"))?;
+                emit_sext(asm, layout, dst_id, value, &ty, reg_types, local_types)?;
             }
-            AsmInstructionKind::SextOrTrunc(value, ty) => {
-                emit_sext_or_trunc(asm, layout, inst.id, value, ty, reg_types, local_types)?;
+            AsmGenericOpcode::SextOrTrunc => {
+                let dst_id = require_dest_vreg(inst)?;
+                let value = unary_operand(inst)?;
+                let ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("missing type for sextortrunc"))?;
+                emit_sext_or_trunc(asm, layout, dst_id, value, &ty, reg_types, local_types)?;
             }
-            AsmInstructionKind::Bitcast(value, ty) => {
-                emit_bitcast(asm, layout, inst.id, value, ty, reg_types, local_types)?;
+            AsmGenericOpcode::Bitcast => {
+                let dst_id = require_dest_vreg(inst)?;
+                let value = unary_operand(inst)?;
+                let ty = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("missing type for bitcast"))?;
+                emit_bitcast(asm, layout, dst_id, value, &ty, reg_types, local_types)?;
             }
-            AsmInstructionKind::PtrToInt(value) => {
-                emit_ptr_to_int(asm, layout, inst.id, value, reg_types, local_types)?;
+            AsmGenericOpcode::PtrToInt => {
+                let dst_id = require_dest_vreg(inst)?;
+                let value = unary_operand(inst)?;
+                emit_ptr_to_int(asm, layout, dst_id, value, reg_types, local_types)?;
             }
-            AsmInstructionKind::IntToPtr(value) => {
-                emit_int_to_ptr(asm, layout, inst.id, value, reg_types, local_types)?;
+            AsmGenericOpcode::IntToPtr => {
+                let dst_id = require_dest_vreg(inst)?;
+                let value = unary_operand(inst)?;
+                emit_int_to_ptr(asm, layout, dst_id, value, reg_types, local_types)?;
             }
-            AsmInstructionKind::InsertValue {
-                aggregate,
-                element,
-                indices,
-            } => {
+            AsmGenericOpcode::InsertValue => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (aggregate, element, indices) = insert_value_parts(inst)?;
                 emit_insert_value(
                     asm,
                     layout,
-                    inst.id,
+                    dst_id,
                     aggregate,
                     element,
-                    indices,
+                    &indices,
                     reg_types,
                     local_types,
                     rodata,
                     rodata_pool,
                 )?;
             }
-            AsmInstructionKind::ExtractValue { aggregate, indices } => {
-                emit_extract_value(
-                    asm,
-                    layout,
-                    inst.id,
-                    aggregate,
-                    indices,
-                    reg_types,
-                    local_types,
-                )?;
+            AsmGenericOpcode::ExtractValue => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (aggregate, indices) = extract_value_parts(inst)?;
+                emit_extract_value(asm, layout, dst_id, aggregate, &indices, reg_types, local_types)?;
             }
-            AsmInstructionKind::Select {
-                condition,
-                if_true,
-                if_false,
-            } => {
+            AsmGenericOpcode::Select => {
+                let dst_id = require_dest_vreg(inst)?;
+                let (condition, if_true, if_false) = select_parts(inst)?;
                 emit_select(
                     asm,
                     layout,
-                    inst.id,
+                    dst_id,
                     condition,
                     if_true,
                     if_false,
@@ -7253,16 +7464,28 @@ fn emit_block(
                     local_types,
                 )?;
             }
-            AsmInstructionKind::LandingPad { result_type, .. } => {
-                emit_landingpad(asm, layout, inst.id, result_type)?;
+            AsmGenericOpcode::LandingPad => {
+                let dst_id = require_dest_vreg(inst)?;
+                let result_type = reg_types
+                    .get(&dst_id)
+                    .cloned()
+                    .ok_or_else(|| Error::from("missing type for landingpad"))?;
+                emit_landingpad(asm, layout, dst_id, &result_type)?;
             }
-            AsmInstructionKind::Freeze(value) => {
-                emit_freeze(asm, layout, inst.id, value, reg_types, local_types)?;
+            AsmGenericOpcode::Freeze => {
+                let dst_id = require_dest_vreg(inst)?;
+                let value = unary_operand(inst)?;
+                emit_freeze(asm, layout, dst_id, value, reg_types, local_types)?;
             }
-            AsmInstructionKind::InlineAsm { output_type, .. } => {
-                emit_inline_asm(asm, layout, inst.id, output_type)?;
+            AsmGenericOpcode::InlineAsm => {
+                let dst_id = dest_vreg(inst);
+                let output_ty = dst_id
+                    .and_then(|id| reg_types.get(&id))
+                    .cloned()
+                    .unwrap_or(AsmType::Void);
+                emit_inline_asm(asm, layout, dst_id.unwrap_or(u32::MAX), &output_ty)?;
             }
-            AsmInstructionKind::Unreachable => {
+            AsmGenericOpcode::Unreachable => {
                 emit_trap(asm);
             }
             other => {
@@ -7293,15 +7516,15 @@ fn emit_block(
                     .ok_or_else(|| Error::from("missing sret pointer for aggregate return"))?;
                 emit_load_from_sp(asm, Reg::X17, sret_offset);
                 match value {
-                    AsmValue::Register(id) => {
+                    AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
                         let src_offset = agg_offset(layout, *id)?;
                         copy_sp_to_reg(asm, src_offset, Reg::X17, size_of(return_ty) as i32)?;
                     }
-                    AsmValue::Local(id) => {
+                    AsmOperand::Local(id) => {
                         let src_offset = local_offset(layout, *id)?;
                         copy_sp_to_reg(asm, src_offset, Reg::X17, size_of(return_ty) as i32)?;
                     }
-                    AsmValue::Constant(constant) => {
+                    AsmOperand::Constant(constant) => {
                         store_constant_aggregate_to_reg(
                             asm,
                             &layout.data_layout,
@@ -7450,8 +7673,8 @@ fn emit_cmp(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    lhs: &AsmValue,
-    rhs: &AsmValue,
+    lhs: &AsmOperand,
+    rhs: &AsmOperand,
     kind: CmpKind,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -7482,7 +7705,7 @@ fn emit_cmp(
     }
     load_value(asm, layout, lhs, Reg::X16, reg_types, local_types)?;
     match rhs {
-        AsmValue::Constant(constant) => {
+        AsmOperand::Constant(constant) => {
             if matches!(
                 constant,
                 AsmConstant::GlobalRef(_, _, _) | AsmConstant::FunctionRef(_, _)
@@ -7526,8 +7749,8 @@ fn emit_i128_cmp(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    lhs: &AsmValue,
-    rhs: &AsmValue,
+    lhs: &AsmOperand,
+    rhs: &AsmOperand,
     kind: CmpKind,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
@@ -7621,9 +7844,9 @@ fn emit_select(
     asm: &mut Assembler,
     layout: &FrameLayout,
     dst_id: u32,
-    condition: &AsmValue,
-    if_true: &AsmValue,
-    if_false: &AsmValue,
+    condition: &AsmOperand,
+    if_true: &AsmOperand,
+    if_false: &AsmOperand,
     reg_types: &HashMap<u32, AsmType>,
     local_types: &HashMap<u32, AsmType>,
 ) -> Result<()> {
@@ -7669,26 +7892,19 @@ fn emit_select(
 fn emit_cond_branch(
     asm: &mut Assembler,
     layout: &FrameLayout,
-    condition: &AsmValue,
+    condition: &AsmOperand,
     if_true: Label,
     if_false: Label,
 ) -> Result<()> {
     match condition {
-        AsmValue::Constant(AsmConstant::Bool(value)) => {
+        AsmOperand::Constant(AsmConstant::Bool(value)) => {
             if *value {
                 asm.emit_b(if_true);
             } else {
                 asm.emit_b(if_false);
             }
         }
-        AsmValue::Register(id) => {
-            let offset = vreg_offset(layout, *id)?;
-            emit_load_from_sp(asm, Reg::X16, offset);
-            emit_cmp_imm12(asm, Reg::X16, 0);
-            asm.emit_b_cond(1, if_true);
-            asm.emit_b(if_false);
-        }
-        AsmValue::Flags(id) => {
+        AsmOperand::Register { reg: AsmRegister::Virtual(id), .. } => {
             let offset = vreg_offset(layout, *id)?;
             emit_load_from_sp(asm, Reg::X16, offset);
             emit_cmp_imm12(asm, Reg::X16, 0);
@@ -7703,7 +7919,7 @@ fn emit_cond_branch(
 fn emit_switch(
     asm: &mut Assembler,
     layout: &FrameLayout,
-    value: &AsmValue,
+    value: &AsmOperand,
     default: BasicBlockId,
     cases: &[(u64, BasicBlockId)],
     reg_types: &HashMap<u32, AsmType>,
@@ -8011,8 +8227,8 @@ fn program_uses_fp_panic(program: &AsmProgram) -> bool {
     for func in &program.functions {
         for block in &func.basic_blocks {
             for inst in &block.instructions {
-                if let AsmInstructionKind::Call { function, .. } = &inst.kind {
-                    if matches!(function, AsmValue::Function(name) if name == "fp_panic") {
+                if let Some((function, _args)) = inst.call_target_and_args() {
+                    if matches!(function, AsmOperand::Symbol(name) if name.as_str() == "fp_panic") {
                         return true;
                     }
                 }
@@ -8028,8 +8244,8 @@ mod tests {
     use crate::emit::TargetFormat;
     use fp_core::asmir::{
         AsmArchitecture, AsmBlock, AsmConstant, AsmEndianness, AsmFunction, AsmFunctionSignature,
-        AsmGenericOpcode, AsmInstruction, AsmInstructionKind, AsmObjectFormat, AsmOpcode,
-        AsmProgram, AsmTarget, AsmTerminator, AsmType, AsmValue,
+        AsmGenericOpcode, AsmInstruction, AsmObjectFormat, AsmOpcode, AsmOperand, AsmProgram,
+        AsmRegister, AsmRegisterBank, AsmTarget, AsmTerminator, AsmType, OperandAccess,
     };
     use fp_core::lir::{CallingConvention, Linkage, LirDataLayout, Name, Visibility};
 
@@ -8055,6 +8271,28 @@ mod tests {
     }
 
     fn minimal_program() -> AsmProgram {
+        let mut function = AsmFunction::new(
+            Name::new("main"),
+            AsmFunctionSignature {
+                params: Vec::new(),
+                return_type: AsmType::I32,
+                is_variadic: false,
+            },
+        );
+        function.basic_blocks.push(AsmBlock {
+            id: 0,
+            label: Some(Name::new("entry")),
+            instructions: Vec::new(),
+            terminator: AsmTerminator::Return(None),
+            terminator_encoding: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        });
+        function.linkage = Linkage::External;
+        function.visibility = Visibility::Default;
+        function.calling_convention = Some(CallingConvention::C);
+        function.section = Some(".text".to_string());
+
         AsmProgram {
             target: AsmTarget {
                 architecture: AsmArchitecture::Aarch64,
@@ -8068,36 +8306,49 @@ mod tests {
             container: None,
             sections: Vec::new(),
             globals: Vec::new(),
-            functions: vec![AsmFunction {
-                name: Name::new("main"),
-                signature: AsmFunctionSignature {
-                    params: Vec::new(),
-                    return_type: AsmType::I32,
-                    is_variadic: false,
-                },
-                basic_blocks: vec![AsmBlock {
-                    id: 0,
-                    label: Some(Name::new("entry")),
-                    instructions: Vec::new(),
-                    terminator: AsmTerminator::Return(None),
-                    terminator_encoding: None,
-                    predecessors: Vec::new(),
-                    successors: Vec::new(),
-                }],
-                locals: Vec::new(),
-                stack_slots: Vec::new(),
-                frame: None,
-                linkage: Linkage::External,
-                visibility: Visibility::Default,
-                calling_convention: Some(CallingConvention::C),
-                section: Some(".text".to_string()),
-                is_declaration: false,
-            }],
+            functions: vec![function],
             type_definitions: Vec::new(),
         }
     }
 
     fn unsigned_compare_program() -> AsmProgram {
+        let mut function = AsmFunction::new(
+            Name::new("main"),
+            AsmFunctionSignature {
+                params: Vec::new(),
+                return_type: AsmType::I1,
+                is_variadic: false,
+            },
+        );
+        let dest = function.alloc_virtual_register(AsmType::I1, AsmRegisterBank::General, 8);
+        function.basic_blocks.push(AsmBlock {
+            id: 0,
+            label: Some(Name::new("entry")),
+            instructions: vec![AsmInstruction::new(
+                0,
+                AsmOpcode::Generic(AsmGenericOpcode::Ugt),
+                vec![
+                    AsmOperand::Register {
+                        reg: AsmRegister::Virtual(dest),
+                        access: OperandAccess::Write,
+                    },
+                    AsmOperand::Constant(AsmConstant::Int(1, AsmType::I64)),
+                    AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                ],
+            )],
+            terminator: AsmTerminator::Return(Some(AsmOperand::Register {
+                reg: AsmRegister::Virtual(dest),
+                access: OperandAccess::Read,
+            })),
+            terminator_encoding: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        });
+        function.linkage = Linkage::External;
+        function.visibility = Visibility::Default;
+        function.calling_convention = Some(CallingConvention::C);
+        function.section = Some(".text".to_string());
+
         AsmProgram {
             target: AsmTarget {
                 architecture: AsmArchitecture::Aarch64,
@@ -8111,45 +8362,7 @@ mod tests {
             container: None,
             sections: Vec::new(),
             globals: Vec::new(),
-            functions: vec![AsmFunction {
-                name: Name::new("main"),
-                signature: AsmFunctionSignature {
-                    params: Vec::new(),
-                    return_type: AsmType::I1,
-                    is_variadic: false,
-                },
-                basic_blocks: vec![AsmBlock {
-                    id: 0,
-                    label: Some(Name::new("entry")),
-                    instructions: vec![AsmInstruction {
-                        id: 0,
-                        kind: AsmInstructionKind::Ugt(
-                            AsmValue::Constant(AsmConstant::Int(1, AsmType::I64)),
-                            AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        ),
-                        ty: AsmType::I1,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Ugt),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    }],
-                    terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
-                    terminator_encoding: None,
-                    predecessors: Vec::new(),
-                    successors: Vec::new(),
-                }],
-                locals: Vec::new(),
-                stack_slots: Vec::new(),
-                frame: None,
-                linkage: Linkage::External,
-                visibility: Visibility::Default,
-                calling_convention: Some(CallingConvention::C),
-                section: Some(".text".to_string()),
-                is_declaration: false,
-            }],
+            functions: vec![function],
             type_definitions: Vec::new(),
         }
     }

@@ -3,8 +3,8 @@ use crate::binary::TextRelocation;
 use crate::binary::cfg::wire_block_edges;
 use fp_core::asmir::AsmLocal;
 use fp_core::asmir::{
-    AsmConstant, AsmInstruction, AsmInstructionKind, AsmOpcode, AsmSyscallConvention, AsmType,
-    AsmValue,
+    AsmAttr, AsmConstant, AsmFunction, AsmGenericOpcode, AsmInstruction, AsmOpcode, AsmOperand,
+    AsmRegister, AsmRegisterBank, AsmSyscallConvention, AsmType, AsmVirtualRegId, OperandAccess,
 };
 use fp_core::error::{Error, Result};
 use fp_core::lir::{CallingConvention, Name};
@@ -13,6 +13,7 @@ use fp_core::lir::{CallingConvention, Name};
 struct LastCompare {
     id: u32,
     index: usize,
+    vreg: AsmVirtualRegId,
 }
 
 fn synthesized_annotations(reason: &str) -> Vec<fp_core::asmir::AsmAnnotation> {
@@ -20,6 +21,20 @@ fn synthesized_annotations(reason: &str) -> Vec<fp_core::asmir::AsmAnnotation> {
         key: "fp.synthesized".to_string(),
         value: reason.to_string(),
     }]
+}
+
+fn write_operand(reg: AsmVirtualRegId) -> AsmOperand {
+    AsmOperand::Register {
+        reg: AsmRegister::Virtual(reg),
+        access: OperandAccess::Write,
+    }
+}
+
+fn read_operand(reg: AsmVirtualRegId) -> AsmOperand {
+    AsmOperand::Register {
+        reg: AsmRegister::Virtual(reg),
+        access: OperandAccess::Read,
+    }
 }
 
 fn decode_b_cond_immediate(word: u32, offset: u64) -> Result<Option<(u8, u64)>> {
@@ -64,23 +79,24 @@ fn decode_cmp_immediate(word: u32) -> Option<(u8, i64)> {
     Some((rn, imm12))
 }
 
+/// Builds a placeholder comparison instruction (`Eq lhs, rhs`) that is later
+/// patched (see `patch_compare_kind`) to the real comparison opcode once the
+/// following `b.cond`'s condition code is known. Returns the instruction and
+/// the freshly allocated destination register (of `Flags` bank) that the
+/// eventual conditional branch will read as its condition.
 fn compare_instruction(
     id: u32,
-    kind: AsmInstructionKind,
-    opcode: fp_core::asmir::AsmGenericOpcode,
-) -> AsmInstruction {
-    AsmInstruction {
+    function: &mut AsmFunction,
+    lhs: AsmOperand,
+    rhs: AsmOperand,
+) -> (AsmInstruction, AsmVirtualRegId) {
+    let dest = function.alloc_virtual_register(AsmType::I1, AsmRegisterBank::Flags, 1);
+    let inst = AsmInstruction::new(
         id,
-        opcode: AsmOpcode::Generic(opcode),
-        kind,
-        ty: AsmType::Void,
-        operands: Vec::new(),
-        implicit_uses: Vec::new(),
-        implicit_defs: Vec::new(),
-        encoding: None,
-        debug_info: None,
-        annotations: Vec::new(),
-    }
+        AsmOpcode::Generic(AsmGenericOpcode::Eq),
+        vec![write_operand(dest), lhs, rhs],
+    );
+    (inst, dest)
 }
 
 fn patch_compare_kind(
@@ -94,76 +110,27 @@ fn patch_compare_kind(
     if inst.id != compare.id {
         return Err(Error::from("comparison instruction id mismatch"));
     }
-    let (lhs, rhs) = match &inst.kind {
-        AsmInstructionKind::Eq(lhs, rhs)
-        | AsmInstructionKind::Ne(lhs, rhs)
-        | AsmInstructionKind::Lt(lhs, rhs)
-        | AsmInstructionKind::Le(lhs, rhs)
-        | AsmInstructionKind::Gt(lhs, rhs)
-        | AsmInstructionKind::Ge(lhs, rhs)
-        | AsmInstructionKind::Ult(lhs, rhs)
-        | AsmInstructionKind::Ule(lhs, rhs)
-        | AsmInstructionKind::Ugt(lhs, rhs)
-        | AsmInstructionKind::Uge(lhs, rhs) => (lhs.clone(), rhs.clone()),
-        _ => {
-            return Err(Error::from(
-                "comparison instruction has unexpected kind for patching",
-            ));
-        }
-    };
-    let (kind, opcode) = compare_kind_from_cond(condition, lhs, rhs)?;
-    inst.kind = kind;
-    inst.opcode = AsmOpcode::Generic(opcode);
-    inst.ty = AsmType::Void;
+    if inst.operands.len() != 3 {
+        return Err(Error::from(
+            "comparison instruction has unexpected operand shape for patching",
+        ));
+    }
+    inst.opcode = AsmOpcode::Generic(condition_opcode(condition)?);
     Ok(())
 }
 
-fn compare_kind_from_cond(
-    condition: u8,
-    lhs: AsmValue,
-    rhs: AsmValue,
-) -> Result<(AsmInstructionKind, fp_core::asmir::AsmGenericOpcode)> {
+fn condition_opcode(condition: u8) -> Result<AsmGenericOpcode> {
     Ok(match condition {
-        0 => (
-            AsmInstructionKind::Eq(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Eq,
-        ),
-        1 => (
-            AsmInstructionKind::Ne(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Ne,
-        ),
-        10 => (
-            AsmInstructionKind::Ge(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Ge,
-        ),
-        11 => (
-            AsmInstructionKind::Lt(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Lt,
-        ),
-        12 => (
-            AsmInstructionKind::Gt(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Gt,
-        ),
-        13 => (
-            AsmInstructionKind::Le(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Le,
-        ),
-        2 => (
-            AsmInstructionKind::Uge(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Uge,
-        ),
-        3 => (
-            AsmInstructionKind::Ult(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Ult,
-        ),
-        8 => (
-            AsmInstructionKind::Ugt(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Ugt,
-        ),
-        9 => (
-            AsmInstructionKind::Ule(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Ule,
-        ),
+        0 => AsmGenericOpcode::Eq,
+        1 => AsmGenericOpcode::Ne,
+        10 => AsmGenericOpcode::Ge,
+        11 => AsmGenericOpcode::Lt,
+        12 => AsmGenericOpcode::Gt,
+        13 => AsmGenericOpcode::Le,
+        2 => AsmGenericOpcode::Uge,
+        3 => AsmGenericOpcode::Ult,
+        8 => AsmGenericOpcode::Ugt,
+        9 => AsmGenericOpcode::Ule,
         other => {
             return Err(Error::from(format!(
                 "unsupported aarch64 condition code: {other}"
@@ -176,6 +143,7 @@ pub fn lift_function_bytes(
     bytes: &[u8],
     relocs: &[TextRelocation],
     syscall_convention: Option<AsmSyscallConvention>,
+    function: &mut AsmFunction,
 ) -> Result<LiftedFunction> {
     if bytes.len() % 4 != 0 {
         return Err(Error::from("aarch64 function size is not 4-byte aligned"));
@@ -248,18 +216,11 @@ pub fn lift_function_bytes(
 
             if word == 0xD503201F {
                 let nop_id = next_id;
-                instructions.push(AsmInstruction {
-                    id: nop_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Nop),
-                    kind: AsmInstructionKind::Nop,
-                    ty: AsmType::Void,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
+                instructions.push(AsmInstruction::new(
+                    nop_id,
+                    AsmOpcode::Generic(AsmGenericOpcode::Nop),
+                    Vec::new(),
+                ));
                 next_id += 1;
                 cursor += 4;
                 continue;
@@ -299,7 +260,7 @@ pub fn lift_function_bytes(
                     label: None,
                     instructions: std::mem::take(&mut instructions),
                     terminator: fp_core::asmir::AsmTerminator::CondBr {
-                        condition: AsmValue::Flags(compare.id),
+                        condition: read_operand(compare.vreg),
                         if_true,
                         if_false,
                     },
@@ -333,23 +294,14 @@ pub fn lift_function_bytes(
                 let reloc = relocation_at(relocs, cursor)
                     .ok_or_else(|| Error::from("unsupported aarch64 bl without relocation"))?;
                 let id = next_id;
-                instructions.push(AsmInstruction {
+                instructions.push(AsmInstruction::new(
                     id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function(reloc.symbol.clone()),
-                        args: Vec::new(),
-                        calling_convention: CallingConvention::AAPCS,
-                        tail_call: false,
-                    },
-                    ty: AsmType::Void,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
+                    AsmOpcode::Generic(AsmGenericOpcode::Call),
+                    vec![
+                        AsmOperand::Attr(AsmAttr::CallingConv(CallingConvention::AAPCS)),
+                        AsmOperand::Symbol(Name::new(reloc.symbol.clone())),
+                    ],
+                ));
                 next_id += 1;
                 cursor += 4;
                 continue;
@@ -363,33 +315,32 @@ pub fn lift_function_bytes(
                 let rd = (word & 0x1F) as u8;
                 let reloc = relocation_at(relocs, cursor)
                     .ok_or_else(|| Error::from("unsupported aarch64 adrp without relocation"))?;
-                let symbol_const = AsmValue::Constant(AsmConstant::GlobalRef(
+                let symbol_const = AsmOperand::Constant(AsmConstant::GlobalRef(
                     Name::new(reloc.symbol.clone()),
                     AsmType::Ptr(Box::new(AsmType::I8)),
                     vec![0],
                 ));
+                let dest = function.alloc_virtual_register(
+                    AsmType::Ptr(Box::new(AsmType::I8)),
+                    AsmRegisterBank::General,
+                    64,
+                );
                 let symbol_id = next_id;
-                instructions.push(AsmInstruction {
-                    id: symbol_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                    kind: AsmInstructionKind::Freeze(symbol_const),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
+                instructions.push(AsmInstruction::new(
+                    symbol_id,
+                    AsmOpcode::Generic(AsmGenericOpcode::Freeze),
+                    vec![write_operand(dest), symbol_const],
+                ));
                 next_id += 1;
 
-                let mut value = AsmValue::Register(symbol_id);
+                let mut value = read_operand(dest);
                 if reloc.addend != 0 {
                     value = pointer_add_immediate(
                         value,
                         reloc.addend,
                         &mut instructions,
                         &mut next_id,
+                        function,
                     )?;
                 }
                 ctx.write_gpr(rd, value);
@@ -432,25 +383,25 @@ pub fn lift_function_bytes(
                     ctx.read_gpr(5)?,
                 ];
 
+                let dest = function.alloc_virtual_register(
+                    AsmType::I64,
+                    AsmRegisterBank::General,
+                    64,
+                );
                 let id = next_id;
-                instructions.push(AsmInstruction {
+                let mut operands = vec![
+                    write_operand(dest),
+                    AsmOperand::Attr(AsmAttr::SyscallConvention(syscall_convention)),
+                    number,
+                ];
+                operands.extend(args);
+                instructions.push(AsmInstruction::new(
                     id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Syscall),
-                    kind: AsmInstructionKind::Syscall {
-                        convention: syscall_convention,
-                        number,
-                        args,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
+                    AsmOpcode::Generic(AsmGenericOpcode::Syscall),
+                    operands,
+                ));
                 next_id += 1;
-                ctx.write_gpr(0, AsmValue::Register(id));
+                ctx.write_gpr(0, read_operand(dest));
                 cursor += 4;
                 continue;
             }
@@ -459,15 +410,13 @@ pub fn lift_function_bytes(
                 let lhs_value = ctx.read_gpr(lhs)?;
                 let rhs_value = ctx.read_gpr(rhs)?;
                 let id = next_id;
-                instructions.push(compare_instruction(
-                    id,
-                    AsmInstructionKind::Eq(lhs_value, rhs_value),
-                    fp_core::asmir::AsmGenericOpcode::Eq,
-                ));
+                let (inst, vreg) = compare_instruction(id, function, lhs_value, rhs_value);
+                instructions.push(inst);
                 next_id += 1;
                 last_compare = Some(LastCompare {
                     id,
                     index: instructions.len() - 1,
+                    vreg,
                 });
                 cursor += 4;
                 continue;
@@ -475,17 +424,15 @@ pub fn lift_function_bytes(
 
             if let Some((lhs, imm)) = decode_cmp_immediate(word) {
                 let lhs_value = ctx.read_gpr(lhs)?;
-                let rhs_value = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
+                let rhs_value = AsmOperand::Constant(AsmConstant::Int(imm, AsmType::I64));
                 let id = next_id;
-                instructions.push(compare_instruction(
-                    id,
-                    AsmInstructionKind::Eq(lhs_value, rhs_value),
-                    fp_core::asmir::AsmGenericOpcode::Eq,
-                ));
+                let (inst, vreg) = compare_instruction(id, function, lhs_value, rhs_value);
+                instructions.push(inst);
                 next_id += 1;
                 last_compare = Some(LastCompare {
                     id,
                     index: instructions.len() - 1,
+                    vreg,
                 });
                 cursor += 4;
                 continue;
@@ -494,18 +441,16 @@ pub fn lift_function_bytes(
             if let Some((dst, src, imm)) = decode_add_immediate(word) {
                 if let Some(reloc) = relocation_at(relocs, cursor) {
                     let lhs = ctx.read_gpr(src)?;
-                    let rhs = AsmValue::Constant(AsmConstant::Int(
+                    let rhs = AsmOperand::Constant(AsmConstant::Int(
                         reloc.addend.saturating_add(imm),
                         AsmType::I64,
                     ));
                     let id = next_id;
-                    instructions.push(build_binop(
-                        id,
-                        AsmInstructionKind::Add(lhs, rhs),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                    ));
+                    let (inst, dest) =
+                        build_binop(id, function, AsmGenericOpcode::Add, lhs, rhs);
+                    instructions.push(inst);
                     next_id += 1;
-                    ctx.write_gpr(dst, AsmValue::Register(id));
+                    ctx.write_gpr(dst, read_operand(dest));
                     cursor += 4;
                     continue;
                 }
@@ -519,26 +464,21 @@ pub fn lift_function_bytes(
                         disp.saturating_add(reloc.addend),
                         &mut instructions,
                         &mut next_id,
+                        function,
                     )?;
+                    let dest = function.alloc_virtual_register(
+                        AsmType::I64,
+                        AsmRegisterBank::General,
+                        64,
+                    );
                     let id = next_id;
-                    instructions.push(AsmInstruction {
+                    instructions.push(AsmInstruction::new(
                         id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                        kind: AsmInstructionKind::Load {
-                            address: addr,
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
+                        AsmOpcode::Generic(AsmGenericOpcode::Load),
+                        vec![write_operand(dest), addr],
+                    ));
                     next_id += 1;
-                    ctx.write_gpr(dst, AsmValue::Register(id));
+                    ctx.write_gpr(dst, read_operand(dest));
                     cursor += 4;
                     continue;
                 }
@@ -552,33 +492,22 @@ pub fn lift_function_bytes(
                         disp.saturating_add(reloc.addend),
                         &mut instructions,
                         &mut next_id,
+                        function,
                     )?;
                     let stored = ctx.read_gpr(value)?;
                     let id = next_id;
-                    instructions.push(AsmInstruction {
+                    instructions.push(AsmInstruction::new(
                         id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                        kind: AsmInstructionKind::Store {
-                            value: stored,
-                            address: addr,
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::Void,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
+                        AsmOpcode::Generic(AsmGenericOpcode::Store),
+                        vec![stored, addr],
+                    ));
                     next_id += 1;
                     cursor += 4;
                     continue;
                 }
             }
 
-            lift_instruction(word, &mut ctx, &mut instructions, &mut next_id)?;
+            lift_instruction(word, &mut ctx, &mut instructions, &mut next_id, function)?;
             cursor += 4;
         }
 
@@ -638,16 +567,13 @@ fn lift_instruction(
     ctx: &mut RegisterLiftContext,
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
+    function: &mut AsmFunction,
 ) -> Result<()> {
     if let Some((dst, src, imm)) = decode_add_immediate(word) {
         let lhs = ctx.read_gpr(src)?;
-        let rhs = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
+        let rhs = AsmOperand::Constant(AsmConstant::Int(imm, AsmType::I64));
         let id = *next_id;
-        let mut inst = build_binop(
-            id,
-            AsmInstructionKind::Add(lhs.clone(), rhs.clone()),
-            AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-        );
+        let (mut inst, dest) = build_binop(id, function, AsmGenericOpcode::Add, lhs, rhs);
         inst.annotations.extend([
             fp_core::asmir::AsmAnnotation {
                 key: "fp.preserve.aarch64.dst_gpr".to_string(),
@@ -664,19 +590,15 @@ fn lift_instruction(
         ]);
         instructions.push(inst);
         *next_id += 1;
-        ctx.write_gpr(dst, AsmValue::Register(id));
+        ctx.write_gpr(dst, read_operand(dest));
         return Ok(());
     }
 
     if let Some((dst, src, imm)) = decode_sub_immediate(word) {
         let lhs = ctx.read_gpr(src)?;
-        let rhs = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
+        let rhs = AsmOperand::Constant(AsmConstant::Int(imm, AsmType::I64));
         let id = *next_id;
-        let mut inst = build_binop(
-            id,
-            AsmInstructionKind::Sub(lhs.clone(), rhs.clone()),
-            AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-        );
+        let (mut inst, dest) = build_binop(id, function, AsmGenericOpcode::Sub, lhs, rhs);
         inst.annotations.extend([
             fp_core::asmir::AsmAnnotation {
                 key: "fp.preserve.aarch64.dst_gpr".to_string(),
@@ -693,57 +615,35 @@ fn lift_instruction(
         ]);
         instructions.push(inst);
         *next_id += 1;
-        ctx.write_gpr(dst, AsmValue::Register(id));
+        ctx.write_gpr(dst, read_operand(dest));
         return Ok(());
     }
 
     if let Some((dst, base, disp)) = decode_ldr_immediate(word) {
         let base_value = ctx.read_gpr(base)?;
-        let addr = pointer_add_immediate(base_value, disp, instructions, next_id)?;
+        let addr = pointer_add_immediate(base_value, disp, instructions, next_id, function)?;
+        let dest = function.alloc_virtual_register(AsmType::I64, AsmRegisterBank::General, 64);
         let id = *next_id;
-        instructions.push(AsmInstruction {
+        instructions.push(AsmInstruction::new(
             id,
-            opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-            kind: AsmInstructionKind::Load {
-                address: addr,
-                alignment: None,
-                volatile: false,
-            },
-            ty: AsmType::I64,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        });
+            AsmOpcode::Generic(AsmGenericOpcode::Load),
+            vec![write_operand(dest), addr],
+        ));
         *next_id += 1;
-        ctx.write_gpr(dst, AsmValue::Register(id));
+        ctx.write_gpr(dst, read_operand(dest));
         return Ok(());
     }
 
     if let Some((value, base, disp)) = decode_str_immediate(word) {
         let base_value = ctx.read_gpr(base)?;
-        let addr = pointer_add_immediate(base_value, disp, instructions, next_id)?;
+        let addr = pointer_add_immediate(base_value, disp, instructions, next_id, function)?;
         let stored = ctx.read_gpr(value)?;
         let id = *next_id;
-        instructions.push(AsmInstruction {
+        instructions.push(AsmInstruction::new(
             id,
-            opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-            kind: AsmInstructionKind::Store {
-                value: stored,
-                address: addr,
-                alignment: None,
-                volatile: false,
-            },
-            ty: AsmType::Void,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        });
+            AsmOpcode::Generic(AsmGenericOpcode::Store),
+            vec![stored, addr],
+        ));
         *next_id += 1;
         return Ok(());
     }
@@ -753,19 +653,24 @@ fn lift_instruction(
     )))
 }
 
-fn build_binop(id: u32, kind: AsmInstructionKind, opcode: AsmOpcode) -> AsmInstruction {
-    AsmInstruction {
+/// Builds a binary-op instruction (`opcode dest, lhs, rhs`), allocating a
+/// fresh 64-bit general-purpose destination register. Every aarch64 GPR op
+/// lifted here operates on 64-bit values, so the destination type is always
+/// `I64`.
+fn build_binop(
+    id: u32,
+    function: &mut AsmFunction,
+    opcode: AsmGenericOpcode,
+    lhs: AsmOperand,
+    rhs: AsmOperand,
+) -> (AsmInstruction, AsmVirtualRegId) {
+    let dest = function.alloc_virtual_register(AsmType::I64, AsmRegisterBank::General, 64);
+    let inst = AsmInstruction::new(
         id,
-        opcode,
-        kind,
-        ty: AsmType::I64,
-        operands: Vec::new(),
-        implicit_uses: Vec::new(),
-        implicit_defs: Vec::new(),
-        encoding: None,
-        debug_info: None,
-        annotations: Vec::new(),
-    }
+        AsmOpcode::Generic(opcode),
+        vec![write_operand(dest), lhs, rhs],
+    );
+    (inst, dest)
 }
 
 fn decode_add_immediate(word: u32) -> Option<(u8, u8, i64)> {
@@ -843,7 +748,7 @@ fn decode_str_immediate(word: u32) -> Option<(u8, u8, i64)> {
 struct RegisterLiftContext {
     locals: Vec<AsmLocal>,
     locals_by_register: std::collections::HashMap<u8, u32>,
-    registers: std::collections::HashMap<u8, AsmValue>,
+    registers: std::collections::HashMap<u8, AsmOperand>,
     next_local_id: u32,
 }
 
@@ -857,14 +762,14 @@ impl RegisterLiftContext {
         }
     }
 
-    fn read_return_value(&mut self) -> Option<AsmValue> {
+    fn read_return_value(&mut self) -> Option<AsmOperand> {
         self.registers.get(&0).cloned().or_else(|| {
             self.ensure_local(0, true);
-            Some(AsmValue::Local(*self.locals_by_register.get(&0)?))
+            Some(AsmOperand::Local(*self.locals_by_register.get(&0)?))
         })
     }
 
-    fn read_gpr(&mut self, reg: u8) -> Result<AsmValue> {
+    fn read_gpr(&mut self, reg: u8) -> Result<AsmOperand> {
         if let Some(value) = self.registers.get(&reg).cloned() {
             return Ok(value);
         }
@@ -874,12 +779,12 @@ impl RegisterLiftContext {
             .locals_by_register
             .get(&reg)
             .ok_or_else(|| Error::from("missing local"))?;
-        let value = AsmValue::Local(local_id);
+        let value = AsmOperand::Local(local_id);
         self.registers.insert(reg, value.clone());
         Ok(value)
     }
 
-    fn write_gpr(&mut self, reg: u8, value: AsmValue) {
+    fn write_gpr(&mut self, reg: u8, value: AsmOperand) {
         self.registers.insert(reg, value);
     }
 
@@ -909,23 +814,20 @@ impl RegisterLiftContext {
 }
 
 fn pointer_add_immediate(
-    base: AsmValue,
+    base: AsmOperand,
     displacement: i64,
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
-) -> Result<AsmValue> {
+    function: &mut AsmFunction,
+) -> Result<AsmOperand> {
     if displacement == 0 {
         return Ok(base);
     }
-    let rhs = AsmValue::Constant(AsmConstant::Int(displacement, AsmType::I64));
+    let rhs = AsmOperand::Constant(AsmConstant::Int(displacement, AsmType::I64));
     let id = *next_id;
-    let mut inst = build_binop(
-        id,
-        AsmInstructionKind::Add(base, rhs),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-    );
+    let (mut inst, dest) = build_binop(id, function, AsmGenericOpcode::Add, base, rhs);
     inst.annotations = synthesized_annotations("aarch64.addr");
     instructions.push(inst);
     *next_id += 1;
-    Ok(AsmValue::Register(id))
+    Ok(read_operand(dest))
 }

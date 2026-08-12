@@ -2,12 +2,58 @@ use crate::binary::cfg::wire_block_edges;
 use crate::binary::{DataRegion, LiftedFunction, RipSymbol, RipSymbolKind, TextRelocation};
 use fp_core::asmir::AsmLocal;
 use fp_core::asmir::{
-    AsmAnnotation, AsmConstant, AsmInstruction, AsmInstructionKind, AsmOpcode,
-    AsmSyscallConvention, AsmType, AsmValue,
+    AsmAnnotation, AsmAttr, AsmConstant, AsmFunction, AsmInstruction, AsmOpcode, AsmOperand,
+    AsmRegister, AsmRegisterBank, AsmSyscallConvention, AsmType, AsmVirtualRegId, OperandAccess,
 };
 use fp_core::error::{Error, Result};
 use fp_core::lir::{CallingConvention, Name};
 use std::collections::HashMap;
+
+/// A `Write`-access register operand for a freshly allocated destination
+/// virtual register.
+fn write_operand(reg: AsmVirtualRegId) -> AsmOperand {
+    AsmOperand::Register {
+        reg: AsmRegister::Virtual(reg),
+        access: OperandAccess::Write,
+    }
+}
+
+/// A `Read`-access register operand referencing an existing virtual register.
+fn read_operand(reg: AsmVirtualRegId) -> AsmOperand {
+    AsmOperand::Register {
+        reg: AsmRegister::Virtual(reg),
+        access: OperandAccess::Read,
+    }
+}
+
+/// The canonical register bank for a value of the given type, used when
+/// allocating a fresh destination virtual register for a lifted
+/// instruction whose result type varies by call site (casts, vector ops).
+fn asm_register_bank(ty: &AsmType) -> AsmRegisterBank {
+    match ty {
+        AsmType::F32 | AsmType::F64 => AsmRegisterBank::Float,
+        AsmType::Vector(..) => AsmRegisterBank::Vector,
+        _ => AsmRegisterBank::General,
+    }
+}
+
+/// The bit width of a value of the given type, used alongside
+/// `asm_register_bank` when allocating a fresh destination virtual
+/// register.
+fn asm_type_bits(ty: &AsmType) -> u16 {
+    match ty {
+        AsmType::I1 | AsmType::I8 => 8,
+        AsmType::I16 => 16,
+        AsmType::I32 | AsmType::F32 => 32,
+        AsmType::I64 | AsmType::F64 | AsmType::Ptr(_) => 64,
+        AsmType::I128 => 128,
+        AsmType::Vector(element, count) => {
+            asm_type_bits(element).saturating_mul((*count).min(u32::from(u16::MAX)) as u16)
+        }
+        AsmType::Integer(width) => (*width).min(u32::from(u16::MAX)) as u16,
+        _ => 64,
+    }
+}
 
 #[derive(Clone, Debug)]
 struct JumpTable {
@@ -689,6 +735,7 @@ pub fn lift_function_bytes(
     bytes: &[u8],
     relocs: &[TextRelocation],
     syscall_convention: Option<AsmSyscallConvention>,
+    function: &mut AsmFunction,
 ) -> Result<LiftedFunction> {
     lift_function_bytes_with_symbols(
         bytes,
@@ -703,6 +750,7 @@ pub fn lift_function_bytes(
         0,
         true,
         false,
+        function,
     )
 }
 
@@ -719,6 +767,7 @@ pub(super) fn lift_function_bytes_with_symbols(
     entry_offset: u64,
     initialize_reg_file_from_locals: bool,
     use_lifted_regfile_calls: bool,
+    function: &mut AsmFunction,
 ) -> Result<LiftedFunction> {
     let decoded = decode_stream(bytes)?;
 
@@ -795,7 +844,7 @@ pub(super) fn lift_function_bytes_with_symbols(
         if block_offset == entry_offset && initialize_reg_file_from_locals {
             ctx.emit_reg_file_init_stores(&mut instructions, &mut next_id)?;
         }
-        ctx.begin_block(&mut instructions, &mut next_id)?;
+        ctx.begin_block(&mut instructions, &mut next_id, function)?;
         let mut terminated = false;
         let mut last_compare: Option<LastCompare> = None;
 
@@ -818,6 +867,7 @@ pub(super) fn lift_function_bytes_with_symbols(
                     switch_default_block,
                     &mut saw_switch,
                     &mut last_compare,
+                    function,
                 )?;
 
                 ctx.end_block(&mut instructions, &mut next_id)?;
@@ -844,6 +894,7 @@ pub(super) fn lift_function_bytes_with_symbols(
                 &mut last_compare,
                 syscall_convention,
                 &jump_table_by_capture_offset,
+                function,
             )?;
             cursor = cursor
                 .checked_add(inst.len as u64)
@@ -897,233 +948,187 @@ pub(super) fn lift_function_bytes_with_symbols(
 }
 
 fn packed_add_i32x2(
-    lhs: AsmValue,
-    rhs: AsmValue,
+    lhs: AsmOperand,
+    rhs: AsmOperand,
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
-) -> AsmValue {
-    let lhs = freeze_i64(lhs, instructions, next_id);
-    let rhs = freeze_i64(rhs, instructions, next_id);
+    function: &mut AsmFunction,) -> AsmOperand {
+    let lhs = freeze_i64(lhs, instructions, next_id, function);
+    let rhs = freeze_i64(rhs, instructions, next_id, function);
 
-    let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-    let shift_32 = AsmValue::Constant(AsmConstant::UInt(32, AsmType::I64));
+    let mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+    let shift_32 = AsmOperand::Constant(AsmConstant::UInt(32, AsmType::I64));
 
-    let lhs_low_id = *next_id;
-    instructions.push(build_binop(
-        lhs_low_id,
-        AsmInstructionKind::And(lhs.clone(), mask.clone()),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-    ));
-    *next_id += 1;
-    let rhs_low_id = *next_id;
-    instructions.push(build_binop(
-        rhs_low_id,
-        AsmInstructionKind::And(rhs.clone(), mask.clone()),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-    ));
-    *next_id += 1;
+    let lhs_low_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, lhs.clone(), mask.clone());
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
+    let rhs_low_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, rhs.clone(), mask.clone());
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
 
-    let low_sum_id = *next_id;
-    instructions.push(build_binop(
-        low_sum_id,
-        AsmInstructionKind::Add(
-            AsmValue::Register(lhs_low_id),
-            AsmValue::Register(rhs_low_id),
-        ),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-    ));
-    *next_id += 1;
-    let low_masked_id = *next_id;
-    instructions.push(build_binop(
-        low_masked_id,
-        AsmInstructionKind::And(AsmValue::Register(low_sum_id), mask.clone()),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-    ));
-    *next_id += 1;
+    let low_sum_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, read_operand(lhs_low_id), read_operand(rhs_low_id));
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
+    let low_masked_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(low_sum_id), mask.clone());
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
 
-    let lhs_hi_id = *next_id;
-    instructions.push(build_binop(
-        lhs_hi_id,
-        AsmInstructionKind::Shr(lhs, shift_32.clone()),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-    ));
-    *next_id += 1;
-    let rhs_hi_id = *next_id;
-    instructions.push(build_binop(
-        rhs_hi_id,
-        AsmInstructionKind::Shr(rhs, shift_32.clone()),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-    ));
-    *next_id += 1;
+    let lhs_hi_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, lhs, shift_32.clone());
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
+    let rhs_hi_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, rhs, shift_32.clone());
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
 
-    let hi_sum_id = *next_id;
-    instructions.push(build_binop(
-        hi_sum_id,
-        AsmInstructionKind::Add(AsmValue::Register(lhs_hi_id), AsmValue::Register(rhs_hi_id)),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-    ));
-    *next_id += 1;
-    let hi_masked_id = *next_id;
-    instructions.push(build_binop(
-        hi_masked_id,
-        AsmInstructionKind::And(AsmValue::Register(hi_sum_id), mask),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-    ));
-    *next_id += 1;
+    let hi_sum_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, read_operand(lhs_hi_id), read_operand(rhs_hi_id));
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
+    let hi_masked_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(hi_sum_id), mask);
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
 
-    let hi_shifted_id = *next_id;
-    instructions.push(build_binop(
-        hi_shifted_id,
-        AsmInstructionKind::Shl(AsmValue::Register(hi_masked_id), shift_32),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shl),
-    ));
-    *next_id += 1;
+    let hi_shifted_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shl, read_operand(hi_masked_id), shift_32);
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
 
-    let out_id = *next_id;
-    instructions.push(build_binop(
-        out_id,
-        AsmInstructionKind::Or(
-            AsmValue::Register(hi_shifted_id),
-            AsmValue::Register(low_masked_id),
-        ),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-    ));
-    *next_id += 1;
+    let out_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(hi_shifted_id), read_operand(low_masked_id));
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
 
-    AsmValue::Register(out_id)
+    read_operand(out_id)
 }
 
 fn packed_umax_i32x2(
-    lhs: AsmValue,
-    rhs: AsmValue,
+    lhs: AsmOperand,
+    rhs: AsmOperand,
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
-) -> AsmValue {
-    let lhs = freeze_i64(lhs, instructions, next_id);
-    let rhs = freeze_i64(rhs, instructions, next_id);
+    function: &mut AsmFunction,) -> AsmOperand {
+    let lhs = freeze_i64(lhs, instructions, next_id, function);
+    let rhs = freeze_i64(rhs, instructions, next_id, function);
 
-    let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-    let shift_32 = AsmValue::Constant(AsmConstant::UInt(32, AsmType::I64));
+    let mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+    let shift_32 = AsmOperand::Constant(AsmConstant::UInt(32, AsmType::I64));
 
-    let lhs_low_id = *next_id;
-    instructions.push(build_binop(
-        lhs_low_id,
-        AsmInstructionKind::And(lhs.clone(), mask.clone()),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-    ));
-    *next_id += 1;
-    let rhs_low_id = *next_id;
-    instructions.push(build_binop(
-        rhs_low_id,
-        AsmInstructionKind::And(rhs.clone(), mask.clone()),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-    ));
-    *next_id += 1;
+    let lhs_low_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, lhs.clone(), mask.clone());
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
+    let rhs_low_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, rhs.clone(), mask.clone());
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
 
-    let cmp_low_id = *next_id;
-    instructions.push(compare_instruction(
-        cmp_low_id,
-        AsmInstructionKind::Ugt(
-            AsmValue::Register(lhs_low_id),
-            AsmValue::Register(rhs_low_id),
-        ),
-        fp_core::asmir::AsmGenericOpcode::Ugt,
-    ));
+    let cmp_low_id = {
+        let (cmp_inst, dest) = compare_instruction(*next_id, function, fp_core::asmir::AsmGenericOpcode::Ugt, read_operand(lhs_low_id), read_operand(rhs_low_id));
+        instructions.push(cmp_inst);
+        *next_id += 1;
+        dest
+    };
+    let sel_low_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(cmp_low_id));
+    __ops.push(read_operand(lhs_low_id));
+    __ops.push(read_operand(rhs_low_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select), __ops);
+    instructions.push(__inst);
     *next_id += 1;
-    let sel_low_id = *next_id;
-    instructions.push(AsmInstruction {
-        id: sel_low_id,
-        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select),
-        kind: AsmInstructionKind::Select {
-            condition: AsmValue::Register(cmp_low_id),
-            if_true: AsmValue::Register(lhs_low_id),
-            if_false: AsmValue::Register(rhs_low_id),
-        },
-        ty: AsmType::I64,
-        operands: Vec::new(),
-        implicit_uses: Vec::new(),
-        implicit_defs: Vec::new(),
-        encoding: None,
-        debug_info: None,
-        annotations: Vec::new(),
-    });
-    *next_id += 1;
+    dest
+};
 
-    let lhs_hi_shift_id = *next_id;
-    instructions.push(build_binop(
-        lhs_hi_shift_id,
-        AsmInstructionKind::Shr(lhs, shift_32.clone()),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-    ));
-    *next_id += 1;
-    let rhs_hi_shift_id = *next_id;
-    instructions.push(build_binop(
-        rhs_hi_shift_id,
-        AsmInstructionKind::Shr(rhs, shift_32.clone()),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-    ));
-    *next_id += 1;
+    let lhs_hi_shift_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, lhs, shift_32.clone());
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
+    let rhs_hi_shift_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, rhs, shift_32.clone());
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
 
-    let lhs_hi_id = *next_id;
-    instructions.push(build_binop(
-        lhs_hi_id,
-        AsmInstructionKind::And(AsmValue::Register(lhs_hi_shift_id), mask.clone()),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-    ));
-    *next_id += 1;
-    let rhs_hi_id = *next_id;
-    instructions.push(build_binop(
-        rhs_hi_id,
-        AsmInstructionKind::And(AsmValue::Register(rhs_hi_shift_id), mask.clone()),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-    ));
-    *next_id += 1;
+    let lhs_hi_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(lhs_hi_shift_id), mask.clone());
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
+    let rhs_hi_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(rhs_hi_shift_id), mask.clone());
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
 
-    let cmp_hi_id = *next_id;
-    instructions.push(compare_instruction(
-        cmp_hi_id,
-        AsmInstructionKind::Ugt(AsmValue::Register(lhs_hi_id), AsmValue::Register(rhs_hi_id)),
-        fp_core::asmir::AsmGenericOpcode::Ugt,
-    ));
+    let cmp_hi_id = {
+        let (cmp_inst, dest) = compare_instruction(*next_id, function, fp_core::asmir::AsmGenericOpcode::Ugt, read_operand(lhs_hi_id), read_operand(rhs_hi_id));
+        instructions.push(cmp_inst);
+        *next_id += 1;
+        dest
+    };
+    let sel_hi_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(cmp_hi_id));
+    __ops.push(read_operand(lhs_hi_id));
+    __ops.push(read_operand(rhs_hi_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select), __ops);
+    instructions.push(__inst);
     *next_id += 1;
-    let sel_hi_id = *next_id;
-    instructions.push(AsmInstruction {
-        id: sel_hi_id,
-        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select),
-        kind: AsmInstructionKind::Select {
-            condition: AsmValue::Register(cmp_hi_id),
-            if_true: AsmValue::Register(lhs_hi_id),
-            if_false: AsmValue::Register(rhs_hi_id),
-        },
-        ty: AsmType::I64,
-        operands: Vec::new(),
-        implicit_uses: Vec::new(),
-        implicit_defs: Vec::new(),
-        encoding: None,
-        debug_info: None,
-        annotations: Vec::new(),
-    });
-    *next_id += 1;
+    dest
+};
 
-    let hi_shifted_id = *next_id;
-    instructions.push(build_binop(
-        hi_shifted_id,
-        AsmInstructionKind::Shl(AsmValue::Register(sel_hi_id), shift_32),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shl),
-    ));
-    *next_id += 1;
+    let hi_shifted_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shl, read_operand(sel_hi_id), shift_32);
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
 
-    let out_id = *next_id;
-    instructions.push(build_binop(
-        out_id,
-        AsmInstructionKind::Or(
-            AsmValue::Register(hi_shifted_id),
-            AsmValue::Register(sel_low_id),
-        ),
-        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-    ));
-    *next_id += 1;
-    AsmValue::Register(out_id)
+    let out_id = {
+        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(hi_shifted_id), read_operand(sel_low_id));
+        instructions.push(inst);
+        *next_id += 1;
+        dest
+    };
+    read_operand(out_id)
 }
 
 fn parse_st_register(token: &str) -> Result<u8> {
@@ -1329,7 +1334,7 @@ fn parse_capstone_memory_operand(op_str: &str) -> Result<X86Memory> {
     })
 }
 
-fn x86_64_sysv_call_args(ctx: &mut RegisterLiftContext) -> Result<Vec<AsmValue>> {
+fn x86_64_sysv_call_args(ctx: &mut RegisterLiftContext) -> Result<Vec<AsmOperand>> {
     // SysV integer arguments: rdi, rsi, rdx, rcx, r8, r9.
     Ok(vec![
         ctx.read_gpr(7)?,
@@ -1349,21 +1354,21 @@ fn value_from_operand_with_width(
     relocs: &[TextRelocation],
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
-) -> Result<AsmValue> {
+    function: &mut AsmFunction,) -> Result<AsmOperand> {
     match operand {
         Operand::Imm(imm) => {
             if width_bits >= 64 {
-                return Ok(AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64)));
+                return Ok(AsmOperand::Constant(AsmConstant::Int(imm, AsmType::I64)));
             }
             let mask: i128 = (1i128 << width_bits) - 1;
             let truncated = (imm as i128) & mask;
-            Ok(AsmValue::Constant(AsmConstant::UInt(
+            Ok(AsmOperand::Constant(AsmConstant::UInt(
                 truncated as u64,
                 AsmType::I64,
             )))
         }
         Operand::Rm(rm) => {
-            value_from_rm_with_width(ctx, rm, width_bits, inst, relocs, instructions, next_id)
+            value_from_rm_with_width(ctx, rm, width_bits, inst, relocs, instructions, next_id, function)
         }
     }
 }
@@ -1376,12 +1381,12 @@ fn value_from_rm_with_width(
     relocs: &[TextRelocation],
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
-) -> Result<AsmValue> {
+    function: &mut AsmFunction,) -> Result<AsmOperand> {
     match rm {
         RmOperand::Reg(reg) => Ok(ctx.read_gpr(reg)?),
         RmOperand::Mem(memory) => {
             if memory.segment.is_some() {
-                return Ok(AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)));
+                return Ok(AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)));
             }
 
             if width_bits == 64 {
@@ -1392,79 +1397,74 @@ fn value_from_rm_with_width(
                         .ok_or_else(|| Error::from("x86_64 relocation offset overflow"))?;
                     if let Some(reloc) = relocation_at(relocs, relocation_offset) {
                         if reloc.is_got {
-                            let id = *next_id;
-                            instructions.push(AsmInstruction {
-                                id,
-                                opcode: AsmOpcode::Generic(
-                                    fp_core::asmir::AsmGenericOpcode::SymbolAddress,
-                                ),
-                                kind: AsmInstructionKind::SymbolAddress {
-                                    symbol: reloc.symbol.clone(),
-                                    kind: fp_core::asmir::AsmSymbolAddressKind::Got,
-                                },
-                                ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                                operands: Vec::new(),
-                                implicit_uses: Vec::new(),
-                                implicit_defs: Vec::new(),
-                                encoding: None,
-                                debug_info: None,
-                                annotations: Vec::new(),
-                            });
-                            *next_id += 1;
-                            return Ok(AsmValue::Register(id));
+                            let id = {
+    let dest = function.alloc_virtual_register(AsmType::Ptr(Box::new(AsmType::I8)), asm_register_bank(&(AsmType::Ptr(Box::new(AsmType::I8)))), asm_type_bits(&(AsmType::Ptr(Box::new(AsmType::I8)))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(AsmOperand::Symbol(Name::new(reloc.symbol.clone())));
+    __ops.push(AsmOperand::Attr(AsmAttr::SymbolAddressKind(fp_core::asmir::AsmSymbolAddressKind::Got)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::SymbolAddress), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                            return Ok(read_operand(id));
                         }
                     }
                 }
 
                 if let Some(symbol) = ctx.resolve_rip_symbol(&memory, inst.offset, inst.len) {
                     if symbol.is_got {
-                        let id = *next_id;
                         let target = symbol.import.clone().unwrap_or_else(|| symbol.name.clone());
-                        instructions.push(AsmInstruction {
-                            id,
-                            opcode: AsmOpcode::Generic(
-                                fp_core::asmir::AsmGenericOpcode::SymbolAddress,
-                            ),
-                            kind: AsmInstructionKind::SymbolAddress {
-                                symbol: target,
-                                kind: fp_core::asmir::AsmSymbolAddressKind::Got,
-                            },
-                            ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                            operands: Vec::new(),
-                            implicit_uses: Vec::new(),
-                            implicit_defs: Vec::new(),
-                            encoding: None,
-                            debug_info: None,
-                            annotations: Vec::new(),
-                        });
-                        *next_id += 1;
-                        return Ok(AsmValue::Register(id));
+                        let id = {
+                            let dest = function.alloc_virtual_register(
+                                AsmType::Ptr(Box::new(AsmType::I8)),
+                                AsmRegisterBank::General,
+                                64,
+                            );
+                            let inst = AsmInstruction::new(
+                                *next_id,
+                                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::SymbolAddress),
+                                vec![
+                                    write_operand(dest),
+                                    AsmOperand::Symbol(Name::new(target)),
+                                    AsmOperand::Attr(AsmAttr::SymbolAddressKind(
+                                        fp_core::asmir::AsmSymbolAddressKind::Got,
+                                    )),
+                                ],
+                            );
+                            instructions.push(inst);
+                            *next_id += 1;
+                            dest
+                        };
+                        return Ok(read_operand(id));
                     }
                 }
 
                 if let Some(symbol) = ctx.resolve_disp32_symbol(&memory, inst.offset, inst.len) {
                     if symbol.is_got {
-                        let id = *next_id;
                         let target = symbol.import.clone().unwrap_or_else(|| symbol.name.clone());
-                        instructions.push(AsmInstruction {
-                            id,
-                            opcode: AsmOpcode::Generic(
-                                fp_core::asmir::AsmGenericOpcode::SymbolAddress,
-                            ),
-                            kind: AsmInstructionKind::SymbolAddress {
-                                symbol: target,
-                                kind: fp_core::asmir::AsmSymbolAddressKind::Got,
-                            },
-                            ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                            operands: Vec::new(),
-                            implicit_uses: Vec::new(),
-                            implicit_defs: Vec::new(),
-                            encoding: None,
-                            debug_info: None,
-                            annotations: Vec::new(),
-                        });
-                        *next_id += 1;
-                        return Ok(AsmValue::Register(id));
+                        let id = {
+                            let dest = function.alloc_virtual_register(
+                                AsmType::Ptr(Box::new(AsmType::I8)),
+                                AsmRegisterBank::General,
+                                64,
+                            );
+                            let inst = AsmInstruction::new(
+                                *next_id,
+                                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::SymbolAddress),
+                                vec![
+                                    write_operand(dest),
+                                    AsmOperand::Symbol(Name::new(target)),
+                                    AsmOperand::Attr(AsmAttr::SymbolAddressKind(
+                                        fp_core::asmir::AsmSymbolAddressKind::Got,
+                                    )),
+                                ],
+                            );
+                            instructions.push(inst);
+                            *next_id += 1;
+                            dest
+                        };
+                        return Ok(read_operand(id));
                     }
                 }
             }
@@ -1477,83 +1477,76 @@ fn value_from_rm_with_width(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let load_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: load_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: addr,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: match width_bits {
+    function,)?;
+            let load_id = {
+    let dest = function.alloc_virtual_register(match width_bits {
                     8 => AsmType::I8,
                     16 => AsmType::I16,
                     32 => AsmType::I32,
                     _ => AsmType::I64,
-                },
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: synthesized_annotations("x86.regfile_init_store"),
-            });
-            *next_id += 1;
+                }, asm_register_bank(&(match width_bits {
+                    8 => AsmType::I8,
+                    16 => AsmType::I16,
+                    32 => AsmType::I32,
+                    _ => AsmType::I64,
+                })), asm_type_bits(&(match width_bits {
+                    8 => AsmType::I8,
+                    16 => AsmType::I16,
+                    32 => AsmType::I32,
+                    _ => AsmType::I64,
+                })));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    __inst.annotations = synthesized_annotations("x86.regfile_init_store");
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
             if width_bits == 64 {
-                return Ok(AsmValue::Register(load_id));
+                return Ok(read_operand(load_id));
             }
 
-            let zext_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: zext_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt),
-                kind: AsmInstructionKind::ZExt(AsmValue::Register(load_id), AsmType::I64),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: synthesized_annotations("x86.regfile_load"),
-            });
-            *next_id += 1;
+            let zext_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(load_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt), __ops);
+    __inst.annotations = synthesized_annotations("x86.regfile_load");
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            Ok(AsmValue::Register(zext_id))
+            Ok(read_operand(zext_id))
         }
     }
 }
 
 fn freeze_i64(
-    value: AsmValue,
+    value: AsmOperand,
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
-) -> AsmValue {
-    let id = *next_id;
-    instructions.push(AsmInstruction {
-        id,
-        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-        kind: AsmInstructionKind::Freeze(value),
-        ty: AsmType::I64,
-        operands: Vec::new(),
-        implicit_uses: Vec::new(),
-        implicit_defs: Vec::new(),
-        encoding: None,
-        debug_info: None,
-        annotations: Vec::new(),
-    });
+    function: &mut AsmFunction,) -> AsmOperand {
+    let id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(value);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze), __ops);
+    instructions.push(__inst);
     *next_id += 1;
-    AsmValue::Register(id)
+    dest
+};
+    read_operand(id)
 }
 
 fn value_for_store(
     width_bits: u16,
-    value: AsmValue,
+    value: AsmOperand,
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
-) -> Result<AsmValue> {
+    function: &mut AsmFunction,) -> Result<AsmOperand> {
     let target_ty = match width_bits {
         8 => AsmType::I8,
         16 => AsmType::I16,
@@ -1562,29 +1555,24 @@ fn value_for_store(
         _ => return Err(Error::from("unsupported x86_64 store width")),
     };
 
-    let id = *next_id;
-    instructions.push(AsmInstruction {
-        id,
-        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc),
-        kind: AsmInstructionKind::Trunc(value, target_ty.clone()),
-        ty: target_ty,
-        operands: Vec::new(),
-        implicit_uses: Vec::new(),
-        implicit_defs: Vec::new(),
-        encoding: None,
-        debug_info: None,
-        annotations: Vec::new(),
-    });
+    let id = {
+    let dest = function.alloc_virtual_register(target_ty.clone(), asm_register_bank(&target_ty), asm_type_bits(&target_ty));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(value);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc), __ops);
+    instructions.push(__inst);
     *next_id += 1;
-    Ok(AsmValue::Register(id))
+    dest
+};
+    Ok(read_operand(id))
 }
 
 fn byte_swap_value(
     width_bits: u16,
-    value: AsmValue,
+    value: AsmOperand,
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
-) -> Result<AsmValue> {
+    function: &mut AsmFunction,) -> Result<AsmOperand> {
     let (mask, shift_bits) = match width_bits {
         16 => (0xFFFFu64, 8u16),
         32 => (0xFFFF_FFFFu64, 8u16),
@@ -1592,167 +1580,117 @@ fn byte_swap_value(
         _ => return Err(Error::from("unsupported x86_64 movbe width")),
     };
 
-    let value = freeze_i64(value, instructions, next_id);
+    let value = freeze_i64(value, instructions, next_id, function);
     let masked = if mask == u64::MAX {
         value
     } else {
-        let id = *next_id;
-        instructions.push(build_binop(
-            id,
-            AsmInstructionKind::And(
-                value,
-                AsmValue::Constant(AsmConstant::UInt(mask, AsmType::I64)),
-            ),
-            AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-        ));
-        *next_id += 1;
-        AsmValue::Register(id)
+        let id = {
+            let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, value, AsmOperand::Constant(AsmConstant::UInt(mask, AsmType::I64)));
+            instructions.push(inst);
+            *next_id += 1;
+            dest
+        };
+        read_operand(id)
     };
 
     match width_bits {
         16 => {
-            let shl_id = *next_id;
-            instructions.push(build_binop(
-                shl_id,
-                AsmInstructionKind::Shl(
-                    masked.clone(),
-                    AsmValue::Constant(AsmConstant::UInt(shift_bits as u64, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shl),
-            ));
-            *next_id += 1;
+            let shl_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shl, masked.clone(), AsmOperand::Constant(AsmConstant::UInt(shift_bits as u64, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let shr_id = *next_id;
-            instructions.push(build_binop(
-                shr_id,
-                AsmInstructionKind::Shr(
-                    masked,
-                    AsmValue::Constant(AsmConstant::UInt(shift_bits as u64, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-            ));
-            *next_id += 1;
+            let shr_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, masked, AsmOperand::Constant(AsmConstant::UInt(shift_bits as u64, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let or_id = *next_id;
-            instructions.push(build_binop(
-                or_id,
-                AsmInstructionKind::Or(AsmValue::Register(shl_id), AsmValue::Register(shr_id)),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let or_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(shl_id), read_operand(shr_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let final_id = *next_id;
-            instructions.push(build_binop(
-                final_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(or_id),
-                    AsmValue::Constant(AsmConstant::UInt(mask, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
-            Ok(AsmValue::Register(final_id))
+            let final_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(or_id), AsmOperand::Constant(AsmConstant::UInt(mask, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
+            Ok(read_operand(final_id))
         }
         32 => {
             let left_mask = 0x00FF_00FFu64;
             let right_mask = 0xFF00_FF00u64;
 
-            let left_id = *next_id;
-            instructions.push(build_binop(
-                left_id,
-                AsmInstructionKind::And(
-                    masked.clone(),
-                    AsmValue::Constant(AsmConstant::UInt(left_mask, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let left_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, masked.clone(), AsmOperand::Constant(AsmConstant::UInt(left_mask, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let left_shift_id = *next_id;
-            instructions.push(build_binop(
-                left_shift_id,
-                AsmInstructionKind::Shl(
-                    AsmValue::Register(left_id),
-                    AsmValue::Constant(AsmConstant::UInt(8, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shl),
-            ));
-            *next_id += 1;
+            let left_shift_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shl, read_operand(left_id), AsmOperand::Constant(AsmConstant::UInt(8, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let right_id = *next_id;
-            instructions.push(build_binop(
-                right_id,
-                AsmInstructionKind::And(
-                    masked.clone(),
-                    AsmValue::Constant(AsmConstant::UInt(right_mask, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let right_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, masked.clone(), AsmOperand::Constant(AsmConstant::UInt(right_mask, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let right_shift_id = *next_id;
-            instructions.push(build_binop(
-                right_shift_id,
-                AsmInstructionKind::Shr(
-                    AsmValue::Register(right_id),
-                    AsmValue::Constant(AsmConstant::UInt(8, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-            ));
-            *next_id += 1;
+            let right_shift_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, read_operand(right_id), AsmOperand::Constant(AsmConstant::UInt(8, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let or_id = *next_id;
-            instructions.push(build_binop(
-                or_id,
-                AsmInstructionKind::Or(
-                    AsmValue::Register(left_shift_id),
-                    AsmValue::Register(right_shift_id),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let or_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(left_shift_id), read_operand(right_shift_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let lo_id = *next_id;
-            instructions.push(build_binop(
-                lo_id,
-                AsmInstructionKind::Shl(
-                    AsmValue::Register(or_id),
-                    AsmValue::Constant(AsmConstant::UInt(16, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shl),
-            ));
-            *next_id += 1;
+            let lo_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shl, read_operand(or_id), AsmOperand::Constant(AsmConstant::UInt(16, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let hi_id = *next_id;
-            instructions.push(build_binop(
-                hi_id,
-                AsmInstructionKind::Shr(
-                    AsmValue::Register(or_id),
-                    AsmValue::Constant(AsmConstant::UInt(16, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-            ));
-            *next_id += 1;
+            let hi_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, read_operand(or_id), AsmOperand::Constant(AsmConstant::UInt(16, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let final_or_id = *next_id;
-            instructions.push(build_binop(
-                final_or_id,
-                AsmInstructionKind::Or(AsmValue::Register(lo_id), AsmValue::Register(hi_id)),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let final_or_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(lo_id), read_operand(hi_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let final_id = *next_id;
-            instructions.push(build_binop(
-                final_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(final_or_id),
-                    AsmValue::Constant(AsmConstant::UInt(mask, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
-            Ok(AsmValue::Register(final_id))
+            let final_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(final_or_id), AsmOperand::Constant(AsmConstant::UInt(mask, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
+            Ok(read_operand(final_id))
         }
         64 => {
             let step1_left = 0x00FF_00FF_00FF_00FFu64;
@@ -1760,146 +1698,97 @@ fn byte_swap_value(
             let step2_left = 0x0000_FFFF_0000_FFFFu64;
             let step2_right = 0xFFFF_0000_FFFF_0000u64;
 
-            let left_id = *next_id;
-            instructions.push(build_binop(
-                left_id,
-                AsmInstructionKind::And(
-                    masked.clone(),
-                    AsmValue::Constant(AsmConstant::UInt(step1_left, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let left_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, masked.clone(), AsmOperand::Constant(AsmConstant::UInt(step1_left, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let left_shift_id = *next_id;
-            instructions.push(build_binop(
-                left_shift_id,
-                AsmInstructionKind::Shl(
-                    AsmValue::Register(left_id),
-                    AsmValue::Constant(AsmConstant::UInt(8, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shl),
-            ));
-            *next_id += 1;
+            let left_shift_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shl, read_operand(left_id), AsmOperand::Constant(AsmConstant::UInt(8, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let right_id = *next_id;
-            instructions.push(build_binop(
-                right_id,
-                AsmInstructionKind::And(
-                    masked.clone(),
-                    AsmValue::Constant(AsmConstant::UInt(step1_right, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let right_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, masked.clone(), AsmOperand::Constant(AsmConstant::UInt(step1_right, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let right_shift_id = *next_id;
-            instructions.push(build_binop(
-                right_shift_id,
-                AsmInstructionKind::Shr(
-                    AsmValue::Register(right_id),
-                    AsmValue::Constant(AsmConstant::UInt(8, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-            ));
-            *next_id += 1;
+            let right_shift_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, read_operand(right_id), AsmOperand::Constant(AsmConstant::UInt(8, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let step1_id = *next_id;
-            instructions.push(build_binop(
-                step1_id,
-                AsmInstructionKind::Or(
-                    AsmValue::Register(left_shift_id),
-                    AsmValue::Register(right_shift_id),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let step1_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(left_shift_id), read_operand(right_shift_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let left2_id = *next_id;
-            instructions.push(build_binop(
-                left2_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(step1_id),
-                    AsmValue::Constant(AsmConstant::UInt(step2_left, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let left2_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(step1_id), AsmOperand::Constant(AsmConstant::UInt(step2_left, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let left2_shift_id = *next_id;
-            instructions.push(build_binop(
-                left2_shift_id,
-                AsmInstructionKind::Shl(
-                    AsmValue::Register(left2_id),
-                    AsmValue::Constant(AsmConstant::UInt(16, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shl),
-            ));
-            *next_id += 1;
+            let left2_shift_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shl, read_operand(left2_id), AsmOperand::Constant(AsmConstant::UInt(16, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let right2_id = *next_id;
-            instructions.push(build_binop(
-                right2_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(step1_id),
-                    AsmValue::Constant(AsmConstant::UInt(step2_right, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let right2_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(step1_id), AsmOperand::Constant(AsmConstant::UInt(step2_right, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let right2_shift_id = *next_id;
-            instructions.push(build_binop(
-                right2_shift_id,
-                AsmInstructionKind::Shr(
-                    AsmValue::Register(right2_id),
-                    AsmValue::Constant(AsmConstant::UInt(16, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-            ));
-            *next_id += 1;
+            let right2_shift_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, read_operand(right2_id), AsmOperand::Constant(AsmConstant::UInt(16, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let step2_id = *next_id;
-            instructions.push(build_binop(
-                step2_id,
-                AsmInstructionKind::Or(
-                    AsmValue::Register(left2_shift_id),
-                    AsmValue::Register(right2_shift_id),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let step2_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(left2_shift_id), read_operand(right2_shift_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let left3_id = *next_id;
-            instructions.push(build_binop(
-                left3_id,
-                AsmInstructionKind::Shl(
-                    AsmValue::Register(step2_id),
-                    AsmValue::Constant(AsmConstant::UInt(32, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shl),
-            ));
-            *next_id += 1;
+            let left3_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shl, read_operand(step2_id), AsmOperand::Constant(AsmConstant::UInt(32, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let right3_id = *next_id;
-            instructions.push(build_binop(
-                right3_id,
-                AsmInstructionKind::Shr(
-                    AsmValue::Register(step2_id),
-                    AsmValue::Constant(AsmConstant::UInt(32, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-            ));
-            *next_id += 1;
+            let right3_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, read_operand(step2_id), AsmOperand::Constant(AsmConstant::UInt(32, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let final_id = *next_id;
-            instructions.push(build_binop(
-                final_id,
-                AsmInstructionKind::Or(AsmValue::Register(left3_id), AsmValue::Register(right3_id)),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
-            Ok(AsmValue::Register(final_id))
+            let final_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(left3_id), read_operand(right3_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
+            Ok(read_operand(final_id))
         }
         _ => Err(Error::from("unsupported x86_64 movbe width")),
     }
@@ -1908,88 +1797,83 @@ fn byte_swap_value(
 fn write_gpr_with_width(
     ctx: &mut RegisterLiftContext,
     dst: u8,
-    value: AsmValue,
+    value: AsmOperand,
     width_bits: u16,
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
-) -> Result<()> {
-    let value = freeze_i64(value, instructions, next_id);
+    function: &mut AsmFunction,) -> Result<()> {
+    let value = freeze_i64(value, instructions, next_id, function);
     match width_bits {
         64 => {
             ctx.write_gpr(dst, value);
             Ok(())
         }
         32 => {
-            let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-            let id = *next_id;
-            instructions.push(build_binop(
-                id,
-                AsmInstructionKind::And(value, mask),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
-            ctx.write_gpr(dst, AsmValue::Register(id));
+            let mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+            let id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, value, mask);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
+            ctx.write_gpr(dst, read_operand(id));
             Ok(())
         }
         16 | 8 => {
             let old = ctx.read_gpr(dst)?;
             let low_mask = if width_bits == 8 { 0xFF } else { 0xFFFF };
             let low_mask_value =
-                AsmValue::Constant(AsmConstant::UInt(low_mask as u64, AsmType::I64));
+                AsmOperand::Constant(AsmConstant::UInt(low_mask as u64, AsmType::I64));
             let high_mask_value =
-                AsmValue::Constant(AsmConstant::UInt((!low_mask) as u64, AsmType::I64));
+                AsmOperand::Constant(AsmConstant::UInt((!low_mask) as u64, AsmType::I64));
 
-            let low_id = *next_id;
-            instructions.push(build_binop(
-                low_id,
-                AsmInstructionKind::And(value, low_mask_value),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let low_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, value, low_mask_value);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let preserved_id = *next_id;
-            instructions.push(build_binop(
-                preserved_id,
-                AsmInstructionKind::And(old, high_mask_value),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let preserved_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, old, high_mask_value);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let result_id = *next_id;
-            instructions.push(build_binop(
-                result_id,
-                AsmInstructionKind::Or(
-                    AsmValue::Register(preserved_id),
-                    AsmValue::Register(low_id),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let result_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(preserved_id), read_operand(low_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            ctx.write_gpr(dst, AsmValue::Register(result_id));
+            ctx.write_gpr(dst, read_operand(result_id));
             Ok(())
         }
         _ => Err(Error::from("unsupported x86_64 register write width")),
     }
 }
 
+/// Builds a comparison instruction with the given opcode (usually a
+/// placeholder `Eq` later patched by `patch_compare_kind` once the
+/// consuming `Jcc`'s condition code is known). Returns the instruction and
+/// the freshly allocated `Flags`-bank destination register that the
+/// eventual conditional branch reads as its condition.
 fn compare_instruction(
     id: u32,
-    kind: AsmInstructionKind,
+    function: &mut AsmFunction,
     opcode: fp_core::asmir::AsmGenericOpcode,
-) -> AsmInstruction {
-    AsmInstruction {
+    lhs: AsmOperand,
+    rhs: AsmOperand,
+) -> (AsmInstruction, AsmVirtualRegId) {
+    let dest = function.alloc_virtual_register(AsmType::I1, AsmRegisterBank::Flags, 1);
+    let inst = AsmInstruction::new(
         id,
-        opcode: AsmOpcode::Generic(opcode),
-        kind,
-        ty: AsmType::I1,
-        operands: Vec::new(),
-        implicit_uses: Vec::new(),
-        implicit_defs: Vec::new(),
-        encoding: None,
-        debug_info: None,
-        annotations: Vec::new(),
-    }
+        AsmOpcode::Generic(opcode),
+        vec![write_operand(dest), lhs, rhs],
+    );
+    (inst, dest)
 }
 
 fn value_from_operand(
@@ -2000,32 +1884,32 @@ fn value_from_operand(
     relocs: &[TextRelocation],
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
-) -> Result<AsmValue> {
+    function: &mut AsmFunction,) -> Result<AsmOperand> {
     match operand {
         Operand::Imm(value) => {
             if value >= 0 {
                 let addr = value as u64;
                 if let Some(symbol) = ctx.rip_symbols.get(&addr) {
                     if symbol.kind == RipSymbolKind::Function {
-                        return Ok(AsmValue::Function(symbol.name.clone()));
+                        return Ok(AsmOperand::Symbol(Name::new(symbol.name.clone())));
                     }
                 }
             }
-            Ok(AsmValue::Constant(AsmConstant::Int(value, AsmType::I64)))
+            Ok(AsmOperand::Constant(AsmConstant::Int(value, AsmType::I64)))
         }
         Operand::Rm(rm) => match rm {
             RmOperand::Reg(reg) => ctx.read_gpr(reg),
             RmOperand::Mem(memory) => {
                 if memory.segment.is_some() {
                     // Treat segment-based loads as stable zero for now.
-                    return Ok(AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)));
+                    return Ok(AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)));
                 }
 
                 if let Some(symbol) =
                     ctx.resolve_disp32_symbol(&memory, instruction_offset, instruction_len)
                 {
                     if symbol.kind == RipSymbolKind::Function {
-                        return Ok(AsmValue::Function(symbol.name.clone()));
+                        return Ok(AsmOperand::Symbol(Name::new(symbol.name.clone())));
                     }
                 }
                 let addr = compute_address(
@@ -2036,26 +1920,17 @@ fn value_from_operand(
                     relocs,
                     instructions,
                     next_id,
-                )?;
-                let id = *next_id;
-                instructions.push(AsmInstruction {
-                    id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                    kind: AsmInstructionKind::Load {
-                        address: addr,
-                        alignment: None,
-                        volatile: false,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
-                Ok(AsmValue::Register(id))
+    function,)?;
+                let id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                Ok(read_operand(id))
             }
         },
     }
@@ -2072,105 +1947,39 @@ fn patch_compare_kind(
     if inst.id != compare.id {
         return Err(Error::from("comparison instruction id mismatch"));
     }
-    let (lhs, rhs) = compare_operands(&inst.kind)
-        .ok_or_else(|| Error::from("comparison instruction has unexpected kind"))?;
-    if let Ok((kind, opcode)) = compare_kind_from_condition(condition, lhs, rhs, compare.is_float) {
-        inst.kind = kind;
-        inst.opcode = AsmOpcode::Generic(opcode);
-        inst.ty = AsmType::Void;
+    if inst.operands.len() != 3 {
+        return Err(Error::from(
+            "comparison instruction has unexpected operand shape for patching",
+        ));
     }
+    inst.opcode = AsmOpcode::Generic(compare_opcode_from_condition(condition, compare.is_float)?);
     Ok(())
 }
 
-fn compare_operands(kind: &AsmInstructionKind) -> Option<(AsmValue, AsmValue)> {
-    match kind {
-        AsmInstructionKind::Eq(lhs, rhs)
-        | AsmInstructionKind::Ne(lhs, rhs)
-        | AsmInstructionKind::Lt(lhs, rhs)
-        | AsmInstructionKind::Le(lhs, rhs)
-        | AsmInstructionKind::Gt(lhs, rhs)
-        | AsmInstructionKind::Ge(lhs, rhs)
-        | AsmInstructionKind::Ult(lhs, rhs)
-        | AsmInstructionKind::Ule(lhs, rhs)
-        | AsmInstructionKind::Ugt(lhs, rhs)
-        | AsmInstructionKind::Uge(lhs, rhs) => Some((lhs.clone(), rhs.clone())),
-        _ => None,
-    }
-}
-
-fn compare_kind_from_condition(
+fn compare_opcode_from_condition(
     condition: u8,
-    lhs: AsmValue,
-    rhs: AsmValue,
     is_float: bool,
-) -> Result<(AsmInstructionKind, fp_core::asmir::AsmGenericOpcode)> {
+) -> Result<fp_core::asmir::AsmGenericOpcode> {
+    use fp_core::asmir::AsmGenericOpcode::*;
     Ok(match (condition, is_float) {
-        (0x4, _) => (
-            AsmInstructionKind::Eq(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Eq,
-        ),
-        (0x5, _) => (
-            AsmInstructionKind::Ne(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Ne,
-        ),
-        (0xC, _) => (
-            AsmInstructionKind::Lt(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Lt,
-        ),
-        (0xD, _) => (
-            AsmInstructionKind::Ge(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Ge,
-        ),
-        (0xE, _) => (
-            AsmInstructionKind::Le(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Le,
-        ),
-        (0xF, _) => (
-            AsmInstructionKind::Gt(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Gt,
-        ),
-        (0x2, true) => (
-            AsmInstructionKind::Lt(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Lt,
-        ),
-        (0x3, true) => (
-            AsmInstructionKind::Ge(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Ge,
-        ),
-        (0x6, true) => (
-            AsmInstructionKind::Le(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Le,
-        ),
-        (0x7, true) => (
-            AsmInstructionKind::Gt(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Gt,
-        ),
-        (0x2, false) => (
-            AsmInstructionKind::Ult(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Ult,
-        ),
-        (0x3, false) => (
-            AsmInstructionKind::Uge(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Uge,
-        ),
-        (0x6, false) => (
-            AsmInstructionKind::Ule(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Ule,
-        ),
-        (0x7, false) => (
-            AsmInstructionKind::Ugt(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Ugt,
-        ),
+        (0x4, _) => Eq,
+        (0x5, _) => Ne,
+        (0xC, _) => Lt,
+        (0xD, _) => Ge,
+        (0xE, _) => Le,
+        (0xF, _) => Gt,
+        (0x2, true) => Lt,
+        (0x3, true) => Ge,
+        (0x6, true) => Le,
+        (0x7, true) => Gt,
+        (0x2, false) => Ult,
+        (0x3, false) => Uge,
+        (0x6, false) => Ule,
+        (0x7, false) => Ugt,
         // JS/JNS depend on the sign flag, which is not precisely modeled today.
         // Approximate them via the signed comparison result.
-        (0x8, _) => (
-            AsmInstructionKind::Lt(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Lt,
-        ),
-        (0x9, _) => (
-            AsmInstructionKind::Ge(lhs, rhs),
-            fp_core::asmir::AsmGenericOpcode::Ge,
-        ),
+        (0x8, _) => Lt,
+        (0x9, _) => Ge,
         (other, _) => {
             return Err(Error::from(format!(
                 "unsupported x86_64 conditional jump: 0x{other:02x}"
@@ -2190,6 +1999,7 @@ struct DecodedInstruction {
 struct LastCompare {
     id: u32,
     index: usize,
+    vreg: AsmVirtualRegId,
     is_float: bool,
 }
 
@@ -4076,27 +3886,22 @@ fn is_terminator(kind: &Decoded) -> bool {
 fn synthesize_fallthrough_compare(
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
+    function: &mut AsmFunction,
 ) -> LastCompare {
     let id = *next_id;
-    instructions.push(AsmInstruction {
+    let (cmp_inst, vreg) = compare_instruction(
         id,
-        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Eq),
-        kind: AsmInstructionKind::Eq(
-            AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-            AsmValue::Constant(AsmConstant::Int(1, AsmType::I64)),
-        ),
-        ty: AsmType::Void,
-        operands: Vec::new(),
-        implicit_uses: Vec::new(),
-        implicit_defs: Vec::new(),
-        encoding: None,
-        debug_info: None,
-        annotations: Vec::new(),
-    });
+        function,
+        fp_core::asmir::AsmGenericOpcode::Eq,
+        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+        AsmOperand::Constant(AsmConstant::Int(1, AsmType::I64)),
+    );
+    instructions.push(cmp_inst);
     *next_id += 1;
     LastCompare {
         id,
         index: instructions.len() - 1,
+        vreg,
         is_float: false,
     }
 }
@@ -4112,7 +3917,7 @@ fn lift_terminator(
     switch_default_block: u32,
     saw_switch: &mut bool,
     last_compare: &mut Option<LastCompare>,
-) -> Result<fp_core::asmir::AsmTerminator> {
+    function: &mut AsmFunction,) -> Result<fp_core::asmir::AsmTerminator> {
     match inst.kind {
         Decoded::Ret => Ok(fp_core::asmir::AsmTerminator::Return(
             ctx.read_return_value(),
@@ -4132,16 +3937,16 @@ fn lift_terminator(
             let compare = if let Some(compare) = last_compare.as_ref() {
                 match patch_compare_kind(instructions, compare, condition) {
                     Ok(()) => *compare,
-                    Err(_) => synthesize_fallthrough_compare(instructions, next_id),
+                    Err(_) => synthesize_fallthrough_compare(instructions, next_id, function),
                 }
             } else {
-                synthesize_fallthrough_compare(instructions, next_id)
+                synthesize_fallthrough_compare(instructions, next_id, function)
             };
 
             // The branch consumes the flags produced by the compare.
             // This keeps the terminator independent from ISA-specific condition codes.
             Ok(fp_core::asmir::AsmTerminator::CondBr {
-                condition: AsmValue::Flags(compare.id),
+                condition: read_operand(compare.id),
                 if_true,
                 if_false,
             })
@@ -4168,7 +3973,7 @@ fn lift_terminator(
                             })
                             .ok()
                     })
-                    .unwrap_or_else(|| AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)));
+                    .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)));
 
                 let mut cases = Vec::with_capacity(table.target_offsets.len());
                 for (idx, target) in table.target_offsets.iter().enumerate() {
@@ -4202,28 +4007,20 @@ fn lift_terminator(
                 if let Some(symbol) = symbol {
                     if let Some(import) = symbol.import.clone() {
                         let args = x86_64_sysv_call_args(ctx)?;
-                        let id = *next_id;
-                        instructions.push(AsmInstruction {
-                            id,
-                            opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call),
-                            kind: AsmInstructionKind::Call {
-                                function: AsmValue::Function(import),
-                                args,
-                                calling_convention: CallingConvention::X86_64SysV,
-                                tail_call: false,
-                            },
-                            ty: AsmType::I64,
-                            operands: Vec::new(),
-                            implicit_uses: Vec::new(),
-                            implicit_defs: Vec::new(),
-                            encoding: None,
-                            debug_info: None,
-                            annotations: Vec::new(),
-                        });
-                        *next_id += 1;
-                        ctx.write_gpr(0, AsmValue::Register(id));
+                        let id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(AsmOperand::Attr(AsmAttr::CallingConv(CallingConvention::X86_64SysV)));
+    __ops.push(AsmOperand::Symbol(Name::new(import)));
+    __ops.extend(args);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                        ctx.write_gpr(0, read_operand(id));
                         return Ok(fp_core::asmir::AsmTerminator::Return(Some(
-                            AsmValue::Register(id),
+                            read_operand(id),
                         )));
                     }
                 }
@@ -4234,7 +4031,7 @@ fn lift_terminator(
                 RmOperand::Reg(reg) => ctx.read_gpr(reg)?,
                 RmOperand::Mem(memory) => {
                     if memory.segment.is_some() {
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64))
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64))
                     } else {
                         let addr = compute_address(
                             ctx,
@@ -4244,26 +4041,18 @@ fn lift_terminator(
                             &[],
                             instructions,
                             next_id,
-                        )?;
-                        let load_id = *next_id;
-                        instructions.push(AsmInstruction {
-                            id: load_id,
-                            opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                            kind: AsmInstructionKind::Load {
-                                address: addr,
-                                alignment: None,
-                                volatile: true,
-                            },
-                            ty: AsmType::I64,
-                            operands: Vec::new(),
-                            implicit_uses: Vec::new(),
-                            implicit_defs: Vec::new(),
-                            encoding: None,
-                            debug_info: None,
-                            annotations: Vec::new(),
-                        });
-                        *next_id += 1;
-                        AsmValue::Register(load_id)
+    function,)?;
+                        let load_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    __ops.push(AsmOperand::Attr(AsmAttr::Volatile));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                        read_operand(load_id)
                     }
                 }
             };
@@ -4286,7 +4075,7 @@ fn lift_non_terminator(
     last_compare: &mut Option<LastCompare>,
     syscall_convention: Option<AsmSyscallConvention>,
     jump_table_by_capture_offset: &std::collections::HashMap<u64, (u64, u8)>,
-) -> Result<()> {
+    function: &mut AsmFunction,) -> Result<()> {
     if let Some((jmp_offset, index_reg)) = jump_table_by_capture_offset.get(&inst.offset) {
         // Capture the jump-table index *before* it is overwritten by the
         // `movsxd` load.
@@ -4299,23 +4088,16 @@ fn lift_non_terminator(
 
     match inst.kind {
         Decoded::Nop => {
-            let nop_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: nop_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Nop),
-                kind: AsmInstructionKind::Nop,
-                ty: AsmType::Void,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: vec![AsmAnnotation {
+            let _nop_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Nop), __ops);
+    __inst.annotations = vec![AsmAnnotation {
                     key: "fp.preserve.x86_64.nop_len".to_string(),
                     value: inst.len.to_string(),
-                }],
-            });
-            *next_id += 1;
+                }];
+    instructions.push(__inst);
+    *next_id += 1;
+};
             Ok(())
         }
         Decoded::Hlt => Err(Error::from(
@@ -4325,109 +4107,76 @@ fn lift_non_terminator(
             let rbp = ctx.read_gpr(5)?;
             ctx.write_gpr(4, rbp.clone());
 
-            let load_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: load_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: rbp.clone(),
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: synthesized_annotations("x86.regfile_store"),
-            });
-            *next_id += 1;
+            let load_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rbp.clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    __inst.annotations = synthesized_annotations("x86.regfile_store");
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let rsp_id = *next_id;
-            instructions.push(build_binop(
-                rsp_id,
-                AsmInstructionKind::Add(rbp, AsmValue::Constant(AsmConstant::Int(8, AsmType::I64))),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-            ));
-            *next_id += 1;
-            ctx.write_gpr(4, AsmValue::Register(rsp_id));
-            ctx.write_gpr(5, AsmValue::Register(load_id));
+            let rsp_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, rbp, AsmOperand::Constant(AsmConstant::Int(8, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
+            ctx.write_gpr(4, read_operand(rsp_id));
+            ctx.write_gpr(5, read_operand(load_id));
             Ok(())
         }
         Decoded::PushReg { src } => {
             let rsp = ctx.read_gpr(4)?;
-            let rhs = AsmValue::Constant(AsmConstant::Int(8, AsmType::I64));
-            let new_rsp_id = *next_id;
-            instructions.push(build_binop(
-                new_rsp_id,
-                AsmInstructionKind::Sub(rsp, rhs),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-            ));
-            *next_id += 1;
-            let new_rsp = AsmValue::Register(new_rsp_id);
+            let rhs = AsmOperand::Constant(AsmConstant::Int(8, AsmType::I64));
+            let new_rsp_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Sub, rsp, rhs);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
+            let new_rsp = read_operand(new_rsp_id);
             ctx.write_gpr(4, new_rsp.clone());
 
             let value = ctx.read_gpr(src)?;
-            let store_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: store_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                kind: AsmInstructionKind::Store {
-                    value,
-                    address: new_rsp,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::Void,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(value);
+    __ops.push(new_rsp);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
             Ok(())
         }
         Decoded::PushImm { imm } => {
             let rsp = ctx.read_gpr(4)?;
-            let rhs = AsmValue::Constant(AsmConstant::Int(8, AsmType::I64));
-            let new_rsp_id = *next_id;
-            instructions.push(build_binop(
-                new_rsp_id,
-                AsmInstructionKind::Sub(rsp, rhs),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-            ));
-            *next_id += 1;
-            let new_rsp = AsmValue::Register(new_rsp_id);
+            let rhs = AsmOperand::Constant(AsmConstant::Int(8, AsmType::I64));
+            let new_rsp_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Sub, rsp, rhs);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
+            let new_rsp = read_operand(new_rsp_id);
             ctx.write_gpr(4, new_rsp.clone());
 
-            let value = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
-            let store_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: store_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                kind: AsmInstructionKind::Store {
-                    value,
-                    address: new_rsp,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::Void,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let value = AsmOperand::Constant(AsmConstant::Int(imm, AsmType::I64));
+            let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(value);
+    __ops.push(new_rsp);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
             Ok(())
         }
         Decoded::CallRm { target } => {
             let mut call_is_external = false;
-            let function = match target {
+            let call_target = match target {
                 RmOperand::Reg(reg) => ctx.read_gpr(reg)?,
                 RmOperand::Mem(memory) => {
                     if let Some(displacement_offset) = memory.displacement_offset {
@@ -4437,16 +4186,16 @@ fn lift_non_terminator(
                             .ok_or_else(|| Error::from("x86_64 call relocation overflow"))?;
                         if let Some(reloc) = relocation_at(relocs, relocation_offset) {
                             call_is_external = relocation_is_external_call(reloc);
-                            AsmValue::Function(reloc.symbol.clone())
+                            AsmOperand::Symbol(Name::new(reloc.symbol.clone()))
                         } else {
                             if let Some(symbol) =
                                 ctx.resolve_rip_symbol(&memory, inst.offset, inst.len)
                             {
                                 if let Some(import) = symbol.import.as_ref() {
                                     call_is_external = true;
-                                    AsmValue::Function(import.clone())
+                                    AsmOperand::Symbol(Name::new(import.clone()))
                                 } else if symbol.kind == RipSymbolKind::Function {
-                                    AsmValue::Function(symbol.name.clone())
+                                    AsmOperand::Symbol(Name::new(symbol.name.clone()))
                                 } else {
                                     let addr = compute_address(
                                         ctx,
@@ -4456,37 +4205,26 @@ fn lift_non_terminator(
                                         relocs,
                                         instructions,
                                         next_id,
-                                    )?;
-                                    let load_id = *next_id;
-                                    instructions.push(AsmInstruction {
-                                        id: load_id,
-                                        opcode: AsmOpcode::Generic(
-                                            fp_core::asmir::AsmGenericOpcode::Load,
-                                        ),
-                                        kind: AsmInstructionKind::Load {
-                                            address: addr,
-                                            alignment: None,
-                                            volatile: false,
-                                        },
-                                        ty: AsmType::I64,
-                                        operands: Vec::new(),
-                                        implicit_uses: Vec::new(),
-                                        implicit_defs: Vec::new(),
-                                        encoding: None,
-                                        debug_info: None,
-                                        annotations: Vec::new(),
-                                    });
-                                    *next_id += 1;
-                                    AsmValue::Register(load_id)
+    function,)?;
+                                    let load_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                                    read_operand(load_id)
                                 }
                             } else if let Some(symbol) =
                                 ctx.resolve_disp32_symbol(&memory, inst.offset, inst.len)
                             {
                                 if let Some(import) = symbol.import.as_ref() {
                                     call_is_external = true;
-                                    AsmValue::Function(import.clone())
+                                    AsmOperand::Symbol(Name::new(import.clone()))
                                 } else if symbol.kind == RipSymbolKind::Function {
-                                    AsmValue::Function(symbol.name.clone())
+                                    AsmOperand::Symbol(Name::new(symbol.name.clone()))
                                 } else {
                                     let addr = compute_address(
                                         ctx,
@@ -4496,28 +4234,17 @@ fn lift_non_terminator(
                                         relocs,
                                         instructions,
                                         next_id,
-                                    )?;
-                                    let load_id = *next_id;
-                                    instructions.push(AsmInstruction {
-                                        id: load_id,
-                                        opcode: AsmOpcode::Generic(
-                                            fp_core::asmir::AsmGenericOpcode::Load,
-                                        ),
-                                        kind: AsmInstructionKind::Load {
-                                            address: addr,
-                                            alignment: None,
-                                            volatile: false,
-                                        },
-                                        ty: AsmType::I64,
-                                        operands: Vec::new(),
-                                        implicit_uses: Vec::new(),
-                                        implicit_defs: Vec::new(),
-                                        encoding: None,
-                                        debug_info: None,
-                                        annotations: Vec::new(),
-                                    });
-                                    *next_id += 1;
-                                    AsmValue::Register(load_id)
+    function,)?;
+                                    let load_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                                    read_operand(load_id)
                                 }
                             } else {
                                 let addr = compute_address(
@@ -4528,28 +4255,17 @@ fn lift_non_terminator(
                                     relocs,
                                     instructions,
                                     next_id,
-                                )?;
-                                let load_id = *next_id;
-                                instructions.push(AsmInstruction {
-                                    id: load_id,
-                                    opcode: AsmOpcode::Generic(
-                                        fp_core::asmir::AsmGenericOpcode::Load,
-                                    ),
-                                    kind: AsmInstructionKind::Load {
-                                        address: addr,
-                                        alignment: None,
-                                        volatile: false,
-                                    },
-                                    ty: AsmType::I64,
-                                    operands: Vec::new(),
-                                    implicit_uses: Vec::new(),
-                                    implicit_defs: Vec::new(),
-                                    encoding: None,
-                                    debug_info: None,
-                                    annotations: Vec::new(),
-                                });
-                                *next_id += 1;
-                                AsmValue::Register(load_id)
+    function,)?;
+                                let load_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                                read_operand(load_id)
                             }
                         }
                     } else {
@@ -4561,33 +4277,24 @@ fn lift_non_terminator(
                             relocs,
                             instructions,
                             next_id,
-                        )?;
-                        let load_id = *next_id;
-                        instructions.push(AsmInstruction {
-                            id: load_id,
-                            opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                            kind: AsmInstructionKind::Load {
-                                address: addr,
-                                alignment: None,
-                                volatile: false,
-                            },
-                            ty: AsmType::I64,
-                            operands: Vec::new(),
-                            implicit_uses: Vec::new(),
-                            implicit_defs: Vec::new(),
-                            encoding: None,
-                            debug_info: None,
-                            annotations: Vec::new(),
-                        });
-                        *next_id += 1;
-                        AsmValue::Register(load_id)
+    function,)?;
+                        let load_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                        read_operand(load_id)
                     }
                 }
             };
 
             let call_return_model = if call_is_external {
-                match &function {
-                    AsmValue::Function(name) => external_call_return_model(name),
+                match &call_target {
+                    AsmOperand::Symbol(name) => external_call_return_model(name),
                     _ => None,
                 }
             } else {
@@ -4596,7 +4303,7 @@ fn lift_non_terminator(
 
             let is_lifted_internal = ctx.use_lifted_regfile_calls
                 && !call_is_external
-                && matches!(&function, AsmValue::Function(_));
+                && matches!(&call_target, AsmOperand::Symbol(_));
 
             if is_lifted_internal {
                 ctx.end_block(instructions, next_id)?;
@@ -4608,73 +4315,76 @@ fn lift_non_terminator(
                 x86_64_sysv_call_args(ctx)?
             };
 
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function,
-                    args,
-                    calling_convention: if is_lifted_internal {
-                        CallingConvention::FpLiftedX86_64RegFile
-                    } else {
-                        CallingConvention::X86_64SysV
-                    },
-                    tail_call: false,
-                },
-                ty: if is_lifted_internal {
+            let id = {
+    let dest = function.alloc_virtual_register(if is_lifted_internal {
                     AsmType::Void
                 } else if call_is_external {
                     AsmType::I64
                 } else {
                     AsmType::I64
-                },
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+                }, asm_register_bank(&(if is_lifted_internal {
+                    AsmType::Void
+                } else if call_is_external {
+                    AsmType::I64
+                } else {
+                    AsmType::I64
+                })), asm_type_bits(&(if is_lifted_internal {
+                    AsmType::Void
+                } else if call_is_external {
+                    AsmType::I64
+                } else {
+                    AsmType::I64
+                })));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(AsmOperand::Attr(AsmAttr::CallingConv(if is_lifted_internal {
+                        CallingConvention::FpLiftedX86_64RegFile
+                    } else {
+                        CallingConvention::X86_64SysV
+                    })));
+    __ops.push(call_target);
+    __ops.extend(args);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
             if is_lifted_internal {
-                ctx.begin_block(instructions, next_id)?;
+                ctx.begin_block(instructions, next_id, function)?;
             } else if call_is_external {
                 if let Some(model) = call_return_model {
                     match model {
                         ExternalCallReturnModel::I64 => {
-                            ctx.write_gpr(0, AsmValue::Register(id));
+                            ctx.write_gpr(0, read_operand(id));
                         }
                         ExternalCallReturnModel::I32 => {
                             write_gpr_with_width(
                                 ctx,
                                 0,
-                                AsmValue::Register(id),
+                                read_operand(id),
                                 32,
                                 instructions,
                                 next_id,
-                            )?;
+    function,)?;
                         }
                     }
                 } else {
-                    ctx.write_gpr(0, AsmValue::Register(id));
+                    ctx.write_gpr(0, read_operand(id));
                 }
             } else {
-                ctx.write_gpr(0, AsmValue::Register(id));
+                ctx.write_gpr(0, read_operand(id));
             }
             Ok(())
         }
         Decoded::PushRm { src } => {
             let rsp = ctx.read_gpr(4)?;
-            let rhs = AsmValue::Constant(AsmConstant::Int(8, AsmType::I64));
-            let new_rsp_id = *next_id;
-            instructions.push(build_binop(
-                new_rsp_id,
-                AsmInstructionKind::Sub(rsp, rhs),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-            ));
-            *next_id += 1;
-            let new_rsp = AsmValue::Register(new_rsp_id);
+            let rhs = AsmOperand::Constant(AsmConstant::Int(8, AsmType::I64));
+            let new_rsp_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Sub, rsp, rhs);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
+            let new_rsp = read_operand(new_rsp_id);
             ctx.write_gpr(4, new_rsp.clone());
 
             let value = value_from_operand(
@@ -4685,59 +4395,38 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let store_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: store_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                kind: AsmInstructionKind::Store {
-                    value,
-                    address: new_rsp,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::Void,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+    function,)?;
+            let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(value);
+    __ops.push(new_rsp);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
             Ok(())
         }
         Decoded::PopReg { dst } => {
             let rsp = ctx.read_gpr(4)?;
-            let load_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: load_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: rsp.clone(),
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_gpr(dst, AsmValue::Register(load_id));
+            let load_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rsp.clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_gpr(dst, read_operand(load_id));
 
-            let rhs = AsmValue::Constant(AsmConstant::Int(8, AsmType::I64));
-            let new_rsp_id = *next_id;
-            instructions.push(build_binop(
-                new_rsp_id,
-                AsmInstructionKind::Add(rsp, rhs),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-            ));
-            *next_id += 1;
-            ctx.write_gpr(4, AsmValue::Register(new_rsp_id));
+            let rhs = AsmOperand::Constant(AsmConstant::Int(8, AsmType::I64));
+            let new_rsp_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, rsp, rhs);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
+            ctx.write_gpr(4, read_operand(new_rsp_id));
             Ok(())
         }
         Decoded::XorReg {
@@ -4747,22 +4436,21 @@ fn lift_non_terminator(
         } => {
             let lhs = ctx.read_gpr(dst)?;
             let rhs = ctx.read_gpr(src)?;
-            let id = *next_id;
-            instructions.push(build_binop(
-                id,
-                AsmInstructionKind::Xor(lhs.clone(), rhs),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Xor),
-            ));
-            *next_id += 1;
+            let id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Xor, lhs.clone(), rhs);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
             write_gpr_with_width(
                 ctx,
                 dst,
-                AsmValue::Register(id),
+                read_operand(id),
                 width_bits,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
             let value = ctx.read_gpr(dst)?;
             let mask_bits = match width_bits {
                 64 => None,
@@ -4772,32 +4460,26 @@ fn lift_non_terminator(
                 _ => None,
             };
             let masked = if let Some(mask_bits) = mask_bits {
-                let mask = AsmValue::Constant(AsmConstant::UInt(mask_bits, AsmType::I64));
-                let masked_id = *next_id;
-                instructions.push(build_binop(
-                    masked_id,
-                    AsmInstructionKind::And(value, mask),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                ));
-                *next_id += 1;
-                AsmValue::Register(masked_id)
+                let mask = AsmOperand::Constant(AsmConstant::UInt(mask_bits, AsmType::I64));
+                let masked_id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, value, mask);
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
+                read_operand(masked_id)
             } else {
                 value
             };
 
-            let cmp_id = *next_id;
-            instructions.push(compare_instruction(
-                cmp_id,
-                AsmInstructionKind::Eq(
-                    masked,
-                    AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                ),
-                fp_core::asmir::AsmGenericOpcode::Eq,
-            ));
+            let cmp_id_instr_id = *next_id;
+            let (cmp_inst, cmp_id) = compare_instruction(cmp_id_instr_id, function, fp_core::asmir::AsmGenericOpcode::Eq, masked, AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)));
+            instructions.push(cmp_inst);
             *next_id += 1;
             *last_compare = Some(LastCompare {
-                id: cmp_id,
+                id: cmp_id_instr_id,
                 index: instructions.len() - 1,
+                vreg: cmp_id,
                 is_float: false,
             });
             Ok(())
@@ -4818,7 +4500,7 @@ fn lift_non_terminator(
                 instructions,
                 next_id,
                 fp_core::asmir::AsmGenericOpcode::Xor,
-            )?;
+    function,)?;
 
             if let RmOperand::Reg(reg) = dst {
                 let value = ctx.read_gpr(reg)?;
@@ -4830,32 +4512,26 @@ fn lift_non_terminator(
                     _ => None,
                 };
                 let masked = if let Some(mask_bits) = mask_bits {
-                    let mask = AsmValue::Constant(AsmConstant::UInt(mask_bits, AsmType::I64));
-                    let masked_id = *next_id;
-                    instructions.push(build_binop(
-                        masked_id,
-                        AsmInstructionKind::And(value, mask),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                    ));
-                    *next_id += 1;
-                    AsmValue::Register(masked_id)
+                    let mask = AsmOperand::Constant(AsmConstant::UInt(mask_bits, AsmType::I64));
+                    let masked_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, value, mask);
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
+                    read_operand(masked_id)
                 } else {
                     value
                 };
 
-                let cmp_id = *next_id;
-                instructions.push(compare_instruction(
-                    cmp_id,
-                    AsmInstructionKind::Eq(
-                        masked,
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ),
-                    fp_core::asmir::AsmGenericOpcode::Eq,
-                ));
+                let cmp_id_instr_id = *next_id;
+                let (cmp_inst, cmp_id) = compare_instruction(cmp_id_instr_id, function, fp_core::asmir::AsmGenericOpcode::Eq, masked, AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)));
+                instructions.push(cmp_inst);
                 *next_id += 1;
                 *last_compare = Some(LastCompare {
-                    id: cmp_id,
+                    id: cmp_id_instr_id,
                     index: instructions.len() - 1,
+                    vreg: cmp_id,
                     is_float: false,
                 });
             }
@@ -4877,7 +4553,7 @@ fn lift_non_terminator(
             instructions,
             next_id,
             fp_core::asmir::AsmGenericOpcode::Or,
-        ),
+    function,),
         Decoded::AndReg {
             dst,
             src,
@@ -4885,21 +4561,20 @@ fn lift_non_terminator(
         } => {
             let lhs = ctx.read_gpr(dst)?;
             let rhs = ctx.read_gpr(src)?;
-            let id = *next_id;
-            instructions.push(build_binop(
-                id,
-                AsmInstructionKind::And(lhs, rhs),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, lhs, rhs);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
             write_gpr_with_width(
                 ctx,
                 dst,
-                AsmValue::Register(id),
+                read_operand(id),
                 width_bits,
                 instructions,
                 next_id,
-            )
+    function,)
         }
         Decoded::AndRmToReg {
             dst,
@@ -4915,22 +4590,21 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let id = *next_id;
-            instructions.push(build_binop(
-                id,
-                AsmInstructionKind::And(lhs, rhs),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+    function,)?;
+            let id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, lhs, rhs);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
             write_gpr_with_width(
                 ctx,
                 dst,
-                AsmValue::Register(id),
+                read_operand(id),
                 width_bits,
                 instructions,
                 next_id,
-            )
+    function,)
         }
         Decoded::OrReg {
             dst,
@@ -4939,21 +4613,20 @@ fn lift_non_terminator(
         } => {
             let lhs = ctx.read_gpr(dst)?;
             let rhs = ctx.read_gpr(src)?;
-            let id = *next_id;
-            instructions.push(build_binop(
-                id,
-                AsmInstructionKind::Or(lhs, rhs),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, lhs, rhs);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
             write_gpr_with_width(
                 ctx,
                 dst,
-                AsmValue::Register(id),
+                read_operand(id),
                 width_bits,
                 instructions,
                 next_id,
-            )
+    function,)
         }
         Decoded::OrRmToReg {
             dst,
@@ -4969,22 +4642,21 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let id = *next_id;
-            instructions.push(build_binop(
-                id,
-                AsmInstructionKind::Or(lhs, rhs),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+    function,)?;
+            let id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, lhs, rhs);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
             write_gpr_with_width(
                 ctx,
                 dst,
-                AsmValue::Register(id),
+                read_operand(id),
                 width_bits,
                 instructions,
                 next_id,
-            )
+    function,)
         }
         Decoded::OrRmReg {
             dst,
@@ -5004,37 +4676,34 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
             let rhs = ctx.read_gpr(src)?;
-            let id = *next_id;
-            let (kind, opcode) = match inst.kind {
-                Decoded::OrRmReg { .. } => (
-                    AsmInstructionKind::Or(lhs, rhs),
-                    fp_core::asmir::AsmGenericOpcode::Or,
-                ),
-                _ => (
-                    AsmInstructionKind::And(lhs, rhs),
-                    fp_core::asmir::AsmGenericOpcode::And,
-                ),
+            let opcode = match inst.kind {
+                Decoded::OrRmReg { .. } => fp_core::asmir::AsmGenericOpcode::Or,
+                _ => fp_core::asmir::AsmGenericOpcode::And,
             };
-            instructions.push(build_binop(id, kind, AsmOpcode::Generic(opcode)));
-            *next_id += 1;
+            let id = {
+                let (inst_built, dest) = build_binop(*next_id, function, opcode, lhs, rhs);
+                instructions.push(inst_built);
+                *next_id += 1;
+                dest
+            };
 
             match dst {
                 RmOperand::Reg(dst_reg) => write_gpr_with_width(
                     ctx,
                     dst_reg,
-                    AsmValue::Register(id),
+                    read_operand(id),
                     width_bits,
                     instructions,
                     next_id,
-                ),
+    function,),
                 RmOperand::Mem(memory) => {
                     if memory.segment.is_some() {
                         return Ok(());
                     }
                     let stored =
-                        value_for_store(width_bits, AsmValue::Register(id), instructions, next_id)?;
+                        value_for_store(width_bits, read_operand(id), instructions, next_id, function)?;
                     let addr = compute_address(
                         ctx,
                         memory,
@@ -5043,26 +4712,15 @@ fn lift_non_terminator(
                         relocs,
                         instructions,
                         next_id,
-                    )?;
-                    let store_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: store_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                        kind: AsmInstructionKind::Store {
-                            value: stored,
-                            address: addr,
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::Void,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+    function,)?;
+                    let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(stored);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
                     Ok(())
                 }
             }
@@ -5081,22 +4739,21 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let id = *next_id;
-            instructions.push(build_binop(
-                id,
-                AsmInstructionKind::Xor(lhs, rhs),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Xor),
-            ));
-            *next_id += 1;
+    function,)?;
+            let id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Xor, lhs, rhs);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
             write_gpr_with_width(
                 ctx,
                 dst,
-                AsmValue::Register(id),
+                read_operand(id),
                 width_bits,
                 instructions,
                 next_id,
-            )
+    function,)
         }
         Decoded::AndImm {
             dst,
@@ -5113,7 +4770,7 @@ fn lift_non_terminator(
             instructions,
             next_id,
             fp_core::asmir::AsmGenericOpcode::And,
-        ),
+    function,),
         Decoded::AdcImm {
             dst,
             imm,
@@ -5131,23 +4788,18 @@ fn lift_non_terminator(
             // Force the compare to be treated as `ult`.
             patch_compare_kind(instructions, compare, 0x2)?;
 
-            let carry_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: carry_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt),
-                kind: AsmInstructionKind::ZExt(AsmValue::Register(compare.id), AsmType::I64),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            let carry = AsmValue::Register(carry_id);
+            let carry_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(compare.id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            let carry = read_operand(carry_id);
 
-            let rhs = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
+            let rhs = AsmOperand::Constant(AsmConstant::Int(imm, AsmType::I64));
             let is_sbb = matches!(inst.kind, Decoded::SbbImm { .. });
 
             let (addr, current_value) = match dst {
@@ -5164,67 +4816,56 @@ fn lift_non_terminator(
                         relocs,
                         instructions,
                         next_id,
-                    )?;
-                    let load_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: load_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                        kind: AsmInstructionKind::Load {
-                            address: addr.clone(),
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
-                    (Some(addr), AsmValue::Register(load_id))
+    function,)?;
+                    let load_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr.clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                    (Some(addr), read_operand(load_id))
                 }
             };
 
-            let id1 = *next_id;
-            let first_kind = if is_sbb {
-                AsmInstructionKind::Sub(current_value.clone(), rhs)
-            } else {
-                AsmInstructionKind::Add(current_value.clone(), rhs)
-            };
             let first_op = if is_sbb {
                 fp_core::asmir::AsmGenericOpcode::Sub
             } else {
                 fp_core::asmir::AsmGenericOpcode::Add
             };
-            instructions.push(build_binop(
-                id1,
-                first_kind,
-                AsmOpcode::Generic(first_op.clone()),
-            ));
-            *next_id += 1;
-
-            let id2 = *next_id;
-            let second_kind = if is_sbb {
-                AsmInstructionKind::Sub(AsmValue::Register(id1), carry)
-            } else {
-                AsmInstructionKind::Add(AsmValue::Register(id1), carry)
-            };
-            instructions.push(build_binop(id2, second_kind, AsmOpcode::Generic(first_op)));
-            *next_id += 1;
-
-            let mut value = AsmValue::Register(id2);
-            if width_bits == 32 {
-                let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-                let and_id = *next_id;
-                instructions.push(build_binop(
-                    and_id,
-                    AsmInstructionKind::And(value, mask),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                ));
+            let id1 = {
+                let (inst, dest) = build_binop(
+                    *next_id,
+                    function,
+                    first_op.clone(),
+                    current_value.clone(),
+                    rhs,
+                );
+                instructions.push(inst);
                 *next_id += 1;
-                value = AsmValue::Register(and_id);
+                dest
+            };
+
+            let id2 = {
+                let (inst, dest) =
+                    build_binop(*next_id, function, first_op, read_operand(id1), carry);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
+
+            let mut value = read_operand(id2);
+            if width_bits == 32 {
+                let mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                let and_id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, value, mask);
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
+                value = read_operand(and_id);
             }
 
             match (dst, addr) {
@@ -5233,25 +4874,14 @@ fn lift_non_terminator(
                     Ok(())
                 }
                 (RmOperand::Mem(_), Some(addr)) => {
-                    let store_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: store_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                        kind: AsmInstructionKind::Store {
-                            value,
-                            address: addr,
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::Void,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+                    let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(value);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
                     Ok(())
                 }
                 _ => Err(Error::from("internal error: adc/sbb address missing")),
@@ -5262,33 +4892,27 @@ fn lift_non_terminator(
             imm_offset: _,
             imm,
         } => {
-            let value = AsmValue::Constant(AsmConstant::Int(imm as i64, AsmType::I32));
+            let value = AsmOperand::Constant(AsmConstant::Int(imm as i64, AsmType::I32));
             match dst {
                 RmOperand::Reg(dst) => {
-                    let id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                        kind: AsmInstructionKind::Freeze(value),
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+                    let id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(value);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
                     // x86_64 zero-extends 32-bit register writes.
-                    let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-                    let and_id = *next_id;
-                    instructions.push(build_binop(
-                        and_id,
-                        AsmInstructionKind::And(AsmValue::Register(id), mask),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                    ));
-                    *next_id += 1;
-                    ctx.write_gpr(dst, AsmValue::Register(and_id));
+                    let mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                    let and_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(id), mask);
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
+                    ctx.write_gpr(dst, read_operand(and_id));
                     Ok(())
                 }
                 RmOperand::Mem(memory) => {
@@ -5303,26 +4927,15 @@ fn lift_non_terminator(
                         relocs,
                         instructions,
                         next_id,
-                    )?;
-                    let id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                        kind: AsmInstructionKind::Store {
-                            value,
-                            address: addr,
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::Void,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+    function,)?;
+                    let _id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(value);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
                     Ok(())
                 }
             }
@@ -5343,54 +4956,38 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let value = AsmValue::Constant(AsmConstant::Int(imm as i64, AsmType::I64));
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                kind: AsmInstructionKind::Store {
-                    value,
-                    address: addr,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::Void,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+    function,)?;
+            let value = AsmOperand::Constant(AsmConstant::Int(imm as i64, AsmType::I64));
+            let _id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(value);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
             Ok(())
         }
         Decoded::MovImm8ToRm { dst, imm } => match dst {
             RmOperand::Reg(dst) => {
-                let value = AsmValue::Constant(AsmConstant::UInt(imm as u8 as u64, AsmType::I64));
-                let id = *next_id;
-                instructions.push(AsmInstruction {
-                    id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                    kind: AsmInstructionKind::Freeze(value),
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
-                ctx.write_gpr(dst, AsmValue::Register(id));
+                let value = AsmOperand::Constant(AsmConstant::UInt(imm as u8 as u64, AsmType::I64));
+                let id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(value);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                ctx.write_gpr(dst, read_operand(id));
                 Ok(())
             }
             RmOperand::Mem(memory) => {
                 if memory.segment.is_some() {
                     return Ok(());
                 }
-                let value = AsmValue::Constant(AsmConstant::Int(imm as i64, AsmType::I8));
+                let value = AsmOperand::Constant(AsmConstant::Int(imm as i64, AsmType::I8));
                 let addr = compute_address(
                     ctx,
                     memory,
@@ -5399,26 +4996,15 @@ fn lift_non_terminator(
                     relocs,
                     instructions,
                     next_id,
-                )?;
-                let id = *next_id;
-                instructions.push(AsmInstruction {
-                    id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                    kind: AsmInstructionKind::Store {
-                        value,
-                        address: addr,
-                        alignment: None,
-                        volatile: false,
-                    },
-                    ty: AsmType::Void,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+    function,)?;
+                let _id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(value);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
                 Ok(())
             }
         },
@@ -5430,31 +5016,29 @@ fn lift_non_terminator(
             RmOperand::Reg(dst) => {
                 let current = ctx.read_gpr(dst)?;
                 let mask =
-                    AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF_FFFF_0000, AsmType::I64));
-                let masked_id = *next_id;
-                instructions.push(build_binop(
-                    masked_id,
-                    AsmInstructionKind::And(current, mask),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                ));
-                *next_id += 1;
+                    AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF_FFFF_0000, AsmType::I64));
+                let masked_id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, current, mask);
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
 
-                let imm_val = AsmValue::Constant(AsmConstant::UInt(imm as u64, AsmType::I64));
-                let merged_id = *next_id;
-                instructions.push(build_binop(
-                    merged_id,
-                    AsmInstructionKind::Or(AsmValue::Register(masked_id), imm_val),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-                ));
-                *next_id += 1;
-                ctx.write_gpr(dst, AsmValue::Register(merged_id));
+                let imm_val = AsmOperand::Constant(AsmConstant::UInt(imm as u64, AsmType::I64));
+                let merged_id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(masked_id), imm_val);
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
+                ctx.write_gpr(dst, read_operand(merged_id));
                 Ok(())
             }
             RmOperand::Mem(memory) => {
                 if memory.segment.is_some() {
                     return Ok(());
                 }
-                let value = AsmValue::Constant(AsmConstant::UInt(imm as u64, AsmType::I16));
+                let value = AsmOperand::Constant(AsmConstant::UInt(imm as u64, AsmType::I16));
                 let addr = compute_address(
                     ctx,
                     memory,
@@ -5463,26 +5047,15 @@ fn lift_non_terminator(
                     relocs,
                     instructions,
                     next_id,
-                )?;
-                let id = *next_id;
-                instructions.push(AsmInstruction {
-                    id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                    kind: AsmInstructionKind::Store {
-                        value,
-                        address: addr,
-                        alignment: None,
-                        volatile: false,
-                    },
-                    ty: AsmType::Void,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+    function,)?;
+                let _id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(value);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
                 Ok(())
             }
         },
@@ -5496,15 +5069,14 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let id = *next_id;
-            instructions.push(build_binop(
-                id,
-                AsmInstructionKind::Add(lhs.clone(), rhs),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-            ));
-            *next_id += 1;
-            ctx.write_gpr(dst, AsmValue::Register(id));
+    function,)?;
+            let id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, lhs.clone(), rhs);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
+            ctx.write_gpr(dst, read_operand(id));
             Ok(())
         }
         Decoded::AddRmReg {
@@ -5516,24 +5088,22 @@ fn lift_non_terminator(
             match dst {
                 RmOperand::Reg(dst) => {
                     let lhs = ctx.read_gpr(dst)?;
-                    let id = *next_id;
-                    instructions.push(build_binop(
-                        id,
-                        AsmInstructionKind::Add(lhs.clone(), rhs),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                    ));
-                    *next_id += 1;
-                    let mut value = AsmValue::Register(id);
-                    if width_bits == 32 {
-                        let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-                        let and_id = *next_id;
-                        instructions.push(build_binop(
-                            and_id,
-                            AsmInstructionKind::And(value, mask),
-                            AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                        ));
+                    let id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, lhs.clone(), rhs);
+                        instructions.push(inst);
                         *next_id += 1;
-                        value = AsmValue::Register(and_id);
+                        dest
+                    };
+                    let mut value = read_operand(id);
+                    if width_bits == 32 {
+                        let mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                        let and_id = {
+                            let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, value, mask);
+                            instructions.push(inst);
+                            *next_id += 1;
+                            dest
+                        };
+                        value = read_operand(and_id);
                     }
                     ctx.write_gpr(dst, value);
                     Ok(())
@@ -5550,63 +5120,41 @@ fn lift_non_terminator(
                         relocs,
                         instructions,
                         next_id,
-                    )?;
-                    let load_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: load_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                        kind: AsmInstructionKind::Load {
-                            address: addr.clone(),
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
-                    let id = *next_id;
-                    instructions.push(build_binop(
-                        id,
-                        AsmInstructionKind::Add(AsmValue::Register(load_id), rhs),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                    ));
-                    *next_id += 1;
-                    let mut value = AsmValue::Register(id);
-                    if width_bits == 32 {
-                        let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-                        let and_id = *next_id;
-                        instructions.push(build_binop(
-                            and_id,
-                            AsmInstructionKind::And(value, mask),
-                            AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                        ));
+    function,)?;
+                    let load_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr.clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                    let id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, read_operand(load_id), rhs);
+                        instructions.push(inst);
                         *next_id += 1;
-                        value = AsmValue::Register(and_id);
+                        dest
+                    };
+                    let mut value = read_operand(id);
+                    if width_bits == 32 {
+                        let mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                        let and_id = {
+                            let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, value, mask);
+                            instructions.push(inst);
+                            *next_id += 1;
+                            dest
+                        };
+                        value = read_operand(and_id);
                     }
-                    let store_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: store_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                        kind: AsmInstructionKind::Store {
-                            value,
-                            address: addr,
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::Void,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+                    let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(value);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
                     Ok(())
                 }
             }
@@ -5621,15 +5169,14 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let id = *next_id;
-            instructions.push(build_binop(
-                id,
-                AsmInstructionKind::Sub(lhs.clone(), rhs),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-            ));
-            *next_id += 1;
-            ctx.write_gpr(dst, AsmValue::Register(id));
+    function,)?;
+            let id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Sub, lhs.clone(), rhs);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
+            ctx.write_gpr(dst, read_operand(id));
             Ok(())
         }
         Decoded::SubRegRmWidth {
@@ -5646,22 +5193,21 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let id = *next_id;
-            instructions.push(build_binop(
-                id,
-                AsmInstructionKind::Sub(lhs, rhs),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-            ));
-            *next_id += 1;
+    function,)?;
+            let id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Sub, lhs, rhs);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
             write_gpr_with_width(
                 ctx,
                 dst,
-                AsmValue::Register(id),
+                read_operand(id),
                 width_bits,
                 instructions,
                 next_id,
-            )
+    function,)
         }
         Decoded::SubRmReg {
             dst,
@@ -5672,24 +5218,22 @@ fn lift_non_terminator(
             match dst {
                 RmOperand::Reg(dst) => {
                     let lhs = ctx.read_gpr(dst)?;
-                    let id = *next_id;
-                    instructions.push(build_binop(
-                        id,
-                        AsmInstructionKind::Sub(lhs.clone(), rhs),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-                    ));
-                    *next_id += 1;
-                    let mut value = AsmValue::Register(id);
-                    if width_bits == 32 {
-                        let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-                        let and_id = *next_id;
-                        instructions.push(build_binop(
-                            and_id,
-                            AsmInstructionKind::And(value, mask),
-                            AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                        ));
+                    let id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Sub, lhs.clone(), rhs);
+                        instructions.push(inst);
                         *next_id += 1;
-                        value = AsmValue::Register(and_id);
+                        dest
+                    };
+                    let mut value = read_operand(id);
+                    if width_bits == 32 {
+                        let mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                        let and_id = {
+                            let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, value, mask);
+                            instructions.push(inst);
+                            *next_id += 1;
+                            dest
+                        };
+                        value = read_operand(and_id);
                     }
                     ctx.write_gpr(dst, value);
                     Ok(())
@@ -5706,63 +5250,41 @@ fn lift_non_terminator(
                         relocs,
                         instructions,
                         next_id,
-                    )?;
-                    let load_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: load_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                        kind: AsmInstructionKind::Load {
-                            address: addr.clone(),
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
-                    let id = *next_id;
-                    instructions.push(build_binop(
-                        id,
-                        AsmInstructionKind::Sub(AsmValue::Register(load_id), rhs),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-                    ));
-                    *next_id += 1;
-                    let mut value = AsmValue::Register(id);
-                    if width_bits == 32 {
-                        let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-                        let and_id = *next_id;
-                        instructions.push(build_binop(
-                            and_id,
-                            AsmInstructionKind::And(value, mask),
-                            AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                        ));
+    function,)?;
+                    let load_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr.clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                    let id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Sub, read_operand(load_id), rhs);
+                        instructions.push(inst);
                         *next_id += 1;
-                        value = AsmValue::Register(and_id);
+                        dest
+                    };
+                    let mut value = read_operand(id);
+                    if width_bits == 32 {
+                        let mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                        let and_id = {
+                            let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, value, mask);
+                            instructions.push(inst);
+                            *next_id += 1;
+                            dest
+                        };
+                        value = read_operand(and_id);
                     }
-                    let store_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: store_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                        kind: AsmInstructionKind::Store {
-                            value,
-                            address: addr,
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::Void,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+                    let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(value);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
                     Ok(())
                 }
             }
@@ -5784,12 +5306,13 @@ fn lift_non_terminator(
                 }
             };
             let lhs = ctx.read_gpr(dst)?;
-            let rhs = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
-            let id = *next_id;
-            let mut inst = build_binop(
-                id,
-                AsmInstructionKind::Add(lhs.clone(), rhs.clone()),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
+            let rhs = AsmOperand::Constant(AsmConstant::Int(imm, AsmType::I64));
+            let (mut inst, id) = build_binop(
+                *next_id,
+                function,
+                fp_core::asmir::AsmGenericOpcode::Add,
+                lhs.clone(),
+                rhs.clone(),
             );
             inst.annotations.extend([
                 AsmAnnotation {
@@ -5803,19 +5326,20 @@ fn lift_non_terminator(
             ]);
             instructions.push(inst);
             *next_id += 1;
-            let mut value = AsmValue::Register(id);
+            let mut value = read_operand(id);
             if width_bits == 32 {
-                let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-                let and_id = *next_id;
-                let mut inst = build_binop(
-                    and_id,
-                    AsmInstructionKind::And(value, mask),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
+                let mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                let (mut inst, and_id) = build_binop(
+                    *next_id,
+                    function,
+                    fp_core::asmir::AsmGenericOpcode::And,
+                    value,
+                    mask,
                 );
                 inst.annotations = synthesized_annotations("x86.zeroext32");
                 instructions.push(inst);
                 *next_id += 1;
-                value = AsmValue::Register(and_id);
+                value = read_operand(and_id);
             }
             ctx.write_gpr(dst, value);
             Ok(())
@@ -5835,7 +5359,7 @@ fn lift_non_terminator(
             instructions,
             next_id,
             fp_core::asmir::AsmGenericOpcode::Add,
-        ),
+    function,),
         Decoded::SubImm {
             dst,
             imm,
@@ -5853,12 +5377,13 @@ fn lift_non_terminator(
                 }
             };
             let lhs = ctx.read_gpr(dst)?;
-            let rhs = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
-            let id = *next_id;
-            let mut inst = build_binop(
-                id,
-                AsmInstructionKind::Sub(lhs.clone(), rhs.clone()),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
+            let rhs = AsmOperand::Constant(AsmConstant::Int(imm, AsmType::I64));
+            let (mut inst, id) = build_binop(
+                *next_id,
+                function,
+                fp_core::asmir::AsmGenericOpcode::Sub,
+                lhs.clone(),
+                rhs.clone(),
             );
             inst.annotations.extend([
                 AsmAnnotation {
@@ -5872,19 +5397,20 @@ fn lift_non_terminator(
             ]);
             instructions.push(inst);
             *next_id += 1;
-            let mut value = AsmValue::Register(id);
+            let mut value = read_operand(id);
             if width_bits == 32 {
-                let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-                let and_id = *next_id;
-                let mut inst = build_binop(
-                    and_id,
-                    AsmInstructionKind::And(value, mask),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
+                let mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                let (mut inst, and_id) = build_binop(
+                    *next_id,
+                    function,
+                    fp_core::asmir::AsmGenericOpcode::And,
+                    value,
+                    mask,
                 );
                 inst.annotations = synthesized_annotations("x86.zeroext32");
                 instructions.push(inst);
                 *next_id += 1;
-                value = AsmValue::Register(and_id);
+                value = read_operand(and_id);
             }
             ctx.write_gpr(dst, value);
             Ok(())
@@ -5904,7 +5430,7 @@ fn lift_non_terminator(
             instructions,
             next_id,
             fp_core::asmir::AsmGenericOpcode::Sub,
-        ),
+    function,),
         Decoded::Cmp {
             lhs,
             rhs,
@@ -5918,7 +5444,7 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
             let rhs_value = value_from_operand_with_width(
                 ctx,
                 rhs,
@@ -5927,39 +5453,41 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
             let (lhs_value, rhs_value) = if width_bits != 64 {
                 let mask_bits = if width_bits == 32 { 0xFFFF_FFFF } else { 0xFF };
-                let mask = AsmValue::Constant(AsmConstant::UInt(mask_bits, AsmType::I64));
-                let lhs_id = *next_id;
-                instructions.push(build_binop(
-                    lhs_id,
-                    AsmInstructionKind::And(lhs_value, mask.clone()),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                ));
-                *next_id += 1;
-                let rhs_id = *next_id;
-                instructions.push(build_binop(
-                    rhs_id,
-                    AsmInstructionKind::And(rhs_value, mask),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                ));
-                *next_id += 1;
-                (AsmValue::Register(lhs_id), AsmValue::Register(rhs_id))
+                let mask = AsmOperand::Constant(AsmConstant::UInt(mask_bits, AsmType::I64));
+                let lhs_id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, lhs_value, mask.clone());
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
+                let rhs_id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, rhs_value, mask);
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
+                (read_operand(lhs_id), read_operand(rhs_id))
             } else {
                 (lhs_value, rhs_value)
             };
-            let id = *next_id;
-            instructions.push(compare_instruction(
-                id,
-                AsmInstructionKind::Eq(lhs_value, rhs_value),
+            let id_instr_id = *next_id;
+            let (cmp_inst, id) = compare_instruction(
+                id_instr_id,
+                function,
                 fp_core::asmir::AsmGenericOpcode::Eq,
-            ));
+                lhs_value,
+                rhs_value,
+            );
+            instructions.push(cmp_inst);
             *next_id += 1;
             *last_compare = Some(LastCompare {
-                id,
+                id: id_instr_id,
                 index: instructions.len() - 1,
+                vreg: id,
                 is_float: false,
             });
             Ok(())
@@ -5977,7 +5505,7 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
             let rhs_value = value_from_operand_with_width(
                 ctx,
                 rhs,
@@ -5986,50 +5514,42 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
             let (lhs_value, rhs_value) = if width_bits != 64 {
                 let mask_bits = if width_bits == 32 { 0xFFFF_FFFF } else { 0xFF };
-                let mask = AsmValue::Constant(AsmConstant::UInt(mask_bits, AsmType::I64));
-                let lhs_id = *next_id;
-                instructions.push(build_binop(
-                    lhs_id,
-                    AsmInstructionKind::And(lhs_value, mask.clone()),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                ));
-                *next_id += 1;
-                let rhs_id = *next_id;
-                instructions.push(build_binop(
-                    rhs_id,
-                    AsmInstructionKind::And(rhs_value, mask),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                ));
-                *next_id += 1;
-                (AsmValue::Register(lhs_id), AsmValue::Register(rhs_id))
+                let mask = AsmOperand::Constant(AsmConstant::UInt(mask_bits, AsmType::I64));
+                let lhs_id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, lhs_value, mask.clone());
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
+                let rhs_id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, rhs_value, mask);
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
+                (read_operand(lhs_id), read_operand(rhs_id))
             } else {
                 (lhs_value, rhs_value)
             };
-            let and_id = *next_id;
-            instructions.push(build_binop(
-                and_id,
-                AsmInstructionKind::And(lhs_value, rhs_value),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let and_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, lhs_value, rhs_value);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let cmp_id = *next_id;
-            instructions.push(compare_instruction(
-                cmp_id,
-                AsmInstructionKind::Eq(
-                    AsmValue::Register(and_id),
-                    AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                ),
-                fp_core::asmir::AsmGenericOpcode::Eq,
-            ));
+            let cmp_id_instr_id = *next_id;
+            let (cmp_inst, cmp_id) = compare_instruction(cmp_id_instr_id, function, fp_core::asmir::AsmGenericOpcode::Eq, read_operand(and_id), AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)));
+            instructions.push(cmp_inst);
             *next_id += 1;
             *last_compare = Some(LastCompare {
-                id: cmp_id,
+                id: cmp_id_instr_id,
                 index: instructions.len() - 1,
+                vreg: cmp_id,
                 is_float: false,
             });
             Ok(())
@@ -6041,40 +5561,26 @@ fn lift_non_terminator(
 
             let lhs_vec = ctx.read_vec(lhs)?;
 
-            let lhs0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: lhs_vec.clone(),
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            let lhs1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: lhs_vec,
-                    lane: 1,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            let lhs1_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
             let addr = compute_address(
                 ctx,
@@ -6084,92 +5590,62 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let rhs0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: addr.clone(),
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+    function,)?;
+            let rhs0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr.clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let addr1_id = *next_id;
-            instructions.push(build_binop(
-                addr1_id,
-                AsmInstructionKind::Add(
-                    addr,
-                    AsmValue::Constant(AsmConstant::Int(8, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-            ));
-            *next_id += 1;
+            let addr1_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, addr, AsmOperand::Constant(AsmConstant::Int(8, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let rhs1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: AsmValue::Register(addr1_id),
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let rhs1_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(addr1_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let and0_id = *next_id;
-            instructions.push(build_binop(
-                and0_id,
-                AsmInstructionKind::And(AsmValue::Register(lhs0_id), AsmValue::Register(rhs0_id)),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
-            let and1_id = *next_id;
-            instructions.push(build_binop(
-                and1_id,
-                AsmInstructionKind::And(AsmValue::Register(lhs1_id), AsmValue::Register(rhs1_id)),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let and0_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(lhs0_id), read_operand(rhs0_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
+            let and1_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(lhs1_id), read_operand(rhs1_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let or_id = *next_id;
-            instructions.push(build_binop(
-                or_id,
-                AsmInstructionKind::Or(AsmValue::Register(and0_id), AsmValue::Register(and1_id)),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let or_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(and0_id), read_operand(and1_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let cmp_id = *next_id;
-            instructions.push(compare_instruction(
-                cmp_id,
-                AsmInstructionKind::Eq(
-                    AsmValue::Register(or_id),
-                    AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                ),
-                fp_core::asmir::AsmGenericOpcode::Eq,
-            ));
+            let cmp_id_instr_id = *next_id;
+            let (cmp_inst, cmp_id) = compare_instruction(cmp_id_instr_id, function, fp_core::asmir::AsmGenericOpcode::Eq, read_operand(or_id), AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)));
+            instructions.push(cmp_inst);
             *next_id += 1;
             *last_compare = Some(LastCompare {
-                id: cmp_id,
+                id: cmp_id_instr_id,
                 index: instructions.len() - 1,
+                vreg: cmp_id,
                 is_float: false,
             });
             Ok(())
@@ -6177,72 +5653,64 @@ fn lift_non_terminator(
         Decoded::BtReg { value, bit } => {
             let lhs_value = ctx.read_gpr(value)?;
             let rhs_value = ctx.read_gpr(bit)?;
-            let shift_id = *next_id;
-            instructions.push(build_binop(
-                shift_id,
-                AsmInstructionKind::Shr(lhs_value, rhs_value),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-            ));
-            *next_id += 1;
+            let shift_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, lhs_value, rhs_value);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let mask = AsmValue::Constant(AsmConstant::Int(1, AsmType::I64));
-            let and_id = *next_id;
-            instructions.push(build_binop(
-                and_id,
-                AsmInstructionKind::And(AsmValue::Register(shift_id), mask),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let mask = AsmOperand::Constant(AsmConstant::Int(1, AsmType::I64));
+            let and_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(shift_id), mask);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
             // `bt` writes the carry flag; represent that as a comparison between
             // `0` and the tested bit, which allows `jc/jnc` to patch the predicate
             // into `ult/uge`.
-            let zero = AsmValue::Constant(AsmConstant::Int(0, AsmType::I64));
-            let id = *next_id;
-            instructions.push(compare_instruction(
-                id,
-                AsmInstructionKind::Eq(zero, AsmValue::Register(and_id)),
-                fp_core::asmir::AsmGenericOpcode::Eq,
-            ));
-            *next_id += 1;
+            let zero = AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64));
+            let id_instr_id = *next_id;
+                let (cmp_inst, id) = compare_instruction(id_instr_id, function, fp_core::asmir::AsmGenericOpcode::Eq, zero, read_operand(and_id));
+                instructions.push(cmp_inst);
+                *next_id += 1;
             *last_compare = Some(LastCompare {
-                id,
+                id: id_instr_id,
                 index: instructions.len() - 1,
+                vreg: id,
                 is_float: false,
             });
             Ok(())
         }
         Decoded::BtImm { value, imm } => {
             let lhs_value = ctx.read_gpr(value)?;
-            let rhs_value = AsmValue::Constant(AsmConstant::UInt(imm as u64, AsmType::I64));
-            let shift_id = *next_id;
-            instructions.push(build_binop(
-                shift_id,
-                AsmInstructionKind::Shr(lhs_value, rhs_value),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-            ));
-            *next_id += 1;
+            let rhs_value = AsmOperand::Constant(AsmConstant::UInt(imm as u64, AsmType::I64));
+            let shift_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, lhs_value, rhs_value);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let mask = AsmValue::Constant(AsmConstant::Int(1, AsmType::I64));
-            let and_id = *next_id;
-            instructions.push(build_binop(
-                and_id,
-                AsmInstructionKind::And(AsmValue::Register(shift_id), mask),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let mask = AsmOperand::Constant(AsmConstant::Int(1, AsmType::I64));
+            let and_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(shift_id), mask);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let zero = AsmValue::Constant(AsmConstant::Int(0, AsmType::I64));
-            let id = *next_id;
-            instructions.push(compare_instruction(
-                id,
-                AsmInstructionKind::Eq(zero, AsmValue::Register(and_id)),
-                fp_core::asmir::AsmGenericOpcode::Eq,
-            ));
-            *next_id += 1;
+            let zero = AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64));
+            let id_instr_id = *next_id;
+                let (cmp_inst, id) = compare_instruction(id_instr_id, function, fp_core::asmir::AsmGenericOpcode::Eq, zero, read_operand(and_id));
+                instructions.push(cmp_inst);
+                *next_id += 1;
             *last_compare = Some(LastCompare {
-                id,
+                id: id_instr_id,
                 index: instructions.len() - 1,
+                vreg: id,
                 is_float: false,
             });
             Ok(())
@@ -6260,59 +5728,55 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
             let mask_value =
-                AsmValue::Constant(AsmConstant::UInt(1u64 << (imm as u64), AsmType::I64));
+                AsmOperand::Constant(AsmConstant::UInt(1u64 << (imm as u64), AsmType::I64));
 
-            let and_id = *next_id;
-            instructions.push(build_binop(
-                and_id,
-                AsmInstructionKind::And(value.clone(), mask_value.clone()),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let and_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, value.clone(), mask_value.clone());
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let zero = AsmValue::Constant(AsmConstant::Int(0, AsmType::I64));
-            let cmp_id = *next_id;
-            instructions.push(compare_instruction(
-                cmp_id,
-                AsmInstructionKind::Eq(zero, AsmValue::Register(and_id)),
-                fp_core::asmir::AsmGenericOpcode::Eq,
-            ));
+            let zero = AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64));
+            let cmp_id_instr_id = *next_id;
+            let (cmp_inst, cmp_id) = compare_instruction(cmp_id_instr_id, function, fp_core::asmir::AsmGenericOpcode::Eq, zero, read_operand(and_id));
+            instructions.push(cmp_inst);
             *next_id += 1;
             *last_compare = Some(LastCompare {
-                id: cmp_id,
+                id: cmp_id_instr_id,
                 index: instructions.len() - 1,
+                vreg: cmp_id,
                 is_float: false,
             });
 
-            let xor_id = *next_id;
-            instructions.push(build_binop(
-                xor_id,
-                AsmInstructionKind::Xor(value, mask_value),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Xor),
-            ));
-            *next_id += 1;
+            let xor_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Xor, value, mask_value);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
             match dst {
                 RmOperand::Reg(reg) => write_gpr_with_width(
                     ctx,
                     reg,
-                    AsmValue::Register(xor_id),
+                    read_operand(xor_id),
                     width_bits,
                     instructions,
                     next_id,
-                ),
+    function,),
                 RmOperand::Mem(memory) => {
                     if memory.segment.is_some() {
                         return Ok(());
                     }
                     let stored = value_for_store(
                         width_bits,
-                        AsmValue::Register(xor_id),
+                        read_operand(xor_id),
                         instructions,
                         next_id,
-                    )?;
+    function,)?;
                     let addr = compute_address(
                         ctx,
                         memory,
@@ -6321,159 +5785,115 @@ fn lift_non_terminator(
                         relocs,
                         instructions,
                         next_id,
-                    )?;
-                    let store_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: store_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                        kind: AsmInstructionKind::Store {
-                            value: stored,
-                            address: addr,
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::Void,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+    function,)?;
+                    let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(stored);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
                     Ok(())
                 }
             }
         }
         Decoded::Cqo => {
             let rax = ctx.read_gpr(0)?;
-            let cmp_id = *next_id;
-            instructions.push(compare_instruction(
-                cmp_id,
-                AsmInstructionKind::Lt(rax, AsmValue::Constant(AsmConstant::Int(0, AsmType::I64))),
-                fp_core::asmir::AsmGenericOpcode::Lt,
-            ));
-            *next_id += 1;
+            let cmp_id = {
+                let (cmp_inst, dest) = compare_instruction(
+                    *next_id,
+                    function,
+                    fp_core::asmir::AsmGenericOpcode::Lt,
+                    rax,
+                    AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                );
+                instructions.push(cmp_inst);
+                *next_id += 1;
+                dest
+            };
 
-            let select_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: select_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select),
-                kind: AsmInstructionKind::Select {
-                    condition: AsmValue::Register(cmp_id),
-                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
-                    if_false: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_gpr(2, AsmValue::Register(select_id));
+            let select_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(cmp_id));
+    __ops.push(AsmOperand::Constant(AsmConstant::Int(-1, AsmType::I64)));
+    __ops.push(AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_gpr(2, read_operand(select_id));
             Ok(())
         }
         Decoded::Cdq => {
             let rax = ctx.read_gpr(0)?;
 
-            let trunc_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: trunc_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc),
-                kind: AsmInstructionKind::Trunc(rax, AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let trunc_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rax);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let sext_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: sext_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::SExt),
-                kind: AsmInstructionKind::SExt(AsmValue::Register(trunc_id), AsmType::I64),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let sext_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(trunc_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::SExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let cmp_id = *next_id;
-            instructions.push(compare_instruction(
-                cmp_id,
-                AsmInstructionKind::Lt(
-                    AsmValue::Register(sext_id),
-                    AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                ),
-                fp_core::asmir::AsmGenericOpcode::Lt,
-            ));
-            *next_id += 1;
+            let cmp_id = {
+                let (cmp_inst, dest) = compare_instruction(*next_id, function, fp_core::asmir::AsmGenericOpcode::Lt, read_operand(sext_id), AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)));
+                instructions.push(cmp_inst);
+                *next_id += 1;
+                dest
+            };
 
-            let select_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: select_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select),
-                kind: AsmInstructionKind::Select {
-                    condition: AsmValue::Register(cmp_id),
-                    if_true: AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)),
-                    if_false: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_gpr(2, AsmValue::Register(select_id));
+            let select_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(cmp_id));
+    __ops.push(AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)));
+    __ops.push(AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_gpr(2, read_operand(select_id));
             Ok(())
         }
         Decoded::Cdqe => {
             let value = ctx.read_gpr(0)?;
 
-            let trunc_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: trunc_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc),
-                kind: AsmInstructionKind::Trunc(value, AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let trunc_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(value);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let sext_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: sext_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::SExt),
-                kind: AsmInstructionKind::SExt(AsmValue::Register(trunc_id), AsmType::I64),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_gpr(0, AsmValue::Register(sext_id));
+            let sext_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(trunc_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::SExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_gpr(0, read_operand(sext_id));
             Ok(())
         }
         Decoded::ShlImm {
@@ -6499,7 +5919,7 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
             let id = if matches!(inst.kind, Decoded::SarImm { .. }) {
                 let sign_shift = match width_bits {
@@ -6508,117 +5928,90 @@ fn lift_non_terminator(
                     _ => return Err(Error::from("unsupported x86_64 sar width")),
                 };
                 if imm == 0 {
-                    let id = *next_id;
-                    instructions.push(build_binop(
-                        id,
-                        AsmInstructionKind::Add(
-                            lhs,
-                            AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                    ));
-                    *next_id += 1;
+                    let id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, lhs, AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
                     id
                 } else {
-                    let shift = AsmValue::Constant(AsmConstant::Int(i64::from(imm), AsmType::I64));
-                    let logical_id = *next_id;
-                    instructions.push(build_binop(
-                        logical_id,
-                        AsmInstructionKind::Shr(lhs.clone(), shift.clone()),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-                    ));
-                    *next_id += 1;
+                    let shift = AsmOperand::Constant(AsmConstant::Int(i64::from(imm), AsmType::I64));
+                    let logical_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, lhs.clone(), shift.clone());
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let sign_id = *next_id;
-                    instructions.push(build_binop(
-                        sign_id,
-                        AsmInstructionKind::Shr(
-                            lhs,
-                            AsmValue::Constant(AsmConstant::Int(
+                    let sign_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, lhs, AsmOperand::Constant(AsmConstant::Int(
                                 i64::from(sign_shift),
                                 AsmType::I64,
-                            )),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-                    ));
-                    *next_id += 1;
+                            )));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let neg_id = *next_id;
-                    instructions.push(build_binop(
-                        neg_id,
-                        AsmInstructionKind::Sub(
-                            AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                            AsmValue::Register(sign_id),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-                    ));
-                    *next_id += 1;
+                    let neg_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Sub, AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)), read_operand(sign_id));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
                     let fill_shift = width_bits
                         .try_into()
                         .ok()
                         .and_then(|bits: u8| bits.checked_sub(imm))
                         .ok_or_else(|| Error::from("unsupported x86_64 sar shift"))?;
-                    let fill_id = *next_id;
-                    instructions.push(build_binop(
-                        fill_id,
-                        AsmInstructionKind::Shl(
-                            AsmValue::Register(neg_id),
-                            AsmValue::Constant(AsmConstant::Int(
+                    let fill_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shl, read_operand(neg_id), AsmOperand::Constant(AsmConstant::Int(
                                 i64::from(fill_shift),
                                 AsmType::I64,
-                            )),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shl),
-                    ));
-                    *next_id += 1;
+                            )));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let result_id = *next_id;
-                    instructions.push(build_binop(
-                        result_id,
-                        AsmInstructionKind::Or(
-                            AsmValue::Register(logical_id),
-                            AsmValue::Register(fill_id),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-                    ));
-                    *next_id += 1;
+                    let result_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(logical_id), read_operand(fill_id));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
                     result_id
                 }
             } else {
-                let rhs = AsmValue::Constant(AsmConstant::Int(i64::from(imm), AsmType::I64));
-                let id = *next_id;
-                let (kind, opcode) = match inst.kind {
-                    Decoded::ShlImm { .. } => (
-                        AsmInstructionKind::Shl(lhs, rhs),
-                        fp_core::asmir::AsmGenericOpcode::Shl,
-                    ),
-                    Decoded::ShrImm { .. } => (
-                        AsmInstructionKind::Shr(lhs, rhs),
-                        fp_core::asmir::AsmGenericOpcode::Shr,
-                    ),
+                let rhs = AsmOperand::Constant(AsmConstant::Int(i64::from(imm), AsmType::I64));
+                let opcode = match inst.kind {
+                    Decoded::ShlImm { .. } => fp_core::asmir::AsmGenericOpcode::Shl,
+                    Decoded::ShrImm { .. } => fp_core::asmir::AsmGenericOpcode::Shr,
                     _ => return Err(Error::from("internal error: expected shift kind")),
                 };
-                instructions.push(build_binop(id, kind, AsmOpcode::Generic(opcode)));
+                let (inst_built, dest) = build_binop(*next_id, function, opcode, lhs, rhs);
+                instructions.push(inst_built);
                 *next_id += 1;
-                id
+                dest
             };
 
             match dst {
                 RmOperand::Reg(dst_reg) => write_gpr_with_width(
                     ctx,
                     dst_reg,
-                    AsmValue::Register(id),
+                    read_operand(id),
                     width_bits,
                     instructions,
                     next_id,
-                ),
+    function,),
                 RmOperand::Mem(memory) => {
                     if memory.segment.is_some() {
                         return Ok(());
                     }
                     let stored =
-                        value_for_store(width_bits, AsmValue::Register(id), instructions, next_id)?;
+                        value_for_store(width_bits, read_operand(id), instructions, next_id, function)?;
                     let addr = compute_address(
                         ctx,
                         memory,
@@ -6627,26 +6020,15 @@ fn lift_non_terminator(
                         relocs,
                         instructions,
                         next_id,
-                    )?;
-                    let store_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: store_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                        kind: AsmInstructionKind::Store {
-                            value: stored,
-                            address: addr,
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::Void,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+    function,)?;
+                    let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(stored);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
                     Ok(())
                 }
             }
@@ -6665,7 +6047,7 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
             let rhs = value_from_rm_with_width(
                 ctx,
                 shift,
@@ -6674,37 +6056,32 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let rhs = freeze_i64(rhs, instructions, next_id);
+    function,)?;
+            let rhs = freeze_i64(rhs, instructions, next_id, function);
 
             let mask = if width_bits == 64 { 0x3F } else { 0x1F };
-            let rhs_mask_id = *next_id;
-            instructions.push(build_binop(
-                rhs_mask_id,
-                AsmInstructionKind::And(
-                    rhs,
-                    AsmValue::Constant(AsmConstant::UInt(mask, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let rhs_mask_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, rhs, AsmOperand::Constant(AsmConstant::UInt(mask, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let id = *next_id;
-            instructions.push(build_binop(
-                id,
-                AsmInstructionKind::Shr(lhs, AsmValue::Register(rhs_mask_id)),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-            ));
-            *next_id += 1;
+            let id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, lhs, read_operand(rhs_mask_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
             write_gpr_with_width(
                 ctx,
                 dst,
-                AsmValue::Register(id),
+                read_operand(id),
                 width_bits,
                 instructions,
                 next_id,
-            )
+    function,)
         }
         Decoded::Shlx {
             dst,
@@ -6720,7 +6097,7 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
             let rhs = value_from_rm_with_width(
                 ctx,
                 shift,
@@ -6729,37 +6106,32 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let rhs = freeze_i64(rhs, instructions, next_id);
+    function,)?;
+            let rhs = freeze_i64(rhs, instructions, next_id, function);
 
             let mask = if width_bits == 64 { 0x3F } else { 0x1F };
-            let rhs_mask_id = *next_id;
-            instructions.push(build_binop(
-                rhs_mask_id,
-                AsmInstructionKind::And(
-                    rhs,
-                    AsmValue::Constant(AsmConstant::UInt(mask, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let rhs_mask_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, rhs, AsmOperand::Constant(AsmConstant::UInt(mask, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let id = *next_id;
-            instructions.push(build_binop(
-                id,
-                AsmInstructionKind::Shl(lhs, AsmValue::Register(rhs_mask_id)),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shl),
-            ));
-            *next_id += 1;
+            let id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shl, lhs, read_operand(rhs_mask_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
             write_gpr_with_width(
                 ctx,
                 dst,
-                AsmValue::Register(id),
+                read_operand(id),
                 width_bits,
                 instructions,
                 next_id,
-            )
+    function,)
         }
         Decoded::Rorx {
             dst,
@@ -6778,8 +6150,8 @@ fn lift_non_terminator(
                     relocs,
                     instructions,
                     next_id,
-                )?;
-                return write_gpr_with_width(ctx, dst, value, width_bits, instructions, next_id);
+    function,)?;
+                return write_gpr_with_width(ctx, dst, value, width_bits, instructions, next_id, function);
             }
 
             let value = value_from_rm_with_width(
@@ -6790,42 +6162,39 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let imm_value = AsmValue::Constant(AsmConstant::UInt(imm, AsmType::I64));
-            let inv_value = AsmValue::Constant(AsmConstant::UInt(width - imm, AsmType::I64));
+    function,)?;
+            let imm_value = AsmOperand::Constant(AsmConstant::UInt(imm, AsmType::I64));
+            let inv_value = AsmOperand::Constant(AsmConstant::UInt(width - imm, AsmType::I64));
 
-            let shr_id = *next_id;
-            instructions.push(build_binop(
-                shr_id,
-                AsmInstructionKind::Shr(value.clone(), imm_value),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-            ));
-            *next_id += 1;
+            let shr_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, value.clone(), imm_value);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let shl_id = *next_id;
-            instructions.push(build_binop(
-                shl_id,
-                AsmInstructionKind::Shl(value, inv_value),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shl),
-            ));
-            *next_id += 1;
+            let shl_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shl, value, inv_value);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let or_id = *next_id;
-            instructions.push(build_binop(
-                or_id,
-                AsmInstructionKind::Or(AsmValue::Register(shr_id), AsmValue::Register(shl_id)),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let or_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(shr_id), read_operand(shl_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
             write_gpr_with_width(
                 ctx,
                 dst,
-                AsmValue::Register(or_id),
+                read_operand(or_id),
                 width_bits,
                 instructions,
                 next_id,
-            )
+    function,)
         }
         Decoded::Blsr {
             dst,
@@ -6840,34 +6209,29 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let sub_id = *next_id;
-            instructions.push(build_binop(
-                sub_id,
-                AsmInstructionKind::Sub(
-                    value.clone(),
-                    AsmValue::Constant(AsmConstant::Int(1, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-            ));
-            *next_id += 1;
+    function,)?;
+            let sub_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Sub, value.clone(), AsmOperand::Constant(AsmConstant::Int(1, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let and_id = *next_id;
-            instructions.push(build_binop(
-                and_id,
-                AsmInstructionKind::And(value, AsmValue::Register(sub_id)),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let and_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, value, read_operand(sub_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
             write_gpr_with_width(
                 ctx,
                 dst,
-                AsmValue::Register(and_id),
+                read_operand(and_id),
                 width_bits,
                 instructions,
                 next_id,
-            )
+    function,)
         }
         Decoded::NotRm { dst, width_bits } => {
             let value = value_from_rm_with_width(
@@ -6878,36 +6242,31 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Not),
-                kind: AsmInstructionKind::Not(value),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+    function,)?;
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(value);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Not), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
             match dst {
                 RmOperand::Reg(reg) => write_gpr_with_width(
                     ctx,
                     reg,
-                    AsmValue::Register(id),
+                    read_operand(id),
                     width_bits,
                     instructions,
                     next_id,
-                ),
+    function,),
                 RmOperand::Mem(memory) => {
                     if memory.segment.is_some() {
                         return Ok(());
                     }
                     let stored =
-                        value_for_store(width_bits, AsmValue::Register(id), instructions, next_id)?;
+                        value_for_store(width_bits, read_operand(id), instructions, next_id, function)?;
                     let addr = compute_address(
                         ctx,
                         memory,
@@ -6916,26 +6275,15 @@ fn lift_non_terminator(
                         relocs,
                         instructions,
                         next_id,
-                    )?;
-                    let store_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: store_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                        kind: AsmInstructionKind::Store {
-                            value: stored,
-                            address: addr,
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::Void,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+    function,)?;
+                    let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(stored);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
                     Ok(())
                 }
             }
@@ -6949,32 +6297,28 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let id = *next_id;
-            instructions.push(build_binop(
-                id,
-                AsmInstructionKind::Sub(
-                    AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    value,
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-            ));
-            *next_id += 1;
+    function,)?;
+            let id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Sub, AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)), value);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
             match dst {
                 RmOperand::Reg(reg) => write_gpr_with_width(
                     ctx,
                     reg,
-                    AsmValue::Register(id),
+                    read_operand(id),
                     width_bits,
                     instructions,
                     next_id,
-                ),
+    function,),
                 RmOperand::Mem(memory) => {
                     if memory.segment.is_some() {
                         return Ok(());
                     }
                     let stored =
-                        value_for_store(width_bits, AsmValue::Register(id), instructions, next_id)?;
+                        value_for_store(width_bits, read_operand(id), instructions, next_id, function)?;
                     let addr = compute_address(
                         ctx,
                         memory,
@@ -6983,26 +6327,15 @@ fn lift_non_terminator(
                         relocs,
                         instructions,
                         next_id,
-                    )?;
-                    let store_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: store_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                        kind: AsmInstructionKind::Store {
-                            value: stored,
-                            address: addr,
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::Void,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+    function,)?;
+                    let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(stored);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
                     Ok(())
                 }
             }
@@ -7012,49 +6345,40 @@ fn lift_non_terminator(
                 // Interpret carry as `ult` from the last comparison.
                 patch_compare_kind(instructions, compare, 0x2)?;
 
-                let zext_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: zext_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt),
-                    kind: AsmInstructionKind::ZExt(AsmValue::Register(compare.id), AsmType::I64),
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let zext_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(compare.id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let id = *next_id;
-                instructions.push(build_binop(
-                    id,
-                    AsmInstructionKind::Sub(
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        AsmValue::Register(zext_id),
-                    ),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-                ));
-                *next_id += 1;
+                let id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Sub, AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)), read_operand(zext_id));
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
                 write_gpr_with_width(
                     ctx,
                     reg,
-                    AsmValue::Register(id),
+                    read_operand(id),
                     width_bits,
                     instructions,
                     next_id,
-                )
+    function,)
             } else {
                 // If we do not know the carry flag, conservatively emit `0`.
                 write_gpr_with_width(
                     ctx,
                     reg,
-                    AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                    AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
                     width_bits,
                     instructions,
                     next_id,
-                )
+    function,)
             }
         }
         Decoded::OrImmRm {
@@ -7072,7 +6396,7 @@ fn lift_non_terminator(
             instructions,
             next_id,
             fp_core::asmir::AsmGenericOpcode::Or,
-        ),
+    function,),
         Decoded::AndImmRm {
             dst,
             imm,
@@ -7088,7 +6412,7 @@ fn lift_non_terminator(
             instructions,
             next_id,
             fp_core::asmir::AsmGenericOpcode::And,
-        ),
+    function,),
         Decoded::ImulReg {
             dst,
             src,
@@ -7096,21 +6420,20 @@ fn lift_non_terminator(
         } => {
             let lhs = ctx.read_gpr(dst)?;
             let rhs = ctx.read_gpr(src)?;
-            let id = *next_id;
-            instructions.push(build_binop(
-                id,
-                AsmInstructionKind::Mul(lhs, rhs),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
-            ));
-            *next_id += 1;
+            let id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Mul, lhs, rhs);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
             write_gpr_with_width(
                 ctx,
                 dst,
-                AsmValue::Register(id),
+                read_operand(id),
                 width_bits,
                 instructions,
                 next_id,
-            )
+    function,)
         }
         Decoded::ImulRegImm {
             dst,
@@ -7126,23 +6449,22 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let rhs = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
-            let id = *next_id;
-            instructions.push(build_binop(
-                id,
-                AsmInstructionKind::Mul(lhs, rhs),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
-            ));
-            *next_id += 1;
+    function,)?;
+            let rhs = AsmOperand::Constant(AsmConstant::Int(imm, AsmType::I64));
+            let id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Mul, lhs, rhs);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
             write_gpr_with_width(
                 ctx,
                 dst,
-                AsmValue::Register(id),
+                read_operand(id),
                 width_bits,
                 instructions,
                 next_id,
-            )
+    function,)
         }
         Decoded::ImulRmWide { src, width_bits } => {
             let lhs = ctx.read_gpr(0)?;
@@ -7154,59 +6476,53 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
-            let id = *next_id;
-            instructions.push(build_binop(
-                id,
-                AsmInstructionKind::Mul(lhs, rhs),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
-            ));
-            *next_id += 1;
+            let id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Mul, lhs, rhs);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
             match width_bits {
                 32 => {
-                    let low_mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-                    let low_id = *next_id;
-                    instructions.push(build_binop(
-                        low_id,
-                        AsmInstructionKind::And(AsmValue::Register(id), low_mask),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                    ));
-                    *next_id += 1;
+                    let low_mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                    let low_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(id), low_mask);
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let high_id = *next_id;
-                    instructions.push(build_binop(
-                        high_id,
-                        AsmInstructionKind::Shr(
-                            AsmValue::Register(id),
-                            AsmValue::Constant(AsmConstant::UInt(32, AsmType::I64)),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-                    ));
-                    *next_id += 1;
+                    let high_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, read_operand(id), AsmOperand::Constant(AsmConstant::UInt(32, AsmType::I64)));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
                     write_gpr_with_width(
                         ctx,
                         0,
-                        AsmValue::Register(low_id),
+                        read_operand(low_id),
                         32,
                         instructions,
                         next_id,
-                    )?;
+    function,)?;
                     write_gpr_with_width(
                         ctx,
                         2,
-                        AsmValue::Register(high_id),
+                        read_operand(high_id),
                         32,
                         instructions,
                         next_id,
-                    )?;
+    function,)?;
                     Ok(())
                 }
                 64 => {
-                    ctx.write_gpr(0, AsmValue::Register(id));
-                    ctx.write_gpr(2, AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)));
+                    ctx.write_gpr(0, read_operand(id));
+                    ctx.write_gpr(2, AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)));
                     Ok(())
                 }
                 _ => Err(Error::from("unsupported x86_64 imul width")),
@@ -7222,301 +6538,211 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
             match width_bits {
                 32 => {
-                    let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                    let mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
 
-                    let lhs32_id = *next_id;
-                    instructions.push(build_binop(
-                        lhs32_id,
-                        AsmInstructionKind::And(lhs, mask.clone()),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                    ));
-                    *next_id += 1;
+                    let lhs32_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, lhs, mask.clone());
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let rhs32_id = *next_id;
-                    instructions.push(build_binop(
-                        rhs32_id,
-                        AsmInstructionKind::And(rhs, mask),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                    ));
-                    *next_id += 1;
+                    let rhs32_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, rhs, mask);
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let product_id = *next_id;
-                    instructions.push(build_binop(
-                        product_id,
-                        AsmInstructionKind::Mul(
-                            AsmValue::Register(lhs32_id),
-                            AsmValue::Register(rhs32_id),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
-                    ));
-                    *next_id += 1;
+                    let product_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Mul, read_operand(lhs32_id), read_operand(rhs32_id));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let low_id = *next_id;
-                    instructions.push(build_binop(
-                        low_id,
-                        AsmInstructionKind::And(
-                            AsmValue::Register(product_id),
-                            AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                    ));
-                    *next_id += 1;
+                    let low_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(product_id), AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let high_id = *next_id;
-                    instructions.push(build_binop(
-                        high_id,
-                        AsmInstructionKind::Shr(
-                            AsmValue::Register(product_id),
-                            AsmValue::Constant(AsmConstant::UInt(32, AsmType::I64)),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-                    ));
-                    *next_id += 1;
+                    let high_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, read_operand(product_id), AsmOperand::Constant(AsmConstant::UInt(32, AsmType::I64)));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
                     write_gpr_with_width(
                         ctx,
                         0,
-                        AsmValue::Register(low_id),
+                        read_operand(low_id),
                         32,
                         instructions,
                         next_id,
-                    )?;
+    function,)?;
                     write_gpr_with_width(
                         ctx,
                         2,
-                        AsmValue::Register(high_id),
+                        read_operand(high_id),
                         32,
                         instructions,
                         next_id,
-                    )
+    function,)
                 }
                 64 => {
-                    let low_mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-                    let high_shift = AsmValue::Constant(AsmConstant::UInt(32, AsmType::I64));
+                    let low_mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                    let high_shift = AsmOperand::Constant(AsmConstant::UInt(32, AsmType::I64));
 
-                    let a0_id = *next_id;
-                    instructions.push(build_binop(
-                        a0_id,
-                        AsmInstructionKind::And(lhs.clone(), low_mask.clone()),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                    ));
-                    *next_id += 1;
-                    let a1_id = *next_id;
-                    instructions.push(build_binop(
-                        a1_id,
-                        AsmInstructionKind::Shr(lhs, high_shift.clone()),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-                    ));
-                    *next_id += 1;
+                    let a0_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, lhs.clone(), low_mask.clone());
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
+                    let a1_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, lhs, high_shift.clone());
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let b0_id = *next_id;
-                    instructions.push(build_binop(
-                        b0_id,
-                        AsmInstructionKind::And(rhs.clone(), low_mask),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                    ));
-                    *next_id += 1;
-                    let b1_id = *next_id;
-                    instructions.push(build_binop(
-                        b1_id,
-                        AsmInstructionKind::Shr(rhs, high_shift.clone()),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-                    ));
-                    *next_id += 1;
+                    let b0_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, rhs.clone(), low_mask);
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
+                    let b1_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, rhs, high_shift.clone());
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let p0_id = *next_id;
-                    instructions.push(build_binop(
-                        p0_id,
-                        AsmInstructionKind::Mul(
-                            AsmValue::Register(a0_id),
-                            AsmValue::Register(b0_id),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
-                    ));
-                    *next_id += 1;
-                    let p1_id = *next_id;
-                    instructions.push(build_binop(
-                        p1_id,
-                        AsmInstructionKind::Mul(
-                            AsmValue::Register(a0_id),
-                            AsmValue::Register(b1_id),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
-                    ));
-                    *next_id += 1;
-                    let p2_id = *next_id;
-                    instructions.push(build_binop(
-                        p2_id,
-                        AsmInstructionKind::Mul(
-                            AsmValue::Register(a1_id),
-                            AsmValue::Register(b0_id),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
-                    ));
-                    *next_id += 1;
-                    let p3_id = *next_id;
-                    instructions.push(build_binop(
-                        p3_id,
-                        AsmInstructionKind::Mul(
-                            AsmValue::Register(a1_id),
-                            AsmValue::Register(b1_id),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
-                    ));
-                    *next_id += 1;
+                    let p0_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Mul, read_operand(a0_id), read_operand(b0_id));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
+                    let p1_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Mul, read_operand(a0_id), read_operand(b1_id));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
+                    let p2_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Mul, read_operand(a1_id), read_operand(b0_id));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
+                    let p3_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Mul, read_operand(a1_id), read_operand(b1_id));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let mid_sum_id = *next_id;
-                    instructions.push(build_binop(
-                        mid_sum_id,
-                        AsmInstructionKind::Add(
-                            AsmValue::Register(p1_id),
-                            AsmValue::Register(p2_id),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                    ));
-                    *next_id += 1;
+                    let mid_sum_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, read_operand(p1_id), read_operand(p2_id));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let mid_carry_flag_id = *next_id;
-                    instructions.push(compare_instruction(
-                        mid_carry_flag_id,
-                        AsmInstructionKind::Ult(
-                            AsmValue::Register(mid_sum_id),
-                            AsmValue::Register(p1_id),
-                        ),
-                        fp_core::asmir::AsmGenericOpcode::Ult,
-                    ));
-                    *next_id += 1;
+                    let mid_carry_flag_id = {
+                        let (cmp_inst, dest) = compare_instruction(*next_id, function, fp_core::asmir::AsmGenericOpcode::Ult, read_operand(mid_sum_id), read_operand(p1_id));
+                        instructions.push(cmp_inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let mid_carry_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: mid_carry_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt),
-                        kind: AsmInstructionKind::ZExt(
-                            AsmValue::Register(mid_carry_flag_id),
-                            AsmType::I64,
-                        ),
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+                    let mid_carry_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(mid_carry_flag_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                    let mid_shifted_id = *next_id;
-                    instructions.push(build_binop(
-                        mid_shifted_id,
-                        AsmInstructionKind::Shl(
-                            AsmValue::Register(mid_sum_id),
-                            AsmValue::Constant(AsmConstant::UInt(32, AsmType::I64)),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shl),
-                    ));
-                    *next_id += 1;
+                    let mid_shifted_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shl, read_operand(mid_sum_id), AsmOperand::Constant(AsmConstant::UInt(32, AsmType::I64)));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let low_id = *next_id;
-                    instructions.push(build_binop(
-                        low_id,
-                        AsmInstructionKind::Add(
-                            AsmValue::Register(p0_id),
-                            AsmValue::Register(mid_shifted_id),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                    ));
-                    *next_id += 1;
+                    let low_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, read_operand(p0_id), read_operand(mid_shifted_id));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let low_carry_flag_id = *next_id;
-                    instructions.push(compare_instruction(
-                        low_carry_flag_id,
-                        AsmInstructionKind::Ult(
-                            AsmValue::Register(low_id),
-                            AsmValue::Register(p0_id),
-                        ),
-                        fp_core::asmir::AsmGenericOpcode::Ult,
-                    ));
-                    *next_id += 1;
+                    let low_carry_flag_id = {
+                        let (cmp_inst, dest) = compare_instruction(*next_id, function, fp_core::asmir::AsmGenericOpcode::Ult, read_operand(low_id), read_operand(p0_id));
+                        instructions.push(cmp_inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let low_carry_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: low_carry_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt),
-                        kind: AsmInstructionKind::ZExt(
-                            AsmValue::Register(low_carry_flag_id),
-                            AsmType::I64,
-                        ),
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+                    let low_carry_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(low_carry_flag_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                    let mid_high_id = *next_id;
-                    instructions.push(build_binop(
-                        mid_high_id,
-                        AsmInstructionKind::Shr(
-                            AsmValue::Register(mid_sum_id),
-                            AsmValue::Constant(AsmConstant::UInt(32, AsmType::I64)),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shr),
-                    ));
-                    *next_id += 1;
+                    let mid_high_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shr, read_operand(mid_sum_id), AsmOperand::Constant(AsmConstant::UInt(32, AsmType::I64)));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let mid_carry_shifted_id = *next_id;
-                    instructions.push(build_binop(
-                        mid_carry_shifted_id,
-                        AsmInstructionKind::Shl(
-                            AsmValue::Register(mid_carry_id),
-                            AsmValue::Constant(AsmConstant::UInt(32, AsmType::I64)),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shl),
-                    ));
-                    *next_id += 1;
+                    let mid_carry_shifted_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shl, read_operand(mid_carry_id), AsmOperand::Constant(AsmConstant::UInt(32, AsmType::I64)));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let high_partial1_id = *next_id;
-                    instructions.push(build_binop(
-                        high_partial1_id,
-                        AsmInstructionKind::Add(
-                            AsmValue::Register(p3_id),
-                            AsmValue::Register(mid_high_id),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                    ));
-                    *next_id += 1;
+                    let high_partial1_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, read_operand(p3_id), read_operand(mid_high_id));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let high_partial2_id = *next_id;
-                    instructions.push(build_binop(
-                        high_partial2_id,
-                        AsmInstructionKind::Add(
-                            AsmValue::Register(high_partial1_id),
-                            AsmValue::Register(mid_carry_shifted_id),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                    ));
-                    *next_id += 1;
+                    let high_partial2_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, read_operand(high_partial1_id), read_operand(mid_carry_shifted_id));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    let high_id = *next_id;
-                    instructions.push(build_binop(
-                        high_id,
-                        AsmInstructionKind::Add(
-                            AsmValue::Register(high_partial2_id),
-                            AsmValue::Register(low_carry_id),
-                        ),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                    ));
-                    *next_id += 1;
+                    let high_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, read_operand(high_partial2_id), read_operand(low_carry_id));
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
 
-                    ctx.write_gpr(0, AsmValue::Register(low_id));
-                    ctx.write_gpr(2, AsmValue::Register(high_id));
+                    ctx.write_gpr(0, read_operand(low_id));
+                    ctx.write_gpr(2, read_operand(high_id));
                     Ok(())
                 }
                 _ => Err(Error::from("unsupported x86_64 mul width")),
@@ -7524,24 +6750,19 @@ fn lift_non_terminator(
         }
         Decoded::Fild { src, width_bits } => {
             if src.segment.is_some() {
-                let id = *next_id;
-                instructions.push(AsmInstruction {
-                    id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                    kind: AsmInstructionKind::Freeze(AsmValue::Constant(AsmConstant::Float(
+                let id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(AsmOperand::Constant(AsmConstant::Float(
                         0.0,
                         AsmType::F64,
-                    ))),
-                    ty: AsmType::F64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
-                ctx.x87_push(AsmValue::Register(id))?;
+                    )));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                ctx.x87_push(read_operand(id))?;
                 return Ok(());
             }
 
@@ -7553,47 +6774,33 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
             let load_ty = match width_bits {
                 32 => AsmType::I32,
                 64 => AsmType::I64,
                 _ => return Err(Error::from("unsupported x86_64 fild width")),
             };
 
-            let load_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: load_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: addr,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: load_ty.clone(),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let load_id = {
+    let dest = function.alloc_virtual_register(load_ty.clone(), asm_register_bank(&(load_ty.clone())), asm_type_bits(&(load_ty.clone())));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let conv_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: conv_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::SIToFP),
-                kind: AsmInstructionKind::SIToFP(AsmValue::Register(load_id), AsmType::F64),
-                ty: AsmType::F64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.x87_push(AsmValue::Register(conv_id))?;
+            let conv_id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(load_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::SIToFP), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.x87_push(read_operand(conv_id))?;
             Ok(())
         }
         Decoded::FldSt { index } => {
@@ -7602,24 +6809,19 @@ fn lift_non_terminator(
         }
         Decoded::FldMem { src, width_bits } => {
             if src.segment.is_some() {
-                let id = *next_id;
-                instructions.push(AsmInstruction {
-                    id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                    kind: AsmInstructionKind::Freeze(AsmValue::Constant(AsmConstant::Float(
+                let id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(AsmOperand::Constant(AsmConstant::Float(
                         0.0,
                         AsmType::F64,
-                    ))),
-                    ty: AsmType::F64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
-                ctx.x87_push(AsmValue::Register(id))?;
+                    )));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                ctx.x87_push(read_operand(id))?;
                 return Ok(());
             }
 
@@ -7631,148 +6833,122 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
             let (load_ty, need_extend) = match width_bits {
                 32 => (AsmType::F32, true),
                 64 | 80 => (AsmType::F64, false),
                 _ => return Err(Error::from("unsupported x86_64 fld width")),
             };
 
-            let load_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: load_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: addr,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: load_ty,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let load_id = {
+    let dest = function.alloc_virtual_register(load_ty.clone(), asm_register_bank(&load_ty), asm_type_bits(&load_ty));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
             if need_extend {
-                let ext_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: ext_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::FPExt),
-                    kind: AsmInstructionKind::FPExt(AsmValue::Register(load_id), AsmType::F64),
-                    ty: AsmType::F64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
-                ctx.x87_push(AsmValue::Register(ext_id))
+                let ext_id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(load_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::FPExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                ctx.x87_push(read_operand(ext_id))
             } else {
-                ctx.x87_push(AsmValue::Register(load_id))
+                ctx.x87_push(read_operand(load_id))
             }
         }
         Decoded::Fxch { index } => ctx.x87_swap(index),
         Decoded::FmulSt0St { index } => {
             let st0 = ctx.x87_peek(0)?;
             let rhs = ctx.x87_peek(index)?;
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
-                kind: AsmInstructionKind::Mul(st0, rhs),
-                ty: AsmType::F64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.x87_set(0, AsmValue::Register(id))
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(st0);
+    __ops.push(rhs);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.x87_set(0, read_operand(id))
         }
         Decoded::Fmulp { index } => {
             let st0 = ctx.x87_peek(0)?;
             let lhs = ctx.x87_peek(index)?;
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
-                kind: AsmInstructionKind::Mul(lhs, st0),
-                ty: AsmType::F64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.x87_set(index, AsmValue::Register(id))?;
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs);
+    __ops.push(st0);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.x87_set(index, read_operand(id))?;
             ctx.x87_pop()?;
             Ok(())
         }
         Decoded::Fdivrp { index } => {
             let st0 = ctx.x87_peek(0)?;
             let denom = ctx.x87_peek(index)?;
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Div),
-                kind: AsmInstructionKind::Div(st0, denom),
-                ty: AsmType::F64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.x87_set(index, AsmValue::Register(id))?;
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(st0);
+    __ops.push(denom);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Div), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.x87_set(index, read_operand(id))?;
             ctx.x87_pop()?;
             Ok(())
         }
         Decoded::Fdivp { index } => {
             let st0 = ctx.x87_peek(0)?;
             let lhs = ctx.x87_peek(index)?;
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Div),
-                kind: AsmInstructionKind::Div(lhs, st0),
-                ty: AsmType::F64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.x87_set(index, AsmValue::Register(id))?;
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs);
+    __ops.push(st0);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Div), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.x87_set(index, read_operand(id))?;
             ctx.x87_pop()?;
             Ok(())
         }
         Decoded::Fcomi { index } => {
             let st0 = ctx.x87_peek(0)?;
             let rhs = ctx.x87_peek(index)?;
-            let id = *next_id;
-            instructions.push(compare_instruction(
-                id,
-                AsmInstructionKind::Eq(st0, rhs),
+            let id_instr_id = *next_id;
+            let (cmp_inst, id) = compare_instruction(
+                id_instr_id,
+                function,
                 fp_core::asmir::AsmGenericOpcode::Eq,
-            ));
+                st0,
+                rhs,
+            );
+            instructions.push(cmp_inst);
             *next_id += 1;
             *last_compare = Some(LastCompare {
-                id,
+                id: id_instr_id,
                 index: instructions.len() - 1,
+                vreg: id,
                 is_float: true,
             });
             Ok(())
@@ -7780,16 +6956,14 @@ fn lift_non_terminator(
         Decoded::Fcomip { index } => {
             let st0 = ctx.x87_peek(0)?;
             let rhs = ctx.x87_peek(index)?;
-            let id = *next_id;
-            instructions.push(compare_instruction(
-                id,
-                AsmInstructionKind::Eq(st0, rhs),
-                fp_core::asmir::AsmGenericOpcode::Eq,
-            ));
-            *next_id += 1;
+            let id_instr_id = *next_id;
+                let (cmp_inst, id) = compare_instruction(id_instr_id, function, fp_core::asmir::AsmGenericOpcode::Eq, st0, rhs);
+                instructions.push(cmp_inst);
+                *next_id += 1;
             *last_compare = Some(LastCompare {
-                id,
+                id: id_instr_id,
                 index: instructions.len() - 1,
+                vreg: id,
                 is_float: true,
             });
             ctx.x87_pop()?;
@@ -7807,21 +6981,16 @@ fn lift_non_terminator(
             let st0 = ctx.x87_peek(0)?;
             let stored_value = match width_bits {
                 32 => {
-                    let id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::FPTrunc),
-                        kind: AsmInstructionKind::FPTrunc(st0, AsmType::F32),
-                        ty: AsmType::F32,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
-                    AsmValue::Register(id)
+                    let id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(st0);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::FPTrunc), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                    read_operand(id)
                 }
                 64 => st0,
                 // x87 `fstp tbyte ptr` stores 80-bit extended precision.
@@ -7844,26 +7013,15 @@ fn lift_non_terminator(
                     relocs,
                     instructions,
                     next_id,
-                )?;
-                let store_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: store_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                    kind: AsmInstructionKind::Store {
-                        value: stored_value,
-                        address: addr,
-                        alignment: None,
-                        volatile: false,
-                    },
-                    ty: AsmType::Void,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+    function,)?;
+                let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(stored_value);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
             }
 
             ctx.x87_pop()?;
@@ -7880,47 +7038,31 @@ fn lift_non_terminator(
                     relocs,
                     instructions,
                     next_id,
-                )?;
+    function,)?;
                 let int_ty = match width_bits {
                     32 => AsmType::I32,
                     64 => AsmType::I64,
                     _ => return Err(Error::from("unsupported x86_64 fisttp width")),
                 };
 
-                let conv_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: conv_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::FPToSI),
-                    kind: AsmInstructionKind::FPToSI(st0, int_ty.clone()),
-                    ty: int_ty,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let conv_id = {
+    let dest = function.alloc_virtual_register(int_ty.clone(), asm_register_bank(&int_ty), asm_type_bits(&int_ty));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(st0);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::FPToSI), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let store_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: store_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                    kind: AsmInstructionKind::Store {
-                        value: AsmValue::Register(conv_id),
-                        address: addr,
-                        alignment: None,
-                        volatile: false,
-                    },
-                    ty: AsmType::Void,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(read_operand(conv_id));
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
             }
 
             ctx.x87_pop()?;
@@ -7939,7 +7081,7 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
             let (load_ty, need_extend) = match width_bits {
                 32 => (AsmType::F32, true),
@@ -7947,81 +7089,58 @@ fn lift_non_terminator(
                 _ => return Err(Error::from("unsupported x86_64 fadd width")),
             };
 
-            let load_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: load_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: addr,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: load_ty,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let load_id = {
+    let dest = function.alloc_virtual_register(load_ty.clone(), asm_register_bank(&load_ty), asm_type_bits(&load_ty));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
             let rhs = if need_extend {
-                let ext_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: ext_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::FPExt),
-                    kind: AsmInstructionKind::FPExt(AsmValue::Register(load_id), AsmType::F64),
-                    ty: AsmType::F64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
-                AsmValue::Register(ext_id)
+                let ext_id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(load_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::FPExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                read_operand(ext_id)
             } else {
-                AsmValue::Register(load_id)
+                read_operand(load_id)
             };
 
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                kind: AsmInstructionKind::Add(st0, rhs),
-                ty: AsmType::F64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.x87_set(0, AsmValue::Register(id))
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(st0);
+    __ops.push(rhs);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.x87_set(0, read_operand(id))
         }
         Decoded::Ffreep { index } => {
             if index != 0 {
-                let zero_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: zero_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                    kind: AsmInstructionKind::Freeze(AsmValue::Constant(AsmConstant::Float(
+                let zero_id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(AsmOperand::Constant(AsmConstant::Float(
                         0.0,
                         AsmType::F64,
-                    ))),
-                    ty: AsmType::F64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
-                ctx.x87_set(index, AsmValue::Register(zero_id))?;
+                    )));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                ctx.x87_set(index, read_operand(zero_id))?;
             }
             ctx.x87_pop()?;
             Ok(())
@@ -8029,21 +7148,17 @@ fn lift_non_terminator(
         Decoded::FsubrSt0St { index } => {
             let st0 = ctx.x87_peek(0)?;
             let lhs = ctx.x87_peek(index)?;
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-                kind: AsmInstructionKind::Sub(lhs, st0),
-                ty: AsmType::F64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.x87_set(0, AsmValue::Register(id))
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs);
+    __ops.push(st0);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.x87_set(0, read_operand(id))
         }
         Decoded::Fcmovcc { condition, src } => {
             let old = ctx.x87_peek(0)?;
@@ -8054,25 +7169,18 @@ fn lift_non_terminator(
             };
             patch_compare_kind(instructions, compare, condition)?;
 
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select),
-                kind: AsmInstructionKind::Select {
-                    condition: AsmValue::Register(compare.id),
-                    if_true: new,
-                    if_false: old,
-                },
-                ty: AsmType::F64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.x87_set(0, AsmValue::Register(id))
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(compare.id));
+    __ops.push(new);
+    __ops.push(old);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.x87_set(0, read_operand(id))
         }
         Decoded::Cmovcc {
             dst,
@@ -8089,39 +7197,32 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
             let Some(compare) = last_compare.as_ref() else {
-                return write_gpr_with_width(ctx, dst, new, width_bits, instructions, next_id);
+                return write_gpr_with_width(ctx, dst, new, width_bits, instructions, next_id, function);
             };
             patch_compare_kind(instructions, compare, condition)?;
 
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select),
-                kind: AsmInstructionKind::Select {
-                    condition: AsmValue::Register(compare.id),
-                    if_true: new,
-                    if_false: old,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(compare.id));
+    __ops.push(new);
+    __ops.push(old);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
             write_gpr_with_width(
                 ctx,
                 dst,
-                AsmValue::Register(id),
+                read_operand(id),
                 width_bits,
                 instructions,
                 next_id,
-            )
+    function,)
         }
         Decoded::MovRmToReg {
             dst,
@@ -8130,28 +7231,23 @@ fn lift_non_terminator(
         } => match src {
             RmOperand::Reg(src) => {
                 let value = ctx.read_gpr(src)?;
-                write_gpr_with_width(ctx, dst, value, width_bits, instructions, next_id)
+                write_gpr_with_width(ctx, dst, value, width_bits, instructions, next_id, function)
             }
             RmOperand::Mem(memory) => {
                 if memory.segment.is_some() {
                     // Most real-world ELF executables use this for stack canary loads.
                     // We do not model TLS/segments yet, so treat it as a stable zero value.
-                    let value = AsmValue::Constant(AsmConstant::Int(0, AsmType::I64));
-                    let id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                        kind: AsmInstructionKind::Freeze(value),
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
-                    ctx.write_gpr(dst, AsmValue::Register(id));
+                    let value = AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64));
+                    let id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(value);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                    ctx.write_gpr(dst, read_operand(id));
                     return Ok(());
                 }
 
@@ -8160,7 +7256,7 @@ fn lift_non_terminator(
                     .or_else(|| ctx.resolve_rip_symbol(&memory, inst.offset, inst.len))
                 {
                     if symbol.kind == RipSymbolKind::Function {
-                        ctx.write_gpr(dst, AsmValue::Function(symbol.name.clone()));
+                        ctx.write_gpr(dst, AsmOperand::Symbol(Name::new(symbol.name.clone())));
                         return Ok(());
                     }
                 }
@@ -8172,51 +7268,47 @@ fn lift_non_terminator(
                     relocs,
                     instructions,
                     next_id,
-                )?;
-                let id = *next_id;
-                instructions.push(AsmInstruction {
-                    id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                    kind: AsmInstructionKind::Load {
-                        address: addr,
-                        alignment: None,
-                        volatile: false,
-                    },
-                    ty: match width_bits {
+    function,)?;
+                let id = {
+    let dest = function.alloc_virtual_register(match width_bits {
                         8 => AsmType::I8,
                         16 => AsmType::I16,
                         32 => AsmType::I32,
                         _ => AsmType::I64,
-                    },
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                    }, asm_register_bank(&(match width_bits {
+                        8 => AsmType::I8,
+                        16 => AsmType::I16,
+                        32 => AsmType::I32,
+                        _ => AsmType::I64,
+                    })), asm_type_bits(&(match width_bits {
+                        8 => AsmType::I8,
+                        16 => AsmType::I16,
+                        32 => AsmType::I32,
+                        _ => AsmType::I64,
+                    })));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
                 let value = match width_bits {
-                    64 => AsmValue::Register(id),
+                    64 => read_operand(id),
                     _ => {
-                        let zext_id = *next_id;
-                        instructions.push(AsmInstruction {
-                            id: zext_id,
-                            opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt),
-                            kind: AsmInstructionKind::ZExt(AsmValue::Register(id), AsmType::I64),
-                            ty: AsmType::I64,
-                            operands: Vec::new(),
-                            implicit_uses: Vec::new(),
-                            implicit_defs: Vec::new(),
-                            encoding: None,
-                            debug_info: None,
-                            annotations: Vec::new(),
-                        });
-                        *next_id += 1;
-                        AsmValue::Register(zext_id)
+                        let zext_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                        read_operand(zext_id)
                     }
                 };
-                write_gpr_with_width(ctx, dst, value, width_bits, instructions, next_id)
+                write_gpr_with_width(ctx, dst, value, width_bits, instructions, next_id, function)
             }
         },
         Decoded::MovRegToRm {
@@ -8227,10 +7319,10 @@ fn lift_non_terminator(
             let value = ctx.read_gpr(src)?;
             match dst {
                 RmOperand::Reg(dst) => {
-                    write_gpr_with_width(ctx, dst, value, width_bits, instructions, next_id)
+                    write_gpr_with_width(ctx, dst, value, width_bits, instructions, next_id, function)
                 }
                 RmOperand::Mem(memory) => {
-                    let value = value_for_store(width_bits, value, instructions, next_id)?;
+                    let value = value_for_store(width_bits, value, instructions, next_id, function)?;
                     let addr = compute_address(
                         ctx,
                         memory,
@@ -8239,26 +7331,15 @@ fn lift_non_terminator(
                         relocs,
                         instructions,
                         next_id,
-                    )?;
-                    let id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                        kind: AsmInstructionKind::Store {
-                            value,
-                            address: addr,
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::Void,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+    function,)?;
+                    let _id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(value);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
                     Ok(())
                 }
             }
@@ -8276,9 +7357,9 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let swapped = byte_swap_value(width_bits, value, instructions, next_id)?;
-            write_gpr_with_width(ctx, dst, swapped, width_bits, instructions, next_id)
+    function,)?;
+            let swapped = byte_swap_value(width_bits, value, instructions, next_id, function)?;
+            write_gpr_with_width(ctx, dst, swapped, width_bits, instructions, next_id, function)
         }
         Decoded::MovbeMemFromReg {
             dst,
@@ -8286,8 +7367,8 @@ fn lift_non_terminator(
             width_bits,
         } => {
             let value = ctx.read_gpr(src)?;
-            let swapped = byte_swap_value(width_bits, value, instructions, next_id)?;
-            let value = value_for_store(width_bits, swapped, instructions, next_id)?;
+            let swapped = byte_swap_value(width_bits, value, instructions, next_id, function)?;
+            let value = value_for_store(width_bits, swapped, instructions, next_id, function)?;
             let addr = compute_address(
                 ctx,
                 dst,
@@ -8296,32 +7377,21 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                kind: AsmInstructionKind::Store {
-                    value,
-                    address: addr,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::Void,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+    function,)?;
+            let _id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(value);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
             Ok(())
         }
         Decoded::Bswap { dst, width_bits } => {
             let value = ctx.read_gpr(dst)?;
-            let swapped = byte_swap_value(width_bits, value, instructions, next_id)?;
-            write_gpr_with_width(ctx, dst, swapped, width_bits, instructions, next_id)
+            let swapped = byte_swap_value(width_bits, value, instructions, next_id, function)?;
+            write_gpr_with_width(ctx, dst, swapped, width_bits, instructions, next_id, function)
         }
         Decoded::MovImm64 {
             dst,
@@ -8333,59 +7403,48 @@ fn lift_non_terminator(
                 .checked_add(imm_offset as u64)
                 .ok_or_else(|| Error::from("x86_64 mov imm64 relocation overflow"))?;
             if let Some(reloc) = relocation_at(relocs, reloc_offset) {
-                let symbol_const = AsmValue::Constant(AsmConstant::GlobalRef(
+                let symbol_const = AsmOperand::Constant(AsmConstant::GlobalRef(
                     Name::new(reloc.symbol.clone()),
                     AsmType::Ptr(Box::new(AsmType::I8)),
                     vec![0],
                 ));
-                let symbol_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: symbol_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                    kind: AsmInstructionKind::Freeze(symbol_const),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let symbol_id = {
+    let dest = function.alloc_virtual_register(AsmType::Ptr(Box::new(AsmType::I8)), asm_register_bank(&(AsmType::Ptr(Box::new(AsmType::I8)))), asm_type_bits(&(AsmType::Ptr(Box::new(AsmType::I8)))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(symbol_const);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let mut value = AsmValue::Register(symbol_id);
+                let mut value = read_operand(symbol_id);
                 let addend = reloc.addend.saturating_add(imm);
                 if addend != 0 {
-                    let rhs = AsmValue::Constant(AsmConstant::Int(addend, AsmType::I64));
-                    let id = *next_id;
-                    instructions.push(build_binop(
-                        id,
-                        AsmInstructionKind::Add(value, rhs),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                    ));
-                    *next_id += 1;
-                    value = AsmValue::Register(id);
+                    let rhs = AsmOperand::Constant(AsmConstant::Int(addend, AsmType::I64));
+                    let id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, value, rhs);
+                        instructions.push(inst);
+                        *next_id += 1;
+                        dest
+                    };
+                    value = read_operand(id);
                 }
                 ctx.write_gpr(dst, value);
                 return Ok(());
             }
 
-            let value = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                kind: AsmInstructionKind::Freeze(value),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_gpr(dst, AsmValue::Register(id));
+            let value = AsmOperand::Constant(AsmConstant::Int(imm, AsmType::I64));
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(value);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_gpr(dst, read_operand(id));
             Ok(())
         }
         Decoded::Lea {
@@ -8405,11 +7464,11 @@ fn lift_non_terminator(
                             return write_gpr_with_width(
                                 ctx,
                                 dst,
-                                AsmValue::Constant(AsmConstant::String(text.clone())),
+                                AsmOperand::Constant(AsmConstant::String(text.clone())),
                                 width_bits,
                                 instructions,
                                 next_id,
-                            );
+    function,);
                         }
                     }
                 }
@@ -8423,8 +7482,8 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            write_gpr_with_width(ctx, dst, addr, width_bits, instructions, next_id)
+    function,)?;
+            write_gpr_with_width(ctx, dst, addr, width_bits, instructions, next_id, function)
         }
         Decoded::CallRel32 { imm_offset, target } => {
             let reloc_offset = inst
@@ -8434,7 +7493,7 @@ fn lift_non_terminator(
 
             let mut call_is_external = false;
 
-            let function = if let Some(reloc) = relocation_at(relocs, reloc_offset) {
+            let call_target = if let Some(reloc) = relocation_at(relocs, reloc_offset) {
                 if reloc.kind != object::RelocationKind::Relative
                     && reloc.kind != object::RelocationKind::PltRelative
                 {
@@ -8447,22 +7506,22 @@ fn lift_non_terminator(
                     return Err(Error::from("unsupported x86_64 call relocation encoding"));
                 }
                 call_is_external = relocation_is_external_call(reloc);
-                AsmValue::Function(reloc.symbol.clone())
+                AsmOperand::Symbol(Name::new(reloc.symbol.clone()))
             } else if let Some(symbol) = ctx.plt_targets.get(&target) {
                 call_is_external = true;
-                AsmValue::Function(symbol.clone())
+                AsmOperand::Symbol(Name::new(symbol.clone()))
             } else {
                 // Executables frequently use direct calls that do not carry
                 // relocations. We represent the callee as a synthetic symbol
                 // rooted at the target offset within the text slice so the
                 // object lifter can pull in the corresponding function body.
                 ctx.direct_call_targets.push(target);
-                AsmValue::Function(format!("sub_{target:x}"))
+                AsmOperand::Symbol(Name::new(format!("sub_{target:x}")))
             };
 
             let call_return_model = if call_is_external {
-                match &function {
-                    AsmValue::Function(name) => external_call_return_model(name),
+                match &call_target {
+                    AsmOperand::Symbol(name) => external_call_return_model(name),
                     _ => None,
                 }
             } else {
@@ -8471,7 +7530,7 @@ fn lift_non_terminator(
 
             let is_lifted_internal = ctx.use_lifted_regfile_calls
                 && !call_is_external
-                && matches!(&function, AsmValue::Function(_));
+                && matches!(&call_target, AsmOperand::Symbol(_));
 
             if is_lifted_internal {
                 ctx.end_block(instructions, next_id)?;
@@ -8483,85 +7542,87 @@ fn lift_non_terminator(
                 x86_64_sysv_call_args(ctx)?
             };
 
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function,
-                    args,
-                    calling_convention: if is_lifted_internal {
-                        CallingConvention::FpLiftedX86_64RegFile
-                    } else {
-                        CallingConvention::X86_64SysV
-                    },
-                    tail_call: false,
-                },
-                ty: if is_lifted_internal {
+            let id = {
+    let dest = function.alloc_virtual_register(if is_lifted_internal {
                     AsmType::Void
                 } else if call_is_external {
                     AsmType::I64
                 } else {
                     AsmType::I64
-                },
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+                }, asm_register_bank(&(if is_lifted_internal {
+                    AsmType::Void
+                } else if call_is_external {
+                    AsmType::I64
+                } else {
+                    AsmType::I64
+                })), asm_type_bits(&(if is_lifted_internal {
+                    AsmType::Void
+                } else if call_is_external {
+                    AsmType::I64
+                } else {
+                    AsmType::I64
+                })));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(AsmOperand::Attr(AsmAttr::CallingConv(if is_lifted_internal {
+                        CallingConvention::FpLiftedX86_64RegFile
+                    } else {
+                        CallingConvention::X86_64SysV
+                    })));
+    __ops.push(call_target);
+    __ops.extend(args);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
             if is_lifted_internal {
-                ctx.begin_block(instructions, next_id)?;
+                ctx.begin_block(instructions, next_id, function)?;
             } else if call_is_external {
                 if let Some(model) = call_return_model {
                     match model {
                         ExternalCallReturnModel::I64 => {
-                            ctx.write_gpr(0, AsmValue::Register(id));
+                            ctx.write_gpr(0, read_operand(id));
                         }
                         ExternalCallReturnModel::I32 => {
                             write_gpr_with_width(
                                 ctx,
                                 0,
-                                AsmValue::Register(id),
+                                read_operand(id),
                                 32,
                                 instructions,
                                 next_id,
-                            )?;
+    function,)?;
                         }
                     }
                 } else {
-                    ctx.write_gpr(0, AsmValue::Register(id));
+                    ctx.write_gpr(0, read_operand(id));
                 }
             } else {
-                ctx.write_gpr(0, AsmValue::Register(id));
+                ctx.write_gpr(0, read_operand(id));
             }
             Ok(())
         }
         Decoded::IncRm { target, width_bits } => {
-            let one = AsmValue::Constant(AsmConstant::Int(1, AsmType::I64));
+            let one = AsmOperand::Constant(AsmConstant::Int(1, AsmType::I64));
             match target {
                 RmOperand::Reg(reg) => {
                     let lhs = ctx.read_gpr(reg)?;
-                    let id = *next_id;
-                    instructions.push(build_binop(
-                        id,
-                        AsmInstructionKind::Add(lhs.clone(), one),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                    ));
-                    *next_id += 1;
-                    let mut value = AsmValue::Register(id);
-                    if width_bits == 32 {
-                        let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-                        let and_id = *next_id;
-                        instructions.push(build_binop(
-                            and_id,
-                            AsmInstructionKind::And(value, mask),
-                            AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                        ));
+                    let id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, lhs.clone(), one);
+                        instructions.push(inst);
                         *next_id += 1;
-                        value = AsmValue::Register(and_id);
+                        dest
+                    };
+                    let mut value = read_operand(id);
+                    if width_bits == 32 {
+                        let mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                        let and_id = {
+                            let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, value, mask);
+                            instructions.push(inst);
+                            *next_id += 1;
+                            dest
+                        };
+                        value = read_operand(and_id);
                     }
                     ctx.write_gpr(reg, value);
                     Ok(())
@@ -8578,65 +7639,43 @@ fn lift_non_terminator(
                         relocs,
                         instructions,
                         next_id,
-                    )?;
-                    let load_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: load_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                        kind: AsmInstructionKind::Load {
-                            address: addr.clone(),
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+    function,)?;
+                    let load_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr.clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                    let add_id = *next_id;
-                    instructions.push(build_binop(
-                        add_id,
-                        AsmInstructionKind::Add(AsmValue::Register(load_id), one),
-                        AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                    ));
-                    *next_id += 1;
-                    let mut value = AsmValue::Register(add_id);
-                    if width_bits == 32 {
-                        let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-                        let and_id = *next_id;
-                        instructions.push(build_binop(
-                            and_id,
-                            AsmInstructionKind::And(value, mask),
-                            AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                        ));
+                    let add_id = {
+                        let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, read_operand(load_id), one);
+                        instructions.push(inst);
                         *next_id += 1;
-                        value = AsmValue::Register(and_id);
+                        dest
+                    };
+                    let mut value = read_operand(add_id);
+                    if width_bits == 32 {
+                        let mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                        let and_id = {
+                            let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, value, mask);
+                            instructions.push(inst);
+                            *next_id += 1;
+                            dest
+                        };
+                        value = read_operand(and_id);
                     }
 
-                    let store_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: store_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                        kind: AsmInstructionKind::Store {
-                            value,
-                            address: addr,
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::Void,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+                    let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(value);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
                     Ok(())
                 }
             }
@@ -8652,13 +7691,13 @@ fn lift_non_terminator(
             instructions,
             next_id,
             fp_core::asmir::AsmGenericOpcode::Sub,
-        ),
+    function,),
         Decoded::MovSxd { dst, src } => {
             let value = match src {
                 RmOperand::Reg(src) => ctx.read_gpr(src)?,
                 RmOperand::Mem(memory) => {
                     if memory.segment.is_some() {
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64))
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64))
                     } else {
                         let addr = compute_address(
                             ctx,
@@ -8668,61 +7707,42 @@ fn lift_non_terminator(
                             relocs,
                             instructions,
                             next_id,
-                        )?;
-                        let load_id = *next_id;
-                        instructions.push(AsmInstruction {
-                            id: load_id,
-                            opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                            kind: AsmInstructionKind::Load {
-                                address: addr,
-                                alignment: None,
-                                volatile: false,
-                            },
-                            ty: AsmType::I32,
-                            operands: Vec::new(),
-                            implicit_uses: Vec::new(),
-                            implicit_defs: Vec::new(),
-                            encoding: None,
-                            debug_info: None,
-                            annotations: Vec::new(),
-                        });
-                        *next_id += 1;
-                        AsmValue::Register(load_id)
+    function,)?;
+                        let load_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                        read_operand(load_id)
                     }
                 }
             };
 
-            let trunc_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: trunc_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc),
-                kind: AsmInstructionKind::Trunc(value, AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let trunc_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(value);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let sext_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: sext_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::SExt),
-                kind: AsmInstructionKind::SExt(AsmValue::Register(trunc_id), AsmType::I64),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let sext_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(trunc_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::SExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            ctx.write_gpr(dst, AsmValue::Register(sext_id));
+            ctx.write_gpr(dst, read_operand(sext_id));
             Ok(())
         }
         Decoded::MovSx {
@@ -8735,7 +7755,7 @@ fn lift_non_terminator(
                 RmOperand::Reg(src) => ctx.read_gpr(src)?,
                 RmOperand::Mem(memory) => {
                     if memory.segment.is_some() {
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64))
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64))
                     } else {
                         let addr = compute_address(
                             ctx,
@@ -8745,29 +7765,26 @@ fn lift_non_terminator(
                             relocs,
                             instructions,
                             next_id,
-                        )?;
-                        let load_id = *next_id;
-                        instructions.push(AsmInstruction {
-                            id: load_id,
-                            opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                            kind: AsmInstructionKind::Load {
-                                address: addr,
-                                alignment: None,
-                                volatile: false,
-                            },
-                            ty: match src_width_bits {
+    function,)?;
+                        let load_id = {
+    let dest = function.alloc_virtual_register(match src_width_bits {
                                 8 => AsmType::I8,
                                 _ => AsmType::I16,
-                            },
-                            operands: Vec::new(),
-                            implicit_uses: Vec::new(),
-                            implicit_defs: Vec::new(),
-                            encoding: None,
-                            debug_info: None,
-                            annotations: Vec::new(),
-                        });
-                        *next_id += 1;
-                        AsmValue::Register(load_id)
+                            }, asm_register_bank(&(match src_width_bits {
+                                8 => AsmType::I8,
+                                _ => AsmType::I16,
+                            })), asm_type_bits(&(match src_width_bits {
+                                8 => AsmType::I8,
+                                _ => AsmType::I16,
+                            })));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                        read_operand(load_id)
                     }
                 }
             };
@@ -8776,44 +7793,34 @@ fn lift_non_terminator(
                 8 => AsmType::I8,
                 _ => AsmType::I16,
             };
-            let trunc_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: trunc_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc),
-                kind: AsmInstructionKind::Trunc(raw, truncated_type.clone()),
-                ty: truncated_type,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let trunc_id = {
+    let dest = function.alloc_virtual_register(truncated_type.clone(), asm_register_bank(&truncated_type), asm_type_bits(&truncated_type));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(raw);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let sext_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: sext_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::SExt),
-                kind: AsmInstructionKind::SExt(AsmValue::Register(trunc_id), AsmType::I64),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let sext_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(trunc_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::SExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
             write_gpr_with_width(
                 ctx,
                 dst,
-                AsmValue::Register(sext_id),
+                read_operand(sext_id),
                 dst_width_bits,
                 instructions,
                 next_id,
-            )
+    function,)
         }
         Decoded::DivRm {
             src,
@@ -8836,43 +7843,39 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
-            let quot_id = *next_id;
-            instructions.push(build_binop(
-                quot_id,
-                AsmInstructionKind::Div(rax.clone(), divisor.clone()),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Div),
-            ));
-            *next_id += 1;
-            let rem_id = *next_id;
-            instructions.push(build_binop(
-                rem_id,
-                AsmInstructionKind::Rem(rax, divisor),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Rem),
-            ));
-            *next_id += 1;
+            let quot_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Div, rax.clone(), divisor.clone());
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
+            let rem_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Rem, rax, divisor);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let mut quot = AsmValue::Register(quot_id);
-            let mut rem = AsmValue::Register(rem_id);
+            let mut quot = read_operand(quot_id);
+            let mut rem = read_operand(rem_id);
             if width_bits == 32 {
-                let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-                let q_id = *next_id;
-                instructions.push(build_binop(
-                    q_id,
-                    AsmInstructionKind::And(quot, mask.clone()),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                ));
-                *next_id += 1;
-                quot = AsmValue::Register(q_id);
-                let r_id = *next_id;
-                instructions.push(build_binop(
-                    r_id,
-                    AsmInstructionKind::And(rem, mask),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                ));
-                *next_id += 1;
-                rem = AsmValue::Register(r_id);
+                let mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                let q_id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, quot, mask.clone());
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
+                quot = read_operand(q_id);
+                let r_id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, rem, mask);
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
+                rem = read_operand(r_id);
             }
 
             ctx.write_gpr(0, quot);
@@ -8892,136 +7895,94 @@ fn lift_non_terminator(
                 ctx.read_gpr(8)?,
                 ctx.read_gpr(9)?,
             ];
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Syscall),
-                kind: AsmInstructionKind::Syscall {
-                    convention: syscall_convention,
-                    number,
-                    args,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_gpr(0, AsmValue::Register(id));
-            ctx.write_gpr(1, AsmValue::Undef(AsmType::I64));
-            ctx.write_gpr(11, AsmValue::Undef(AsmType::I64));
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(AsmOperand::Attr(AsmAttr::SyscallConvention(syscall_convention)));
+    __ops.push(number);
+    __ops.extend(args);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Syscall), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_gpr(0, read_operand(id));
+            ctx.write_gpr(1, AsmOperand::Constant(AsmConstant::Undef(AsmType::I64)));
+            ctx.write_gpr(11, AsmOperand::Constant(AsmConstant::Undef(AsmType::I64)));
             Ok(())
         }
         Decoded::Vpbroadcastq { dst, src } => {
             let value = ctx.read_gpr(src)?;
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Splat),
-                kind: AsmInstructionKind::Splat {
-                    value,
-                    lane_bits: 64,
-                    lanes: 2,
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(id));
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(value);
+    __ops.push(AsmOperand::Immediate(i128::from(64)));
+    __ops.push(AsmOperand::Immediate(i128::from(2)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Splat), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(id));
             Ok(())
         }
         Decoded::ZeroXmm { dst } => {
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(id));
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                    ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(id));
             Ok(())
         }
         Decoded::OnesXmm { dst } => {
-            let zero_vec_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: zero_vec_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let zero_vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                    ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let ones = AsmValue::Constant(AsmConstant::UInt(u64::MAX, AsmType::I64));
+            let ones = AsmOperand::Constant(AsmConstant::UInt(u64::MAX, AsmType::I64));
 
-            let insert0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(zero_vec_id),
-                    lane: 0,
-                    value: ones.clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let insert0_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(zero_vec_id));
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(ones.clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(insert0_id),
-                    lane: 1,
-                    value: ones,
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert1_id));
+            let insert1_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(insert0_id));
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    __ops.push(ones);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert1_id));
             Ok(())
         }
         Decoded::Vcvtusi2sd {
@@ -9039,58 +8000,41 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
-            let fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::UIToFP),
-                kind: AsmInstructionKind::UIToFP(int_value, AsmType::F64),
-                ty: AsmType::F64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(int_value);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::UIToFP), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let bits_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: bits_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(fp_id), AsmType::I64),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let bits_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(fp_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: src_vec_value,
-                    lane: 0,
-                    value: AsmValue::Register(bits_id),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let insert0_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(src_vec_value);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(read_operand(bits_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            ctx.write_vec(dst, AsmValue::Register(insert0_id));
+            ctx.write_vec(dst, read_operand(insert0_id));
             Ok(())
         }
         Decoded::Vcvtusi2ss {
@@ -9101,34 +8045,23 @@ fn lift_non_terminator(
         } => {
             let base_vec = ctx.read_vec(src_vec)?;
 
-            let old_lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: old_lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: base_vec.clone(),
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let old_lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let preserved_id = *next_id;
-            instructions.push(build_binop(
-                preserved_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(old_lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(!0xFFFF_FFFFu64, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let preserved_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(old_lane0_id), AsmOperand::Constant(AsmConstant::UInt(!0xFFFF_FFFFu64, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
             let int_value = value_from_rm_with_width(
                 ctx,
@@ -9138,120 +8071,82 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
-            let fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::UIToFP),
-                kind: AsmInstructionKind::UIToFP(int_value, AsmType::F32),
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(int_value);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::UIToFP), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let bits_i32_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: bits_i32_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(fp_id), AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let bits_i32_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(fp_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let bits_i64_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: bits_i64_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt),
-                kind: AsmInstructionKind::ZExt(AsmValue::Register(bits_i32_id), AsmType::I64),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let bits_i64_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(bits_i32_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let merged_id = *next_id;
-            instructions.push(build_binop(
-                merged_id,
-                AsmInstructionKind::Or(
-                    AsmValue::Register(preserved_id),
-                    AsmValue::Register(bits_i64_id),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let merged_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(preserved_id), read_operand(bits_i64_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let insert_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: base_vec,
-                    lane: 0,
-                    value: AsmValue::Register(merged_id),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert_id));
+            let insert_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(read_operand(merged_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert_id));
             Ok(())
         }
         Decoded::VmulsdMem { dst, lhs, rhs } => {
             let lhs_vec = ctx.read_vec(lhs)?;
 
-            let lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: lhs_vec.clone(),
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let lhs_fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs_fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(lane0_id), AsmType::F64),
-                ty: AsmType::F64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs_fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lane0_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
             let addr = compute_address(
                 ctx,
@@ -9261,244 +8156,159 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let rhs_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: addr,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::F64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+    function,)?;
+            let rhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let mul_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: mul_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
-                kind: AsmInstructionKind::Mul(
-                    AsmValue::Register(lhs_fp_id),
-                    AsmValue::Register(rhs_id),
-                ),
-                ty: AsmType::F64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let mul_id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_fp_id));
+    __ops.push(read_operand(rhs_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let bits_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: bits_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(mul_id), AsmType::I64),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let bits_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(mul_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: lhs_vec,
-                    lane: 0,
-                    value: AsmValue::Register(bits_id),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let insert_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(read_operand(bits_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            ctx.write_vec(dst, AsmValue::Register(insert_id));
+            ctx.write_vec(dst, read_operand(insert_id));
             Ok(())
         }
         Decoded::Vdivsd { dst, lhs, rhs } => {
             let lhs_vec = ctx.read_vec(lhs)?;
             let rhs_vec = ctx.read_vec(rhs)?;
 
-            let lhs_lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs_lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: lhs_vec.clone(),
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs_lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let rhs_lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs_lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: rhs_vec,
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let rhs_lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rhs_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let lhs_fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs_fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(lhs_lane0_id), AsmType::F64),
-                ty: AsmType::F64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs_fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_lane0_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let rhs_fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs_fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(rhs_lane0_id), AsmType::F64),
-                ty: AsmType::F64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let rhs_fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(rhs_lane0_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let div_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: div_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Div),
-                kind: AsmInstructionKind::Div(
-                    AsmValue::Register(lhs_fp_id),
-                    AsmValue::Register(rhs_fp_id),
-                ),
-                ty: AsmType::F64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let div_id = {
+    let dest = function.alloc_virtual_register(AsmType::F64, asm_register_bank(&(AsmType::F64)), asm_type_bits(&(AsmType::F64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_fp_id));
+    __ops.push(read_operand(rhs_fp_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Div), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let bits_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: bits_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(div_id), AsmType::I64),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let bits_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(div_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: lhs_vec,
-                    lane: 0,
-                    value: AsmValue::Register(bits_id),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let insert_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(read_operand(bits_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            ctx.write_vec(dst, AsmValue::Register(insert_id));
+            ctx.write_vec(dst, read_operand(insert_id));
             Ok(())
         }
         Decoded::VmovupsStore { dst, src } => {
             let src_vec = ctx.read_vec(src)?;
 
-            let lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: src_vec.clone(),
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(src_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let lane1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lane1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: src_vec,
-                    lane: 1,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lane1_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(src_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
             let addr = compute_address(
                 ctx,
@@ -9508,57 +8318,31 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let store0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: store0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                kind: AsmInstructionKind::Store {
-                    value: AsmValue::Register(lane0_id),
-                    address: addr.clone(),
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::Void,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+    function,)?;
+            let _store0_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(read_operand(lane0_id));
+    __ops.push(addr.clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
 
-            let addr1_id = *next_id;
-            instructions.push(build_binop(
-                addr1_id,
-                AsmInstructionKind::Add(
-                    addr,
-                    AsmValue::Constant(AsmConstant::Int(8, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-            ));
-            *next_id += 1;
+            let addr1_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, addr, AsmOperand::Constant(AsmConstant::Int(8, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let store1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: store1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                kind: AsmInstructionKind::Store {
-                    value: AsmValue::Register(lane1_id),
-                    address: AsmValue::Register(addr1_id),
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::Void,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let _store1_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(read_operand(lane1_id));
+    __ops.push(read_operand(addr1_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
             Ok(())
         }
         Decoded::VmovupsLoad { dst, src } => {
@@ -9570,115 +8354,72 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let load0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: load0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: addr.clone(),
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+    function,)?;
+            let load0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr.clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let addr1_id = *next_id;
-            instructions.push(build_binop(
-                addr1_id,
-                AsmInstructionKind::Add(
-                    addr,
-                    AsmValue::Constant(AsmConstant::Int(8, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-            ));
-            *next_id += 1;
+            let addr1_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, addr, AsmOperand::Constant(AsmConstant::Int(8, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let load1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: load1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: AsmValue::Register(addr1_id),
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let load1_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(addr1_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let zero_vec_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: zero_vec_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let zero_vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                    ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(zero_vec_id),
-                    lane: 0,
-                    value: AsmValue::Register(load0_id),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let insert0_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(zero_vec_id));
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(read_operand(load0_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(insert0_id),
-                    lane: 1,
-                    value: AsmValue::Register(load1_id),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let insert1_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(insert0_id));
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    __ops.push(read_operand(load1_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            ctx.write_vec(dst, AsmValue::Register(insert1_id));
+            ctx.write_vec(dst, read_operand(insert1_id));
             Ok(())
         }
         Decoded::VmovssLoad { dst, src } => {
@@ -9691,87 +8432,61 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
-            let old_lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: old_lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: dst_vec.clone(),
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let old_lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(dst_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let preserved_id = *next_id;
-            instructions.push(build_binop(
-                preserved_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(old_lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(!0xFFFF_FFFFu64, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let preserved_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(old_lane0_id), AsmOperand::Constant(AsmConstant::UInt(!0xFFFF_FFFFu64, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let merged_id = *next_id;
-            instructions.push(build_binop(
-                merged_id,
-                AsmInstructionKind::Or(AsmValue::Register(preserved_id), new_low),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let merged_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(preserved_id), new_low);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let insert_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: dst_vec,
-                    lane: 0,
-                    value: AsmValue::Register(merged_id),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert_id));
+            let insert_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(dst_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(read_operand(merged_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert_id));
             Ok(())
         }
         Decoded::VmovssStore { dst, src } => {
             let src_vec = ctx.read_vec(src)?;
-            let lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: src_vec,
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(src_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let stored = value_for_store(32, AsmValue::Register(lane0_id), instructions, next_id)?;
+            let stored = value_for_store(32, read_operand(lane0_id), instructions, next_id, function)?;
             let addr = compute_address(
                 ctx,
                 dst,
@@ -9780,88 +8495,56 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let store_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: store_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                kind: AsmInstructionKind::Store {
-                    value: stored,
-                    address: addr,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::Void,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+    function,)?;
+            let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(stored);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
             Ok(())
         }
         Decoded::VcomissMem { lhs, rhs } => {
             let lhs_vec = ctx.read_vec(lhs)?;
-            let lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: lhs_vec,
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let mask_id = *next_id;
-            instructions.push(build_binop(
-                mask_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let mask_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(lane0_id), AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let trunc_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: trunc_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc),
-                kind: AsmInstructionKind::Trunc(AsmValue::Register(mask_id), AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let trunc_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(mask_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let lhs_fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs_fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(trunc_id), AsmType::F32),
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs_fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(trunc_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
             let addr = compute_address(
                 ctx,
@@ -9871,36 +8554,25 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let rhs_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: addr,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+    function,)?;
+            let rhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let cmp_id = *next_id;
-            instructions.push(compare_instruction(
-                cmp_id,
-                AsmInstructionKind::Eq(AsmValue::Register(lhs_fp_id), AsmValue::Register(rhs_id)),
-                fp_core::asmir::AsmGenericOpcode::Eq,
-            ));
+            let cmp_id_instr_id = *next_id;
+            let (cmp_inst, cmp_id) = compare_instruction(cmp_id_instr_id, function, fp_core::asmir::AsmGenericOpcode::Eq, read_operand(lhs_fp_id), read_operand(rhs_id));
+            instructions.push(cmp_inst);
             *next_id += 1;
             *last_compare = Some(LastCompare {
-                id: cmp_id,
+                id: cmp_id_instr_id,
                 index: instructions.len() - 1,
+                vreg: cmp_id,
                 is_float: false,
             });
             Ok(())
@@ -9909,137 +8581,90 @@ fn lift_non_terminator(
             let lhs_vec = ctx.read_vec(lhs)?;
             let rhs_vec = ctx.read_vec(rhs)?;
 
-            let lhs_lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs_lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: lhs_vec,
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs_lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let rhs_lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs_lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: rhs_vec,
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let rhs_lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rhs_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let lhs_mask_id = *next_id;
-            instructions.push(build_binop(
-                lhs_mask_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(lhs_lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let lhs_mask_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(lhs_lane0_id), AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let rhs_mask_id = *next_id;
-            instructions.push(build_binop(
-                rhs_mask_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(rhs_lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let rhs_mask_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(rhs_lane0_id), AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let lhs_trunc_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs_trunc_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc),
-                kind: AsmInstructionKind::Trunc(AsmValue::Register(lhs_mask_id), AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs_trunc_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_mask_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let rhs_trunc_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs_trunc_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc),
-                kind: AsmInstructionKind::Trunc(AsmValue::Register(rhs_mask_id), AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let rhs_trunc_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(rhs_mask_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let lhs_fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs_fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(lhs_trunc_id), AsmType::F32),
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs_fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_trunc_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let rhs_fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs_fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(rhs_trunc_id), AsmType::F32),
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let rhs_fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(rhs_trunc_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let cmp_id = *next_id;
-            instructions.push(compare_instruction(
-                cmp_id,
-                AsmInstructionKind::Eq(
-                    AsmValue::Register(lhs_fp_id),
-                    AsmValue::Register(rhs_fp_id),
-                ),
-                fp_core::asmir::AsmGenericOpcode::Eq,
-            ));
+            let cmp_id_instr_id = *next_id;
+            let (cmp_inst, cmp_id) = compare_instruction(cmp_id_instr_id, function, fp_core::asmir::AsmGenericOpcode::Eq, read_operand(lhs_fp_id), read_operand(rhs_fp_id));
+            instructions.push(cmp_inst);
             *next_id += 1;
             *last_compare = Some(LastCompare {
-                id: cmp_id,
+                id: cmp_id_instr_id,
                 index: instructions.len() - 1,
+                vreg: cmp_id,
                 is_float: true,
             });
             Ok(())
@@ -10047,75 +8672,50 @@ fn lift_non_terminator(
         Decoded::VaddssMem { dst, lhs, rhs } => {
             let base_vec = ctx.read_vec(lhs)?;
 
-            let old_lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: old_lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: base_vec.clone(),
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let old_lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let preserved_id = *next_id;
-            instructions.push(build_binop(
-                preserved_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(old_lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(!0xFFFF_FFFFu64, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let preserved_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(old_lane0_id), AsmOperand::Constant(AsmConstant::UInt(!0xFFFF_FFFFu64, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let low_mask_id = *next_id;
-            instructions.push(build_binop(
-                low_mask_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(old_lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let low_mask_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(old_lane0_id), AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let lhs_i32_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs_i32_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc),
-                kind: AsmInstructionKind::Trunc(AsmValue::Register(low_mask_id), AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs_i32_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(low_mask_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let lhs_fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs_fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(lhs_i32_id), AsmType::F32),
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs_fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_i32_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
             let addr = compute_address(
                 ctx,
@@ -10125,392 +8725,256 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let rhs_fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs_fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: addr,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+    function,)?;
+            let rhs_fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let add_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: add_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                kind: AsmInstructionKind::Add(
-                    AsmValue::Register(lhs_fp_id),
-                    AsmValue::Register(rhs_fp_id),
-                ),
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let add_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_fp_id));
+    __ops.push(read_operand(rhs_fp_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let bits_i32_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: bits_i32_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(add_id), AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let bits_i32_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(add_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let bits_i64_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: bits_i64_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt),
-                kind: AsmInstructionKind::ZExt(AsmValue::Register(bits_i32_id), AsmType::I64),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let bits_i64_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(bits_i32_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let merged_id = *next_id;
-            instructions.push(build_binop(
-                merged_id,
-                AsmInstructionKind::Or(
-                    AsmValue::Register(preserved_id),
-                    AsmValue::Register(bits_i64_id),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let merged_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(preserved_id), read_operand(bits_i64_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let insert_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: base_vec,
-                    lane: 0,
-                    value: AsmValue::Register(merged_id),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let insert_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(read_operand(merged_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            ctx.write_vec(dst, AsmValue::Register(insert_id));
+            ctx.write_vec(dst, read_operand(insert_id));
             Ok(())
         }
         Decoded::Vdivss { dst, lhs, rhs } => {
             let base_vec = ctx.read_vec(lhs)?;
             let rhs_vec = ctx.read_vec(rhs)?;
 
-            let old_lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: old_lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: base_vec.clone(),
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let old_lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let rhs_lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs_lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: rhs_vec,
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let rhs_lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rhs_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let preserved_id = *next_id;
-            instructions.push(build_binop(
-                preserved_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(old_lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(!0xFFFF_FFFFu64, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let preserved_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(old_lane0_id), AsmOperand::Constant(AsmConstant::UInt(!0xFFFF_FFFFu64, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let lhs_low_mask_id = *next_id;
-            instructions.push(build_binop(
-                lhs_low_mask_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(old_lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let lhs_low_mask_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(old_lane0_id), AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let rhs_low_mask_id = *next_id;
-            instructions.push(build_binop(
-                rhs_low_mask_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(rhs_lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let rhs_low_mask_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(rhs_lane0_id), AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let lhs_i32_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs_i32_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc),
-                kind: AsmInstructionKind::Trunc(AsmValue::Register(lhs_low_mask_id), AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs_i32_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_low_mask_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let rhs_i32_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs_i32_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc),
-                kind: AsmInstructionKind::Trunc(AsmValue::Register(rhs_low_mask_id), AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let rhs_i32_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(rhs_low_mask_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let lhs_fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs_fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(lhs_i32_id), AsmType::F32),
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs_fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_i32_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let rhs_fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs_fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(rhs_i32_id), AsmType::F32),
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let rhs_fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(rhs_i32_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let div_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: div_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Div),
-                kind: AsmInstructionKind::Div(
-                    AsmValue::Register(lhs_fp_id),
-                    AsmValue::Register(rhs_fp_id),
-                ),
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let div_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_fp_id));
+    __ops.push(read_operand(rhs_fp_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Div), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let bits_i32_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: bits_i32_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(div_id), AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let bits_i32_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(div_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let bits_i64_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: bits_i64_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt),
-                kind: AsmInstructionKind::ZExt(AsmValue::Register(bits_i32_id), AsmType::I64),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let bits_i64_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(bits_i32_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let merged_id = *next_id;
-            instructions.push(build_binop(
-                merged_id,
-                AsmInstructionKind::Or(
-                    AsmValue::Register(preserved_id),
-                    AsmValue::Register(bits_i64_id),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let merged_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(preserved_id), read_operand(bits_i64_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let insert_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: base_vec,
-                    lane: 0,
-                    value: AsmValue::Register(merged_id),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert_id));
+            let insert_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(read_operand(merged_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert_id));
             Ok(())
         }
         Decoded::VdivssMem { dst, lhs, rhs } => {
             let base_vec = ctx.read_vec(lhs)?;
 
-            let old_lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: old_lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: base_vec.clone(),
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let old_lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let preserved_id = *next_id;
-            instructions.push(build_binop(
-                preserved_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(old_lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(!0xFFFF_FFFFu64, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let preserved_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(old_lane0_id), AsmOperand::Constant(AsmConstant::UInt(!0xFFFF_FFFFu64, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let lhs_low_mask_id = *next_id;
-            instructions.push(build_binop(
-                lhs_low_mask_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(old_lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let lhs_low_mask_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(old_lane0_id), AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let lhs_i32_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs_i32_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc),
-                kind: AsmInstructionKind::Trunc(AsmValue::Register(lhs_low_mask_id), AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs_i32_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_low_mask_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let lhs_fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs_fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(lhs_i32_id), AsmType::F32),
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs_fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_i32_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
             let addr = compute_address(
                 ctx,
@@ -10520,104 +8984,67 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let rhs_fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs_fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: addr,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+    function,)?;
+            let rhs_fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let div_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: div_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Div),
-                kind: AsmInstructionKind::Div(
-                    AsmValue::Register(lhs_fp_id),
-                    AsmValue::Register(rhs_fp_id),
-                ),
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let div_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_fp_id));
+    __ops.push(read_operand(rhs_fp_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Div), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let bits_i32_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: bits_i32_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(div_id), AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let bits_i32_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(div_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let bits_i64_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: bits_i64_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt),
-                kind: AsmInstructionKind::ZExt(AsmValue::Register(bits_i32_id), AsmType::I64),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let bits_i64_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(bits_i32_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let merged_id = *next_id;
-            instructions.push(build_binop(
-                merged_id,
-                AsmInstructionKind::Or(
-                    AsmValue::Register(preserved_id),
-                    AsmValue::Register(bits_i64_id),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let merged_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(preserved_id), read_operand(bits_i64_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let insert_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: base_vec,
-                    lane: 0,
-                    value: AsmValue::Register(merged_id),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert_id));
+            let insert_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(read_operand(merged_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert_id));
             Ok(())
         }
         Decoded::Vcvttss2usi {
@@ -10626,374 +9053,249 @@ fn lift_non_terminator(
             width_bits,
         } => {
             let src_vec = ctx.read_vec(src)?;
-            let lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: src_vec,
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(src_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let mask_id = *next_id;
-            instructions.push(build_binop(
-                mask_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let mask_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(lane0_id), AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let trunc_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: trunc_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc),
-                kind: AsmInstructionKind::Trunc(AsmValue::Register(mask_id), AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let trunc_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(mask_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(trunc_id), AsmType::F32),
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(trunc_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let int_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: int_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::FPToUI),
-                kind: AsmInstructionKind::FPToUI(AsmValue::Register(fp_id), AsmType::I64),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let int_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(fp_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::FPToUI), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
             write_gpr_with_width(
                 ctx,
                 dst,
-                AsmValue::Register(int_id),
+                read_operand(int_id),
                 width_bits,
                 instructions,
                 next_id,
-            )
+    function,)
         }
         Decoded::Vmulss { dst, lhs, rhs } => {
             let base_vec = ctx.read_vec(lhs)?;
             let rhs_vec = ctx.read_vec(rhs)?;
 
-            let old_lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: old_lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: base_vec.clone(),
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let old_lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let rhs_lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs_lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: rhs_vec,
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let rhs_lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rhs_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let preserved_id = *next_id;
-            instructions.push(build_binop(
-                preserved_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(old_lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(!0xFFFF_FFFFu64, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let preserved_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(old_lane0_id), AsmOperand::Constant(AsmConstant::UInt(!0xFFFF_FFFFu64, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let lhs_low_mask_id = *next_id;
-            instructions.push(build_binop(
-                lhs_low_mask_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(old_lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let lhs_low_mask_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(old_lane0_id), AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let rhs_low_mask_id = *next_id;
-            instructions.push(build_binop(
-                rhs_low_mask_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(rhs_lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let rhs_low_mask_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(rhs_lane0_id), AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let lhs_i32_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs_i32_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc),
-                kind: AsmInstructionKind::Trunc(AsmValue::Register(lhs_low_mask_id), AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs_i32_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_low_mask_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let rhs_i32_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs_i32_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc),
-                kind: AsmInstructionKind::Trunc(AsmValue::Register(rhs_low_mask_id), AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let rhs_i32_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(rhs_low_mask_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let lhs_fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs_fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(lhs_i32_id), AsmType::F32),
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs_fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_i32_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let rhs_fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs_fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(rhs_i32_id), AsmType::F32),
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let rhs_fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(rhs_i32_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let mul_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: mul_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
-                kind: AsmInstructionKind::Mul(
-                    AsmValue::Register(lhs_fp_id),
-                    AsmValue::Register(rhs_fp_id),
-                ),
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let mul_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_fp_id));
+    __ops.push(read_operand(rhs_fp_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let bits_i32_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: bits_i32_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(mul_id), AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let bits_i32_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(mul_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let bits_i64_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: bits_i64_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt),
-                kind: AsmInstructionKind::ZExt(AsmValue::Register(bits_i32_id), AsmType::I64),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let bits_i64_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(bits_i32_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let merged_id = *next_id;
-            instructions.push(build_binop(
-                merged_id,
-                AsmInstructionKind::Or(
-                    AsmValue::Register(preserved_id),
-                    AsmValue::Register(bits_i64_id),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let merged_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(preserved_id), read_operand(bits_i64_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let insert_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: base_vec,
-                    lane: 0,
-                    value: AsmValue::Register(merged_id),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert_id));
+            let insert_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(read_operand(merged_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert_id));
             Ok(())
         }
         Decoded::VmulssMem { dst, lhs, rhs } => {
             let base_vec = ctx.read_vec(lhs)?;
 
-            let old_lane0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: old_lane0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: base_vec.clone(),
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let old_lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let preserved_id = *next_id;
-            instructions.push(build_binop(
-                preserved_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(old_lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(!0xFFFF_FFFFu64, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let preserved_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(old_lane0_id), AsmOperand::Constant(AsmConstant::UInt(!0xFFFF_FFFFu64, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let lhs_low_mask_id = *next_id;
-            instructions.push(build_binop(
-                lhs_low_mask_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(old_lane0_id),
-                    AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let lhs_low_mask_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(old_lane0_id), AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let lhs_i32_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs_i32_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc),
-                kind: AsmInstructionKind::Trunc(AsmValue::Register(lhs_low_mask_id), AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs_i32_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_low_mask_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Trunc), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let lhs_fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs_fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(lhs_i32_id), AsmType::F32),
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs_fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_i32_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
             let addr = compute_address(
                 ctx,
@@ -11003,144 +9305,93 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let rhs_fp_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs_fp_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: addr,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+    function,)?;
+            let rhs_fp_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let mul_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: mul_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
-                kind: AsmInstructionKind::Mul(
-                    AsmValue::Register(lhs_fp_id),
-                    AsmValue::Register(rhs_fp_id),
-                ),
-                ty: AsmType::F32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let mul_id = {
+    let dest = function.alloc_virtual_register(AsmType::F32, asm_register_bank(&(AsmType::F32)), asm_type_bits(&(AsmType::F32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(lhs_fp_id));
+    __ops.push(read_operand(rhs_fp_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let bits_i32_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: bits_i32_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast),
-                kind: AsmInstructionKind::Bitcast(AsmValue::Register(mul_id), AsmType::I32),
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let bits_i32_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(mul_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Bitcast), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let bits_i64_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: bits_i64_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt),
-                kind: AsmInstructionKind::ZExt(AsmValue::Register(bits_i32_id), AsmType::I64),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let bits_i64_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(bits_i32_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let merged_id = *next_id;
-            instructions.push(build_binop(
-                merged_id,
-                AsmInstructionKind::Or(
-                    AsmValue::Register(preserved_id),
-                    AsmValue::Register(bits_i64_id),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let merged_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(preserved_id), read_operand(bits_i64_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let insert_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: base_vec,
-                    lane: 0,
-                    value: AsmValue::Register(merged_id),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert_id));
+            let insert_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(read_operand(merged_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert_id));
             Ok(())
         }
         Decoded::VpxorqXmmMem { dst, lhs, rhs } => {
             let lhs_vec = ctx.read_vec(lhs)?;
 
-            let lhs0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: lhs_vec.clone(),
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let lhs1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: lhs_vec,
-                    lane: 1,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs1_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
             let base_addr = compute_address(
                 ctx,
@@ -11150,130 +9401,85 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let rhs0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: base_addr.clone(),
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+    function,)?;
+            let rhs0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base_addr.clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let rhs1_addr_id = *next_id;
-            instructions.push(build_binop(
-                rhs1_addr_id,
-                AsmInstructionKind::Add(
-                    base_addr,
-                    AsmValue::Constant(AsmConstant::Int(8, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-            ));
-            *next_id += 1;
+            let rhs1_addr_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, base_addr, AsmOperand::Constant(AsmConstant::Int(8, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let rhs1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: AsmValue::Register(rhs1_addr_id),
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let rhs1_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(rhs1_addr_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let out0_id = *next_id;
-            instructions.push(build_binop(
-                out0_id,
-                AsmInstructionKind::Xor(AsmValue::Register(lhs0_id), AsmValue::Register(rhs0_id)),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Xor),
-            ));
-            *next_id += 1;
+            let out0_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Xor, read_operand(lhs0_id), read_operand(rhs0_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let out1_id = *next_id;
-            instructions.push(build_binop(
-                out1_id,
-                AsmInstructionKind::Xor(AsmValue::Register(lhs1_id), AsmValue::Register(rhs1_id)),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Xor),
-            ));
-            *next_id += 1;
+            let out1_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Xor, read_operand(lhs1_id), read_operand(rhs1_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let zero_vec_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: zero_vec_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let zero_vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                    ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(zero_vec_id),
-                    lane: 0,
-                    value: AsmValue::Register(out0_id),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let insert0_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(zero_vec_id));
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(read_operand(out0_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(insert0_id),
-                    lane: 1,
-                    value: AsmValue::Register(out1_id),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert1_id));
+            let insert1_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(insert0_id));
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    __ops.push(read_operand(out1_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert1_id));
             Ok(())
         }
         Decoded::Vpmaxuq { dst, lhs, rhs } => {
@@ -11286,134 +9492,91 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
             let lanes = [0u16, 1u16];
             let mut lane_values = Vec::with_capacity(2);
             for lane in lanes {
-                let lhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: lhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: lhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let lhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let rhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: rhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: rhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let rhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let cmp_id = *next_id;
-                instructions.push(compare_instruction(
-                    cmp_id,
-                    AsmInstructionKind::Ugt(AsmValue::Register(lhs_id), AsmValue::Register(rhs_id)),
-                    fp_core::asmir::AsmGenericOpcode::Ugt,
-                ));
-                *next_id += 1;
+                let cmp_id = {
+                    let (cmp_inst, dest) = compare_instruction(*next_id, function, fp_core::asmir::AsmGenericOpcode::Ugt, read_operand(lhs_id), read_operand(rhs_id));
+                    instructions.push(cmp_inst);
+                    *next_id += 1;
+                    dest
+                };
 
-                let select_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: select_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select),
-                    kind: AsmInstructionKind::Select {
-                        condition: AsmValue::Register(cmp_id),
-                        if_true: AsmValue::Register(lhs_id),
-                        if_false: AsmValue::Register(rhs_id),
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
-                lane_values.push(AsmValue::Register(select_id));
+                let select_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(cmp_id));
+    __ops.push(read_operand(lhs_id));
+    __ops.push(read_operand(rhs_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                lane_values.push(read_operand(select_id));
             }
 
-            let zero_vec_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: zero_vec_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let zero_vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                    ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(zero_vec_id),
-                    lane: 0,
-                    value: lane_values[0].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let insert0_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(zero_vec_id));
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(lane_values[0].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(insert0_id),
-                    lane: 1,
-                    value: lane_values[1].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert1_id));
+            let insert1_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(insert0_id));
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    __ops.push(lane_values[1].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert1_id));
             Ok(())
         }
         Decoded::Vpmaxud { dst, lhs, rhs } => {
@@ -11426,114 +9589,79 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
             let lanes = [0u16, 1u16];
             let mut lane_values = Vec::with_capacity(2);
             for lane in lanes {
-                let lhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: lhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: lhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let lhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let rhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: rhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: rhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let rhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
                 let out = packed_umax_i32x2(
-                    AsmValue::Register(lhs_id),
-                    AsmValue::Register(rhs_id),
+                    read_operand(lhs_id),
+                    read_operand(rhs_id),
                     instructions,
                     next_id,
-                );
+    function,);
                 lane_values.push(out);
             }
 
-            let zero_vec_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: zero_vec_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let zero_vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                    ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(zero_vec_id),
-                    lane: 0,
-                    value: lane_values[0].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let insert0_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(zero_vec_id));
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(lane_values[0].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(insert0_id),
-                    lane: 1,
-                    value: lane_values[1].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert1_id));
+            let insert1_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(insert0_id));
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    __ops.push(lane_values[1].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert1_id));
             Ok(())
         }
         Decoded::Vpminuq { dst, lhs, rhs } => {
@@ -11546,134 +9674,91 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
             let lanes = [0u16, 1u16];
             let mut lane_values = Vec::with_capacity(2);
             for lane in lanes {
-                let lhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: lhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: lhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let lhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let rhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: rhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: rhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let rhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let cmp_id = *next_id;
-                instructions.push(compare_instruction(
-                    cmp_id,
-                    AsmInstructionKind::Ugt(AsmValue::Register(lhs_id), AsmValue::Register(rhs_id)),
-                    fp_core::asmir::AsmGenericOpcode::Ugt,
-                ));
-                *next_id += 1;
+                let cmp_id = {
+                    let (cmp_inst, dest) = compare_instruction(*next_id, function, fp_core::asmir::AsmGenericOpcode::Ugt, read_operand(lhs_id), read_operand(rhs_id));
+                    instructions.push(cmp_inst);
+                    *next_id += 1;
+                    dest
+                };
 
-                let select_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: select_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select),
-                    kind: AsmInstructionKind::Select {
-                        condition: AsmValue::Register(cmp_id),
-                        if_true: AsmValue::Register(rhs_id),
-                        if_false: AsmValue::Register(lhs_id),
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
-                lane_values.push(AsmValue::Register(select_id));
+                let select_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(cmp_id));
+    __ops.push(read_operand(rhs_id));
+    __ops.push(read_operand(lhs_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                lane_values.push(read_operand(select_id));
             }
 
-            let zero_vec_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: zero_vec_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let zero_vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                    ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(zero_vec_id),
-                    lane: 0,
-                    value: lane_values[0].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let insert0_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(zero_vec_id));
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(lane_values[0].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(insert0_id),
-                    lane: 1,
-                    value: lane_values[1].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert1_id));
+            let insert1_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(insert0_id));
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    __ops.push(lane_values[1].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert1_id));
             Ok(())
         }
         Decoded::Vpsubq { dst, lhs, rhs } => {
@@ -11686,115 +9771,79 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
             let lanes = [0u16, 1u16];
             let mut lane_values = Vec::with_capacity(2);
             for lane in lanes {
-                let lhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: lhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: lhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let lhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let rhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: rhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: rhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let rhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let out_id = *next_id;
-                instructions.push(build_binop(
-                    out_id,
-                    AsmInstructionKind::Sub(AsmValue::Register(lhs_id), AsmValue::Register(rhs_id)),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Sub),
-                ));
-                *next_id += 1;
-                lane_values.push(AsmValue::Register(out_id));
+                let out_id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Sub, read_operand(lhs_id), read_operand(rhs_id));
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
+                lane_values.push(read_operand(out_id));
             }
 
-            let zero_vec_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: zero_vec_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let zero_vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                    ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(zero_vec_id),
-                    lane: 0,
-                    value: lane_values[0].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let insert0_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(zero_vec_id));
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(lane_values[0].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(insert0_id),
-                    lane: 1,
-                    value: lane_values[1].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert1_id));
+            let insert1_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(insert0_id));
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    __ops.push(lane_values[1].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert1_id));
             Ok(())
         }
         Decoded::Vpunpcklwd { dst, lhs, rhs } => {
@@ -11807,27 +9856,20 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZipLow),
-                kind: AsmInstructionKind::ZipLow {
-                    lhs: lhs_vec,
-                    rhs: rhs_vec,
-                    lane_bits: 16,
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(id));
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec);
+    __ops.push(rhs_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(16)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZipLow), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(id));
             Ok(())
         }
         Decoded::Vpunpckldq { dst, lhs, rhs } => {
@@ -11840,27 +9882,20 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZipLow),
-                kind: AsmInstructionKind::ZipLow {
-                    lhs: lhs_vec,
-                    rhs: rhs_vec,
-                    lane_bits: 32,
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(id));
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec);
+    __ops.push(rhs_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(32)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZipLow), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(id));
             Ok(())
         }
         Decoded::Vpunpcklqdq { dst, lhs, rhs } => {
@@ -11873,27 +9908,20 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZipLow),
-                kind: AsmInstructionKind::ZipLow {
-                    lhs: lhs_vec,
-                    rhs: rhs_vec,
-                    lane_bits: 64,
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(id));
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec);
+    __ops.push(rhs_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(64)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZipLow), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(id));
             Ok(())
         }
         Decoded::Vpaddd { dst, lhs, rhs } => {
@@ -11906,114 +9934,79 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
             let lanes = [0u16, 1u16];
             let mut lane_values = Vec::with_capacity(2);
             for lane in lanes {
-                let lhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: lhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: lhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let lhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let rhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: rhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: rhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let rhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
                 let out = packed_add_i32x2(
-                    AsmValue::Register(lhs_id),
-                    AsmValue::Register(rhs_id),
+                    read_operand(lhs_id),
+                    read_operand(rhs_id),
                     instructions,
                     next_id,
-                );
+    function,);
                 lane_values.push(out);
             }
 
-            let zero_vec_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: zero_vec_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let zero_vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                    ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(zero_vec_id),
-                    lane: 0,
-                    value: lane_values[0].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let insert0_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(zero_vec_id));
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(lane_values[0].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(insert0_id),
-                    lane: 1,
-                    value: lane_values[1].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert1_id));
+            let insert1_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(insert0_id));
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    __ops.push(lane_values[1].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert1_id));
             Ok(())
         }
         Decoded::Vpaddq { dst, lhs, rhs } => {
@@ -12026,115 +10019,79 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
             let lanes = [0u16, 1u16];
             let mut lane_values = Vec::with_capacity(2);
             for lane in lanes {
-                let lhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: lhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: lhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let lhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let rhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: rhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: rhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let rhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let out_id = *next_id;
-                instructions.push(build_binop(
-                    out_id,
-                    AsmInstructionKind::Add(AsmValue::Register(lhs_id), AsmValue::Register(rhs_id)),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                ));
-                *next_id += 1;
-                lane_values.push(AsmValue::Register(out_id));
+                let out_id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, read_operand(lhs_id), read_operand(rhs_id));
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
+                lane_values.push(read_operand(out_id));
             }
 
-            let zero_vec_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: zero_vec_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let zero_vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                    ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(zero_vec_id),
-                    lane: 0,
-                    value: lane_values[0].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let insert0_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(zero_vec_id));
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(lane_values[0].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(insert0_id),
-                    lane: 1,
-                    value: lane_values[1].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert1_id));
+            let insert1_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(insert0_id));
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    __ops.push(lane_values[1].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert1_id));
             Ok(())
         }
         Decoded::Vpsrldq { dst, src, imm } => {
@@ -12145,67 +10102,46 @@ fn lift_non_terminator(
                     Ok(())
                 }
                 8 => {
-                    let lane1_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: lane1_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                        kind: AsmInstructionKind::ExtractLane {
-                            vector: src_vec,
-                            lane: 1,
-                        },
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+                    let lane1_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(src_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                    let vec_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: vec_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                        kind: AsmInstructionKind::BuildVector {
-                            elements: vec![
-                                AsmValue::Register(lane1_id),
-                                AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                            ],
-                        },
-                        ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
-                    ctx.write_vec(dst, AsmValue::Register(vec_id));
+                    let vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                                read_operand(lane1_id),
+                                AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                            ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                    ctx.write_vec(dst, read_operand(vec_id));
                     Ok(())
                 }
                 imm if imm >= 16 => {
-                    let zero_vec_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: zero_vec_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                        kind: AsmInstructionKind::BuildVector {
-                            elements: vec![
-                                AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                                AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                            ],
-                        },
-                        ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
-                    ctx.write_vec(dst, AsmValue::Register(zero_vec_id));
+                    let zero_vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                                AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                                AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                            ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                    ctx.write_vec(dst, read_operand(zero_vec_id));
                     Ok(())
                 }
                 _ => Err(Error::from("unsupported x86_64 vpsrldq shift amount")),
@@ -12221,115 +10157,79 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
             let lanes = [0u16, 1u16];
             let mut lane_values = Vec::with_capacity(2);
             for lane in lanes {
-                let lhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: lhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: lhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let lhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let rhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: rhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: rhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let rhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let out_id = *next_id;
-                instructions.push(build_binop(
-                    out_id,
-                    AsmInstructionKind::And(AsmValue::Register(lhs_id), AsmValue::Register(rhs_id)),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                ));
-                *next_id += 1;
-                lane_values.push(AsmValue::Register(out_id));
+                let out_id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(lhs_id), read_operand(rhs_id));
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
+                lane_values.push(read_operand(out_id));
             }
 
-            let zero_vec_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: zero_vec_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let zero_vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                    ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(zero_vec_id),
-                    lane: 0,
-                    value: lane_values[0].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let insert0_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(zero_vec_id));
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(lane_values[0].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(insert0_id),
-                    lane: 1,
-                    value: lane_values[1].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert1_id));
+            let insert1_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(insert0_id));
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    __ops.push(lane_values[1].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert1_id));
             Ok(())
         }
         Decoded::Vporq { dst, lhs, rhs } => {
@@ -12342,227 +10242,155 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
             let lanes = [0u16, 1u16];
             let mut lane_values = Vec::with_capacity(2);
             for lane in lanes {
-                let lhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: lhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: lhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let lhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let rhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: rhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: rhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let rhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let out_id = *next_id;
-                instructions.push(build_binop(
-                    out_id,
-                    AsmInstructionKind::Or(AsmValue::Register(lhs_id), AsmValue::Register(rhs_id)),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-                ));
-                *next_id += 1;
-                lane_values.push(AsmValue::Register(out_id));
+                let out_id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(lhs_id), read_operand(rhs_id));
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
+                lane_values.push(read_operand(out_id));
             }
 
-            let zero_vec_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: zero_vec_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let zero_vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                    ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(zero_vec_id),
-                    lane: 0,
-                    value: lane_values[0].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let insert0_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(zero_vec_id));
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(lane_values[0].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(insert0_id),
-                    lane: 1,
-                    value: lane_values[1].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert1_id));
+            let insert1_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(insert0_id));
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    __ops.push(lane_values[1].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert1_id));
             Ok(())
         }
         Decoded::Vptest { lhs, rhs } => {
             let lhs_vec = ctx.read_vec(lhs)?;
             let rhs_vec = ctx.read_vec(rhs)?;
 
-            let lhs0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: lhs_vec.clone(),
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            let lhs1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: lhs1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: lhs_vec,
-                    lane: 1,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let lhs0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            let lhs1_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let rhs0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: rhs_vec.clone(),
-                    lane: 0,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            let rhs1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: rhs1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: rhs_vec,
-                    lane: 1,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let rhs0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            let rhs1_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rhs_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let and0_id = *next_id;
-            instructions.push(build_binop(
-                and0_id,
-                AsmInstructionKind::And(AsmValue::Register(lhs0_id), AsmValue::Register(rhs0_id)),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
-            let and1_id = *next_id;
-            instructions.push(build_binop(
-                and1_id,
-                AsmInstructionKind::And(AsmValue::Register(lhs1_id), AsmValue::Register(rhs1_id)),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let and0_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(lhs0_id), read_operand(rhs0_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
+            let and1_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(lhs1_id), read_operand(rhs1_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let or_id = *next_id;
-            instructions.push(build_binop(
-                or_id,
-                AsmInstructionKind::Or(AsmValue::Register(and0_id), AsmValue::Register(and1_id)),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let or_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(and0_id), read_operand(and1_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let cmp_id = *next_id;
-            instructions.push(compare_instruction(
-                cmp_id,
-                AsmInstructionKind::Eq(
-                    AsmValue::Register(or_id),
-                    AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                ),
-                fp_core::asmir::AsmGenericOpcode::Eq,
-            ));
+            let cmp_id_instr_id = *next_id;
+            let (cmp_inst, cmp_id) = compare_instruction(cmp_id_instr_id, function, fp_core::asmir::AsmGenericOpcode::Eq, read_operand(or_id), AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)));
+            instructions.push(cmp_inst);
             *next_id += 1;
             *last_compare = Some(LastCompare {
-                id: cmp_id,
+                id: cmp_id_instr_id,
                 index: instructions.len() - 1,
+                vreg: cmp_id,
                 is_float: true,
             });
             Ok(())
@@ -12577,88 +10405,60 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
             match imm {
                 0 => {
                     ctx.write_vec(dst, lhs_vec);
                     Ok(())
                 }
                 8 => {
-                    let lhs_lane1_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: lhs_lane1_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                        kind: AsmInstructionKind::ExtractLane {
-                            vector: lhs_vec.clone(),
-                            lane: 1,
-                        },
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+                    let lhs_lane1_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                    let rhs_lane0_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: rhs_lane0_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                        kind: AsmInstructionKind::ExtractLane {
-                            vector: rhs_vec,
-                            lane: 0,
-                        },
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+                    let rhs_lane0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rhs_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                    let insert0_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: insert0_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                        kind: AsmInstructionKind::InsertLane {
-                            vector: lhs_vec,
-                            lane: 0,
-                            value: AsmValue::Register(lhs_lane1_id),
-                        },
-                        ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+                    let insert0_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(read_operand(lhs_lane1_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                    let insert1_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: insert1_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                        kind: AsmInstructionKind::InsertLane {
-                            vector: AsmValue::Register(insert0_id),
-                            lane: 1,
-                            value: AsmValue::Register(rhs_lane0_id),
-                        },
-                        ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+                    let insert1_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(insert0_id));
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    __ops.push(read_operand(rhs_lane0_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                    ctx.write_vec(dst, AsmValue::Register(insert1_id));
+                    ctx.write_vec(dst, read_operand(insert1_id));
                     Ok(())
                 }
                 16 => {
@@ -12666,26 +10466,19 @@ fn lift_non_terminator(
                     Ok(())
                 }
                 imm if imm > 16 => {
-                    let zero_vec_id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id: zero_vec_id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                        kind: AsmInstructionKind::BuildVector {
-                            elements: vec![
-                                AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                                AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                            ],
-                        },
-                        ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
-                    ctx.write_vec(dst, AsmValue::Register(zero_vec_id));
+                    let zero_vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                                AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                                AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                            ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                    ctx.write_vec(dst, read_operand(zero_vec_id));
                     Ok(())
                 }
                 _ => Err(Error::from("unsupported x86_64 vpalignr immediate")),
@@ -12701,167 +10494,116 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
             let lanes = [0u16, 1u16];
             let mut lane_values = Vec::with_capacity(2);
             for lane in lanes {
-                let lhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: lhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: lhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let lhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(lhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let rhs_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: rhs_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                    kind: AsmInstructionKind::ExtractLane {
-                        vector: rhs_vec.clone(),
-                        lane,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let rhs_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(rhs_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-                let cmp_id = *next_id;
-                instructions.push(compare_instruction(
-                    cmp_id,
-                    AsmInstructionKind::Gt(AsmValue::Register(lhs_id), AsmValue::Register(rhs_id)),
-                    fp_core::asmir::AsmGenericOpcode::Gt,
-                ));
-                *next_id += 1;
+                let cmp_id = {
+                    let (cmp_inst, dest) = compare_instruction(*next_id, function, fp_core::asmir::AsmGenericOpcode::Gt, read_operand(lhs_id), read_operand(rhs_id));
+                    instructions.push(cmp_inst);
+                    *next_id += 1;
+                    dest
+                };
 
-                let select_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: select_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select),
-                    kind: AsmInstructionKind::Select {
-                        condition: AsmValue::Register(cmp_id),
-                        if_true: AsmValue::Register(lhs_id),
-                        if_false: AsmValue::Register(rhs_id),
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
-                lane_values.push(AsmValue::Register(select_id));
+                let select_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(cmp_id));
+    __ops.push(read_operand(lhs_id));
+    __ops.push(read_operand(rhs_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Select), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                lane_values.push(read_operand(select_id));
             }
 
-            let zero_vec_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: zero_vec_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let zero_vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                    ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(zero_vec_id),
-                    lane: 0,
-                    value: lane_values[0].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let insert0_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(zero_vec_id));
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    __ops.push(lane_values[0].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let insert1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: AsmValue::Register(insert0_id),
-                    lane: 1,
-                    value: lane_values[1].clone(),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert1_id));
+            let insert1_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(insert0_id));
+    __ops.push(AsmOperand::Immediate(i128::from(1)));
+    __ops.push(lane_values[1].clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert1_id));
             Ok(())
         }
         Decoded::MovdXmmFromGpr32 { dst, src } => {
             let raw = ctx.read_gpr(src)?;
-            let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-            let masked_id = *next_id;
-            instructions.push(build_binop(
-                masked_id,
-                AsmInstructionKind::And(raw, mask),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+            let masked_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, raw, mask);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let vec_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: vec_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![
-                        AsmValue::Register(masked_id),
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(vec_id));
+            let vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                        read_operand(masked_id),
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                    ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(vec_id));
             Ok(())
         }
         Decoded::MovdXmmFromMem32 { dst, src } => {
@@ -12877,62 +10619,41 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
-            let load_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: load_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: addr,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let load_id = {
+    let dest = function.alloc_virtual_register(AsmType::I32, asm_register_bank(&(AsmType::I32)), asm_type_bits(&(AsmType::I32)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let zext_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: zext_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt),
-                kind: AsmInstructionKind::ZExt(AsmValue::Register(load_id), AsmType::I64),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let zext_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(load_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let vec_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: vec_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![
-                        AsmValue::Register(zext_id),
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(vec_id));
+            let vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                        read_operand(zext_id),
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                    ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(vec_id));
             Ok(())
         }
         Decoded::MovdMem32FromXmm { dst, src } => {
@@ -12941,23 +10662,19 @@ fn lift_non_terminator(
             }
 
             let vector = ctx.read_vec(src)?;
-            let extract_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: extract_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane { vector, lane: 0 },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let extract_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(vector);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
             let stored =
-                value_for_store(32, AsmValue::Register(extract_id), instructions, next_id)?;
+                value_for_store(32, read_operand(extract_id), instructions, next_id, function)?;
             let addr = compute_address(
                 ctx,
                 dst,
@@ -12966,27 +10683,16 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
-            let store_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: store_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                kind: AsmInstructionKind::Store {
-                    value: stored,
-                    address: addr,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::Void,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(stored);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
             Ok(())
         }
         Decoded::MovdGpr32FromXmm {
@@ -12995,28 +10701,24 @@ fn lift_non_terminator(
             width_bits,
         } => {
             let vector = ctx.read_vec(src)?;
-            let extract_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: extract_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane { vector, lane: 0 },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let extract_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(vector);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
             write_gpr_with_width(
                 ctx,
                 dst,
-                AsmValue::Register(extract_id),
+                read_operand(extract_id),
                 width_bits,
                 instructions,
                 next_id,
-            )
+    function,)
         }
         Decoded::Pinsrd {
             dst,
@@ -13029,97 +10731,73 @@ fn lift_non_terminator(
             }
             let base_vec = ctx.read_vec(vector)?;
             let scalar =
-                value_from_rm_with_width(ctx, value, 32, *inst, relocs, instructions, next_id)?;
+                value_from_rm_with_width(ctx, value, 32, *inst, relocs, instructions, next_id, function)?;
 
             let half = u16::from(lane / 2);
             let part = lane % 2;
 
-            let extract_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: extract_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: base_vec.clone(),
-                    lane: half,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let extract_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(half)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let scalar_masked_id = *next_id;
-            instructions.push(build_binop(
-                scalar_masked_id,
-                AsmInstructionKind::And(
-                    scalar,
-                    AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let scalar_masked_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, scalar, AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
             let (preserve_mask, shifted_scalar) = if part == 0 {
                 (
-                    AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF_0000_0000, AsmType::I64)),
-                    AsmValue::Register(scalar_masked_id),
+                    AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF_0000_0000, AsmType::I64)),
+                    read_operand(scalar_masked_id),
                 )
             } else {
-                let shifted_id = *next_id;
-                instructions.push(build_binop(
-                    shifted_id,
-                    AsmInstructionKind::Shl(
-                        AsmValue::Register(scalar_masked_id),
-                        AsmValue::Constant(AsmConstant::Int(32, AsmType::I64)),
-                    ),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shl),
-                ));
-                *next_id += 1;
+                let shifted_id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shl, read_operand(scalar_masked_id), AsmOperand::Constant(AsmConstant::Int(32, AsmType::I64)));
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
                 (
-                    AsmValue::Constant(AsmConstant::UInt(0x0000_0000_FFFF_FFFF, AsmType::I64)),
-                    AsmValue::Register(shifted_id),
+                    AsmOperand::Constant(AsmConstant::UInt(0x0000_0000_FFFF_FFFF, AsmType::I64)),
+                    read_operand(shifted_id),
                 )
             };
 
-            let preserved_id = *next_id;
-            instructions.push(build_binop(
-                preserved_id,
-                AsmInstructionKind::And(AsmValue::Register(extract_id), preserve_mask),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let preserved_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(extract_id), preserve_mask);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let merged_id = *next_id;
-            instructions.push(build_binop(
-                merged_id,
-                AsmInstructionKind::Or(AsmValue::Register(preserved_id), shifted_scalar),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let merged_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(preserved_id), shifted_scalar);
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let insert_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: base_vec,
-                    lane: half,
-                    value: AsmValue::Register(merged_id),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert_id));
+            let insert_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(half)));
+    __ops.push(read_operand(merged_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert_id));
             Ok(())
         }
         Decoded::Pinsrb {
@@ -13138,91 +10816,61 @@ fn lift_non_terminator(
 
             let base_vec = ctx.read_vec(vector)?;
 
-            let extract_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: extract_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector: base_vec.clone(),
-                    lane: word_lane,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let extract_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base_vec.clone());
+    __ops.push(AsmOperand::Immediate(i128::from(word_lane)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
             let raw =
-                value_from_rm_with_width(ctx, value, 8, *inst, relocs, instructions, next_id)?;
+                value_from_rm_with_width(ctx, value, 8, *inst, relocs, instructions, next_id, function)?;
 
-            let masked_byte_id = *next_id;
-            instructions.push(build_binop(
-                masked_byte_id,
-                AsmInstructionKind::And(
-                    raw,
-                    AsmValue::Constant(AsmConstant::UInt(0xFF, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let masked_byte_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, raw, AsmOperand::Constant(AsmConstant::UInt(0xFF, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let shifted_id = *next_id;
-            instructions.push(build_binop(
-                shifted_id,
-                AsmInstructionKind::Shl(
-                    AsmValue::Register(masked_byte_id),
-                    AsmValue::Constant(AsmConstant::Int(shift_bits, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Shl),
-            ));
-            *next_id += 1;
+            let shifted_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Shl, read_operand(masked_byte_id), AsmOperand::Constant(AsmConstant::Int(shift_bits, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
             let mask = !(0xFFu64 << (byte_lane * 8));
-            let cleared_id = *next_id;
-            instructions.push(build_binop(
-                cleared_id,
-                AsmInstructionKind::And(
-                    AsmValue::Register(extract_id),
-                    AsmValue::Constant(AsmConstant::UInt(mask, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
+            let cleared_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, read_operand(extract_id), AsmOperand::Constant(AsmConstant::UInt(mask, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let merged_id = *next_id;
-            instructions.push(build_binop(
-                merged_id,
-                AsmInstructionKind::Or(
-                    AsmValue::Register(cleared_id),
-                    AsmValue::Register(shifted_id),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Or),
-            ));
-            *next_id += 1;
+            let merged_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Or, read_operand(cleared_id), read_operand(shifted_id));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let insert_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: insert_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: base_vec,
-                    lane: word_lane,
-                    value: AsmValue::Register(merged_id),
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(insert_id));
+            let insert_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base_vec);
+    __ops.push(AsmOperand::Immediate(i128::from(word_lane)));
+    __ops.push(read_operand(merged_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(insert_id));
             Ok(())
         }
         Decoded::MovqXmmFromMem { dst, src } => {
@@ -13237,67 +10885,44 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let load_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: load_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: addr,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+    function,)?;
+            let load_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let vec_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: vec_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![
-                        AsmValue::Register(load_id),
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(vec_id));
+            let vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                        read_operand(load_id),
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                    ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(vec_id));
             Ok(())
         }
         Decoded::MovqXmmFromGpr { dst, src } => {
             let value = ctx.read_gpr(src)?;
-            let vec_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: vec_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![value, AsmValue::Constant(AsmConstant::Int(0, AsmType::I64))],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(vec_id));
+            let vec_id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![value, AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64))]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(vec_id));
             Ok(())
         }
         Decoded::MovqMemFromXmm { dst, src } => {
@@ -13305,20 +10930,16 @@ fn lift_non_terminator(
                 return Ok(());
             }
             let vector = ctx.read_vec(src)?;
-            let extract_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: extract_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane { vector, lane: 0 },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let extract_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(vector);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
             let addr = compute_address(
                 ctx,
@@ -13328,45 +10949,30 @@ fn lift_non_terminator(
                 relocs,
                 instructions,
                 next_id,
-            )?;
-            let store_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: store_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                kind: AsmInstructionKind::Store {
-                    value: AsmValue::Register(extract_id),
-                    address: addr,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::Void,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+    function,)?;
+            let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(read_operand(extract_id));
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
             Ok(())
         }
         Decoded::MovqGprFromXmm { dst, src } => {
             let vector = ctx.read_vec(src)?;
-            let extract_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: extract_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane { vector, lane: 0 },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_gpr(dst, AsmValue::Register(extract_id));
+            let extract_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(vector);
+    __ops.push(AsmOperand::Immediate(i128::from(0)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_gpr(dst, read_operand(extract_id));
             Ok(())
         }
         Decoded::Pinsrq {
@@ -13377,72 +10983,53 @@ fn lift_non_terminator(
         } => {
             let base = ctx.read_vec(vector)?;
             let scalar =
-                value_from_rm_with_width(ctx, value, 64, *inst, relocs, instructions, next_id)?;
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane),
-                kind: AsmInstructionKind::InsertLane {
-                    vector: base,
-                    lane: lane as u16,
-                    value: scalar,
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_vec(dst, AsmValue::Register(id));
+                value_from_rm_with_width(ctx, value, 64, *inst, relocs, instructions, next_id, function)?;
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(base);
+    __ops.push(AsmOperand::Immediate(i128::from(lane as u16)));
+    __ops.push(scalar);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::InsertLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_vec(dst, read_operand(id));
             Ok(())
         }
         Decoded::Pextrq { dst, src, lane } => {
             let vector = ctx.read_vec(src)?;
-            let extract_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: extract_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane),
-                kind: AsmInstructionKind::ExtractLane {
-                    vector,
-                    lane: lane as u16,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            ctx.write_gpr(dst, AsmValue::Register(extract_id));
+            let extract_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(vector);
+    __ops.push(AsmOperand::Immediate(i128::from(lane as u16)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ExtractLane), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            ctx.write_gpr(dst, read_operand(extract_id));
             Ok(())
         }
         Decoded::Setcc { dst, condition } => {
             let value = if let Some(compare) = last_compare.as_ref() {
                 patch_compare_kind(instructions, compare, condition)?;
-                let zext_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: zext_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt),
-                    kind: AsmInstructionKind::ZExt(AsmValue::Register(compare.id), AsmType::I8),
-                    ty: AsmType::I8,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
-                AsmValue::Register(zext_id)
+                let zext_id = {
+    let dest = function.alloc_virtual_register(AsmType::I8, asm_register_bank(&(AsmType::I8)), asm_type_bits(&(AsmType::I8)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(compare.id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::ZExt), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                read_operand(zext_id)
             } else {
                 // `setcc` can observe flags from arithmetic instructions we
                 // do not model yet; conservatively synthesize `0`.
-                AsmValue::Constant(AsmConstant::UInt(0, AsmType::I8))
+                AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I8))
             };
             match dst {
                 RmOperand::Reg(reg) => {
@@ -13461,26 +11048,15 @@ fn lift_non_terminator(
                         relocs,
                         instructions,
                         next_id,
-                    )?;
-                    let id = *next_id;
-                    instructions.push(AsmInstruction {
-                        id,
-                        opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                        kind: AsmInstructionKind::Store {
-                            value,
-                            address: addr,
-                            alignment: None,
-                            volatile: false,
-                        },
-                        ty: AsmType::Void,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    });
-                    *next_id += 1;
+    function,)?;
+                    let _id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(value);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
                     Ok(())
                 }
             }
@@ -13495,7 +11071,7 @@ fn lift_non_terminator(
                 RmOperand::Reg(src) => ctx.read_gpr(src)?,
                 RmOperand::Mem(memory) => {
                     if memory.segment.is_some() {
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64))
+                        AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64))
                     } else {
                         let addr = compute_address(
                             ctx,
@@ -13505,30 +11081,29 @@ fn lift_non_terminator(
                             relocs,
                             instructions,
                             next_id,
-                        )?;
-                        let load_id = *next_id;
-                        instructions.push(AsmInstruction {
-                            id: load_id,
-                            opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                            kind: AsmInstructionKind::Load {
-                                address: addr,
-                                alignment: None,
-                                volatile: false,
-                            },
-                            ty: match src_width_bits {
+    function,)?;
+                        let load_id = {
+    let dest = function.alloc_virtual_register(match src_width_bits {
                                 8 => AsmType::I8,
                                 16 => AsmType::I16,
                                 _ => AsmType::I32,
-                            },
-                            operands: Vec::new(),
-                            implicit_uses: Vec::new(),
-                            implicit_defs: Vec::new(),
-                            encoding: None,
-                            debug_info: None,
-                            annotations: Vec::new(),
-                        });
-                        *next_id += 1;
-                        AsmValue::Register(load_id)
+                            }, asm_register_bank(&(match src_width_bits {
+                                8 => AsmType::I8,
+                                16 => AsmType::I16,
+                                _ => AsmType::I32,
+                            })), asm_type_bits(&(match src_width_bits {
+                                8 => AsmType::I8,
+                                16 => AsmType::I16,
+                                _ => AsmType::I32,
+                            })));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                        read_operand(load_id)
                     }
                 }
             };
@@ -13537,25 +11112,23 @@ fn lift_non_terminator(
                 16 => 0xFFFF,
                 _ => 0xFFFF_FFFF,
             };
-            let mask = AsmValue::Constant(AsmConstant::UInt(mask_bits, AsmType::I64));
-            let and_id = *next_id;
-            instructions.push(build_binop(
-                and_id,
-                AsmInstructionKind::And(value, mask),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-            ));
-            *next_id += 1;
-            let mut result = AsmValue::Register(and_id);
-            if dst_width_bits == 32 {
-                let mask = AsmValue::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
-                let and_id = *next_id;
-                instructions.push(build_binop(
-                    and_id,
-                    AsmInstructionKind::And(result, mask),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::And),
-                ));
+            let mask = AsmOperand::Constant(AsmConstant::UInt(mask_bits, AsmType::I64));
+            let and_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, value, mask);
+                instructions.push(inst);
                 *next_id += 1;
-                result = AsmValue::Register(and_id);
+                dest
+            };
+            let mut result = read_operand(and_id);
+            if dst_width_bits == 32 {
+                let mask = AsmOperand::Constant(AsmConstant::UInt(0xFFFF_FFFF, AsmType::I64));
+                let and_id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::And, result, mask);
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
+                result = read_operand(and_id);
             }
             ctx.write_gpr(dst, result);
             Ok(())
@@ -15284,19 +12857,24 @@ fn decode_instruction(bytes: &[u8], offset: u64) -> Result<Option<(Decoded, usiz
     Ok(None)
 }
 
-fn build_binop(id: u32, kind: AsmInstructionKind, opcode: AsmOpcode) -> AsmInstruction {
-    AsmInstruction {
+/// Builds a binary-op instruction (`opcode dest, lhs, rhs`), allocating a
+/// fresh 64-bit general-purpose destination register. Every x86_64 GPR op
+/// lifted here operates on 64-bit values, so the destination type is always
+/// `I64`. Returns the instruction and its destination register.
+fn build_binop(
+    id: u32,
+    function: &mut AsmFunction,
+    opcode: fp_core::asmir::AsmGenericOpcode,
+    lhs: AsmOperand,
+    rhs: AsmOperand,
+) -> (AsmInstruction, AsmVirtualRegId) {
+    let dest = function.alloc_virtual_register(AsmType::I64, AsmRegisterBank::General, 64);
+    let inst = AsmInstruction::new(
         id,
-        opcode,
-        kind,
-        ty: AsmType::I64,
-        operands: Vec::new(),
-        implicit_uses: Vec::new(),
-        implicit_defs: Vec::new(),
-        encoding: None,
-        debug_info: None,
-        annotations: Vec::new(),
-    }
+        AsmOpcode::Generic(opcode),
+        vec![write_operand(dest), lhs, rhs],
+    );
+    (inst, dest)
 }
 
 fn lift_rm_imm_binop(
@@ -15310,25 +12888,35 @@ fn lift_rm_imm_binop(
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
     opcode: fp_core::asmir::AsmGenericOpcode,
+    function: &mut AsmFunction,
 ) -> Result<()> {
     let preserve_dst_reg = match dst {
         RmOperand::Reg(reg) => Some(reg),
         _ => None,
     };
-    let lhs = value_from_rm_with_width(ctx, dst, width_bits, inst, relocs, instructions, next_id)?;
-    let rhs = AsmValue::Constant(AsmConstant::Int(imm, AsmType::I64));
+    let lhs = value_from_rm_with_width(
+        ctx,
+        dst,
+        width_bits,
+        inst,
+        relocs,
+        instructions,
+        next_id,
+        function,
+    )?;
+    let rhs = AsmOperand::Constant(AsmConstant::Int(imm, AsmType::I64));
 
-    let id = *next_id;
-    let kind = match opcode {
-        fp_core::asmir::AsmGenericOpcode::Add => AsmInstructionKind::Add(lhs, rhs),
-        fp_core::asmir::AsmGenericOpcode::Sub => AsmInstructionKind::Sub(lhs, rhs),
-        fp_core::asmir::AsmGenericOpcode::And => AsmInstructionKind::And(lhs, rhs),
-        fp_core::asmir::AsmGenericOpcode::Or => AsmInstructionKind::Or(lhs, rhs),
-        fp_core::asmir::AsmGenericOpcode::Xor => AsmInstructionKind::Xor(lhs, rhs),
-        _ => return Err(Error::from("unsupported rm+imm binop opcode")),
-    };
-    let opcode_copy = opcode.clone();
-    let mut binop_inst = build_binop(id, kind, AsmOpcode::Generic(opcode_copy));
+    if !matches!(
+        opcode,
+        fp_core::asmir::AsmGenericOpcode::Add
+            | fp_core::asmir::AsmGenericOpcode::Sub
+            | fp_core::asmir::AsmGenericOpcode::And
+            | fp_core::asmir::AsmGenericOpcode::Or
+            | fp_core::asmir::AsmGenericOpcode::Xor
+    ) {
+        return Err(Error::from("unsupported rm+imm binop opcode"));
+    }
+    let (mut binop_inst, id) = build_binop(*next_id, function, opcode.clone(), lhs, rhs);
     if let (
         Some(dst_reg),
         fp_core::asmir::AsmGenericOpcode::Add | fp_core::asmir::AsmGenericOpcode::Sub,
@@ -15358,17 +12946,23 @@ fn lift_rm_imm_binop(
         RmOperand::Reg(dst_reg) => write_gpr_with_width(
             ctx,
             dst_reg,
-            AsmValue::Register(id),
+            read_operand(id),
             width_bits,
             instructions,
             next_id,
+            function,
         ),
         RmOperand::Mem(memory) => {
             if memory.segment.is_some() {
                 return Ok(());
             }
-            let stored =
-                value_for_store(width_bits, AsmValue::Register(id), instructions, next_id)?;
+            let stored = value_for_store(
+                width_bits,
+                read_operand(id),
+                instructions,
+                next_id,
+                function,
+            )?;
             let addr = compute_address(
                 ctx,
                 memory,
@@ -15377,26 +12971,16 @@ fn lift_rm_imm_binop(
                 relocs,
                 instructions,
                 next_id,
+                function,
             )?;
-            let store_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: store_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                kind: AsmInstructionKind::Store {
-                    value: stored,
-                    address: addr,
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::Void,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(stored);
+    __ops.push(addr);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+};
             Ok(())
         }
     }
@@ -15528,31 +13112,24 @@ fn vec_operand_value(
     relocs: &[TextRelocation],
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
-) -> Result<AsmValue> {
+    function: &mut AsmFunction,) -> Result<AsmOperand> {
     match operand {
         VecOperand::Reg(reg) => ctx.read_vec(reg),
         VecOperand::Mem(memory) => {
             if memory.segment.is_some() {
-                let id = *next_id;
-                instructions.push(AsmInstruction {
-                    id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                    kind: AsmInstructionKind::BuildVector {
-                        elements: vec![
-                            AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                            AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        ],
-                    },
-                    ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
-                return Ok(AsmValue::Register(id));
+                let id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![
+                            AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                            AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                        ]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                return Ok(read_operand(id));
             }
 
             let addr = compute_address(
@@ -15563,74 +13140,45 @@ fn vec_operand_value(
                 relocs,
                 instructions,
                 next_id,
-            )?;
+    function,)?;
 
-            let load0_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: load0_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: addr.clone(),
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let load0_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr.clone());
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let addr1_id = *next_id;
-            instructions.push(build_binop(
-                addr1_id,
-                AsmInstructionKind::Add(
-                    addr,
-                    AsmValue::Constant(AsmConstant::Int(8, AsmType::I64)),
-                ),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-            ));
-            *next_id += 1;
+            let addr1_id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, addr, AsmOperand::Constant(AsmConstant::Int(8, AsmType::I64)));
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
 
-            let load1_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: load1_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: AsmValue::Register(addr1_id),
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let load1_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(read_operand(addr1_id));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let id = *next_id;
-            instructions.push(AsmInstruction {
-                id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector),
-                kind: AsmInstructionKind::BuildVector {
-                    elements: vec![AsmValue::Register(load0_id), AsmValue::Register(load1_id)],
-                },
-                ty: AsmType::Vector(Box::new(AsmType::I64), 2),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            Ok(AsmValue::Register(id))
+            let id = {
+    let dest = function.alloc_virtual_register(AsmType::Vector(Box::new(AsmType::I64), 2), asm_register_bank(&(AsmType::Vector(Box::new(AsmType::I64), 2))), asm_type_bits(&(AsmType::Vector(Box::new(AsmType::I64), 2))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.extend(vec![read_operand(load0_id), read_operand(load1_id)]);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::BuildVector), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            Ok(read_operand(id))
         }
     }
 }
@@ -15643,7 +13191,7 @@ fn compute_address(
     relocs: &[TextRelocation],
     instructions: &mut Vec<AsmInstruction>,
     next_id: &mut u32,
-) -> Result<AsmValue> {
+    function: &mut AsmFunction,) -> Result<AsmOperand> {
     if let Some(displacement_offset) = memory.displacement_offset {
         let relocation_offset = instruction_offset
             .checked_add(displacement_offset as u64)
@@ -15651,7 +13199,7 @@ fn compute_address(
         if let Some(reloc) = relocation_at(relocs, relocation_offset) {
             if reloc.addend == 0 && memory.displacement == 0 {
                 if let Some(text) = ctx.rodata_cstrings.get(&reloc.symbol) {
-                    return Ok(AsmValue::Constant(AsmConstant::String(text.clone())));
+                    return Ok(AsmOperand::Constant(AsmConstant::String(text.clone())));
                 }
             }
             if reloc.kind != object::RelocationKind::Relative
@@ -15670,27 +13218,22 @@ fn compute_address(
                     "unsupported x86_64 relocation encoding for address",
                 ));
             }
-            let symbol_const = AsmValue::Constant(AsmConstant::GlobalRef(
+            let symbol_const = AsmOperand::Constant(AsmConstant::GlobalRef(
                 Name::new(reloc.symbol.clone()),
                 AsmType::Ptr(Box::new(AsmType::I8)),
                 vec![0],
             ));
-            let symbol_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: symbol_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                kind: AsmInstructionKind::Freeze(symbol_const),
-                ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
+            let symbol_id = {
+    let dest = function.alloc_virtual_register(AsmType::Ptr(Box::new(AsmType::I8)), asm_register_bank(&(AsmType::Ptr(Box::new(AsmType::I8)))), asm_type_bits(&(AsmType::Ptr(Box::new(AsmType::I8)))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(symbol_const);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
-            let mut addr = AsmValue::Register(symbol_id);
+            let mut addr = read_operand(symbol_id);
             let mut addend = reloc.addend.saturating_add(memory.displacement);
             if reloc.kind == object::RelocationKind::Relative
                 || reloc.kind == object::RelocationKind::PltRelative
@@ -15703,15 +13246,14 @@ fn compute_address(
                 addend = addend.saturating_add(correction);
             }
             if addend != 0 {
-                let rhs = AsmValue::Constant(AsmConstant::Int(addend, AsmType::I64));
-                let id = *next_id;
-                instructions.push(build_binop(
-                    id,
-                    AsmInstructionKind::Add(addr, rhs),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                ));
-                *next_id += 1;
-                addr = AsmValue::Register(id);
+                let rhs = AsmOperand::Constant(AsmConstant::Int(addend, AsmType::I64));
+                let id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, addr, rhs);
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
+                addr = read_operand(id);
             }
 
             return Ok(addr);
@@ -15721,26 +13263,21 @@ fn compute_address(
             if let Some(symbol) =
                 ctx.resolve_rip_symbol(&memory, instruction_offset, instruction_len)
             {
-                let symbol_const = AsmValue::Constant(AsmConstant::GlobalRef(
+                let symbol_const = AsmOperand::Constant(AsmConstant::GlobalRef(
                     Name::new(symbol.name.clone()),
                     AsmType::Ptr(Box::new(AsmType::I8)),
                     vec![0],
                 ));
-                let symbol_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: symbol_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                    kind: AsmInstructionKind::Freeze(symbol_const),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
-                return Ok(AsmValue::Register(symbol_id));
+                let symbol_id = {
+    let dest = function.alloc_virtual_register(AsmType::Ptr(Box::new(AsmType::I8)), asm_register_bank(&(AsmType::Ptr(Box::new(AsmType::I8)))), asm_type_bits(&(AsmType::Ptr(Box::new(AsmType::I8)))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(symbol_const);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                return Ok(read_operand(symbol_id));
             }
 
             let next_ip = (ctx.code_base_address as i64)
@@ -15752,57 +13289,46 @@ fn compute_address(
             }
 
             if let Some((region, offset)) = ctx.resolve_data_region(absolute as u64) {
-                let symbol_const = AsmValue::Constant(AsmConstant::GlobalRef(
+                let symbol_const = AsmOperand::Constant(AsmConstant::GlobalRef(
                     Name::new(region.symbol.clone()),
                     AsmType::Ptr(Box::new(AsmType::I8)),
                     vec![0],
                 ));
-                let symbol_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: symbol_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                    kind: AsmInstructionKind::Freeze(symbol_const),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let symbol_id = {
+    let dest = function.alloc_virtual_register(AsmType::Ptr(Box::new(AsmType::I8)), asm_register_bank(&(AsmType::Ptr(Box::new(AsmType::I8)))), asm_type_bits(&(AsmType::Ptr(Box::new(AsmType::I8)))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(symbol_const);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
                 if offset == 0 {
-                    return Ok(AsmValue::Register(symbol_id));
+                    return Ok(read_operand(symbol_id));
                 }
 
-                let rhs = AsmValue::Constant(AsmConstant::Int(offset as i64, AsmType::I64));
-                let id = *next_id;
-                instructions.push(build_binop(
-                    id,
-                    AsmInstructionKind::Add(AsmValue::Register(symbol_id), rhs),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                ));
-                *next_id += 1;
-                return Ok(AsmValue::Register(id));
+                let rhs = AsmOperand::Constant(AsmConstant::Int(offset as i64, AsmType::I64));
+                let id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, read_operand(symbol_id), rhs);
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
+                return Ok(read_operand(id));
             }
 
-            let addr_const = AsmValue::Constant(AsmConstant::UInt(absolute as u64, AsmType::I64));
-            let addr_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: addr_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                kind: AsmInstructionKind::Freeze(addr_const),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            return Ok(AsmValue::Register(addr_id));
+            let addr_const = AsmOperand::Constant(AsmConstant::UInt(absolute as u64, AsmType::I64));
+            let addr_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr_const);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            return Ok(read_operand(addr_id));
         }
 
         // `mod=00 rm=101 disp32` is RIP-relative addressing on x86_64.
@@ -15819,26 +13345,21 @@ fn compute_address(
             if let Some(symbol) =
                 ctx.resolve_disp32_symbol(&memory, instruction_offset, instruction_len)
             {
-                let symbol_const = AsmValue::Constant(AsmConstant::GlobalRef(
+                let symbol_const = AsmOperand::Constant(AsmConstant::GlobalRef(
                     Name::new(symbol.name.clone()),
                     AsmType::Ptr(Box::new(AsmType::I8)),
                     vec![0],
                 ));
-                let symbol_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: symbol_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                    kind: AsmInstructionKind::Freeze(symbol_const),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
-                return Ok(AsmValue::Register(symbol_id));
+                let symbol_id = {
+    let dest = function.alloc_virtual_register(AsmType::Ptr(Box::new(AsmType::I8)), asm_register_bank(&(AsmType::Ptr(Box::new(AsmType::I8)))), asm_type_bits(&(AsmType::Ptr(Box::new(AsmType::I8)))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(symbol_const);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+                return Ok(read_operand(symbol_id));
             }
 
             if absolute < 0 {
@@ -15846,98 +13367,84 @@ fn compute_address(
             }
 
             if let Some((region, offset)) = ctx.resolve_data_region(absolute as u64) {
-                let symbol_const = AsmValue::Constant(AsmConstant::GlobalRef(
+                let symbol_const = AsmOperand::Constant(AsmConstant::GlobalRef(
                     Name::new(region.symbol.clone()),
                     AsmType::Ptr(Box::new(AsmType::I8)),
                     vec![0],
                 ));
-                let symbol_id = *next_id;
-                instructions.push(AsmInstruction {
-                    id: symbol_id,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                    kind: AsmInstructionKind::Freeze(symbol_const),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                });
-                *next_id += 1;
+                let symbol_id = {
+    let dest = function.alloc_virtual_register(AsmType::Ptr(Box::new(AsmType::I8)), asm_register_bank(&(AsmType::Ptr(Box::new(AsmType::I8)))), asm_type_bits(&(AsmType::Ptr(Box::new(AsmType::I8)))));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(symbol_const);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
 
                 if offset == 0 {
-                    return Ok(AsmValue::Register(symbol_id));
+                    return Ok(read_operand(symbol_id));
                 }
 
-                let rhs = AsmValue::Constant(AsmConstant::Int(offset as i64, AsmType::I64));
-                let id = *next_id;
-                instructions.push(build_binop(
-                    id,
-                    AsmInstructionKind::Add(AsmValue::Register(symbol_id), rhs),
-                    AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-                ));
-                *next_id += 1;
-                return Ok(AsmValue::Register(id));
+                let rhs = AsmOperand::Constant(AsmConstant::Int(offset as i64, AsmType::I64));
+                let id = {
+                    let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, read_operand(symbol_id), rhs);
+                    instructions.push(inst);
+                    *next_id += 1;
+                    dest
+                };
+                return Ok(read_operand(id));
             }
-            let addr_const = AsmValue::Constant(AsmConstant::UInt(absolute as u64, AsmType::I64));
-            let addr_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: addr_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                kind: AsmInstructionKind::Freeze(addr_const),
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            });
-            *next_id += 1;
-            return Ok(AsmValue::Register(addr_id));
+            let addr_const = AsmOperand::Constant(AsmConstant::UInt(absolute as u64, AsmType::I64));
+            let addr_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(addr_const);
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze), __ops);
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            return Ok(read_operand(addr_id));
         }
     }
 
     let mut addr = match memory.base {
         Some(base) => ctx.read_gpr(base)?,
-        None => AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
+        None => AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
     };
 
     if let Some(index_reg) = memory.index {
         let mut index_value = ctx.read_gpr(index_reg)?;
         if memory.scale != 1 {
-            let rhs = AsmValue::Constant(AsmConstant::Int(memory.scale as i64, AsmType::I64));
-            let id = *next_id;
-            instructions.push(build_binop(
-                id,
-                AsmInstructionKind::Mul(index_value.clone(), rhs.clone()),
-                AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Mul),
-            ));
-            *next_id += 1;
-            index_value = AsmValue::Register(id);
+            let rhs = AsmOperand::Constant(AsmConstant::Int(memory.scale as i64, AsmType::I64));
+            let id = {
+                let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Mul, index_value.clone(), rhs.clone());
+                instructions.push(inst);
+                *next_id += 1;
+                dest
+            };
+            index_value = read_operand(id);
         }
 
-        let id = *next_id;
-        instructions.push(build_binop(
-            id,
-            AsmInstructionKind::Add(addr, index_value),
-            AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-        ));
-        *next_id += 1;
-        addr = AsmValue::Register(id);
+        let id = {
+            let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, addr, index_value);
+            instructions.push(inst);
+            *next_id += 1;
+            dest
+        };
+        addr = read_operand(id);
     }
 
     if memory.displacement != 0 {
-        let rhs = AsmValue::Constant(AsmConstant::Int(memory.displacement, AsmType::I64));
-        let id = *next_id;
-        instructions.push(build_binop(
-            id,
-            AsmInstructionKind::Add(addr, rhs),
-            AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Add),
-        ));
-        *next_id += 1;
-        addr = AsmValue::Register(id);
+        let rhs = AsmOperand::Constant(AsmConstant::Int(memory.displacement, AsmType::I64));
+        let id = {
+            let (inst, dest) = build_binop(*next_id, function, fp_core::asmir::AsmGenericOpcode::Add, addr, rhs);
+            instructions.push(inst);
+            *next_id += 1;
+            dest
+        };
+        addr = read_operand(id);
     }
 
     Ok(addr)
@@ -15946,10 +13453,10 @@ fn compute_address(
 struct RegisterLiftContext {
     locals: Vec<AsmLocal>,
     locals_by_register: std::collections::HashMap<u8, u32>,
-    registers: std::collections::HashMap<u8, AsmValue>,
+    registers: std::collections::HashMap<u8, AsmOperand>,
     vec_locals_by_register: std::collections::HashMap<u8, u32>,
-    vec_registers: std::collections::HashMap<u8, AsmValue>,
-    x87_stack: Vec<AsmValue>,
+    vec_registers: std::collections::HashMap<u8, AsmOperand>,
+    x87_stack: Vec<AsmOperand>,
     next_local_id: u32,
     code_base_address: u64,
     rip_symbols: HashMap<u64, RipSymbol>,
@@ -15959,7 +13466,7 @@ struct RegisterLiftContext {
     data_regions: Vec<DataRegion>,
     direct_call_targets: Vec<u64>,
     gpr_slot_by_reg: std::collections::HashMap<u8, u32>,
-    pending_jump_table_index: std::collections::HashMap<u64, AsmValue>,
+    pending_jump_table_index: std::collections::HashMap<u64, AsmOperand>,
     mark_sysv_args: bool,
     use_lifted_regfile_calls: bool,
 }
@@ -16040,25 +13547,16 @@ impl RegisterLiftContext {
                 .get(&reg)
                 .ok_or_else(|| Error::from("missing x86 register slot"))?;
 
-            let store_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: store_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                kind: AsmInstructionKind::Store {
-                    value: AsmValue::Local(local_id),
-                    address: AsmValue::StackSlot(slot_id),
-                    alignment: Some(8),
-                    volatile: false,
-                },
-                ty: AsmType::Void,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: synthesized_annotations("x86.regfile.init"),
-            });
-            *next_id += 1;
+            let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(AsmOperand::Local(local_id));
+    __ops.push(AsmOperand::StackSlot(slot_id));
+    __ops.push(AsmOperand::Attr(AsmAttr::Alignment(8)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    __inst.annotations = synthesized_annotations("x86.regfile.init");
+    instructions.push(__inst);
+    *next_id += 1;
+};
         }
         Ok(())
     }
@@ -16067,6 +13565,7 @@ impl RegisterLiftContext {
         &mut self,
         instructions: &mut Vec<AsmInstruction>,
         next_id: &mut u32,
+        function: &mut AsmFunction,
     ) -> Result<()> {
         self.registers.clear();
         self.vec_registers.clear();
@@ -16078,25 +13577,18 @@ impl RegisterLiftContext {
                 .gpr_slot_by_reg
                 .get(&reg)
                 .ok_or_else(|| Error::from("missing x86 register slot"))?;
-            let load_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: load_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: AsmValue::StackSlot(slot_id),
-                    alignment: Some(8),
-                    volatile: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: synthesized_annotations("x86.regfile.begin"),
-            });
-            *next_id += 1;
-            self.registers.insert(reg, AsmValue::Register(load_id));
+            let load_id = {
+    let dest = function.alloc_virtual_register(AsmType::I64, asm_register_bank(&(AsmType::I64)), asm_type_bits(&(AsmType::I64)));
+    let mut __ops = vec![write_operand(dest)];
+    __ops.push(AsmOperand::StackSlot(slot_id));
+    __ops.push(AsmOperand::Attr(AsmAttr::Alignment(8)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load), __ops);
+    __inst.annotations = synthesized_annotations("x86.regfile.begin");
+    instructions.push(__inst);
+    *next_id += 1;
+    dest
+};
+            self.registers.insert(reg, read_operand(load_id));
         }
 
         Ok(())
@@ -16119,28 +13611,19 @@ impl RegisterLiftContext {
                     .locals_by_register
                     .get(&reg)
                     .ok_or_else(|| Error::from("missing x86 register local"))?;
-                AsmValue::Local(local_id)
+                AsmOperand::Local(local_id)
             };
 
-            let store_id = *next_id;
-            instructions.push(AsmInstruction {
-                id: store_id,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store),
-                kind: AsmInstructionKind::Store {
-                    value,
-                    address: AsmValue::StackSlot(slot_id),
-                    alignment: Some(8),
-                    volatile: false,
-                },
-                ty: AsmType::Void,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: synthesized_annotations("x86.regfile.end"),
-            });
-            *next_id += 1;
+            let _store_id = {
+    let mut __ops: Vec<AsmOperand> = Vec::new();
+    __ops.push(value);
+    __ops.push(AsmOperand::StackSlot(slot_id));
+    __ops.push(AsmOperand::Attr(AsmAttr::Alignment(8)));
+    let mut __inst = AsmInstruction::new(*next_id, AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Store), __ops);
+    __inst.annotations = synthesized_annotations("x86.regfile.end");
+    instructions.push(__inst);
+    *next_id += 1;
+};
         }
 
         Ok(())
@@ -16188,7 +13671,7 @@ impl RegisterLiftContext {
         self.rip_symbols.get(&target)
     }
 
-    fn x87_push(&mut self, value: AsmValue) -> Result<()> {
+    fn x87_push(&mut self, value: AsmOperand) -> Result<()> {
         if self.x87_stack.len() >= 8 {
             return Err(Error::from("x87 stack overflow"));
         }
@@ -16196,25 +13679,25 @@ impl RegisterLiftContext {
         Ok(())
     }
 
-    fn x87_pop(&mut self) -> Result<AsmValue> {
+    fn x87_pop(&mut self) -> Result<AsmOperand> {
         Ok(self
             .x87_stack
             .pop()
-            .unwrap_or_else(|| AsmValue::Undef(AsmType::F64)))
+            .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::Undef(AsmType::F64))))
     }
 
-    fn x87_peek(&self, index: u8) -> Result<AsmValue> {
+    fn x87_peek(&self, index: u8) -> Result<AsmOperand> {
         let index = usize::from(index);
         if index >= self.x87_stack.len() {
-            return Ok(AsmValue::Undef(AsmType::F64));
+            return Ok(AsmOperand::Constant(AsmConstant::Undef(AsmType::F64)));
         }
         Ok(self.x87_stack[self.x87_stack.len() - 1 - index].clone())
     }
 
-    fn x87_set(&mut self, index: u8, value: AsmValue) -> Result<()> {
+    fn x87_set(&mut self, index: u8, value: AsmOperand) -> Result<()> {
         let index = usize::from(index);
         while self.x87_stack.len() <= index {
-            self.x87_stack.push(AsmValue::Undef(AsmType::F64));
+            self.x87_stack.push(AsmOperand::Constant(AsmConstant::Undef(AsmType::F64)));
         }
         let slot = self.x87_stack.len() - 1 - index;
         self.x87_stack[slot] = value;
@@ -16224,7 +13707,7 @@ impl RegisterLiftContext {
     fn x87_swap(&mut self, index: u8) -> Result<()> {
         let index = usize::from(index);
         while self.x87_stack.len() <= index {
-            self.x87_stack.push(AsmValue::Undef(AsmType::F64));
+            self.x87_stack.push(AsmOperand::Constant(AsmConstant::Undef(AsmType::F64)));
         }
         let top = self.x87_stack.len() - 1;
         let other = self.x87_stack.len() - 1 - index;
@@ -16232,14 +13715,14 @@ impl RegisterLiftContext {
         Ok(())
     }
 
-    fn read_return_value(&mut self) -> Option<AsmValue> {
+    fn read_return_value(&mut self) -> Option<AsmOperand> {
         self.registers.get(&0).cloned().or_else(|| {
             self.ensure_local(0, false);
-            Some(AsmValue::Local(*self.locals_by_register.get(&0)?))
+            Some(AsmOperand::Local(*self.locals_by_register.get(&0)?))
         })
     }
 
-    fn read_gpr(&mut self, reg: u8) -> Result<AsmValue> {
+    fn read_gpr(&mut self, reg: u8) -> Result<AsmOperand> {
         if let Some(value) = self.registers.get(&reg).cloned() {
             return Ok(value);
         }
@@ -16250,16 +13733,16 @@ impl RegisterLiftContext {
             .locals_by_register
             .get(&reg)
             .ok_or_else(|| Error::from("missing local"))?;
-        let value = AsmValue::Local(local_id);
+        let value = AsmOperand::Local(local_id);
         self.registers.insert(reg, value.clone());
         Ok(value)
     }
 
-    fn write_gpr(&mut self, reg: u8, value: AsmValue) {
+    fn write_gpr(&mut self, reg: u8, value: AsmOperand) {
         self.registers.insert(reg, value);
     }
 
-    fn read_vec(&mut self, reg: u8) -> Result<AsmValue> {
+    fn read_vec(&mut self, reg: u8) -> Result<AsmOperand> {
         if let Some(value) = self.vec_registers.get(&reg).cloned() {
             return Ok(value);
         }
@@ -16269,12 +13752,12 @@ impl RegisterLiftContext {
             .vec_locals_by_register
             .get(&reg)
             .ok_or_else(|| Error::from("missing x86_64 vector local"))?;
-        let value = AsmValue::Local(local_id);
+        let value = AsmOperand::Local(local_id);
         self.vec_registers.insert(reg, value.clone());
         Ok(value)
     }
 
-    fn write_vec(&mut self, reg: u8, value: AsmValue) {
+    fn write_vec(&mut self, reg: u8, value: AsmOperand) {
         self.vec_registers.insert(reg, value);
     }
 

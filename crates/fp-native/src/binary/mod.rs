@@ -61,7 +61,10 @@ mod tests {
     use super::{RipSymbol, RipSymbolKind};
     use super::{aarch64, x86_64};
     use fp_core::asmir::AsmSyscallConvention;
-    use fp_core::asmir::{AsmConstant, AsmInstructionKind};
+    use fp_core::asmir::{
+        AsmConstant, AsmFunction, AsmFunctionSignature, AsmGenericOpcode, AsmInstruction,
+        AsmOpcode, AsmOperand, AsmType,
+    };
     use fp_core::container::{ContainerKind, ContainerSymbolScope};
     use object::write::{Object, Symbol, SymbolSection};
     use object::{
@@ -69,6 +72,83 @@ mod tests {
         RelocationKind, SectionKind, SymbolFlags, SymbolKind, SymbolScope,
     };
     use std::collections::HashMap;
+
+    fn is_opcode(inst: &AsmInstruction, opcode: AsmGenericOpcode) -> bool {
+        matches!(&inst.opcode, AsmOpcode::Generic(op) if *op == opcode)
+    }
+
+    /// The target-symbol name of a `Call` instruction, if its target is a
+    /// direct `Symbol` reference (as opposed to a register/memory indirect
+    /// call target).
+    fn call_target_symbol(inst: &AsmInstruction) -> Option<String> {
+        let (target, _) = inst.call_target_and_args()?;
+        match target {
+            AsmOperand::Symbol(name) => Some(name.to_string()),
+            _ => None,
+        }
+    }
+
+    /// Checks whether the `arg_index`'th argument of the call to `callee`
+    /// resolves -- directly, or through a `Freeze` indirection (e.g. a
+    /// register-file spill/reload) -- to the result register of the call to
+    /// `caller_result_of`.
+    fn arg_resolves_to_call_result(
+        instructions: &[AsmInstruction],
+        caller_result_of: &str,
+        callee: &str,
+        arg_index: usize,
+    ) -> bool {
+        let source_call = instructions
+            .iter()
+            .find(|inst| call_target_symbol(inst).as_deref() == Some(caller_result_of))
+            .unwrap_or_else(|| panic!("missing {caller_result_of} call"));
+        let Some(source_result) = source_call.result_register() else {
+            return false;
+        };
+
+        let sink_call = instructions
+            .iter()
+            .find(|inst| call_target_symbol(inst).as_deref() == Some(callee))
+            .unwrap_or_else(|| panic!("missing {callee} call"));
+        let (_, args) = sink_call.call_target_and_args().unwrap();
+        let Some(AsmOperand::Register { reg: arg_reg, .. }) = args.get(arg_index) else {
+            panic!("expected {callee} argument {arg_index} to be a register");
+        };
+
+        if arg_reg == source_result {
+            return true;
+        }
+
+        instructions.iter().any(|inst| {
+            if !is_opcode(inst, AsmGenericOpcode::Freeze) {
+                return false;
+            }
+            let Some(dest) = inst.result_register() else {
+                return false;
+            };
+            if dest != arg_reg {
+                return false;
+            }
+            matches!(
+                inst.operands.get(1),
+                Some(AsmOperand::Register { reg, .. }) if reg == source_result
+            )
+        })
+    }
+
+    /// A throwaway `AsmFunction` for tests that need to call lifter entry
+    /// points requiring a `&mut AsmFunction` for virtual-register allocation,
+    /// but don't care about the function's own name/signature.
+    fn scratch_function() -> AsmFunction {
+        AsmFunction::new(
+            fp_core::lir::Name::new("scratch"),
+            AsmFunctionSignature {
+                params: Vec::new(),
+                return_type: AsmType::Void,
+                is_variadic: false,
+            },
+        )
+    }
 
     #[test]
     fn x86_64_lifter_splits_blocks_for_unconditional_jump() {
@@ -134,11 +214,8 @@ mod tests {
         let block = &lifted.basic_blocks[0];
         let mut saw_memmove_call = false;
         for inst in &block.instructions {
-            if let AsmInstructionKind::Call { function, .. } = &inst.kind {
-                if matches!(function, fp_core::asmir::AsmValue::Function(name) if name == "memmove")
-                {
-                    saw_memmove_call = true;
-                }
+            if call_target_symbol(inst).as_deref() == Some("memmove") {
+                saw_memmove_call = true;
             }
         }
         assert!(saw_memmove_call, "expected tail jump to become a call");
@@ -191,28 +268,8 @@ mod tests {
                 .unwrap();
         let instructions = &lifted.basic_blocks[0].instructions;
 
-        let inst_by_id: HashMap<u32, &AsmInstructionKind> = instructions
-            .iter()
-            .map(|inst| (inst.id, &inst.kind))
-            .collect();
-
-        let mut calls = instructions.iter().filter_map(|inst| match &inst.kind {
-            AsmInstructionKind::Call { args, .. } => Some((inst.id, args.clone())),
-            _ => None,
-        });
-        let (strchr_call_id, _) = calls.next().expect("missing strchr call");
-        let (_, fprintf_args) = calls.next().expect("missing fprintf call");
-
-        let Some(fp_core::asmir::AsmValue::Register(arg_id)) = fprintf_args.get(2) else {
-            panic!("expected fprintf third argument to be a register");
-        };
-        let arg_resolves_to_return = *arg_id == strchr_call_id
-            || matches!(
-                inst_by_id.get(arg_id),
-                Some(AsmInstructionKind::Freeze(fp_core::asmir::AsmValue::Register(id))) if *id == strchr_call_id
-            );
         assert!(
-            arg_resolves_to_return,
+            arg_resolves_to_call_result(instructions, "strchr", "fprintf", 2),
             "expected fprintf third argument to read strchr return via rax"
         );
     }
@@ -259,28 +316,8 @@ mod tests {
                 .unwrap();
         let instructions = &lifted.basic_blocks[0].instructions;
 
-        let inst_by_id: HashMap<u32, &AsmInstructionKind> = instructions
-            .iter()
-            .map(|inst| (inst.id, &inst.kind))
-            .collect();
-
-        let mut calls = instructions.iter().filter_map(|inst| match &inst.kind {
-            AsmInstructionKind::Call { args, .. } => Some((inst.id, args.clone())),
-            _ => None,
-        });
-        let (dcgettext_call_id, _) = calls.next().expect("missing dcgettext call");
-        let (_, fprintf_args) = calls.next().expect("missing fprintf call");
-
-        let Some(fp_core::asmir::AsmValue::Register(arg_id)) = fprintf_args.get(2) else {
-            panic!("expected fprintf third argument to be a register");
-        };
-        let arg_resolves_to_return = *arg_id == dcgettext_call_id
-            || matches!(
-                inst_by_id.get(arg_id),
-                Some(AsmInstructionKind::Freeze(fp_core::asmir::AsmValue::Register(id))) if *id == dcgettext_call_id
-            );
         assert!(
-            arg_resolves_to_return,
+            arg_resolves_to_call_result(instructions, "dcgettext", "fprintf", 2),
             "expected fprintf third argument to read dcgettext return via rax"
         );
     }
@@ -317,10 +354,7 @@ mod tests {
         let call_args = lifted.basic_blocks[0]
             .instructions
             .iter()
-            .find_map(|inst| match &inst.kind {
-                AsmInstructionKind::Call { args, .. } => Some(args),
-                _ => None,
-            })
+            .find_map(|inst| inst.call_target_and_args().map(|(_, args)| args))
             .expect("missing call");
         assert!(
             call_args.is_empty(),
@@ -330,28 +364,35 @@ mod tests {
         let string_value = lifted.basic_blocks[0]
             .instructions
             .iter()
-            .find_map(|inst| match &inst.kind {
-                AsmInstructionKind::Store { value, address, .. }
-                    if matches!(address, fp_core::asmir::AsmValue::StackSlot(7)) =>
-                {
-                    match value {
-                        fp_core::asmir::AsmValue::Constant(AsmConstant::String(text)) => {
-                            Some(text.clone())
-                        }
-                        fp_core::asmir::AsmValue::Register(id) => lifted.basic_blocks[0]
-                            .instructions
-                            .iter()
-                            .find(|inst| inst.id == *id)
-                            .and_then(|inst| match &inst.kind {
-                                AsmInstructionKind::Freeze(fp_core::asmir::AsmValue::Constant(
-                                    AsmConstant::String(text),
-                                )) => Some(text.clone()),
-                                _ => None,
-                            }),
-                        _ => None,
-                    }
+            .find_map(|inst| {
+                if !is_opcode(inst, AsmGenericOpcode::Store) {
+                    return None;
                 }
-                _ => None,
+                // Canonical `Store` operand schema: `[Read value, Read address, ...]`.
+                let value = inst.operands.first()?;
+                let address = inst.operands.get(1)?;
+                if !matches!(address, AsmOperand::StackSlot(7)) {
+                    return None;
+                }
+                match value {
+                    AsmOperand::Constant(AsmConstant::String(text)) => Some(text.clone()),
+                    AsmOperand::Register { reg, .. } => lifted.basic_blocks[0]
+                        .instructions
+                        .iter()
+                        .find(|inst| inst.result_register() == Some(reg))
+                        .and_then(|inst| {
+                            if !is_opcode(inst, AsmGenericOpcode::Freeze) {
+                                return None;
+                            }
+                            match inst.operands.get(1) {
+                                Some(AsmOperand::Constant(AsmConstant::String(text))) => {
+                                    Some(text.clone())
+                                }
+                                _ => None,
+                            }
+                        }),
+                    _ => None,
+                }
             })
             .expect("expected rdi regfile slot to store string literal");
         assert_eq!(string_value, "hello");
@@ -398,9 +439,14 @@ mod tests {
         bytes.extend_from_slice(&nop);
         bytes.extend_from_slice(&ret);
 
-        let lifted =
-            aarch64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxAarch64))
-                .unwrap();
+        let mut function = scratch_function();
+        let lifted = aarch64::lift_function_bytes(
+            &bytes,
+            &[],
+            Some(AsmSyscallConvention::LinuxAarch64),
+            &mut function,
+        )
+        .unwrap();
         assert_eq!(lifted.basic_blocks.len(), 3);
         assert!(matches!(
             lifted.basic_blocks[0].terminator,
@@ -429,9 +475,14 @@ mod tests {
         bytes.extend_from_slice(&ret);
         bytes.extend_from_slice(&ret);
 
-        let lifted =
-            aarch64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxAarch64))
-                .unwrap();
+        let mut function = scratch_function();
+        let lifted = aarch64::lift_function_bytes(
+            &bytes,
+            &[],
+            Some(AsmSyscallConvention::LinuxAarch64),
+            &mut function,
+        )
+        .unwrap();
         assert_eq!(lifted.basic_blocks.len(), 3);
         assert!(matches!(
             lifted.basic_blocks[0].terminator,
@@ -465,11 +516,14 @@ mod tests {
         let mut has_address_constant = false;
         for block in &lifted.basic_blocks {
             for instruction in &block.instructions {
-                if let AsmInstructionKind::Freeze(value) = &instruction.kind {
-                    if let fp_core::asmir::AsmValue::Constant(AsmConstant::UInt(value, _)) = value {
-                        if *value == 0x17 {
-                            has_address_constant = true;
-                        }
+                if !is_opcode(instruction, AsmGenericOpcode::Freeze) {
+                    continue;
+                }
+                if let Some(AsmOperand::Constant(AsmConstant::UInt(value, _))) =
+                    instruction.operands.get(1)
+                {
+                    if *value == 0x17 {
+                        has_address_constant = true;
                     }
                 }
             }
@@ -495,10 +549,11 @@ mod tests {
         let mut has_extract_lane = false;
         for block in &lifted.basic_blocks {
             for instruction in &block.instructions {
-                match &instruction.kind {
-                    AsmInstructionKind::BuildVector { .. } => has_build_vector = true,
-                    AsmInstructionKind::ExtractLane { .. } => has_extract_lane = true,
-                    _ => {}
+                if is_opcode(instruction, AsmGenericOpcode::BuildVector) {
+                    has_build_vector = true;
+                }
+                if is_opcode(instruction, AsmGenericOpcode::ExtractLane) {
+                    has_extract_lane = true;
                 }
             }
         }
@@ -518,10 +573,11 @@ mod tests {
         let mut saw_build_vector = false;
         for block in &lifted.basic_blocks {
             for instruction in &block.instructions {
-                match &instruction.kind {
-                    AsmInstructionKind::Load { .. } => saw_load = true,
-                    AsmInstructionKind::BuildVector { .. } => saw_build_vector = true,
-                    _ => {}
+                if is_opcode(instruction, AsmGenericOpcode::Load) {
+                    saw_load = true;
+                }
+                if is_opcode(instruction, AsmGenericOpcode::BuildVector) {
+                    saw_build_vector = true;
                 }
             }
         }
@@ -543,10 +599,11 @@ mod tests {
         let mut saw_store = false;
         for block in &lifted.basic_blocks {
             for instruction in &block.instructions {
-                match &instruction.kind {
-                    AsmInstructionKind::ExtractLane { .. } => saw_extract_lane = true,
-                    AsmInstructionKind::Store { .. } => saw_store = true,
-                    _ => {}
+                if is_opcode(instruction, AsmGenericOpcode::ExtractLane) {
+                    saw_extract_lane = true;
+                }
+                if is_opcode(instruction, AsmGenericOpcode::Store) {
+                    saw_store = true;
                 }
             }
         }
@@ -567,7 +624,7 @@ mod tests {
         let mut saw_extract_lane = false;
         for block in &lifted.basic_blocks {
             for instruction in &block.instructions {
-                if matches!(instruction.kind, AsmInstructionKind::ExtractLane { .. }) {
+                if is_opcode(instruction, AsmGenericOpcode::ExtractLane) {
                     saw_extract_lane = true;
                 }
             }
@@ -588,7 +645,12 @@ mod tests {
         let mut saw_extract_lane_1 = false;
         for block in &lifted.basic_blocks {
             for instruction in &block.instructions {
-                if let AsmInstructionKind::ExtractLane { lane, .. } = &instruction.kind {
+                if !is_opcode(instruction, AsmGenericOpcode::ExtractLane) {
+                    continue;
+                }
+                // Canonical `ExtractLane` operand schema:
+                // `[Write dest, Read vector, Immediate(lane)]`.
+                if let Some(AsmOperand::Immediate(lane)) = instruction.operands.get(2) {
                     if *lane == 1 {
                         saw_extract_lane_1 = true;
                     }
@@ -611,12 +673,13 @@ mod tests {
         let mut has_shift = false;
         for block in &lifted.basic_blocks {
             for instruction in &block.instructions {
-                match &instruction.kind {
-                    AsmInstructionKind::Load { .. } => has_load = true,
-                    AsmInstructionKind::Shl(_, _) | AsmInstructionKind::Shr(_, _) => {
-                        has_shift = true
-                    }
-                    _ => {}
+                if is_opcode(instruction, AsmGenericOpcode::Load) {
+                    has_load = true;
+                }
+                if is_opcode(instruction, AsmGenericOpcode::Shl)
+                    || is_opcode(instruction, AsmGenericOpcode::Shr)
+                {
+                    has_shift = true;
                 }
             }
         }
@@ -637,10 +700,11 @@ mod tests {
         let mut saw_select = false;
         for block in &lifted.basic_blocks {
             for instruction in &block.instructions {
-                match &instruction.kind {
-                    AsmInstructionKind::Trunc(_, _) => saw_trunc = true,
-                    AsmInstructionKind::Select { .. } => saw_select = true,
-                    _ => {}
+                if is_opcode(instruction, AsmGenericOpcode::Trunc) {
+                    saw_trunc = true;
+                }
+                if is_opcode(instruction, AsmGenericOpcode::Select) {
+                    saw_select = true;
                 }
             }
         }
@@ -661,7 +725,7 @@ mod tests {
         let mut has_compare = false;
         for block in &lifted.basic_blocks {
             for instruction in &block.instructions {
-                if matches!(instruction.kind, AsmInstructionKind::Eq(_, _)) {
+                if is_opcode(instruction, AsmGenericOpcode::Eq) {
                     has_compare = true;
                 }
             }
@@ -683,12 +747,13 @@ mod tests {
         let mut has_shift = false;
         for block in &lifted.basic_blocks {
             for instruction in &block.instructions {
-                match &instruction.kind {
-                    AsmInstructionKind::Mul(_, _) => has_mul = true,
-                    AsmInstructionKind::Shr(_, _) | AsmInstructionKind::Shl(_, _) => {
-                        has_shift = true
-                    }
-                    _ => {}
+                if is_opcode(instruction, AsmGenericOpcode::Mul) {
+                    has_mul = true;
+                }
+                if is_opcode(instruction, AsmGenericOpcode::Shr)
+                    || is_opcode(instruction, AsmGenericOpcode::Shl)
+                {
+                    has_shift = true;
                 }
             }
         }

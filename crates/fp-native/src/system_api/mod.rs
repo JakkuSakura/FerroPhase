@@ -1,15 +1,323 @@
 #![allow(dead_code)]
 
 use fp_core::asmir::{
-    AsmBlock, AsmConstant, AsmFunction, AsmFunctionSignature, AsmGenericOpcode, AsmGlobal,
-    AsmGlobalRelocation, AsmInstruction, AsmInstructionKind, AsmLocal, AsmObjectFormat, AsmOpcode,
-    AsmProgram, AsmRelocationKind, AsmSection, AsmSectionFlag, AsmSectionKind, AsmSysOp,
-    AsmSyscallConvention, AsmTerminator, AsmType, AsmValue, PosixDirentStyle, PosixFlagStyle,
+    AsmAttr, AsmBlock, AsmConstant, AsmFunction, AsmFunctionSignature, AsmGenericOpcode, AsmGlobal,
+    AsmGlobalRelocation, AsmInstruction, AsmLocal, AsmObjectFormat, AsmOpcode, AsmOperand,
+    AsmProgram, AsmRegister, AsmRegisterBank, AsmRelocationKind, AsmSection, AsmSectionFlag,
+    AsmSectionKind, AsmSysOp, AsmSyscallConvention, AsmTerminator, AsmType, AsmVirtualRegId,
+    OperandAccess, PosixDirentStyle, PosixFlagStyle,
 };
 use fp_core::error::{Error, Result};
 use fp_core::lir::{CallingConvention, Linkage, Name, Visibility};
 
 type SystemApiOp = AsmSysOp;
+
+// ---------------------------------------------------------------------------
+// Shared instruction-construction helpers.
+//
+// This module synthesizes a large amount of glue AsmIR (libc/syscall shims,
+// Windows-import <-> syscall rewriting, ...). All of it funnels through these
+// helpers so every synthesized `AsmOperand` list matches the canonical
+// per-opcode operand schema (see `fp_core::asmir::AsmInstruction`) in one
+// place, and every synthesized virtual register goes through
+// `AsmFunction::alloc_virtual_register` rather than being hand-numbered.
+// ---------------------------------------------------------------------------
+
+fn register_bank_for(ty: &AsmType) -> AsmRegisterBank {
+    match ty {
+        AsmType::F32 | AsmType::F64 => AsmRegisterBank::Float,
+        AsmType::Vector(..) => AsmRegisterBank::Vector,
+        _ => AsmRegisterBank::General,
+    }
+}
+
+fn type_bits_for(ty: &AsmType) -> u16 {
+    let bytes: u64 = match ty {
+        AsmType::I1 | AsmType::I8 => 1,
+        AsmType::I16 => 2,
+        AsmType::I32 | AsmType::F32 => 4,
+        AsmType::I64 | AsmType::F64 | AsmType::Ptr(_) | AsmType::Function { .. } => 8,
+        AsmType::I128 => 16,
+        AsmType::Integer(width) => u64::from(width.div_ceil(8)),
+        AsmType::Array(element, count) => u64::from(type_bits_for(element) / 8) * *count,
+        AsmType::Vector(element, count) => {
+            u64::from(type_bits_for(element) / 8) * u64::from(*count)
+        }
+        AsmType::Struct { fields, .. } => fields
+            .iter()
+            .map(|field| u64::from(type_bits_for(field) / 8))
+            .sum(),
+        AsmType::Void | AsmType::Label | AsmType::Token | AsmType::Metadata | AsmType::Error => 0,
+    };
+    let bytes = bytes.min(u64::from(u16::MAX));
+    if bytes == 0 {
+        64
+    } else {
+        (bytes as u16).saturating_mul(8)
+    }
+}
+
+/// Allocates a fresh virtual register in `function` for a value of type
+/// `ty`, deriving its register bank/width from the type. This is the sole
+/// place synthesized glue code should mint new registers.
+fn alloc_result(function: &mut AsmFunction, ty: AsmType) -> AsmVirtualRegId {
+    let bank = register_bank_for(&ty);
+    let bits = type_bits_for(&ty);
+    function.alloc_virtual_register(ty, bank, bits)
+}
+
+fn vreg_read(reg: AsmVirtualRegId) -> AsmOperand {
+    AsmOperand::Register {
+        reg: AsmRegister::Virtual(reg),
+        access: OperandAccess::Read,
+    }
+}
+
+fn vreg_write(reg: AsmVirtualRegId) -> AsmOperand {
+    AsmOperand::Register {
+        reg: AsmRegister::Virtual(reg),
+        access: OperandAccess::Write,
+    }
+}
+
+/// Builds a `Call` instruction with operands in the canonical
+/// `[dest?, Attr(CallingConv), Attr(TailCall)?, target, arg...]` order, so
+/// `AsmInstruction::call_target_and_args` keeps working on it.
+fn build_call(
+    id: u32,
+    dest: Option<AsmVirtualRegId>,
+    target: AsmOperand,
+    args: Vec<AsmOperand>,
+    calling_convention: CallingConvention,
+    tail_call: bool,
+) -> AsmInstruction {
+    let mut operands = Vec::with_capacity(3 + args.len());
+    if let Some(dest) = dest {
+        operands.push(vreg_write(dest));
+    }
+    operands.push(AsmOperand::Attr(AsmAttr::CallingConv(calling_convention)));
+    if tail_call {
+        operands.push(AsmOperand::Attr(AsmAttr::TailCall));
+    }
+    operands.push(target);
+    operands.extend(args);
+    AsmInstruction::new(id, AsmOpcode::Generic(AsmGenericOpcode::Call), operands)
+}
+
+/// `build_call` against a named symbol (the overwhelmingly common case in
+/// this file: calling a libc function by name).
+fn build_call_symbol(
+    id: u32,
+    dest: Option<AsmVirtualRegId>,
+    name: &str,
+    args: Vec<AsmOperand>,
+    calling_convention: CallingConvention,
+) -> AsmInstruction {
+    build_call(
+        id,
+        dest,
+        AsmOperand::Symbol(Name::new(name)),
+        args,
+        calling_convention,
+        false,
+    )
+}
+
+fn build_unary(id: u32, opcode: AsmGenericOpcode, dest: AsmVirtualRegId, src: AsmOperand) -> AsmInstruction {
+    AsmInstruction::new(id, AsmOpcode::Generic(opcode), vec![vreg_write(dest), src])
+}
+
+/// Registers (if not already present) a function with an empty body that
+/// unconditionally returns `return_value`. Used for no-op compatibility
+/// stubs (e.g. Darwin stand-ins for glibc-only APIs like libcap).
+fn ensure_constant_stub_function(
+    program: &mut AsmProgram,
+    name: &str,
+    params: Vec<(&str, AsmType)>,
+    return_type: AsmType,
+    return_value: AsmOperand,
+) {
+    let mut f = AsmFunction::new(
+        Name::new(name),
+        AsmFunctionSignature {
+            params: params.iter().map(|(_, ty)| ty.clone()).collect(),
+            return_type,
+            is_variadic: false,
+        },
+    );
+    f.locals = params
+        .iter()
+        .enumerate()
+        .map(|(i, (pname, ty))| AsmLocal {
+            id: i as u32,
+            name: Some((*pname).to_string()),
+            ty: ty.clone(),
+            is_argument: true,
+        })
+        .collect();
+    f.basic_blocks = vec![AsmBlock {
+        id: 0,
+        label: None,
+        instructions: Vec::new(),
+        terminator: AsmTerminator::Return(Some(return_value)),
+        terminator_encoding: None,
+        predecessors: Vec::new(),
+        successors: Vec::new(),
+    }];
+    f.linkage = Linkage::External;
+    f.visibility = Visibility::Default;
+    f.calling_convention = Some(CallingConvention::C);
+    f.section = Some(".text".to_string());
+    f.is_declaration = false;
+    ensure_function(program, f);
+}
+
+/// Registers (if not already present) a trampoline function that forwards
+/// all of its arguments verbatim to `target` and returns its result. This
+/// is the common "glibc-only alias forwards to an equivalent libc function"
+/// shape used throughout this module (e.g. `fflush_unlocked` -> `fflush`).
+fn ensure_forwarding_function(
+    program: &mut AsmProgram,
+    name: &str,
+    params: Vec<(&str, AsmType)>,
+    return_type: AsmType,
+    target: &str,
+) {
+    let mut f = AsmFunction::new(
+        Name::new(name),
+        AsmFunctionSignature {
+            params: params.iter().map(|(_, ty)| ty.clone()).collect(),
+            return_type: return_type.clone(),
+            is_variadic: false,
+        },
+    );
+    f.locals = params
+        .iter()
+        .enumerate()
+        .map(|(i, (pname, ty))| AsmLocal {
+            id: i as u32,
+            name: Some((*pname).to_string()),
+            ty: ty.clone(),
+            is_argument: true,
+        })
+        .collect();
+    let args: Vec<AsmOperand> = (0..params.len() as u32).map(AsmOperand::Local).collect();
+    let result = alloc_result(&mut f, return_type);
+    f.basic_blocks = vec![AsmBlock {
+        id: 0,
+        label: None,
+        instructions: vec![build_call_symbol(0, Some(result), target, args, CallingConvention::C)],
+        terminator: AsmTerminator::Return(Some(vreg_read(result))),
+        terminator_encoding: None,
+        predecessors: Vec::new(),
+        successors: Vec::new(),
+    }];
+    f.linkage = Linkage::External;
+    f.visibility = Visibility::Default;
+    f.calling_convention = Some(CallingConvention::C);
+    f.section = Some(".text".to_string());
+    f.is_declaration = false;
+    ensure_function(program, f);
+}
+
+fn build_binop(
+    id: u32,
+    opcode: AsmGenericOpcode,
+    dest: AsmVirtualRegId,
+    lhs: AsmOperand,
+    rhs: AsmOperand,
+) -> AsmInstruction {
+    AsmInstruction::new(
+        id,
+        AsmOpcode::Generic(opcode),
+        vec![vreg_write(dest), lhs, rhs],
+    )
+}
+
+fn build_load(id: u32, dest: AsmVirtualRegId, address: AsmOperand) -> AsmInstruction {
+    AsmInstruction::new(
+        id,
+        AsmOpcode::Generic(AsmGenericOpcode::Load),
+        vec![vreg_write(dest), address],
+    )
+}
+
+fn build_store(id: u32, value: AsmOperand, address: AsmOperand) -> AsmInstruction {
+    AsmInstruction::new(
+        id,
+        AsmOpcode::Generic(AsmGenericOpcode::Store),
+        vec![value, address],
+    )
+}
+
+fn build_alloca(id: u32, dest: AsmVirtualRegId, size: AsmOperand, alignment: u32) -> AsmInstruction {
+    AsmInstruction::new(
+        id,
+        AsmOpcode::Generic(AsmGenericOpcode::Alloca),
+        vec![vreg_write(dest), size, AsmOperand::Attr(AsmAttr::Alignment(alignment))],
+    )
+}
+
+fn build_gep(
+    id: u32,
+    dest: AsmVirtualRegId,
+    ptr: AsmOperand,
+    indices: Vec<AsmOperand>,
+) -> AsmInstruction {
+    let mut operands = Vec::with_capacity(2 + indices.len());
+    operands.push(vreg_write(dest));
+    operands.push(ptr);
+    operands.extend(indices);
+    AsmInstruction::new(id, AsmOpcode::Generic(AsmGenericOpcode::GetElementPtr), operands)
+}
+
+fn build_eq(id: u32, dest: AsmVirtualRegId, lhs: AsmOperand, rhs: AsmOperand) -> AsmInstruction {
+    build_binop(id, AsmGenericOpcode::Eq, dest, lhs, rhs)
+}
+
+fn build_select(
+    id: u32,
+    dest: AsmVirtualRegId,
+    condition: AsmOperand,
+    if_true: AsmOperand,
+    if_false: AsmOperand,
+) -> AsmInstruction {
+    AsmInstruction::new(
+        id,
+        AsmOpcode::Generic(AsmGenericOpcode::Select),
+        vec![vreg_write(dest), condition, if_true, if_false],
+    )
+}
+
+/// Builds a `Syscall` instruction with operands in the canonical
+/// `[dest?, Attr(SyscallConvention), number, arg...]` order.
+fn build_syscall(
+    id: u32,
+    dest: Option<AsmVirtualRegId>,
+    convention: AsmSyscallConvention,
+    number: AsmOperand,
+    args: Vec<AsmOperand>,
+) -> AsmInstruction {
+    let mut operands = Vec::with_capacity(2 + args.len());
+    if let Some(dest) = dest {
+        operands.push(vreg_write(dest));
+    }
+    operands.push(AsmOperand::Attr(AsmAttr::SyscallConvention(convention)));
+    operands.push(number);
+    operands.extend(args);
+    AsmInstruction::new(id, AsmOpcode::Generic(AsmGenericOpcode::Syscall), operands)
+}
+
+/// Builds a `SysOp` instruction with operands in the canonical
+/// `[dest?, SysOp(op)]` order.
+fn build_sysop(id: u32, dest: Option<AsmVirtualRegId>, op: AsmSysOp) -> AsmInstruction {
+    let mut operands = Vec::new();
+    if let Some(dest) = dest {
+        operands.push(vreg_write(dest));
+    }
+    operands.push(AsmOperand::SysOp(Box::new(op)));
+    AsmInstruction::new(id, AsmOpcode::Generic(AsmGenericOpcode::SysOp), operands)
+}
 
 fn match_getfileattributes_sequence_to_syscall(
     instructions: &[AsmInstruction],
@@ -25,7 +333,7 @@ fn match_getfileattributes_sequence_to_syscall(
     if !is_call_named(call, "kernel32.dll", "GetFileAttributesA") {
         return Ok(None);
     }
-    let AsmInstructionKind::Call { args, .. } = &call.kind else {
+    let Some((_, args)) = call.call_target_and_args() else {
         return Ok(None);
     };
     if args.len() != 1 {
@@ -37,7 +345,7 @@ fn match_getfileattributes_sequence_to_syscall(
         "GetFileAttributesA",
         SystemApiOp::Access {
             path: args[0].clone(),
-            mode: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)),
+            mode: AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32)),
         },
         convention,
     )
@@ -90,154 +398,118 @@ fn ensure_glibc_progname_globals(program: &mut AsmProgram) {
 fn ensure_glibc_overflow(program: &mut AsmProgram) -> Result<()> {
     // glibc uses `__overflow(FILE*, int)` as an internal stdio helper.
     // Provide a compatibility definition that forwards to libc `fputc`.
-    ensure_function(
-        program,
-        AsmFunction {
-            name: Name::new("__overflow"),
-            signature: AsmFunctionSignature {
-                params: vec![AsmType::Ptr(Box::new(AsmType::I8)), AsmType::I32],
-                return_type: AsmType::I32,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("fputc".to_string()),
-                        args: vec![AsmValue::Local(1), AsmValue::Local(0)],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::I32,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("stream".to_string()),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("ch".to_string()),
-                    ty: AsmType::I32,
-                    is_argument: true,
-                },
-            ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
+    let mut f = AsmFunction::new(
+        Name::new("__overflow"),
+        AsmFunctionSignature {
+            params: vec![AsmType::Ptr(Box::new(AsmType::I8)), AsmType::I32],
+            return_type: AsmType::I32,
+            is_variadic: false,
         },
     );
+    f.locals = vec![
+        AsmLocal {
+            id: 0,
+            name: Some("stream".to_string()),
+            ty: AsmType::Ptr(Box::new(AsmType::I8)),
+            is_argument: true,
+        },
+        AsmLocal {
+            id: 1,
+            name: Some("ch".to_string()),
+            ty: AsmType::I32,
+            is_argument: true,
+        },
+    ];
+    let result = alloc_result(&mut f, AsmType::I32);
+    f.basic_blocks = vec![AsmBlock {
+        id: 0,
+        label: None,
+        instructions: vec![build_call_symbol(
+            0,
+            Some(result),
+            "fputc",
+            vec![AsmOperand::Local(1), AsmOperand::Local(0)],
+            CallingConvention::C,
+        )],
+        terminator: AsmTerminator::Return(Some(vreg_read(result))),
+        terminator_encoding: None,
+        predecessors: Vec::new(),
+        successors: Vec::new(),
+    }];
+    f.linkage = Linkage::External;
+    f.visibility = Visibility::Default;
+    f.calling_convention = Some(CallingConvention::C);
+    f.section = Some(".text".to_string());
+    f.is_declaration = false;
+    ensure_function(program, f);
     Ok(())
 }
 
 fn ensure_glibc_mempcpy(program: &mut AsmProgram) -> Result<()> {
     // Darwin libc doesn't provide mempcpy, but glibc-compiled binaries may.
     // This is a minimal, unsafe compatibility implementation.
-    ensure_function(
-        program,
-        AsmFunction {
-            name: Name::new("mempcpy"),
-            signature: AsmFunctionSignature {
-                params: vec![
-                    AsmType::Ptr(Box::new(AsmType::I8)),
-                    AsmType::Ptr(Box::new(AsmType::I8)),
-                    AsmType::I64,
-                ],
-                return_type: AsmType::Ptr(Box::new(AsmType::I8)),
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![
-                    AsmInstruction {
-                        id: 0,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                        kind: AsmInstructionKind::Call {
-                            function: AsmValue::Function("memcpy".to_string()),
-                            args: vec![AsmValue::Local(0), AsmValue::Local(1), AsmValue::Local(2)],
-                            calling_convention: CallingConvention::C,
-                            tail_call: false,
-                        },
-                        ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    AsmInstruction {
-                        id: 1,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::GetElementPtr),
-                        kind: AsmInstructionKind::GetElementPtr {
-                            ptr: AsmValue::Local(0),
-                            indices: vec![AsmValue::Local(2)],
-                            inbounds: false,
-                        },
-                        ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                ],
-                terminator: AsmTerminator::Return(Some(AsmValue::Register(1))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("dest".to_string()),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("src".to_string()),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 2,
-                    name: Some("len".to_string()),
-                    ty: AsmType::I64,
-                    is_argument: true,
-                },
+    let mut f = AsmFunction::new(
+        Name::new("mempcpy"),
+        AsmFunctionSignature {
+            params: vec![
+                AsmType::Ptr(Box::new(AsmType::I8)),
+                AsmType::Ptr(Box::new(AsmType::I8)),
+                AsmType::I64,
             ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
+            return_type: AsmType::Ptr(Box::new(AsmType::I8)),
+            is_variadic: false,
         },
     );
+    f.locals = vec![
+        AsmLocal {
+            id: 0,
+            name: Some("dest".to_string()),
+            ty: AsmType::Ptr(Box::new(AsmType::I8)),
+            is_argument: true,
+        },
+        AsmLocal {
+            id: 1,
+            name: Some("src".to_string()),
+            ty: AsmType::Ptr(Box::new(AsmType::I8)),
+            is_argument: true,
+        },
+        AsmLocal {
+            id: 2,
+            name: Some("len".to_string()),
+            ty: AsmType::I64,
+            is_argument: true,
+        },
+    ];
+    let memcpy_result = alloc_result(&mut f, AsmType::Ptr(Box::new(AsmType::I8)));
+    let gep_result = alloc_result(&mut f, AsmType::Ptr(Box::new(AsmType::I8)));
+    f.basic_blocks = vec![AsmBlock {
+        id: 0,
+        label: None,
+        instructions: vec![
+            build_call_symbol(
+                0,
+                Some(memcpy_result),
+                "memcpy",
+                vec![
+                    AsmOperand::Local(0),
+                    AsmOperand::Local(1),
+                    AsmOperand::Local(2),
+                ],
+                CallingConvention::C,
+            ),
+            build_gep(1, gep_result, AsmOperand::Local(0), vec![AsmOperand::Local(2)]),
+        ],
+        terminator: AsmTerminator::Return(Some(vreg_read(gep_result))),
+        terminator_encoding: None,
+        predecessors: Vec::new(),
+        successors: Vec::new(),
+    }];
+    f.linkage = Linkage::External;
+    f.visibility = Visibility::Default;
+    f.calling_convention = Some(CallingConvention::C);
+    f.section = Some(".text".to_string());
+    f.is_declaration = false;
+    ensure_function(program, f);
     Ok(())
 }
 
@@ -246,168 +518,164 @@ fn ensure_glibc_start_main(program: &mut AsmProgram) -> Result<()> {
     //
     // We only need this to satisfy references from lifted ELF `_start` code paths.
     // The fp-cli wrapper prefers calling `fp_lifted_main` directly.
-    ensure_function(
-        program,
-        AsmFunction {
-            name: Name::new("__libc_start_main"),
-            signature: AsmFunctionSignature {
-                params: vec![
-                    AsmType::Ptr(Box::new(AsmType::I8)),
-                    AsmType::I32,
-                    AsmType::Ptr(Box::new(AsmType::Ptr(Box::new(AsmType::I8)))),
-                    AsmType::Ptr(Box::new(AsmType::I8)),
-                    AsmType::Ptr(Box::new(AsmType::I8)),
-                    AsmType::Ptr(Box::new(AsmType::I8)),
-                    AsmType::Ptr(Box::new(AsmType::I8)),
-                ],
-                return_type: AsmType::I32,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![
-                    AsmInstruction {
-                        id: 0,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::SExt),
-                        kind: AsmInstructionKind::SExt(AsmValue::Local(1), AsmType::I64),
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    AsmInstruction {
-                        id: 1,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Add),
-                        kind: AsmInstructionKind::Add(
-                            AsmValue::Register(0),
-                            AsmValue::Constant(AsmConstant::UInt(1, AsmType::I64)),
-                        ),
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    AsmInstruction {
-                        id: 2,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::GetElementPtr),
-                        kind: AsmInstructionKind::GetElementPtr {
-                            ptr: AsmValue::Local(2),
-                            indices: vec![AsmValue::Register(1)],
-                            inbounds: false,
-                        },
-                        ty: AsmType::Ptr(Box::new(AsmType::Ptr(Box::new(AsmType::I8)))),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    AsmInstruction {
-                        id: 3,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                        kind: AsmInstructionKind::Call {
-                            function: AsmValue::Local(0),
-                            args: vec![
-                                AsmValue::Local(1),
-                                AsmValue::Local(2),
-                                AsmValue::Register(2),
-                            ],
-                            calling_convention: CallingConvention::C,
-                            tail_call: false,
-                        },
-                        ty: AsmType::I32,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    AsmInstruction {
-                        id: 4,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                        kind: AsmInstructionKind::Call {
-                            function: AsmValue::Function("exit".to_string()),
-                            args: vec![AsmValue::Register(3)],
-                            calling_convention: CallingConvention::C,
-                            tail_call: false,
-                        },
-                        ty: AsmType::Void,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                ],
-                terminator: AsmTerminator::Unreachable,
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("main".to_string()),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("argc".to_string()),
-                    ty: AsmType::I32,
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 2,
-                    name: Some("argv".to_string()),
-                    ty: AsmType::Ptr(Box::new(AsmType::Ptr(Box::new(AsmType::I8)))),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 3,
-                    name: Some("init".to_string()),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 4,
-                    name: Some("fini".to_string()),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 5,
-                    name: Some("rtld_fini".to_string()),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 6,
-                    name: Some("stack_end".to_string()),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    is_argument: true,
-                },
+    let mut f = AsmFunction::new(
+        Name::new("__libc_start_main"),
+        AsmFunctionSignature {
+            params: vec![
+                AsmType::Ptr(Box::new(AsmType::I8)),
+                AsmType::I32,
+                AsmType::Ptr(Box::new(AsmType::Ptr(Box::new(AsmType::I8)))),
+                AsmType::Ptr(Box::new(AsmType::I8)),
+                AsmType::Ptr(Box::new(AsmType::I8)),
+                AsmType::Ptr(Box::new(AsmType::I8)),
+                AsmType::Ptr(Box::new(AsmType::I8)),
             ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
+            return_type: AsmType::I32,
+            is_variadic: false,
         },
     );
+    f.locals = vec![
+        AsmLocal {
+            id: 0,
+            name: Some("main".to_string()),
+            ty: AsmType::Ptr(Box::new(AsmType::I8)),
+            is_argument: true,
+        },
+        AsmLocal {
+            id: 1,
+            name: Some("argc".to_string()),
+            ty: AsmType::I32,
+            is_argument: true,
+        },
+        AsmLocal {
+            id: 2,
+            name: Some("argv".to_string()),
+            ty: AsmType::Ptr(Box::new(AsmType::Ptr(Box::new(AsmType::I8)))),
+            is_argument: true,
+        },
+        AsmLocal {
+            id: 3,
+            name: Some("init".to_string()),
+            ty: AsmType::Ptr(Box::new(AsmType::I8)),
+            is_argument: true,
+        },
+        AsmLocal {
+            id: 4,
+            name: Some("fini".to_string()),
+            ty: AsmType::Ptr(Box::new(AsmType::I8)),
+            is_argument: true,
+        },
+        AsmLocal {
+            id: 5,
+            name: Some("rtld_fini".to_string()),
+            ty: AsmType::Ptr(Box::new(AsmType::I8)),
+            is_argument: true,
+        },
+        AsmLocal {
+            id: 6,
+            name: Some("stack_end".to_string()),
+            ty: AsmType::Ptr(Box::new(AsmType::I8)),
+            is_argument: true,
+        },
+    ];
+    let argc64 = alloc_result(&mut f, AsmType::I64);
+    let argv_end_index = alloc_result(&mut f, AsmType::I64);
+    let envp = alloc_result(
+        &mut f,
+        AsmType::Ptr(Box::new(AsmType::Ptr(Box::new(AsmType::I8)))),
+    );
+    let main_result = alloc_result(&mut f, AsmType::I32);
+    f.basic_blocks = vec![AsmBlock {
+        id: 0,
+        label: None,
+        instructions: vec![
+            build_unary(0, AsmGenericOpcode::SExt, argc64, AsmOperand::Local(1)),
+            build_binop(
+                1,
+                AsmGenericOpcode::Add,
+                argv_end_index,
+                vreg_read(argc64),
+                AsmOperand::Constant(AsmConstant::UInt(1, AsmType::I64)),
+            ),
+            build_gep(2, envp, AsmOperand::Local(2), vec![vreg_read(argv_end_index)]),
+            build_call(
+                3,
+                Some(main_result),
+                AsmOperand::Local(0),
+                vec![AsmOperand::Local(1), AsmOperand::Local(2), vreg_read(envp)],
+                CallingConvention::C,
+                false,
+            ),
+            build_call_symbol(
+                4,
+                None,
+                "exit",
+                vec![vreg_read(main_result)],
+                CallingConvention::C,
+            ),
+        ],
+        terminator: AsmTerminator::Unreachable,
+        terminator_encoding: None,
+        predecessors: Vec::new(),
+        successors: Vec::new(),
+    }];
+    f.linkage = Linkage::External;
+    f.visibility = Visibility::Default;
+    f.calling_convention = Some(CallingConvention::C);
+    f.section = Some(".text".to_string());
+    f.is_declaration = false;
+    ensure_function(program, f);
     Ok(())
+}
+
+/// Extracts a `Syscall` instruction's `(convention, number, args)` per the
+/// canonical `[dest?, Attr(SyscallConvention(cc)), number, arg...]` schema.
+fn syscall_parts(inst: &AsmInstruction) -> Option<(AsmSyscallConvention, &AsmOperand, &[AsmOperand])> {
+    if !matches!(inst.opcode, AsmOpcode::Generic(AsmGenericOpcode::Syscall)) {
+        return None;
+    }
+    let cc_idx = inst
+        .operands
+        .iter()
+        .position(|op| matches!(op, AsmOperand::Attr(AsmAttr::SyscallConvention(_))))?;
+    let AsmOperand::Attr(AsmAttr::SyscallConvention(convention)) = &inst.operands[cc_idx] else {
+        unreachable!()
+    };
+    let number = inst.operands.get(cc_idx + 1)?;
+    let args = &inst.operands[cc_idx + 2..];
+    Some((*convention, number, args))
+}
+
+/// The register this instruction writes, if any, as a bare vreg id (for
+/// reuse as the `dest` of a replacement instruction built in place).
+fn result_vreg(inst: &AsmInstruction) -> Option<AsmVirtualRegId> {
+    inst.result_register().and_then(|reg| match reg {
+        AsmRegister::Virtual(id) => Some(*id),
+        AsmRegister::Physical(_) => None,
+    })
+}
+
+/// Extracts a `SysOp` instruction's op payload per the canonical
+/// `[dest?, SysOp(op)]` schema.
+fn sysop_of(inst: &AsmInstruction) -> Option<&AsmSysOp> {
+    if !matches!(inst.opcode, AsmOpcode::Generic(AsmGenericOpcode::SysOp)) {
+        return None;
+    }
+    inst.operands.iter().find_map(|op| match op {
+        AsmOperand::SysOp(inner) => Some(inner.as_ref()),
+        _ => None,
+    })
+}
+
+/// Whether `operand` is exactly a (`Read`-or-otherwise) reference to the
+/// register `inst` defines. Registers are no longer numbered the same as
+/// instruction ids, so callers must compare against `inst.result_register()`
+/// rather than reconstructing `AsmOperand::Register` from `inst.id`.
+fn operand_is_result_of(operand: &AsmOperand, inst: &AsmInstruction) -> bool {
+    matches!(
+        (operand, inst.result_register()),
+        (AsmOperand::Register { reg, .. }, Some(result_reg)) if reg == result_reg
+    )
 }
 
 pub fn rewrite_program_to_sys_ops(program: &mut AsmProgram) -> Result<()> {
@@ -429,33 +697,25 @@ pub fn rewrite_program_to_sys_ops(program: &mut AsmProgram) -> Result<()> {
         for block in &mut func.basic_blocks {
             let snapshot = block.instructions.clone();
             for inst in &mut block.instructions {
-                if let AsmInstructionKind::Syscall {
-                    convention,
-                    number,
-                    args,
-                } = &inst.kind
-                {
+                let dest = result_vreg(inst);
+
+                if let Some((convention, number, args)) = syscall_parts(inst) {
                     if let Some(op) =
-                        detect_system_api_from_syscall(convention, number, args, &snapshot)
+                        detect_system_api_from_syscall(&convention, number, args, &snapshot)
                     {
-                        inst.kind = AsmInstructionKind::SysOp(op);
-                        inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::SysOp);
+                        *inst = build_sysop(inst.id, dest, op);
                     }
                     continue;
                 }
 
-                if let Some(op) = detect_system_api_from_posix_call(&inst.kind, posix_dirent_style)
-                {
-                    inst.kind = AsmInstructionKind::SysOp(op);
-                    inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::SysOp);
+                if let Some(op) = detect_system_api_from_posix_call(inst, posix_dirent_style) {
+                    *inst = build_sysop(inst.id, dest, op);
                     continue;
                 }
 
                 if let Some(convention) = syscall_convention {
-                    if let Some(op) = detect_system_api_from_windows_import(&inst.kind, convention)
-                    {
-                        inst.kind = AsmInstructionKind::SysOp(op);
-                        inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::SysOp);
+                    if let Some(op) = detect_system_api_from_windows_import(inst, convention) {
+                        *inst = build_sysop(inst.id, dest, op);
                     }
                 }
             }
@@ -530,27 +790,41 @@ fn rewrite_glibc_chk_calls_to_libc(program: &mut AsmProgram) {
         })
     }
 
+    // `Call` operand schema: `[dest?, Attr(CallingConv), Attr(TailCall)?,
+    // target, arg...]` — the target is the first non-`Attr`, non-dest-`Write`
+    // operand (mirrors `AsmInstruction::call_target_and_args`).
+    fn call_target_index(operands: &[AsmOperand]) -> Option<usize> {
+        operands.iter().position(|op| {
+            !matches!(op, AsmOperand::Attr(_))
+                && !matches!(
+                    op,
+                    AsmOperand::Register {
+                        access: OperandAccess::Write,
+                        ..
+                    }
+                )
+        })
+    }
+
     fn rewrite_variadic_call(
-        function: &mut AsmValue,
-        args: &mut Vec<AsmValue>,
+        operands: &mut Vec<AsmOperand>,
+        target_idx: usize,
         new_name: &str,
         drop_indices: &[usize],
     ) {
+        operands[target_idx] = AsmOperand::Symbol(Name::new(new_name));
         if drop_indices.is_empty() {
-            *function = AsmValue::Function(new_name.to_string());
             return;
         }
 
-        let mut next_args = Vec::with_capacity(args.len());
-        for (index, arg) in args.iter().cloned().enumerate() {
-            if drop_indices.contains(&index) {
-                continue;
-            }
-            next_args.push(arg);
-        }
-
-        *function = AsmValue::Function(new_name.to_string());
-        *args = next_args;
+        let arg_start = target_idx + 1;
+        let kept: Vec<AsmOperand> = operands
+            .drain(arg_start..)
+            .enumerate()
+            .filter(|(index, _)| !drop_indices.contains(index))
+            .map(|(_, arg)| arg)
+            .collect();
+        operands.extend(kept);
     }
 
     for func in &mut program.functions {
@@ -559,14 +833,16 @@ fn rewrite_glibc_chk_calls_to_libc(program: &mut AsmProgram) {
         }
         for block in &mut func.basic_blocks {
             for inst in &mut block.instructions {
-                let AsmInstructionKind::Call { function, args, .. } = &mut inst.kind else {
+                if !matches!(inst.opcode, AsmOpcode::Generic(AsmGenericOpcode::Call)) {
+                    continue;
+                }
+                let Some(target_idx) = call_target_index(&inst.operands) else {
                     continue;
                 };
-
-                let name = match function {
-                    AsmValue::Function(name) => name.clone(),
-                    _ => continue,
+                let AsmOperand::Symbol(name) = &inst.operands[target_idx] else {
+                    continue;
                 };
+                let name = name.to_string();
 
                 let candidates = [
                     name.as_str(),
@@ -574,7 +850,7 @@ fn rewrite_glibc_chk_calls_to_libc(program: &mut AsmProgram) {
                 ];
                 for candidate in candidates {
                     if let Some((new_name, drop_indices)) = chk_call_rewrite(candidate) {
-                        rewrite_variadic_call(function, args, new_name, drop_indices);
+                        rewrite_variadic_call(&mut inst.operands, target_idx, new_name, drop_indices);
                         break;
                     }
                 }
@@ -600,138 +876,104 @@ fn rewrite_glibc_chk_calls_to_libc(program: &mut AsmProgram) {
 }
 
 fn ensure_glibc_fpending(program: &mut AsmProgram) -> Result<()> {
-    ensure_function(
-        program,
-        AsmFunction {
-            name: Name::new("__fpending"),
-            signature: AsmFunctionSignature {
-                params: vec![AsmType::Ptr(Box::new(AsmType::I8))],
-                return_type: AsmType::I64,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: Vec::new(),
-                terminator: AsmTerminator::Return(Some(AsmValue::Constant(AsmConstant::UInt(
-                    0,
-                    AsmType::I64,
-                )))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
+    let mut f = AsmFunction::new(
+        Name::new("__fpending"),
+        AsmFunctionSignature {
+            params: vec![AsmType::Ptr(Box::new(AsmType::I8))],
+            return_type: AsmType::I64,
+            is_variadic: false,
         },
     );
+    f.basic_blocks = vec![AsmBlock {
+        id: 0,
+        label: None,
+        instructions: Vec::new(),
+        terminator: AsmTerminator::Return(Some(AsmOperand::Constant(AsmConstant::UInt(
+            0,
+            AsmType::I64,
+        )))),
+        terminator_encoding: None,
+        predecessors: Vec::new(),
+        successors: Vec::new(),
+    }];
+    f.linkage = Linkage::External;
+    f.visibility = Visibility::Default;
+    f.calling_convention = Some(CallingConvention::C);
+    f.section = Some(".text".to_string());
+    f.is_declaration = false;
+    ensure_function(program, f);
     Ok(())
 }
 
 fn ensure_glibc_errno_location(program: &mut AsmProgram) -> Result<()> {
-    ensure_function(
-        program,
-        AsmFunction {
-            name: Name::new("__errno_location"),
-            signature: AsmFunctionSignature {
-                params: Vec::new(),
-                return_type: AsmType::Ptr(Box::new(AsmType::I32)),
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("__error".to_string()),
-                        args: Vec::new(),
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::Ptr(Box::new(AsmType::I32)),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
+    let mut f = AsmFunction::new(
+        Name::new("__errno_location"),
+        AsmFunctionSignature {
+            params: Vec::new(),
+            return_type: AsmType::Ptr(Box::new(AsmType::I32)),
+            is_variadic: false,
         },
     );
+    let result = alloc_result(&mut f, AsmType::Ptr(Box::new(AsmType::I32)));
+    f.basic_blocks = vec![AsmBlock {
+        id: 0,
+        label: None,
+        instructions: vec![build_call_symbol(
+            0,
+            Some(result),
+            "__error",
+            Vec::new(),
+            CallingConvention::C,
+        )],
+        terminator: AsmTerminator::Return(Some(vreg_read(result))),
+        terminator_encoding: None,
+        predecessors: Vec::new(),
+        successors: Vec::new(),
+    }];
+    f.linkage = Linkage::External;
+    f.visibility = Visibility::Default;
+    f.calling_convention = Some(CallingConvention::C);
+    f.section = Some(".text".to_string());
+    f.is_declaration = false;
+    ensure_function(program, f);
     Ok(())
 }
 
 fn ensure_glibc_assert_fail(program: &mut AsmProgram) -> Result<()> {
-    ensure_function(
-        program,
-        AsmFunction {
-            name: Name::new("__assert_fail"),
-            signature: AsmFunctionSignature {
-                params: vec![
-                    AsmType::Ptr(Box::new(AsmType::I8)),
-                    AsmType::Ptr(Box::new(AsmType::I8)),
-                    AsmType::I32,
-                    AsmType::Ptr(Box::new(AsmType::I8)),
-                ],
-                return_type: AsmType::Void,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("abort".to_string()),
-                        args: Vec::new(),
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::Void,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: AsmTerminator::Unreachable,
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
+    let mut f = AsmFunction::new(
+        Name::new("__assert_fail"),
+        AsmFunctionSignature {
+            params: vec![
+                AsmType::Ptr(Box::new(AsmType::I8)),
+                AsmType::Ptr(Box::new(AsmType::I8)),
+                AsmType::I32,
+                AsmType::Ptr(Box::new(AsmType::I8)),
+            ],
+            return_type: AsmType::Void,
+            is_variadic: false,
         },
     );
+    f.basic_blocks = vec![AsmBlock {
+        id: 0,
+        label: None,
+        instructions: vec![build_call_symbol(
+            0,
+            None,
+            "abort",
+            Vec::new(),
+            CallingConvention::C,
+        )],
+        terminator: AsmTerminator::Unreachable,
+        terminator_encoding: None,
+        predecessors: Vec::new(),
+        successors: Vec::new(),
+    }];
+    f.linkage = Linkage::External;
+    f.visibility = Visibility::Default;
+    f.calling_convention = Some(CallingConvention::C);
+    f.section = Some(".text".to_string());
+    f.is_declaration = false;
+    ensure_function(program, f);
     Ok(())
 }
 
@@ -751,23 +993,21 @@ fn match_freelibrary_sequence_to_unix_call(
     if !is_call_named(call, "kernel32.dll", "FreeLibrary") {
         return Ok(None);
     }
-    if !matches!(eq.kind, AsmInstructionKind::Eq(_, _)) {
+    if !matches!(eq.opcode, AsmOpcode::Generic(AsmGenericOpcode::Eq)) {
         return Ok(None);
     }
-    let AsmInstructionKind::Select {
-        if_true, if_false, ..
-    } = &select.kind
-    else {
-        return Ok(None);
-    };
-    if if_true != &AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)) {
+    if !matches!(select.opcode, AsmOpcode::Generic(AsmGenericOpcode::Select)) {
         return Ok(None);
     }
-    if if_false != &AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)) {
+    // Select operand schema: [dest, condition, if_true, if_false].
+    if select.operands.get(2) != Some(&AsmOperand::Constant(AsmConstant::Int(-1, AsmType::I64))) {
+        return Ok(None);
+    }
+    if select.operands.get(3) != Some(&AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64))) {
         return Ok(None);
     }
 
-    let AsmInstructionKind::Call { args, .. } = &call.kind else {
+    let Some((_, args)) = call.call_target_and_args() else {
         return Ok(None);
     };
     if args.len() != 1 {
@@ -777,22 +1017,9 @@ fn match_freelibrary_sequence_to_unix_call(
     let op = SystemApiOp::Dlclose {
         handle: args[0].clone(),
     };
-    let (opcode, kind, ty) = lower_system_api_to_unix(op, convention);
-    Ok(Some((
-        AsmInstruction {
-            id: select.id,
-            opcode,
-            kind,
-            ty: ty,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        },
-        3,
-    )))
+    let dest = result_vreg(select);
+    let replacement = lower_system_api_to_unix(select.id, dest, op, convention);
+    Ok(Some((replacement, 3)))
 }
 
 fn normalize_proc_name(symbol: &str) -> String {
@@ -801,13 +1028,11 @@ fn normalize_proc_name(symbol: &str) -> String {
 }
 
 fn detect_system_api_from_posix_call(
-    kind: &AsmInstructionKind,
+    inst: &AsmInstruction,
     dirent_style: PosixDirentStyle,
 ) -> Option<SystemApiOp> {
-    let AsmInstructionKind::Call { function, args, .. } = kind else {
-        return None;
-    };
-    let AsmValue::Function(symbol) = function else {
+    let (target, args) = inst.call_target_and_args()?;
+    let AsmOperand::Symbol(symbol) = target else {
         return None;
     };
     let name = normalize_proc_name(symbol);
@@ -816,88 +1041,88 @@ fn detect_system_api_from_posix_call(
             path: args
                 .get(0)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8))))),
         }),
         "readdir" | "readdir64" => Some(SystemApiOp::Readdir {
             dir: args
                 .get(0)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8))))),
             dirent_style,
         }),
         "closedir" => Some(SystemApiOp::Closedir {
             dir: args
                 .get(0)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8))))),
         }),
         "dlopen" => Some(SystemApiOp::Dlopen {
             path: args
                 .get(0)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8))))),
             flags: args
                 .get(1)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32))),
         }),
         "dlsym" => Some(SystemApiOp::Dlsym {
             handle: args
                 .get(0)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64))),
             symbol: args
                 .get(1)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8))))),
         }),
         "dlclose" => Some(SystemApiOp::Dlclose {
             handle: args
                 .get(0)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64))),
         }),
         "unlink" => Some(SystemApiOp::Unlink {
             path: args
                 .get(0)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8))))),
         }),
         "mkdir" => Some(SystemApiOp::Mkdir {
             path: args
                 .get(0)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8))))),
             mode: args
                 .get(1)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32))),
         }),
         "rmdir" => Some(SystemApiOp::Rmdir {
             path: args
                 .get(0)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8))))),
         }),
         "rename" => Some(SystemApiOp::Rename {
             from: args
                 .get(0)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8))))),
             to: args
                 .get(1)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8))))),
         }),
         "access" => Some(SystemApiOp::Access {
             path: args
                 .get(0)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8))))),
             mode: args
                 .get(1)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32))),
         }),
         _ => None,
     }
@@ -999,17 +1224,14 @@ fn match_closehandle_sequence_to_syscall(
     }
 
     let mut base = 0usize;
-    let mut fd_value: Option<AsmValue> = None;
+    let mut fd_value: Option<AsmOperand> = None;
 
     if is_call_named(&instructions[0], "kernel32.dll", "GetStdHandle") {
         if instructions.len() < 4 {
             return Ok(None);
         }
         let getstd = &instructions[0];
-        let AsmInstructionKind::Call {
-            args: getstd_args, ..
-        } = &getstd.kind
-        else {
+        let Some((_, getstd_args)) = getstd.call_target_and_args() else {
             return Ok(None);
         };
         let Some(handle_code) = getstd_args.first().and_then(|value| {
@@ -1028,7 +1250,7 @@ fn match_closehandle_sequence_to_syscall(
             Some(-12) => 2u64,
             _ => return Ok(None),
         };
-        fd_value = Some(AsmValue::Constant(AsmConstant::UInt(fd, AsmType::I64)));
+        fd_value = Some(AsmOperand::Constant(AsmConstant::UInt(fd, AsmType::I64)));
         base = 1;
     }
 
@@ -1043,45 +1265,29 @@ fn match_closehandle_sequence_to_syscall(
     if !is_call_named(close, "kernel32.dll", "CloseHandle") {
         return Ok(None);
     }
-    if !matches!(cmp.kind, AsmInstructionKind::Eq(_, _)) {
+    if !matches!(cmp.opcode, AsmOpcode::Generic(AsmGenericOpcode::Eq)) {
         return Ok(None);
     }
-    if !matches!(select.kind, AsmInstructionKind::Select { .. }) {
+    if !matches!(select.opcode, AsmOpcode::Generic(AsmGenericOpcode::Select)) {
         return Ok(None);
     }
 
-    let AsmInstructionKind::Call {
-        args: close_args, ..
-    } = &close.kind
-    else {
+    let Some((_, close_args)) = close.call_target_and_args() else {
         return Ok(None);
     };
     if close_args.len() != 1 {
         return Ok(None);
     }
-    if base == 1 && close_args[0] != AsmValue::Register(instructions[0].id) {
+    if base == 1 && !operand_is_result_of(&close_args[0], &instructions[0]) {
         return Ok(None);
     }
 
     let fd = fd_value.unwrap_or_else(|| close_args[0].clone());
     let op = SystemApiOp::Close { fd };
-    let kind = lower_system_api_to_syscall(op, convention);
+    let dest = result_vreg(select);
+    let replacement = lower_system_api_to_syscall(select.id, dest, op, convention);
 
-    Ok(Some((
-        AsmInstruction {
-            id: select.id,
-            opcode: AsmOpcode::Generic(AsmGenericOpcode::Syscall),
-            kind,
-            ty: AsmType::I64,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        },
-        base + 3,
-    )))
+    Ok(Some((replacement, base + 3)))
 }
 
 fn fd_to_std_handle_code(fd: i64) -> Option<i64> {
@@ -1152,67 +1358,54 @@ fn ensure_glibc_rawmemchr(program: &mut AsmProgram) -> Result<()> {
     // rawmemchr(const void *s, int c) -> memchr(s, c, SIZE_MAX)
     let void_ptr = AsmType::Ptr(Box::new(AsmType::I8));
 
-    ensure_function(
-        program,
-        AsmFunction {
-            name: Name::new("rawmemchr"),
-            signature: AsmFunctionSignature {
-                params: vec![void_ptr.clone(), AsmType::I32],
-                return_type: void_ptr.clone(),
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("memchr".to_string()),
-                        args: vec![
-                            AsmValue::Local(0),
-                            AsmValue::Local(1),
-                            AsmValue::Constant(AsmConstant::UInt(u64::MAX, AsmType::I64)),
-                        ],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: void_ptr.clone(),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("s".to_string()),
-                    ty: void_ptr,
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("c".to_string()),
-                    ty: AsmType::I32,
-                    is_argument: true,
-                },
-            ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
+    let mut f = AsmFunction::new(
+        Name::new("rawmemchr"),
+        AsmFunctionSignature {
+            params: vec![void_ptr.clone(), AsmType::I32],
+            return_type: void_ptr.clone(),
+            is_variadic: false,
         },
     );
+    f.locals = vec![
+        AsmLocal {
+            id: 0,
+            name: Some("s".to_string()),
+            ty: void_ptr.clone(),
+            is_argument: true,
+        },
+        AsmLocal {
+            id: 1,
+            name: Some("c".to_string()),
+            ty: AsmType::I32,
+            is_argument: true,
+        },
+    ];
+    let result = alloc_result(&mut f, void_ptr);
+    f.basic_blocks = vec![AsmBlock {
+        id: 0,
+        label: None,
+        instructions: vec![build_call_symbol(
+            0,
+            Some(result),
+            "memchr",
+            vec![
+                AsmOperand::Local(0),
+                AsmOperand::Local(1),
+                AsmOperand::Constant(AsmConstant::UInt(u64::MAX, AsmType::I64)),
+            ],
+            CallingConvention::C,
+        )],
+        terminator: AsmTerminator::Return(Some(vreg_read(result))),
+        terminator_encoding: None,
+        predecessors: Vec::new(),
+        successors: Vec::new(),
+    }];
+    f.linkage = Linkage::External;
+    f.visibility = Visibility::Default;
+    f.calling_convention = Some(CallingConvention::C);
+    f.section = Some(".text".to_string());
+    f.is_declaration = false;
+    ensure_function(program, f);
 
     Ok(())
 }
@@ -1228,78 +1421,46 @@ fn ensure_linux_statx_stub(program: &mut AsmProgram) -> Result<()> {
     let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
     let ptr_i32 = AsmType::Ptr(Box::new(AsmType::I32));
 
-    ensure_function(
-        program,
-        AsmFunction {
-            name: Name::new("statx"),
-            signature: AsmFunctionSignature {
-                params: vec![
-                    AsmType::I32,
-                    ptr_i8.clone(),
-                    AsmType::I32,
-                    AsmType::I32,
-                    ptr_i8.clone(),
-                ],
-                return_type: AsmType::I32,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![
-                    AsmInstruction {
-                        id: 0,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                        kind: AsmInstructionKind::Call {
-                            function: AsmValue::Function("__errno_location".to_string()),
-                            args: Vec::new(),
-                            calling_convention: CallingConvention::C,
-                            tail_call: false,
-                        },
-                        ty: ptr_i32.clone(),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    AsmInstruction {
-                        id: 1,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Store),
-                        kind: AsmInstructionKind::Store {
-                            value: AsmValue::Constant(AsmConstant::UInt(38, AsmType::I32)),
-                            address: AsmValue::Register(0),
-                            alignment: Some(4),
-                            volatile: false,
-                        },
-                        ty: AsmType::Void,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                ],
-                terminator: AsmTerminator::Return(Some(AsmValue::Constant(AsmConstant::Int(
-                    -1,
-                    AsmType::I32,
-                )))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
+    let mut f = AsmFunction::new(
+        Name::new("statx"),
+        AsmFunctionSignature {
+            params: vec![
+                AsmType::I32,
+                ptr_i8.clone(),
+                AsmType::I32,
+                AsmType::I32,
+                ptr_i8,
+            ],
+            return_type: AsmType::I32,
+            is_variadic: false,
         },
     );
+    let errno_ptr = alloc_result(&mut f, ptr_i32);
+    f.basic_blocks = vec![AsmBlock {
+        id: 0,
+        label: None,
+        instructions: vec![
+            build_call_symbol(0, Some(errno_ptr), "__errno_location", Vec::new(), CallingConvention::C),
+            build_store(
+                1,
+                AsmOperand::Constant(AsmConstant::UInt(38, AsmType::I32)),
+                vreg_read(errno_ptr),
+            ),
+        ],
+        terminator: AsmTerminator::Return(Some(AsmOperand::Constant(AsmConstant::Int(
+            -1,
+            AsmType::I32,
+        )))),
+        terminator_encoding: None,
+        predecessors: Vec::new(),
+        successors: Vec::new(),
+    }];
+    f.linkage = Linkage::External;
+    f.visibility = Visibility::Default;
+    f.calling_convention = Some(CallingConvention::C);
+    f.section = Some(".text".to_string());
+    f.is_declaration = false;
+    ensure_function(program, f);
 
     Ok(())
 }
@@ -1311,141 +1472,81 @@ fn ensure_glibc_mbrtoc32(program: &mut AsmProgram) -> Result<()> {
     let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
     let ptr_i32 = AsmType::Ptr(Box::new(AsmType::I32));
 
-    ensure_function(
-        program,
-        AsmFunction {
-            name: Name::new("mbrtoc32"),
-            signature: AsmFunctionSignature {
-                params: vec![
-                    ptr_i32.clone(),
-                    ptr_i8.clone(),
-                    AsmType::I64,
-                    ptr_i8.clone(),
-                ],
-                return_type: AsmType::I64,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![
-                    AsmInstruction {
-                        id: 0,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Load),
-                        kind: AsmInstructionKind::Load {
-                            address: AsmValue::Local(1),
-                            alignment: Some(1),
-                            volatile: false,
-                        },
-                        ty: AsmType::I8,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    AsmInstruction {
-                        id: 1,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::ZExt),
-                        kind: AsmInstructionKind::ZExt(AsmValue::Register(0), AsmType::I32),
-                        ty: AsmType::I32,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    AsmInstruction {
-                        id: 2,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Store),
-                        kind: AsmInstructionKind::Store {
-                            value: AsmValue::Register(1),
-                            address: AsmValue::Local(0),
-                            alignment: Some(4),
-                            volatile: false,
-                        },
-                        ty: AsmType::Void,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    AsmInstruction {
-                        id: 3,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
-                        kind: AsmInstructionKind::Eq(
-                            AsmValue::Register(0),
-                            AsmValue::Constant(AsmConstant::UInt(0, AsmType::I8)),
-                        ),
-                        ty: AsmType::I1,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    AsmInstruction {
-                        id: 4,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
-                        kind: AsmInstructionKind::Select {
-                            condition: AsmValue::Register(3),
-                            if_true: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
-                            if_false: AsmValue::Constant(AsmConstant::UInt(1, AsmType::I64)),
-                        },
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                ],
-                terminator: AsmTerminator::Return(Some(AsmValue::Register(4))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("pc32".to_string()),
-                    ty: ptr_i32,
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("s".to_string()),
-                    ty: ptr_i8.clone(),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 2,
-                    name: Some("n".to_string()),
-                    ty: AsmType::I64,
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 3,
-                    name: Some("ps".to_string()),
-                    ty: ptr_i8,
-                    is_argument: true,
-                },
+    let mut f = AsmFunction::new(
+        Name::new("mbrtoc32"),
+        AsmFunctionSignature {
+            params: vec![
+                ptr_i32.clone(),
+                ptr_i8.clone(),
+                AsmType::I64,
+                ptr_i8.clone(),
             ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
+            return_type: AsmType::I64,
+            is_variadic: false,
         },
     );
+    f.locals = vec![
+        AsmLocal {
+            id: 0,
+            name: Some("pc32".to_string()),
+            ty: ptr_i32,
+            is_argument: true,
+        },
+        AsmLocal {
+            id: 1,
+            name: Some("s".to_string()),
+            ty: ptr_i8.clone(),
+            is_argument: true,
+        },
+        AsmLocal {
+            id: 2,
+            name: Some("n".to_string()),
+            ty: AsmType::I64,
+            is_argument: true,
+        },
+        AsmLocal {
+            id: 3,
+            name: Some("ps".to_string()),
+            ty: ptr_i8,
+            is_argument: true,
+        },
+    ];
+    let byte_reg = alloc_result(&mut f, AsmType::I8);
+    let widened_reg = alloc_result(&mut f, AsmType::I32);
+    let is_nul_reg = alloc_result(&mut f, AsmType::I1);
+    let result_reg = alloc_result(&mut f, AsmType::I64);
+    f.basic_blocks = vec![AsmBlock {
+        id: 0,
+        label: None,
+        instructions: vec![
+            build_load(0, byte_reg, AsmOperand::Local(1)),
+            build_unary(1, AsmGenericOpcode::ZExt, widened_reg, vreg_read(byte_reg)),
+            build_store(2, vreg_read(widened_reg), AsmOperand::Local(0)),
+            build_eq(
+                3,
+                is_nul_reg,
+                vreg_read(byte_reg),
+                AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I8)),
+            ),
+            build_select(
+                4,
+                result_reg,
+                vreg_read(is_nul_reg),
+                AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                AsmOperand::Constant(AsmConstant::UInt(1, AsmType::I64)),
+            ),
+        ],
+        terminator: AsmTerminator::Return(Some(vreg_read(result_reg))),
+        terminator_encoding: None,
+        predecessors: Vec::new(),
+        successors: Vec::new(),
+    }];
+    f.linkage = Linkage::External;
+    f.visibility = Visibility::Default;
+    f.calling_convention = Some(CallingConvention::C);
+    f.section = Some(".text".to_string());
+    f.is_declaration = false;
+    ensure_function(program, f);
 
     Ok(())
 }
@@ -1459,169 +1560,106 @@ fn ensure_linux_xattr_wrappers(program: &mut AsmProgram) -> Result<()> {
 
     // ssize_t lgetxattr(const char *path, const char *name, void *value, size_t size)
     // -> getxattr(path, name, value, size, 0, 0)
-    ensure_function(
-        program,
-        AsmFunction {
-            name: Name::new("lgetxattr"),
-            signature: AsmFunctionSignature {
-                params: vec![
-                    ptr_i8.clone(),
-                    ptr_i8.clone(),
-                    void_ptr.clone(),
-                    AsmType::I64,
-                ],
+    {
+        let mut f = AsmFunction::new(
+            Name::new("lgetxattr"),
+            AsmFunctionSignature {
+                params: vec![ptr_i8.clone(), ptr_i8.clone(), void_ptr.clone(), AsmType::I64],
                 return_type: AsmType::I64,
                 is_variadic: false,
             },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("getxattr".to_string()),
-                        args: vec![
-                            AsmValue::Local(0),
-                            AsmValue::Local(1),
-                            AsmValue::Local(2),
-                            AsmValue::Local(3),
-                            AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)),
-                            AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)),
-                        ],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("path".to_string()),
-                    ty: ptr_i8.clone(),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("name".to_string()),
-                    ty: ptr_i8.clone(),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 2,
-                    name: Some("value".to_string()),
-                    ty: void_ptr.clone(),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 3,
-                    name: Some("size".to_string()),
-                    ty: AsmType::I64,
-                    is_argument: true,
-                },
-            ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
-    );
+        );
+        f.locals = vec![
+            AsmLocal { id: 0, name: Some("path".to_string()), ty: ptr_i8.clone(), is_argument: true },
+            AsmLocal { id: 1, name: Some("name".to_string()), ty: ptr_i8.clone(), is_argument: true },
+            AsmLocal { id: 2, name: Some("value".to_string()), ty: void_ptr.clone(), is_argument: true },
+            AsmLocal { id: 3, name: Some("size".to_string()), ty: AsmType::I64, is_argument: true },
+        ];
+        let result = alloc_result(&mut f, AsmType::I64);
+        f.basic_blocks = vec![AsmBlock {
+            id: 0,
+            label: None,
+            instructions: vec![build_call_symbol(
+                0,
+                Some(result),
+                "getxattr",
+                vec![
+                    AsmOperand::Local(0),
+                    AsmOperand::Local(1),
+                    AsmOperand::Local(2),
+                    AsmOperand::Local(3),
+                    AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32)),
+                    AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32)),
+                ],
+                CallingConvention::C,
+            )],
+            terminator: AsmTerminator::Return(Some(vreg_read(result))),
+            terminator_encoding: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
+        f.linkage = Linkage::External;
+        f.visibility = Visibility::Default;
+        f.calling_convention = Some(CallingConvention::C);
+        f.section = Some(".text".to_string());
+        f.is_declaration = false;
+        ensure_function(program, f);
+    }
 
     // ssize_t llistxattr(const char *path, char *list, size_t size)
     // -> listxattr(path, list, size, 0)
-    ensure_function(
-        program,
-        AsmFunction {
-            name: Name::new("llistxattr"),
-            signature: AsmFunctionSignature {
+    {
+        let mut f = AsmFunction::new(
+            Name::new("llistxattr"),
+            AsmFunctionSignature {
                 params: vec![ptr_i8.clone(), void_ptr.clone(), AsmType::I64],
                 return_type: AsmType::I64,
                 is_variadic: false,
             },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("listxattr".to_string()),
-                        args: vec![
-                            AsmValue::Local(0),
-                            AsmValue::Local(1),
-                            AsmValue::Local(2),
-                            AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)),
-                        ],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("path".to_string()),
-                    ty: ptr_i8.clone(),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("list".to_string()),
-                    ty: void_ptr.clone(),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 2,
-                    name: Some("size".to_string()),
-                    ty: AsmType::I64,
-                    is_argument: true,
-                },
-            ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
-    );
+        );
+        f.locals = vec![
+            AsmLocal { id: 0, name: Some("path".to_string()), ty: ptr_i8.clone(), is_argument: true },
+            AsmLocal { id: 1, name: Some("list".to_string()), ty: void_ptr.clone(), is_argument: true },
+            AsmLocal { id: 2, name: Some("size".to_string()), ty: AsmType::I64, is_argument: true },
+        ];
+        let result = alloc_result(&mut f, AsmType::I64);
+        f.basic_blocks = vec![AsmBlock {
+            id: 0,
+            label: None,
+            instructions: vec![build_call_symbol(
+                0,
+                Some(result),
+                "listxattr",
+                vec![
+                    AsmOperand::Local(0),
+                    AsmOperand::Local(1),
+                    AsmOperand::Local(2),
+                    AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32)),
+                ],
+                CallingConvention::C,
+            )],
+            terminator: AsmTerminator::Return(Some(vreg_read(result))),
+            terminator_encoding: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
+        f.linkage = Linkage::External;
+        f.visibility = Visibility::Default;
+        f.calling_convention = Some(CallingConvention::C);
+        f.section = Some(".text".to_string());
+        f.is_declaration = false;
+        ensure_function(program, f);
+    }
 
     // int lsetxattr(const char *path, const char *name, const void *value, size_t size, int flags)
     // -> setxattr(path, name, value, size, 0, flags)
-    ensure_function(
-        program,
-        AsmFunction {
-            name: Name::new("lsetxattr"),
-            signature: AsmFunctionSignature {
+    {
+        let mut f = AsmFunction::new(
+            Name::new("lsetxattr"),
+            AsmFunctionSignature {
                 params: vec![
                     ptr_i8.clone(),
-                    ptr_i8,
+                    ptr_i8.clone(),
                     void_ptr.clone(),
                     AsmType::I64,
                     AsmType::I32,
@@ -1629,146 +1667,87 @@ fn ensure_linux_xattr_wrappers(program: &mut AsmProgram) -> Result<()> {
                 return_type: AsmType::I32,
                 is_variadic: false,
             },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("setxattr".to_string()),
-                        args: vec![
-                            AsmValue::Local(0),
-                            AsmValue::Local(1),
-                            AsmValue::Local(2),
-                            AsmValue::Local(3),
-                            AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)),
-                            AsmValue::Local(4),
-                        ],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::I32,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("path".to_string()),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("name".to_string()),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 2,
-                    name: Some("value".to_string()),
-                    ty: void_ptr.clone(),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 3,
-                    name: Some("size".to_string()),
-                    ty: AsmType::I64,
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 4,
-                    name: Some("flags".to_string()),
-                    ty: AsmType::I32,
-                    is_argument: true,
-                },
-            ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
-    );
+        );
+        f.locals = vec![
+            AsmLocal { id: 0, name: Some("path".to_string()), ty: ptr_i8.clone(), is_argument: true },
+            AsmLocal { id: 1, name: Some("name".to_string()), ty: ptr_i8.clone(), is_argument: true },
+            AsmLocal { id: 2, name: Some("value".to_string()), ty: void_ptr.clone(), is_argument: true },
+            AsmLocal { id: 3, name: Some("size".to_string()), ty: AsmType::I64, is_argument: true },
+            AsmLocal { id: 4, name: Some("flags".to_string()), ty: AsmType::I32, is_argument: true },
+        ];
+        let result = alloc_result(&mut f, AsmType::I32);
+        f.basic_blocks = vec![AsmBlock {
+            id: 0,
+            label: None,
+            instructions: vec![build_call_symbol(
+                0,
+                Some(result),
+                "setxattr",
+                vec![
+                    AsmOperand::Local(0),
+                    AsmOperand::Local(1),
+                    AsmOperand::Local(2),
+                    AsmOperand::Local(3),
+                    AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32)),
+                    AsmOperand::Local(4),
+                ],
+                CallingConvention::C,
+            )],
+            terminator: AsmTerminator::Return(Some(vreg_read(result))),
+            terminator_encoding: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
+        f.linkage = Linkage::External;
+        f.visibility = Visibility::Default;
+        f.calling_convention = Some(CallingConvention::C);
+        f.section = Some(".text".to_string());
+        f.is_declaration = false;
+        ensure_function(program, f);
+    }
 
     // int lremovexattr(const char *path, const char *name)
     // -> removexattr(path, name, 0)
-    ensure_function(
-        program,
-        AsmFunction {
-            name: Name::new("lremovexattr"),
-            signature: AsmFunctionSignature {
-                params: vec![
-                    AsmType::Ptr(Box::new(AsmType::I8)),
-                    AsmType::Ptr(Box::new(AsmType::I8)),
-                ],
+    {
+        let mut f = AsmFunction::new(
+            Name::new("lremovexattr"),
+            AsmFunctionSignature {
+                params: vec![ptr_i8.clone(), ptr_i8.clone()],
                 return_type: AsmType::I32,
                 is_variadic: false,
             },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("removexattr".to_string()),
-                        args: vec![
-                            AsmValue::Local(0),
-                            AsmValue::Local(1),
-                            AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)),
-                        ],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::I32,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("path".to_string()),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("name".to_string()),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    is_argument: true,
-                },
-            ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
-    );
+        );
+        f.locals = vec![
+            AsmLocal { id: 0, name: Some("path".to_string()), ty: ptr_i8.clone(), is_argument: true },
+            AsmLocal { id: 1, name: Some("name".to_string()), ty: ptr_i8.clone(), is_argument: true },
+        ];
+        let result = alloc_result(&mut f, AsmType::I32);
+        f.basic_blocks = vec![AsmBlock {
+            id: 0,
+            label: None,
+            instructions: vec![build_call_symbol(
+                0,
+                Some(result),
+                "removexattr",
+                vec![
+                    AsmOperand::Local(0),
+                    AsmOperand::Local(1),
+                    AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32)),
+                ],
+                CallingConvention::C,
+            )],
+            terminator: AsmTerminator::Return(Some(vreg_read(result))),
+            terminator_encoding: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
+        f.linkage = Linkage::External;
+        f.visibility = Visibility::Default;
+        f.calling_convention = Some(CallingConvention::C);
+        f.section = Some(".text".to_string());
+        f.is_declaration = false;
+        ensure_function(program, f);
+    }
 
     Ok(())
 }
@@ -1781,444 +1760,76 @@ fn ensure_glibc_stdio_unlocked(program: &mut AsmProgram) -> Result<()> {
     let void_ptr = AsmType::Ptr(Box::new(AsmType::I8));
 
     // int fflush_unlocked(FILE *stream)
-    ensure_function(
+    ensure_forwarding_function(
         program,
-        AsmFunction {
-            name: Name::new("fflush_unlocked"),
-            signature: AsmFunctionSignature {
-                params: vec![file_ptr.clone()],
-                return_type: AsmType::I32,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("fflush".to_string()),
-                        args: vec![AsmValue::Local(0)],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::I32,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![AsmLocal {
-                id: 0,
-                name: Some("stream".to_string()),
-                ty: file_ptr.clone(),
-                is_argument: true,
-            }],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "fflush_unlocked",
+        vec![("stream", file_ptr.clone())],
+        AsmType::I32,
+        "fflush",
     );
 
     // size_t fwrite_unlocked(const void *ptr, size_t size, size_t nmemb, FILE *stream)
-    ensure_function(
+    ensure_forwarding_function(
         program,
-        AsmFunction {
-            name: Name::new("fwrite_unlocked"),
-            signature: AsmFunctionSignature {
-                params: vec![
-                    void_ptr.clone(),
-                    AsmType::I64,
-                    AsmType::I64,
-                    file_ptr.clone(),
-                ],
-                return_type: AsmType::I64,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("fwrite".to_string()),
-                        args: vec![
-                            AsmValue::Local(0),
-                            AsmValue::Local(1),
-                            AsmValue::Local(2),
-                            AsmValue::Local(3),
-                        ],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("ptr".to_string()),
-                    ty: void_ptr.clone(),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("size".to_string()),
-                    ty: AsmType::I64,
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 2,
-                    name: Some("nmemb".to_string()),
-                    ty: AsmType::I64,
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 3,
-                    name: Some("stream".to_string()),
-                    ty: file_ptr.clone(),
-                    is_argument: true,
-                },
-            ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "fwrite_unlocked",
+        vec![
+            ("ptr", void_ptr.clone()),
+            ("size", AsmType::I64),
+            ("nmemb", AsmType::I64),
+            ("stream", file_ptr.clone()),
+        ],
+        AsmType::I64,
+        "fwrite",
     );
 
     // size_t fread_unlocked(void *ptr, size_t size, size_t nmemb, FILE *stream)
-    ensure_function(
+    ensure_forwarding_function(
         program,
-        AsmFunction {
-            name: Name::new("fread_unlocked"),
-            signature: AsmFunctionSignature {
-                params: vec![
-                    void_ptr.clone(),
-                    AsmType::I64,
-                    AsmType::I64,
-                    file_ptr.clone(),
-                ],
-                return_type: AsmType::I64,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("fread".to_string()),
-                        args: vec![
-                            AsmValue::Local(0),
-                            AsmValue::Local(1),
-                            AsmValue::Local(2),
-                            AsmValue::Local(3),
-                        ],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("ptr".to_string()),
-                    ty: void_ptr.clone(),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("size".to_string()),
-                    ty: AsmType::I64,
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 2,
-                    name: Some("nmemb".to_string()),
-                    ty: AsmType::I64,
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 3,
-                    name: Some("stream".to_string()),
-                    ty: file_ptr.clone(),
-                    is_argument: true,
-                },
-            ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "fread_unlocked",
+        vec![
+            ("ptr", void_ptr.clone()),
+            ("size", AsmType::I64),
+            ("nmemb", AsmType::I64),
+            ("stream", file_ptr.clone()),
+        ],
+        AsmType::I64,
+        "fread",
     );
 
     // int fputc_unlocked(int c, FILE *stream)
-    ensure_function(
+    ensure_forwarding_function(
         program,
-        AsmFunction {
-            name: Name::new("fputc_unlocked"),
-            signature: AsmFunctionSignature {
-                params: vec![AsmType::I32, file_ptr.clone()],
-                return_type: AsmType::I32,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("fputc".to_string()),
-                        args: vec![AsmValue::Local(0), AsmValue::Local(1)],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::I32,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("c".to_string()),
-                    ty: AsmType::I32,
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("stream".to_string()),
-                    ty: file_ptr.clone(),
-                    is_argument: true,
-                },
-            ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "fputc_unlocked",
+        vec![("c", AsmType::I32), ("stream", file_ptr.clone())],
+        AsmType::I32,
+        "fputc",
     );
 
     // int fputs_unlocked(const char *s, FILE *stream)
-    ensure_function(
+    ensure_forwarding_function(
         program,
-        AsmFunction {
-            name: Name::new("fputs_unlocked"),
-            signature: AsmFunctionSignature {
-                params: vec![void_ptr.clone(), file_ptr.clone()],
-                return_type: AsmType::I32,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("fputs".to_string()),
-                        args: vec![AsmValue::Local(0), AsmValue::Local(1)],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::I32,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("s".to_string()),
-                    ty: void_ptr.clone(),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("stream".to_string()),
-                    ty: file_ptr.clone(),
-                    is_argument: true,
-                },
-            ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "fputs_unlocked",
+        vec![("s", void_ptr.clone()), ("stream", file_ptr.clone())],
+        AsmType::I32,
+        "fputs",
     );
 
     // int getc_unlocked(FILE *stream)
-    ensure_function(
+    ensure_forwarding_function(
         program,
-        AsmFunction {
-            name: Name::new("getc_unlocked"),
-            signature: AsmFunctionSignature {
-                params: vec![file_ptr.clone()],
-                return_type: AsmType::I32,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("getc".to_string()),
-                        args: vec![AsmValue::Local(0)],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::I32,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![AsmLocal {
-                id: 0,
-                name: Some("stream".to_string()),
-                ty: file_ptr.clone(),
-                is_argument: true,
-            }],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "getc_unlocked",
+        vec![("stream", file_ptr.clone())],
+        AsmType::I32,
+        "getc",
     );
 
     // int putc_unlocked(int c, FILE *stream)
-    ensure_function(
+    ensure_forwarding_function(
         program,
-        AsmFunction {
-            name: Name::new("putc_unlocked"),
-            signature: AsmFunctionSignature {
-                params: vec![AsmType::I32, file_ptr.clone()],
-                return_type: AsmType::I32,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("putc".to_string()),
-                        args: vec![AsmValue::Local(0), AsmValue::Local(1)],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::I32,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("c".to_string()),
-                    ty: AsmType::I32,
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("stream".to_string()),
-                    ty: file_ptr.clone(),
-                    is_argument: true,
-                },
-            ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "putc_unlocked",
+        vec![("c", AsmType::I32), ("stream", file_ptr)],
+        AsmType::I32,
+        "putc",
     );
 
     Ok(())
@@ -2246,168 +1857,39 @@ fn ensure_linux_libcap_stubs(program: &mut AsmProgram) -> Result<()> {
     );
 
     // int cap_free(void *ptr)
-    ensure_function(
+    ensure_constant_stub_function(
         program,
-        AsmFunction {
-            name: Name::new("cap_free"),
-            signature: AsmFunctionSignature {
-                params: vec![ptr_i8.clone()],
-                return_type: AsmType::I32,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: Vec::new(),
-                terminator: AsmTerminator::Return(Some(AsmValue::Constant(AsmConstant::UInt(
-                    0,
-                    AsmType::I32,
-                )))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![AsmLocal {
-                id: 0,
-                name: Some("ptr".to_string()),
-                ty: ptr_i8.clone(),
-                is_argument: true,
-            }],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "cap_free",
+        vec![("ptr", ptr_i8.clone())],
+        AsmType::I32,
+        AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32)),
     );
 
     // void *cap_get_file(const char *path)
-    ensure_function(
+    ensure_constant_stub_function(
         program,
-        AsmFunction {
-            name: Name::new("cap_get_file"),
-            signature: AsmFunctionSignature {
-                params: vec![ptr_i8.clone()],
-                return_type: ptr_i8.clone(),
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: Vec::new(),
-                terminator: AsmTerminator::Return(Some(AsmValue::Null(ptr_i8.clone()))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![AsmLocal {
-                id: 0,
-                name: Some("path".to_string()),
-                ty: ptr_i8.clone(),
-                is_argument: true,
-            }],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "cap_get_file",
+        vec![("path", ptr_i8.clone())],
+        ptr_i8.clone(),
+        AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
     );
 
     // int cap_set_file(const char *path, void *cap)
-    ensure_function(
+    ensure_constant_stub_function(
         program,
-        AsmFunction {
-            name: Name::new("cap_set_file"),
-            signature: AsmFunctionSignature {
-                params: vec![ptr_i8.clone(), ptr_i8.clone()],
-                return_type: AsmType::I32,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: Vec::new(),
-                terminator: AsmTerminator::Return(Some(AsmValue::Constant(AsmConstant::UInt(
-                    0,
-                    AsmType::I32,
-                )))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("path".to_string()),
-                    ty: ptr_i8.clone(),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("cap".to_string()),
-                    ty: ptr_i8.clone(),
-                    is_argument: true,
-                },
-            ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "cap_set_file",
+        vec![("path", ptr_i8.clone()), ("cap", ptr_i8.clone())],
+        AsmType::I32,
+        AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32)),
     );
 
     // char *cap_to_text(void *cap, ssize_t *len)
-    ensure_function(
+    ensure_constant_stub_function(
         program,
-        AsmFunction {
-            name: Name::new("cap_to_text"),
-            signature: AsmFunctionSignature {
-                params: vec![ptr_i8.clone(), AsmType::Ptr(Box::new(AsmType::I64))],
-                return_type: ptr_i8.clone(),
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: Vec::new(),
-                terminator: AsmTerminator::Return(Some(AsmValue::Global(
-                    "fp_linux_empty_cstring".to_string(),
-                    ptr_i8.clone(),
-                ))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("cap".to_string()),
-                    ty: ptr_i8.clone(),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("len".to_string()),
-                    ty: AsmType::Ptr(Box::new(AsmType::I64)),
-                    is_argument: true,
-                },
-            ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "cap_to_text",
+        vec![("cap", ptr_i8.clone()), ("len", AsmType::Ptr(Box::new(AsmType::I64)))],
+        ptr_i8,
+        AsmOperand::Symbol(Name::new("fp_linux_empty_cstring")),
     );
 
     Ok(())
@@ -2417,208 +1899,52 @@ fn ensure_glibc_gettext_stubs(program: &mut AsmProgram) -> Result<()> {
     let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
 
     // const char *bindtextdomain(const char *domain, const char *dir)
-    ensure_function(
+    ensure_constant_stub_function(
         program,
-        AsmFunction {
-            name: Name::new("bindtextdomain"),
-            signature: AsmFunctionSignature {
-                params: vec![ptr_i8.clone(), ptr_i8.clone()],
-                return_type: ptr_i8.clone(),
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: Vec::new(),
-                terminator: AsmTerminator::Return(Some(AsmValue::Local(1))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("domain".to_string()),
-                    ty: ptr_i8.clone(),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("dir".to_string()),
-                    ty: ptr_i8.clone(),
-                    is_argument: true,
-                },
-            ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "bindtextdomain",
+        vec![("domain", ptr_i8.clone()), ("dir", ptr_i8.clone())],
+        ptr_i8.clone(),
+        AsmOperand::Local(1),
     );
 
     // const char *textdomain(const char *domain)
-    ensure_function(
+    ensure_constant_stub_function(
         program,
-        AsmFunction {
-            name: Name::new("textdomain"),
-            signature: AsmFunctionSignature {
-                params: vec![ptr_i8.clone()],
-                return_type: ptr_i8.clone(),
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: Vec::new(),
-                terminator: AsmTerminator::Return(Some(AsmValue::Local(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![AsmLocal {
-                id: 0,
-                name: Some("domain".to_string()),
-                ty: ptr_i8.clone(),
-                is_argument: true,
-            }],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "textdomain",
+        vec![("domain", ptr_i8.clone())],
+        ptr_i8.clone(),
+        AsmOperand::Local(0),
     );
 
     // const char *dcgettext(const char *domain, const char *msgid, int category)
-    ensure_function(
+    ensure_constant_stub_function(
         program,
-        AsmFunction {
-            name: Name::new("dcgettext"),
-            signature: AsmFunctionSignature {
-                params: vec![ptr_i8.clone(), ptr_i8.clone(), AsmType::I32],
-                return_type: ptr_i8.clone(),
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: Vec::new(),
-                terminator: AsmTerminator::Return(Some(AsmValue::Local(1))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("domain".to_string()),
-                    ty: ptr_i8.clone(),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("msgid".to_string()),
-                    ty: ptr_i8.clone(),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 2,
-                    name: Some("category".to_string()),
-                    ty: AsmType::I32,
-                    is_argument: true,
-                },
-            ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "dcgettext",
+        vec![
+            ("domain", ptr_i8.clone()),
+            ("msgid", ptr_i8.clone()),
+            ("category", AsmType::I32),
+        ],
+        ptr_i8.clone(),
+        AsmOperand::Local(1),
     );
 
     // const char *dgettext(const char *domain, const char *msgid)
-    ensure_function(
+    ensure_constant_stub_function(
         program,
-        AsmFunction {
-            name: Name::new("dgettext"),
-            signature: AsmFunctionSignature {
-                params: vec![ptr_i8.clone(), ptr_i8.clone()],
-                return_type: ptr_i8.clone(),
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: Vec::new(),
-                terminator: AsmTerminator::Return(Some(AsmValue::Local(1))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![
-                AsmLocal {
-                    id: 0,
-                    name: Some("domain".to_string()),
-                    ty: ptr_i8.clone(),
-                    is_argument: true,
-                },
-                AsmLocal {
-                    id: 1,
-                    name: Some("msgid".to_string()),
-                    ty: ptr_i8.clone(),
-                    is_argument: true,
-                },
-            ],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "dgettext",
+        vec![("domain", ptr_i8.clone()), ("msgid", ptr_i8.clone())],
+        ptr_i8.clone(),
+        AsmOperand::Local(1),
     );
 
     // const char *gettext(const char *msgid)
-    ensure_function(
+    ensure_constant_stub_function(
         program,
-        AsmFunction {
-            name: Name::new("gettext"),
-            signature: AsmFunctionSignature {
-                params: vec![ptr_i8.clone()],
-                return_type: ptr_i8,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: Vec::new(),
-                terminator: AsmTerminator::Return(Some(AsmValue::Local(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: vec![AsmLocal {
-                id: 0,
-                name: Some("msgid".to_string()),
-                ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                is_argument: true,
-            }],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "gettext",
+        vec![("msgid", ptr_i8.clone())],
+        ptr_i8,
+        AsmOperand::Local(0),
     );
 
     Ok(())
@@ -2798,147 +2124,55 @@ fn ensure_ctype_tables(program: &mut AsmProgram) {
 }
 
 fn ensure_ctype_loc_functions(program: &mut AsmProgram) -> Result<()> {
-    let ptr_return = AsmType::Ptr(Box::new(AsmType::Ptr(Box::new(AsmType::I8))));
+    let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
+    let ptr_return = AsmType::Ptr(Box::new(ptr_i8.clone()));
 
-    ensure_function(
+    ensure_constant_stub_function(
         program,
-        AsmFunction {
-            name: Name::new("__ctype_tolower_loc"),
-            signature: AsmFunctionSignature {
-                params: Vec::new(),
-                return_type: ptr_return.clone(),
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: Vec::new(),
-                terminator: AsmTerminator::Return(Some(AsmValue::Constant(
-                    AsmConstant::GlobalRef(
-                        Name::new("fp_linux_ctype_tolower_ptr"),
-                        AsmType::Ptr(Box::new(AsmType::I8)),
-                        vec![0],
-                    ),
-                ))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "__ctype_tolower_loc",
+        Vec::new(),
+        ptr_return.clone(),
+        AsmOperand::Constant(AsmConstant::GlobalRef(
+            Name::new("fp_linux_ctype_tolower_ptr"),
+            ptr_i8.clone(),
+            vec![0],
+        )),
     );
 
-    ensure_function(
+    ensure_constant_stub_function(
         program,
-        AsmFunction {
-            name: Name::new("__ctype_toupper_loc"),
-            signature: AsmFunctionSignature {
-                params: Vec::new(),
-                return_type: ptr_return.clone(),
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: Vec::new(),
-                terminator: AsmTerminator::Return(Some(AsmValue::Constant(
-                    AsmConstant::GlobalRef(
-                        Name::new("fp_linux_ctype_toupper_ptr"),
-                        AsmType::Ptr(Box::new(AsmType::I8)),
-                        vec![0],
-                    ),
-                ))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "__ctype_toupper_loc",
+        Vec::new(),
+        ptr_return.clone(),
+        AsmOperand::Constant(AsmConstant::GlobalRef(
+            Name::new("fp_linux_ctype_toupper_ptr"),
+            ptr_i8.clone(),
+            vec![0],
+        )),
     );
 
-    ensure_function(
+    ensure_constant_stub_function(
         program,
-        AsmFunction {
-            name: Name::new("__ctype_b_loc"),
-            signature: AsmFunctionSignature {
-                params: Vec::new(),
-                return_type: ptr_return,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: Vec::new(),
-                terminator: AsmTerminator::Return(Some(AsmValue::Constant(
-                    AsmConstant::GlobalRef(
-                        Name::new("fp_linux_ctype_b_ptr"),
-                        AsmType::Ptr(Box::new(AsmType::I8)),
-                        vec![0],
-                    ),
-                ))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "__ctype_b_loc",
+        Vec::new(),
+        ptr_return,
+        AsmOperand::Constant(AsmConstant::GlobalRef(
+            Name::new("fp_linux_ctype_b_ptr"),
+            ptr_i8,
+            vec![0],
+        )),
     );
 
     Ok(())
 }
 
 fn ensure_ctype_mb_cur_max(program: &mut AsmProgram) -> Result<()> {
-    ensure_function(
+    ensure_constant_stub_function(
         program,
-        AsmFunction {
-            name: Name::new("__ctype_get_mb_cur_max"),
-            signature: AsmFunctionSignature {
-                params: Vec::new(),
-                return_type: AsmType::I64,
-                is_variadic: false,
-            },
-            basic_blocks: vec![AsmBlock {
-                id: 0,
-                label: None,
-                instructions: Vec::new(),
-                terminator: AsmTerminator::Return(Some(AsmValue::Constant(AsmConstant::UInt(
-                    1,
-                    AsmType::I64,
-                )))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(CallingConvention::C),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        },
+        "__ctype_get_mb_cur_max",
+        Vec::new(),
+        AsmType::I64,
+        AsmOperand::Constant(AsmConstant::UInt(1, AsmType::I64)),
     );
 
     Ok(())
@@ -2978,8 +2212,8 @@ fn lower_sys_ops_to_unix_syscalls(program: &mut AsmProgram) -> Result<()> {
             .flat_map(|b| b.instructions.iter())
             .any(|inst| {
                 matches!(
-                    &inst.kind,
-                    AsmInstructionKind::SysOp(AsmSysOp::Readdir {
+                    sysop_of(inst),
+                    Some(AsmSysOp::Readdir {
                         dirent_style: PosixDirentStyle::Linux,
                         ..
                     })
@@ -2996,50 +2230,28 @@ fn lower_sys_ops_to_unix_syscalls(program: &mut AsmProgram) -> Result<()> {
 
         for block in &mut function.basic_blocks {
             for inst in &mut block.instructions {
-                let AsmInstructionKind::SysOp(op) = &inst.kind else {
+                let Some(op) = sysop_of(inst).cloned() else {
                     continue;
                 };
+                let dest = result_vreg(inst);
 
                 match op {
                     AsmSysOp::Opendir { path } => {
-                        inst.kind = AsmInstructionKind::Call {
-                            function: AsmValue::Function("opendir".to_string()),
-                            args: vec![path.clone()],
-                            calling_convention: default_cc.clone(),
-                            tail_call: false,
-                        };
-                        inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::Call);
-                        inst.ty = AsmType::Ptr(Box::new(AsmType::I8));
+                        *inst = build_call_symbol(inst.id, dest, "opendir", vec![path], default_cc.clone());
                     }
                     AsmSysOp::Readdir { dir, dirent_style } => {
-                        let name = if *dirent_style != target_dirent_style {
+                        let name = if dirent_style != target_dirent_style {
                             "fp_linux_readdir"
                         } else {
                             "readdir"
                         };
-                        inst.kind = AsmInstructionKind::Call {
-                            function: AsmValue::Function(name.to_string()),
-                            args: vec![dir.clone()],
-                            calling_convention: default_cc.clone(),
-                            tail_call: false,
-                        };
-                        inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::Call);
-                        inst.ty = AsmType::Ptr(Box::new(AsmType::I8));
+                        *inst = build_call_symbol(inst.id, dest, name, vec![dir], default_cc.clone());
                     }
                     AsmSysOp::Closedir { dir } => {
-                        inst.kind = AsmInstructionKind::Call {
-                            function: AsmValue::Function("closedir".to_string()),
-                            args: vec![dir.clone()],
-                            calling_convention: default_cc.clone(),
-                            tail_call: false,
-                        };
-                        inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::Call);
-                        inst.ty = AsmType::I64;
+                        *inst = build_call_symbol(inst.id, dest, "closedir", vec![dir], default_cc.clone());
                     }
-                    _ => {
-                        inst.kind = lower_system_api_to_syscall(op.clone(), target_convention);
-                        inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::Syscall);
-                        inst.ty = AsmType::I64;
+                    other => {
+                        *inst = lower_system_api_to_syscall(inst.id, dest, other, target_convention);
                     }
                 }
             }
@@ -3071,7 +2283,7 @@ fn inject_linux_readdir_shim(program: &mut AsmProgram, cc: CallingConvention) ->
         use fp_core::lir::{Linkage, Name, Visibility};
 
         let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
-        let null_ptr = AsmValue::Null(ptr_i8.clone());
+        let null_ptr = AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone()));
 
         const LINUX_DIRENT_SIZE: u64 = 280;
         const LINUX_D_NAME_OFFSET: u64 = 19;
@@ -3092,85 +2304,20 @@ fn inject_linux_readdir_shim(program: &mut AsmProgram, cc: CallingConvention) ->
             .max()
             .unwrap_or(0)
             .saturating_add(1);
+        let mut fresh_id = move || {
+            let id = next_id;
+            next_id += 1;
+            id
+        };
 
-        let call = |id: u32, name: &str, args: Vec<AsmValue>, ret: AsmType| AsmInstruction {
-            id,
-            opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-            kind: AsmInstructionKind::Call {
-                function: AsmValue::Function(name.to_string()),
-                args,
-                calling_convention: cc.clone(),
-                tail_call: false,
+        let mut f = AsmFunction::new(
+            Name::new("fp_linux_readdir"),
+            AsmFunctionSignature {
+                params: vec![ptr_i8.clone()],
+                return_type: ptr_i8.clone(),
+                is_variadic: false,
             },
-            ty: ret,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        };
-
-        let add = |id: u32, lhs: AsmValue, rhs: AsmValue, ty: AsmType| AsmInstruction {
-            id,
-            opcode: AsmOpcode::Generic(AsmGenericOpcode::Add),
-            kind: AsmInstructionKind::Add(lhs, rhs),
-            ty: ty,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        };
-
-        let load = |id: u32, address: AsmValue, ty: AsmType| AsmInstruction {
-            id,
-            opcode: AsmOpcode::Generic(AsmGenericOpcode::Load),
-            kind: AsmInstructionKind::Load {
-                address,
-                alignment: None,
-                volatile: false,
-            },
-            ty: ty,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        };
-
-        let store = |id: u32, value: AsmValue, address: AsmValue| AsmInstruction {
-            id,
-            opcode: AsmOpcode::Generic(AsmGenericOpcode::Store),
-            kind: AsmInstructionKind::Store {
-                value,
-                address,
-                alignment: None,
-                volatile: false,
-            },
-            ty: AsmType::Void,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        };
-
-        let eq = |id: u32, lhs: AsmValue, rhs: AsmValue| AsmInstruction {
-            id,
-            opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
-            kind: AsmInstructionKind::Eq(lhs, rhs),
-            ty: AsmType::I1,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        };
+        );
 
         let dir_local = AsmLocal {
             id: 0,
@@ -3178,6 +2325,7 @@ fn inject_linux_readdir_shim(program: &mut AsmProgram, cc: CallingConvention) ->
             name: Some("dir".to_string()),
             is_argument: true,
         };
+        f.locals = vec![dir_local.clone()];
 
         // entry:
         //   entry = readdir(dir)
@@ -3190,54 +2338,43 @@ fn inject_linux_readdir_shim(program: &mut AsmProgram, cc: CallingConvention) ->
         //   strncpy(out->d_name, entry->d_name, LINUX_D_NAME_MAX)
         //   return out
 
-        let call_readdir_id = next_id;
-        next_id += 1;
-        let entry_ptr = AsmValue::Register(call_readdir_id);
+        let entry_ptr_reg = alloc_result(&mut f, ptr_i8.clone());
+        let is_null_reg = alloc_result(&mut f, AsmType::I1);
+        let out_ptr_reg = alloc_result(&mut f, ptr_i8.clone());
+        let entry_ino_addr_reg = alloc_result(&mut f, ptr_i8.clone());
+        let entry_ino_reg = alloc_result(&mut f, AsmType::I64);
+        let out_ino_addr_reg = alloc_result(&mut f, ptr_i8.clone());
+        let out_reclen_addr_reg = alloc_result(&mut f, ptr_i8.clone());
+        let entry_type_addr_reg = alloc_result(&mut f, ptr_i8.clone());
+        let entry_type_reg = alloc_result(&mut f, AsmType::I8);
+        let out_type_addr_reg = alloc_result(&mut f, ptr_i8.clone());
+        let out_name_ptr_reg = alloc_result(&mut f, ptr_i8.clone());
+        let entry_name_ptr_reg = alloc_result(&mut f, ptr_i8.clone());
 
-        let is_null_id = next_id;
-        next_id += 1;
-
-        let alloc_id = next_id;
-        next_id += 1;
-        let out_ptr = AsmValue::Register(alloc_id);
-
-        let entry_ino_addr_id = next_id;
-        next_id += 1;
-        let entry_ino_id = next_id;
-        next_id += 1;
-
-        let entry_type_addr_id = next_id;
-        next_id += 1;
-        let entry_type_id = next_id;
-        next_id += 1;
-
-        let out_ino_addr_id = next_id;
-        next_id += 1;
-        let out_reclen_addr_id = next_id;
-        next_id += 1;
-        let out_type_addr_id = next_id;
-        next_id += 1;
-
-        let out_name_ptr_id = next_id;
-        next_id += 1;
-        let entry_name_ptr_id = next_id;
-        next_id += 1;
+        let entry_ptr = vreg_read(entry_ptr_reg);
+        let out_ptr = vreg_read(out_ptr_reg);
 
         let mut entry_insts = Vec::new();
-        entry_insts.push(call(
-            call_readdir_id,
+        entry_insts.push(build_call_symbol(
+            fresh_id(),
+            Some(entry_ptr_reg),
             "readdir",
-            vec![AsmValue::Local(dir_local.id)],
-            ptr_i8.clone(),
+            vec![AsmOperand::Local(dir_local.id)],
+            cc.clone(),
         ));
-        entry_insts.push(eq(is_null_id, entry_ptr.clone(), null_ptr.clone()));
+        entry_insts.push(build_eq(
+            fresh_id(),
+            is_null_reg,
+            entry_ptr.clone(),
+            null_ptr.clone(),
+        ));
 
         let entry_block = AsmBlock {
             id: 0,
             label: Some(Name::new("entry")),
             instructions: entry_insts,
             terminator: AsmTerminator::CondBr {
-                condition: AsmValue::Register(is_null_id),
+                condition: vreg_read(is_null_reg),
                 if_true: 1,
                 if_false: 2,
             },
@@ -3257,111 +2394,117 @@ fn inject_linux_readdir_shim(program: &mut AsmProgram, cc: CallingConvention) ->
         };
 
         let mut alloc_insts = Vec::new();
-        alloc_insts.push(call(
-            alloc_id,
+        alloc_insts.push(build_call_symbol(
+            fresh_id(),
+            Some(out_ptr_reg),
             "malloc",
-            vec![AsmValue::Constant(AsmConstant::UInt(
+            vec![AsmOperand::Constant(AsmConstant::UInt(
                 LINUX_DIRENT_SIZE,
                 AsmType::I64,
             ))],
-            ptr_i8.clone(),
+            cc.clone(),
         ));
-        alloc_insts.push(call(
-            next_id,
+        alloc_insts.push(build_call_symbol(
+            fresh_id(),
+            None,
             "memset",
             vec![
                 out_ptr.clone(),
-                AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)),
-                AsmValue::Constant(AsmConstant::UInt(LINUX_DIRENT_SIZE, AsmType::I64)),
+                AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32)),
+                AsmOperand::Constant(AsmConstant::UInt(LINUX_DIRENT_SIZE, AsmType::I64)),
             ],
-            ptr_i8.clone(),
+            cc.clone(),
         ));
-        next_id += 1;
 
-        alloc_insts.push(add(
-            entry_ino_addr_id,
+        alloc_insts.push(build_binop(
+            fresh_id(),
+            AsmGenericOpcode::Add,
+            entry_ino_addr_reg,
             entry_ptr.clone(),
-            AsmValue::Constant(AsmConstant::UInt(host_d_ino_offset, AsmType::I64)),
-            ptr_i8.clone(),
+            AsmOperand::Constant(AsmConstant::UInt(host_d_ino_offset, AsmType::I64)),
         ));
-        alloc_insts.push(load(
-            entry_ino_id,
-            AsmValue::Register(entry_ino_addr_id),
-            AsmType::I64,
+        alloc_insts.push(build_load(
+            fresh_id(),
+            entry_ino_reg,
+            vreg_read(entry_ino_addr_reg),
         ));
 
-        alloc_insts.push(add(
-            out_ino_addr_id,
+        alloc_insts.push(build_binop(
+            fresh_id(),
+            AsmGenericOpcode::Add,
+            out_ino_addr_reg,
             out_ptr.clone(),
-            AsmValue::Constant(AsmConstant::UInt(LINUX_D_INO_OFFSET, AsmType::I64)),
-            ptr_i8.clone(),
+            AsmOperand::Constant(AsmConstant::UInt(LINUX_D_INO_OFFSET, AsmType::I64)),
         ));
-        alloc_insts.push(store(
-            next_id,
-            AsmValue::Register(entry_ino_id),
-            AsmValue::Register(out_ino_addr_id),
+        alloc_insts.push(build_store(
+            fresh_id(),
+            vreg_read(entry_ino_reg),
+            vreg_read(out_ino_addr_reg),
         ));
-        next_id += 1;
 
-        alloc_insts.push(add(
-            out_reclen_addr_id,
+        alloc_insts.push(build_binop(
+            fresh_id(),
+            AsmGenericOpcode::Add,
+            out_reclen_addr_reg,
             out_ptr.clone(),
-            AsmValue::Constant(AsmConstant::UInt(LINUX_D_RECLEN_OFFSET, AsmType::I64)),
-            ptr_i8.clone(),
+            AsmOperand::Constant(AsmConstant::UInt(LINUX_D_RECLEN_OFFSET, AsmType::I64)),
         ));
-        alloc_insts.push(store(
-            next_id,
-            AsmValue::Constant(AsmConstant::UInt(LINUX_DIRENT_SIZE, AsmType::I16)),
-            AsmValue::Register(out_reclen_addr_id),
+        alloc_insts.push(build_store(
+            fresh_id(),
+            AsmOperand::Constant(AsmConstant::UInt(LINUX_DIRENT_SIZE, AsmType::I16)),
+            vreg_read(out_reclen_addr_reg),
         ));
-        next_id += 1;
 
-        alloc_insts.push(add(
-            entry_type_addr_id,
+        alloc_insts.push(build_binop(
+            fresh_id(),
+            AsmGenericOpcode::Add,
+            entry_type_addr_reg,
             entry_ptr.clone(),
-            AsmValue::Constant(AsmConstant::UInt(host_d_type_offset, AsmType::I64)),
-            ptr_i8.clone(),
+            AsmOperand::Constant(AsmConstant::UInt(host_d_type_offset, AsmType::I64)),
         ));
-        alloc_insts.push(load(
-            entry_type_id,
-            AsmValue::Register(entry_type_addr_id),
-            AsmType::I8,
+        alloc_insts.push(build_load(
+            fresh_id(),
+            entry_type_reg,
+            vreg_read(entry_type_addr_reg),
         ));
-        alloc_insts.push(add(
-            out_type_addr_id,
+        alloc_insts.push(build_binop(
+            fresh_id(),
+            AsmGenericOpcode::Add,
+            out_type_addr_reg,
             out_ptr.clone(),
-            AsmValue::Constant(AsmConstant::UInt(LINUX_D_TYPE_OFFSET, AsmType::I64)),
-            ptr_i8.clone(),
+            AsmOperand::Constant(AsmConstant::UInt(LINUX_D_TYPE_OFFSET, AsmType::I64)),
         ));
-        alloc_insts.push(store(
-            next_id,
-            AsmValue::Register(entry_type_id),
-            AsmValue::Register(out_type_addr_id),
+        alloc_insts.push(build_store(
+            fresh_id(),
+            vreg_read(entry_type_reg),
+            vreg_read(out_type_addr_reg),
         ));
-        next_id += 1;
 
-        alloc_insts.push(add(
-            out_name_ptr_id,
+        alloc_insts.push(build_binop(
+            fresh_id(),
+            AsmGenericOpcode::Add,
+            out_name_ptr_reg,
             out_ptr.clone(),
-            AsmValue::Constant(AsmConstant::UInt(LINUX_D_NAME_OFFSET, AsmType::I64)),
-            ptr_i8.clone(),
+            AsmOperand::Constant(AsmConstant::UInt(LINUX_D_NAME_OFFSET, AsmType::I64)),
         ));
-        alloc_insts.push(add(
-            entry_name_ptr_id,
+        alloc_insts.push(build_binop(
+            fresh_id(),
+            AsmGenericOpcode::Add,
+            entry_name_ptr_reg,
             entry_ptr.clone(),
-            AsmValue::Constant(AsmConstant::UInt(host_d_name_offset, AsmType::I64)),
-            ptr_i8.clone(),
+            AsmOperand::Constant(AsmConstant::UInt(host_d_name_offset, AsmType::I64)),
         ));
 
-        alloc_insts.push(call(
-            next_id,
+        alloc_insts.push(build_call_symbol(
+            fresh_id(),
+            None,
             "strncpy",
             vec![
-                AsmValue::Register(out_name_ptr_id),
-                AsmValue::Register(entry_name_ptr_id),
-                AsmValue::Constant(AsmConstant::UInt(LINUX_D_NAME_MAX, AsmType::I64)),
+                vreg_read(out_name_ptr_reg),
+                vreg_read(entry_name_ptr_reg),
+                AsmOperand::Constant(AsmConstant::UInt(LINUX_D_NAME_MAX, AsmType::I64)),
             ],
-            ptr_i8.clone(),
+            cc.clone(),
         ));
 
         let alloc_block = AsmBlock {
@@ -3374,23 +2517,13 @@ fn inject_linux_readdir_shim(program: &mut AsmProgram, cc: CallingConvention) ->
             successors: Vec::new(),
         };
 
-        program.functions.push(AsmFunction {
-            name: Name::new("fp_linux_readdir"),
-            signature: AsmFunctionSignature {
-                params: vec![ptr_i8.clone()],
-                return_type: ptr_i8,
-                is_variadic: false,
-            },
-            basic_blocks: vec![entry_block, null_block, alloc_block],
-            locals: vec![dir_local],
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: Linkage::External,
-            visibility: Visibility::Default,
-            calling_convention: Some(cc),
-            section: Some(".text".to_string()),
-            is_declaration: false,
-        });
+        f.basic_blocks = vec![entry_block, null_block, alloc_block];
+        f.linkage = Linkage::External;
+        f.visibility = Visibility::Default;
+        f.calling_convention = Some(cc);
+        f.section = Some(".text".to_string());
+        f.is_declaration = false;
+        program.functions.push(f);
         Ok(())
     }
 }
@@ -3409,21 +2542,27 @@ fn lower_sys_ops_to_windows_imports(program: &mut AsmProgram) -> Result<()> {
             .unwrap_or(0)
             .saturating_add(1);
 
-        for block in &mut function.basic_blocks {
+        // Temporarily move `basic_blocks` out so `function` is free to be
+        // borrowed mutably (for `alloc_virtual_register`) while iterating.
+        let mut blocks = std::mem::take(&mut function.basic_blocks);
+        for block in &mut blocks {
             let snapshot = block.instructions.clone();
             let mut out = Vec::with_capacity(block.instructions.len());
 
             for inst in &block.instructions {
-                let AsmInstructionKind::SysOp(op) = &inst.kind else {
+                let Some(op) = sysop_of(inst) else {
                     out.push(inst.clone());
                     continue;
                 };
+                let dest = result_vreg(inst);
 
                 match lower_system_api_to_windows_import(
                     op.clone(),
                     inst.id,
+                    dest,
                     &snapshot,
                     &mut next_id,
+                    function,
                 )? {
                     LoweredWindows::Unchanged => out.push(inst.clone()),
                     LoweredWindows::Single(lowered) => out.push(lowered),
@@ -3433,6 +2572,7 @@ fn lower_sys_ops_to_windows_imports(program: &mut AsmProgram) -> Result<()> {
 
             block.instructions = out;
         }
+        function.basic_blocks = blocks;
     }
     Ok(())
 }
@@ -3466,25 +2606,19 @@ fn rewrite_syscalls_to_target_unix_convention(program: &mut AsmProgram) -> Resul
         for block in &mut function.basic_blocks {
             let snapshot = block.instructions.clone();
             for inst in &mut block.instructions {
-                let AsmInstructionKind::Syscall {
-                    convention,
-                    number,
-                    args,
-                } = &inst.kind
-                else {
+                let Some((convention, number, args)) = syscall_parts(inst) else {
                     continue;
                 };
-                if *convention == target_convention {
+                if convention == target_convention {
                     continue;
                 }
 
-                let Some(op) = detect_system_api_from_syscall(convention, number, args, &snapshot)
+                let Some(op) = detect_system_api_from_syscall(&convention, number, args, &snapshot)
                 else {
                     continue;
                 };
-                inst.kind = lower_system_api_to_syscall(op, target_convention);
-                inst.opcode = AsmOpcode::Generic(AsmGenericOpcode::Syscall);
-                inst.ty = AsmType::I64;
+                let dest = result_vreg(inst);
+                *inst = lower_system_api_to_syscall(inst.id, dest, op, target_convention);
             }
         }
     }
@@ -3505,19 +2639,27 @@ fn rewrite_posix_calls_to_windows_imports(program: &mut AsmProgram) -> Result<()
             .unwrap_or(0)
             .saturating_add(1);
 
-        for block in &mut function.basic_blocks {
+        let mut blocks = std::mem::take(&mut function.basic_blocks);
+        for block in &mut blocks {
             let snapshot = block.instructions.clone();
             let mut out = Vec::with_capacity(block.instructions.len());
 
             for inst in &block.instructions {
-                let Some(op) =
-                    detect_system_api_from_posix_call(&inst.kind, PosixDirentStyle::Linux)
+                let Some(op) = detect_system_api_from_posix_call(inst, PosixDirentStyle::Linux)
                 else {
                     out.push(inst.clone());
                     continue;
                 };
+                let dest = result_vreg(inst);
 
-                match lower_system_api_to_windows_import(op, inst.id, &snapshot, &mut next_id)? {
+                match lower_system_api_to_windows_import(
+                    op,
+                    inst.id,
+                    dest,
+                    &snapshot,
+                    &mut next_id,
+                    function,
+                )? {
                     LoweredWindows::Unchanged => out.push(inst.clone()),
                     LoweredWindows::Single(lowered) => out.push(lowered),
                     LoweredWindows::Sequence(mut seq) => out.append(&mut seq),
@@ -3526,6 +2668,7 @@ fn rewrite_posix_calls_to_windows_imports(program: &mut AsmProgram) -> Result<()
 
             block.instructions = out;
         }
+        function.basic_blocks = blocks;
     }
     Ok(())
 }
@@ -3544,35 +2687,44 @@ fn rewrite_syscalls_to_windows_imports(program: &mut AsmProgram) -> Result<()> {
             .unwrap_or(0)
             .saturating_add(1);
 
-        for block in &mut function.basic_blocks {
+        let mut blocks = std::mem::take(&mut function.basic_blocks);
+        for block in &mut blocks {
             let snapshot = block.instructions.clone();
             let mut out = Vec::with_capacity(block.instructions.len());
 
             for inst in &block.instructions {
-                let AsmInstructionKind::Syscall {
-                    convention,
-                    number,
-                    args,
-                } = &inst.kind
-                else {
+                let Some((convention, number, args)) = syscall_parts(inst) else {
                     out.push(inst.clone());
                     continue;
                 };
 
-                let Some(op) = detect_system_api_from_syscall(convention, number, args, &snapshot)
+                let Some(op) = detect_system_api_from_syscall(&convention, number, args, &snapshot)
                 else {
                     out.push(inst.clone());
                     continue;
                 };
+                let dest = result_vreg(inst);
+                let result_reg = inst.result_register().cloned();
 
-                match lower_system_api_to_windows_import(op, inst.id, &snapshot, &mut next_id)? {
+                match lower_system_api_to_windows_import(
+                    op,
+                    inst.id,
+                    dest,
+                    &snapshot,
+                    &mut next_id,
+                    function,
+                )? {
                     LoweredWindows::Unchanged => out.push(inst.clone()),
                     LoweredWindows::Single(lowered) => {
                         if let fp_core::asmir::AsmTerminator::Return(Some(value)) =
                             &block.terminator
                         {
-                            if value == &AsmValue::Register(inst.id) {
-                                block.terminator = fp_core::asmir::AsmTerminator::Return(None);
+                            if let (AsmOperand::Register { reg, .. }, Some(result_reg)) =
+                                (value, &result_reg)
+                            {
+                                if reg == result_reg {
+                                    block.terminator = fp_core::asmir::AsmTerminator::Return(None);
+                                }
                             }
                         }
                         out.push(lowered);
@@ -3583,6 +2735,7 @@ fn rewrite_syscalls_to_windows_imports(program: &mut AsmProgram) -> Result<()> {
 
             block.instructions = out;
         }
+        function.basic_blocks = blocks;
     }
     Ok(())
 }
@@ -3714,11 +2867,9 @@ fn rewrite_windows_imports_to_syscalls(program: &mut AsmProgram) -> Result<()> {
                 }
 
                 let mut inst = block.instructions[i].clone();
-                if let Some(op) = detect_system_api_from_windows_import(&inst.kind, convention) {
-                    let (opcode, kind, ty) = lower_system_api_to_unix(op, convention);
-                    inst.kind = kind;
-                    inst.opcode = opcode;
-                    inst.ty = ty;
+                if let Some(op) = detect_system_api_from_windows_import(&inst, convention) {
+                    let dest = result_vreg(&inst);
+                    inst = lower_system_api_to_unix(inst.id, dest, op, convention);
                 }
                 out.push(inst);
                 i += 1;
@@ -3741,56 +2892,46 @@ fn unix_calling_convention(convention: AsmSyscallConvention) -> CallingConventio
 }
 
 fn lower_system_api_to_unix(
+    id: u32,
+    dest: Option<AsmVirtualRegId>,
     op: SystemApiOp,
     convention: AsmSyscallConvention,
-) -> (AsmOpcode, AsmInstructionKind, AsmType) {
+) -> AsmInstruction {
     match op {
-        SystemApiOp::Dlopen { path, flags } => (
-            AsmOpcode::Generic(AsmGenericOpcode::Call),
-            AsmInstructionKind::Call {
-                function: AsmValue::Function("dlopen".to_string()),
-                args: vec![path, flags],
-                calling_convention: unix_calling_convention(convention),
-                tail_call: false,
-            },
-            AsmType::I64,
+        SystemApiOp::Dlopen { path, flags } => build_call(
+            id,
+            dest,
+            AsmOperand::Symbol(Name::new("dlopen")),
+            vec![path, flags],
+            unix_calling_convention(convention),
+            false,
         ),
-        SystemApiOp::Dlsym { handle, symbol } => (
-            AsmOpcode::Generic(AsmGenericOpcode::Call),
-            AsmInstructionKind::Call {
-                function: AsmValue::Function("dlsym".to_string()),
-                args: vec![handle, symbol],
-                calling_convention: unix_calling_convention(convention),
-                tail_call: false,
-            },
-            AsmType::I64,
+        SystemApiOp::Dlsym { handle, symbol } => build_call(
+            id,
+            dest,
+            AsmOperand::Symbol(Name::new("dlsym")),
+            vec![handle, symbol],
+            unix_calling_convention(convention),
+            false,
         ),
-        SystemApiOp::Dlclose { handle } => (
-            AsmOpcode::Generic(AsmGenericOpcode::Call),
-            AsmInstructionKind::Call {
-                function: AsmValue::Function("dlclose".to_string()),
-                args: vec![handle],
-                calling_convention: unix_calling_convention(convention),
-                tail_call: false,
-            },
-            AsmType::I64,
+        SystemApiOp::Dlclose { handle } => build_call(
+            id,
+            dest,
+            AsmOperand::Symbol(Name::new("dlclose")),
+            vec![handle],
+            unix_calling_convention(convention),
+            false,
         ),
-        other => (
-            AsmOpcode::Generic(AsmGenericOpcode::Syscall),
-            lower_system_api_to_syscall(other, convention),
-            AsmType::I64,
-        ),
+        other => lower_system_api_to_syscall(id, dest, other, convention),
     }
 }
 
 fn detect_system_api_from_windows_import(
-    kind: &AsmInstructionKind,
+    inst: &AsmInstruction,
     convention: AsmSyscallConvention,
 ) -> Option<SystemApiOp> {
-    let AsmInstructionKind::Call { function, args, .. } = kind else {
-        return None;
-    };
-    let AsmValue::Function(name) = function else {
+    let (target, args) = inst.call_target_and_args()?;
+    let AsmOperand::Symbol(name) = target else {
         return None;
     };
     let (dll, proc_name) = split_import_symbol(name);
@@ -3806,7 +2947,7 @@ fn detect_system_api_from_windows_import(
             let code = args
                 .first()
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)));
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32)));
             Some(SystemApiOp::Exit { code })
         }
         "RtlExitUserProcess" => {
@@ -3816,7 +2957,7 @@ fn detect_system_api_from_windows_import(
             let code = args
                 .first()
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)));
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32)));
             Some(SystemApiOp::Exit { code })
         }
         "GetCurrentProcessId" => {
@@ -3843,10 +2984,10 @@ fn detect_system_api_from_windows_import(
             let path = args
                 .get(0)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))));
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8)))));
             Some(SystemApiOp::Dlopen {
                 path,
-                flags: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)),
+                flags: AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32)),
             })
         }
         "GetProcAddress" => {
@@ -3879,7 +3020,7 @@ fn detect_system_api_from_windows_import(
             let path = args
                 .get(0)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))));
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8)))));
             Some(SystemApiOp::Unlink { path })
         }
         "CreateDirectoryA" => {
@@ -3891,7 +3032,7 @@ fn detect_system_api_from_windows_import(
             }
             Some(SystemApiOp::Mkdir {
                 path: args[0].clone(),
-                mode: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)),
+                mode: AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32)),
             })
         }
         "RemoveDirectoryA" => {
@@ -3924,10 +3065,10 @@ fn detect_system_api_from_windows_import(
             let path = args
                 .get(0)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))));
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8)))));
             Some(SystemApiOp::Access {
                 path,
-                mode: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)),
+                mode: AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32)),
             })
         }
         "CreateFileA" => {
@@ -3955,8 +3096,8 @@ fn detect_system_api_from_windows_import(
             let flags = posix_flags_from_createfile(convention, desired_access, disposition);
             Some(SystemApiOp::Open {
                 path,
-                flags: AsmValue::Constant(AsmConstant::Int(flags, AsmType::I64)),
-                mode: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
+                flags: AsmOperand::Constant(AsmConstant::Int(flags, AsmType::I64)),
+                mode: AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
                 flag_style: match convention {
                     AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
                         PosixFlagStyle::Darwin
@@ -4047,13 +3188,13 @@ fn detect_system_api_from_windows_import(
             Some(SystemApiOp::Mmap {
                 addr: args[0].clone(),
                 len: args[1].clone(),
-                prot: AsmValue::Constant(AsmConstant::Int(prot, AsmType::I64)),
-                flags: AsmValue::Constant(AsmConstant::Int(
+                prot: AsmOperand::Constant(AsmConstant::Int(prot, AsmType::I64)),
+                flags: AsmOperand::Constant(AsmConstant::Int(
                     posix_mmap_flags_anonymous_private(style),
                     AsmType::I64,
                 )),
-                fd: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
-                offset: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                fd: AsmOperand::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                offset: AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
             })
         }
         "VirtualFree" => {
@@ -4144,8 +3285,8 @@ fn posix_flags_from_createfile(
 
 fn detect_system_api_from_syscall(
     convention: &AsmSyscallConvention,
-    number: &AsmValue,
-    args: &[AsmValue],
+    number: &AsmOperand,
+    args: &[AsmOperand],
     instructions: &[AsmInstruction],
 ) -> Option<SystemApiOp> {
     let num = resolve_u64(number, instructions)?;
@@ -4155,7 +3296,7 @@ fn detect_system_api_from_syscall(
             code: args
                 .get(0)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32))),
         }),
         AsmSyscallConvention::LinuxX86_64 if num == 39 => Some(SystemApiOp::GetPid),
         AsmSyscallConvention::LinuxX86_64 if num == 186 => Some(SystemApiOp::GetTid),
@@ -4163,7 +3304,7 @@ fn detect_system_api_from_syscall(
             code: args
                 .get(0)
                 .cloned()
-                .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32))),
+                .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32))),
         }),
         AsmSyscallConvention::LinuxAarch64 if num == 172 => Some(SystemApiOp::GetPid),
         AsmSyscallConvention::LinuxAarch64 if num == 178 => Some(SystemApiOp::GetTid),
@@ -4174,7 +3315,7 @@ fn detect_system_api_from_syscall(
                 code: args
                     .get(0)
                     .cloned()
-                    .unwrap_or_else(|| AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32))),
+                    .unwrap_or_else(|| AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32))),
             })
         }
         AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64
@@ -4597,454 +3738,177 @@ enum LoweredWindows {
     Sequence(Vec<AsmInstruction>),
 }
 
+/// Builds the common `call; cmp; select` idiom used across most POSIX ->
+/// Win32 lowerings: `select (call(...) == failure) ? -1 : 0`.
+fn win_bool_call_to_select(
+    function: &mut AsmFunction,
+    next_id: &mut u32,
+    replaces_id: u32,
+    dest: Option<AsmVirtualRegId>,
+    target: &str,
+    args: Vec<AsmOperand>,
+    failure: AsmConstant,
+) -> LoweredWindows {
+    let call_dest = alloc_result(function, AsmType::I64);
+    let cmp_dest = alloc_result(function, AsmType::I1);
+    let call_id = *next_id;
+    *next_id = next_id.saturating_add(1);
+    let cmp_id = *next_id;
+    *next_id = next_id.saturating_add(1);
+
+    let call = build_call_symbol(call_id, Some(call_dest), target, args, CallingConvention::Win64);
+    let cmp = build_eq(
+        cmp_id,
+        cmp_dest,
+        vreg_read(call_dest),
+        AsmOperand::Constant(failure),
+    );
+    let select = match dest {
+        Some(dest) => build_select(
+            replaces_id,
+            dest,
+            vreg_read(cmp_dest),
+            AsmOperand::Constant(AsmConstant::Int(-1, AsmType::I64)),
+            AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+        ),
+        None => AsmInstruction::new(replaces_id, AsmOpcode::Generic(AsmGenericOpcode::Nop), Vec::new()),
+    };
+    LoweredWindows::Sequence(vec![call, cmp, select])
+}
+
+/// Builds a `GetStdHandle(code)` prefix call, returning the instruction and
+/// the virtual register holding its result.
+fn win_getstdhandle(
+    function: &mut AsmFunction,
+    id: u32,
+    std_handle_code: i64,
+) -> (AsmInstruction, AsmVirtualRegId) {
+    let dest = alloc_result(function, AsmType::Ptr(Box::new(AsmType::I8)));
+    let inst = build_call_symbol(
+        id,
+        Some(dest),
+        "kernel32!GetStdHandle",
+        vec![AsmOperand::Constant(AsmConstant::Int(
+            std_handle_code,
+            AsmType::I64,
+        ))],
+        CallingConvention::Win64,
+    );
+    (inst, dest)
+}
+
 fn lower_system_api_to_windows_import(
     op: SystemApiOp,
     replaces_id: u32,
+    dest: Option<AsmVirtualRegId>,
     instructions: &[AsmInstruction],
     next_id: &mut u32,
+    function: &mut AsmFunction,
 ) -> Result<LoweredWindows> {
     match op {
-        SystemApiOp::Exit { code } => Ok(LoweredWindows::Single(AsmInstruction {
-            id: replaces_id,
-            opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-            kind: AsmInstructionKind::Call {
-                function: AsmValue::Function("kernel32!ExitProcess".to_string()),
-                args: vec![code],
-                calling_convention: CallingConvention::Win64,
-                tail_call: false,
-            },
-            // ExitProcess is `noreturn` at the OS ABI level, but our AsmIR currently
-            // models call results as SSA values that may be referenced by later
-            // instructions (e.g. through generic lowering patterns). Keep this typed
-            // as an integer to avoid codegen attempting to materialize a `Void` value.
-            ty: AsmType::I64,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        })),
-        SystemApiOp::GetPid => Ok(LoweredWindows::Single(AsmInstruction {
-            id: replaces_id,
-            opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-            kind: AsmInstructionKind::Call {
-                function: AsmValue::Function("kernel32!GetCurrentProcessId".to_string()),
-                args: Vec::new(),
-                calling_convention: CallingConvention::Win64,
-                tail_call: false,
-            },
-            ty: AsmType::I64,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        })),
-        SystemApiOp::GetTid => Ok(LoweredWindows::Single(AsmInstruction {
-            id: replaces_id,
-            opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-            kind: AsmInstructionKind::Call {
-                function: AsmValue::Function("kernel32!GetCurrentThreadId".to_string()),
-                args: Vec::new(),
-                calling_convention: CallingConvention::Win64,
-                tail_call: false,
-            },
-            ty: AsmType::I64,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        })),
-        SystemApiOp::Dlopen { path, .. } => Ok(LoweredWindows::Single(AsmInstruction {
-            id: replaces_id,
-            opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-            kind: AsmInstructionKind::Call {
-                function: AsmValue::Function("kernel32!LoadLibraryA".to_string()),
-                args: vec![path],
-                calling_convention: CallingConvention::Win64,
-                tail_call: false,
-            },
-            ty: AsmType::I64,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        })),
-        SystemApiOp::Dlsym { handle, symbol } => Ok(LoweredWindows::Single(AsmInstruction {
-            id: replaces_id,
-            opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-            kind: AsmInstructionKind::Call {
-                function: AsmValue::Function("kernel32!GetProcAddress".to_string()),
-                args: vec![handle, symbol],
-                calling_convention: CallingConvention::Win64,
-                tail_call: false,
-            },
-            ty: AsmType::I64,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        })),
-        SystemApiOp::Dlclose { handle } => {
-            let freelib_id = *next_id;
-            *next_id = next_id.saturating_add(1);
-            let cmp_id = *next_id;
-            *next_id = next_id.saturating_add(1);
-
-            let freelib = AsmInstruction {
-                id: freelib_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("kernel32!FreeLibrary".to_string()),
-                    args: vec![handle],
-                    calling_convention: CallingConvention::Win64,
-                    tail_call: false,
-                },
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-
-            let cmp = AsmInstruction {
-                id: cmp_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
-                kind: AsmInstructionKind::Eq(
-                    AsmValue::Register(freelib_id),
-                    AsmValue::Constant(AsmConstant::Bool(false)),
-                ),
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-
-            let select = AsmInstruction {
-                id: replaces_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
-                kind: AsmInstructionKind::Select {
-                    condition: AsmValue::Register(cmp_id),
-                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
-                    if_false: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-
-            Ok(LoweredWindows::Sequence(vec![freelib, cmp, select]))
-        }
-        SystemApiOp::Unlink { path } => {
-            let call_id = *next_id;
-            *next_id = next_id.saturating_add(1);
-            let cmp_id = *next_id;
-            *next_id = next_id.saturating_add(1);
-
-            let call = AsmInstruction {
-                id: call_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("kernel32!DeleteFileA".to_string()),
-                    args: vec![path],
-                    calling_convention: CallingConvention::Win64,
-                    tail_call: false,
-                },
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-            let cmp = AsmInstruction {
-                id: cmp_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
-                kind: AsmInstructionKind::Eq(
-                    AsmValue::Register(call_id),
-                    AsmValue::Constant(AsmConstant::Bool(false)),
-                ),
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-            let select = AsmInstruction {
-                id: replaces_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
-                kind: AsmInstructionKind::Select {
-                    condition: AsmValue::Register(cmp_id),
-                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
-                    if_false: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-            Ok(LoweredWindows::Sequence(vec![call, cmp, select]))
-        }
-        SystemApiOp::Mkdir { path, .. } => {
-            let call_id = *next_id;
-            *next_id = next_id.saturating_add(1);
-            let cmp_id = *next_id;
-            *next_id = next_id.saturating_add(1);
-
-            let call = AsmInstruction {
-                id: call_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("kernel32!CreateDirectoryA".to_string()),
-                    args: vec![path, AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8)))],
-                    calling_convention: CallingConvention::Win64,
-                    tail_call: false,
-                },
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-            let cmp = AsmInstruction {
-                id: cmp_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
-                kind: AsmInstructionKind::Eq(
-                    AsmValue::Register(call_id),
-                    AsmValue::Constant(AsmConstant::Bool(false)),
-                ),
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-            let select = AsmInstruction {
-                id: replaces_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
-                kind: AsmInstructionKind::Select {
-                    condition: AsmValue::Register(cmp_id),
-                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
-                    if_false: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-            Ok(LoweredWindows::Sequence(vec![call, cmp, select]))
-        }
-        SystemApiOp::Rmdir { path } => {
-            let call_id = *next_id;
-            *next_id = next_id.saturating_add(1);
-            let cmp_id = *next_id;
-            *next_id = next_id.saturating_add(1);
-
-            let call = AsmInstruction {
-                id: call_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("kernel32!RemoveDirectoryA".to_string()),
-                    args: vec![path],
-                    calling_convention: CallingConvention::Win64,
-                    tail_call: false,
-                },
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-            let cmp = AsmInstruction {
-                id: cmp_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
-                kind: AsmInstructionKind::Eq(
-                    AsmValue::Register(call_id),
-                    AsmValue::Constant(AsmConstant::Bool(false)),
-                ),
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-            let select = AsmInstruction {
-                id: replaces_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
-                kind: AsmInstructionKind::Select {
-                    condition: AsmValue::Register(cmp_id),
-                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
-                    if_false: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-            Ok(LoweredWindows::Sequence(vec![call, cmp, select]))
-        }
+        SystemApiOp::Exit { code } => Ok(LoweredWindows::Single(build_call_symbol(
+            replaces_id,
+            dest,
+            "kernel32!ExitProcess",
+            vec![code],
+            CallingConvention::Win64,
+        ))),
+        SystemApiOp::GetPid => Ok(LoweredWindows::Single(build_call_symbol(
+            replaces_id,
+            dest,
+            "kernel32!GetCurrentProcessId",
+            Vec::new(),
+            CallingConvention::Win64,
+        ))),
+        SystemApiOp::GetTid => Ok(LoweredWindows::Single(build_call_symbol(
+            replaces_id,
+            dest,
+            "kernel32!GetCurrentThreadId",
+            Vec::new(),
+            CallingConvention::Win64,
+        ))),
+        SystemApiOp::Dlopen { path, .. } => Ok(LoweredWindows::Single(build_call_symbol(
+            replaces_id,
+            dest,
+            "kernel32!LoadLibraryA",
+            vec![path],
+            CallingConvention::Win64,
+        ))),
+        SystemApiOp::Dlsym { handle, symbol } => Ok(LoweredWindows::Single(build_call_symbol(
+            replaces_id,
+            dest,
+            "kernel32!GetProcAddress",
+            vec![handle, symbol],
+            CallingConvention::Win64,
+        ))),
+        SystemApiOp::Dlclose { handle } => Ok(win_bool_call_to_select(
+            function,
+            next_id,
+            replaces_id,
+            dest,
+            "kernel32!FreeLibrary",
+            vec![handle],
+            AsmConstant::Bool(false),
+        )),
+        SystemApiOp::Unlink { path } => Ok(win_bool_call_to_select(
+            function,
+            next_id,
+            replaces_id,
+            dest,
+            "kernel32!DeleteFileA",
+            vec![path],
+            AsmConstant::Bool(false),
+        )),
+        SystemApiOp::Mkdir { path, .. } => Ok(win_bool_call_to_select(
+            function,
+            next_id,
+            replaces_id,
+            dest,
+            "kernel32!CreateDirectoryA",
+            vec![
+                path,
+                AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+            ],
+            AsmConstant::Bool(false),
+        )),
+        SystemApiOp::Rmdir { path } => Ok(win_bool_call_to_select(
+            function,
+            next_id,
+            replaces_id,
+            dest,
+            "kernel32!RemoveDirectoryA",
+            vec![path],
+            AsmConstant::Bool(false),
+        )),
         SystemApiOp::Rename { from, to } => {
             // MOVEFILE_REPLACE_EXISTING=1
             const MOVEFILE_REPLACE_EXISTING: i64 = 1;
-
-            let call_id = *next_id;
-            *next_id = next_id.saturating_add(1);
-            let cmp_id = *next_id;
-            *next_id = next_id.saturating_add(1);
-
-            let call = AsmInstruction {
-                id: call_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("kernel32!MoveFileExA".to_string()),
-                    args: vec![
-                        from,
-                        to,
-                        AsmValue::Constant(AsmConstant::Int(
-                            MOVEFILE_REPLACE_EXISTING,
-                            AsmType::I64,
-                        )),
-                    ],
-                    calling_convention: CallingConvention::Win64,
-                    tail_call: false,
-                },
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-            let cmp = AsmInstruction {
-                id: cmp_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
-                kind: AsmInstructionKind::Eq(
-                    AsmValue::Register(call_id),
-                    AsmValue::Constant(AsmConstant::Bool(false)),
-                ),
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-            let select = AsmInstruction {
-                id: replaces_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
-                kind: AsmInstructionKind::Select {
-                    condition: AsmValue::Register(cmp_id),
-                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
-                    if_false: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-            Ok(LoweredWindows::Sequence(vec![call, cmp, select]))
+            Ok(win_bool_call_to_select(
+                function,
+                next_id,
+                replaces_id,
+                dest,
+                "kernel32!MoveFileExA",
+                vec![
+                    from,
+                    to,
+                    AsmOperand::Constant(AsmConstant::Int(
+                        MOVEFILE_REPLACE_EXISTING,
+                        AsmType::I64,
+                    )),
+                ],
+                AsmConstant::Bool(false),
+            ))
         }
-        SystemApiOp::Access { path, .. } => {
-            let call_id = *next_id;
-            *next_id = next_id.saturating_add(1);
-            let cmp_id = *next_id;
-            *next_id = next_id.saturating_add(1);
-
-            let call = AsmInstruction {
-                id: call_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("kernel32!GetFileAttributesA".to_string()),
-                    args: vec![path],
-                    calling_convention: CallingConvention::Win64,
-                    tail_call: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-
-            let cmp = AsmInstruction {
-                id: cmp_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
-                kind: AsmInstructionKind::Eq(
-                    AsmValue::Register(call_id),
-                    AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
-                ),
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-
-            let select = AsmInstruction {
-                id: replaces_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
-                kind: AsmInstructionKind::Select {
-                    condition: AsmValue::Register(cmp_id),
-                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
-                    if_false: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-
-            Ok(LoweredWindows::Sequence(vec![call, cmp, select]))
-        }
+        SystemApiOp::Access { path, .. } => Ok(win_bool_call_to_select(
+            function,
+            next_id,
+            replaces_id,
+            dest,
+            "kernel32!GetFileAttributesA",
+            vec![path],
+            AsmConstant::Int(-1, AsmType::I64),
+        )),
         SystemApiOp::Write { fd, buffer, len } => {
             let (handle_value, std_handle_code) = match resolve_i64(&fd, instructions)
                 .map_err(|e| {
@@ -5078,27 +3942,8 @@ fn lower_system_api_to_windows_import(
             *next_id = next_id.saturating_add(1);
 
             let (prefix, handle_arg) = if let Some(std_handle_code) = std_handle_code {
-                let getstd = AsmInstruction {
-                    id: getstd_id,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("kernel32!GetStdHandle".to_string()),
-                        args: vec![AsmValue::Constant(AsmConstant::Int(
-                            std_handle_code,
-                            AsmType::I64,
-                        ))],
-                        calling_convention: CallingConvention::Win64,
-                        tail_call: false,
-                    },
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                };
-                (Some(getstd), AsmValue::Register(getstd_id))
+                let (inst, reg) = win_getstdhandle(function, getstd_id, std_handle_code);
+                (Some(inst), vreg_read(reg))
             } else {
                 (
                     None,
@@ -5107,94 +3952,51 @@ fn lower_system_api_to_windows_import(
                 )
             };
 
-            let alloca_written = AsmInstruction {
-                id: alloca_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Alloca),
-                kind: AsmInstructionKind::Alloca {
-                    size: AsmValue::Constant(AsmConstant::UInt(1, AsmType::I64)),
-                    alignment: 8,
-                },
-                ty: AsmType::Ptr(Box::new(AsmType::I64)),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
+            let alloca_reg = alloc_result(function, AsmType::Ptr(Box::new(AsmType::I64)));
+            let alloca_written = build_alloca(
+                alloca_id,
+                alloca_reg,
+                AsmOperand::Constant(AsmConstant::UInt(1, AsmType::I64)),
+                8,
+            );
 
-            let writefile = AsmInstruction {
-                id: writefile_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("kernel32!WriteFile".to_string()),
-                    args: vec![
-                        handle_arg,
-                        buffer,
-                        len,
-                        AsmValue::Register(alloca_id),
-                        AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                    ],
-                    calling_convention: CallingConvention::Win64,
-                    tail_call: false,
-                },
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
+            let writefile_reg = alloc_result(function, AsmType::I1);
+            let writefile = build_call_symbol(
+                writefile_id,
+                Some(writefile_reg),
+                "kernel32!WriteFile",
+                vec![
+                    handle_arg,
+                    buffer,
+                    len,
+                    vreg_read(alloca_reg),
+                    AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+                ],
+                CallingConvention::Win64,
+            );
 
-            let load_written = AsmInstruction {
-                id: load_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: AsmValue::Register(alloca_id),
-                    alignment: Some(8),
-                    volatile: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
+            let load_reg = alloc_result(function, AsmType::I64);
+            let load_written = build_load(load_id, load_reg, vreg_read(alloca_reg));
 
-            let cmp = AsmInstruction {
-                id: cmp_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
-                kind: AsmInstructionKind::Eq(
-                    AsmValue::Register(writefile_id),
-                    AsmValue::Constant(AsmConstant::Bool(false)),
+            let cmp_reg = alloc_result(function, AsmType::I1);
+            let cmp = build_eq(
+                cmp_id,
+                cmp_reg,
+                vreg_read(writefile_reg),
+                AsmOperand::Constant(AsmConstant::Bool(false)),
+            );
+
+            let select = match dest {
+                Some(dest) => build_select(
+                    replaces_id,
+                    dest,
+                    vreg_read(cmp_reg),
+                    AsmOperand::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                    vreg_read(load_reg),
                 ),
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-
-            let select = AsmInstruction {
-                id: replaces_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
-                kind: AsmInstructionKind::Select {
-                    condition: AsmValue::Register(cmp_id),
-                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
-                    if_false: AsmValue::Register(load_id),
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
+                None => {
+                    AsmInstruction::new(replaces_id, AsmOpcode::Generic(AsmGenericOpcode::Nop), Vec::new())
+                }
             };
 
             let mut seq = Vec::new();
@@ -5230,24 +4032,8 @@ fn lower_system_api_to_windows_import(
             *next_id = next_id.saturating_add(1);
 
             let (prefix, handle_arg) = if use_stdio {
-                let getstd = AsmInstruction {
-                    id: getstd_id,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("kernel32!GetStdHandle".to_string()),
-                        args: vec![AsmValue::Constant(AsmConstant::Int(-10, AsmType::I64))],
-                        calling_convention: CallingConvention::Win64,
-                        tail_call: false,
-                    },
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                };
-                (Some(getstd), AsmValue::Register(getstd_id))
+                let (inst, reg) = win_getstdhandle(function, getstd_id, -10);
+                (Some(inst), vreg_read(reg))
             } else {
                 (
                     None,
@@ -5256,94 +4042,51 @@ fn lower_system_api_to_windows_import(
                 )
             };
 
-            let alloca_read = AsmInstruction {
-                id: alloca_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Alloca),
-                kind: AsmInstructionKind::Alloca {
-                    size: AsmValue::Constant(AsmConstant::UInt(1, AsmType::I64)),
-                    alignment: 8,
-                },
-                ty: AsmType::Ptr(Box::new(AsmType::I64)),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
+            let alloca_reg = alloc_result(function, AsmType::Ptr(Box::new(AsmType::I64)));
+            let alloca_read = build_alloca(
+                alloca_id,
+                alloca_reg,
+                AsmOperand::Constant(AsmConstant::UInt(1, AsmType::I64)),
+                8,
+            );
 
-            let readfile = AsmInstruction {
-                id: readfile_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("kernel32!ReadFile".to_string()),
-                    args: vec![
-                        handle_arg,
-                        buffer,
-                        len,
-                        AsmValue::Register(alloca_id),
-                        AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                    ],
-                    calling_convention: CallingConvention::Win64,
-                    tail_call: false,
-                },
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
+            let readfile_reg = alloc_result(function, AsmType::I1);
+            let readfile = build_call_symbol(
+                readfile_id,
+                Some(readfile_reg),
+                "kernel32!ReadFile",
+                vec![
+                    handle_arg,
+                    buffer,
+                    len,
+                    vreg_read(alloca_reg),
+                    AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+                ],
+                CallingConvention::Win64,
+            );
 
-            let load_read = AsmInstruction {
-                id: load_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: AsmValue::Register(alloca_id),
-                    alignment: Some(8),
-                    volatile: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
+            let load_reg = alloc_result(function, AsmType::I64);
+            let load_read = build_load(load_id, load_reg, vreg_read(alloca_reg));
 
-            let cmp = AsmInstruction {
-                id: cmp_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
-                kind: AsmInstructionKind::Eq(
-                    AsmValue::Register(readfile_id),
-                    AsmValue::Constant(AsmConstant::Bool(false)),
+            let cmp_reg = alloc_result(function, AsmType::I1);
+            let cmp = build_eq(
+                cmp_id,
+                cmp_reg,
+                vreg_read(readfile_reg),
+                AsmOperand::Constant(AsmConstant::Bool(false)),
+            );
+
+            let select = match dest {
+                Some(dest) => build_select(
+                    replaces_id,
+                    dest,
+                    vreg_read(cmp_reg),
+                    AsmOperand::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                    vreg_read(load_reg),
                 ),
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-
-            let select = AsmInstruction {
-                id: replaces_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
-                kind: AsmInstructionKind::Select {
-                    condition: AsmValue::Register(cmp_id),
-                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
-                    if_false: AsmValue::Register(load_id),
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
+                None => {
+                    AsmInstruction::new(replaces_id, AsmOpcode::Generic(AsmGenericOpcode::Nop), Vec::new())
+                }
             };
 
             let mut seq = Vec::new();
@@ -5379,27 +4122,8 @@ fn lower_system_api_to_windows_import(
             *next_id = next_id.saturating_add(1);
 
             let (prefix, handle_arg) = if let Some(std_handle_code) = std_handle_code {
-                let getstd = AsmInstruction {
-                    id: getstd_id,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("kernel32!GetStdHandle".to_string()),
-                        args: vec![AsmValue::Constant(AsmConstant::Int(
-                            std_handle_code,
-                            AsmType::I64,
-                        ))],
-                        calling_convention: CallingConvention::Win64,
-                        tail_call: false,
-                    },
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                };
-                (Some(getstd), AsmValue::Register(getstd_id))
+                let (inst, reg) = win_getstdhandle(function, getstd_id, std_handle_code);
+                (Some(inst), vreg_read(reg))
             } else {
                 (
                     None,
@@ -5408,55 +4132,34 @@ fn lower_system_api_to_windows_import(
                 )
             };
 
-            let close = AsmInstruction {
-                id: close_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("kernel32!CloseHandle".to_string()),
-                    args: vec![handle_arg],
-                    calling_convention: CallingConvention::Win64,
-                    tail_call: false,
-                },
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
+            let close_reg = alloc_result(function, AsmType::I1);
+            let close = build_call_symbol(
+                close_id,
+                Some(close_reg),
+                "kernel32!CloseHandle",
+                vec![handle_arg],
+                CallingConvention::Win64,
+            );
 
-            let cmp = AsmInstruction {
-                id: cmp_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
-                kind: AsmInstructionKind::Eq(
-                    AsmValue::Register(close_id),
-                    AsmValue::Constant(AsmConstant::Bool(false)),
+            let cmp_reg = alloc_result(function, AsmType::I1);
+            let cmp = build_eq(
+                cmp_id,
+                cmp_reg,
+                vreg_read(close_reg),
+                AsmOperand::Constant(AsmConstant::Bool(false)),
+            );
+
+            let select = match dest {
+                Some(dest) => build_select(
+                    replaces_id,
+                    dest,
+                    vreg_read(cmp_reg),
+                    AsmOperand::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                    AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
                 ),
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-
-            let select = AsmInstruction {
-                id: replaces_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
-                kind: AsmInstructionKind::Select {
-                    condition: AsmValue::Register(cmp_id),
-                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
-                    if_false: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
+                None => {
+                    AsmInstruction::new(replaces_id, AsmOpcode::Generic(AsmGenericOpcode::Nop), Vec::new())
+                }
             };
 
             let mut seq = Vec::new();
@@ -5485,34 +4188,24 @@ fn lower_system_api_to_windows_import(
             let desired_access = windows_createfile_desired_access(flags);
             let disposition = windows_createfile_disposition_from_flags(flag_style, flags);
 
-            Ok(LoweredWindows::Single(AsmInstruction {
-                id: replaces_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("kernel32!CreateFileA".to_string()),
-                    args: vec![
-                        path,
-                        AsmValue::Constant(AsmConstant::Int(desired_access, AsmType::I64)),
-                        AsmValue::Constant(AsmConstant::Int(
-                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                            AsmType::I64,
-                        )),
-                        AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                        AsmValue::Constant(AsmConstant::Int(disposition, AsmType::I64)),
-                        AsmValue::Constant(AsmConstant::Int(FILE_ATTRIBUTE_NORMAL, AsmType::I64)),
-                        AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                    ],
-                    calling_convention: CallingConvention::Win64,
-                    tail_call: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            }))
+            Ok(LoweredWindows::Single(build_call_symbol(
+                replaces_id,
+                dest,
+                "kernel32!CreateFileA",
+                vec![
+                    path,
+                    AsmOperand::Constant(AsmConstant::Int(desired_access, AsmType::I64)),
+                    AsmOperand::Constant(AsmConstant::Int(
+                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                        AsmType::I64,
+                    )),
+                    AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+                    AsmOperand::Constant(AsmConstant::Int(disposition, AsmType::I64)),
+                    AsmOperand::Constant(AsmConstant::Int(FILE_ATTRIBUTE_NORMAL, AsmType::I64)),
+                    AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+                ],
+                CallingConvention::Win64,
+            )))
         }
         SystemApiOp::Seek { fd, offset, whence } => {
             let (handle_value, std_handle_code) = match resolve_i64(&fd, instructions)
@@ -5544,27 +4237,8 @@ fn lower_system_api_to_windows_import(
             *next_id = next_id.saturating_add(1);
 
             let (prefix, handle_arg) = if let Some(std_handle_code) = std_handle_code {
-                let getstd = AsmInstruction {
-                    id: getstd_id,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("kernel32!GetStdHandle".to_string()),
-                        args: vec![AsmValue::Constant(AsmConstant::Int(
-                            std_handle_code,
-                            AsmType::I64,
-                        ))],
-                        calling_convention: CallingConvention::Win64,
-                        tail_call: false,
-                    },
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                };
-                (Some(getstd), AsmValue::Register(getstd_id))
+                let (inst, reg) = win_getstdhandle(function, getstd_id, std_handle_code);
+                (Some(inst), vreg_read(reg))
             } else {
                 (
                     None,
@@ -5573,88 +4247,45 @@ fn lower_system_api_to_windows_import(
                 )
             };
 
-            let alloca_new_pos = AsmInstruction {
-                id: alloca_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Alloca),
-                kind: AsmInstructionKind::Alloca {
-                    size: AsmValue::Constant(AsmConstant::UInt(1, AsmType::I64)),
-                    alignment: 8,
-                },
-                ty: AsmType::Ptr(Box::new(AsmType::I64)),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
+            let alloca_reg = alloc_result(function, AsmType::Ptr(Box::new(AsmType::I64)));
+            let alloca_new_pos = build_alloca(
+                alloca_id,
+                alloca_reg,
+                AsmOperand::Constant(AsmConstant::UInt(1, AsmType::I64)),
+                8,
+            );
 
-            let setfp = AsmInstruction {
-                id: setfp_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("kernel32!SetFilePointerEx".to_string()),
-                    args: vec![handle_arg, offset, AsmValue::Register(alloca_id), whence],
-                    calling_convention: CallingConvention::Win64,
-                    tail_call: false,
-                },
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
+            let setfp_reg = alloc_result(function, AsmType::I1);
+            let setfp = build_call_symbol(
+                setfp_id,
+                Some(setfp_reg),
+                "kernel32!SetFilePointerEx",
+                vec![handle_arg, offset, vreg_read(alloca_reg), whence],
+                CallingConvention::Win64,
+            );
 
-            let load_new_pos = AsmInstruction {
-                id: load_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: AsmValue::Register(alloca_id),
-                    alignment: Some(8),
-                    volatile: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
+            let load_reg = alloc_result(function, AsmType::I64);
+            let load_new_pos = build_load(load_id, load_reg, vreg_read(alloca_reg));
 
-            let cmp = AsmInstruction {
-                id: cmp_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
-                kind: AsmInstructionKind::Eq(
-                    AsmValue::Register(setfp_id),
-                    AsmValue::Constant(AsmConstant::Bool(false)),
+            let cmp_reg = alloc_result(function, AsmType::I1);
+            let cmp = build_eq(
+                cmp_id,
+                cmp_reg,
+                vreg_read(setfp_reg),
+                AsmOperand::Constant(AsmConstant::Bool(false)),
+            );
+
+            let select = match dest {
+                Some(dest) => build_select(
+                    replaces_id,
+                    dest,
+                    vreg_read(cmp_reg),
+                    AsmOperand::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                    vreg_read(load_reg),
                 ),
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-
-            let select = AsmInstruction {
-                id: replaces_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
-                kind: AsmInstructionKind::Select {
-                    condition: AsmValue::Register(cmp_id),
-                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
-                    if_false: AsmValue::Register(load_id),
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
+                None => {
+                    AsmInstruction::new(replaces_id, AsmOpcode::Generic(AsmGenericOpcode::Nop), Vec::new())
+                }
             };
 
             let mut seq = Vec::new();
@@ -5709,60 +4340,39 @@ fn lower_system_api_to_windows_import(
             let cmp_id = *next_id;
             *next_id = next_id.saturating_add(1);
 
-            let call = AsmInstruction {
-                id: call_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("kernel32!VirtualAlloc".to_string()),
-                    args: vec![
-                        addr,
-                        len,
-                        AsmValue::Constant(AsmConstant::Int(MEM_COMMIT_RESERVE, AsmType::I64)),
-                        AsmValue::Constant(AsmConstant::Int(protection, AsmType::I64)),
-                    ],
-                    calling_convention: CallingConvention::Win64,
-                    tail_call: false,
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
+            let call_reg = alloc_result(function, AsmType::I64);
+            let call = build_call_symbol(
+                call_id,
+                Some(call_reg),
+                "kernel32!VirtualAlloc",
+                vec![
+                    addr,
+                    len,
+                    AsmOperand::Constant(AsmConstant::Int(MEM_COMMIT_RESERVE, AsmType::I64)),
+                    AsmOperand::Constant(AsmConstant::Int(protection, AsmType::I64)),
+                ],
+                CallingConvention::Win64,
+            );
 
-            let cmp = AsmInstruction {
-                id: cmp_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
-                kind: AsmInstructionKind::Eq(
-                    AsmValue::Register(call_id),
-                    AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
+            let cmp_reg = alloc_result(function, AsmType::I1);
+            let cmp = build_eq(
+                cmp_id,
+                cmp_reg,
+                vreg_read(call_reg),
+                AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
+            );
+
+            let select = match dest {
+                Some(dest) => build_select(
+                    replaces_id,
+                    dest,
+                    vreg_read(cmp_reg),
+                    AsmOperand::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                    vreg_read(call_reg),
                 ),
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-
-            let select = AsmInstruction {
-                id: replaces_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
-                kind: AsmInstructionKind::Select {
-                    condition: AsmValue::Register(cmp_id),
-                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
-                    if_false: AsmValue::Register(call_id),
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
+                None => {
+                    AsmInstruction::new(replaces_id, AsmOpcode::Generic(AsmGenericOpcode::Nop), Vec::new())
+                }
             };
 
             Ok(LoweredWindows::Sequence(vec![call, cmp, select]))
@@ -5774,59 +4384,38 @@ fn lower_system_api_to_windows_import(
             let cmp_id = *next_id;
             *next_id = next_id.saturating_add(1);
 
-            let call = AsmInstruction {
-                id: call_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("kernel32!VirtualFree".to_string()),
-                    args: vec![
-                        addr,
-                        AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
-                        AsmValue::Constant(AsmConstant::Int(MEM_RELEASE, AsmType::I64)),
-                    ],
-                    calling_convention: CallingConvention::Win64,
-                    tail_call: false,
-                },
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
+            let call_reg = alloc_result(function, AsmType::I1);
+            let call = build_call_symbol(
+                call_id,
+                Some(call_reg),
+                "kernel32!VirtualFree",
+                vec![
+                    addr,
+                    AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                    AsmOperand::Constant(AsmConstant::Int(MEM_RELEASE, AsmType::I64)),
+                ],
+                CallingConvention::Win64,
+            );
 
-            let cmp = AsmInstruction {
-                id: cmp_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
-                kind: AsmInstructionKind::Eq(
-                    AsmValue::Register(call_id),
-                    AsmValue::Constant(AsmConstant::Bool(false)),
+            let cmp_reg = alloc_result(function, AsmType::I1);
+            let cmp = build_eq(
+                cmp_id,
+                cmp_reg,
+                vreg_read(call_reg),
+                AsmOperand::Constant(AsmConstant::Bool(false)),
+            );
+
+            let select = match dest {
+                Some(dest) => build_select(
+                    replaces_id,
+                    dest,
+                    vreg_read(cmp_reg),
+                    AsmOperand::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                    AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
                 ),
-                ty: AsmType::I1,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            };
-
-            let select = AsmInstruction {
-                id: replaces_id,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
-                kind: AsmInstructionKind::Select {
-                    condition: AsmValue::Register(cmp_id),
-                    if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
-                    if_false: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
-                },
-                ty: AsmType::I64,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
+                None => {
+                    AsmInstruction::new(replaces_id, AsmOpcode::Generic(AsmGenericOpcode::Nop), Vec::new())
+                }
             };
 
             Ok(LoweredWindows::Sequence(vec![call, cmp, select]))
@@ -5853,15 +4442,15 @@ fn match_writefile_sequence_to_syscall(
     }
 
     let mut base = 0usize;
-    let mut fd_value: Option<AsmValue> = None;
-    let handle_value: AsmValue;
+    let mut fd_value: Option<AsmOperand> = None;
+    let handle_value: AsmOperand;
 
     if is_call_named(&instructions[0], "kernel32.dll", "GetStdHandle") {
         if instructions.len() < 4 {
             return Ok(None);
         }
         let getstd = &instructions[0];
-        let AsmInstructionKind::Call { args, .. } = &getstd.kind else {
+        let Some((_, args)) = getstd.call_target_and_args() else {
             return Ok(None);
         };
         let Some(handle_code) = args.first().and_then(|value| {
@@ -5879,12 +4468,14 @@ fn match_writefile_sequence_to_syscall(
             Some(-12) => 2u64,
             _ => return Ok(None),
         };
-        fd_value = Some(AsmValue::Constant(AsmConstant::UInt(fd, AsmType::I64)));
-        handle_value = AsmValue::Register(getstd.id);
+        fd_value = Some(AsmOperand::Constant(AsmConstant::UInt(fd, AsmType::I64)));
+        handle_value = vreg_read(result_vreg(getstd).ok_or_else(|| {
+            fp_core::error::Error::from("GetStdHandle call has no result register")
+        })?);
         base = 1;
     } else {
         // Handle comes directly from the WriteFile call's first arg.
-        handle_value = AsmValue::Undef(AsmType::I64);
+        handle_value = AsmOperand::Constant(AsmConstant::Undef(AsmType::I64));
     }
 
     let alloca = &instructions[base];
@@ -5895,26 +4486,30 @@ fn match_writefile_sequence_to_syscall(
         .get(base + 2)
         .ok_or_else(|| fp_core::error::Error::from("missing Load instruction in sequence"))?;
 
-    if !matches!(alloca.kind, AsmInstructionKind::Alloca { .. }) {
+    if !matches!(alloca.opcode, AsmOpcode::Generic(AsmGenericOpcode::Alloca)) {
         return Ok(None);
     }
     if !is_call_named(writefile, "kernel32.dll", "WriteFile") {
         return Ok(None);
     }
-    let AsmInstructionKind::Load { address, .. } = &load.kind else {
+    if !matches!(load.opcode, AsmOpcode::Generic(AsmGenericOpcode::Load)) {
+        return Ok(None);
+    }
+    // Load operand schema: [dest, address].
+    let Some(address) = load.operands.get(1) else {
         return Ok(None);
     };
-    if address != &AsmValue::Register(alloca.id) {
+    if !operand_is_result_of(address, alloca) {
         return Ok(None);
     }
 
-    let AsmInstructionKind::Call { args, .. } = &writefile.kind else {
+    let Some((_, args)) = writefile.call_target_and_args() else {
         return Ok(None);
     };
     if args.len() < 5 {
         return Ok(None);
     }
-    if args[3] != AsmValue::Register(alloca.id) {
+    if !operand_is_result_of(&args[3], alloca) {
         return Ok(None);
     }
     let handle_arg = if base == 1 {
@@ -5934,24 +4529,11 @@ fn match_writefile_sequence_to_syscall(
     };
 
     let load_index = base + 2;
-    let (dest_id, consumed_tail) = match_result_chain_at(instructions, load_index, load.id);
-    let kind = lower_system_api_to_syscall(op, convention);
+    let (dest_inst, consumed_tail) = match_result_chain_at(instructions, load_index, load);
+    let dest = result_vreg(dest_inst);
+    let replacement = lower_system_api_to_syscall(dest_inst.id, dest, op, convention);
 
-    Ok(Some((
-        AsmInstruction {
-            id: dest_id,
-            opcode: AsmOpcode::Generic(AsmGenericOpcode::Syscall),
-            kind,
-            ty: AsmType::I64,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        },
-        consumed_tail,
-    )))
+    Ok(Some((replacement, consumed_tail)))
 }
 
 fn match_readfile_sequence_to_syscall(
@@ -5967,15 +4549,15 @@ fn match_readfile_sequence_to_syscall(
     }
 
     let mut base = 0usize;
-    let mut fd_value: Option<AsmValue> = None;
-    let handle_value: AsmValue;
+    let mut fd_value: Option<AsmOperand> = None;
+    let handle_value: AsmOperand;
 
     if is_call_named(&instructions[0], "kernel32.dll", "GetStdHandle") {
         if instructions.len() < 4 {
             return Ok(None);
         }
         let getstd = &instructions[0];
-        let AsmInstructionKind::Call { args, .. } = &getstd.kind else {
+        let Some((_, args)) = getstd.call_target_and_args() else {
             return Ok(None);
         };
         let Some(handle_code) = args.first().and_then(|value| {
@@ -5992,11 +4574,13 @@ fn match_readfile_sequence_to_syscall(
             Some(-10) => {}
             _ => return Ok(None),
         }
-        fd_value = Some(AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)));
-        handle_value = AsmValue::Register(getstd.id);
+        fd_value = Some(AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)));
+        handle_value = vreg_read(result_vreg(getstd).ok_or_else(|| {
+            fp_core::error::Error::from("GetStdHandle call has no result register")
+        })?);
         base = 1;
     } else {
-        handle_value = AsmValue::Undef(AsmType::I64);
+        handle_value = AsmOperand::Constant(AsmConstant::Undef(AsmType::I64));
     }
 
     let alloca = &instructions[base];
@@ -6007,26 +4591,29 @@ fn match_readfile_sequence_to_syscall(
         .get(base + 2)
         .ok_or_else(|| fp_core::error::Error::from("missing Load instruction in sequence"))?;
 
-    if !matches!(alloca.kind, AsmInstructionKind::Alloca { .. }) {
+    if !matches!(alloca.opcode, AsmOpcode::Generic(AsmGenericOpcode::Alloca)) {
         return Ok(None);
     }
     if !is_call_named(readfile, "kernel32.dll", "ReadFile") {
         return Ok(None);
     }
-    let AsmInstructionKind::Load { address, .. } = &load.kind else {
+    if !matches!(load.opcode, AsmOpcode::Generic(AsmGenericOpcode::Load)) {
+        return Ok(None);
+    }
+    let Some(address) = load.operands.get(1) else {
         return Ok(None);
     };
-    if address != &AsmValue::Register(alloca.id) {
+    if !operand_is_result_of(address, alloca) {
         return Ok(None);
     }
 
-    let AsmInstructionKind::Call { args, .. } = &readfile.kind else {
+    let Some((_, args)) = readfile.call_target_and_args() else {
         return Ok(None);
     };
     if args.len() < 5 {
         return Ok(None);
     }
-    if args[3] != AsmValue::Register(alloca.id) {
+    if !operand_is_result_of(&args[3], alloca) {
         return Ok(None);
     }
     let handle_arg = if base == 1 {
@@ -6046,24 +4633,11 @@ fn match_readfile_sequence_to_syscall(
     };
 
     let load_index = base + 2;
-    let (dest_id, consumed_tail) = match_result_chain_at(instructions, load_index, load.id);
-    let kind = lower_system_api_to_syscall(op, convention);
+    let (dest_inst, consumed_tail) = match_result_chain_at(instructions, load_index, load);
+    let dest = result_vreg(dest_inst);
+    let replacement = lower_system_api_to_syscall(dest_inst.id, dest, op, convention);
 
-    Ok(Some((
-        AsmInstruction {
-            id: dest_id,
-            opcode: AsmOpcode::Generic(AsmGenericOpcode::Syscall),
-            kind,
-            ty: AsmType::I64,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        },
-        consumed_tail,
-    )))
+    Ok(Some((replacement, consumed_tail)))
 }
 
 fn match_setfilepointerex_sequence_to_syscall(
@@ -6079,15 +4653,15 @@ fn match_setfilepointerex_sequence_to_syscall(
     }
 
     let mut base = 0usize;
-    let mut fd_value: Option<AsmValue> = None;
-    let handle_value: AsmValue;
+    let mut fd_value: Option<AsmOperand> = None;
+    let handle_value: AsmOperand;
 
     if is_call_named(&instructions[0], "kernel32.dll", "GetStdHandle") {
         if instructions.len() < 4 {
             return Ok(None);
         }
         let getstd = &instructions[0];
-        let AsmInstructionKind::Call { args, .. } = &getstd.kind else {
+        let Some((_, args)) = getstd.call_target_and_args() else {
             return Ok(None);
         };
         let Some(handle_code) = args.first().and_then(|value| {
@@ -6106,11 +4680,13 @@ fn match_setfilepointerex_sequence_to_syscall(
             Some(-12) => 2u64,
             _ => return Ok(None),
         };
-        fd_value = Some(AsmValue::Constant(AsmConstant::UInt(fd, AsmType::I64)));
-        handle_value = AsmValue::Register(getstd.id);
+        fd_value = Some(AsmOperand::Constant(AsmConstant::UInt(fd, AsmType::I64)));
+        handle_value = vreg_read(result_vreg(getstd).ok_or_else(|| {
+            fp_core::error::Error::from("GetStdHandle call has no result register")
+        })?);
         base = 1;
     } else {
-        handle_value = AsmValue::Undef(AsmType::I64);
+        handle_value = AsmOperand::Constant(AsmConstant::Undef(AsmType::I64));
     }
 
     let alloca = &instructions[base];
@@ -6121,26 +4697,29 @@ fn match_setfilepointerex_sequence_to_syscall(
         .get(base + 2)
         .ok_or_else(|| fp_core::error::Error::from("missing Load instruction in sequence"))?;
 
-    if !matches!(alloca.kind, AsmInstructionKind::Alloca { .. }) {
+    if !matches!(alloca.opcode, AsmOpcode::Generic(AsmGenericOpcode::Alloca)) {
         return Ok(None);
     }
     if !is_call_named(setfp, "kernel32.dll", "SetFilePointerEx") {
         return Ok(None);
     }
-    let AsmInstructionKind::Load { address, .. } = &load.kind else {
+    if !matches!(load.opcode, AsmOpcode::Generic(AsmGenericOpcode::Load)) {
+        return Ok(None);
+    }
+    let Some(address) = load.operands.get(1) else {
         return Ok(None);
     };
-    if address != &AsmValue::Register(alloca.id) {
+    if !operand_is_result_of(address, alloca) {
         return Ok(None);
     }
 
-    let AsmInstructionKind::Call { args, .. } = &setfp.kind else {
+    let Some((_, args)) = setfp.call_target_and_args() else {
         return Ok(None);
     };
     if args.len() != 4 {
         return Ok(None);
     }
-    if args[2] != AsmValue::Register(alloca.id) {
+    if !operand_is_result_of(&args[2], alloca) {
         return Ok(None);
     }
     let handle_arg = if base == 1 {
@@ -6160,24 +4739,11 @@ fn match_setfilepointerex_sequence_to_syscall(
     };
 
     let load_index = base + 2;
-    let (dest_id, consumed_tail) = match_result_chain_at(instructions, load_index, load.id);
-    let kind = lower_system_api_to_syscall(op, convention);
+    let (dest_inst, consumed_tail) = match_result_chain_at(instructions, load_index, load);
+    let dest = result_vreg(dest_inst);
+    let replacement = lower_system_api_to_syscall(dest_inst.id, dest, op, convention);
 
-    Ok(Some((
-        AsmInstruction {
-            id: dest_id,
-            opcode: AsmOpcode::Generic(AsmGenericOpcode::Syscall),
-            kind,
-            ty: AsmType::I64,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        },
-        consumed_tail,
-    )))
+    Ok(Some((replacement, consumed_tail)))
 }
 
 fn match_virtualalloc_sequence_to_syscall(
@@ -6196,23 +4762,27 @@ fn match_virtualalloc_sequence_to_syscall(
     if !is_call_named(call, "kernel32.dll", "VirtualAlloc") {
         return Ok(None);
     }
-    if !matches!(eq.kind, AsmInstructionKind::Eq(_, _)) {
+    if !matches!(eq.opcode, AsmOpcode::Generic(AsmGenericOpcode::Eq)) {
         return Ok(None);
     }
-    let AsmInstructionKind::Select {
-        if_true, if_false, ..
-    } = &select.kind
-    else {
+    if !matches!(select.opcode, AsmOpcode::Generic(AsmGenericOpcode::Select)) {
+        return Ok(None);
+    }
+    // Select operand schema: [dest, condition, if_true, if_false].
+    let Some(if_true) = select.operands.get(2) else {
         return Ok(None);
     };
-    if if_false != &AsmValue::Register(call.id) {
+    let Some(if_false) = select.operands.get(3) else {
+        return Ok(None);
+    };
+    if !operand_is_result_of(if_false, call) {
         return Ok(None);
     }
-    if if_true != &AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)) {
+    if if_true != &AsmOperand::Constant(AsmConstant::Int(-1, AsmType::I64)) {
         return Ok(None);
     }
 
-    let AsmInstructionKind::Call { args, .. } = &call.kind else {
+    let Some((_, args)) = call.call_target_and_args() else {
         return Ok(None);
     };
     if args.len() != 4 {
@@ -6244,31 +4814,18 @@ fn match_virtualalloc_sequence_to_syscall(
     let op = SystemApiOp::Mmap {
         addr: args[0].clone(),
         len: args[1].clone(),
-        prot: AsmValue::Constant(AsmConstant::Int(prot, AsmType::I64)),
-        flags: AsmValue::Constant(AsmConstant::Int(
+        prot: AsmOperand::Constant(AsmConstant::Int(prot, AsmType::I64)),
+        flags: AsmOperand::Constant(AsmConstant::Int(
             posix_mmap_flags_anonymous_private(style),
             AsmType::I64,
         )),
-        fd: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
-        offset: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
+        fd: AsmOperand::Constant(AsmConstant::Int(-1, AsmType::I64)),
+        offset: AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
     };
 
-    let kind = lower_system_api_to_syscall(op, convention);
-    Ok(Some((
-        AsmInstruction {
-            id: select.id,
-            opcode: AsmOpcode::Generic(AsmGenericOpcode::Syscall),
-            kind,
-            ty: AsmType::I64,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        },
-        3,
-    )))
+    let dest = result_vreg(select);
+    let replacement = lower_system_api_to_syscall(select.id, dest, op, convention);
+    Ok(Some((replacement, 3)))
 }
 
 fn match_virtualfree_sequence_to_syscall(
@@ -6287,23 +4844,20 @@ fn match_virtualfree_sequence_to_syscall(
     if !is_call_named(call, "kernel32.dll", "VirtualFree") {
         return Ok(None);
     }
-    if !matches!(eq.kind, AsmInstructionKind::Eq(_, _)) {
+    if !matches!(eq.opcode, AsmOpcode::Generic(AsmGenericOpcode::Eq)) {
         return Ok(None);
     }
-    let AsmInstructionKind::Select {
-        if_true, if_false, ..
-    } = &select.kind
-    else {
-        return Ok(None);
-    };
-    if if_true != &AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)) {
+    if !matches!(select.opcode, AsmOpcode::Generic(AsmGenericOpcode::Select)) {
         return Ok(None);
     }
-    if if_false != &AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)) {
+    if select.operands.get(2) != Some(&AsmOperand::Constant(AsmConstant::Int(-1, AsmType::I64))) {
+        return Ok(None);
+    }
+    if select.operands.get(3) != Some(&AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64))) {
         return Ok(None);
     }
 
-    let AsmInstructionKind::Call { args, .. } = &call.kind else {
+    let Some((_, args)) = call.call_target_and_args() else {
         return Ok(None);
     };
     if args.len() != 3 {
@@ -6315,22 +4869,9 @@ fn match_virtualfree_sequence_to_syscall(
         len: args[1].clone(),
     };
 
-    let kind = lower_system_api_to_syscall(op, convention);
-    Ok(Some((
-        AsmInstruction {
-            id: select.id,
-            opcode: AsmOpcode::Generic(AsmGenericOpcode::Syscall),
-            kind,
-            ty: AsmType::I64,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        },
-        3,
-    )))
+    let dest = result_vreg(select);
+    let replacement = lower_system_api_to_syscall(select.id, dest, op, convention);
+    Ok(Some((replacement, 3)))
 }
 
 fn match_kernel32_bool_call_sequence_to_syscall(
@@ -6351,40 +4892,30 @@ fn match_kernel32_bool_call_sequence_to_syscall(
     if !is_call_named(call, "kernel32.dll", proc_name) {
         return Ok(None);
     }
-    if !matches!(eq.kind, AsmInstructionKind::Eq(_, _)) {
+    if !matches!(eq.opcode, AsmOpcode::Generic(AsmGenericOpcode::Eq)) {
         return Ok(None);
     }
-    let AsmInstructionKind::Select {
-        if_true, if_false, ..
-    } = &select.kind
-    else {
+    if !matches!(select.opcode, AsmOpcode::Generic(AsmGenericOpcode::Select)) {
+        return Ok(None);
+    }
+    let Some(if_true) = select.operands.get(2) else {
         return Ok(None);
     };
-    if if_true != &AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)) {
+    let Some(if_false) = select.operands.get(3) else {
+        return Ok(None);
+    };
+    if if_true != &AsmOperand::Constant(AsmConstant::Int(-1, AsmType::I64)) {
         return Ok(None);
     }
-    if if_false != &AsmValue::Constant(AsmConstant::Int(0, AsmType::I64))
-        && if_false != &AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64))
+    if if_false != &AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64))
+        && if_false != &AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64))
     {
         return Ok(None);
     }
 
-    let kind = lower_system_api_to_syscall(op, convention);
-    Ok(Some((
-        AsmInstruction {
-            id: select.id,
-            opcode: AsmOpcode::Generic(AsmGenericOpcode::Syscall),
-            kind,
-            ty: AsmType::I64,
-            operands: Vec::new(),
-            implicit_uses: Vec::new(),
-            implicit_defs: Vec::new(),
-            encoding: None,
-            debug_info: None,
-            annotations: Vec::new(),
-        },
-        3,
-    )))
+    let dest = result_vreg(select);
+    let replacement = lower_system_api_to_syscall(select.id, dest, op, convention);
+    Ok(Some((replacement, 3)))
 }
 
 fn match_deletefile_sequence_to_syscall(
@@ -6395,7 +4926,7 @@ fn match_deletefile_sequence_to_syscall(
     let Some(call) = call else {
         return Ok(None);
     };
-    let AsmInstructionKind::Call { args, .. } = &call.kind else {
+    let Some((_, args)) = call.call_target_and_args() else {
         return Ok(None);
     };
     if args.len() != 1 {
@@ -6419,7 +4950,7 @@ fn match_createdirectory_sequence_to_syscall(
     let Some(call) = call else {
         return Ok(None);
     };
-    let AsmInstructionKind::Call { args, .. } = &call.kind else {
+    let Some((_, args)) = call.call_target_and_args() else {
         return Ok(None);
     };
     if args.len() != 2 {
@@ -6430,7 +4961,7 @@ fn match_createdirectory_sequence_to_syscall(
         "CreateDirectoryA",
         SystemApiOp::Mkdir {
             path: args[0].clone(),
-            mode: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I32)),
+            mode: AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I32)),
         },
         convention,
     )
@@ -6444,7 +4975,7 @@ fn match_removedirectory_sequence_to_syscall(
     let Some(call) = call else {
         return Ok(None);
     };
-    let AsmInstructionKind::Call { args, .. } = &call.kind else {
+    let Some((_, args)) = call.call_target_and_args() else {
         return Ok(None);
     };
     if args.len() != 1 {
@@ -6468,7 +4999,7 @@ fn match_movefileex_sequence_to_syscall(
     let Some(call) = call else {
         return Ok(None);
     };
-    let AsmInstructionKind::Call { args, .. } = &call.kind else {
+    let Some((_, args)) = call.call_target_and_args() else {
         return Ok(None);
     };
     if args.len() != 3 {
@@ -6485,36 +5016,43 @@ fn match_movefileex_sequence_to_syscall(
     )
 }
 
-fn match_result_chain_at(
-    instructions: &[AsmInstruction],
+/// Finds the instruction that carries the final result of a
+/// `...; Load; [Eq; Select]` idiom: the `Load` itself, unless it is
+/// immediately followed by an `Eq`/`Select` pair where the `Select`'s
+/// `if_false` operand is exactly a reference to the `Load`'s result (in
+/// which case the `Select` is the true final result).
+fn match_result_chain_at<'a>(
+    instructions: &'a [AsmInstruction],
     load_index: usize,
-    load_id: u32,
-) -> (u32, usize) {
+    load: &'a AsmInstruction,
+) -> (&'a AsmInstruction, usize) {
     // Accept both:
     //   ...; Load
     //   ...; Load; Eq; Select  (Select.if_false == Load)
     if instructions.len() >= load_index + 3 {
         let eq = &instructions[load_index + 1];
         let select = &instructions[load_index + 2];
-        if matches!(eq.kind, AsmInstructionKind::Eq(_, _)) {
-            if let AsmInstructionKind::Select { if_false, .. } = &select.kind {
-                if if_false == &AsmValue::Register(load_id) {
-                    return (select.id, load_index + 3);
+        if matches!(eq.opcode, AsmOpcode::Generic(AsmGenericOpcode::Eq))
+            && matches!(select.opcode, AsmOpcode::Generic(AsmGenericOpcode::Select))
+        {
+            if let Some(if_false) = select.operands.get(3) {
+                if operand_is_result_of(if_false, load) {
+                    return (select, load_index + 3);
                 }
             }
         }
     }
-    (load_id, load_index + 1)
+    (load, load_index + 1)
 }
 
 fn is_call_named(inst: &AsmInstruction, dll: &str, name: &str) -> bool {
-    let AsmInstructionKind::Call { function, .. } = &inst.kind else {
+    let Some((target, _)) = inst.call_target_and_args() else {
         return false;
     };
-    let AsmValue::Function(symbol) = function else {
+    let AsmOperand::Symbol(symbol) = target else {
         return false;
     };
-    let (sym_dll, sym_name) = split_import_symbol(symbol);
+    let (sym_dll, sym_name) = split_import_symbol(symbol.as_str());
     import_dll_matches(&sym_dll, dll) && sym_name == name
 }
 
@@ -6533,9 +5071,11 @@ fn import_dll_matches(actual: &str, expected: &str) -> bool {
 }
 
 fn lower_system_api_to_syscall(
+    id: u32,
+    dest: Option<AsmVirtualRegId>,
     op: SystemApiOp,
     convention: AsmSyscallConvention,
-) -> AsmInstructionKind {
+) -> AsmInstruction {
     match op {
         SystemApiOp::Exit { code } => {
             let number = match convention {
@@ -6545,11 +5085,13 @@ fn lower_system_api_to_syscall(
                     0x2000_0001
                 }
             };
-            AsmInstructionKind::Syscall {
+            build_syscall(
+                id,
+                dest,
                 convention,
-                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
-                args: vec![code],
-            }
+                AsmOperand::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                vec![code],
+            )
         }
         SystemApiOp::GetPid => {
             let number = match convention {
@@ -6559,11 +5101,13 @@ fn lower_system_api_to_syscall(
                     0x2000_0014
                 }
             };
-            AsmInstructionKind::Syscall {
+            build_syscall(
+                id,
+                dest,
                 convention,
-                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
-                args: Vec::new(),
-            }
+                AsmOperand::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                Vec::new(),
+            )
         }
         SystemApiOp::GetTid => {
             let number = match convention {
@@ -6574,11 +5118,13 @@ fn lower_system_api_to_syscall(
                     0
                 }
             };
-            AsmInstructionKind::Syscall {
+            build_syscall(
+                id,
+                dest,
                 convention,
-                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
-                args: Vec::new(),
-            }
+                AsmOperand::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                Vec::new(),
+            )
         }
         SystemApiOp::Write { fd, buffer, len } => {
             let number = match convention {
@@ -6588,14 +5134,30 @@ fn lower_system_api_to_syscall(
                     0x2000_0004
                 }
             };
-            AsmInstructionKind::Syscall {
+            build_syscall(
+                id,
+                dest,
                 convention,
-                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
-                args: vec![fd, buffer, len],
-            }
+                AsmOperand::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                vec![fd, buffer, len],
+            )
         }
         SystemApiOp::Dlopen { .. } | SystemApiOp::Dlsym { .. } | SystemApiOp::Dlclose { .. } => {
-            AsmInstructionKind::Freeze(AsmValue::Undef(AsmType::I64))
+            // Not actually supported over raw syscalls (dlopen/dlsym/dlclose
+            // are libc-level, not syscalls); `lower_system_api_to_unix`
+            // handles these directly as libc calls instead. This arm only
+            // exists so callers with just a `SystemApiOp` (e.g. the generic
+            // `_` fallback in `lower_sys_ops_to_unix_syscalls`) don't panic;
+            // preserve the register (if any) as frozen-undef.
+            match dest {
+                Some(dest) => build_unary(
+                    id,
+                    AsmGenericOpcode::Freeze,
+                    dest,
+                    AsmOperand::Constant(AsmConstant::Undef(AsmType::I64)),
+                ),
+                None => AsmInstruction::new(id, AsmOpcode::Generic(AsmGenericOpcode::Nop), Vec::new()),
+            }
         }
         SystemApiOp::Opendir { .. }
         | SystemApiOp::Readdir { .. }
@@ -6608,20 +5170,22 @@ fn lower_system_api_to_syscall(
                 AsmSyscallConvention::LinuxAarch64 => (
                     35,
                     vec![
-                        AsmValue::Constant(AsmConstant::Int(-100, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(-100, AsmType::I64)),
                         path,
-                        AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
                     ],
                 ),
                 AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
                     (0x2000_000a, vec![path])
                 }
             };
-            AsmInstructionKind::Syscall {
+            build_syscall(
+                id,
+                dest,
                 convention,
-                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                AsmOperand::Constant(AsmConstant::UInt(number, AsmType::I64)),
                 args,
-            }
+            )
         }
         SystemApiOp::Mkdir { path, mode } => {
             let (number, args) = match convention {
@@ -6629,7 +5193,7 @@ fn lower_system_api_to_syscall(
                 AsmSyscallConvention::LinuxAarch64 => (
                     34,
                     vec![
-                        AsmValue::Constant(AsmConstant::Int(-100, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(-100, AsmType::I64)),
                         path,
                         mode,
                     ],
@@ -6638,11 +5202,13 @@ fn lower_system_api_to_syscall(
                     (0x2000_0088, vec![path, mode])
                 }
             };
-            AsmInstructionKind::Syscall {
+            build_syscall(
+                id,
+                dest,
                 convention,
-                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                AsmOperand::Constant(AsmConstant::UInt(number, AsmType::I64)),
                 args,
-            }
+            )
         }
         SystemApiOp::Rmdir { path } => {
             let (number, args) = match convention {
@@ -6650,20 +5216,22 @@ fn lower_system_api_to_syscall(
                 AsmSyscallConvention::LinuxAarch64 => (
                     35,
                     vec![
-                        AsmValue::Constant(AsmConstant::Int(-100, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(-100, AsmType::I64)),
                         path,
-                        AsmValue::Constant(AsmConstant::Int(0x200, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(0x200, AsmType::I64)),
                     ],
                 ),
                 AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
                     (0x2000_0089, vec![path])
                 }
             };
-            AsmInstructionKind::Syscall {
+            build_syscall(
+                id,
+                dest,
                 convention,
-                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                AsmOperand::Constant(AsmConstant::UInt(number, AsmType::I64)),
                 args,
-            }
+            )
         }
         SystemApiOp::Rename { from, to } => {
             let (number, args) = match convention {
@@ -6671,9 +5239,9 @@ fn lower_system_api_to_syscall(
                 AsmSyscallConvention::LinuxAarch64 => (
                     38,
                     vec![
-                        AsmValue::Constant(AsmConstant::Int(-100, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(-100, AsmType::I64)),
                         from,
-                        AsmValue::Constant(AsmConstant::Int(-100, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(-100, AsmType::I64)),
                         to,
                     ],
                 ),
@@ -6681,11 +5249,13 @@ fn lower_system_api_to_syscall(
                     (0x2000_0080, vec![from, to])
                 }
             };
-            AsmInstructionKind::Syscall {
+            build_syscall(
+                id,
+                dest,
                 convention,
-                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                AsmOperand::Constant(AsmConstant::UInt(number, AsmType::I64)),
                 args,
-            }
+            )
         }
         SystemApiOp::Access { path, mode } => {
             let (number, args) = match convention {
@@ -6693,21 +5263,23 @@ fn lower_system_api_to_syscall(
                 AsmSyscallConvention::LinuxAarch64 => (
                     48,
                     vec![
-                        AsmValue::Constant(AsmConstant::Int(-100, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::Int(-100, AsmType::I64)),
                         path,
                         mode,
-                        AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                        AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
                     ],
                 ),
                 AsmSyscallConvention::DarwinX86_64 | AsmSyscallConvention::DarwinAarch64 => {
                     (0x2000_0021, vec![path, mode])
                 }
             };
-            AsmInstructionKind::Syscall {
+            build_syscall(
+                id,
+                dest,
                 convention,
-                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                AsmOperand::Constant(AsmConstant::UInt(number, AsmType::I64)),
                 args,
-            }
+            )
         }
         SystemApiOp::Read { fd, buffer, len } => {
             let number = match convention {
@@ -6717,11 +5289,13 @@ fn lower_system_api_to_syscall(
                     0x2000_0003
                 }
             };
-            AsmInstructionKind::Syscall {
+            build_syscall(
+                id,
+                dest,
                 convention,
-                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
-                args: vec![fd, buffer, len],
-            }
+                AsmOperand::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                vec![fd, buffer, len],
+            )
         }
         SystemApiOp::Close { fd } => {
             let number = match convention {
@@ -6731,11 +5305,13 @@ fn lower_system_api_to_syscall(
                     0x2000_0006
                 }
             };
-            AsmInstructionKind::Syscall {
+            build_syscall(
+                id,
+                dest,
                 convention,
-                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
-                args: vec![fd],
-            }
+                AsmOperand::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                vec![fd],
+            )
         }
         SystemApiOp::Open {
             path, flags, mode, ..
@@ -6749,18 +5325,20 @@ fn lower_system_api_to_syscall(
             };
             let args = match convention {
                 AsmSyscallConvention::LinuxAarch64 => vec![
-                    AsmValue::Constant(AsmConstant::Int(-100, AsmType::I64)),
+                    AsmOperand::Constant(AsmConstant::Int(-100, AsmType::I64)),
                     path,
                     flags,
                     mode,
                 ],
                 _ => vec![path, flags, mode],
             };
-            AsmInstructionKind::Syscall {
+            build_syscall(
+                id,
+                dest,
                 convention,
-                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                AsmOperand::Constant(AsmConstant::UInt(number, AsmType::I64)),
                 args,
-            }
+            )
         }
         SystemApiOp::Seek { fd, offset, whence } => {
             let number = match convention {
@@ -6770,11 +5348,13 @@ fn lower_system_api_to_syscall(
                     0x2000_00c7
                 }
             };
-            AsmInstructionKind::Syscall {
+            build_syscall(
+                id,
+                dest,
                 convention,
-                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
-                args: vec![fd, offset, whence],
-            }
+                AsmOperand::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                vec![fd, offset, whence],
+            )
         }
         SystemApiOp::Mmap {
             addr,
@@ -6791,11 +5371,13 @@ fn lower_system_api_to_syscall(
                     0x2000_00c5
                 }
             };
-            AsmInstructionKind::Syscall {
+            build_syscall(
+                id,
+                dest,
                 convention,
-                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
-                args: vec![addr, len, prot, flags, fd, offset],
-            }
+                AsmOperand::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                vec![addr, len, prot, flags, fd, offset],
+            )
         }
         SystemApiOp::Munmap { addr, len } => {
             let number = match convention {
@@ -6805,53 +5387,76 @@ fn lower_system_api_to_syscall(
                     0x2000_0049
                 }
             };
-            AsmInstructionKind::Syscall {
+            build_syscall(
+                id,
+                dest,
                 convention,
-                number: AsmValue::Constant(AsmConstant::UInt(number, AsmType::I64)),
-                args: vec![addr, len],
-            }
+                AsmOperand::Constant(AsmConstant::UInt(number, AsmType::I64)),
+                vec![addr, len],
+            )
         }
     }
 }
 
-fn resolve_u64(value: &AsmValue, instructions: &[AsmInstruction]) -> Option<u64> {
+/// Finds the instruction in `instructions` whose result is virtual register
+/// `id`, if it is a `Freeze`, and returns its source operand. Registers are
+/// no longer numbered the same as instruction ids, so this must search by
+/// `result_register()` rather than by `inst.id`.
+fn freeze_source_for_register<'a>(
+    id: AsmVirtualRegId,
+    instructions: &'a [AsmInstruction],
+) -> Option<&'a AsmOperand> {
+    let inst = instructions.iter().find(|inst| {
+        matches!(
+            inst.result_register(),
+            Some(AsmRegister::Virtual(rid)) if *rid == id
+        )
+    })?;
+    if !matches!(inst.opcode, AsmOpcode::Generic(AsmGenericOpcode::Freeze)) {
+        return None;
+    }
+    // Freeze operand schema: [Write dest, Read src].
+    inst.operands.get(1)
+}
+
+fn resolve_u64(value: &AsmOperand, instructions: &[AsmInstruction]) -> Option<u64> {
     match value {
-        AsmValue::Constant(AsmConstant::UInt(x, _)) => Some(*x),
-        AsmValue::Constant(AsmConstant::Int(x, _)) => (*x)
+        AsmOperand::Constant(AsmConstant::UInt(x, _)) => Some(*x),
+        AsmOperand::Constant(AsmConstant::Int(x, _)) => (*x)
             .try_into()
             .map_err(|e| {
                 eprintln!("[fp-native] Win32-to-POSIX value conversion error: {e}");
                 e
             })
             .ok(),
-        AsmValue::Register(id) => {
-            let inst = instructions.iter().find(|inst| inst.id == *id)?;
-            match &inst.kind {
-                AsmInstructionKind::Freeze(inner) => resolve_u64(inner, instructions),
-                _ => None,
-            }
+        AsmOperand::Register {
+            reg: AsmRegister::Virtual(id),
+            ..
+        } => {
+            let inner = freeze_source_for_register(*id, instructions)?;
+            resolve_u64(inner, instructions)
         }
         _ => None,
     }
 }
 
-fn resolve_i64(value: &AsmValue, instructions: &[AsmInstruction]) -> Result<Option<i64>> {
+fn resolve_i64(value: &AsmOperand, instructions: &[AsmInstruction]) -> Result<Option<i64>> {
     Ok(match value {
-        AsmValue::Constant(AsmConstant::Int(x, _)) => Some(*x),
-        AsmValue::Constant(AsmConstant::UInt(x, _)) => i64::try_from(*x)
+        AsmOperand::Constant(AsmConstant::Int(x, _)) => Some(*x),
+        AsmOperand::Constant(AsmConstant::UInt(x, _)) => i64::try_from(*x)
             .map_err(|e| {
                 eprintln!("[fp-native] Win32-to-POSIX value conversion error: {e}");
                 e
             })
             .ok(),
-        AsmValue::Register(id) => {
-            let Some(inst) = instructions.iter().find(|inst| inst.id == *id) else {
+        AsmOperand::Register {
+            reg: AsmRegister::Virtual(id),
+            ..
+        } => {
+            let Some(inner) = freeze_source_for_register(*id, instructions) else {
                 return Ok(None);
             };
-            match &inst.kind {
-                AsmInstructionKind::Freeze(inner) => resolve_i64(inner, instructions)?,
-                _ => None,
-            }
+            resolve_i64(inner, instructions)?
         }
         _ => None,
     })
@@ -6888,6 +5493,85 @@ mod tests {
         AsmProgram::new(target.clone(), target.data_layout())
     }
 
+    /// Builds a `main` function whose sole instruction is a call to `target`
+    /// returning `ret_ty`, terminated by returning that call's result.
+    fn single_call_function(
+        target: &str,
+        args: Vec<AsmOperand>,
+        cc: CallingConvention,
+        ret_ty: AsmType,
+    ) -> AsmFunction {
+        let mut f = AsmFunction::new(
+            Name::new("main"),
+            AsmFunctionSignature {
+                params: Vec::new(),
+                return_type: AsmType::Void,
+                is_variadic: false,
+            },
+        );
+        let result = alloc_result(&mut f, ret_ty);
+        let inst = build_call_symbol(0, Some(result), target, args, cc);
+        f.basic_blocks = vec![AsmBlock {
+            id: 0,
+            label: None,
+            instructions: vec![inst],
+            terminator: AsmTerminator::Return(Some(vreg_read(result))),
+            terminator_encoding: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
+        f
+    }
+
+    /// Builds a `main` function whose sole instruction is a raw syscall,
+    /// terminated by returning that syscall's result.
+    fn single_syscall_function(
+        convention: AsmSyscallConvention,
+        number: u64,
+        args: Vec<AsmOperand>,
+    ) -> AsmFunction {
+        let mut f = AsmFunction::new(
+            Name::new("main"),
+            AsmFunctionSignature {
+                params: Vec::new(),
+                return_type: AsmType::Void,
+                is_variadic: false,
+            },
+        );
+        let result = alloc_result(&mut f, AsmType::I64);
+        let inst = build_syscall(
+            0,
+            Some(result),
+            convention,
+            AsmOperand::Constant(AsmConstant::UInt(number, AsmType::I64)),
+            args,
+        );
+        f.basic_blocks = vec![AsmBlock {
+            id: 0,
+            label: None,
+            instructions: vec![inst],
+            terminator: AsmTerminator::Return(Some(vreg_read(result))),
+            terminator_encoding: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
+        f
+    }
+
+    fn assert_has_syscall_number(block: &fp_core::asmir::AsmBlock, number: u64) {
+        assert!(
+            block.instructions.iter().any(|inst| {
+                syscall_parts(inst)
+                    .map(|(_, num, _)| {
+                        matches!(num, AsmOperand::Constant(AsmConstant::UInt(n, _)) if *n == number)
+                    })
+                    .unwrap_or(false)
+            }),
+            "expected a syscall with number {number} in {:#?}",
+            block.instructions
+        );
+    }
+
     #[test]
     fn rewrite_linux_readdir_call_to_darwin_shim() {
         let mut prog = program(AsmObjectFormat::MachO);
@@ -6899,66 +5583,41 @@ mod tests {
         ));
 
         let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
-        prog.functions.push(fp_core::asmir::AsmFunction {
-            name: fp_core::lir::Name::new("main"),
-            signature: fp_core::asmir::AsmFunctionSignature {
+        let mut f = AsmFunction::new(
+            Name::new("main"),
+            AsmFunctionSignature {
                 params: Vec::new(),
                 return_type: ptr_i8.clone(),
                 is_variadic: false,
             },
-            basic_blocks: vec![fp_core::asmir::AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![
-                    AsmInstruction {
-                        id: 0,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                        kind: AsmInstructionKind::Call {
-                            function: AsmValue::Function("opendir".to_string()),
-                            args: vec![AsmValue::Null(ptr_i8.clone())],
-                            calling_convention: CallingConvention::C,
-                            tail_call: false,
-                        },
-                        ty: ptr_i8.clone(),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    AsmInstruction {
-                        id: 1,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                        kind: AsmInstructionKind::Call {
-                            function: AsmValue::Function("readdir".to_string()),
-                            args: vec![AsmValue::Register(0)],
-                            calling_convention: CallingConvention::C,
-                            tail_call: false,
-                        },
-                        ty: ptr_i8.clone(),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                ],
-                terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(1))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: fp_core::lir::Linkage::External,
-            visibility: fp_core::lir::Visibility::Default,
-            calling_convention: None,
-            section: None,
-            is_declaration: false,
-        });
+        );
+        let opendir_result = alloc_result(&mut f, ptr_i8.clone());
+        let readdir_result = alloc_result(&mut f, ptr_i8.clone());
+        f.basic_blocks = vec![AsmBlock {
+            id: 0,
+            label: None,
+            instructions: vec![
+                build_call_symbol(
+                    0,
+                    Some(opendir_result),
+                    "opendir",
+                    vec![AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone()))],
+                    CallingConvention::C,
+                ),
+                build_call_symbol(
+                    1,
+                    Some(readdir_result),
+                    "readdir",
+                    vec![vreg_read(opendir_result)],
+                    CallingConvention::C,
+                ),
+            ],
+            terminator: AsmTerminator::Return(Some(vreg_read(readdir_result))),
+            terminator_encoding: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
+        prog.functions.push(f);
 
         rewrite_program_for_target(&mut prog).unwrap();
         assert!(
@@ -6975,61 +5634,26 @@ mod tests {
             .unwrap()
             .basic_blocks[0];
         assert!(block.instructions.iter().any(|inst| {
-            matches!(
-                &inst.kind,
-                AsmInstructionKind::Call { function: AsmValue::Function(name), .. }
-                    if name == "fp_linux_readdir"
-            )
+            inst.call_target_and_args()
+                .map(|(target, _)| {
+                    matches!(target, AsmOperand::Symbol(name) if name.as_str() == "fp_linux_readdir")
+                })
+                .unwrap_or(false)
         }));
     }
 
     #[test]
     fn rewrite_linux_write_syscall_to_windows_writefile_sequence() {
         let mut prog = program(AsmObjectFormat::Coff);
-        prog.functions.push(fp_core::asmir::AsmFunction {
-            name: fp_core::lir::Name::new("main"),
-            signature: fp_core::asmir::AsmFunctionSignature {
-                params: Vec::new(),
-                return_type: AsmType::Void,
-                is_variadic: false,
-            },
-            basic_blocks: vec![fp_core::asmir::AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Syscall),
-                    kind: AsmInstructionKind::Syscall {
-                        convention: AsmSyscallConvention::LinuxX86_64,
-                        number: AsmValue::Constant(AsmConstant::UInt(1, AsmType::I64)),
-                        args: vec![
-                            AsmValue::Constant(AsmConstant::UInt(1, AsmType::I64)),
-                            AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                            AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
-                        ],
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: fp_core::lir::Linkage::External,
-            visibility: fp_core::lir::Visibility::Default,
-            calling_convention: None,
-            section: None,
-            is_declaration: false,
-        });
+        prog.functions.push(single_syscall_function(
+            AsmSyscallConvention::LinuxX86_64,
+            1,
+            vec![
+                AsmOperand::Constant(AsmConstant::UInt(1, AsmType::I64)),
+                AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+                AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
+            ],
+        ));
 
         rewrite_program_for_target(&mut prog).unwrap();
         let block = &prog.functions[0].basic_blocks[0];
@@ -7045,484 +5669,211 @@ mod tests {
         )));
         assert!(matches!(
             block.terminator,
-            fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0)))
+            AsmTerminator::Return(Some(AsmOperand::Register { .. }))
         ));
     }
 
     #[test]
     fn rewrite_windows_writefile_sequence_back_to_linux_syscall() {
         let mut prog = program(AsmObjectFormat::Elf);
-        prog.functions.push(fp_core::asmir::AsmFunction {
-            name: fp_core::lir::Name::new("main"),
-            signature: fp_core::asmir::AsmFunctionSignature {
+        let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
+        let mut f = AsmFunction::new(
+            Name::new("main"),
+            AsmFunctionSignature {
                 params: Vec::new(),
                 return_type: AsmType::Void,
                 is_variadic: false,
             },
-            basic_blocks: vec![fp_core::asmir::AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![
-                    // GetStdHandle(-11)
-                    AsmInstruction {
-                        id: 1,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                        kind: AsmInstructionKind::Call {
-                            function: AsmValue::Function("kernel32!GetStdHandle".to_string()),
-                            args: vec![AsmValue::Constant(AsmConstant::Int(-11, AsmType::I64))],
-                            calling_convention: CallingConvention::Win64,
-                            tail_call: false,
-                        },
-                        ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    // alloca written
-                    AsmInstruction {
-                        id: 2,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Alloca),
-                        kind: AsmInstructionKind::Alloca {
-                            size: AsmValue::Constant(AsmConstant::UInt(1, AsmType::I64)),
-                            alignment: 8,
-                        },
-                        ty: AsmType::Ptr(Box::new(AsmType::I64)),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    // WriteFile(handle, null, 0, ptr, null)
-                    AsmInstruction {
-                        id: 3,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                        kind: AsmInstructionKind::Call {
-                            function: AsmValue::Function("kernel32!WriteFile".to_string()),
-                            args: vec![
-                                AsmValue::Register(1),
-                                AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                                AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
-                                AsmValue::Register(2),
-                                AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                            ],
-                            calling_convention: CallingConvention::Win64,
-                            tail_call: false,
-                        },
-                        ty: AsmType::I1,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    // load written -> id 0
-                    AsmInstruction {
-                        id: 0,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Load),
-                        kind: AsmInstructionKind::Load {
-                            address: AsmValue::Register(2),
-                            alignment: Some(8),
-                            volatile: false,
-                        },
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                ],
-                terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: fp_core::lir::Linkage::External,
-            visibility: fp_core::lir::Visibility::Default,
-            calling_convention: None,
-            section: None,
-            is_declaration: false,
-        });
+        );
+        let getstd_reg = alloc_result(&mut f, ptr_i8.clone());
+        let alloca_reg = alloc_result(&mut f, AsmType::Ptr(Box::new(AsmType::I64)));
+        let writefile_reg = alloc_result(&mut f, AsmType::I1);
+        let load_reg = alloc_result(&mut f, AsmType::I64);
+        f.basic_blocks = vec![AsmBlock {
+            id: 0,
+            label: None,
+            instructions: vec![
+                // GetStdHandle(-11)
+                build_call_symbol(
+                    1,
+                    Some(getstd_reg),
+                    "kernel32!GetStdHandle",
+                    vec![AsmOperand::Constant(AsmConstant::Int(-11, AsmType::I64))],
+                    CallingConvention::Win64,
+                ),
+                // alloca written
+                build_alloca(
+                    2,
+                    alloca_reg,
+                    AsmOperand::Constant(AsmConstant::UInt(1, AsmType::I64)),
+                    8,
+                ),
+                // WriteFile(handle, null, 0, ptr, null)
+                build_call_symbol(
+                    3,
+                    Some(writefile_reg),
+                    "kernel32!WriteFile",
+                    vec![
+                        vreg_read(getstd_reg),
+                        AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                        AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                        vreg_read(alloca_reg),
+                        AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                    ],
+                    CallingConvention::Win64,
+                ),
+                // load written
+                build_load(4, load_reg, vreg_read(alloca_reg)),
+            ],
+            terminator: AsmTerminator::Return(Some(vreg_read(load_reg))),
+            terminator_encoding: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
+        prog.functions.push(f);
 
         rewrite_program_for_target(&mut prog).unwrap();
         let block = &prog.functions[0].basic_blocks[0];
-        assert!(block.instructions.iter().any(|inst| {
-            matches!(
-                inst.kind,
-                AsmInstructionKind::Syscall {
-                    number: AsmValue::Constant(AsmConstant::UInt(1, _)),
-                    ..
-                }
-            )
-        }));
+        assert_has_syscall_number(block, 1);
     }
 
     #[test]
     fn rewrite_windows_kernelbase_writefile_sequence_back_to_linux_syscall() {
         let mut prog = program(AsmObjectFormat::Elf);
-        prog.functions.push(fp_core::asmir::AsmFunction {
-            name: fp_core::lir::Name::new("main"),
-            signature: fp_core::asmir::AsmFunctionSignature {
+        let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
+        let mut f = AsmFunction::new(
+            Name::new("main"),
+            AsmFunctionSignature {
                 params: Vec::new(),
                 return_type: AsmType::Void,
                 is_variadic: false,
             },
-            basic_blocks: vec![fp_core::asmir::AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![
-                    AsmInstruction {
-                        id: 1,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                        kind: AsmInstructionKind::Call {
-                            function: AsmValue::Function("kernelbase!GetStdHandle".to_string()),
-                            args: vec![AsmValue::Constant(AsmConstant::Int(-11, AsmType::I64))],
-                            calling_convention: CallingConvention::Win64,
-                            tail_call: false,
-                        },
-                        ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    AsmInstruction {
-                        id: 2,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Alloca),
-                        kind: AsmInstructionKind::Alloca {
-                            size: AsmValue::Constant(AsmConstant::UInt(1, AsmType::I64)),
-                            alignment: 8,
-                        },
-                        ty: AsmType::Ptr(Box::new(AsmType::I64)),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    AsmInstruction {
-                        id: 3,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                        kind: AsmInstructionKind::Call {
-                            function: AsmValue::Function("kernelbase!WriteFile".to_string()),
-                            args: vec![
-                                AsmValue::Register(1),
-                                AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                                AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
-                                AsmValue::Register(2),
-                                AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                            ],
-                            calling_convention: CallingConvention::Win64,
-                            tail_call: false,
-                        },
-                        ty: AsmType::I1,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    AsmInstruction {
-                        id: 0,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Load),
-                        kind: AsmInstructionKind::Load {
-                            address: AsmValue::Register(2),
-                            alignment: Some(8),
-                            volatile: false,
-                        },
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                ],
-                terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: fp_core::lir::Linkage::External,
-            visibility: fp_core::lir::Visibility::Default,
-            calling_convention: None,
-            section: None,
-            is_declaration: false,
-        });
+        );
+        let getstd_reg = alloc_result(&mut f, ptr_i8.clone());
+        let alloca_reg = alloc_result(&mut f, AsmType::Ptr(Box::new(AsmType::I64)));
+        let writefile_reg = alloc_result(&mut f, AsmType::I1);
+        let load_reg = alloc_result(&mut f, AsmType::I64);
+        f.basic_blocks = vec![AsmBlock {
+            id: 0,
+            label: None,
+            instructions: vec![
+                build_call_symbol(
+                    1,
+                    Some(getstd_reg),
+                    "kernelbase!GetStdHandle",
+                    vec![AsmOperand::Constant(AsmConstant::Int(-11, AsmType::I64))],
+                    CallingConvention::Win64,
+                ),
+                build_alloca(
+                    2,
+                    alloca_reg,
+                    AsmOperand::Constant(AsmConstant::UInt(1, AsmType::I64)),
+                    8,
+                ),
+                build_call_symbol(
+                    3,
+                    Some(writefile_reg),
+                    "kernelbase!WriteFile",
+                    vec![
+                        vreg_read(getstd_reg),
+                        AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                        AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                        vreg_read(alloca_reg),
+                        AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                    ],
+                    CallingConvention::Win64,
+                ),
+                build_load(4, load_reg, vreg_read(alloca_reg)),
+            ],
+            terminator: AsmTerminator::Return(Some(vreg_read(load_reg))),
+            terminator_encoding: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
+        prog.functions.push(f);
 
         rewrite_program_for_target(&mut prog).unwrap();
         let block = &prog.functions[0].basic_blocks[0];
-        assert!(block.instructions.iter().any(|inst| {
-            matches!(
-                inst.kind,
-                AsmInstructionKind::Syscall {
-                    number: AsmValue::Constant(AsmConstant::UInt(1, _)),
-                    ..
-                }
-            )
-        }));
+        assert_has_syscall_number(block, 1);
     }
 
     #[test]
     fn rewrite_ntdll_writefile_import_to_linux_syscall() {
         let mut prog = program(AsmObjectFormat::Elf);
-        prog.functions.push(fp_core::asmir::AsmFunction {
-            name: fp_core::lir::Name::new("main"),
-            signature: fp_core::asmir::AsmFunctionSignature {
-                params: Vec::new(),
-                return_type: AsmType::Void,
-                is_variadic: false,
-            },
-            basic_blocks: vec![fp_core::asmir::AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("ntdll!NtWriteFile".to_string()),
-                        args: vec![
-                            AsmValue::Constant(AsmConstant::UInt(1, AsmType::I64)),
-                            AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                            AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                            AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                            AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                            AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                            AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
-                            AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                            AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                        ],
-                        calling_convention: CallingConvention::Win64,
-                        tail_call: false,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: fp_core::lir::Linkage::External,
-            visibility: fp_core::lir::Visibility::Default,
-            calling_convention: None,
-            section: None,
-            is_declaration: false,
-        });
+        let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
+        prog.functions.push(single_call_function(
+            "ntdll!NtWriteFile",
+            vec![
+                AsmOperand::Constant(AsmConstant::UInt(1, AsmType::I64)),
+                AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                AsmOperand::Constant(AsmConstant::Null(ptr_i8)),
+            ],
+            CallingConvention::Win64,
+            AsmType::I64,
+        ));
 
         rewrite_program_for_target(&mut prog).unwrap();
         let block = &prog.functions[0].basic_blocks[0];
-        assert!(block.instructions.iter().any(|inst| {
-            matches!(
-                inst.kind,
-                AsmInstructionKind::Syscall {
-                    number: AsmValue::Constant(AsmConstant::UInt(1, _)),
-                    ..
-                }
-            )
-        }));
+        assert_has_syscall_number(block, 1);
     }
 
     #[test]
     fn rewrite_ntdll_close_import_to_linux_syscall() {
         let mut prog = program(AsmObjectFormat::Elf);
-        prog.functions.push(fp_core::asmir::AsmFunction {
-            name: fp_core::lir::Name::new("main"),
-            signature: fp_core::asmir::AsmFunctionSignature {
-                params: Vec::new(),
-                return_type: AsmType::Void,
-                is_variadic: false,
-            },
-            basic_blocks: vec![fp_core::asmir::AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("ntdll!ZwClose".to_string()),
-                        args: vec![AsmValue::Constant(AsmConstant::UInt(3, AsmType::I64))],
-                        calling_convention: CallingConvention::Win64,
-                        tail_call: false,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: fp_core::lir::Linkage::External,
-            visibility: fp_core::lir::Visibility::Default,
-            calling_convention: None,
-            section: None,
-            is_declaration: false,
-        });
+        prog.functions.push(single_call_function(
+            "ntdll!ZwClose",
+            vec![AsmOperand::Constant(AsmConstant::UInt(3, AsmType::I64))],
+            CallingConvention::Win64,
+            AsmType::I64,
+        ));
 
         rewrite_program_for_target(&mut prog).unwrap();
         let block = &prog.functions[0].basic_blocks[0];
-        assert!(block.instructions.iter().any(|inst| {
-            matches!(
-                inst.kind,
-                AsmInstructionKind::Syscall {
-                    number: AsmValue::Constant(AsmConstant::UInt(3, _)),
-                    ..
-                }
-            )
-        }));
+        assert_has_syscall_number(block, 3);
     }
 
     #[test]
     fn rewrite_kernelbase_createfile_import_to_linux_open_syscall() {
         let mut prog = program(AsmObjectFormat::Elf);
-        prog.functions.push(fp_core::asmir::AsmFunction {
-            name: fp_core::lir::Name::new("main"),
-            signature: fp_core::asmir::AsmFunctionSignature {
-                params: Vec::new(),
-                return_type: AsmType::Void,
-                is_variadic: false,
-            },
-            basic_blocks: vec![fp_core::asmir::AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("kernelbase!CreateFileA".to_string()),
-                        args: vec![
-                            AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                            AsmValue::Constant(AsmConstant::Int(
-                                0x8000_0000u32 as i64,
-                                AsmType::I64,
-                            )),
-                            AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
-                            AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                            AsmValue::Constant(AsmConstant::Int(3, AsmType::I64)),
-                            AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
-                            AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                        ],
-                        calling_convention: CallingConvention::Win64,
-                        tail_call: false,
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: fp_core::lir::Linkage::External,
-            visibility: fp_core::lir::Visibility::Default,
-            calling_convention: None,
-            section: None,
-            is_declaration: false,
-        });
+        let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
+        prog.functions.push(single_call_function(
+            "kernelbase!CreateFileA",
+            vec![
+                AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                AsmOperand::Constant(AsmConstant::Int(0x8000_0000u32 as i64, AsmType::I64)),
+                AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                AsmOperand::Constant(AsmConstant::Int(3, AsmType::I64)),
+                AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                AsmOperand::Constant(AsmConstant::Null(ptr_i8)),
+            ],
+            CallingConvention::Win64,
+            AsmType::I64,
+        ));
 
         rewrite_program_for_target(&mut prog).unwrap();
         let block = &prog.functions[0].basic_blocks[0];
-        assert!(block.instructions.iter().any(|inst| {
-            matches!(
-                inst.kind,
-                AsmInstructionKind::Syscall {
-                    number: AsmValue::Constant(AsmConstant::UInt(2, _)),
-                    ..
-                }
-            )
-        }));
+        assert_has_syscall_number(block, 2);
     }
 
     #[test]
     fn rewrite_linux_read_syscall_to_windows_readfile_sequence() {
         let mut prog = program(AsmObjectFormat::Coff);
-        prog.functions.push(fp_core::asmir::AsmFunction {
-            name: fp_core::lir::Name::new("main"),
-            signature: fp_core::asmir::AsmFunctionSignature {
-                params: Vec::new(),
-                return_type: AsmType::Void,
-                is_variadic: false,
-            },
-            basic_blocks: vec![fp_core::asmir::AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Syscall),
-                    kind: AsmInstructionKind::Syscall {
-                        convention: AsmSyscallConvention::LinuxX86_64,
-                        number: AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
-                        args: vec![
-                            AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
-                            AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                            AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
-                        ],
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: fp_core::lir::Linkage::External,
-            visibility: fp_core::lir::Visibility::Default,
-            calling_convention: None,
-            section: None,
-            is_declaration: false,
-        });
+        prog.functions.push(single_syscall_function(
+            AsmSyscallConvention::LinuxX86_64,
+            0,
+            vec![
+                AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                AsmOperand::Constant(AsmConstant::Null(AsmType::Ptr(Box::new(AsmType::I8)))),
+                AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
+            ],
+        ));
 
         rewrite_program_for_target(&mut prog).unwrap();
         let block = &prog.functions[0].basic_blocks[0];
@@ -7538,171 +5889,82 @@ mod tests {
         )));
         assert!(matches!(
             block.terminator,
-            fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0)))
+            AsmTerminator::Return(Some(AsmOperand::Register { .. }))
         ));
     }
 
     #[test]
     fn rewrite_windows_readfile_sequence_back_to_linux_syscall() {
         let mut prog = program(AsmObjectFormat::Elf);
-        prog.functions.push(fp_core::asmir::AsmFunction {
-            name: fp_core::lir::Name::new("main"),
-            signature: fp_core::asmir::AsmFunctionSignature {
+        let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
+        let mut f = AsmFunction::new(
+            Name::new("main"),
+            AsmFunctionSignature {
                 params: Vec::new(),
                 return_type: AsmType::Void,
                 is_variadic: false,
             },
-            basic_blocks: vec![fp_core::asmir::AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![
-                    // GetStdHandle(-10)
-                    AsmInstruction {
-                        id: 1,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                        kind: AsmInstructionKind::Call {
-                            function: AsmValue::Function("kernel32!GetStdHandle".to_string()),
-                            args: vec![AsmValue::Constant(AsmConstant::Int(-10, AsmType::I64))],
-                            calling_convention: CallingConvention::Win64,
-                            tail_call: false,
-                        },
-                        ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    // alloca read
-                    AsmInstruction {
-                        id: 2,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Alloca),
-                        kind: AsmInstructionKind::Alloca {
-                            size: AsmValue::Constant(AsmConstant::UInt(1, AsmType::I64)),
-                            alignment: 8,
-                        },
-                        ty: AsmType::Ptr(Box::new(AsmType::I64)),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    // ReadFile(handle, null, 0, ptr, null)
-                    AsmInstruction {
-                        id: 3,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                        kind: AsmInstructionKind::Call {
-                            function: AsmValue::Function("kernel32!ReadFile".to_string()),
-                            args: vec![
-                                AsmValue::Register(1),
-                                AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                                AsmValue::Constant(AsmConstant::UInt(0, AsmType::I64)),
-                                AsmValue::Register(2),
-                                AsmValue::Null(AsmType::Ptr(Box::new(AsmType::I8))),
-                            ],
-                            calling_convention: CallingConvention::Win64,
-                            tail_call: false,
-                        },
-                        ty: AsmType::I1,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    // load read -> id 0
-                    AsmInstruction {
-                        id: 0,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Load),
-                        kind: AsmInstructionKind::Load {
-                            address: AsmValue::Register(2),
-                            alignment: Some(8),
-                            volatile: false,
-                        },
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                ],
-                terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: fp_core::lir::Linkage::External,
-            visibility: fp_core::lir::Visibility::Default,
-            calling_convention: None,
-            section: None,
-            is_declaration: false,
-        });
+        );
+        let getstd_reg = alloc_result(&mut f, ptr_i8.clone());
+        let alloca_reg = alloc_result(&mut f, AsmType::Ptr(Box::new(AsmType::I64)));
+        let readfile_reg = alloc_result(&mut f, AsmType::I1);
+        let load_reg = alloc_result(&mut f, AsmType::I64);
+        f.basic_blocks = vec![AsmBlock {
+            id: 0,
+            label: None,
+            instructions: vec![
+                // GetStdHandle(-10)
+                build_call_symbol(
+                    1,
+                    Some(getstd_reg),
+                    "kernel32!GetStdHandle",
+                    vec![AsmOperand::Constant(AsmConstant::Int(-10, AsmType::I64))],
+                    CallingConvention::Win64,
+                ),
+                // alloca read
+                build_alloca(
+                    2,
+                    alloca_reg,
+                    AsmOperand::Constant(AsmConstant::UInt(1, AsmType::I64)),
+                    8,
+                ),
+                // ReadFile(handle, null, 0, ptr, null)
+                build_call_symbol(
+                    3,
+                    Some(readfile_reg),
+                    "kernel32!ReadFile",
+                    vec![
+                        vreg_read(getstd_reg),
+                        AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                        AsmOperand::Constant(AsmConstant::UInt(0, AsmType::I64)),
+                        vreg_read(alloca_reg),
+                        AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                    ],
+                    CallingConvention::Win64,
+                ),
+                // load read
+                build_load(4, load_reg, vreg_read(alloca_reg)),
+            ],
+            terminator: AsmTerminator::Return(Some(vreg_read(load_reg))),
+            terminator_encoding: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
+        prog.functions.push(f);
 
         rewrite_program_for_target(&mut prog).unwrap();
         let block = &prog.functions[0].basic_blocks[0];
-        assert!(block.instructions.iter().any(|inst| {
-            matches!(
-                inst.kind,
-                AsmInstructionKind::Syscall {
-                    number: AsmValue::Constant(AsmConstant::UInt(0, _)),
-                    ..
-                }
-            )
-        }));
+        assert_has_syscall_number(block, 0);
     }
 
     #[test]
     fn rewrite_linux_close_syscall_to_windows_closehandle_sequence() {
         let mut prog = program(AsmObjectFormat::Coff);
-        prog.functions.push(fp_core::asmir::AsmFunction {
-            name: fp_core::lir::Name::new("main"),
-            signature: fp_core::asmir::AsmFunctionSignature {
-                params: Vec::new(),
-                return_type: AsmType::Void,
-                is_variadic: false,
-            },
-            basic_blocks: vec![fp_core::asmir::AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Syscall),
-                    kind: AsmInstructionKind::Syscall {
-                        convention: AsmSyscallConvention::LinuxX86_64,
-                        number: AsmValue::Constant(AsmConstant::UInt(3, AsmType::I64)),
-                        args: vec![AsmValue::Constant(AsmConstant::UInt(1, AsmType::I64))],
-                    },
-                    ty: AsmType::I64,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                }],
-                terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: fp_core::lir::Linkage::External,
-            visibility: fp_core::lir::Visibility::Default,
-            calling_convention: None,
-            section: None,
-            is_declaration: false,
-        });
+        prog.functions.push(single_syscall_function(
+            AsmSyscallConvention::LinuxX86_64,
+            3,
+            vec![AsmOperand::Constant(AsmConstant::UInt(1, AsmType::I64))],
+        ));
 
         rewrite_program_for_target(&mut prog).unwrap();
         let block = &prog.functions[0].basic_blocks[0];
@@ -7721,108 +5983,59 @@ mod tests {
     #[test]
     fn rewrite_windows_closehandle_sequence_back_to_linux_syscall() {
         let mut prog = program(AsmObjectFormat::Elf);
-        prog.functions.push(fp_core::asmir::AsmFunction {
-            name: fp_core::lir::Name::new("main"),
-            signature: fp_core::asmir::AsmFunctionSignature {
+        let mut f = AsmFunction::new(
+            Name::new("main"),
+            AsmFunctionSignature {
                 params: Vec::new(),
                 return_type: AsmType::Void,
                 is_variadic: false,
             },
-            basic_blocks: vec![fp_core::asmir::AsmBlock {
-                id: 0,
-                label: None,
-                instructions: vec![
-                    AsmInstruction {
-                        id: 1,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                        kind: AsmInstructionKind::Call {
-                            function: AsmValue::Function("kernel32!GetStdHandle".to_string()),
-                            args: vec![AsmValue::Constant(AsmConstant::Int(-11, AsmType::I64))],
-                            calling_convention: CallingConvention::Win64,
-                            tail_call: false,
-                        },
-                        ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    AsmInstruction {
-                        id: 2,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                        kind: AsmInstructionKind::Call {
-                            function: AsmValue::Function("kernel32!CloseHandle".to_string()),
-                            args: vec![AsmValue::Register(1)],
-                            calling_convention: CallingConvention::Win64,
-                            tail_call: false,
-                        },
-                        ty: AsmType::I1,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    AsmInstruction {
-                        id: 3,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Eq),
-                        kind: AsmInstructionKind::Eq(
-                            AsmValue::Register(2),
-                            AsmValue::Constant(AsmConstant::Bool(false)),
-                        ),
-                        ty: AsmType::I1,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                    AsmInstruction {
-                        id: 0,
-                        opcode: AsmOpcode::Generic(AsmGenericOpcode::Select),
-                        kind: AsmInstructionKind::Select {
-                            condition: AsmValue::Register(3),
-                            if_true: AsmValue::Constant(AsmConstant::Int(-1, AsmType::I64)),
-                            if_false: AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                        },
-                        ty: AsmType::I64,
-                        operands: Vec::new(),
-                        implicit_uses: Vec::new(),
-                        implicit_defs: Vec::new(),
-                        encoding: None,
-                        debug_info: None,
-                        annotations: Vec::new(),
-                    },
-                ],
-                terminator: fp_core::asmir::AsmTerminator::Return(Some(AsmValue::Register(0))),
-                terminator_encoding: None,
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            }],
-            locals: Vec::new(),
-            stack_slots: Vec::new(),
-            frame: None,
-            linkage: fp_core::lir::Linkage::External,
-            visibility: fp_core::lir::Visibility::Default,
-            calling_convention: None,
-            section: None,
-            is_declaration: false,
-        });
+        );
+        let getstd_reg = alloc_result(&mut f, AsmType::Ptr(Box::new(AsmType::I8)));
+        let close_reg = alloc_result(&mut f, AsmType::I1);
+        let cmp_reg = alloc_result(&mut f, AsmType::I1);
+        let select_reg = alloc_result(&mut f, AsmType::I64);
+        f.basic_blocks = vec![AsmBlock {
+            id: 0,
+            label: None,
+            instructions: vec![
+                build_call_symbol(
+                    1,
+                    Some(getstd_reg),
+                    "kernel32!GetStdHandle",
+                    vec![AsmOperand::Constant(AsmConstant::Int(-11, AsmType::I64))],
+                    CallingConvention::Win64,
+                ),
+                build_call_symbol(
+                    2,
+                    Some(close_reg),
+                    "kernel32!CloseHandle",
+                    vec![vreg_read(getstd_reg)],
+                    CallingConvention::Win64,
+                ),
+                build_eq(
+                    3,
+                    cmp_reg,
+                    vreg_read(close_reg),
+                    AsmOperand::Constant(AsmConstant::Bool(false)),
+                ),
+                build_select(
+                    4,
+                    select_reg,
+                    vreg_read(cmp_reg),
+                    AsmOperand::Constant(AsmConstant::Int(-1, AsmType::I64)),
+                    AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                ),
+            ],
+            terminator: AsmTerminator::Return(Some(vreg_read(select_reg))),
+            terminator_encoding: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
+        prog.functions.push(f);
 
         rewrite_program_for_target(&mut prog).unwrap();
         let block = &prog.functions[0].basic_blocks[0];
-        assert!(block.instructions.iter().any(|inst| {
-            matches!(
-                inst.kind,
-                AsmInstructionKind::Syscall {
-                    number: AsmValue::Constant(AsmConstant::UInt(3, _)),
-                    ..
-                }
-            )
-        }));
+        assert_has_syscall_number(block, 3);
     }
 }
