@@ -2,11 +2,12 @@ use crate::binary::cfg::wire_block_edges;
 use crate::binary::{DataRegion, LiftedFunction, RipSymbol, RipSymbolKind, TextRelocation};
 use fp_core::asmir::AsmLocal;
 use fp_core::asmir::{
-    AsmAnnotation, AsmAttr, AsmConstant, AsmFunction, AsmInstruction, AsmOpcode, AsmOperand,
-    AsmRegister, AsmRegisterBank, AsmSyscallConvention, AsmType, AsmVirtualRegId, OperandAccess,
+    AsmAnnotation, AsmAttr, AsmConstant, AsmFunction, AsmGlobal, AsmInstruction, AsmOpcode,
+    AsmOperand, AsmRegister, AsmRegisterBank, AsmSyscallConvention, AsmType, AsmVirtualRegId,
+    OperandAccess,
 };
 use fp_core::error::{Error, Result};
-use fp_core::lir::{CallingConvention, Name};
+use fp_core::lir::{CallingConvention, Linkage, Name, Visibility};
 use std::collections::HashMap;
 
 /// A `Write`-access register operand for a freshly allocated destination
@@ -944,6 +945,7 @@ pub(super) fn lift_function_bytes_with_symbols(
         locals: ctx.locals,
         stack_slots,
         direct_call_targets: ctx.direct_call_targets,
+        globals: ctx.interned_globals,
     })
 }
 
@@ -7460,15 +7462,17 @@ fn lift_non_terminator(
                         .saturating_add(inst.len as i64);
                     let target = next_ip.saturating_add(src.displacement);
                     if target >= 0 {
-                        if let Some(text) = ctx.rodata_cstrings_by_addr.get(&(target as u64)) {
+                        if let Some(text) = ctx.rodata_cstrings_by_addr.get(&(target as u64)).cloned() {
+                            let operand = ctx.intern_string(&text);
                             return write_gpr_with_width(
                                 ctx,
                                 dst,
-                                AsmOperand::Constant(AsmConstant::String(text.clone())),
+                                operand,
                                 width_bits,
                                 instructions,
                                 next_id,
-    function,);
+                                function,
+                            );
                         }
                     }
                 }
@@ -13198,8 +13202,8 @@ fn compute_address(
             .ok_or_else(|| Error::from("x86_64 relocation offset overflow"))?;
         if let Some(reloc) = relocation_at(relocs, relocation_offset) {
             if reloc.addend == 0 && memory.displacement == 0 {
-                if let Some(text) = ctx.rodata_cstrings.get(&reloc.symbol) {
-                    return Ok(AsmOperand::Constant(AsmConstant::String(text.clone())));
+                if let Some(text) = ctx.rodata_cstrings.get(&reloc.symbol).cloned() {
+                    return Ok(ctx.intern_string(&text));
                 }
             }
             if reloc.kind != object::RelocationKind::Relative
@@ -13469,6 +13473,9 @@ struct RegisterLiftContext {
     pending_jump_table_index: std::collections::HashMap<u64, AsmOperand>,
     mark_sysv_args: bool,
     use_lifted_regfile_calls: bool,
+    interned_strings: HashMap<String, Name>,
+    interned_globals: Vec<AsmGlobal>,
+    next_interned_string_id: u32,
 }
 
 fn synthesized_annotations(reason: &str) -> Vec<AsmAnnotation> {
@@ -13510,7 +13517,46 @@ impl RegisterLiftContext {
             pending_jump_table_index: std::collections::HashMap::new(),
             mark_sysv_args,
             use_lifted_regfile_calls,
+            interned_strings: HashMap::new(),
+            interned_globals: Vec::new(),
+            next_interned_string_id: 0,
         }
+    }
+
+    /// Interns a string constant reconstructed from machine code (e.g. a
+    /// `lea reg, [rip + rodata_string]`) into a real `.rodata` global right
+    /// where it's discovered, deduplicating within this function -- instead
+    /// of leaving a raw string constant for a later pass to walk the whole
+    /// program and promote.
+    fn intern_string(&mut self, text: &str) -> AsmOperand {
+        let name = if let Some(name) = self.interned_strings.get(text) {
+            name.clone()
+        } else {
+            self.next_interned_string_id += 1;
+            let name = Name::new(format!("fp_lift_str_{}", self.next_interned_string_id));
+            let mut bytes = Vec::with_capacity(text.len() + 1);
+            bytes.extend_from_slice(text.as_bytes());
+            bytes.push(0);
+            let ty = AsmType::Array(Box::new(AsmType::I8), bytes.len() as u64);
+            self.interned_globals.push(AsmGlobal {
+                name: name.clone(),
+                ty,
+                initializer: Some(AsmConstant::Bytes(bytes)),
+                relocations: Vec::new(),
+                section: Some(".rodata".to_string()),
+                linkage: Linkage::Private,
+                visibility: Visibility::Default,
+                alignment: Some(1),
+                is_constant: true,
+            });
+            self.interned_strings.insert(text.to_string(), name.clone());
+            name
+        };
+        AsmOperand::Constant(AsmConstant::GlobalRef(
+            name,
+            AsmType::Ptr(Box::new(AsmType::I8)),
+            Vec::new(),
+        ))
     }
 
     fn initialize_reg_file_slots(&mut self) -> Vec<fp_core::asmir::AsmStackSlot> {

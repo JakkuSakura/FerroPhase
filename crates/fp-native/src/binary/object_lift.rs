@@ -920,6 +920,7 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
             function.calling_convention = None;
             function.section = Some(".text".to_string());
             function.is_declaration = false;
+            program.globals.extend(lifted.globals);
             program.functions.push(function);
 
             for target in direct_calls {
@@ -1066,6 +1067,7 @@ pub(super) fn lift_object_to_asmir(bytes: &[u8]) -> Result<AsmProgram> {
         function.calling_convention = None;
         function.section = Some(".text".to_string());
         function.is_declaration = false;
+        program.globals.extend(lifted.globals);
         program.functions.push(function);
     }
 

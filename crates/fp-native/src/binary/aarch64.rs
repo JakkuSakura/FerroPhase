@@ -536,6 +536,7 @@ pub fn lift_function_bytes(
         locals: ctx.locals,
         stack_slots: Vec::new(),
         direct_call_targets: Vec::new(),
+        globals: Vec::new(),
     })
 }
 

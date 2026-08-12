@@ -46,6 +46,11 @@ pub struct LiftedFunction {
     pub locals: Vec<fp_core::asmir::AsmLocal>,
     pub stack_slots: Vec<fp_core::asmir::AsmStackSlot>,
     pub direct_call_targets: Vec<u64>,
+    /// `.rodata` globals interned for string constants reconstructed from
+    /// machine code during lifting (e.g. `lea reg, [rip + rodata_string]`),
+    /// deduplicated within this function. Callers should extend the
+    /// program's globals with these directly.
+    pub globals: Vec<fp_core::asmir::AsmGlobal>,
 }
 
 /// Lift an object file's machine code into generic AsmIR.
@@ -62,8 +67,8 @@ mod tests {
     use super::{aarch64, x86_64};
     use fp_core::asmir::AsmSyscallConvention;
     use fp_core::asmir::{
-        AsmConstant, AsmFunction, AsmFunctionSignature, AsmGenericOpcode, AsmInstruction,
-        AsmOpcode, AsmOperand, AsmType,
+        AsmConstant, AsmFunction, AsmFunctionSignature, AsmGenericOpcode, AsmGlobal,
+        AsmInstruction, AsmOpcode, AsmOperand, AsmType,
     };
     use fp_core::container::{ContainerKind, ContainerSymbolScope};
     use object::write::{Object, Symbol, SymbolSection};
@@ -75,6 +80,26 @@ mod tests {
 
     fn is_opcode(inst: &AsmInstruction, opcode: AsmGenericOpcode) -> bool {
         matches!(&inst.opcode, AsmOpcode::Generic(op) if *op == opcode)
+    }
+
+    /// Resolves a constant operand to its string content, whether it's a
+    /// literal `AsmConstant::String` or a reference to an interned
+    /// `.rodata` global (`AsmConstant::GlobalRef`) produced by lifting's
+    /// construction-time string interning (see `RegisterLiftContext::
+    /// intern_string` in `binary::x86_64`).
+    fn resolve_string_constant(constant: &AsmConstant, globals: &[AsmGlobal]) -> Option<String> {
+        match constant {
+            AsmConstant::String(text) => Some(text.clone()),
+            AsmConstant::GlobalRef(name, _, _) => {
+                let global = globals.iter().find(|g| &g.name == name)?;
+                let AsmConstant::Bytes(bytes) = global.initializer.as_ref()? else {
+                    return None;
+                };
+                let nul = bytes.iter().position(|byte| *byte == 0).unwrap_or(bytes.len());
+                std::str::from_utf8(&bytes[..nul]).ok().map(str::to_string)
+            }
+            _ => None,
+        }
     }
 
     /// The target-symbol name of a `Call` instruction, if its target is a
@@ -377,7 +402,9 @@ mod tests {
                     return None;
                 }
                 match value {
-                    AsmOperand::Constant(AsmConstant::String(text)) => Some(text.clone()),
+                    AsmOperand::Constant(constant) => {
+                        resolve_string_constant(constant, &lifted.globals)
+                    }
                     AsmOperand::Register { reg, .. } => lifted.basic_blocks[0]
                         .instructions
                         .iter()
@@ -387,8 +414,8 @@ mod tests {
                                 return None;
                             }
                             match inst.operands.get(1) {
-                                Some(AsmOperand::Constant(AsmConstant::String(text))) => {
-                                    Some(text.clone())
+                                Some(AsmOperand::Constant(constant)) => {
+                                    resolve_string_constant(constant, &lifted.globals)
                                 }
                                 _ => None,
                             }
