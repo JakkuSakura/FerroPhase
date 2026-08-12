@@ -1051,14 +1051,18 @@ async fn compile_project(
         prepared.push((package_id.clone(), source));
     }
 
-    // Field mutability (`val` vs `var`) is decided workspace-wide: a struct's
-    // fields can be defined in one package and mutated through a `&mut`
-    // reference in another.
-    let workspace_mutated_fields: std::collections::HashSet<String> =
+    // Field mutability (`val` vs `var`) and List-vs-String disambiguation
+    // (`.len()` -> `.size` not `.length`, range-index -> `.subList` not
+    // `.substring`) are both decided workspace-wide: a struct's fields can
+    // be defined in one package and mutated/read from another.
+    let (workspace_mutated_fields, workspace_list_fields) =
         if matches!(target, crate::languages::backend::LanguageTarget::Kotlin) {
-            fp_kotlin::collect_mutated_field_names(prepared.iter().flat_map(|(_, src)| &src.items))
+            (
+                fp_kotlin::collect_mutated_field_names(prepared.iter().flat_map(|(_, src)| &src.items)),
+                fp_kotlin::collect_list_field_names(prepared.iter().flat_map(|(_, src)| &src.items)),
+            )
         } else {
-            Default::default()
+            (Default::default(), Default::default())
         };
 
     // Phase 2: serialize + write every package now that the workspace-wide
@@ -1070,7 +1074,7 @@ async fn compile_project(
         let files = if let crate::languages::backend::LanguageTarget::Kotlin = target {
             let serializer = fp_kotlin::KotlinSerializer;
             serializer
-                .serialize_package(source, &workspace_packages, &workspace_mutated_fields)
+                .serialize_package(source, &workspace_packages, &workspace_mutated_fields, &workspace_list_fields)
                 .map_err(|e| CliError::Compilation(e.to_string()))?
         } else {
             // Fallback: per-file emit_ast_target for other targets
