@@ -1065,6 +1065,17 @@ fn emit_if_stmt(if_expr: &fp_core::ast::ExprIf, e: &mut KotlinEmitter, is_tail: 
 fn emit_box_body(body: &BExpr, e: &mut KotlinEmitter) -> Result<()> {
     if let ExprKind::Block(block) = body.kind() {
         for s in &block.stmts { emit_stmt(s, e, false)?; }
+    } else if let ExprKind::If(if_expr) = body.kind() {
+        // An "else if" continuation: `elze` is a bare `ExprKind::If`, not a
+        // `Block` wrapping one. Recursing through the statement-oriented
+        // `emit_if_stmt` (rather than falling through to the generic
+        // single-expression `render_expr` branch below) matters whenever
+        // that nested if's own body has more than one statement —
+        // `render_expr`'s `ExprKind::If` arm renders each branch via
+        // `render_expr_single`, which silently drops every `BlockStmt`
+        // that isn't a bare `Expr` and joins the survivors with a plain
+        // space, no `else`/statement separator at all.
+        emit_if_stmt(if_expr, e, false)?;
     } else {
         let val = render_expr(body, e)?;
         e.push_line(&val);
