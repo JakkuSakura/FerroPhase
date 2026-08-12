@@ -35,10 +35,13 @@ use far more of `std` than that — `HashSet`, `Arc`, `std::sync::atomic::*`,
 
 ## Current state
 
-- `fp_rust::RustPackageProvider` discovers and parses real `.rs`/Cargo
-  projects — currently by delegating straight to
-  `fp_lang::cargo_provider::CargoWorkspaceProvider` (same discovery +
-  `FerroFrontend` parsing), since there's no Rust-specific parser yet.
+- `fp_rust::RustPackageProvider` discovers real `.rs`/Cargo projects (via
+  `fp_lang::project`'s Cargo/Magnet manifest walking, the same discovery
+  `CargoWorkspaceProvider` uses) and parses them with `fp_rust::RustFrontend`
+  — a named Rust frontend distinct from `FerroFrontend`'s `.fp`-dialect
+  identity, currently implemented by delegating to `FerroFrontend` internally
+  since it's the only Rust-capable parser that exists, but with its own seam
+  to grow Rust-specific parsing into.
 - `fp_rust::RustStdProvider` serves the `"std"`/`"libc"` package IDs: `"std"`
   from this directory's embedded real rustc source, `"libc"` delegated
   straight to `fp_lang::embedded_libc` (C ABI declarations aren't
@@ -49,8 +52,11 @@ use far more of `std` than that — `HashSet`, `Arc`, `std::sync::atomic::*`,
   been validated against — heavy `unsafe`, `#[lang = "..."]` items,
   `#[stable]`/`#[unstable]`/`#[rustc_...]` attributes, `cfg`-gated platform
   code, const generics, specialization, inline asm in a few spots, SIMD,
-  macro-heavy internals. Expect a low parse success rate until
-  `FerroFrontend`'s grammar coverage grows to match.
+  macro-heavy internals. Measured coverage today (`cargo test -p fp-rust
+  measures_real_std_parse_coverage -- --nocapture`): **654/1023 files parse
+  (~64%)**. That test asserts a 50% floor as a regression canary, not a
+  target — it's meant to catch a wholesale regression, not block gradual
+  improvement to `FerroFrontend`'s grammar coverage.
 - Directory inputs (`magnet transpile`/`fp compile <dir>`, the case a whole
   project actually hits) now resolve their source language by manifest
   presence (`crate::languages::detect_project_language`): a real
@@ -62,6 +68,7 @@ use far more of `std` than that — `HashSet`, `Arc`, `std::sync::atomic::*`,
 
 ## Not done yet
 
-- **Parse coverage.** No measurement yet of what fraction of real std
-  actually parses successfully, or which specific grammar gaps block the
-  rest.
+- **Closing the parse-coverage gap.** The ~36% of files that don't parse
+  today haven't been triaged into specific grammar gaps (const generics vs.
+  inline asm vs. attribute syntax vs. ...) — that triage, and improving
+  `FerroFrontend`'s coverage to match, is the remaining work.

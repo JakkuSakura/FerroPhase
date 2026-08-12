@@ -407,3 +407,37 @@ fn fp_relative_to_module_segments(package_name: &str, relative: &str) -> Vec<Str
     }
     segments
 }
+
+#[cfg(test)]
+mod real_std_parse_coverage {
+    use super::*;
+
+    /// Canary, not a strict gate: catches a wholesale regression (e.g. a
+    /// frontend change that suddenly can't parse anything) without blocking
+    /// gradual improvement to `RustFrontend`'s grammar coverage as it grows
+    /// to handle more of real std's `unsafe`/`cfg`/attribute-heavy surface.
+    #[test]
+    fn measures_real_std_parse_coverage() {
+        let frontend = RustFrontend::new();
+        let root = crate::embedded_std::root_dir();
+        let mut parsed = 0usize;
+        let mut skipped = 0usize;
+        for relative_str in crate::embedded_std::module_paths() {
+            let path = root.join(relative_str);
+            let Some(source) = crate::embedded_std::read(&path) else {
+                continue;
+            };
+            match frontend.parse_file(source, &path) {
+                Ok(_) => parsed += 1,
+                Err(_) => skipped += 1,
+            }
+        }
+        let total = parsed + skipped;
+        let pct = parsed as f64 / total as f64 * 100.0;
+        eprintln!("fp-rust: real std parse coverage — {parsed}/{total} files ({pct:.1}%)");
+        assert!(
+            parsed > total / 2,
+            "real std parse coverage dropped below 50% ({parsed}/{total} files)"
+        );
+    }
+}
