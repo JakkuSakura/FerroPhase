@@ -1291,6 +1291,29 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
         }
 
         ExprKind::Index(idx) => {
+            // Rust's `&s[..end]`/`s[start..]`/`&s[start..end]` (slicing with an
+            // omitted bound is common) has no direct Kotlin equivalent —
+            // `obj[range]` isn't valid indexing syntax. `String.substring`
+            // takes the same start/end-exclusive semantics `..` already has.
+            if let ExprKind::Range(r) = idx.index.kind() {
+                let obj = render_expr(&idx.obj, e)?;
+                let start = match &r.start {
+                    Some(s) => render_expr(s, e)?,
+                    None => "0".to_string(),
+                };
+                return match &r.end {
+                    Some(end) => {
+                        let end = render_expr(end, e)?;
+                        let end = if matches!(r.limit, fp_core::ast::ExprRangeLimit::Inclusive) {
+                            format!("({} + 1)", end)
+                        } else {
+                            end
+                        };
+                        Ok(format!("{}.substring({}, {})", obj, start, end))
+                    }
+                    None => Ok(format!("{}.substring({})", obj, start)),
+                };
+            }
             Ok(format!("{}[{}]", render_expr(&idx.obj, e)?, render_expr(&idx.index, e)?))
         }
 
