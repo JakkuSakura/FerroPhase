@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
-use fp_core::ast::{Item, ItemKind};
+use fp_core::ast::{AttrMeta, Attribute, Item, ItemKind};
 use fp_core::frontend::LanguageFrontend;
 use fp_core::module::path::QualifiedPath;
 use fp_core::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
@@ -108,10 +108,17 @@ impl PackageProvider for RustPackageProvider {
                 .parse_file(&source, &abs)
                 .map_err(|e| ProviderError::other(format!("parse {}: {}", abs.display(), e)))?;
             let path = rs_relative_to_module_path(&rel);
-            items.extend(result.ast.items.into_iter().map(|item| PackageItem {
-                path: path.clone(),
-                item,
-            }));
+            items.extend(
+                result
+                    .ast
+                    .items
+                    .into_iter()
+                    .filter(|item| !is_cfg_test(item_attrs(item)))
+                    .map(|item| PackageItem {
+                        path: path.clone(),
+                        item,
+                    }),
+            );
         }
 
         if let Ok(mut c) = self.cache.write() {
@@ -235,6 +242,15 @@ impl PackageProvider for RustStdProvider {
 
 fn flatten_items(path: &QualifiedPath, items: &[Item], output: &mut Vec<PackageItem>) {
     for item in items {
+        if is_cfg_test(item_attrs(item)) {
+            // Rust-test-only code (`#[cfg(test)] mod tests { .. }` or a
+            // standalone `#[cfg(test)] fn`) was never meant to exist in a
+            // transpiled target — skip it (and, for a module, everything
+            // nested inside it) entirely rather than trying to transpile
+            // test-harness code (`std::process::Command`, `std::fs`,
+            // tempdirs, ...) that has no equivalent here.
+            continue;
+        }
         if let ItemKind::Module(module) = item.kind() {
             flatten_items(
                 &path.with_segment(module.name.as_str().to_owned()),
@@ -248,6 +264,33 @@ fn flatten_items(path: &QualifiedPath, items: &[Item], output: &mut Vec<PackageI
             });
         }
     }
+}
+
+/// Attributes for the item kinds that can plausibly carry `#[cfg(test)]`.
+fn item_attrs(item: &Item) -> &[Attribute] {
+    match item.kind() {
+        ItemKind::Module(m) => &m.attrs,
+        ItemKind::DefFunction(f) => &f.attrs,
+        ItemKind::DefStruct(s) => &s.attrs,
+        ItemKind::DefEnum(e) => &e.attrs,
+        ItemKind::DefConst(c) => &c.attrs,
+        ItemKind::Impl(i) => &i.attrs,
+        _ => &[],
+    }
+}
+
+/// True if `attrs` contains `#[cfg(test)]`.
+fn is_cfg_test(attrs: &[Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        let AttrMeta::List(list) = &attr.meta else {
+            return false;
+        };
+        list.name.last().as_str() == "cfg"
+            && list.items.iter().any(|item| match item {
+                AttrMeta::Path(p) => p.last().as_str() == "test",
+                _ => false,
+            })
+    })
 }
 
 /// Parse every embedded real-std `.rs` file, skipping (with a warning) any
