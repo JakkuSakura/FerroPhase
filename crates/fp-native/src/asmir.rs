@@ -1,3 +1,6 @@
+mod normalize;
+pub use normalize::normalize_for_target;
+
 use crate::asm::aarch64::{
     Aarch64CallTarget, Aarch64ConditionCode, Aarch64InstructionDetail, Aarch64MemoryOperand,
     Aarch64Operand, Aarch64Register, Aarch64TerminatorDetail, Aarch64TerminatorOpcode,
@@ -9,18 +12,19 @@ use crate::asm::x86_64::{
 use crate::asm::{aarch64 as aarch64_asm, x86_64 as x86_64_asm};
 use crate::emit::{TargetArch, TargetFormat};
 use fp_core::asmir::{
-    AsmAddressValue, AsmArchitecture, AsmBlock, AsmConditionCode, AsmConstant, AsmEndianness,
-    AsmFunction, AsmFunctionSignature, AsmGenericOpcode, AsmGlobal, AsmInstruction,
-    AsmInstructionKind, AsmIntrinsicKind, AsmLandingPadClause, AsmMemoryOperand, AsmObjectFormat,
-    AsmOpcode, AsmOperand, AsmPhysicalRegister, AsmProgram, AsmRegister, AsmRegisterBank,
-    AsmSection, AsmSectionFlag, AsmSectionKind, AsmSyscallConvention, AsmTarget, AsmTerminator,
-    AsmType, AsmTypeDefinition, AsmValue, OperandAccess,
+    AsmAddressValue, AsmArchitecture, AsmAttr, AsmBlock, AsmConditionCode, AsmConstant,
+    AsmEndianness, AsmFunction, AsmFunctionSignature, AsmGenericOpcode, AsmGlobal, AsmInstruction,
+    AsmIntrinsicKind, AsmMemoryOperand, AsmObjectFormat, AsmOpcode, AsmOperand,
+    AsmPhysicalRegister, AsmProgram, AsmRegister, AsmRegisterBank, AsmSection, AsmSectionFlag,
+    AsmSectionKind, AsmSyscallConvention, AsmTarget, AsmTerminator, AsmType, AsmTypeDefinition,
+    AsmVirtualRegId, OperandAccess,
 };
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
-    Linkage, LirConstant, LirConstantAggregate, LirConstantData, LirConstantExpr, LirConstantKind,
-    LirFloat, LirInstructionKind, LirInteger, LirIntrinsicKind, LirProgram, LirTerminator,
-    LirValue, LirValueKind, Name, Visibility,
+    LandingPadClause, LirConstant, LirConstantAggregate, LirConstantData, LirConstantExpr,
+    LirConstantKind, LirFloat, LirFunction, LirInstruction, LirInstructionKind, LirInteger,
+    LirIntrinsicKind, LirProgram, LirTerminator, LirValue, LirValueKind, Name, RegisterId,
+    Visibility,
 };
 use std::collections::HashMap;
 
@@ -65,73 +69,488 @@ pub fn select_program(
     program.globals = lir_program.globals.iter().map(map_global).collect();
 
     for function in &lir_program.functions {
-        let mut asm_function = AsmFunction {
-            name: function.name.clone(),
-            signature: AsmFunctionSignature {
-                params: function.signature.params.clone(),
-                return_type: function.signature.return_type.clone(),
-                is_variadic: function.signature.is_variadic,
-            },
-            basic_blocks: Vec::with_capacity(function.basic_blocks.len()),
-            locals: function
-                .locals
-                .iter()
-                .map(|local| fp_core::asmir::AsmLocal {
-                    id: local.id,
-                    ty: local.ty.clone(),
-                    name: local.name.clone(),
-                    is_argument: local.is_argument,
-                })
-                .collect(),
-            stack_slots: function.stack_slots.clone(),
-            frame: None,
-            linkage: function.linkage.clone(),
-            visibility: Visibility::Default,
-            calling_convention: Some(function.calling_convention.clone()),
-            section: Some(".text".to_string()),
-            is_declaration: function.is_declaration,
-        };
-
-        for block in &function.basic_blocks {
-            let mut instructions = Vec::with_capacity(block.instructions.len());
-            for instruction in &block.instructions {
-                instructions.push(AsmInstruction {
-                    id: instruction.id,
-                    kind: map_instruction_kind(&instruction.kind),
-                    ty: instruction
-                        .result
-                        .as_ref()
-                        .map(|result| result.ty.clone())
-                        .unwrap_or(AsmType::Void),
-                    opcode: AsmOpcode::Generic(generic_opcode(&map_instruction_kind(
-                        &instruction.kind,
-                    ))),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: instruction.debug_info.clone(),
-                    annotations: Vec::new(),
-                });
-            }
-            asm_function.basic_blocks.push(AsmBlock {
-                id: block.id,
-                label: block.label.clone(),
-                instructions,
-                terminator: map_terminator(&block.terminator),
-                terminator_encoding: None,
-                predecessors: block.predecessors.clone(),
-                successors: block.successors.clone(),
-            });
-        }
-
-        asm_function.frame = None;
-        program.functions.push(asm_function);
+        program.functions.push(select_function(function));
     }
 
-    normalize_program_for_target(&mut program);
+    normalize_for_target(&mut program);
 
     Ok(program)
+}
+
+fn select_function(function: &LirFunction) -> AsmFunction {
+    let mut asm_function = AsmFunction::new(
+        function.name.clone(),
+        AsmFunctionSignature {
+            params: function.signature.params.clone(),
+            return_type: function.signature.return_type.clone(),
+            is_variadic: function.signature.is_variadic,
+        },
+    );
+    asm_function.locals = function
+        .locals
+        .iter()
+        .map(|local| fp_core::asmir::AsmLocal {
+            id: local.id,
+            ty: local.ty.clone(),
+            name: local.name.clone(),
+            is_argument: local.is_argument,
+        })
+        .collect();
+    asm_function.stack_slots = function.stack_slots.clone();
+    asm_function.linkage = function.linkage.clone();
+    asm_function.visibility = Visibility::Default;
+    asm_function.calling_convention = Some(function.calling_convention.clone());
+    asm_function.section = Some(".text".to_string());
+    asm_function.is_declaration = function.is_declaration;
+
+    // Pass 1: allocate a canonical AsmVirtualRegId (independent of any
+    // AsmInstrId) for every LIR result, before building any operands, so
+    // forward references (e.g. a Phi referring to a register defined later
+    // in the same function) resolve correctly regardless of block order.
+    let mut reg_map: HashMap<RegisterId, AsmVirtualRegId> = HashMap::new();
+    for block in &function.basic_blocks {
+        for instruction in &block.instructions {
+            if let Some(result) = &instruction.result {
+                let vreg = asm_function.alloc_virtual_register(
+                    result.ty.clone(),
+                    register_bank(&result.ty),
+                    type_size_bits(&result.ty),
+                );
+                reg_map.insert(result.id, vreg);
+            }
+        }
+    }
+
+    // Pass 2: build opcode+operands for every instruction/terminator now
+    // that every register a use could reference is already declared.
+    for block in &function.basic_blocks {
+        let instructions = block
+            .instructions
+            .iter()
+            .map(|instruction| select_instruction(instruction, &reg_map))
+            .collect();
+        asm_function.basic_blocks.push(AsmBlock {
+            id: block.id,
+            label: block.label.clone(),
+            instructions,
+            terminator: select_terminator(&block.terminator, &reg_map),
+            terminator_encoding: None,
+            predecessors: block.predecessors.clone(),
+            successors: block.successors.clone(),
+        });
+    }
+
+    asm_function
+}
+
+/// The `Write` operand for this instruction's result, if it defines one.
+fn result_operand(
+    instruction: &LirInstruction,
+    reg_map: &HashMap<RegisterId, AsmVirtualRegId>,
+) -> Option<AsmOperand> {
+    let result = instruction.result.as_ref()?;
+    let vreg = *reg_map
+        .get(&result.id)
+        .expect("every LIR result must be allocated in pass 1 before selection");
+    Some(AsmOperand::Register {
+        reg: AsmRegister::Virtual(vreg),
+        access: OperandAccess::Write,
+    })
+}
+
+fn lir_value_operand(
+    value: &LirValue,
+    access: OperandAccess,
+    reg_map: &HashMap<RegisterId, AsmVirtualRegId>,
+) -> AsmOperand {
+    match &value.kind {
+        LirValueKind::Register(id) => {
+            let vreg = *reg_map
+                .get(id)
+                .expect("LIR register used before its defining instruction was selected");
+            AsmOperand::Register {
+                reg: AsmRegister::Virtual(vreg),
+                access,
+            }
+        }
+        LirValueKind::Constant(constant) => {
+            AsmOperand::Constant(map_constant_kind(constant, &value.ty))
+        }
+        LirValueKind::Global(name) => AsmOperand::Symbol(name.clone()),
+        LirValueKind::Function(function_ref) => {
+            AsmOperand::Symbol(Name::new(function_name(function_ref)))
+        }
+        LirValueKind::Local(id) => AsmOperand::Local(*id),
+        LirValueKind::StackSlot(id) => AsmOperand::StackSlot(*id),
+    }
+}
+
+fn unary_instruction(
+    id: fp_core::asmir::AsmInstrId,
+    opcode: AsmGenericOpcode,
+    dest: Option<AsmOperand>,
+    src: AsmOperand,
+) -> AsmInstruction {
+    let mut operands = Vec::with_capacity(2);
+    operands.extend(dest);
+    operands.push(src);
+    AsmInstruction::new(id, AsmOpcode::Generic(opcode), operands)
+}
+
+fn select_instruction(
+    instruction: &LirInstruction,
+    reg_map: &HashMap<RegisterId, AsmVirtualRegId>,
+) -> AsmInstruction {
+    let read = |value: &LirValue| lir_value_operand(value, OperandAccess::Read, reg_map);
+    let dest = result_operand(instruction, reg_map);
+    let id = instruction.id;
+
+    macro_rules! binop {
+        ($opcode:ident, $lhs:expr, $rhs:expr) => {{
+            let mut operands = Vec::with_capacity(3);
+            operands.extend(dest);
+            operands.push(read($lhs));
+            operands.push(read($rhs));
+            AsmInstruction::new(id, AsmOpcode::Generic(AsmGenericOpcode::$opcode), operands)
+        }};
+    }
+
+    match &instruction.kind {
+        LirInstructionKind::Add(a, b) => binop!(Add, a, b),
+        LirInstructionKind::Sub(a, b) => binop!(Sub, a, b),
+        LirInstructionKind::Mul(a, b) => binop!(Mul, a, b),
+        LirInstructionKind::Div(a, b) => binop!(Div, a, b),
+        LirInstructionKind::Rem(a, b) => binop!(Rem, a, b),
+        LirInstructionKind::And(a, b) => binop!(And, a, b),
+        LirInstructionKind::Or(a, b) => binop!(Or, a, b),
+        LirInstructionKind::Xor(a, b) => binop!(Xor, a, b),
+        LirInstructionKind::Shl(a, b) => binop!(Shl, a, b),
+        LirInstructionKind::Shr(a, b) => binop!(Shr, a, b),
+        LirInstructionKind::Eq(a, b) => binop!(Eq, a, b),
+        LirInstructionKind::Ne(a, b) => binop!(Ne, a, b),
+        LirInstructionKind::Lt(a, b) => binop!(Lt, a, b),
+        LirInstructionKind::Le(a, b) => binop!(Le, a, b),
+        LirInstructionKind::Gt(a, b) => binop!(Gt, a, b),
+        LirInstructionKind::Ge(a, b) => binop!(Ge, a, b),
+        LirInstructionKind::Not(v) => unary_instruction(id, AsmGenericOpcode::Not, dest, read(v)),
+        LirInstructionKind::PtrToInt(v) => {
+            unary_instruction(id, AsmGenericOpcode::PtrToInt, dest, read(v))
+        }
+        LirInstructionKind::IntToPtr(v) => {
+            unary_instruction(id, AsmGenericOpcode::IntToPtr, dest, read(v))
+        }
+        LirInstructionKind::Freeze(v) => {
+            unary_instruction(id, AsmGenericOpcode::Freeze, dest, read(v))
+        }
+        // Cast target types are not carried as an operand: they are the
+        // destination register's type, already recorded in the function's
+        // virtual-register table (see `select_function` pass 1).
+        LirInstructionKind::Bitcast(v, _) => {
+            unary_instruction(id, AsmGenericOpcode::Bitcast, dest, read(v))
+        }
+        LirInstructionKind::Trunc(v, _) => {
+            unary_instruction(id, AsmGenericOpcode::Trunc, dest, read(v))
+        }
+        LirInstructionKind::ZExt(v, _) => {
+            unary_instruction(id, AsmGenericOpcode::ZExt, dest, read(v))
+        }
+        LirInstructionKind::SExt(v, _) => {
+            unary_instruction(id, AsmGenericOpcode::SExt, dest, read(v))
+        }
+        LirInstructionKind::FPExt(v, _) => {
+            unary_instruction(id, AsmGenericOpcode::FPExt, dest, read(v))
+        }
+        LirInstructionKind::FPTrunc(v, _) => {
+            unary_instruction(id, AsmGenericOpcode::FPTrunc, dest, read(v))
+        }
+        LirInstructionKind::FPToUI(v, _) => {
+            unary_instruction(id, AsmGenericOpcode::FPToUI, dest, read(v))
+        }
+        LirInstructionKind::FPToSI(v, _) => {
+            unary_instruction(id, AsmGenericOpcode::FPToSI, dest, read(v))
+        }
+        LirInstructionKind::UIToFP(v, _) => {
+            unary_instruction(id, AsmGenericOpcode::UIToFP, dest, read(v))
+        }
+        LirInstructionKind::SIToFP(v, _) => {
+            unary_instruction(id, AsmGenericOpcode::SIToFP, dest, read(v))
+        }
+        LirInstructionKind::SextOrTrunc(v, _) => {
+            unary_instruction(id, AsmGenericOpcode::SextOrTrunc, dest, read(v))
+        }
+        LirInstructionKind::Load {
+            address,
+            alignment,
+            volatile,
+        } => {
+            let mut operands = Vec::new();
+            operands.extend(dest);
+            operands.push(read(address));
+            if let Some(align) = alignment {
+                operands.push(AsmOperand::Attr(AsmAttr::Alignment(*align)));
+            }
+            if *volatile {
+                operands.push(AsmOperand::Attr(AsmAttr::Volatile));
+            }
+            AsmInstruction::new(id, AsmOpcode::Generic(AsmGenericOpcode::Load), operands)
+        }
+        LirInstructionKind::Store {
+            value,
+            address,
+            alignment,
+            volatile,
+        } => {
+            let mut operands = vec![read(value), read(address)];
+            if let Some(align) = alignment {
+                operands.push(AsmOperand::Attr(AsmAttr::Alignment(*align)));
+            }
+            if *volatile {
+                operands.push(AsmOperand::Attr(AsmAttr::Volatile));
+            }
+            AsmInstruction::new(id, AsmOpcode::Generic(AsmGenericOpcode::Store), operands)
+        }
+        LirInstructionKind::Alloca { size, alignment } => {
+            let mut operands = Vec::new();
+            operands.extend(dest);
+            operands.push(read(size));
+            operands.push(AsmOperand::Attr(AsmAttr::Alignment(*alignment)));
+            AsmInstruction::new(id, AsmOpcode::Generic(AsmGenericOpcode::Alloca), operands)
+        }
+        LirInstructionKind::GetElementPtr {
+            ptr,
+            indices,
+            inbounds,
+        } => {
+            let mut operands = Vec::new();
+            operands.extend(dest);
+            operands.push(read(ptr));
+            if *inbounds {
+                operands.push(AsmOperand::Attr(AsmAttr::Inbounds));
+            }
+            operands.extend(indices.iter().map(&read));
+            AsmInstruction::new(
+                id,
+                AsmOpcode::Generic(AsmGenericOpcode::GetElementPtr),
+                operands,
+            )
+        }
+        LirInstructionKind::ExtractValue { aggregate, indices } => {
+            let mut operands = Vec::new();
+            operands.extend(dest);
+            operands.push(read(aggregate));
+            operands.extend(indices.iter().map(|index| AsmOperand::Immediate(*index as i128)));
+            AsmInstruction::new(
+                id,
+                AsmOpcode::Generic(AsmGenericOpcode::ExtractValue),
+                operands,
+            )
+        }
+        LirInstructionKind::InsertValue {
+            aggregate,
+            element,
+            indices,
+        } => {
+            let mut operands = Vec::new();
+            operands.extend(dest);
+            operands.push(read(aggregate));
+            operands.push(read(element));
+            operands.extend(indices.iter().map(|index| AsmOperand::Immediate(*index as i128)));
+            AsmInstruction::new(
+                id,
+                AsmOpcode::Generic(AsmGenericOpcode::InsertValue),
+                operands,
+            )
+        }
+        LirInstructionKind::Call {
+            function,
+            args,
+            calling_convention,
+            tail_call,
+        } => {
+            let mut operands = Vec::new();
+            operands.extend(dest);
+            operands.push(AsmOperand::Attr(AsmAttr::CallingConv(
+                calling_convention.clone(),
+            )));
+            if *tail_call {
+                operands.push(AsmOperand::Attr(AsmAttr::TailCall));
+            }
+            operands.push(read(function));
+            operands.extend(args.iter().map(&read));
+            AsmInstruction::new(id, AsmOpcode::Generic(AsmGenericOpcode::Call), operands)
+        }
+        LirInstructionKind::ExecQuery(_) => {
+            panic!("LIR ExecQuery is only supported by pxc whole-file lowering")
+        }
+        LirInstructionKind::IntrinsicCall { kind, format, args } => {
+            let mut operands = Vec::new();
+            operands.extend(dest);
+            operands.push(AsmOperand::Attr(AsmAttr::Format(format.clone())));
+            operands.push(AsmOperand::Attr(AsmAttr::Intrinsic(map_intrinsic(kind))));
+            operands.extend(args.iter().map(&read));
+            AsmInstruction::new(
+                id,
+                AsmOpcode::Generic(AsmGenericOpcode::IntrinsicCall),
+                operands,
+            )
+        }
+        LirInstructionKind::Phi { incoming } => {
+            let mut operands = Vec::new();
+            operands.extend(dest);
+            for (value, block) in incoming {
+                operands.push(read(value));
+                operands.push(AsmOperand::Block(*block));
+            }
+            AsmInstruction::new(id, AsmOpcode::Generic(AsmGenericOpcode::Phi), operands)
+        }
+        LirInstructionKind::Select {
+            condition,
+            if_true,
+            if_false,
+        } => {
+            let mut operands = Vec::new();
+            operands.extend(dest);
+            operands.push(read(condition));
+            operands.push(read(if_true));
+            operands.push(read(if_false));
+            AsmInstruction::new(id, AsmOpcode::Generic(AsmGenericOpcode::Select), operands)
+        }
+        LirInstructionKind::InlineAsm {
+            asm_string,
+            constraints,
+            inputs,
+            output_type: _,
+            side_effects,
+            align_stack,
+        } => {
+            let mut operands = Vec::new();
+            operands.extend(dest);
+            operands.push(AsmOperand::Attr(AsmAttr::AsmText(asm_string.clone())));
+            operands.push(AsmOperand::Attr(AsmAttr::Constraints(constraints.clone())));
+            if *side_effects {
+                operands.push(AsmOperand::Attr(AsmAttr::SideEffects));
+            }
+            if *align_stack {
+                operands.push(AsmOperand::Attr(AsmAttr::AlignStack));
+            }
+            operands.extend(inputs.iter().map(&read));
+            AsmInstruction::new(id, AsmOpcode::Generic(AsmGenericOpcode::InlineAsm), operands)
+        }
+        LirInstructionKind::LandingPad {
+            result_type: _,
+            personality,
+            cleanup,
+            clauses,
+        } => {
+            let mut operands = Vec::new();
+            operands.extend(dest);
+            if *cleanup {
+                operands.push(AsmOperand::Attr(AsmAttr::Cleanup));
+            }
+            if let Some(personality) = personality {
+                operands.push(read(personality));
+            }
+            for clause in clauses {
+                match clause {
+                    LandingPadClause::Catch(value) => {
+                        operands.push(AsmOperand::Attr(AsmAttr::LandingPadCatch));
+                        operands.push(read(value));
+                    }
+                    LandingPadClause::Filter(values) => {
+                        operands.push(AsmOperand::Attr(AsmAttr::LandingPadFilter(
+                            values.len() as u32
+                        )));
+                        operands.extend(values.iter().map(&read));
+                    }
+                }
+            }
+            AsmInstruction::new(
+                id,
+                AsmOpcode::Generic(AsmGenericOpcode::LandingPad),
+                operands,
+            )
+        }
+        LirInstructionKind::Unreachable => {
+            AsmInstruction::new(id, AsmOpcode::Generic(AsmGenericOpcode::Unreachable), Vec::new())
+        }
+        LirInstructionKind::ComptimeOp(_) => {
+            AsmInstruction::new(id, AsmOpcode::Generic(AsmGenericOpcode::Nop), Vec::new())
+        }
+    }
+}
+
+fn select_terminator(
+    term: &LirTerminator,
+    reg_map: &HashMap<RegisterId, AsmVirtualRegId>,
+) -> AsmTerminator {
+    let read = |value: &LirValue| lir_value_operand(value, OperandAccess::Read, reg_map);
+    match term {
+        LirTerminator::Return(value) => AsmTerminator::Return(value.as_ref().map(&read)),
+        LirTerminator::Br(target) => AsmTerminator::Br(*target),
+        LirTerminator::CondBr {
+            condition,
+            if_true,
+            if_false,
+        } => AsmTerminator::CondBr {
+            condition: read(condition),
+            if_true: *if_true,
+            if_false: *if_false,
+        },
+        LirTerminator::Switch {
+            value,
+            default,
+            cases,
+        } => AsmTerminator::Switch {
+            value: read(value),
+            default: *default,
+            cases: cases.clone(),
+        },
+        LirTerminator::IndirectBr {
+            address,
+            destinations,
+        } => AsmTerminator::IndirectBr {
+            address: read(address),
+            destinations: destinations.clone(),
+        },
+        LirTerminator::Invoke {
+            function,
+            args,
+            normal_dest,
+            unwind_dest,
+            calling_convention,
+        } => AsmTerminator::Invoke {
+            function: read(function),
+            args: args.iter().map(&read).collect(),
+            normal_dest: *normal_dest,
+            unwind_dest: *unwind_dest,
+            calling_convention: calling_convention.clone(),
+        },
+        LirTerminator::Resume(value) => AsmTerminator::Resume(read(value)),
+        LirTerminator::Unreachable => AsmTerminator::Unreachable,
+        LirTerminator::CleanupRet {
+            cleanup_pad,
+            unwind_dest,
+        } => AsmTerminator::CleanupRet {
+            cleanup_pad: read(cleanup_pad),
+            unwind_dest: *unwind_dest,
+        },
+        LirTerminator::CatchRet {
+            catch_pad,
+            successor,
+        } => AsmTerminator::CatchRet {
+            catch_pad: read(catch_pad),
+            successor: *successor,
+        },
+        LirTerminator::CatchSwitch {
+            parent_pad,
+            handlers,
+            unwind_dest,
+        } => AsmTerminator::CatchSwitch {
+            parent_pad: parent_pad.as_ref().map(&read),
+            handlers: handlers.clone(),
+            unwind_dest: *unwind_dest,
+        },
+    }
 }
 
 fn register_bank_id(bank: AsmRegisterBank) -> u8 {
@@ -827,503 +1246,6 @@ pub fn lift_from_aarch64(program: &aarch64_asm::AsmAarch64Program) -> Result<Asm
     Ok(lifted)
 }
 
-fn normalize_program_for_target(program: &mut AsmProgram) {
-    intern_string_constants(program);
-    normalize_syscall_conventions_for_target(program);
-    match program.target.architecture {
-        AsmArchitecture::X86_64 => normalize_program_for_x86_64(program),
-        AsmArchitecture::Aarch64 => normalize_program_for_aarch64(program),
-        _ => normalize_program_generic(program),
-    }
-}
-
-fn intern_string_constants(program: &mut AsmProgram) {
-    #[derive(Default)]
-    struct InternContext {
-        seen: HashMap<String, Name>,
-        globals: Vec<AsmGlobal>,
-        next_id: u32,
-    }
-
-    impl InternContext {
-        fn intern_cstring(&mut self, text: &str) -> Name {
-            if let Some(name) = self.seen.get(text) {
-                return name.clone();
-            }
-
-            self.next_id += 1;
-            let name = Name::new(format!("fp_str_{}", self.next_id));
-
-            let mut bytes = Vec::with_capacity(text.len() + 1);
-            bytes.extend_from_slice(text.as_bytes());
-            bytes.push(0);
-            let ty = AsmType::Array(Box::new(AsmType::I8), bytes.len() as u64);
-            self.globals.push(AsmGlobal {
-                name: name.clone(),
-                ty,
-                initializer: Some(AsmConstant::Bytes(bytes)),
-                relocations: Vec::new(),
-                section: Some(".rodata".to_string()),
-                linkage: Linkage::Private,
-                visibility: Visibility::Default,
-                alignment: Some(1),
-                is_constant: true,
-            });
-            self.seen.insert(text.to_string(), name.clone());
-            name
-        }
-    }
-
-    fn rewrite_value(value: &mut AsmValue, ctx: &mut InternContext) {
-        match value {
-            AsmValue::Constant(constant) => rewrite_constant(constant, ctx),
-            AsmValue::Address(address) => {
-                if let Some(base) = address.base.as_deref_mut() {
-                    rewrite_value(base, ctx);
-                }
-                if let Some(index) = address.index.as_deref_mut() {
-                    rewrite_value(index, ctx);
-                }
-                if let Some(segment) = address.segment.as_deref_mut() {
-                    rewrite_value(segment, ctx);
-                }
-            }
-            AsmValue::Comparison(comparison) => {
-                rewrite_value(&mut comparison.lhs, ctx);
-                rewrite_value(&mut comparison.rhs, ctx);
-            }
-            _ => {}
-        }
-    }
-
-    fn rewrite_constant(constant: &mut AsmConstant, ctx: &mut InternContext) {
-        match constant {
-            AsmConstant::String(text) => {
-                let symbol = ctx.intern_cstring(text);
-                *constant =
-                    AsmConstant::GlobalRef(symbol, AsmType::Ptr(Box::new(AsmType::I8)), Vec::new());
-            }
-            AsmConstant::Array(values, _) | AsmConstant::Struct(values, _) => {
-                for value in values {
-                    rewrite_constant(value, ctx);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn rewrite_instruction(kind: &mut AsmInstructionKind, ctx: &mut InternContext) {
-        match kind {
-            AsmInstructionKind::Nop => {}
-            AsmInstructionKind::Add(lhs, rhs)
-            | AsmInstructionKind::Sub(lhs, rhs)
-            | AsmInstructionKind::Mul(lhs, rhs)
-            | AsmInstructionKind::Div(lhs, rhs)
-            | AsmInstructionKind::Rem(lhs, rhs)
-            | AsmInstructionKind::And(lhs, rhs)
-            | AsmInstructionKind::Or(lhs, rhs)
-            | AsmInstructionKind::Xor(lhs, rhs)
-            | AsmInstructionKind::Shl(lhs, rhs)
-            | AsmInstructionKind::Shr(lhs, rhs)
-            | AsmInstructionKind::Eq(lhs, rhs)
-            | AsmInstructionKind::Ne(lhs, rhs)
-            | AsmInstructionKind::Lt(lhs, rhs)
-            | AsmInstructionKind::Le(lhs, rhs)
-            | AsmInstructionKind::Gt(lhs, rhs)
-            | AsmInstructionKind::Ge(lhs, rhs)
-            | AsmInstructionKind::Ult(lhs, rhs)
-            | AsmInstructionKind::Ule(lhs, rhs)
-            | AsmInstructionKind::Ugt(lhs, rhs)
-            | AsmInstructionKind::Uge(lhs, rhs)
-            | AsmInstructionKind::ZipLow { lhs, rhs, .. } => {
-                rewrite_value(lhs, ctx);
-                rewrite_value(rhs, ctx);
-            }
-            AsmInstructionKind::Not(value)
-            | AsmInstructionKind::PtrToInt(value)
-            | AsmInstructionKind::IntToPtr(value)
-            | AsmInstructionKind::Freeze(value)
-            | AsmInstructionKind::ExtractLane { vector: value, .. } => {
-                rewrite_value(value, ctx);
-            }
-            AsmInstructionKind::Load { address, .. } => {
-                rewrite_value(address, ctx);
-            }
-            AsmInstructionKind::Store { value, address, .. } => {
-                rewrite_value(value, ctx);
-                rewrite_value(address, ctx);
-            }
-            AsmInstructionKind::Alloca { size, .. } => {
-                rewrite_value(size, ctx);
-            }
-            AsmInstructionKind::SymbolAddress { .. } => {}
-            AsmInstructionKind::GetElementPtr { ptr, indices, .. } => {
-                rewrite_value(ptr, ctx);
-                for index in indices {
-                    rewrite_value(index, ctx);
-                }
-            }
-            AsmInstructionKind::Bitcast(value, _)
-            | AsmInstructionKind::Trunc(value, _)
-            | AsmInstructionKind::ZExt(value, _)
-            | AsmInstructionKind::SExt(value, _)
-            | AsmInstructionKind::FPExt(value, _)
-            | AsmInstructionKind::FPTrunc(value, _)
-            | AsmInstructionKind::FPToUI(value, _)
-            | AsmInstructionKind::FPToSI(value, _)
-            | AsmInstructionKind::UIToFP(value, _)
-            | AsmInstructionKind::SIToFP(value, _) => {
-                rewrite_value(value, ctx);
-            }
-            AsmInstructionKind::ExtractValue { aggregate, .. } => {
-                rewrite_value(aggregate, ctx);
-            }
-            AsmInstructionKind::InsertValue {
-                aggregate, element, ..
-            } => {
-                rewrite_value(aggregate, ctx);
-                rewrite_value(element, ctx);
-            }
-            AsmInstructionKind::Call { function, args, .. } => {
-                rewrite_value(function, ctx);
-                let preserve_strings = matches!(
-                    function,
-                    AsmValue::Function(name)
-                        if matches!(
-                            name.as_str(),
-                            "printf" | "fprintf" | "sprintf" | "snprintf" | "dprintf" | "vprintf"
-                                | "vfprintf" | "vsprintf" | "vsnprintf" | "vdprintf"
-                        )
-                );
-                for arg in args {
-                    if preserve_strings {
-                        if matches!(arg, AsmValue::Constant(AsmConstant::String(_))) {
-                            continue;
-                        }
-                    }
-                    rewrite_value(arg, ctx);
-                }
-            }
-            AsmInstructionKind::IntrinsicCall { args, .. } => {
-                for arg in args {
-                    rewrite_value(arg, ctx);
-                }
-            }
-            AsmInstructionKind::SextOrTrunc(value, _) => {
-                rewrite_value(value, ctx);
-            }
-            AsmInstructionKind::Phi { incoming } => {
-                for (value, _) in incoming {
-                    rewrite_value(value, ctx);
-                }
-            }
-            AsmInstructionKind::Select {
-                condition,
-                if_true,
-                if_false,
-            } => {
-                rewrite_value(condition, ctx);
-                rewrite_value(if_true, ctx);
-                rewrite_value(if_false, ctx);
-            }
-            AsmInstructionKind::InlineAsm { inputs, .. } => {
-                for input in inputs {
-                    rewrite_value(input, ctx);
-                }
-            }
-            AsmInstructionKind::LandingPad {
-                personality,
-                clauses,
-                ..
-            } => {
-                if let Some(personality) = personality {
-                    rewrite_value(personality, ctx);
-                }
-                for clause in clauses {
-                    match clause {
-                        AsmLandingPadClause::Catch(value) => rewrite_value(value, ctx),
-                        AsmLandingPadClause::Filter(values) => {
-                            for value in values {
-                                rewrite_value(value, ctx);
-                            }
-                        }
-                    }
-                }
-            }
-            AsmInstructionKind::Syscall { number, args, .. } => {
-                rewrite_value(number, ctx);
-                for arg in args {
-                    rewrite_value(arg, ctx);
-                }
-            }
-            AsmInstructionKind::SysOp(op) => match op {
-                fp_core::asmir::AsmSysOp::Exit { code } => rewrite_value(code, ctx),
-                fp_core::asmir::AsmSysOp::GetPid | fp_core::asmir::AsmSysOp::GetTid => {}
-                fp_core::asmir::AsmSysOp::Dlopen { path, flags } => {
-                    rewrite_value(path, ctx);
-                    rewrite_value(flags, ctx);
-                }
-                fp_core::asmir::AsmSysOp::Dlsym { handle, symbol } => {
-                    rewrite_value(handle, ctx);
-                    rewrite_value(symbol, ctx);
-                }
-                fp_core::asmir::AsmSysOp::Dlclose { handle } => rewrite_value(handle, ctx),
-                fp_core::asmir::AsmSysOp::Unlink { path }
-                | fp_core::asmir::AsmSysOp::Rmdir { path } => rewrite_value(path, ctx),
-                fp_core::asmir::AsmSysOp::Mkdir { path, mode } => {
-                    rewrite_value(path, ctx);
-                    rewrite_value(mode, ctx);
-                }
-                fp_core::asmir::AsmSysOp::Rename { from, to } => {
-                    rewrite_value(from, ctx);
-                    rewrite_value(to, ctx);
-                }
-                fp_core::asmir::AsmSysOp::Access { path, mode } => {
-                    rewrite_value(path, ctx);
-                    rewrite_value(mode, ctx);
-                }
-                fp_core::asmir::AsmSysOp::Write { fd, buffer, len }
-                | fp_core::asmir::AsmSysOp::Read { fd, buffer, len } => {
-                    rewrite_value(fd, ctx);
-                    rewrite_value(buffer, ctx);
-                    rewrite_value(len, ctx);
-                }
-                fp_core::asmir::AsmSysOp::Close { fd } => rewrite_value(fd, ctx),
-                fp_core::asmir::AsmSysOp::Open {
-                    path, flags, mode, ..
-                } => {
-                    rewrite_value(path, ctx);
-                    rewrite_value(flags, ctx);
-                    rewrite_value(mode, ctx);
-                }
-                fp_core::asmir::AsmSysOp::Seek { fd, offset, whence } => {
-                    rewrite_value(fd, ctx);
-                    rewrite_value(offset, ctx);
-                    rewrite_value(whence, ctx);
-                }
-                fp_core::asmir::AsmSysOp::Mmap {
-                    addr,
-                    len,
-                    prot,
-                    flags,
-                    fd,
-                    offset,
-                } => {
-                    rewrite_value(addr, ctx);
-                    rewrite_value(len, ctx);
-                    rewrite_value(prot, ctx);
-                    rewrite_value(flags, ctx);
-                    rewrite_value(fd, ctx);
-                    rewrite_value(offset, ctx);
-                }
-                fp_core::asmir::AsmSysOp::Munmap { addr, len } => {
-                    rewrite_value(addr, ctx);
-                    rewrite_value(len, ctx);
-                }
-                fp_core::asmir::AsmSysOp::Opendir { path } => rewrite_value(path, ctx),
-                fp_core::asmir::AsmSysOp::Readdir { dir, .. }
-                | fp_core::asmir::AsmSysOp::Closedir { dir } => rewrite_value(dir, ctx),
-            },
-            AsmInstructionKind::Splat { value, .. } => rewrite_value(value, ctx),
-            AsmInstructionKind::BuildVector { elements } => {
-                for element in elements {
-                    rewrite_value(element, ctx);
-                }
-            }
-            AsmInstructionKind::InsertLane { vector, value, .. } => {
-                rewrite_value(vector, ctx);
-                rewrite_value(value, ctx);
-            }
-            AsmInstructionKind::Unreachable => {}
-        }
-    }
-
-    fn rewrite_terminator(terminator: &mut AsmTerminator, ctx: &mut InternContext) {
-        match terminator {
-            AsmTerminator::Return(value) => {
-                if let Some(value) = value {
-                    rewrite_value(value, ctx);
-                }
-            }
-            AsmTerminator::CondBr { condition, .. } => rewrite_value(condition, ctx),
-            AsmTerminator::Switch { value, .. } => rewrite_value(value, ctx),
-            AsmTerminator::IndirectBr { address, .. } => rewrite_value(address, ctx),
-            AsmTerminator::Invoke { function, args, .. } => {
-                rewrite_value(function, ctx);
-                for arg in args {
-                    rewrite_value(arg, ctx);
-                }
-            }
-            AsmTerminator::Resume(value)
-            | AsmTerminator::CleanupRet {
-                cleanup_pad: value, ..
-            }
-            | AsmTerminator::CatchRet {
-                catch_pad: value, ..
-            } => rewrite_value(value, ctx),
-            AsmTerminator::CatchSwitch { parent_pad, .. } => {
-                if let Some(value) = parent_pad {
-                    rewrite_value(value, ctx);
-                }
-            }
-            AsmTerminator::Br(..) | AsmTerminator::Unreachable => {}
-        }
-    }
-
-    let mut ctx = InternContext::default();
-
-    for global in &mut program.globals {
-        if let Some(initializer) = &mut global.initializer {
-            rewrite_constant(initializer, &mut ctx);
-        }
-    }
-
-    for function in &mut program.functions {
-        for block in &mut function.basic_blocks {
-            for instruction in &mut block.instructions {
-                rewrite_instruction(&mut instruction.kind, &mut ctx);
-            }
-            rewrite_terminator(&mut block.terminator, &mut ctx);
-        }
-    }
-
-    program.globals.extend(ctx.globals);
-}
-
-fn normalize_syscall_conventions_for_target(program: &mut AsmProgram) {
-    let Some(convention) = syscall_convention_for_target(&program.target) else {
-        return;
-    };
-
-    for function in &mut program.functions {
-        for block in &mut function.basic_blocks {
-            let mut last_constants: HashMap<u32, AsmConstant> = HashMap::new();
-            for instruction in &mut block.instructions {
-                if let AsmInstructionKind::Freeze(AsmValue::Constant(constant)) = &instruction.kind
-                {
-                    last_constants.insert(instruction.id, constant.clone());
-                }
-
-                if let AsmInstructionKind::Syscall {
-                    convention: c,
-                    number,
-                    ..
-                } = &mut instruction.kind
-                {
-                    let old_convention = *c;
-                    *c = convention;
-
-                    if matches!(
-                        (old_convention, convention),
-                        (
-                            AsmSyscallConvention::DarwinX86_64,
-                            AsmSyscallConvention::DarwinAarch64
-                        ) | (
-                            AsmSyscallConvention::DarwinAarch64,
-                            AsmSyscallConvention::DarwinX86_64
-                        )
-                    ) {
-                        let constant_number = match number {
-                            AsmValue::Constant(AsmConstant::UInt(value, ty)) => {
-                                Some((*value as i64, ty.clone()))
-                            }
-                            AsmValue::Constant(AsmConstant::Int(value, ty)) => {
-                                Some((*value, ty.clone()))
-                            }
-                            AsmValue::Register(id) => {
-                                last_constants.get(id).and_then(|constant| match constant {
-                                    AsmConstant::UInt(value, ty) => {
-                                        Some((*value as i64, ty.clone()))
-                                    }
-                                    AsmConstant::Int(value, ty) => Some((*value, ty.clone())),
-                                    _ => None,
-                                })
-                            }
-                            _ => None,
-                        };
-
-                        if let Some((value, ty)) = constant_number {
-                            let translated = match (old_convention, convention) {
-                                (
-                                    AsmSyscallConvention::DarwinX86_64,
-                                    AsmSyscallConvention::DarwinAarch64,
-                                ) => value.saturating_sub(0x0200_0000),
-                                (
-                                    AsmSyscallConvention::DarwinAarch64,
-                                    AsmSyscallConvention::DarwinX86_64,
-                                ) => value.saturating_add(0x0200_0000),
-                                _ => value,
-                            };
-
-                            if translated != value {
-                                *number = AsmValue::Constant(AsmConstant::Int(translated, ty));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn syscall_convention_for_target(target: &AsmTarget) -> Option<AsmSyscallConvention> {
-    use fp_core::asmir::AsmObjectFormat;
-
-    match (&target.architecture, &target.object_format) {
-        (AsmArchitecture::X86_64, AsmObjectFormat::Elf) => Some(AsmSyscallConvention::LinuxX86_64),
-        (AsmArchitecture::X86_64, AsmObjectFormat::MachO) => {
-            Some(AsmSyscallConvention::DarwinX86_64)
-        }
-        (AsmArchitecture::Aarch64, AsmObjectFormat::Elf) => {
-            Some(AsmSyscallConvention::LinuxAarch64)
-        }
-        (AsmArchitecture::Aarch64, AsmObjectFormat::MachO) => {
-            Some(AsmSyscallConvention::DarwinAarch64)
-        }
-        _ => None,
-    }
-}
-
-pub fn normalize_for_target(program: &mut AsmProgram) {
-    normalize_program_for_target(program);
-}
-
-fn normalize_program_generic(program: &mut AsmProgram) {
-    for function in &mut program.functions {
-        let register_types = build_operand_type_map(function);
-        for block in &mut function.basic_blocks {
-            for instruction in &mut block.instructions {
-                instruction.opcode = AsmOpcode::Generic(generic_opcode(&instruction.kind));
-                instruction.operands = generic_operands(
-                    instruction.id,
-                    &instruction.kind,
-                    Some(&instruction.ty),
-                    &register_types,
-                );
-            }
-        }
-    }
-}
-
-fn build_operand_type_map(function: &AsmFunction) -> HashMap<u32, AsmType> {
-    function
-        .basic_blocks
-        .iter()
-        .flat_map(|block| block.instructions.iter())
-        .filter_map(|instruction| {
-            (!matches!(instruction.ty, AsmType::Void))
-                .then(|| (instruction.id, instruction.ty.clone()))
-        })
-        .collect()
-}
-
-fn normalize_program_for_x86_64(program: &mut AsmProgram) {
-    normalize_program_generic(program);
-}
-
-fn normalize_program_for_aarch64(program: &mut AsmProgram) {
-    normalize_program_generic(program);
-}
 
 fn relink_comparison_condition(
     instructions: &[AsmInstruction],
@@ -4370,339 +4292,6 @@ fn sanitize_symbol(value: &str) -> String {
     }
 }
 
-fn generic_opcode(kind: &AsmInstructionKind) -> AsmGenericOpcode {
-    match kind {
-        AsmInstructionKind::Nop => AsmGenericOpcode::Nop,
-        AsmInstructionKind::Add(..) => AsmGenericOpcode::Add,
-        AsmInstructionKind::Sub(..) => AsmGenericOpcode::Sub,
-        AsmInstructionKind::Mul(..) => AsmGenericOpcode::Mul,
-        AsmInstructionKind::Div(..) => AsmGenericOpcode::Div,
-        AsmInstructionKind::Rem(..) => AsmGenericOpcode::Rem,
-        AsmInstructionKind::And(..) => AsmGenericOpcode::And,
-        AsmInstructionKind::Or(..) => AsmGenericOpcode::Or,
-        AsmInstructionKind::Xor(..) => AsmGenericOpcode::Xor,
-        AsmInstructionKind::Shl(..) => AsmGenericOpcode::Shl,
-        AsmInstructionKind::Shr(..) => AsmGenericOpcode::Shr,
-        AsmInstructionKind::Not(..) => AsmGenericOpcode::Not,
-        AsmInstructionKind::Eq(..) => AsmGenericOpcode::Eq,
-        AsmInstructionKind::Ne(..) => AsmGenericOpcode::Ne,
-        AsmInstructionKind::Lt(..) => AsmGenericOpcode::Lt,
-        AsmInstructionKind::Le(..) => AsmGenericOpcode::Le,
-        AsmInstructionKind::Gt(..) => AsmGenericOpcode::Gt,
-        AsmInstructionKind::Ge(..) => AsmGenericOpcode::Ge,
-        AsmInstructionKind::Ult(..) => AsmGenericOpcode::Ult,
-        AsmInstructionKind::Ule(..) => AsmGenericOpcode::Ule,
-        AsmInstructionKind::Ugt(..) => AsmGenericOpcode::Ugt,
-        AsmInstructionKind::Uge(..) => AsmGenericOpcode::Uge,
-        AsmInstructionKind::Load { .. } => AsmGenericOpcode::Load,
-        AsmInstructionKind::Store { .. } => AsmGenericOpcode::Store,
-        AsmInstructionKind::Alloca { .. } => AsmGenericOpcode::Alloca,
-        AsmInstructionKind::GetElementPtr { .. } => AsmGenericOpcode::GetElementPtr,
-        AsmInstructionKind::Bitcast(..) => AsmGenericOpcode::Bitcast,
-        AsmInstructionKind::PtrToInt(..) => AsmGenericOpcode::PtrToInt,
-        AsmInstructionKind::IntToPtr(..) => AsmGenericOpcode::IntToPtr,
-        AsmInstructionKind::Trunc(..) => AsmGenericOpcode::Trunc,
-        AsmInstructionKind::ZExt(..) => AsmGenericOpcode::ZExt,
-        AsmInstructionKind::SExt(..) => AsmGenericOpcode::SExt,
-        AsmInstructionKind::FPExt(..) => AsmGenericOpcode::FPExt,
-        AsmInstructionKind::FPTrunc(..) => AsmGenericOpcode::FPTrunc,
-        AsmInstructionKind::FPToUI(..) => AsmGenericOpcode::FPToUI,
-        AsmInstructionKind::FPToSI(..) => AsmGenericOpcode::FPToSI,
-        AsmInstructionKind::UIToFP(..) => AsmGenericOpcode::UIToFP,
-        AsmInstructionKind::SIToFP(..) => AsmGenericOpcode::SIToFP,
-        AsmInstructionKind::ExtractValue { .. } => AsmGenericOpcode::ExtractValue,
-        AsmInstructionKind::InsertValue { .. } => AsmGenericOpcode::InsertValue,
-        AsmInstructionKind::Call { .. } => AsmGenericOpcode::Call,
-        AsmInstructionKind::IntrinsicCall { .. } => AsmGenericOpcode::IntrinsicCall,
-        AsmInstructionKind::SextOrTrunc(..) => AsmGenericOpcode::SextOrTrunc,
-        AsmInstructionKind::Phi { .. } => AsmGenericOpcode::Phi,
-        AsmInstructionKind::Select { .. } => AsmGenericOpcode::Select,
-        AsmInstructionKind::InlineAsm { .. } => AsmGenericOpcode::InlineAsm,
-        AsmInstructionKind::LandingPad { .. } => AsmGenericOpcode::LandingPad,
-        AsmInstructionKind::Unreachable => AsmGenericOpcode::Unreachable,
-        AsmInstructionKind::Freeze(..) => AsmGenericOpcode::Freeze,
-        AsmInstructionKind::Syscall { .. } => AsmGenericOpcode::Syscall,
-        AsmInstructionKind::SysOp(..) => AsmGenericOpcode::SysOp,
-        AsmInstructionKind::Splat { .. } => AsmGenericOpcode::Splat,
-        AsmInstructionKind::BuildVector { .. } => AsmGenericOpcode::BuildVector,
-        AsmInstructionKind::ExtractLane { .. } => AsmGenericOpcode::ExtractLane,
-        AsmInstructionKind::InsertLane { .. } => AsmGenericOpcode::InsertLane,
-        AsmInstructionKind::ZipLow { .. } => AsmGenericOpcode::ZipLow,
-        AsmInstructionKind::SymbolAddress { .. } => AsmGenericOpcode::SymbolAddress,
-    }
-}
-
-fn map_instruction_kind(kind: &LirInstructionKind) -> AsmInstructionKind {
-    match kind {
-        LirInstructionKind::Add(lhs, rhs) => {
-            AsmInstructionKind::Add(map_value(lhs), map_value(rhs))
-        }
-        LirInstructionKind::Sub(lhs, rhs) => {
-            AsmInstructionKind::Sub(map_value(lhs), map_value(rhs))
-        }
-        LirInstructionKind::Mul(lhs, rhs) => {
-            AsmInstructionKind::Mul(map_value(lhs), map_value(rhs))
-        }
-        LirInstructionKind::Div(lhs, rhs) => {
-            AsmInstructionKind::Div(map_value(lhs), map_value(rhs))
-        }
-        LirInstructionKind::Rem(lhs, rhs) => {
-            AsmInstructionKind::Rem(map_value(lhs), map_value(rhs))
-        }
-        LirInstructionKind::And(lhs, rhs) => {
-            AsmInstructionKind::And(map_value(lhs), map_value(rhs))
-        }
-        LirInstructionKind::Or(lhs, rhs) => AsmInstructionKind::Or(map_value(lhs), map_value(rhs)),
-        LirInstructionKind::Xor(lhs, rhs) => {
-            AsmInstructionKind::Xor(map_value(lhs), map_value(rhs))
-        }
-        LirInstructionKind::Shl(lhs, rhs) => {
-            AsmInstructionKind::Shl(map_value(lhs), map_value(rhs))
-        }
-        LirInstructionKind::Shr(lhs, rhs) => {
-            AsmInstructionKind::Shr(map_value(lhs), map_value(rhs))
-        }
-        LirInstructionKind::Not(value) => AsmInstructionKind::Not(map_value(value)),
-        LirInstructionKind::Eq(lhs, rhs) => AsmInstructionKind::Eq(map_value(lhs), map_value(rhs)),
-        LirInstructionKind::Ne(lhs, rhs) => AsmInstructionKind::Ne(map_value(lhs), map_value(rhs)),
-        LirInstructionKind::Lt(lhs, rhs) => AsmInstructionKind::Lt(map_value(lhs), map_value(rhs)),
-        LirInstructionKind::Le(lhs, rhs) => AsmInstructionKind::Le(map_value(lhs), map_value(rhs)),
-        LirInstructionKind::Gt(lhs, rhs) => AsmInstructionKind::Gt(map_value(lhs), map_value(rhs)),
-        LirInstructionKind::Ge(lhs, rhs) => AsmInstructionKind::Ge(map_value(lhs), map_value(rhs)),
-        LirInstructionKind::Load {
-            address,
-            volatile,
-            alignment,
-        } => AsmInstructionKind::Load {
-            address: map_value(address),
-            alignment: *alignment,
-            volatile: *volatile,
-        },
-        LirInstructionKind::Store {
-            value,
-            address,
-            volatile,
-            alignment,
-        } => AsmInstructionKind::Store {
-            value: map_value(value),
-            address: map_value(address),
-            alignment: *alignment,
-            volatile: *volatile,
-        },
-        LirInstructionKind::Alloca { size, alignment } => AsmInstructionKind::Alloca {
-            size: map_value(size),
-            alignment: *alignment,
-        },
-        LirInstructionKind::GetElementPtr {
-            ptr,
-            indices,
-            inbounds,
-        } => AsmInstructionKind::GetElementPtr {
-            ptr: map_value(ptr),
-            indices: indices.iter().map(map_value).collect(),
-            inbounds: *inbounds,
-        },
-        LirInstructionKind::Bitcast(value, ty) => {
-            AsmInstructionKind::Bitcast(map_value(value), ty.clone())
-        }
-        LirInstructionKind::PtrToInt(value) => AsmInstructionKind::PtrToInt(map_value(value)),
-        LirInstructionKind::IntToPtr(value) => AsmInstructionKind::IntToPtr(map_value(value)),
-        LirInstructionKind::Trunc(value, ty) => {
-            AsmInstructionKind::Trunc(map_value(value), ty.clone())
-        }
-        LirInstructionKind::ZExt(value, ty) => {
-            AsmInstructionKind::ZExt(map_value(value), ty.clone())
-        }
-        LirInstructionKind::SExt(value, ty) => {
-            AsmInstructionKind::SExt(map_value(value), ty.clone())
-        }
-        LirInstructionKind::FPExt(value, ty) => {
-            AsmInstructionKind::FPExt(map_value(value), ty.clone())
-        }
-        LirInstructionKind::FPTrunc(value, ty) => {
-            AsmInstructionKind::FPTrunc(map_value(value), ty.clone())
-        }
-        LirInstructionKind::FPToUI(value, ty) => {
-            AsmInstructionKind::FPToUI(map_value(value), ty.clone())
-        }
-        LirInstructionKind::FPToSI(value, ty) => {
-            AsmInstructionKind::FPToSI(map_value(value), ty.clone())
-        }
-        LirInstructionKind::UIToFP(value, ty) => {
-            AsmInstructionKind::UIToFP(map_value(value), ty.clone())
-        }
-        LirInstructionKind::SIToFP(value, ty) => {
-            AsmInstructionKind::SIToFP(map_value(value), ty.clone())
-        }
-        LirInstructionKind::ExtractValue { aggregate, indices } => {
-            AsmInstructionKind::ExtractValue {
-                aggregate: map_value(aggregate),
-                indices: indices.clone(),
-            }
-        }
-        LirInstructionKind::InsertValue {
-            aggregate,
-            element,
-            indices,
-        } => AsmInstructionKind::InsertValue {
-            aggregate: map_value(aggregate),
-            element: map_value(element),
-            indices: indices.clone(),
-        },
-        LirInstructionKind::Call {
-            function,
-            args,
-            calling_convention,
-            tail_call,
-        } => AsmInstructionKind::Call {
-            function: map_value(function),
-            args: args.iter().map(map_value).collect(),
-            calling_convention: calling_convention.clone(),
-            tail_call: *tail_call,
-        },
-        LirInstructionKind::ExecQuery(_) => {
-            panic!("LIR ExecQuery is only supported by pxc whole-file lowering")
-        }
-        LirInstructionKind::IntrinsicCall { kind, format, args } => {
-            AsmInstructionKind::IntrinsicCall {
-                kind: map_intrinsic(kind),
-                format: format.clone(),
-                args: args.iter().map(map_value).collect(),
-            }
-        }
-        LirInstructionKind::SextOrTrunc(value, ty) => {
-            AsmInstructionKind::SextOrTrunc(map_value(value), ty.clone())
-        }
-        LirInstructionKind::Phi { incoming } => AsmInstructionKind::Phi {
-            incoming: incoming
-                .iter()
-                .map(|(value, block)| (map_value(value), *block))
-                .collect(),
-        },
-        LirInstructionKind::Select {
-            condition,
-            if_true,
-            if_false,
-        } => AsmInstructionKind::Select {
-            condition: map_value(condition),
-            if_true: map_value(if_true),
-            if_false: map_value(if_false),
-        },
-        LirInstructionKind::InlineAsm {
-            asm_string,
-            constraints,
-            inputs,
-            output_type,
-            side_effects,
-            align_stack,
-        } => AsmInstructionKind::InlineAsm {
-            asm_string: asm_string.clone(),
-            constraints: constraints.clone(),
-            inputs: inputs.iter().map(map_value).collect(),
-            output_type: output_type.clone(),
-            side_effects: *side_effects,
-            align_stack: *align_stack,
-        },
-        LirInstructionKind::LandingPad {
-            result_type,
-            personality,
-            cleanup,
-            clauses,
-        } => AsmInstructionKind::LandingPad {
-            result_type: result_type.clone(),
-            personality: personality.as_ref().map(map_value),
-            cleanup: *cleanup,
-            clauses: clauses.iter().map(map_clause).collect(),
-        },
-        LirInstructionKind::Unreachable => AsmInstructionKind::Unreachable,
-        LirInstructionKind::Freeze(value) => AsmInstructionKind::Freeze(map_value(value)),
-        LirInstructionKind::ComptimeOp(_) => AsmInstructionKind::Nop,
-    }
-}
-
-fn map_terminator(term: &LirTerminator) -> AsmTerminator {
-    match term {
-        LirTerminator::Return(value) => AsmTerminator::Return(value.as_ref().map(map_value)),
-        LirTerminator::Br(target) => AsmTerminator::Br(*target),
-        LirTerminator::CondBr {
-            condition,
-            if_true,
-            if_false,
-        } => AsmTerminator::CondBr {
-            condition: map_value(condition),
-            if_true: *if_true,
-            if_false: *if_false,
-        },
-        LirTerminator::Switch {
-            value,
-            default,
-            cases,
-        } => AsmTerminator::Switch {
-            value: map_value(value),
-            default: *default,
-            cases: cases.clone(),
-        },
-        LirTerminator::IndirectBr {
-            address,
-            destinations,
-        } => AsmTerminator::IndirectBr {
-            address: map_value(address),
-            destinations: destinations.clone(),
-        },
-        LirTerminator::Invoke {
-            function,
-            args,
-            normal_dest,
-            unwind_dest,
-            calling_convention,
-        } => AsmTerminator::Invoke {
-            function: map_value(function),
-            args: args.iter().map(map_value).collect(),
-            normal_dest: *normal_dest,
-            unwind_dest: *unwind_dest,
-            calling_convention: calling_convention.clone(),
-        },
-        LirTerminator::Resume(value) => AsmTerminator::Resume(map_value(value)),
-        LirTerminator::Unreachable => AsmTerminator::Unreachable,
-        LirTerminator::CleanupRet {
-            cleanup_pad,
-            unwind_dest,
-        } => AsmTerminator::CleanupRet {
-            cleanup_pad: map_value(cleanup_pad),
-            unwind_dest: *unwind_dest,
-        },
-        LirTerminator::CatchRet {
-            catch_pad,
-            successor,
-        } => AsmTerminator::CatchRet {
-            catch_pad: map_value(catch_pad),
-            successor: *successor,
-        },
-        LirTerminator::CatchSwitch {
-            parent_pad,
-            handlers,
-            unwind_dest,
-        } => AsmTerminator::CatchSwitch {
-            parent_pad: parent_pad.as_ref().map(map_value),
-            handlers: handlers.clone(),
-            unwind_dest: *unwind_dest,
-        },
-    }
-}
-
-fn map_value(value: &LirValue) -> AsmValue {
-    match &value.kind {
-        LirValueKind::Register(id) => AsmValue::Register(*id),
-        LirValueKind::Constant(constant) => {
-            AsmValue::Constant(map_constant_kind(constant, &value.ty))
-        }
-        LirValueKind::Global(name) => AsmValue::Global(name.to_string(), value.ty.clone()),
-        LirValueKind::Function(function) => AsmValue::Function(function_name(function)),
-        LirValueKind::Local(id) => AsmValue::Local(*id),
-        LirValueKind::StackSlot(id) => AsmValue::StackSlot(*id),
-    }
-}
-
 fn map_constant(constant: &LirConstant) -> AsmConstant {
     map_constant_kind(&constant.kind, &constant.ty)
 }
@@ -4834,17 +4423,6 @@ fn map_intrinsic(kind: &LirIntrinsicKind) -> AsmIntrinsicKind {
         LirIntrinsicKind::Println => AsmIntrinsicKind::Println,
         LirIntrinsicKind::Format => AsmIntrinsicKind::Format,
         LirIntrinsicKind::TimeNow => AsmIntrinsicKind::TimeNow,
-    }
-}
-
-fn map_clause(clause: &fp_core::lir::LandingPadClause) -> AsmLandingPadClause {
-    match clause {
-        fp_core::lir::LandingPadClause::Catch(value) => {
-            AsmLandingPadClause::Catch(map_value(value))
-        }
-        fp_core::lir::LandingPadClause::Filter(values) => {
-            AsmLandingPadClause::Filter(values.iter().map(map_value).collect())
-        }
     }
 }
 
