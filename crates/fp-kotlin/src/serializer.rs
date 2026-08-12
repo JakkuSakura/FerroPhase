@@ -1394,11 +1394,17 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
 
         ExprKind::If(if_expr) => {
             let cond = render_expr(&if_expr.cond, e)?;
+            // Always brace-wrap: `then`/`elze` can be a multi-statement block
+            // (render_expr_single/render_expr on an ExprKind::Block renders
+            // just the inner statements, no braces of its own), and Kotlin
+            // accepts `if (c) { x } else { y }` as an expression too, so
+            // wrapping unconditionally is safe even for the single-expression
+            // case.
             let then_val = render_expr_single(&if_expr.then, e)?;
             if let Some(elze) = &if_expr.elze {
-                Ok(format!("if ({}) {} else {}", cond, then_val, render_expr_single(elze, e)?))
+                Ok(format!("if ({}) {{ {} }} else {{ {} }}", cond, then_val, render_expr_single(elze, e)?))
             } else {
-                Ok(format!("if ({}) {}", cond, then_val))
+                Ok(format!("if ({}) {{ {} }}", cond, then_val))
             }
         }
 
@@ -1797,14 +1803,13 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
     }
 }
 
+/// `render_expr` already handles `ExprKind::Block` correctly (via `emit_stmt`,
+/// preserving every statement kind — `let`s, `for`-loops, everything, not
+/// just bare `Expr` statements) — this is a thin alias kept for call-site
+/// clarity at "this body must render as a single value" positions (an
+/// if/else branch used as an expression), not a distinct implementation.
 fn render_expr_single(body: &BExpr, e: &mut KotlinEmitter) -> Result<String> {
-    if let ExprKind::Block(block) = body.kind() {
-        let mut parts = Vec::new();
-        for stmt in &block.stmts {
-            if let BlockStmt::Expr(se) = stmt { parts.push(render_expr(&se.expr, e)?); }
-        }
-        Ok(parts.join(" "))
-    } else { render_expr(body, e) }
+    render_expr(body, e)
 }
 
 fn render_invoke_target(target: &ExprInvokeTarget, e: &mut KotlinEmitter) -> Result<String> {
