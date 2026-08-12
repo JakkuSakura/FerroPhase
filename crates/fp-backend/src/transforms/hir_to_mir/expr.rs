@@ -546,8 +546,15 @@ impl MirLowering {
     }
 
     pub fn compute_adt_layout(&mut self, def_id: hir::DefId, substs: &[Ty], span: Span) {
-        let _ = self.struct_layout_for_instance(def_id, substs, span);
-        let _ = self.enum_layout_for_instance(def_id, substs, span);
+        // `def_id` is either a struct or an enum, never both — calling both
+        // layout functions regardless of which one it actually is makes the
+        // non-matching call spuriously report "definition not registered"
+        // for a perfectly valid, correctly-registered type.
+        if self.struct_defs.contains_key(&def_id) {
+            let _ = self.struct_layout_for_instance(def_id, substs, span);
+        } else if self.enum_defs.contains_key(&def_id) {
+            let _ = self.enum_layout_for_instance(def_id, substs, span);
+        }
     }
 
     fn compute_ty_layout(&mut self, ty: &Ty, span: Span) {
@@ -5136,9 +5143,9 @@ impl MirLowering {
         let field_tys = layout.field_tys.clone();
         for field_ty in &field_tys {
             if let TyKind::Adt(adt, substs) = &field_ty.kind {
-                if !self.struct_defs.contains_key(&adt.did)
-                    && !self.enum_defs.contains_key(&adt.did)
-                {
+                let is_struct = self.struct_defs.contains_key(&adt.did);
+                let is_enum = !is_struct && self.enum_defs.contains_key(&adt.did);
+                if !is_struct && !is_enum {
                     continue;
                 }
                 let types: Vec<Ty> = substs
@@ -5148,8 +5155,14 @@ impl MirLowering {
                     _ => None,
                     })
                     .collect();
-                let _ = self.struct_layout_for_instance(adt.did, &types, span);
-                let _ = self.enum_layout_for_instance(adt.did, &types, span);
+                // `adt.did` is either a struct or an enum, never both —
+                // calling the non-matching layout function regardless would
+                // spuriously report "definition not registered".
+                if is_struct {
+                    let _ = self.struct_layout_for_instance(adt.did, &types, span);
+                } else {
+                    let _ = self.enum_layout_for_instance(adt.did, &types, span);
+                }
             }
         }
 
@@ -5354,9 +5367,9 @@ impl MirLowering {
         let payload_tys = layout.payload_tys.clone();
         for field_ty in &payload_tys {
             if let TyKind::Adt(adt, substs) = &field_ty.kind {
-                if !self.struct_defs.contains_key(&adt.did)
-                    && !self.enum_defs.contains_key(&adt.did)
-                {
+                let is_struct = self.struct_defs.contains_key(&adt.did);
+                let is_enum = !is_struct && self.enum_defs.contains_key(&adt.did);
+                if !is_struct && !is_enum {
                     continue;
                 }
                 let types: Vec<Ty> = substs
@@ -5366,8 +5379,14 @@ impl MirLowering {
                     _ => None,
                     })
                     .collect();
-                let _ = self.struct_layout_for_instance(adt.did, &types, span);
-                let _ = self.enum_layout_for_instance(adt.did, &types, span);
+                // Same as above: `adt.did` is either a struct or an enum,
+                // never both — only call the layout function for the kind
+                // it actually is.
+                if is_struct {
+                    let _ = self.struct_layout_for_instance(adt.did, &types, span);
+                } else {
+                    let _ = self.enum_layout_for_instance(adt.did, &types, span);
+                }
             }
         }
 

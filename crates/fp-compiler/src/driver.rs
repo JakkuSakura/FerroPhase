@@ -853,31 +853,38 @@ impl CompilerDriver {
             lowering.seed_resolved_const(key.to_string(), value.clone());
         }
         let result = lowering.transform_async(hir).await;
+        let mir = match result {
+            Ok(mir) => mir,
+            Err(error) => {
+                let (diagnostics, _) = lowering.take_diagnostics();
+                let details = diagnostics
+                    .iter()
+                    .map(|diagnostic| diagnostic.message.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                return Err(CompilerDriverError::InternalCompilerError(if details.is_empty() {
+                    format!("HIR-to-MIR lowering failed: {error}")
+                } else {
+                    format!("HIR-to-MIR lowering failed: {error}; diagnostics: {details}")
+                }));
+            }
+        };
+        // Run *before* the diagnostics check below — `walk_program_types_for_layouts`
+        // can itself report errors (e.g. an unregistered ADT layout), and
+        // those must not be silently dropped when `lowering` goes out of
+        // scope at the end of this function.
+        lowering.walk_program_types_for_layouts(&mir);
         let (diagnostics, had_errors) = lowering.take_diagnostics();
+        if had_errors {
             let details = diagnostics
                 .iter()
                 .map(|diagnostic| diagnostic.message.as_str())
                 .collect::<Vec<_>>()
                 .join("; ");
-        let mir = match result {
-            Ok(mir) => mir,
-            Err(error) if details.is_empty() => {
-                return Err(CompilerDriverError::InternalCompilerError(format!(
-                    "HIR-to-MIR lowering failed: {error}"
-                )));
-            }
-            Err(error) => {
-                return Err(CompilerDriverError::InternalCompilerError(format!(
-                    "HIR-to-MIR lowering failed: {error}; diagnostics: {details}"
-                )));
-            }
-        };
-        if had_errors {
             return Err(CompilerDriverError::InternalCompilerError(format!(
                 "HIR-to-MIR lowering reported diagnostics: {details}"
             )));
         }
-        lowering.walk_program_types_for_layouts(&mir);
         let adt_defs: HashMap<fp_core::hir::DefId, fp_core::mir::ty::AdtDef> =
             lowering.take_adt_defs();
         let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
