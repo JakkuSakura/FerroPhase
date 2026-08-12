@@ -1764,9 +1764,9 @@ fn parse_match_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     while peek_symbol(probe) != Some("}") {
         let mut arm_probe = probe;
         skip_outer_attrs_before_match_arm(&mut arm_probe, file)?;
-        let pat = parse_general_pattern(&mut arm_probe)?;
+        let mut patterns = vec![parse_general_pattern(&mut arm_probe)?];
         while expect_symbol(&mut arm_probe, "|").is_ok() {
-            let _ = parse_general_pattern(&mut arm_probe)?;
+            patterns.push(parse_general_pattern(&mut arm_probe)?);
         }
         let mut guard = None;
         let mut guard_probe = arm_probe;
@@ -1786,13 +1786,18 @@ fn parse_match_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
             arm_probe = comma_probe;
         }
         probe = arm_probe;
-        cases.push(fp_core::ast::ExprMatchCase {
-            span: union_spans(pat.span(), body.span()),
-            pat: Some(Box::new(pat)),
-            cond: Box::new(Expr::value(Value::bool(true))),
-            guard,
-            body: Box::new(body),
-        });
+        // `A | B => body` desugars into one `ExprMatchCase` per
+        // alternative, all sharing the same guard/body — mirrors
+        // `build_if_let_match`'s handling of `if let A | B = x {...}`.
+        for pat in patterns {
+            cases.push(fp_core::ast::ExprMatchCase {
+                span: union_spans(pat.span(), body.span()),
+                pat: Some(Box::new(pat)),
+                cond: Box::new(Expr::value(Value::bool(true))),
+                guard: guard.clone(),
+                body: Box::new(body.clone()),
+            });
+        }
     }
     expect_symbol(&mut probe, "}")?;
     *input = probe;

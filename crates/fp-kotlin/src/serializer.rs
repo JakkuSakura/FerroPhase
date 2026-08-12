@@ -1261,22 +1261,31 @@ fn is_byte_array_index(expr: &Expr) -> bool {
     false
 }
 
-/// True if `expr`'s name (a bare local/param name, or a struct field access)
-/// is a known List — i.e. present in `field_element_types` (populated from
-/// struct fields, `let`-bindings with an explicit `Vec<T>`/`List<T>`
-/// annotation, and List-typed function parameters). Used to disambiguate
-/// Rust operations that mean different things on a `String` vs. a `List`
+/// True if `expr` is a known List — checks the real inferred type
+/// (`Ty::Vec`/`Ty::Slice`) first, falling back to name-registry lookup
+/// (`field_element_types`, populated from struct fields, `let`-bindings
+/// with an explicit `Vec<T>`/`List<T>` annotation, and List-typed function
+/// parameters) only when no type is available. Used to disambiguate Rust
+/// operations that mean different things on a `String` vs. a `List`
 /// (`.len()` → `.size` not `.length`; range-indexing → `.subList(...)` not
 /// `.substring(...)`).
 fn is_known_list_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
+    if matches!(expr.ty(), Some(Ty::Vec(_)) | Some(Ty::Slice(_))) {
+        return true;
+    }
     expr_receiver_name(expr).is_some_and(|n| e.field_element_types.contains_key(&n))
 }
 
-/// True if `expr`'s name is a known `String` field (see `string_field_names`'s
-/// doc comment) — used to disambiguate `.clone()`, which needs to drop
-/// entirely on a `String` (already immutable, no `.copy()` method) rather
-/// than map to Kotlin's data-class `.copy()` convention.
+/// True if `expr` is a known `String` — checks the real inferred type
+/// first, falling back to name-registry lookup (`string_field_names`, see
+/// its doc comment) only when no type is available. Used to disambiguate
+/// `.clone()`, which needs to drop entirely on a `String` (already
+/// immutable, no `.copy()` method) rather than map to Kotlin's data-class
+/// `.copy()` convention.
 fn is_known_string_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
+    if matches!(expr.ty(), Some(Ty::Primitive(TypePrimitive::String))) {
+        return true;
+    }
     expr_receiver_name(expr).is_some_and(|n| e.string_field_names.contains(&n))
 }
 
@@ -1356,6 +1365,12 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                         }
                     }
                     let obj = render_expr(&sel.obj, e)?;
+                    // `round`/`log2` have no Kotlin member-method equivalent — both are
+                    // top-level `kotlin.math` functions taking the receiver as an
+                    // argument (`kotlin.math.round(x)`, not `x.round()`).
+                    if matches!(sel.field.name.as_str(), "round" | "log2") && inv.args.is_empty() {
+                        return Ok(format!("kotlin.math.{}({})", sel.field.name.as_str(), obj));
+                    }
                     // `.map` is ambiguous: `Option::map`/`Result::map` need Kotlin's
                     // `.let { }` (no built-in `.map` on nullable types), but
                     // `Iterator::map` needs Kotlin's own (identically-named) `.map { }`,
@@ -1673,6 +1688,11 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                             .map(|l| format!("            {}", l))
                             .collect::<Vec<_>>().join("\n");
                         let _ = writeln!(buf, "        {} -> {{\n{}\n        }}", pat, indented);
+                    } else if body.is_empty() {
+                        // An empty Rust arm body (`_ => {}`) renders to an
+                        // empty string — Kotlin's `when` needs an actual
+                        // expression/block after `->`, not a blank.
+                        let _ = writeln!(buf, "        {} -> {{}}", pat);
                     } else {
                         let _ = writeln!(buf, "        {} -> {}", pat, body);
                     }
@@ -2124,6 +2144,7 @@ fn map_kt_method(name: &str) -> String {
         "kill_process" => "destroy".into(),
         "sleep" => "Thread.sleep".into(),
         "next" => "".into(),
+        "clamp" => "coerceIn".into(),
         _ => name.replace("::", "."),
     }
 }
@@ -2187,6 +2208,25 @@ fn render_match_pat(pat: &Option<fp_core::ast::BPattern>) -> String {
                     .map(|p| render_match_pat(&Some(Box::new(p.clone()))))
                     .collect::<Vec<_>>().join(", ");
                 format!("{}({})", variant_name, inner)
+            }
+            // A bare qualified path pattern (`ChangesLineKind::Add`, no `(...)`)
+            // parses as a "literal" `Variant` pattern (see
+            // `parse_literal_pattern_expr` in fp-lang), not `TupleStruct` —
+            // render it the same way `ExprKind::Name` renders a path
+            // expression elsewhere (dotted + uppercased last segment, e.g.
+            // `ChangesLineKind.ADD`). Plain literal values (ints/strings/etc,
+            // also routed through `Variant` by the same parser rule) render
+            // via `render_value` instead.
+            PatternKind::Variant(v) => {
+                let variant = match v.name.kind() {
+                    ExprKind::Name(name) => uppercase_last_segment(&name.to_string().replace("::", ".")),
+                    ExprKind::Value(val) => render_value(val),
+                    _ => return "else".to_string(),
+                };
+                match &v.pattern {
+                    Some(inner) => format!("{}({})", variant, render_match_pat(&Some(inner.clone()))),
+                    None => variant,
+                }
             }
             _ => "else".to_string(),
         },

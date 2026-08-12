@@ -604,7 +604,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
         };
 
         let pat = match binding_case.pat.as_ref() {
-            Some(p) if !matches!(p.kind, PatternKind::Wildcard(_)) => p,
+            Some(p) if is_option_or_result_binding_pattern(&p.kind) => p,
             _ => return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, ty_slot, span, ExprKind::Match(m)))),
         };
 
@@ -1376,6 +1376,25 @@ fn is_trivial_match_arm(pat: Option<&PatternKind>) -> bool {
         Some(PatternKind::Wildcard(_)) => true,
         Some(PatternKind::Ident(id)) => id.ident.name == "None" || id.ident.name == "Err",
         None => true,
+        _ => false,
+    }
+}
+
+/// Whether a pattern is shaped like the binding side of an Option/Result
+/// match (`Some(x)`/`Ok(x)`, or a bare binding identifier) — required
+/// before `normalize_match` rewrites a 1-or-2-arm match into an
+/// `if (scrutinee != null)` check. Without this, any match with a
+/// wildcard/`None`/`Err` arm plus *any* other pattern (e.g. a bare enum
+/// variant like `ChangesLineKind::Add`) gets misidentified as an
+/// Option/Result if-let.
+fn is_option_or_result_binding_pattern(pat: &PatternKind) -> bool {
+    match pat {
+        PatternKind::TupleStruct(ts) => {
+            let name = ts.name.to_string();
+            let variant = name.rsplit("::").next().unwrap_or(name.as_str());
+            variant == "Some" || variant == "Ok"
+        }
+        PatternKind::Ident(id) => id.ident.name != "None" && id.ident.name != "Err",
         _ => false,
     }
 }

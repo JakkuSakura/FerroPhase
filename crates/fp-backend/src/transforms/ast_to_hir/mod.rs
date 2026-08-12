@@ -587,6 +587,15 @@ impl HirGenerator {
         &self,
         self_path: &hir::Path,
     ) -> Result<fp_core::module::path::QualifiedPath> {
+        // Non-nominal self-type shapes (`&T`, `[T]`, `[T; N]`) carry a typed
+        // `Res::Builtin` tag rather than resolving to a `DefId` — mirrors
+        // rustc's `SimplifiedType` fast-reject bucketing. Check this first,
+        // via the tag rather than sniffing the segment name.
+        if let Some(hir::Res::Builtin(kind)) = &self_path.res {
+            return Ok(fp_core::module::path::QualifiedPath::new(vec![
+                kind.bucket_key().to_string(),
+            ]));
+        }
         let self_def_id = match self_path.res {
             Some(hir::Res::Def(def_id)) => Some(def_id),
             _ => {
@@ -743,11 +752,15 @@ impl HirGenerator {
             return;
         };
         for (_module_path, hir_program, exports) in workspace.hir_definitions() {
+            // Deliberately *not* pushed into `program.items` — that would
+            // duplicate every dependency's struct/enum into this package's
+            // own output/lifted AST regardless of whether anything here
+            // actually references them. `def_map` (populated below) is the
+            // registry; `hir_to_mir::MirLowering::compute_adt_layout` looks
+            // up and lazily registers a foreign struct/enum from it only
+            // when something concrete actually needs one.
             for item in &hir_program.items {
                 program.def_map.insert(item.def_id, item.clone());
-                if matches!(item.kind, hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_)) {
-                    program.items.push(item.clone());
-                }
             }
             program.def_map.extend(hir_program.def_map);
             program.def_paths.extend(hir_program.def_paths);

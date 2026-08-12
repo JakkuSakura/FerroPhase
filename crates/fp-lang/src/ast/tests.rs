@@ -936,7 +936,18 @@ fn parse_expr_ast_supports_match_or_patterns() {
     let ExprKind::Match(match_expr) = expr.kind() else {
         panic!("expected match expr");
     };
-    assert_eq!(match_expr.cases.len(), 2);
+    // `"rs" | "rust" => rust` desugars into one case per alternative
+    // (both sharing the `rust` body), plus the `_ => other` case: 3 total.
+    // Previously the parser silently discarded all but the first
+    // alternative, making `"rust"` unreachable dead code in every backend.
+    assert_eq!(match_expr.cases.len(), 3);
+    let patterns: Vec<_> = match_expr
+        .cases
+        .iter()
+        .map(|case| format!("{:?}", case.pat))
+        .collect();
+    assert!(patterns[0].contains("rs"));
+    assert!(patterns[1].contains("rust"));
 }
 
 #[test]

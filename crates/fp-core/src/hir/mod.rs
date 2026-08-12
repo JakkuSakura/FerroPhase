@@ -552,6 +552,34 @@ pub enum Res {
     Local(HirId),
     SelfTy,
     Module(Vec<String>),
+    /// A non-nominal `impl` self-type shape with no `DefId` of its own —
+    /// `&T`/`&mut T`, `[T]`, `[T; N]`. Mirrors rustc's `SimplifiedType`
+    /// fast-reject bucketing (`rustc_middle::ty::fast_reject`): identifies
+    /// only the shallow outer shape, not the referent/element type, so
+    /// multiple impls of the same shape share one bucket. `.method()`
+    /// call resolution does not use this — it re-derives structural
+    /// self-type equality per candidate impl independently. This exists
+    /// only so `canonical_type_path` can produce a key for the impl
+    /// during HIR lowering, consumed by UFCS-style explicit-path lookups.
+    Builtin(BuiltinSelfType),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuiltinSelfType {
+    Reference { mutable: bool },
+    Slice,
+    Array,
+}
+
+impl BuiltinSelfType {
+    pub fn bucket_key(&self) -> &'static str {
+        match self {
+            BuiltinSelfType::Reference { mutable: false } => "&",
+            BuiltinSelfType::Reference { mutable: true } => "&mut",
+            BuiltinSelfType::Slice => "[]",
+            BuiltinSelfType::Array => "[;N]",
+        }
+    }
 }
 
 // Temporary types until we have proper implementations

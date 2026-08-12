@@ -454,6 +454,15 @@ pub struct MirLowering {
     typeck_generic_call_args: HashMap<hir::HirId, Vec<Ty>>,
     typeck_generic_method_args: HashMap<hir::HirId, Vec<Ty>>,
     adt_defs: HashMap<hir::DefId, mir::ty::AdtDef>,
+    /// Snapshot of the whole-workspace `hir::Program.def_map`/`def_paths`
+    /// (local items + every dependency's, via `seed_workspace_definitions`),
+    /// taken once at the top of `lower_program`/`transform`. Lets
+    /// `compute_adt_layout` look up and lazily register a foreign
+    /// struct/enum on demand (O(1) point lookup) instead of every
+    /// dependency's ADTs being eagerly duplicated into `program.items`
+    /// whether anything here references them or not.
+    hir_def_map: HashMap<hir::DefId, hir::Item>,
+    hir_def_paths: HashMap<hir::DefId, Vec<hir::Symbol>>,
 }
 
 impl MirLowering {
@@ -531,6 +540,8 @@ impl MirLowering {
             typeck_generic_call_args: HashMap::new(),
             typeck_generic_method_args: HashMap::new(),
             adt_defs: HashMap::new(),
+            hir_def_map: HashMap::new(),
+            hir_def_paths: HashMap::new(),
         }
     }
 
@@ -555,6 +566,9 @@ impl MirLowering {
     }
 
     pub fn compute_adt_layout(&mut self, def_id: hir::DefId, substs: &[Ty], span: Span) {
+        if !self.struct_defs.contains_key(&def_id) && !self.enum_defs.contains_key(&def_id) {
+            self.try_lazily_register_adt(def_id, span);
+        }
         // `def_id` is either a struct or an enum, never both — calling both
         // layout functions regardless of which one it actually is makes the
         // non-matching call spuriously report "definition not registered"
@@ -564,6 +578,33 @@ impl MirLowering {
         } else if self.enum_defs.contains_key(&def_id) {
             let _ = self.enum_layout_for_instance(def_id, substs, span);
         }
+    }
+
+    /// On-demand registration for a struct/enum defined in a *different*
+    /// package (std/libc/etc.) — reached only when `def_id` isn't already
+    /// registered locally. `hir_def_map`/`hir_def_paths` (populated once in
+    /// `lower_program`) are a superset covering every previously-compiled
+    /// workspace package, via `seed_workspace_definitions`, so this is a
+    /// plain O(1) point lookup, not a scan — no dependency's ADTs need to
+    /// be eagerly registered ahead of whatever a given package actually
+    /// references. `mem::take`s `hir_def_paths` for the duration of the
+    /// call to hand `register_struct`/`register_enum` an owned reference
+    /// without a `&self`/`&mut self` borrow conflict.
+    fn try_lazily_register_adt(&mut self, def_id: hir::DefId, span: Span) {
+        let Some(item) = self.hir_def_map.get(&def_id).cloned() else {
+            return;
+        };
+        let def_paths = std::mem::take(&mut self.hir_def_paths);
+        match &item.kind {
+            hir::ItemKind::Struct(strukt) => {
+                self.register_struct(&def_paths, def_id, strukt, span);
+            }
+            hir::ItemKind::Enum(enm) => {
+                self.register_enum(&def_paths, def_id, enm, span);
+            }
+            _ => {}
+        }
+        self.hir_def_paths = def_paths;
     }
 
     fn compute_ty_layout(&mut self, ty: &Ty, span: Span) {
@@ -882,6 +923,11 @@ impl MirLowering {
     }
 
     fn lower_program(&mut self, program: &hir::Program) -> Result<mir::Program> {
+        // Snapshot for `compute_adt_layout`'s lazy foreign-struct/enum
+        // lookup — see the fields' doc comment. One clone per package
+        // compile, not per lookup.
+        self.hir_def_map = program.def_map.clone();
+        self.hir_def_paths = program.def_paths.clone();
         let mut mir_program = mir::Program::new();
         self.next_synthetic_hir_def_id = program
             .items
@@ -894,10 +940,10 @@ impl MirLowering {
         for item in &program.items {
             match &item.kind {
                 hir::ItemKind::Struct(def) => {
-                    self.register_struct(program, item.def_id, def, item.span);
+                    self.register_struct(&program.def_paths, item.def_id, def, item.span);
                 }
                 hir::ItemKind::Enum(def) => {
-                    self.register_enum(program, item.def_id, def, item.span);
+                    self.register_enum(&program.def_paths, item.def_id, def, item.span);
                 }
                 _ => {}
             }
@@ -1070,7 +1116,7 @@ impl MirLowering {
 
         let mir_function = mir::Function {
             name: mir::Symbol::new(Self::qualified_display_name(
-                program,
+                &program.def_paths,
                 item.def_id,
                 function.sig.name.as_str(),
             )),
@@ -4554,14 +4600,17 @@ impl MirLowering {
     /// Qualified display name for a definition, sourced from
     /// `hir::Program::def_paths` (the item's `name` field is always bare —
     /// see that table's doc comment). Falls back to the bare name itself
-    /// when no path is recorded (e.g. synthetic items).
+    /// when no path is recorded (e.g. synthetic items). Takes the
+    /// `def_paths` table directly (not the whole `&hir::Program`) so
+    /// `register_struct`/`register_enum` can be called from a context that
+    /// only has `def_paths` on hand (`compute_adt_layout`'s lazy foreign-type
+    /// lookup, which runs after the original `hir::Program` is out of scope).
     fn qualified_display_name(
-        program: &hir::Program,
+        def_paths: &HashMap<hir::DefId, Vec<hir::Symbol>>,
         def_id: hir::DefId,
         bare_name: &str,
     ) -> String {
-        program
-            .def_paths
+        def_paths
             .get(&def_id)
             .map(|segments| {
                 segments
@@ -4575,7 +4624,7 @@ impl MirLowering {
 
     fn register_struct(
         &mut self,
-        program: &hir::Program,
+        def_paths: &HashMap<hir::DefId, Vec<hir::Symbol>>,
         def_id: hir::DefId,
         strukt: &hir::Struct,
         _span: Span,
@@ -4605,7 +4654,7 @@ impl MirLowering {
         self.struct_defs.insert(
             def_id,
             StructDefinition {
-                name: Self::qualified_display_name(program, def_id, strukt.name.as_str()),
+                name: Self::qualified_display_name(def_paths, def_id, strukt.name.as_str()),
                 generics,
                 fields,
                 field_index,
@@ -4615,7 +4664,7 @@ impl MirLowering {
 
     fn register_enum(
         &mut self,
-        program: &hir::Program,
+        def_paths: &HashMap<hir::DefId, Vec<hir::Symbol>>,
         def_id: hir::DefId,
         enm: &hir::Enum,
         _span: Span,
@@ -4630,7 +4679,7 @@ impl MirLowering {
             .iter()
             .map(|param| param.name.as_str().to_string())
             .collect::<Vec<_>>();
-        let enum_qualified_name = Self::qualified_display_name(program, def_id, enm.name.as_str());
+        let enum_qualified_name = Self::qualified_display_name(def_paths, def_id, enm.name.as_str());
 
         let mut variants = Vec::new();
         let mut next_value: i64 = 0;
@@ -10208,11 +10257,11 @@ impl<'a> BodyBuilder<'a> {
         match &item.kind {
             hir::ItemKind::Struct(def) => {
                 self.lowering
-                    .register_struct(self.program, item.def_id, def, item.span);
+                    .register_struct(&self.program.def_paths, item.def_id, def, item.span);
             }
             hir::ItemKind::Enum(enm) => {
                 self.lowering
-                    .register_enum(self.program, item.def_id, enm, item.span);
+                    .register_enum(&self.program.def_paths, item.def_id, enm, item.span);
             }
             hir::ItemKind::Const(konst) => {
                 self.lowering

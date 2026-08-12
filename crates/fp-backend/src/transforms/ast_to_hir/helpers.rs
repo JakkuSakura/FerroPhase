@@ -502,6 +502,55 @@ impl HirGenerator {
 
                 Ok(base)
             }
+            // A self-type like `&'a str`/`[T]`/`[T; N]` parses as a plain
+            // `Ty` (not path-like at all — no `Name`/`Select`/`Invoke`
+            // shape exists for it), wrapped as `Value::Type` by
+            // `fp_lang::ast::type_to_expr`. These aren't nameable the way
+            // `canonical_type_path` expects — real rustc doesn't register
+            // their impls under a module path either, it keys them by a
+            // structural `SimplifiedType` bucket. Mirror that: tag the
+            // path with `Res::Builtin(BuiltinSelfType)` (a typed shape
+            // tag) instead of relying on the segment name; see
+            // `canonical_type_path`'s matching `Res::Builtin` check.
+            ast::ExprKind::Value(value) => match value.as_ref() {
+                ast::Value::Type(ast::Ty::Reference(reference)) => {
+                    let kind = hir::BuiltinSelfType::Reference {
+                        mutable: reference.mutability.unwrap_or(false),
+                    };
+                    Ok(hir::Path {
+                        segments: vec![self.make_path_segment(kind.bucket_key(), None)],
+                        res: Some(hir::Res::Builtin(kind)),
+                    })
+                }
+                ast::Value::Type(ast::Ty::Slice(_)) => {
+                    let kind = hir::BuiltinSelfType::Slice;
+                    Ok(hir::Path {
+                        segments: vec![self.make_path_segment(kind.bucket_key(), None)],
+                        res: Some(hir::Res::Builtin(kind)),
+                    })
+                }
+                ast::Value::Type(ast::Ty::Array(_)) => {
+                    let kind = hir::BuiltinSelfType::Array;
+                    Ok(hir::Path {
+                        segments: vec![self.make_path_segment(kind.bucket_key(), None)],
+                        res: Some(hir::Res::Builtin(kind)),
+                    })
+                }
+                _ => {
+                    self.add_error(
+                        Diagnostic::error(format!(
+                            "expected path-like expression for type path, found {:?}",
+                            value
+                        ))
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(expr.span()),
+                    );
+                    Ok(hir::Path {
+                        segments: vec![self.make_path_segment("__fp_error", None)],
+                        res: None,
+                    })
+                }
+            },
             other => {
                 self.add_error(
                     Diagnostic::error(format!(
