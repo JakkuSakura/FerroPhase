@@ -11537,19 +11537,52 @@ impl<'a> BodyBuilder<'a> {
         }
         if payload_tys.len() == 1 && fields.len() != layout.payload_tys.len() {
             let payload_ty = payload_tys[0].clone();
-            let payload_def = self.struct_def_from_ty(&payload_ty).ok_or_else(|| {
-                fp_core::error::Error::from("struct-like enum payload definition is unavailable")
-            })?;
+            // Prefer the struct DefId already recorded on the variant (from
+            // its original HIR payload type) over re-deriving it from the
+            // lowered payload Ty — single-field structs are flattened to
+            // their inner field's type for ABI purposes (e.g. `Adt(Some)`
+            // with one `i32` field lowers to plain `Int(I32)`), so
+            // `struct_def_from_ty` can no longer find a struct definition
+            // to match against once that optimization has applied.
+            let payload_def = variant
+                .payload_def
+                .or_else(|| self.struct_def_from_ty(&payload_ty))
+                .ok_or_else(|| {
+                    fp_core::error::Error::from("struct-like enum payload definition is unavailable")
+                })?;
             let payload_info = self
                 .lowering
                 .struct_defs
                 .get(&payload_def)
                 .cloned()
                 .ok_or_else(|| fp_core::error::Error::from("struct-like enum payload fields are unavailable"))?;
+            // Same flattening concern as `payload_def` above: look the
+            // layout up by the original struct's DefId first, since
+            // `payload_ty` may no longer be the struct's own Adt type.
             let payload_layout = self
                 .lowering
                 .struct_layout_for_ty(&payload_ty)
+                .or_else(|| self.lowering.struct_layout_for_instance(payload_def, &[], span))
                 .ok_or_else(|| fp_core::error::Error::from("struct-like enum payload layout is unavailable"))?;
+            // `lower_registered_struct_literal`'s own missing-field check
+            // only fires for its generic (non-enum) struct-literal path — it
+            // can't tell this is an enum payload once `payload_ty` has been
+            // flattened to a non-Adt type, so it would otherwise report a
+            // plain "missing field in struct literal" diagnostic (and only
+            // as a diagnostic, not a hard error) instead of failing lowering
+            // outright. This is already known to be an enum variant's
+            // struct-like payload here, so check field completeness
+            // directly and fail hard with the caller-facing message.
+            let provided_fields: std::collections::HashSet<&str> =
+                fields.iter().map(|field| field.name.as_str()).collect();
+            for field_def in &payload_info.fields {
+                if !provided_fields.contains(field_def.name.as_str()) {
+                    return Err(fp_core::error::Error::from(format!(
+                        "missing field `{}` in enum variant struct literal",
+                        field_def.name
+                    )));
+                }
+            }
             let payload_local = self.allocate_temp(payload_ty.clone(), span);
             self.lower_registered_struct_literal(
                 payload_local,
