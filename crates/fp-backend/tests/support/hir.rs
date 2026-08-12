@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use fp_core::hir::{
-    self, Body, Expr, ExprKind, Function, FunctionSig, Generics, Item, ItemKind, Program, TypeExpr,
-    TypeExprKind,
+    self, Block, Expr, ExprKind, Function, FunctionSig, Generics, Item, ItemKind, Program,
+    TypeExpr, TypeExprKind,
 };
 use fp_core::span::Span;
 
@@ -22,10 +22,10 @@ pub fn unit_type() -> TypeExpr {
 }
 
 pub fn function_item(name: &str, body: Expr) -> Item {
-    let func_body = Body {
+    let func_body = Block {
         hir_id: 1,
-        params: Vec::new(),
-        value: body,
+        stmts: Vec::new(),
+        expr: Some(Box::new(body)),
     };
 
     let sig = FunctionSig {

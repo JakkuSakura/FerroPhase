@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 use fp_core::mir::ty::{IntTy, Ty};
 use fp_core::mir::{
-    self, BasicBlockData, Body, BodyId, Function, FunctionSig, Item, ItemKind, Program, Statement,
-    StatementKind, Terminator, TerminatorKind,
+    self, BasicBlockData, Body, BodyId, Function, FunctionSig, Item, ItemKind, LocalDecl,
+    LocalInfo, Mutability, Program, Statement, StatementKind, Terminator, TerminatorKind,
 };
 use fp_core::span::Span;
 
@@ -29,7 +29,19 @@ pub fn return_block() -> BasicBlockData {
 }
 
 pub fn body_with_blocks(blocks: Vec<BasicBlockData>) -> (BodyId, Body) {
-    let body = Body::new(blocks, Vec::new(), 0, Span::new(0, 0, 0));
+    // Local 0 is always the return-value slot; a body with no locals at all
+    // leaves it undeclared, so lowering has no storage/register to read the
+    // return value back from.
+    let return_local = LocalDecl {
+        mutability: Mutability::Not,
+        local_info: LocalInfo::Other,
+        internal: false,
+        is_block_tail: None,
+        ty: int_ty(),
+        user_ty: None,
+        source_info: Span::new(0, 0, 0),
+    };
+    let body = Body::new(blocks, vec![return_local], 0, Span::new(0, 0, 0));
     (BodyId(0), body)
 }
 

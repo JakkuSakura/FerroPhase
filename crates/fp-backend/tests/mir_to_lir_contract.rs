@@ -111,6 +111,7 @@ fn lowers_static_integer_initializer_into_global_constant() {
     };
 
     let static_item = mir::Static {
+        name: mir::Symbol::new("STATIC"),
         ty: ty.clone(),
         init: Operand::Constant(constant),
         mutability: Mutability::Not,
@@ -137,11 +138,13 @@ fn lowers_static_integer_initializer_into_global_constant() {
     match &global.initializer {
         Some(constant) => {
             assert_eq!(constant.ty, LirType::I32);
+            // Global initializers are canonicalized to raw bytes
+            // (`canonicalize_global_initializer`), regardless of the
+            // original constant's shape.
             assert!(matches!(
-                constant.kind,
-                fp_core::lir::LirConstantKind::Data(fp_core::lir::LirConstantData::Integer(
-                    fp_core::lir::LirInteger::I32(7)
-                ))
+                &constant.kind,
+                fp_core::lir::LirConstantKind::Data(fp_core::lir::LirConstantData::Bytes(bytes))
+                    if bytes.as_slice() == [7, 0, 0, 0]
             ));
         }
         other => panic!("expected integer initializer, got {:?}", other),
@@ -152,6 +155,7 @@ fn lowers_static_integer_initializer_into_global_constant() {
 fn rejects_non_constant_static_initializer_operand() {
     let ty = Ty::int(IntTy::I32);
     let static_item = mir::Static {
+        name: mir::Symbol::new("STATIC"),
         ty: ty.clone(),
         init: Operand::Copy(mir::Place::from_local(0)),
         mutability: Mutability::Not,
@@ -187,6 +191,7 @@ fn rejects_tuple_constant_with_non_tuple_ty() {
     };
 
     let static_item = mir::Static {
+        name: mir::Symbol::new("STATIC"),
         ty: ty.clone(),
         init: Operand::Constant(constant),
         mutability: Mutability::Not,
@@ -224,6 +229,7 @@ fn lowers_slice_static_into_bytes_with_relocation() {
     };
 
     let static_item = mir::Static {
+        name: mir::Symbol::new("STATIC"),
         ty: ty.clone(),
         init: Operand::Constant(constant),
         mutability: Mutability::Not,
@@ -243,8 +249,10 @@ fn lowers_slice_static_into_bytes_with_relocation() {
         .expect("lowering should succeed");
 
     assert_eq!(lir_program.globals.len(), 2);
-    let slice_global = &lir_program.globals[0];
-    let data_global = &lir_program.globals[1];
+    // The referenced string-bytes global is emitted before the slice struct
+    // that relocates against it.
+    let data_global = &lir_program.globals[0];
+    let slice_global = &lir_program.globals[1];
 
     match &slice_global.initializer {
         Some(constant)
@@ -551,7 +559,7 @@ fn rejects_call_terminator_without_destination() {
                 span: Span::new(0, 0, 0),
                 ty: Ty::int(IntTy::I32),
                 user_ty: None,
-                literal: mir::ConstantKind::Str("no_dest_fn".to_string()),
+                literal: mir::ConstantKind::Fn(mir::Symbol::new("no_dest_fn")),
             }),
             args: Vec::new(),
             destination: None,

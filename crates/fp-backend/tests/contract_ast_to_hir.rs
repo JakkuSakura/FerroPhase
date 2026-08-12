@@ -1,7 +1,7 @@
 use fp_backend::transformations::HirGenerator;
 use fp_core::error::Result as OptimizeResult;
 use fp_core::hir::{self, FormatTemplatePart, ItemKind, StmtKind};
-use fp_core::intrinsics::CallKind;
+use fp_core::intrinsics::{CallKind, IntrinsicKind};
 use fp_core::ops::BinOpKind;
 
 mod support;
@@ -37,7 +37,15 @@ fn make_fn(
     ret: fp_core::ast::Ty,
     body: fp_core::ast::Expr,
 ) -> fp_core::ast::Item {
-    let func = fp_core::ast::ItemDefFunction::new_simple(ident(name), body.into())
+    // A body that's already block-shaped (`{ stmt; stmt; ... }`) keeps its own
+    // statements; wrapping it again via `ExprBlock::new_expr` would nest it as
+    // a tail expression instead, losing its statements from the function's
+    // own block.
+    let block = match body.kind() {
+        fp_core::ast::ExprKind::Block(block) => block.clone(),
+        _ => fp_core::ast::ExprBlock::new_expr(body),
+    };
+    let func = fp_core::ast::ItemDefFunction::new_simple(ident(name), block)
         .with_params(params)
         .with_ret_ty(ret);
     fp_core::ast::Item::from(fp_core::ast::ItemKind::DefFunction(func))
@@ -64,8 +72,10 @@ fn transforms_literal_expression_into_main_function() -> OptimizeResult<()> {
             assert!(!func.is_const);
 
             let body = func.body.as_ref().expect("main should have a body");
-            assert_eq!(body.params.len(), 0);
-            support::assertions::assert_hir_integer(&body.value, 42);
+            support::assertions::assert_hir_integer(
+                body.expr.as_deref().expect("body has a tail expression"),
+                42,
+            );
         }
         kind => panic!("expected function item, found {:?}", kind),
     }
@@ -99,8 +109,9 @@ fn preserves_try_expression_for_backend_lowering() -> OptimizeResult<()> {
         panic!("main item should be a function");
     };
     let body = main_fn.body.as_ref().expect("main should have a body");
+    let tail = body.expr.as_deref().expect("body has a tail expression");
     assert!(
-        matches!(body.value.kind, hir::ExprKind::Try(_)),
+        matches!(tail.kind, hir::ExprKind::Try(_)),
         "try should remain a first-class HIR node for MIR lowering",
     );
 
@@ -236,11 +247,15 @@ fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
 
     if let ItemKind::Function(func) = &call_item.kind {
         let body = func.body.as_ref().expect("call_sum has a body");
-        let expr = match &body.value.kind {
-            hir::ExprKind::Call(_, _) => &body.value,
+        let tail = body
+            .expr
+            .as_deref()
+            .expect("call_sum body has a tail expression");
+        let expr = match &tail.kind {
+            hir::ExprKind::Call(_, _) => tail,
             hir::ExprKind::Block(block) => block
                 .expr
-                .as_ref()
+                .as_deref()
                 .expect("block should hold call expression"),
             other => panic!("expected call expression, found {:?}", other),
         };
@@ -359,11 +374,15 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
 
     if let ItemKind::Function(func) = &callers_item.kind {
         let body = func.body.as_ref().expect("call has a body");
-        let expr = match &body.value.kind {
-            hir::ExprKind::Call(_, _) => &body.value,
+        let tail = body
+            .expr
+            .as_deref()
+            .expect("call body has a tail expression");
+        let expr = match &tail.kind {
+            hir::ExprKind::Call(_, _) => tail,
             hir::ExprKind::Block(block) => block
                 .expr
-                .as_ref()
+                .as_deref()
                 .expect("block should hold call expression"),
             other => panic!("expected call expression, found {:?}", other),
         };
@@ -439,11 +458,7 @@ fn lowers_println_macro_into_intrinsic_call() -> OptimizeResult<()> {
     })?;
 
     let main_fn = find_function(&program, "main");
-    let body = main_fn.body.as_ref().expect("main has body");
-    let block = match &body.value.kind {
-        hir::ExprKind::Block(block) => block,
-        other => panic!("expected function body block, found {:?}", other),
-    };
+    let block = main_fn.body.as_ref().expect("main has body");
     assert_eq!(block.stmts.len(), 1, "println expands to one statement");
 
     let stmt = &block.stmts[0];
@@ -460,7 +475,7 @@ fn lowers_println_macro_into_intrinsic_call() -> OptimizeResult<()> {
         other => panic!("expected intrinsic call, found {:?}", other),
     };
 
-    assert_eq!(call.kind, CallKind::Println);
+    assert_eq!(call.kind, IntrinsicKind::Println);
     let template = match call.callargs.first().map(|arg| &arg.value.kind) {
         Some(hir::ExprKind::FormatString(template)) => template,
         other => panic!("println expects format template argument, got {:?}", other),
@@ -514,11 +529,7 @@ fn lowers_print_macro_into_intrinsic_call() -> OptimizeResult<()> {
     })?;
 
     let main_fn = find_function(&program, "main");
-    let body = main_fn.body.as_ref().expect("main has body");
-    let block = match &body.value.kind {
-        hir::ExprKind::Block(block) => block,
-        other => panic!("expected block in function body, found {:?}", other),
-    };
+    let block = main_fn.body.as_ref().expect("main has body");
     assert_eq!(block.stmts.len(), 1);
 
     let expr = match &block.stmts[0].kind {
@@ -531,7 +542,7 @@ fn lowers_print_macro_into_intrinsic_call() -> OptimizeResult<()> {
         other => panic!("expected intrinsic call, found {:?}", other),
     };
 
-    assert_eq!(call.kind, CallKind::Print);
+    assert_eq!(call.kind, IntrinsicKind::Print);
     let template = match call.callargs.first().map(|arg| &arg.value.kind) {
         Some(hir::ExprKind::FormatString(template)) => template,
         other => panic!("print expects format template argument, got {:?}", other),
@@ -612,11 +623,11 @@ fn lowers_sizeof_and_field_count_intrinsics() -> OptimizeResult<()> {
             let expr = &konst.body.value;
             if let hir::ExprKind::IntrinsicCall(call) = &expr.kind {
                 match call.kind {
-                    CallKind::SizeOf => {
+                    IntrinsicKind::SizeOf => {
                         saw_sizeof = true;
                         assert_eq!(call.callargs.len(), 1);
                     }
-                    CallKind::FieldCount => {
+                    IntrinsicKind::FieldCount => {
                         saw_field_count = true;
                         assert_eq!(call.callargs.len(), 1);
                     }

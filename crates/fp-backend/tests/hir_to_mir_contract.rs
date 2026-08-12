@@ -110,10 +110,10 @@ fn local_stmt(hir_id: u32, pat: Pat, ty: TypeExpr, init: Expr) -> hir::Stmt {
 #[test]
 fn lowers_constant_return_function_into_mir_assign_and_return() {
     let body_expr = literal_expr(1, 5);
-    let body = hir::Body {
+    let body = hir::Block {
         hir_id: 2,
-        params: Vec::new(),
-        value: body_expr.clone(),
+        stmts: Vec::new(),
+        expr: Some(Box::new(body_expr.clone())),
     };
 
     let sig = FunctionSig {
@@ -207,10 +207,10 @@ fn lowers_identity_function_with_parameter() {
         res: Some(hir::Res::Local(param_pat.hir_id)),
     };
     let body_expr = Expr::new(7, ExprKind::Path(path), span());
-    let body = hir::Body {
+    let body = hir::Block {
         hir_id: 8,
-        params: vec![param.clone()],
-        value: body_expr,
+        stmts: Vec::new(),
+        expr: Some(Box::new(body_expr)),
     };
 
     let sig = FunctionSig {
@@ -276,10 +276,10 @@ fn rejects_unresolved_value_path_in_function_body() {
         }),
         span(),
     );
-    let body = hir::Body {
+    let body = hir::Block {
         hir_id: 22,
-        params: Vec::new(),
-        value: body_expr,
+        stmts: Vec::new(),
+        expr: Some(Box::new(body_expr)),
     };
 
     let sig = FunctionSig {
@@ -332,10 +332,10 @@ fn rejects_binary_operations_with_unit_operands() {
         ),
         span(),
     );
-    let body = hir::Body {
+    let body = hir::Block {
         hir_id: 34,
-        params: Vec::new(),
-        value: body_expr,
+        stmts: Vec::new(),
+        expr: Some(Box::new(body_expr)),
     };
 
     let sig = FunctionSig {
@@ -410,10 +410,10 @@ fn rejects_enum_variant_call_with_missing_payload_values() {
         ),
         span(),
     );
-    let body = hir::Body {
+    let body = hir::Block {
         hir_id: 44,
-        params: Vec::new(),
-        value: body_expr,
+        stmts: Vec::new(),
+        expr: Some(Box::new(body_expr)),
     };
 
     let function = Function::new(
@@ -526,10 +526,10 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
         ),
         span(),
     );
-    let body = hir::Body {
+    let body = hir::Block {
         hir_id: 56,
-        params: Vec::new(),
-        value: body_expr,
+        stmts: Vec::new(),
+        expr: Some(Box::new(body_expr)),
     };
 
     let function = Function::new(
@@ -742,10 +742,10 @@ fn lowers_index_expression_into_place_projection() {
         ExprKind::Index(Box::new(values_path), Box::new(idx_path)),
         span(),
     );
-    let body = hir::Body {
+    let body = hir::Block {
         hir_id: 29,
-        params: vec![values_param.clone(), idx_param.clone()],
-        value: body_expr,
+        stmts: Vec::new(),
+        expr: Some(Box::new(body_expr)),
     };
 
     let sig = FunctionSig {
@@ -830,10 +830,10 @@ fn lowers_index_on_static_slice_into_subslice_then_index_projection() {
         ExprKind::Index(Box::new(slice), Box::new(literal_expr(50, 0))),
         span(),
     );
-    let body = hir::Body {
+    let body = hir::Block {
         hir_id: 51,
-        params: vec![values_param.clone()],
-        value: body_expr,
+        stmts: Vec::new(),
+        expr: Some(Box::new(body_expr)),
     };
 
     let sig = FunctionSig {
@@ -945,10 +945,10 @@ fn lowers_index_on_dynamic_slice_into_explicit_slice_value_then_index_projection
         ExprKind::Index(Box::new(slice), Box::new(literal_expr(73, 0))),
         span(),
     );
-    let body = hir::Body {
+    let body = hir::Block {
         hir_id: 74,
-        params: vec![values_param.clone(), start_param.clone(), end_param.clone()],
-        value: body_expr,
+        stmts: Vec::new(),
+        expr: Some(Box::new(body_expr)),
     };
 
     let sig = FunctionSig {
@@ -1057,10 +1057,10 @@ fn return_value_is_materialized_before_finally_runs() {
         span(),
     );
 
-    let body = hir::Body {
+    let body = hir::Block {
         hir_id: 109,
-        params: Vec::new(),
-        value: Expr::new(
+        stmts: Vec::new(),
+        expr: Some(Box::new(Expr::new(
             110,
             ExprKind::Block(hir::Block {
                 hir_id: 111,
@@ -1068,7 +1068,7 @@ fn return_value_is_materialized_before_finally_runs() {
                 expr: Some(Box::new(try_expr)),
             }),
             span(),
-        ),
+        ))),
     };
 
     let sig = FunctionSig {
@@ -1187,10 +1187,10 @@ fn break_value_is_materialized_before_finally_runs() {
         span(),
     );
 
-    let body = hir::Body {
+    let body = hir::Block {
         hir_id: 131,
-        params: Vec::new(),
-        value: loop_expr,
+        stmts: Vec::new(),
+        expr: Some(Box::new(loop_expr)),
     };
     let sig = FunctionSig {
         name: Symbol::new("main"),

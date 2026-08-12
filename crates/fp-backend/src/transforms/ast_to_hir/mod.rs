@@ -943,11 +943,29 @@ impl HirGenerator {
         })
     }
 
-    fn resolve_type_symbol(&self, name: &str) -> Option<hir::Res> {
+    /// Lexical scope only (generic parameters, locals pushed by
+    /// `push_type_scope`/`push_value_scope`) — distinct from the
+    /// module/prelude/global tiers `resolve_type_symbol`/`resolve_value_symbol`
+    /// also consult. Used to tell a true lexical binding (an identity, not a
+    /// module path — must not be canonicalized) apart from a same-named
+    /// resolution that came from one of the other tiers (a real path that
+    /// canonicalization should expand).
+    fn resolve_lexical_type_symbol(&self, name: &str) -> Option<hir::Res> {
         self.type_scopes
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).cloned())
+    }
+
+    fn resolve_lexical_value_symbol(&self, name: &str) -> Option<hir::Res> {
+        self.value_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).cloned())
+    }
+
+    fn resolve_type_symbol(&self, name: &str) -> Option<hir::Res> {
+        self.resolve_lexical_type_symbol(name)
             .or_else(|| {
                 let qualified = self.module_path.with_segment(name.to_string());
                 self.lookup_symbol(&qualified.to_key(), &self.global_type_defs)
@@ -957,10 +975,7 @@ impl HirGenerator {
     }
 
     fn resolve_value_symbol(&self, name: &str) -> Option<hir::Res> {
-        self.value_scopes
-            .iter()
-            .rev()
-            .find_map(|scope| scope.get(name).cloned())
+        self.resolve_lexical_value_symbol(name)
             .or_else(|| {
                 let qualified = self.module_path.with_segment(name.to_string());
                 self.lookup_symbol(&qualified.to_key(), &self.global_value_defs)
@@ -1039,10 +1054,13 @@ impl HirGenerator {
             None => self.create_unit_type(),
         };
         let main_body_expr = self.transform_expr_to_hir(&lowered_expr)?;
-        let hir::ExprKind::Block(main_body) = main_body_expr.kind else {
-            return Err(fp_core::error::Error::from(
-                "main function body lowering did not produce a block",
-            ));
+        let main_body = match main_body_expr.kind {
+            hir::ExprKind::Block(block) => block,
+            _ => hir::Block {
+                hir_id: self.next_id(),
+                stmts: Vec::new(),
+                expr: Some(Box::new(main_body_expr)),
+            },
         };
         let main_fn = self.create_main_function(main_body, output)?;
 
@@ -1639,7 +1657,13 @@ impl HirGenerator {
                 self.register_value_def(&func_def.name.name, def_id, &func_def.visibility);
                 let lower_body =
                     !self.is_std_module() && !attrs_has_name(&func_def.attrs, "unimplemented");
-                let function = self.transform_function_with_body(func_def, None, lower_body)?;
+                let mut function = self.transform_function_with_body(func_def, None, lower_body)?;
+                // Top-level functions (unlike impl methods, which share this
+                // lowering path but must keep their bare method name) need
+                // their module path baked into `sig.name` so items found by
+                // walking `program.items` are addressable the same way
+                // `global_value_defs` already indexes them.
+                function.sig.name = hir::Symbol::new(self.qualify_name(&func_def.name.name));
                 (
                     hir::ItemKind::Function(function),
                     self.map_visibility(&func_def.visibility),

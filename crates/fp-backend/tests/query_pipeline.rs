@@ -1,11 +1,21 @@
 use fp_backend::transforms::{HirGenerator, LirGenerator, MirLowering};
 use fp_core::hir;
+use fp_core::lir::LirDataLayout;
 use fp_core::mir;
 use fp_core::query::{
     QueryDocument, QueryIrDocument, QueryIrStmt, SqlDialect, statement_to_query_ir,
 };
 use fp_lang::FerroFrontend;
 use fp_sql::sql_ast::parse_sql_ast;
+
+fn test_layout() -> LirDataLayout {
+    LirDataLayout::new(
+        64,
+        8,
+        vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+    )
+    .expect("valid test layout")
+}
 
 #[test]
 fn sql_query_document_lowers_to_hir_and_mir_query_items() {
@@ -56,7 +66,7 @@ fn sql_query_document_lowers_to_hir_and_mir_query_items() {
         Some(QueryIrStmt::Query(_))
     ));
 
-    let mut lir_generator = LirGenerator::new();
+    let mut lir_generator = LirGenerator::new(test_layout());
     let lir_program = lir_generator.transform(mir_program).expect("lir program");
     assert_eq!(lir_program.queries.len(), 1);
     let lir_query = &lir_program.queries[0];
@@ -123,7 +133,7 @@ fn prql_query_document_lowers_to_hir_and_mir_query_items() {
         Some(QueryIrStmt::Query(_))
     ));
 
-    let mut lir_generator = LirGenerator::new();
+    let mut lir_generator = LirGenerator::new(test_layout());
     let lir_program = lir_generator.transform(mir_program).expect("lir program");
     assert_eq!(lir_program.queries.len(), 1);
     assert!(matches!(
@@ -166,7 +176,7 @@ fn fp_query_feature_lowers_in_ast_to_hir_pass() {
         Some(QueryIrStmt::Query(_))
     ));
 
-    let mut lir_generator = LirGenerator::new();
+    let mut lir_generator = LirGenerator::new(test_layout());
     let lir_program = lir_generator.transform(mir_program).expect("lir program");
     assert_eq!(lir_program.queries.len(), 1);
     assert!(matches!(

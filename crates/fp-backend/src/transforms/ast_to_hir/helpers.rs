@@ -152,17 +152,28 @@ impl HirGenerator {
 
         // Lexical bindings (especially generic parameters) are identities, not
         // module paths. Keep their DefId intact and do not pass them through
-        // global canonicalization.
+        // global canonicalization. A same-named resolution from the
+        // module/prelude/global tiers instead (e.g. a prelude alias like
+        // `Result`) is a real path and should still be canonicalized below.
         if segments.len() == 1
             && matches!(
                 resolved,
                 Some(hir::Res::Def(_)) | Some(hir::Res::Local(_)) | Some(hir::Res::SelfTy)
             )
         {
-            return Ok(hir::Path {
-                segments,
-                res: resolved,
+            let is_lexical = segments.last().is_some_and(|segment| {
+                match scope {
+                    PathResolutionScope::Value => self.resolve_lexical_value_symbol(&segment.name),
+                    PathResolutionScope::Type => self.resolve_lexical_type_symbol(&segment.name),
+                }
+                .is_some()
             });
+            if is_lexical || matches!(resolved, Some(hir::Res::Local(_)) | Some(hir::Res::SelfTy)) {
+                return Ok(hir::Path {
+                    segments,
+                    res: resolved,
+                });
+            }
         }
 
         if segments.len() > 1 && path_prefix == PathPrefix::Plain {
@@ -342,6 +353,16 @@ impl HirGenerator {
                 let mut canonical_res = self.lookup_global_res(&canonical, scope);
                 if canonical_res.is_none() && self.module_defs.contains(&canonical) {
                     canonical_res = Some(hir::Res::Module(canonical.segments.clone()));
+                }
+                // `resolve_item_path` returns the path unexpanded when it
+                // already resolved via `scope_contains` (lexical, module- or
+                // prelude-qualified, or plain global tiers) rather than by
+                // discovering a longer canonical form — `lookup_global_res`
+                // only sees the plain global tier, so fall back to the
+                // already-resolved value for tiers it can't see (notably
+                // `prelude_type_defs`/`prelude_value_defs`).
+                if canonical_res.is_none() && canonical.segments.len() == segments.len() {
+                    canonical_res = resolved.clone();
                 }
                 return Ok(hir::Path {
                     segments: canonical_segments,

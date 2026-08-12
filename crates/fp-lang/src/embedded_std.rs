@@ -65,7 +65,7 @@ mod tests {
     fn embedded_std_exposes_prelude_module() {
         let path = root_dir().join("prelude/mod.fp");
         let source = read(&path).expect("embedded std prelude module should exist");
-        assert!(source.contains("pub use super::option::Option;"));
-        assert!(source.contains("pub use super::result::Result;"));
+        assert!(source.contains("pub use ::std::option::Option;"));
+        assert!(source.contains("pub use ::std::result::Result;"));
     }
 }

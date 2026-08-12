@@ -2915,7 +2915,7 @@ fn parse_items_supports_lang_name_value_attributes() {
     let AttrMeta::NameValue(meta) = &attr.meta else {
         unreachable!();
     };
-    assert_eq!(meta.name.last().as_str(), "lang");
+    assert_eq!(meta.name.last().as_str(), "intrinsic");
 }
 
 #[test]

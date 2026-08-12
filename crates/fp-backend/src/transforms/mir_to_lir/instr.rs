@@ -5281,6 +5281,16 @@ impl LirGenerator {
         cleanup: &Option<mir::BasicBlockId>,
         block: &mut lir::LirBasicBlock,
     ) -> Result<lir::LirTerminator> {
+        // Every successful path below requires a destination (the cleanup/
+        // invoke path enforces this itself, with a more specific message);
+        // check it first so a malformed callee/args doesn't produce a
+        // misleading error before this more fundamental one is reached.
+        if destination.is_none() && cleanup.is_none() {
+            return Err(crate::error::optimization_error(
+                "MIR→LIR: call terminator without destination",
+            ));
+        }
+
         let mut function_value = self.transform_operand(func)?;
         block.instructions.extend(self.take_queued_instructions());
 

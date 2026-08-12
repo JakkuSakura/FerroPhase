@@ -10317,11 +10317,15 @@ impl<'a> BodyBuilder<'a> {
             }
         }
 
-        let implicit_ty = local
-            .init
-            .as_ref()
-            .map(|expr| self.implicit_local_init_ty(expr))
-            .transpose()?;
+        let implicit_ty = if declared_ty.is_none() {
+            local
+                .init
+                .as_ref()
+                .map(|expr| self.implicit_local_init_ty(expr))
+                .transpose()?
+        } else {
+            None
+        };
         let local_ty = declared_ty
             .as_ref()
             .or(implicit_ty.as_ref())

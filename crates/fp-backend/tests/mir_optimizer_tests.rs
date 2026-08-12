@@ -21,6 +21,7 @@ fn local_decl(ty: Ty) -> mir::LocalDecl {
 fn int_constant(value: i64) -> mir::Constant {
     mir::Constant {
         span: Span::new(0, 0, 0),
+        ty: Ty::int(IntTy::I64),
         user_ty: None,
         literal: mir::ConstantKind::Int(value),
     }

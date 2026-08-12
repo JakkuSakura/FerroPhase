@@ -72,6 +72,11 @@ fn transform_expr_uses_typing_resolved_name_table() -> Result<()> {
 
 #[test]
 fn unqualified_lookup_does_not_scan_global_paths_by_suffix() {
+    // Resolving a bare name against the *current* module's own qualified
+    // entries (module_path + name) is intentional (lets a module's own
+    // items reference each other unqualified). What this guards against is
+    // resolving it against an unrelated *foreign* module's entries by
+    // matching just the name's suffix.
     let mut generator = HirGenerator::new();
     generator.module_path = QualifiedPath::new(vec!["dependency".to_string()]);
     generator.record_type_symbol(
@@ -80,6 +85,7 @@ fn unqualified_lookup_does_not_scan_global_paths_by_suffix() {
         &ast::Visibility::Public,
     );
 
+    generator.module_path = QualifiedPath::new(vec!["consumer".to_string()]);
     assert_eq!(generator.resolve_value_symbol("SharedType"), None);
     assert_eq!(generator.resolve_type_symbol("SharedType"), None);
 }
@@ -99,23 +105,16 @@ fn compile_normalization_runs_during_ast_to_hir_lowering() -> Result<()> {
         fp_lang::FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile),
     );
     let lowered = generator.transform_expr_to_hir(expr)?;
-    let hir::ExprKind::Call(callee, _) = lowered.kind else {
+    // `println!`/`print!`/`format!` are compiler intrinsics; unlike other
+    // std-surfaced macros, they stay as a first-class `IntrinsicCall` node
+    // rather than degrading to an ordinary call (see
+    // `fp_lang::normalization`'s `compile_mode_std_path`).
+    let hir::ExprKind::IntrinsicCall(call) = lowered.kind else {
         return Err(crate::error::optimization_error(
-            "expected println! to lower to an ordinary std call".to_string(),
+            "expected println! to lower to an intrinsic call".to_string(),
         ));
     };
-    let hir::ExprKind::Path(path) = callee.kind else {
-        return Err(crate::error::optimization_error(
-            "expected std call callee path".to_string(),
-        ));
-    };
-    assert_eq!(
-        path.segments
-            .iter()
-            .map(|segment| segment.name.as_str())
-            .collect::<Vec<_>>(),
-        ["std", "io", "println"]
-    );
+    assert_eq!(call.kind, fp_core::intrinsics::IntrinsicKind::Println);
     Ok(())
 }
 
@@ -520,6 +519,20 @@ fn cfg_filters_items_by_target_os() -> Result<()> {
 #[test]
 fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
     let mut generator = HirGenerator::new();
+    let result_def_id = hir::DefId::new(hir::PackageId(0), 1);
+    // `Result` is defined in `std::result` and re-exported through the
+    // prelude; only the prelude alias entry is needed here for the bare
+    // `Result` reference below to resolve.
+    generator.global_type_defs.insert(
+        "std::prelude::Result".to_string(),
+        SymbolEntry {
+            res: hir::Res::Def(result_def_id),
+            export: SymbolExport::Public,
+            path: None,
+        },
+    );
+    generator.load_default_prelude_defs();
+
     let target = ast::ExprInvokeTarget::Function(ast::Name::Ident(ident("Result")));
     let arg = ast::Expr::path(ast::Path::plain(vec![ident("hir"), ident("GenericArgs")]));
     let invoke = ast::ExprInvoke {
@@ -536,11 +549,13 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
             "expected type path from invoke expression".to_string(),
         ));
     };
-    assert_eq!(path.segments.len(), 3);
-    assert_eq!(path.segments[0].name.as_str(), "std");
-    assert_eq!(path.segments[1].name.as_str(), "result");
-    let seg = &path.segments[2];
+    // Resolved via the prelude alias to the real `Result` def — the path
+    // stays unqualified (matching how it was written), only `res` needs to
+    // point at the correct definition.
+    assert_eq!(path.segments.len(), 1);
+    let seg = &path.segments[0];
     assert_eq!(seg.name.as_str(), "Result");
+    assert_eq!(path.res, Some(hir::Res::Def(result_def_id)));
     let args = seg.args.as_ref().ok_or_else(|| {
         crate::error::optimization_error("expected generic args on Result".to_string())
     })?;
