@@ -1099,6 +1099,10 @@ fn is_mut_pattern(pat: &Pattern) -> bool {
         PatternKind::Ident(id) => id.mutability.unwrap_or(false),
         PatternKind::Type(pt) => is_mut_pattern(&pt.pat),
         PatternKind::Ref(r) => r.mutability.unwrap_or(false) || is_mut_pattern(&r.pattern),
+        // Rust marks mutability per-binding (`let (mut a, mut b) = ...`), but
+        // Kotlin destructuring declarations are all-or-nothing (`var (a, b)`
+        // makes both `var`) — "any element mutable" is the right merge.
+        PatternKind::Tuple(t) => t.patterns.iter().any(is_mut_pattern),
         _ => false,
     }
 }
