@@ -688,6 +688,8 @@ fn format_lit(lit: &Lit) -> String {
         Lit::Str(value) => format!("\"{}\"", escape_string(value)),
         Lit::Char(value) => format!("'{}'", escape_char(*value)),
         Lit::Null => "null".to_string(),
+        Lit::Bytes(bytes) => format!("b\"{}\"", escape_string(&String::from_utf8_lossy(bytes))),
+        Lit::CStr(bytes) => format!("c\"{}\"", escape_string(&String::from_utf8_lossy(bytes))),
     }
 }
 

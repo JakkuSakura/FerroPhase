@@ -3,6 +3,7 @@
 //! Demonstrates literal, repeat, and const-block usage with real data.
 
 use std::collections::HashMap;
+use std::collections::HashMapEntry;
 
 const PRIMES: Vec<i64> = const {
     vec![2, 3, 5, 7, 11, 13]
@@ -14,10 +15,10 @@ const ZERO_BUFFER: Vec<i64> = const {
 
 const HTTP_STATUSES: HashMap<&str, i64> = const {
     HashMap::from([
-        ("ok", 200),
-        ("created", 201),
-        ("accepted", 202),
-        ("not_found", 404),
+        HashMapEntry { key: "ok", value: 200 },
+        HashMapEntry { key: "created", value: 201 },
+        HashMapEntry { key: "accepted", value: 202 },
+        HashMapEntry { key: "not_found", value: 404 },
     ])
 };
 

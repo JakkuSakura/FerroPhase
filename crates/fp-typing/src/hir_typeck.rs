@@ -141,9 +141,19 @@ impl HirTypeChecker {
                     let mut scope = self.generic_scope(&impl_item.generics);
                     let self_ty = scope.check_type_expr(&impl_item.self_ty)?;
                     scope.self_types.push(self_ty);
-                    if let Some(trait_ty) = &impl_item.trait_ty {
-                        scope.check_type_expr(trait_ty)?;
-                    }
+                    // `impl_item.trait_ty`, when present, names the trait
+                    // being implemented — a reference to a trait
+                    // definition, not a value type. `path_ty`/
+                    // `check_type_expr` only knows how to build a concrete
+                    // type from a struct/enum def_id (there is no
+                    // `hir::ItemKind::Trait`; `DefTrait` items lower to a
+                    // placeholder `hir::ItemKind::Const`, see
+                    // `ast_to_hir/mod.rs`'s `ItemKind::DefTrait` arm), so
+                    // running it through the same ADT-only type-checking
+                    // path as `self_ty` above always fails with
+                    // "definition `{def_id}` is not a type" — this
+                    // position was never meant to type-check as a
+                    // concrete type in the first place.
                     for item in &impl_item.items {
                         match &item.kind {
                             hir::ImplItemKind::Method(function) => {
@@ -436,13 +446,43 @@ impl HirTypeChecker {
                 hir::ExprKind::Index(receiver, index) => {
                     let receiver_ty = self.check_expr(receiver).await?;
                     let index_ty = self.check_expr(index).await?;
-                    self.require_same(&index_ty, &Ty::int(ty::IntTy::I64))?;
                     let receiver_ty = match &receiver_ty.kind {
                         TyKind::Ref(_, inner, _) => inner.as_ref(),
                         _ => &receiver_ty,
                     };
                     match &receiver_ty.kind {
-                        TyKind::Array(inner, _) | TyKind::Slice(inner) => (**inner).clone(),
+                        TyKind::Array(inner, _) | TyKind::Slice(inner) => {
+                            self.require_same(&index_ty, &Ty::int(ty::IntTy::I64))?;
+                            (**inner).clone()
+                        }
+                        // `Vec<T>`/`HashMap<K, V>` are real structs (see
+                        // `collection_constructor_signature`), not
+                        // `Array`/`Slice`, so `[]` on them needs its own
+                        // case here rather than falling out of the generic
+                        // shape check above.
+                        TyKind::Adt(adt, args)
+                            if Some(adt.did) == self.well_known_struct_def_id("Vec")
+                                || Some(adt.did) == self.well_known_struct_def_id("List") =>
+                        {
+                            self.require_same(&index_ty, &Ty::int(ty::IntTy::I64))?;
+                            match args.first() {
+                                Some(GenericArg::Type(elem)) => elem.clone(),
+                                _ => return Err(Error::from("Vec index requires a type argument")),
+                            }
+                        }
+                        TyKind::Adt(adt, args)
+                            if Some(adt.did) == self.well_known_struct_def_id("HashMap") =>
+                        {
+                            let (Some(GenericArg::Type(key_ty)), Some(GenericArg::Type(value_ty))) =
+                                (args.first(), args.get(1))
+                            else {
+                                return Err(Error::from(
+                                    "HashMap index requires key and value type arguments",
+                                ));
+                            };
+                            self.require_same(&index_ty, key_ty)?;
+                            value_ty.clone()
+                        }
                         _ => return Err(Error::from("indexing requires an array or slice")),
                     }
                 }
@@ -456,6 +496,18 @@ impl HirTypeChecker {
                         None => self.path_ty(path)?,
                     };
                     let payload_ty = self.enum_struct_payload_type(path, &ty)?;
+                    // When the literal's path has no explicit `<T>` args,
+                    // `path_ty`/`enum_variant_ty` leave the ADT's generic
+                    // args as raw, unsubstituted `TyKind::Param`s (see
+                    // `path_ty`'s no-args fallback). `field_ty` substitutes
+                    // using those same args, so it likewise returns a raw
+                    // `Param` for a generic field — unify each field's
+                    // declared (possibly still-generic) type against its
+                    // actual value type the same way call arguments already
+                    // are (`unify_call_types`/`instantiate_call`), instead
+                    // of comparing them with strict equality, then apply
+                    // the resulting substitutions back onto the ADT type.
+                    let mut substitutions = HashMap::new();
                     for field in fields {
                         let value_ty = self.check_expr(&field.expr).await?;
                         let field_ty = if let Some(payload) = payload_ty.as_ref() {
@@ -463,9 +515,9 @@ impl HirTypeChecker {
                         } else {
                             self.field_ty(&ty, &field.name)?
                         };
-                        self.require_same(&value_ty, &field_ty)?;
+                        self.unify_call_types(&field_ty, &value_ty, &mut substitutions)?;
                     }
-                    ty
+                    self.substitute_param_map(&ty, &substitutions)
                 }
                 hir::ExprKind::If(condition, then_expr, else_expr) => {
                     let condition = self.check_expr(condition).await?;
@@ -992,6 +1044,145 @@ impl HirTypeChecker {
         })
     }
 
+    /// `vec![...]`/collection-literal macros desugar to calls like
+    /// `Vec::from([...])`/`HashMap::from([...])` that have no real backing
+    /// function — MIR lowering recognizes them purely by their trailing
+    /// path segments (see the `"Vec"`/`"List"`/`"HashMap"` name checks in
+    /// `hir_to_mir/expr.rs`, e.g. around its `lower_call`/path-type-
+    /// resolution code). Because nothing ever defines them, HIR's resolver
+    /// never gives their path a `Res::Def`, so plain path resolution always
+    /// reports "unresolved value path". This synthesizes a real, unifiable
+    /// function signature for exactly that fixed set of names, mirroring
+    /// MIR lowering's list — keep the two in sync.
+    fn collection_constructor_signature(&mut self, path: &hir::Path) -> Option<Result<Ty>> {
+        let mut names = path.segments.iter().rev().map(|seg| seg.name.as_str());
+        let last = names.next()?;
+        let second_last = names.next();
+        if last != "from" {
+            return None;
+        }
+        let make_sig = |inputs: Vec<Ty>, output: Ty| Ty {
+            kind: TyKind::FnPtr(ty::PolyFnSig {
+                binder: ty::Binder {
+                    value: ty::FnSig {
+                        inputs: inputs.into_iter().map(Box::new).collect(),
+                        output: Box::new(output),
+                        c_variadic: false,
+                        unsafety: ty::Unsafety::Normal,
+                        abi: ty::Abi::Rust,
+                    },
+                    bound_vars: Vec::new(),
+                },
+            }),
+        };
+        match second_last {
+            Some("Vec") | Some("List") => {
+                let t = Ty {
+                    kind: TyKind::Param(ty::ParamTy {
+                        index: 0,
+                        name: hir::Symbol::new("T"),
+                    }),
+                };
+                let output = match self.well_known_struct_ty("Vec", vec![GenericArg::Type(t.clone())]) {
+                    Some(ty) => ty,
+                    None => {
+                        return Some(Err(Error::from(
+                            "`Vec` struct definition was not found",
+                        )))
+                    }
+                };
+                let input = Ty {
+                    kind: TyKind::Slice(Box::new(t)),
+                };
+                Some(Ok(make_sig(vec![input], output)))
+            }
+            Some("HashMap") => {
+                let k = Ty {
+                    kind: TyKind::Param(ty::ParamTy {
+                        index: 0,
+                        name: hir::Symbol::new("K"),
+                    }),
+                };
+                let v = Ty {
+                    kind: TyKind::Param(ty::ParamTy {
+                        index: 1,
+                        name: hir::Symbol::new("V"),
+                    }),
+                };
+                let entry = match self.well_known_struct_ty(
+                    "HashMapEntry",
+                    vec![GenericArg::Type(k.clone()), GenericArg::Type(v.clone())],
+                ) {
+                    Some(ty) => ty,
+                    None => {
+                        return Some(Err(Error::from(
+                            "`HashMapEntry` struct definition was not found",
+                        )))
+                    }
+                };
+                let output = match self.well_known_struct_ty("HashMap", vec![GenericArg::Type(k), GenericArg::Type(v)]) {
+                    Some(ty) => ty,
+                    None => {
+                        return Some(Err(Error::from(
+                            "`HashMap` struct definition was not found",
+                        )))
+                    }
+                };
+                let input = Ty {
+                    kind: TyKind::Slice(Box::new(entry)),
+                };
+                Some(Ok(make_sig(vec![input], output)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Finds a real struct definition by name, searching this package first
+    /// and then loaded dependency packages — used only for well-known
+    /// standard-library collection types that a synthesized function
+    /// signature (see `collection_constructor_signature`) needs to name as
+    /// its output type, since normal path resolution never runs for them.
+    fn well_known_struct_def_id(&self, name: &str) -> Option<hir::DefId> {
+        let find_in = |items: &[hir::Item]| {
+            items.iter().find_map(|item| match &item.kind {
+                hir::ItemKind::Struct(def) if def.name.as_str() == name => Some(item.def_id),
+                _ => None,
+            })
+        };
+        if let Some(def_id) = find_in(&self.program.items) {
+            return Some(def_id);
+        }
+        if let Some(context) = &self.typing_context {
+            for (_, external, _) in context.env_ctx.hir_definitions() {
+                if let Some(def_id) = find_in(&external.items) {
+                    return Some(def_id);
+                }
+            }
+        }
+        None
+    }
+
+    fn well_known_struct_ty(&self, name: &str, args: Vec<GenericArg>) -> Option<Ty> {
+        let did = self.well_known_struct_def_id(name)?;
+        Some(Ty {
+            kind: TyKind::Adt(
+                AdtDef {
+                    did,
+                    variants: Vec::new(),
+                    flags: AdtFlags::IS_STRUCT,
+                    repr: ReprOptions {
+                        int: None,
+                        align: None,
+                        pack: None,
+                        flags: ReprFlags::empty(),
+                        field_shuffle_seed: 0,
+                    },
+                },
+                args,
+            ),
+        })
+    }
+
     fn expr_path_ty(&mut self, path: &hir::Path) -> Result<Ty> {
         if let Some(hir::Res::Local(local)) = path.res {
             if let Some(name) = path.segments.last().map(|segment| &segment.name) {
@@ -1009,6 +1200,9 @@ impl HirTypeChecker {
             return Err(Error::from(format!("local `{local}` has no inferred type")));
         }
         let Some(hir::Res::Def(def_id)) = path.res else {
+            if let Some(sig) = self.collection_constructor_signature(path) {
+                return sig;
+            }
             // A value path can refer to a definition supplied by a loaded
             // crate. It is resolved by HIR lowering, while this pass only
             // needs a semantic value type for subsequent expression checks.
@@ -1343,7 +1537,9 @@ impl HirTypeChecker {
                     })
             }
             (TyKind::Array(expected, _), TyKind::Array(actual, _))
-            | (TyKind::Slice(expected), TyKind::Slice(actual)) => {
+            | (TyKind::Slice(expected), TyKind::Slice(actual))
+            | (TyKind::Array(expected, _), TyKind::Slice(actual))
+            | (TyKind::Slice(expected), TyKind::Array(actual, _)) => {
                 self.unify_call_types(expected, actual, substitutions)
             }
             (TyKind::Adt(expected, expected_args), TyKind::Adt(actual, actual_args))
@@ -1951,6 +2147,35 @@ impl HirTypeChecker {
                 kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
             },
             hir::Lit::Null => Ty::never(),
+            // `b"..."` — a real Rust byte-string literal's type, `&[u8; N]`.
+            hir::Lit::Bytes(bytes) => Ty {
+                kind: TyKind::Ref(
+                    ty::Region::ReErased,
+                    Box::new(Ty {
+                        kind: TyKind::Array(
+                            Box::new(Ty::uint(ty::UintTy::U8)),
+                            ty::ConstKind::Value(ty::ConstValue::Scalar(ty::Scalar::Int(
+                                ty::ScalarInt {
+                                    data: bytes.len() as u128,
+                                    size: 8,
+                                },
+                            ))),
+                        ),
+                    }),
+                    ty::Mutability::Not,
+                ),
+            },
+            // `c"..."` — typed as `&std::ffi::CStr`, a real (empty) struct
+            // that already resolves fine through ordinary ADT lookup; look
+            // it up the same way `collection_constructor_signature` finds
+            // `Vec`/`HashMap` (no HIR path to resolve against here, since
+            // this literal has no backing definition of its own).
+            hir::Lit::CStr(_) => self
+                .well_known_struct_ty("CStr", Vec::new())
+                .map(|ty| Ty {
+                    kind: TyKind::Ref(ty::Region::ReErased, Box::new(ty), ty::Mutability::Not),
+                })
+                .unwrap_or_else(Ty::never),
         }
     }
 }

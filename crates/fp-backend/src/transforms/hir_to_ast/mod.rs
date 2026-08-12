@@ -231,6 +231,9 @@ impl<'a> HirToAstLifter<'a> {
                 hir::Lit::Str(v) => Value::string(v.clone()),
                 hir::Lit::Char(v) => Value::Char(ast::ValueChar::new(*v)),
                 hir::Lit::Null => Value::null(),
+                hir::Lit::Bytes(bytes) | hir::Lit::CStr(bytes) => {
+                    Value::Bytes(ast::ValueBytes::from(bytes.as_slice()))
+                }
             }),
             hir::ExprKind::Path(path) => Expr::name(Name::path(lift_path(path))),
             hir::ExprKind::Query(_) => {
@@ -603,6 +606,9 @@ impl<'a> HirToAstLifter<'a> {
                     hir::Lit::Str(v) => Value::string(v.clone()),
                     hir::Lit::Char(v) => Value::Char(ast::ValueChar::new(*v)),
                     hir::Lit::Null => Value::null(),
+                    hir::Lit::Bytes(bytes) | hir::Lit::CStr(bytes) => {
+                        Value::Bytes(ast::ValueBytes::from(bytes.as_slice()))
+                    }
                 }),
                 pattern: None,
             })),

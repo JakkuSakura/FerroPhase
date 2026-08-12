@@ -203,9 +203,10 @@ use fp_core::ast::{
     MacroGroup, MacroInvocation, MacroToken, MacroTokenTree, Module, Name, ParameterPath,
     ParameterPathSegment, Path, Pattern, PatternIdent, PatternKind, PatternQuote, PatternTuple,
     PatternTupleStruct, PatternType, PatternVariant, PatternWildcard, QuoteFragmentKind,
-    QuoteItemKind, ReprOptions, ScriptBlock, StmtDefer, StmtLet, StructuralField, Ty, TypeBinaryOp,
-    TypeBinaryOpKind, TypeBounds, TypeEnum, TypeFunction, TypeInt, TypePrimitive, TypeQuote,
-    TypeReference, TypeSlice, TypeStruct, Value, ValueChar, ValueNone, ValueUInt, Visibility,
+    QuoteItemKind, ReprOptions, ScriptBlock, StmtDefer, StmtLet, StructuralField, Ty, TypeArray,
+    TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum, TypeFunction, TypeInt, TypePrimitive,
+    TypeQuote, TypeReference, TypeSlice, TypeStruct, Value, ValueBytes, ValueChar, ValueNone,
+    ValueUInt, Visibility,
 };
 use fp_core::intrinsics::CallKind;
 use fp_core::module::path::PathPrefix;
@@ -217,8 +218,8 @@ use winnow::error::{ContextError, ErrMode};
 use winnow::{ModalResult, Parser};
 
 use crate::ast::lower_common::{
-    decode_single_char_literal, decode_string_literal, split_parameter_path_prefix,
-    split_path_prefix,
+    decode_bytes_literal, decode_single_char_literal, decode_string_literal,
+    split_parameter_path_prefix, split_path_prefix,
 };
 use crate::lexer::tokenizer::{Keyword, Token, TokenKind, strip_number_suffix};
 

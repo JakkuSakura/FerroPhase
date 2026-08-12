@@ -42,6 +42,12 @@ pub struct LirGenerator {
     function_signatures: HashMap<String, lir::LirFunctionSignature>,
     function_call_conventions: HashMap<String, lir::CallingConvention>,
     function_declarations: HashMap<String, bool>,
+    /// Package a predeclared function actually belongs to, for functions
+    /// predeclared from a *dependency* package's MIR (see
+    /// `predeclare_dependency_function_signatures`) — absent entries are
+    /// assumed local (`self.package_id`), so this only needs entries for
+    /// cross-package functions.
+    function_package_ids: HashMap<String, fp_core::package::PackageId>,
     runtime_symbol_map: fn(&str) -> Option<lir::RuntimeSymbol>,
 }
 
@@ -112,6 +118,7 @@ impl LirGenerator {
             function_signatures: HashMap::new(),
             function_call_conventions: HashMap::new(),
             function_declarations: HashMap::new(),
+            function_package_ids: HashMap::new(),
             runtime_symbol_map,
         }
     }
@@ -162,9 +169,14 @@ impl LirGenerator {
             param_types: signature.params.clone(),
             is_variadic: signature.is_variadic,
         }));
+        let package_id = self
+            .function_package_ids
+            .get(&name)
+            .cloned()
+            .unwrap_or_else(|| self.package_id.clone());
         Ok(lir::LirValue::function(
             lir::LirFunctionRef::Package {
-                package_id: self.package_id.clone(),
+                package_id,
                 name: lir::Name::new(name),
             },
             ty,
@@ -261,12 +273,38 @@ impl LirGenerator {
     }
 
     fn predeclare_function_signatures(&mut self, program: &mir::Program) {
+        self.predeclare_function_signatures_impl(program, None);
+    }
+
+    /// Predeclares functions from a *dependency* package's MIR so a
+    /// cross-package call (e.g. `json::parse`) resolves during this
+    /// package's own MIR-to-LIR lowering instead of failing with "missing
+    /// MIR function definition" — `function_def_map`/`function_signatures`/
+    /// etc. were previously only ever populated from this package's own
+    /// MIR (see `transform`/`prepare_program`). Also records `package_id`
+    /// in `function_package_ids` so `function_value` tags the resulting
+    /// `LirFunctionRef::Package` with the *callee's* package, not this
+    /// (caller's) one.
+    pub fn predeclare_dependency_function_signatures(
+        &mut self,
+        program: &mir::Program,
+        package_id: fp_core::package::PackageId,
+    ) {
+        self.predeclare_function_signatures_impl(program, Some(package_id));
+    }
+
+    fn predeclare_function_signatures_impl(
+        &mut self,
+        program: &mir::Program,
+        package_id: Option<fp_core::package::PackageId>,
+    ) {
         for item in &program.items {
             if let mir::ItemKind::Function(func) = &item.kind {
                 let name = self.mangle_function_name(func);
                 if let Some(def_id) = func.def_id {
                     self.function_def_map
-                        .insert((def_id, func.substs.clone()), name.clone());
+                        .entry((def_id, func.substs.clone()))
+                        .or_insert_with(|| name.clone());
                 }
                 let signature = lir::LirFunctionSignature {
                     params: func
@@ -289,8 +327,13 @@ impl LirGenerator {
                     .entry(name.clone())
                     .or_insert(cc);
                 self.function_declarations
-                    .entry(name)
+                    .entry(name.clone())
                     .or_insert(func.is_extern);
+                if let Some(package_id) = &package_id {
+                    self.function_package_ids
+                        .entry(name)
+                        .or_insert_with(|| package_id.clone());
+                }
             }
         }
     }
@@ -1532,7 +1575,18 @@ impl LirGenerator {
                 result_value = Some(lir::LirValue::register(query_id, query_ty));
             }
             mir::Rvalue::IntrinsicCall { kind, format, args } => {
-                let mut instructions = Vec::new();
+                // Deliberately a *separate* vector from the outer
+                // `instructions` (not just a differently-scoped shadow of
+                // it) — the `CreateStruct`/`AddField`/`BuildType`/`Slice`
+                // sub-cases below return it directly via `return
+                // Ok(intrinsic_instructions)`, bypassing the outer
+                // `instructions` entirely (intentional, pre-existing
+                // behavior). `Format`/`TimeNow` are the only sub-cases that
+                // *fall through* instead of returning early, so they need
+                // their accumulated instructions merged into the outer
+                // vector below — this used to be silently lost when this
+                // vector shadowed the outer one under the same name.
+                let mut intrinsic_instructions = Vec::new();
 
                 if matches!(
                     kind,
@@ -1543,7 +1597,7 @@ impl LirGenerator {
                     let mut lir_args = Vec::with_capacity(args.len());
                     for arg in args {
                         let value = self.transform_operand(arg)?;
-                        instructions.extend(self.take_queued_instructions());
+                        intrinsic_instructions.extend(self.take_queued_instructions());
                         lir_args.push(value);
                     }
                     let comptime_op = match kind {
@@ -1574,7 +1628,7 @@ impl LirGenerator {
                         _ => unreachable!(),
                     };
                     let instr_id = self.next_id();
-                    instructions.push(lir::LirInstruction {
+                    intrinsic_instructions.push(lir::LirInstruction {
                         id: instr_id,
                         kind: lir::LirInstructionKind::ComptimeOp(comptime_op),
                         result: destination_lir_ty
@@ -1588,7 +1642,7 @@ impl LirGenerator {
                             fp_core::error::Error::from("comptime intrinsic has no result type")
                         })?,
                     ));
-                    return Ok(instructions);
+                    return Ok(intrinsic_instructions);
                 }
 
                 let lir_kind = match kind {
@@ -1612,11 +1666,11 @@ impl LirGenerator {
                         let end_op = &args[2];
 
                         let base_value = self.transform_operand(base_op)?;
-                        instructions.extend(self.take_queued_instructions());
+                        intrinsic_instructions.extend(self.take_queued_instructions());
                         let start_value = self.transform_operand(start_op)?;
-                        instructions.extend(self.take_queued_instructions());
+                        intrinsic_instructions.extend(self.take_queued_instructions());
                         let end_value = self.transform_operand(end_op)?;
-                        instructions.extend(self.take_queued_instructions());
+                        intrinsic_instructions.extend(self.take_queued_instructions());
 
                         let base_lir_ty = self.type_of_operand(base_op);
                         let elem_lir_ty = destination_lir_ty
@@ -1645,7 +1699,7 @@ impl LirGenerator {
                                     base_value,
                                     0,
                                     ptr_ty.clone(),
-                                    &mut instructions,
+                                    &mut intrinsic_instructions,
                                 )
                             }
                             Some(lir::LirType::Ptr(_)) => base_value,
@@ -1658,7 +1712,7 @@ impl LirGenerator {
                         };
 
                         let len_id = self.next_id();
-                        instructions.push(lir::LirInstruction {
+                        intrinsic_instructions.push(lir::LirInstruction {
                             id: len_id,
                             kind: lir::LirInstructionKind::Sub(
                                 end_value.clone(),
@@ -1673,7 +1727,7 @@ impl LirGenerator {
                         let len_value = lir::LirValue::register(len_id, lir::LirType::I64);
 
                         let gep_id = self.next_id();
-                        instructions.push(lir::LirInstruction {
+                        intrinsic_instructions.push(lir::LirInstruction {
                             id: gep_id,
                             kind: lir::LirInstructionKind::GetElementPtr {
                                 ptr: base_ptr,
@@ -1690,17 +1744,17 @@ impl LirGenerator {
 
                         if matches!(destination_lir_ty, Some(lir::LirType::Ptr(_))) {
                             result_value = Some(slice_ptr);
-                            return Ok(instructions);
+                            return Ok(intrinsic_instructions);
                         }
 
                         let slice_value = self.build_slice_value_with_len_value(
                             slice_ptr,
                             len_value,
                             &elem_lir_ty,
-                            &mut instructions,
+                            &mut intrinsic_instructions,
                         )?;
                         result_value = Some(slice_value);
-                        return Ok(instructions);
+                        return Ok(intrinsic_instructions);
                     }
                     _ => {
                         return Err(fp_core::error::Error::from(format!(
@@ -1712,12 +1766,12 @@ impl LirGenerator {
                 let mut lir_args = Vec::with_capacity(args.len());
                 for arg in args {
                     let value = self.transform_operand(arg)?;
-                    instructions.extend(self.take_queued_instructions());
+                    intrinsic_instructions.extend(self.take_queued_instructions());
                     lir_args.push(value);
                 }
 
                 let instr_id = self.next_id();
-                instructions.push(lir::LirInstruction {
+                intrinsic_instructions.push(lir::LirInstruction {
                     id: instr_id,
                     kind: lir::LirInstructionKind::IntrinsicCall {
                         kind: lir_kind,
@@ -1735,6 +1789,10 @@ impl LirGenerator {
                         fp_core::error::Error::from("intrinsic has no destination type")
                     })?,
                 ));
+                // `Format`/`TimeNow` (the only sub-cases reaching here,
+                // since every other sub-case above returns early) — merge
+                // into the outer `instructions` so they aren't dropped.
+                instructions.append(&mut intrinsic_instructions);
             }
             mir::Rvalue::BinaryOp(bin_op, lhs, rhs) => {
                 let lhs_value = self.transform_operand(lhs)?;
@@ -3484,6 +3542,37 @@ impl LirGenerator {
         let base_ty = self.lookup_place_type(base_place).ok_or_else(|| {
             crate::error::optimization_error("MIR→LIR: missing type for deref projection")
         })?;
+
+        // A reference to an unsized slice (`&str`/`&[T]`) is represented in
+        // this backend as the `{ptr, len}` fat-pointer value directly — see
+        // `lir_type_from_ty`, where both `TyKind::Slice(_)` and
+        // `TyKind::Ref(_, Slice(_), _)` map to the same `__slice` struct.
+        // There is no separate, further-indirected pointee to load through:
+        // the reference's own storage *is* the slice value's storage.
+        // Dereferencing such a place is a type-level no-op — reuse the same
+        // address/value, just retagged with the pointee type — rather than
+        // treating it like a thin pointer (which would load a bogus "pointer
+        // value" out of the first 8 bytes of the fat pointer and then
+        // dereference that garbage address).
+        if let TyKind::Ref(_, inner, _) = &base_ty.kind {
+            if Self::slice_ref_element_ty(inner).is_some() {
+                let pointee_ty = (**inner).clone();
+                let pointee_lir_ty = self.lir_type_from_ty(&pointee_ty);
+                return Ok(match access {
+                    PlaceAccess::Address(addr) => PlaceAccess::Address(PlaceAddress {
+                        ptr: addr.ptr,
+                        ty: pointee_ty,
+                        lir_ty: pointee_lir_ty,
+                        alignment: addr.alignment,
+                    }),
+                    PlaceAccess::Value { value, .. } => PlaceAccess::Value {
+                        value,
+                        ty: pointee_ty,
+                        lir_ty: pointee_lir_ty,
+                    },
+                });
+            }
+        }
 
         let (inner_ty, pointer_lir_ty) = match base_ty.kind {
             TyKind::Ref(_, inner, _) => {
@@ -5824,6 +5913,29 @@ impl LirGenerator {
                 if let Some(elem_ty) = Self::slice_ref_element_ty(inner) {
                     let elem_lir = self.lir_type_from_ty(elem_ty);
                     self.slice_lir_type(&elem_lir)
+                } else if let TyKind::Adt(adt, _) = &inner.kind {
+                    // A reference to a genuinely empty (zero-field) struct
+                    // — e.g. `&std::ffi::CStr`, whose `.fp` definition is
+                    // `pub struct CStr {}` — is an opaque/extern-style
+                    // marker type, not a real, sized value to point at.
+                    // Lowering it the normal way gives `Ptr(Struct{fields:
+                    // []})`, a pointer to a zero-size struct, which then
+                    // can't hold the real (non-empty) C-string data a
+                    // `&CStr` value actually needs to reference. Treat it
+                    // as a bare byte pointer instead, matching how this
+                    // backend already represents other raw/opaque
+                    // pointers.
+                    let is_opaque_struct = self
+                        .struct_layouts
+                        .borrow()
+                        .get(&adt.did)
+                        .map(|fields| fields.is_empty())
+                        .unwrap_or(false);
+                    if is_opaque_struct {
+                        lir::LirType::Ptr(Box::new(lir::LirType::I8))
+                    } else {
+                        lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
+                    }
                 } else {
                     lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
                 }

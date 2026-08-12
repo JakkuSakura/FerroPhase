@@ -385,6 +385,14 @@ fn build_frame_layout(
     let mut alloca_debug = Vec::new();
     let mut local_debug = Vec::new();
     let mut agg_debug = Vec::new();
+    // A bare aggregate constant (e.g. a `&str`'s `{ptr, len}` slice) passed
+    // as a call argument has no backing Local/Register stack slot the way
+    // every other >8-byte aggregate value in this backend does — the whole
+    // calling convention here passes such aggregates *by address*, so one
+    // has to exist somewhere. Reserve a single scratch slot per function,
+    // sized to the largest such constant seen, and materialize into it
+    // immediately before each call that needs it (see `emit_call`).
+    let mut const_agg_scratch_size = 0i32;
 
     for block in &func.basic_blocks {
         for inst in &block.instructions {
@@ -394,6 +402,19 @@ fn build_frame_layout(
                 let mut count = 0usize;
                 for arg in args {
                     count += call_arg_units(arg, reg_types, &local_types)?;
+                    if let AsmValue::Constant(
+                        AsmConstant::Struct(_, _) | AsmConstant::Array(_, _),
+                    ) = arg
+                    {
+                        let ty = value_type(arg, reg_types, &local_types)?;
+                        if is_large_aggregate(&ty, data_layout) {
+                            let size = data_layout
+                                .size_of(&ty)
+                                .map_err(|error| Error::from(error.to_string()))?
+                                as i32;
+                            const_agg_scratch_size = const_agg_scratch_size.max(align8(size));
+                        }
+                    }
                 }
                 max_call_args = max_call_args.max(count);
                 if let Some(start) = darwin_variadic_format_start(function, args) {
@@ -525,6 +546,14 @@ fn build_frame_layout(
         offset += 8;
     }
 
+    let const_agg_scratch_offset = if const_agg_scratch_size > 0 {
+        let scratch_offset = offset;
+        offset += const_agg_scratch_size;
+        Some(scratch_offset)
+    } else {
+        None
+    };
+
     for id in &vreg_ids {
         if let Some(ty) = reg_types.get(id) {
             if is_large_aggregate(ty, data_layout) {
@@ -636,6 +665,7 @@ fn build_frame_layout(
         agg_offsets,
         alloca_offsets,
         sret_offset,
+        const_agg_scratch_offset,
         outgoing_size,
         frame_size,
     })
@@ -925,6 +955,7 @@ struct FrameLayout {
     agg_offsets: HashMap<u32, i32>,
     alloca_offsets: HashMap<u32, i32>,
     sret_offset: Option<i32>,
+    const_agg_scratch_offset: Option<i32>,
     outgoing_size: i32,
     frame_size: i32,
 }
@@ -3728,6 +3759,53 @@ fn emit_call(
                     abi_log("  arg i128 -> pair");
                 }
                 continue;
+            }
+            // Every >8-byte aggregate value in this backend's calling
+            // convention (see `load_value`'s `Register`/`Local` cases, and
+            // the callee prologue's `copy_reg_to_sp`) is passed *by
+            // address*: the argument register holds a pointer to memory
+            // holding the aggregate's bytes, never the bytes themselves. A
+            // bare aggregate constant (e.g. a `&str`'s `{ptr, len}` slice)
+            // has no such backing memory of its own — materialize it into
+            // this function's reserved scratch slot, then pass that slot's
+            // address like any other large-aggregate argument.
+            if let AsmValue::Constant(
+                constant @ (AsmConstant::Struct(_, _) | AsmConstant::Array(_, _)),
+            ) = arg
+            {
+                if is_large_aggregate(&arg_ty, &layout.data_layout) {
+                    let scratch_off = layout.const_agg_scratch_offset.ok_or_else(|| {
+                        Error::from("missing scratch slot for constant aggregate argument")
+                    })?;
+                    // X17 (not X16/X9/X10) because `store_constant_aggregate_to_reg`
+                    // uses those internally as scratch while materializing each
+                    // field — passing one of them as `base` would alias and
+                    // clobber the address mid-store (see its other call sites,
+                    // which all pass X17 for the same reason).
+                    emit_mov_reg(asm, Reg::X17, Reg::X31);
+                    add_immediate_offset(asm, Reg::X17, scratch_off as i64);
+                    store_constant_aggregate_to_reg(
+                        asm,
+                        &layout.data_layout,
+                        Reg::X17,
+                        constant,
+                        &arg_ty,
+                        rodata,
+                        rodata_pool,
+                    )?;
+                    push_int_arg(
+                        asm,
+                        layout,
+                        Reg::X17,
+                        &mut int_idx,
+                        &mut stack_idx,
+                        &arg_regs,
+                    )?;
+                    if abi_debug_enabled() {
+                        abi_log(&format!("  arg {:?} -> scratch+{}", arg_ty, scratch_off));
+                    }
+                    continue;
+                }
             }
             if is_float_type(&arg_ty) {
                 if float_idx < float_regs.len() {

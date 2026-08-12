@@ -807,6 +807,44 @@ fn parse_string(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
                 .with_span(token_span_to_span(&token)));
         }
     }
+    // `b"..."`/`c"..."` — real byte-string / C-string literals, typed as
+    // `&[u8; N]`/`&std::ffi::CStr` respectively (matching rustc; see
+    // `decode_bytes_literal`'s doc comment for what it does and doesn't
+    // decode). NUL-termination for `c"..."` is left to the existing
+    // runtime FFI marshaling (`fp-native/src/ffi.rs`), which already
+    // NUL-terminates any `&CStr`-typed argument at the call site — the
+    // literal itself carries only its content bytes.
+    if token.lexeme.starts_with('b') || token.lexeme.starts_with('c') {
+        let is_cstr = token.lexeme.starts_with('c');
+        let bytes =
+            decode_bytes_literal(&token.lexeme).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        let ty = if is_cstr {
+            Ty::Reference(TypeReference {
+                ty: Box::new(Ty::path(Path::plain(vec![
+                    Ident::new("std"),
+                    Ident::new("ffi"),
+                    Ident::new("CStr"),
+                ]))),
+                mutability: None,
+                lifetime: None,
+            })
+        } else {
+            Ty::Reference(TypeReference {
+                ty: Box::new(Ty::Array(
+                    TypeArray {
+                        elem: Box::new(Ty::Primitive(TypePrimitive::Int(TypeInt::U8))),
+                        len: Box::new(Expr::value(Value::int(bytes.len() as i64))),
+                    }
+                    .into(),
+                )),
+                mutability: None,
+                lifetime: None,
+            })
+        };
+        return Ok(Expr::value(Value::Bytes(ValueBytes::from(bytes.as_slice())))
+            .with_ty_slot(Some(ty))
+            .with_span(token_span_to_span(&token)));
+    }
     let value =
         decode_string_literal(&token.lexeme).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
     let ty = Ty::Reference(TypeReference {

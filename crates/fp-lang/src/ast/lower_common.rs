@@ -127,6 +127,20 @@ pub(crate) fn decode_string_literal(raw: &str) -> Option<String> {
                 '0' => out.push('\0'),
                 '\\' => out.push('\\'),
                 '"' => out.push('"'),
+                // `\xHH` in a `&str`/`char` literal — like real Rust, only
+                // ASCII (<=0x7F) is a valid single-byte-equals-one-char
+                // escape here; a byte-string literal's escape (which can
+                // use the full 0x00-0xFF range) is decoded separately by
+                // `decode_bytes_literal` below.
+                'x' => {
+                    let hi = chars.next()?.to_digit(16)?;
+                    let lo = chars.next()?.to_digit(16)?;
+                    let byte = (hi * 16 + lo) as u8;
+                    if byte > 0x7F {
+                        return None;
+                    }
+                    out.push(byte as char);
+                }
                 other => {
                     out.push('\\');
                     out.push(other);
@@ -178,6 +192,54 @@ pub(crate) fn decode_string_literal(raw: &str) -> Option<String> {
     let inner = &after_quote[..end_idx];
     let _ = prefix;
     Some(inner.to_string())
+}
+
+/// Decodes a `b"..."`/`c"..."` literal's raw lexeme into its byte content
+/// (not a `String` — unlike `decode_string_literal`, the full 0x00-0xFF
+/// range is valid here, which isn't always valid UTF-8). Does not append
+/// `c"..."`'s implicit trailing NUL; callers needing it add it themselves.
+pub(crate) fn decode_bytes_literal(raw: &str) -> Option<Vec<u8>> {
+    fn unescape_bytes(s: &str) -> Option<Vec<u8>> {
+        let mut out = Vec::with_capacity(s.len());
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
+            if c != '\\' {
+                let mut buf = [0u8; 4];
+                out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+                continue;
+            }
+            let esc = chars.next()?;
+            match esc {
+                'n' => out.push(b'\n'),
+                'r' => out.push(b'\r'),
+                't' => out.push(b'\t'),
+                '0' => out.push(0),
+                '\\' => out.push(b'\\'),
+                '"' => out.push(b'"'),
+                '\'' => out.push(b'\''),
+                'x' => {
+                    let hi = chars.next()?.to_digit(16)?;
+                    let lo = chars.next()?.to_digit(16)?;
+                    out.push((hi * 16 + lo) as u8);
+                }
+                other => {
+                    out.push(b'\\');
+                    let mut buf = [0u8; 4];
+                    out.extend_from_slice(other.encode_utf8(&mut buf).as_bytes());
+                }
+            }
+        }
+        Some(out)
+    }
+
+    let rest = raw.strip_prefix('b').or_else(|| raw.strip_prefix('c'))?;
+    if rest.starts_with('\'') && rest.ends_with('\'') && rest.len() >= 2 {
+        return unescape_bytes(&rest[1..rest.len() - 1]);
+    }
+    if rest.starts_with('"') && rest.ends_with('"') && rest.len() >= 2 {
+        return unescape_bytes(&rest[1..rest.len() - 1]);
+    }
+    None
 }
 
 pub(crate) fn macro_token_trees_to_lexemes(tokens: &[MacroTokenTree]) -> Vec<Lexeme> {

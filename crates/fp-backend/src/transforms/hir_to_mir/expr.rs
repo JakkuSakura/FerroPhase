@@ -6742,6 +6742,13 @@ impl MirLowering {
             hir::Lit::Str(value) => mir::ConstValue::Str(value.clone()),
             hir::Lit::Char(value) => mir::ConstValue::Int(*value as i64),
             hir::Lit::Null => mir::ConstValue::Null,
+            // MIR constants have no raw-byte-buffer representation yet
+            // (only UTF-8 `Str`) — every current use of `b"..."`/`c"..."`
+            // in this codebase is plain ASCII, so this is lossy only for
+            // non-UTF-8 byte content, which nothing currently needs.
+            hir::Lit::Bytes(bytes) | hir::Lit::CStr(bytes) => {
+                mir::ConstValue::Str(String::from_utf8_lossy(bytes).into_owned())
+            }
         }
     }
 
@@ -7082,6 +7089,9 @@ impl MirLowering {
             hir::Lit::Str(value) => mir::ConstantKind::Str(value.clone()),
             hir::Lit::Char(value) => mir::ConstantKind::Int(*value as i64),
             hir::Lit::Null => mir::ConstantKind::Null,
+            hir::Lit::Bytes(bytes) | hir::Lit::CStr(bytes) => {
+                mir::ConstantKind::Str(String::from_utf8_lossy(bytes).into_owned())
+            }
         }
     }
 
@@ -7252,10 +7262,16 @@ impl MirLowering {
 
     fn display_type_name(&self, ty: &Ty) -> Option<String> {
         match &ty.kind {
+            // `AdtDef`s built for a *struct* (e.g. `path_ty` in
+            // `fp-typing/src/hir_typeck.rs`) always carry an empty
+            // `variants` list — only enums populate it — so a struct name
+            // (like "Vec"/"HashMap", needed by `is_list_container`/
+            // `is_map_container`) has to come from `struct_defs` instead.
             TyKind::Adt(adt, _) => adt
                 .variants
                 .first()
-                .map(|variant| variant.ident.as_str().to_string()),
+                .map(|variant| variant.ident.as_str().to_string())
+                .or_else(|| self.struct_defs.get(&adt.did).map(|def| def.name.clone())),
             TyKind::Ref(_, inner, _) => self.display_type_name(inner),
             TyKind::RawPtr(type_and_mut) => self.display_type_name(&type_and_mut.ty),
             _ => None,
@@ -8492,6 +8508,16 @@ impl<'a> BodyBuilder<'a> {
         match &ty.kind {
             TyKind::Ref(_, inner, _) => self.struct_def_from_ty(inner.as_ref()),
             TyKind::RawPtr(type_and_mut) => self.struct_def_from_ty(type_and_mut.ty.as_ref()),
+            // `path_ty` (`fp-typing/src/hir_typeck.rs`) builds a struct's
+            // `AdtDef` with an empty `variants` list (only enums populate
+            // it), so an unannotated local bound to a function-call result
+            // carries that empty-variants `Adt` straight through — check
+            // `struct_defs` (keyed by the real `DefId`) directly first,
+            // rather than only via the name-based fallback below, which
+            // needs `display_type_name` to already know the name.
+            TyKind::Adt(adt, _) if self.lowering.struct_defs.contains_key(&adt.did) => {
+                Some(adt.did)
+            }
             _ => self
                 .lowering
                 .struct_layouts_by_ty
@@ -8686,6 +8712,37 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
+    /// When the current function body is a specific generic
+    /// specialization (`self.type_substs` non-empty, e.g. lowering
+    /// `unwrap_or::<i64>`'s body), prefer computing this variant's payload
+    /// types fresh from that specialization's own substitution map over
+    /// anything a `layout`/`enum_layouts` lookup might return. Those
+    /// lookups key on the scrutinee's *type shape* (see
+    /// `enum_layout_ty_matches`'s wildcard `TyKind::Infer` matching), which
+    /// can accidentally match a stale, differently- or not-yet-substituted
+    /// layout cached from an earlier, generic (unspecialized) pass over
+    /// the same enum+variant — `type_substs`, in contrast, is always the
+    /// authoritative substitution for *this* specific specialization.
+    /// Returns `None` when `type_substs` is empty or doesn't cover this
+    /// variant's enum (e.g. a genuinely non-generic enum, or a generic one
+    /// matched outside any specialized method body), letting the caller
+    /// fall back to the layout-based derivation as before.
+    fn payload_types_from_type_substs(&mut self, variant: &EnumVariantInfo, span: Span) -> Option<Vec<Ty>> {
+        if self.type_substs.is_empty() {
+            return None;
+        }
+        let generics = self.lowering.enum_defs.get(&variant.enum_def)?.generics.clone();
+        if generics.is_empty() {
+            return None;
+        }
+        let mut args = Vec::with_capacity(generics.len());
+        for name in &generics {
+            args.push(self.type_substs.get(name)?.clone());
+        }
+        self.lowering
+            .enum_variant_payloads_for_args(variant, &args, span)
+    }
+
     fn variant_payloads_from_layout_or_ty(
         &mut self,
         layout: &EnumLayout,
@@ -8693,6 +8750,9 @@ impl<'a> BodyBuilder<'a> {
         scrutinee_ty: &Ty,
         span: Span,
     ) -> Vec<Ty> {
+        if let Some(payloads) = self.payload_types_from_type_substs(variant, span) {
+            return payloads;
+        }
         if let Some(payloads) = layout.variant_payloads.get(&variant.def_id) {
             return payloads.clone();
         }
@@ -10258,6 +10318,65 @@ impl<'a> BodyBuilder<'a> {
                         }
                         return;
                     }
+                }
+                _ => {}
+            }
+        } else if let TyKind::Tuple(fields) = &scrutinee_ty.kind {
+            // A generic enum's payload is sometimes represented, by this
+            // point, as a plain `(discriminant, ...payload)` tuple rather
+            // than a `TyKind::Adt` the layout lookup above can recognize
+            // (e.g. inside a monomorphized generic method body, where the
+            // scrutinee's registered local type is already the flattened
+            // tuple form) — `enum_layout_for_variant_ty`/`enum_layout_for_ty`
+            // only match `Ref`/`RawPtr`/`Adt`/`Opaque`, so `layout` above is
+            // `None` even though the pattern genuinely is an enum-variant
+            // destructure. Falling through to the generic tuple-pattern
+            // case below would incorrectly bind each part to the *whole*
+            // enum value/type instead of projecting into its payload
+            // field — extract payload types directly from the tuple shape
+            // instead (field 0 is always the discriminant; this mirrors
+            // `variant_payloads_from_layout_or_ty`'s own `TyKind::Tuple`
+            // fallback for exactly this situation).
+            match &pat.kind {
+                hir::PatKind::TupleStruct(path, parts)
+                    if self.enum_variant_info_from_path(path).is_some() =>
+                {
+                    let variant = self.enum_variant_info_from_path(path).expect("checked above");
+                    let substituted_payloads = self.payload_types_from_type_substs(&variant, span);
+                    for (idx, part) in parts.iter().enumerate() {
+                        let field_idx = idx + 1;
+                        let field_ty = match substituted_payloads.as_ref() {
+                            Some(payloads) if idx < payloads.len() => payloads[idx].clone(),
+                            _ if field_idx < fields.len() => (*fields[field_idx]).clone(),
+                            _ => break,
+                        };
+                        let mut field_place = scrutinee_place.clone();
+                        field_place
+                            .projection
+                            .push(mir::PlaceElem::Field(field_idx, field_ty.clone()));
+                        self.bind_match_pattern(part, &field_place, &field_ty, span);
+                    }
+                    return;
+                }
+                hir::PatKind::Struct(path, pat_fields, _)
+                    if self.enum_variant_info_from_path(path).is_some() =>
+                {
+                    let variant = self.enum_variant_info_from_path(path).expect("checked above");
+                    let substituted_payloads = self.payload_types_from_type_substs(&variant, span);
+                    for (idx, field) in pat_fields.iter().enumerate() {
+                        let field_idx = idx + 1;
+                        let field_ty = match substituted_payloads.as_ref() {
+                            Some(payloads) if idx < payloads.len() => payloads[idx].clone(),
+                            _ if field_idx < fields.len() => (*fields[field_idx]).clone(),
+                            _ => break,
+                        };
+                        let mut field_place = scrutinee_place.clone();
+                        field_place
+                            .projection
+                            .push(mir::PlaceElem::Field(field_idx, field_ty.clone()));
+                        self.bind_match_pattern(&field.pat, &field_place, &field_ty, span);
+                    }
+                    return;
                 }
                 _ => {}
             }
@@ -12120,6 +12239,40 @@ impl<'a> BodyBuilder<'a> {
         let arg_values = call_arg_values(args);
         if let hir::ExprKind::Path(path) = &callee.kind {
             let segments = &path.segments;
+            if segments.len() >= 2
+                && matches!(segments[segments.len() - 2].name.as_str(), "Vec" | "List")
+                && segments[segments.len() - 1].name.as_str() == "from"
+            {
+                // `vec![...]` desugars to `Vec::from([...])`
+                // (`fp-lang/src/normalization.rs`) — `Vec`/`List` have no
+                // real backing `from` function (see
+                // `collection_constructor_signature` in
+                // `fp-typing/src/hir_typeck.rs`, which keeps hir_typeck
+                // happy about this same call). Unwrap the call back down to
+                // its array-literal argument and lower that directly into
+                // the destination place, reusing the array-literal
+                // `ContainerKind::List` handling in
+                // `lower_expr_into_place` (the same path a bare `let x:
+                // Vec<T> = [1, 2, 3];` without the `Vec::from` wrapper
+                // already goes through) rather than duplicating it here.
+                if let Some((place, expected_ty)) = destination {
+                    if arg_values.len() != 1 {
+                        self.lowering
+                            .emit_error(expr.span, "Vec::from expects a single array argument");
+                        return Ok(Some(PlaceInfo {
+                            place,
+                            ty: expected_ty,
+                            struct_def: None,
+                        }));
+                    }
+                    self.lower_expr_into_place(arg_values[0], place.clone(), &expected_ty)?;
+                    return Ok(Some(PlaceInfo {
+                        place,
+                        ty: expected_ty,
+                        struct_def: None,
+                    }));
+                }
+            }
             if segments.len() >= 2
                 && segments[segments.len() - 2].name.as_str() == "HashMap"
                 && segments[segments.len() - 1].name.as_str() == "from"
@@ -15675,6 +15828,42 @@ impl<'a> BodyBuilder<'a> {
                     }),
                 });
                 (mir::ConstantKind::Null, ty)
+            }
+            // `expected` should always be populated in practice (a
+            // `b"..."`/`c"..."` literal only ever appears where a
+            // `&[u8; N]`/`&CStr`-typed context already exists), matching
+            // what HIR-typeck already resolved (`literal_ty` in
+            // `fp-typing/src/hir_typeck.rs`) — the fallback here is a
+            // best-effort default for the rare case it isn't.
+            hir::Lit::Bytes(bytes) => {
+                let ty = expected.cloned().unwrap_or_else(|| Ty {
+                    kind: TyKind::Ref(
+                        mir::ty::Region::ReErased,
+                        Box::new(Ty {
+                            kind: TyKind::Array(
+                                Box::new(Ty {
+                                    kind: TyKind::Uint(UintTy::U8),
+                                }),
+                                ConstKind::Value(ConstValue::Scalar(Scalar::Int(ScalarInt {
+                                    data: bytes.len() as u128,
+                                    size: 8,
+                                }))),
+                            ),
+                        }),
+                        Mutability::Not,
+                    ),
+                });
+                (
+                    mir::ConstantKind::Str(String::from_utf8_lossy(bytes).into_owned()),
+                    ty,
+                )
+            }
+            hir::Lit::CStr(bytes) => {
+                let ty = expected.cloned().unwrap_or_else(|| self.lowering.string_slice_ty());
+                (
+                    mir::ConstantKind::Str(String::from_utf8_lossy(bytes).into_owned()),
+                    ty,
+                )
             }
         }
     }

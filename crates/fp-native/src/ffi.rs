@@ -210,6 +210,16 @@ fn push_arg_value(
                 cstrings.push(cstr);
                 args.push(FfiValue::Ptr(ptr));
             }
+            // A `c"..."` literal (`ast/expr.rs::parse_string`) evaluates
+            // to a `Value::Bytes` in the interpreter, same as a plain
+            // string does today — reuse the identical `CString::new` path.
+            Value::Bytes(b) => {
+                let cstr = CString::new(b.value.to_vec())
+                    .map_err(|e| Error::from(format!("string contains interior NUL: {e}")))?;
+                let ptr = cstr.as_ptr() as *mut c_void;
+                cstrings.push(cstr);
+                args.push(FfiValue::Ptr(ptr));
+            }
             Value::Pointer(ptr) => args.push(FfiValue::Ptr(ptr.value as *mut c_void)),
             Value::Null(_) => args.push(FfiValue::Ptr(std::ptr::null_mut())),
             _ => return Err(Error::from("expected CStr argument")),

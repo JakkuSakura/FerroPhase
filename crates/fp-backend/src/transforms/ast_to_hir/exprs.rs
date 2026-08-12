@@ -23,6 +23,29 @@ impl HirGenerator {
         std::str::from_utf8(trimmed).ok().map(str::to_string)
     }
 
+    /// Lowers an AST `Value::Bytes` expression, produced either by a real
+    /// `b"..."`/`c"..."` literal (`ast/expr.rs::parse_string`, which
+    /// attaches a `&[u8; N]`/`&std::ffi::CStr` `ty_slot` to disambiguate
+    /// the two) or by some other, older producer of a bare `Value::Bytes`
+    /// with no such type hint (the Python frontend, `fp-interpret`'s
+    /// raw-memory intrinsics) — preserved via the same UTF-8-plus-
+    /// trailing-NUL fallback this used to always take.
+    fn transform_bytes_value_to_hir(bytes: &ast::ValueBytes, ty: Option<&ast::Ty>) -> hir::ExprKind {
+        let raw: Vec<u8> = bytes.value.as_ref().to_vec();
+        if let Some(ast::Ty::Reference(reference)) = ty {
+            return if matches!(reference.ty.as_ref(), ast::Ty::Array(_)) {
+                hir::ExprKind::Literal(hir::Lit::Bytes(raw))
+            } else {
+                hir::ExprKind::Literal(hir::Lit::CStr(raw))
+            };
+        }
+        if let Some(text) = Self::borrowed_string_from_bytes(bytes) {
+            hir::ExprKind::Literal(hir::Lit::Str(text))
+        } else {
+            hir::ExprKind::Literal(hir::Lit::Bytes(raw))
+        }
+    }
+
     /// Transform an AST expression to HIR expression
     pub(super) fn transform_expr_to_hir(&mut self, ast_expr: &ast::Expr) -> Result<hir::Expr> {
         let Some(normalizer) = self.intrinsic_normalizer.as_ref() else {
@@ -73,7 +96,12 @@ impl HirGenerator {
         }
 
         let kind = match ast_expr.kind() {
-            ExprKind::Value(value) => self.transform_value_to_hir(value)?,
+            ExprKind::Value(value) => match value.as_ref() {
+                ast::Value::Bytes(bytes) => {
+                    Self::transform_bytes_value_to_hir(bytes, ast_expr.ty())
+                }
+                _ => self.transform_value_to_hir(value)?,
+            },
             ExprKind::Id(expr_id) => {
                 return Err(fp_core::error::Error::from(format!(
                     "unresolved expression id {expr_id} during AST→HIR lowering"
@@ -1421,7 +1449,14 @@ impl HirGenerator {
                 span: Span::new(self.current_file, 0, 0),
             }
         } else {
-            hir::Expr {
+            // `IntrinsicKind::Len` returns `u64`, but the synthesized loop
+            // index (`idx_expr`, initialized from an untyped integer
+            // literal) defaults to `i64` — and needs to stay `i64` since
+            // it's also used to index `base_expr` below, which requires an
+            // `i64` index. Cast the length to `i64` here rather than
+            // changing the index's type, to avoid the mismatch without
+            // disturbing indexing.
+            let len_call = hir::Expr {
                 hir_id: self.next_id(),
                 kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
                     kind: IntrinsicKind::Len,
@@ -1430,6 +1465,14 @@ impl HirGenerator {
                         value: base_expr.clone(),
                     }],
                 }),
+                span: Span::new(self.current_file, 0, 0),
+            };
+            hir::Expr {
+                hir_id: self.next_id(),
+                kind: hir::ExprKind::Cast(
+                    Box::new(len_call),
+                    Box::new(self.primitive_type_to_hir(ast::TypePrimitive::Int(ast::TypeInt::I64))),
+                ),
                 span: Span::new(self.current_file, 0, 0),
             }
         };
@@ -1577,7 +1620,10 @@ impl HirGenerator {
                 span: Span::new(self.current_file, 0, 0),
             }
         } else {
-            hir::Expr {
+            // See the matching comment in `lower_enumerate_for_loop`:
+            // `Len` returns `u64`, but the loop index defaults to (and
+            // must stay) `i64` to satisfy indexing, so cast here instead.
+            let len_call = hir::Expr {
                 hir_id: self.next_id(),
                 kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
                     kind: IntrinsicKind::Len,
@@ -1586,6 +1632,14 @@ impl HirGenerator {
                         value: base_expr.clone(),
                     }],
                 }),
+                span: Span::new(self.current_file, 0, 0),
+            };
+            hir::Expr {
+                hir_id: self.next_id(),
+                kind: hir::ExprKind::Cast(
+                    Box::new(len_call),
+                    Box::new(self.primitive_type_to_hir(ast::TypePrimitive::Int(ast::TypeInt::I64))),
+                ),
                 span: Span::new(self.current_file, 0, 0),
             }
         };
@@ -1652,7 +1706,10 @@ impl HirGenerator {
             span: Span::new(self.current_file, 0, 0),
         };
 
-        let len_expr = hir::Expr {
+        // See the matching comment in `lower_enumerate_for_loop`: `Len`
+        // returns `u64`, but the loop index defaults to (and must stay)
+        // `i64` to satisfy indexing, so cast here instead.
+        let len_call = hir::Expr {
             hir_id: self.next_id(),
             kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
                 kind: IntrinsicKind::Len,
@@ -1661,6 +1718,14 @@ impl HirGenerator {
                     value: base_expr.clone(),
                 }],
             }),
+            span: Span::new(self.current_file, 0, 0),
+        };
+        let len_expr = hir::Expr {
+            hir_id: self.next_id(),
+            kind: hir::ExprKind::Cast(
+                Box::new(len_call),
+                Box::new(self.primitive_type_to_hir(ast::TypePrimitive::Int(ast::TypeInt::I64))),
+            ),
             span: Span::new(self.current_file, 0, 0),
         };
 

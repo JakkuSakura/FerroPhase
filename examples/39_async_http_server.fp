@@ -18,7 +18,7 @@ const SOL_SOCKET: i32 = 1;
 const SO_REUSEADDR: i32 = 2;
 const SOCKADDR_LEN: u32 = 16;
 const RESPONSE: &std::ffi::CStr =
-    "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nOK\n";
+    c"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nOK\n";
 
 #[cfg(target_os = "linux")]
 fn make_addr(port_hi: u8, port_lo: u8) -> [u8; 16] {

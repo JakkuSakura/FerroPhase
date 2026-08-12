@@ -10,7 +10,7 @@ fn examples__13_loops__factorial
     alloca Virtual { id: 0, bank: General, size_bits: 64 }, 1
     alloca Virtual { id: 1, bank: General, size_bits: 64 }, 1
     alloca Virtual { id: 2, bank: General, size_bits: 64 }, 1
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 1, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 1
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 2, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 1
     store mem(AsmMemoryOperand { base: Some(Virtual { id: 0, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 1
     br
   bb1 bb1
@@ -22,31 +22,31 @@ fn examples__13_loops__factorial
     eq Virtual { id: 10, bank: General, size_bits: 8 }, Virtual { id: 9, bank: General, size_bits: 8 }, 1
     condbr
   bb2 bb2
-    load Virtual { id: 11, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 1, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 11, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 2, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     load Virtual { id: 12, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 0, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     mul Virtual { id: 13, bank: General, size_bits: 64 }, Virtual { id: 11, bank: General, size_bits: 64 }, Virtual { id: 12, bank: General, size_bits: 64 }
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 1, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 13, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 2, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 13, bank: General, size_bits: 64 }
     load Virtual { id: 15, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 0, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     add Virtual { id: 16, bank: General, size_bits: 64 }, Virtual { id: 15, bank: General, size_bits: 64 }, 1
     store mem(AsmMemoryOperand { base: Some(Virtual { id: 0, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 16, bank: General, size_bits: 64 }
     br
   bb3 bb3
-    load Virtual { id: 18, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 1, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 2, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 18, bank: General, size_bits: 64 }
-    load Virtual { id: 20, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 2, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 18, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 2, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 1, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 18, bank: General, size_bits: 64 }
+    load Virtual { id: 20, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 1, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     ret
 fn examples__13_loops__find_first_divisor
   bb0 bb0
     alloca Virtual { id: 21, bank: General, size_bits: 64 }, 1
     alloca Virtual { id: 22, bank: General, size_bits: 64 }, 1
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 21, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 2
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 22, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 2
     br
   bb1 bb1
     br
   bb2 bb2
     alloca Virtual { id: 24, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 25, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 21, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    load Virtual { id: 26, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 21, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 25, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 22, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 26, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 22, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     mul Virtual { id: 27, bank: General, size_bits: 64 }, Virtual { id: 25, bank: General, size_bits: 64 }, Virtual { id: 26, bank: General, size_bits: 64 }
     store mem(AsmMemoryOperand { base: Some(Virtual { id: 24, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 27, bank: General, size_bits: 64 }
     alloca Virtual { id: 29, bank: General, size_bits: 64 }, 1
@@ -60,16 +60,16 @@ fn examples__13_loops__find_first_divisor
     alloca Virtual { id: 35, bank: General, size_bits: 64 }, 1
     store mem(AsmMemoryOperand { base: Some(Virtual { id: 35, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), symbol(local.1)
     load Virtual { id: 37, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 35, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 22, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 37, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 21, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 37, bank: General, size_bits: 64 }
     br
   bb5 bb5
     br
   bb3 bb3
-    load Virtual { id: 39, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 22, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 39, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 21, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     ret
   bb6 bb6
     alloca Virtual { id: 40, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 41, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 21, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 41, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 22, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     rem Virtual { id: 42, bank: General, size_bits: 64 }, symbol(local.1), Virtual { id: 41, bank: General, size_bits: 64 }
     store mem(AsmMemoryOperand { base: Some(Virtual { id: 40, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 42, bank: General, size_bits: 64 }
     alloca Virtual { id: 44, bank: General, size_bits: 64 }, 1
@@ -81,23 +81,23 @@ fn examples__13_loops__find_first_divisor
     condbr
   bb8 bb8
     alloca Virtual { id: 50, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 51, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 21, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 51, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 22, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     store mem(AsmMemoryOperand { base: Some(Virtual { id: 50, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 51, bank: General, size_bits: 64 }
     load Virtual { id: 53, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 50, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 22, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 53, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 21, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 53, bank: General, size_bits: 64 }
     br
   bb9 bb9
     br
   bb10 bb10
-    load Virtual { id: 55, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 21, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 55, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 22, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     add Virtual { id: 56, bank: General, size_bits: 64 }, Virtual { id: 55, bank: General, size_bits: 64 }, 1
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 21, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 56, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 22, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 56, bank: General, size_bits: 64 }
     br
   bb7 bb7
-    load Virtual { id: 58, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 22, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 58, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 21, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     ret
   bb11 bb11
-    load Virtual { id: 59, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 22, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 59, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 21, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     ret
 fn examples__13_loops__sum_even_numbers
   bb0 bb0
@@ -173,51 +173,51 @@ fn main
   bb2 bb2
     intrinsic.call symbol(intrinsic.println), Virtual { id: 108, bank: General, size_bits: 64 }
     intrinsic.call symbol(intrinsic.println)
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 95, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 0
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 93, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 1
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 97, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 0
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 92, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 1
     br
   bb3 bb3
     alloca Virtual { id: 113, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 114, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 93, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 114, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 92, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     lt Virtual { id: 115, bank: General, size_bits: 8 }, Virtual { id: 114, bank: General, size_bits: 64 }, 10
     store mem(AsmMemoryOperand { base: Some(Virtual { id: 113, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 115, bank: General, size_bits: 8 }
     load Virtual { id: 117, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 113, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
     eq Virtual { id: 118, bank: General, size_bits: 8 }, Virtual { id: 117, bank: General, size_bits: 8 }, 1
     condbr
   bb4 bb4
-    load Virtual { id: 119, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 95, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    load Virtual { id: 120, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 93, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 119, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 97, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 120, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 92, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     add Virtual { id: 121, bank: General, size_bits: 64 }, Virtual { id: 119, bank: General, size_bits: 64 }, Virtual { id: 120, bank: General, size_bits: 64 }
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 95, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 121, bank: General, size_bits: 64 }
-    load Virtual { id: 123, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 93, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 97, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 121, bank: General, size_bits: 64 }
+    load Virtual { id: 123, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 92, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     add Virtual { id: 124, bank: General, size_bits: 64 }, Virtual { id: 123, bank: General, size_bits: 64 }, 1
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 93, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 124, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 92, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 124, bank: General, size_bits: 64 }
     br
   bb5 bb5
-    load Virtual { id: 126, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 95, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 126, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 97, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     intrinsic.call symbol(intrinsic.println), Virtual { id: 126, bank: General, size_bits: 64 }
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 94, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 0
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 98, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 5
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 93, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 0
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 95, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 5
     br
   bb6 bb6
     alloca Virtual { id: 130, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 131, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 98, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 131, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 95, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     lt Virtual { id: 132, bank: General, size_bits: 8 }, Virtual { id: 131, bank: General, size_bits: 64 }, 15
     store mem(AsmMemoryOperand { base: Some(Virtual { id: 130, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 132, bank: General, size_bits: 8 }
     load Virtual { id: 134, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 130, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
     eq Virtual { id: 135, bank: General, size_bits: 8 }, Virtual { id: 134, bank: General, size_bits: 8 }, 1
     condbr
   bb7 bb7
-    load Virtual { id: 136, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 94, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    load Virtual { id: 137, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 98, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 136, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 93, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 137, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 95, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     add Virtual { id: 138, bank: General, size_bits: 64 }, Virtual { id: 136, bank: General, size_bits: 64 }, Virtual { id: 137, bank: General, size_bits: 64 }
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 94, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 138, bank: General, size_bits: 64 }
-    load Virtual { id: 140, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 98, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 93, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 138, bank: General, size_bits: 64 }
+    load Virtual { id: 140, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 95, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     add Virtual { id: 141, bank: General, size_bits: 64 }, Virtual { id: 140, bank: General, size_bits: 64 }, 1
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 98, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 141, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 95, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 141, bank: General, size_bits: 64 }
     br
   bb8 bb8
-    load Virtual { id: 143, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 94, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 143, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 93, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     intrinsic.call symbol(intrinsic.println), Virtual { id: 143, bank: General, size_bits: 64 }
     intrinsic.call symbol(intrinsic.println)
     call symbol(examples__13_loops__find_first_divisor)(24) cc=C tail=false
@@ -234,22 +234,22 @@ fn main
   bb11 bb11
     intrinsic.call symbol(intrinsic.println), Virtual { id: 151, bank: General, size_bits: 64 }
     intrinsic.call symbol(intrinsic.println)
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 96, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 0
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 92, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 1
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 94, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 0
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 98, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 1
     br
   bb12 bb12
     alloca Virtual { id: 156, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 157, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 92, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 157, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 98, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     lt Virtual { id: 158, bank: General, size_bits: 8 }, Virtual { id: 157, bank: General, size_bits: 64 }, 4
     store mem(AsmMemoryOperand { base: Some(Virtual { id: 156, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 158, bank: General, size_bits: 8 }
     load Virtual { id: 160, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 156, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
     eq Virtual { id: 161, bank: General, size_bits: 8 }, Virtual { id: 160, bank: General, size_bits: 8 }, 1
     condbr
   bb13 bb13
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 97, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 1
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 96, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 1
     br
   bb14 bb14
-    load Virtual { id: 163, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 96, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 163, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 94, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     intrinsic.call symbol(intrinsic.println), Virtual { id: 163, bank: General, size_bits: 64 }
     intrinsic.call symbol(intrinsic.println)
     intrinsic.call symbol(intrinsic.println), 120
@@ -257,39 +257,39 @@ fn main
     ret
   bb15 bb15
     alloca Virtual { id: 168, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 169, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 97, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 169, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 96, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     lt Virtual { id: 170, bank: General, size_bits: 8 }, Virtual { id: 169, bank: General, size_bits: 64 }, 4
     store mem(AsmMemoryOperand { base: Some(Virtual { id: 168, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 170, bank: General, size_bits: 8 }
     load Virtual { id: 172, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 168, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
     eq Virtual { id: 173, bank: General, size_bits: 8 }, Virtual { id: 172, bank: General, size_bits: 8 }, 1
     condbr
   bb16 bb16
-    load Virtual { id: 174, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 96, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 174, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 94, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     add Virtual { id: 175, bank: General, size_bits: 64 }, Virtual { id: 174, bank: General, size_bits: 64 }, 1
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 96, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 175, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 94, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 175, bank: General, size_bits: 64 }
     alloca Virtual { id: 177, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 178, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 92, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    load Virtual { id: 179, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 97, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 178, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 98, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 179, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 96, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     eq Virtual { id: 180, bank: General, size_bits: 8 }, Virtual { id: 178, bank: General, size_bits: 64 }, Virtual { id: 179, bank: General, size_bits: 64 }
     store mem(AsmMemoryOperand { base: Some(Virtual { id: 177, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 180, bank: General, size_bits: 8 }
     load Virtual { id: 182, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 177, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
     eq Virtual { id: 183, bank: General, size_bits: 8 }, Virtual { id: 182, bank: General, size_bits: 8 }, 1
     condbr
   bb17 bb17
-    load Virtual { id: 184, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 92, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 184, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 98, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     add Virtual { id: 185, bank: General, size_bits: 64 }, Virtual { id: 184, bank: General, size_bits: 64 }, 1
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 92, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 185, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 98, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 185, bank: General, size_bits: 64 }
     br
   bb18 bb18
-    load Virtual { id: 187, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 92, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 187, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 98, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     intrinsic.call symbol(intrinsic.print), Virtual { id: 187, bank: General, size_bits: 64 }
     br
   bb19 bb19
     br
   bb20 bb20
-    load Virtual { id: 189, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 97, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 189, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 96, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     add Virtual { id: 190, bank: General, size_bits: 64 }, Virtual { id: 189, bank: General, size_bits: 64 }, 1
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 97, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 190, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 96, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 190, bank: General, size_bits: 64 }
     br
 
 
@@ -351,7 +351,7 @@ Text relocations:
   00000000  ff 03 04 d1 fd 7b 0f a9  fd 03 00 91 e0 5b 00 f9 
   00000010  f0 03 00 91 10 42 03 91  f0 03 00 f9 f0 03 00 91 
   00000020  10 62 03 91 f0 07 00 f9  f0 03 00 91 10 82 03 91 
-  00000030  f0 0b 00 f9 f1 07 40 f9  30 00 80 d2 30 02 00 f9 
+  00000030  f0 0b 00 f9 f1 0b 40 f9  30 00 80 d2 30 02 00 f9 
   00000040  f1 03 40 f9 30 00 80 d2  30 02 00 f9 01 00 00 14 
   00000050  f0 03 00 91 10 a2 03 91  f0 17 00 f9 f0 03 40 f9 
   00000060  11 02 40 f9 f1 1b 00 f9  f0 1b 40 f9 f1 5b 40 f9 
@@ -359,21 +359,21 @@ Text relocations:
   00000080  f0 e3 40 39 30 02 00 39  f0 17 40 f9 11 02 40 39 
   00000090  f1 27 00 f9 f0 23 41 39  1f 06 00 f1 f0 17 9f 9a 
   000000a0  f0 2b 00 f9 f0 2b 40 f9  1f 02 00 f1 41 00 00 54 
-  000000b0  18 00 00 14 f0 07 40 f9  11 02 40 f9 f1 2f 00 f9 
+  000000b0  18 00 00 14 f0 0b 40 f9  11 02 40 f9 f1 2f 00 f9 
   000000c0  f0 03 40 f9 11 02 40 f9  f1 33 00 f9 f0 2f 40 f9 
-  000000d0  f1 33 40 f9 10 7e 11 9b  f0 37 00 f9 f1 07 40 f9 
+  000000d0  f1 33 40 f9 10 7e 11 9b  f0 37 00 f9 f1 0b 40 f9 
   000000e0  f0 37 40 f9 30 02 00 f9  f0 03 40 f9 11 02 40 f9 
   000000f0  f1 3f 00 f9 f0 3f 40 f9  10 06 00 91 f0 43 00 f9 
   00000100  f1 03 40 f9 f0 43 40 f9  30 02 00 f9 d1 ff ff 17 
-  00000110  f0 07 40 f9 11 02 40 f9  f1 4b 00 f9 f1 0b 40 f9 
-  00000120  f0 4b 40 f9 30 02 00 f9  f0 0b 40 f9 11 02 40 f9 
+  00000110  f0 0b 40 f9 11 02 40 f9  f1 4b 00 f9 f1 07 40 f9 
+  00000120  f0 4b 40 f9 30 02 00 f9  f0 07 40 f9 11 02 40 f9 
   00000130  f1 53 00 f9 e0 53 40 f9  bf 03 00 91 fd 7b 4f a9 
   00000140  ff 03 04 91 c0 03 5f d6  ff 43 07 d1 fd 7b 1c a9 
   00000150  fd 03 00 91 e0 a3 00 f9  f0 03 00 91 10 02 06 91 
   00000160  f0 03 00 f9 f0 03 00 91  10 22 06 91 f0 07 00 f9 
-  00000170  f1 03 40 f9 50 00 80 d2  30 02 00 f9 01 00 00 14 
+  00000170  f1 07 40 f9 50 00 80 d2  30 02 00 f9 01 00 00 14 
   00000180  01 00 00 14 f0 03 00 91  10 42 06 91 f0 0f 00 f9 
-  00000190  f0 03 40 f9 11 02 40 f9  f1 13 00 f9 f0 03 40 f9 
+  00000190  f0 07 40 f9 11 02 40 f9  f1 13 00 f9 f0 07 40 f9 
   000001a0  11 02 40 f9 f1 17 00 f9  f0 13 40 f9 f1 17 40 f9 
   000001b0  10 7e 11 9b f0 1b 00 f9  f1 0f 40 f9 f0 1b 40 f9 
   000001c0  30 02 00 f9 f0 03 00 91  10 62 06 91 f0 23 00 f9 
@@ -384,11 +384,11 @@ Text relocations:
   00000210  f0 17 9f 9a f0 37 00 f9  f0 37 40 f9 1f 02 00 f1 
   00000220  41 00 00 54 0e 00 00 14  f0 03 00 91 10 82 06 91 
   00000230  f0 3b 00 f9 f1 3b 40 f9  f0 a3 40 f9 30 02 00 f9 
-  00000240  f0 3b 40 f9 11 02 40 f9  f1 43 00 f9 f1 07 40 f9 
+  00000240  f0 3b 40 f9 11 02 40 f9  f1 43 00 f9 f1 03 40 f9 
   00000250  f0 43 40 f9 30 02 00 f9  02 00 00 14 09 00 00 14 
-  00000260  f0 07 40 f9 11 02 40 f9  f1 4b 00 f9 e0 4b 40 f9 
+  00000260  f0 03 40 f9 11 02 40 f9  f1 4b 00 f9 e0 4b 40 f9 
   00000270  bf 03 00 91 fd 7b 5c a9  ff 43 07 91 c0 03 5f d6 
-  00000280  f0 03 00 91 10 a2 06 91  f0 4f 00 f9 f0 03 40 f9 
+  00000280  f0 03 00 91 10 a2 06 91  f0 4f 00 f9 f0 07 40 f9 
   00000290  11 02 40 f9 f1 53 00 f9  f0 a3 40 f9 f1 53 40 f9 
   000002a0  09 0e d1 9a 30 c1 11 9b  f0 57 00 f9 f1 4f 40 f9 
   000002b0  f0 57 40 f9 30 02 00 f9  f0 03 00 91 10 c2 06 91 
@@ -398,15 +398,15 @@ Text relocations:
   000002f0  11 02 40 39 f1 6f 00 f9  f0 63 43 39 1f 06 00 f1 
   00000300  f0 17 9f 9a f0 73 00 f9  f0 73 40 f9 1f 02 00 f1 
   00000310  41 00 00 54 11 00 00 14  f0 03 00 91 10 e2 06 91 
-  00000320  f0 77 00 f9 f0 03 40 f9  11 02 40 f9 f1 7b 00 f9 
+  00000320  f0 77 00 f9 f0 07 40 f9  11 02 40 f9 f1 7b 00 f9 
   00000330  f1 77 40 f9 f0 7b 40 f9  30 02 00 f9 f0 77 40 f9 
-  00000340  11 02 40 f9 f1 83 00 f9  f1 07 40 f9 f0 83 40 f9 
-  00000350  30 02 00 f9 c3 ff ff 17  01 00 00 14 f0 03 40 f9 
+  00000340  11 02 40 f9 f1 83 00 f9  f1 03 40 f9 f0 83 40 f9 
+  00000350  30 02 00 f9 c3 ff ff 17  01 00 00 14 f0 07 40 f9 
   00000360  11 02 40 f9 f1 8b 00 f9  f0 8b 40 f9 10 06 00 91 
-  00000370  f0 8f 00 f9 f1 03 40 f9  f0 8f 40 f9 30 02 00 f9 
-  00000380  80 ff ff 17 f0 07 40 f9  11 02 40 f9 f1 97 00 f9 
+  00000370  f0 8f 00 f9 f1 07 40 f9  f0 8f 40 f9 30 02 00 f9 
+  00000380  80 ff ff 17 f0 03 40 f9  11 02 40 f9 f1 97 00 f9 
   00000390  e0 97 40 f9 bf 03 00 91  fd 7b 5c a9 ff 43 07 91 
-  000003a0  c0 03 5f d6 f0 07 40 f9  11 02 40 f9 f1 9b 00 f9 
+  000003a0  c0 03 5f d6 f0 03 40 f9  11 02 40 f9 f1 9b 00 f9 
   000003b0  e0 9b 40 f9 bf 03 00 91  fd 7b 5c a9 ff 43 07 91 
   000003c0  c0 03 5f d6 ff 03 06 d1  fd 7b 17 a9 fd 03 00 91 
   000003d0  e0 87 00 f9 f0 03 00 91  10 e2 04 91 f0 03 00 f9 
@@ -460,37 +460,37 @@ Text relocations:
   000006d0  e0 00 80 d2 4b fe ff 97  e0 4b 00 f9 01 00 00 14 
   000006e0  00 00 00 90 00 00 00 91  00 40 04 91 e1 4b 40 f9 
   000006f0  f0 4b 40 f9 f0 03 00 f9  00 00 00 94 00 00 00 90 
-  00000700  00 00 00 91 00 80 04 91  00 00 00 94 f1 17 40 f9 
-  00000710  10 00 80 d2 30 02 00 f9  f1 0f 40 f9 30 00 80 d2 
+  00000700  00 00 00 91 00 80 04 91  00 00 00 94 f1 1f 40 f9 
+  00000710  10 00 80 d2 30 02 00 f9  f1 0b 40 f9 30 00 80 d2 
   00000720  30 02 00 f9 01 00 00 14  f0 03 00 91 10 c2 12 91 
-  00000730  f0 5f 00 f9 f0 0f 40 f9  11 02 40 f9 f1 63 00 f9 
+  00000730  f0 5f 00 f9 f0 0b 40 f9  11 02 40 f9 f1 63 00 f9 
   00000740  f0 63 40 f9 1f 2a 00 f1  f0 a7 9f 9a f0 67 00 f9 
   00000750  f1 5f 40 f9 f0 23 43 39  30 02 00 39 f0 5f 40 f9 
   00000760  11 02 40 39 f1 6f 00 f9  f0 63 43 39 1f 06 00 f1 
   00000770  f0 17 9f 9a f0 73 00 f9  f0 73 40 f9 1f 02 00 f1 
-  00000780  41 00 00 54 18 00 00 14  f0 17 40 f9 11 02 40 f9 
-  00000790  f1 77 00 f9 f0 0f 40 f9  11 02 40 f9 f1 7b 00 f9 
+  00000780  41 00 00 54 18 00 00 14  f0 1f 40 f9 11 02 40 f9 
+  00000790  f1 77 00 f9 f0 0b 40 f9  11 02 40 f9 f1 7b 00 f9 
   000007a0  f0 77 40 f9 f1 7b 40 f9  10 02 11 8b f0 7f 00 f9 
-  000007b0  f1 17 40 f9 f0 7f 40 f9  30 02 00 f9 f0 0f 40 f9 
+  000007b0  f1 1f 40 f9 f0 7f 40 f9  30 02 00 f9 f0 0b 40 f9 
   000007c0  11 02 40 f9 f1 87 00 f9  f0 87 40 f9 10 06 00 91 
-  000007d0  f0 8b 00 f9 f1 0f 40 f9  f0 8b 40 f9 30 02 00 f9 
-  000007e0  d2 ff ff 17 f0 17 40 f9  11 02 40 f9 f1 93 00 f9 
+  000007d0  f0 8b 00 f9 f1 0b 40 f9  f0 8b 40 f9 30 02 00 f9 
+  000007e0  d2 ff ff 17 f0 1f 40 f9  11 02 40 f9 f1 93 00 f9 
   000007f0  00 00 00 90 00 00 00 91  00 00 05 91 e1 93 40 f9 
-  00000800  f0 93 40 f9 f0 03 00 f9  00 00 00 94 f1 13 40 f9 
-  00000810  10 00 80 d2 30 02 00 f9  f1 23 40 f9 b0 00 80 d2 
+  00000800  f0 93 40 f9 f0 03 00 f9  00 00 00 94 f1 0f 40 f9 
+  00000810  10 00 80 d2 30 02 00 f9  f1 17 40 f9 b0 00 80 d2 
   00000820  30 02 00 f9 01 00 00 14  f0 03 00 91 10 e2 12 91 
-  00000830  f0 a3 00 f9 f0 23 40 f9  11 02 40 f9 f1 a7 00 f9 
+  00000830  f0 a3 00 f9 f0 17 40 f9  11 02 40 f9 f1 a7 00 f9 
   00000840  f0 a7 40 f9 1f 3e 00 f1  f0 a7 9f 9a f0 ab 00 f9 
   00000850  f1 a3 40 f9 f0 43 45 39  30 02 00 39 f0 a3 40 f9 
   00000860  11 02 40 39 f1 b3 00 f9  f0 83 45 39 1f 06 00 f1 
   00000870  f0 17 9f 9a f0 b7 00 f9  f0 b7 40 f9 1f 02 00 f1 
-  00000880  41 00 00 54 18 00 00 14  f0 13 40 f9 11 02 40 f9 
-  00000890  f1 bb 00 f9 f0 23 40 f9  11 02 40 f9 f1 bf 00 f9 
+  00000880  41 00 00 54 18 00 00 14  f0 0f 40 f9 11 02 40 f9 
+  00000890  f1 bb 00 f9 f0 17 40 f9  11 02 40 f9 f1 bf 00 f9 
   000008a0  f0 bb 40 f9 f1 bf 40 f9  10 02 11 8b f0 c3 00 f9 
-  000008b0  f1 13 40 f9 f0 c3 40 f9  30 02 00 f9 f0 23 40 f9 
+  000008b0  f1 0f 40 f9 f0 c3 40 f9  30 02 00 f9 f0 17 40 f9 
   000008c0  11 02 40 f9 f1 cb 00 f9  f0 cb 40 f9 10 06 00 91 
-  000008d0  f0 cf 00 f9 f1 23 40 f9  f0 cf 40 f9 30 02 00 f9 
-  000008e0  d2 ff ff 17 f0 13 40 f9  11 02 40 f9 f1 d7 00 f9 
+  000008d0  f0 cf 00 f9 f1 17 40 f9  f0 cf 40 f9 30 02 00 f9 
+  000008e0  d2 ff ff 17 f0 0f 40 f9  11 02 40 f9 f1 d7 00 f9 
   000008f0  00 00 00 90 00 00 00 91  00 60 05 91 e1 d7 40 f9 
   00000900  f0 d7 40 f9 f0 03 00 f9  00 00 00 94 00 00 00 90 
   00000910  00 00 00 91 00 c0 05 91  00 00 00 94 00 03 80 d2 
@@ -504,15 +504,15 @@ Text relocations:
   00000990  01 00 00 14 00 00 00 90  00 00 00 91 00 e0 07 91 
   000009a0  e1 f7 40 f9 f0 f7 40 f9  f0 03 00 f9 00 00 00 94 
   000009b0  00 00 00 90 00 00 00 91  00 80 08 91 00 00 00 94 
-  000009c0  f1 1b 40 f9 10 00 80 d2  30 02 00 f9 f1 0b 40 f9 
+  000009c0  f1 13 40 f9 10 00 80 d2  30 02 00 f9 f1 23 40 f9 
   000009d0  30 00 80 d2 30 02 00 f9  01 00 00 14 f0 03 00 91 
-  000009e0  10 02 13 91 f0 0b 01 f9  f0 0b 40 f9 11 02 40 f9 
+  000009e0  10 02 13 91 f0 0b 01 f9  f0 23 40 f9 11 02 40 f9 
   000009f0  f1 0f 01 f9 f0 0f 41 f9  1f 12 00 f1 f0 a7 9f 9a 
   00000a00  f0 13 01 f9 f1 0b 41 f9  f0 83 48 39 30 02 00 39 
   00000a10  f0 0b 41 f9 11 02 40 39  f1 1b 01 f9 f0 c3 48 39 
   00000a20  1f 06 00 f1 f0 17 9f 9a  f0 1f 01 f9 f0 1f 41 f9 
-  00000a30  1f 02 00 f1 41 00 00 54  05 00 00 14 f1 1f 40 f9 
-  00000a40  30 00 80 d2 30 02 00 f9  21 00 00 14 f0 1b 40 f9 
+  00000a30  1f 02 00 f1 41 00 00 54  05 00 00 14 f1 1b 40 f9 
+  00000a40  30 00 80 d2 30 02 00 f9  21 00 00 14 f0 13 40 f9 
   00000a50  11 02 40 f9 f1 27 01 f9  00 00 00 90 00 00 00 91 
   00000a60  00 e0 08 91 e1 27 41 f9  f0 27 41 f9 f0 03 00 f9 
   00000a70  00 00 00 94 00 00 00 90  00 00 00 91 00 40 09 91 
@@ -521,29 +521,29 @@ Text relocations:
   00000aa0  00 00 00 90 00 00 00 91  00 20 0a 91 00 00 00 94 
   00000ab0  bf 03 00 91 f0 03 00 91  10 82 13 91 1d 7a 40 a9 
   00000ac0  ff c3 13 91 00 00 80 d2  c0 03 5f d6 f0 03 00 91 
-  00000ad0  10 22 13 91 f0 3b 01 f9  f0 1f 40 f9 11 02 40 f9 
+  00000ad0  10 22 13 91 f0 3b 01 f9  f0 1b 40 f9 11 02 40 f9 
   00000ae0  f1 3f 01 f9 f0 3f 41 f9  1f 12 00 f1 f0 a7 9f 9a 
   00000af0  f0 43 01 f9 f1 3b 41 f9  f0 03 4a 39 30 02 00 39 
   00000b00  f0 3b 41 f9 11 02 40 39  f1 4b 01 f9 f0 43 4a 39 
   00000b10  1f 06 00 f1 f0 17 9f 9a  f0 4f 01 f9 f0 4f 41 f9 
-  00000b20  1f 02 00 f1 41 00 00 54  26 00 00 14 f0 1b 40 f9 
+  00000b20  1f 02 00 f1 41 00 00 54  26 00 00 14 f0 13 40 f9 
   00000b30  11 02 40 f9 f1 53 01 f9  f0 53 41 f9 10 06 00 91 
-  00000b40  f0 57 01 f9 f1 1b 40 f9  f0 57 41 f9 30 02 00 f9 
-  00000b50  f0 03 00 91 10 42 13 91  f0 5f 01 f9 f0 0b 40 f9 
-  00000b60  11 02 40 f9 f1 63 01 f9  f0 1f 40 f9 11 02 40 f9 
+  00000b40  f0 57 01 f9 f1 13 40 f9  f0 57 41 f9 30 02 00 f9 
+  00000b50  f0 03 00 91 10 42 13 91  f0 5f 01 f9 f0 23 40 f9 
+  00000b60  11 02 40 f9 f1 63 01 f9  f0 1b 40 f9 11 02 40 f9 
   00000b70  f1 67 01 f9 f0 63 41 f9  f1 67 41 f9 1f 02 11 eb 
   00000b80  f0 17 9f 9a f0 6b 01 f9  f1 5f 41 f9 f0 43 4b 39 
   00000b90  30 02 00 39 f0 5f 41 f9  11 02 40 39 f1 73 01 f9 
   00000ba0  f0 83 4b 39 1f 06 00 f1  f0 17 9f 9a f0 77 01 f9 
   00000bb0  f0 77 41 f9 1f 02 00 f1  81 01 00 54 16 00 00 14 
-  00000bc0  f0 0b 40 f9 11 02 40 f9  f1 7b 01 f9 f0 7b 41 f9 
-  00000bd0  10 06 00 91 f0 7f 01 f9  f1 0b 40 f9 f0 7f 41 f9 
-  00000be0  30 02 00 f9 7e ff ff 17  f0 0b 40 f9 11 02 40 f9 
+  00000bc0  f0 23 40 f9 11 02 40 f9  f1 7b 01 f9 f0 7b 41 f9 
+  00000bd0  10 06 00 91 f0 7f 01 f9  f1 23 40 f9 f0 7f 41 f9 
+  00000be0  30 02 00 f9 7e ff ff 17  f0 23 40 f9 11 02 40 f9 
   00000bf0  f1 87 01 f9 00 00 00 90  00 00 00 91 00 c0 0a 91 
   00000c00  e1 87 41 f9 f0 87 41 f9  f0 03 00 f9 00 00 00 94 
-  00000c10  02 00 00 14 01 00 00 14  f0 1f 40 f9 11 02 40 f9 
+  00000c10  02 00 00 14 01 00 00 14  f0 1b 40 f9 11 02 40 f9 
   00000c20  f1 8f 01 f9 f0 8f 41 f9  10 06 00 91 f0 93 01 f9 
-  00000c30  f1 1f 40 f9 f0 93 41 f9  30 02 00 f9 a4 ff ff 17 
+  00000c30  f1 1b 40 f9 f0 93 41 f9  30 02 00 f9 a4 ff ff 17 
 
 .rodata (696 bytes):
   00000000  78 00 00 00 00 00 00 00  f0 9f 93 98 20 54 75 74 

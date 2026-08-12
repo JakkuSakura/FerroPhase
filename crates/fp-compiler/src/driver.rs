@@ -674,6 +674,9 @@ impl CompilerDriver {
                 hir::Lit::Str(value) => Value::string(value.clone()),
                 hir::Lit::Char(value) => Value::string(value.to_string()),
                 hir::Lit::Null => Value::null(),
+                hir::Lit::Bytes(bytes) | hir::Lit::CStr(bytes) => {
+                    Value::Bytes(fp_core::ast::ValueBytes::from(bytes.as_slice()))
+                }
             }),
             hir::ExprKind::Path(path) => {
                 let name = path
@@ -1009,6 +1012,17 @@ impl CompilerDriver {
             .with_mir_layouts(all_layouts)
             .with_full_layouts(full_layouts.clone())
             .with_adt_defs(adt_defs.clone());
+        // Thread dependency packages' compiled function signatures into
+        // this generator too, mirroring the `mir_struct_fields` merge
+        // above — otherwise a cross-package call (e.g. `json::parse`)
+        // fails during MIR-to-LIR with "missing MIR function definition",
+        // since `function_def_map` was previously only ever populated from
+        // this package's own MIR.
+        for (dep_id, dep_package) in self.state.typing_ctx.env_ctx.crates().iter() {
+            if let Some(dep_mir) = dep_package.borrow().mir_program.as_ref() {
+                lowering.predeclare_dependency_function_signatures(dep_mir, dep_id.clone());
+            }
+        }
         let lir = lowering.transform(mir).map_err(|error| {
             CompilerDriverError::InternalCompilerError(format!(
                 "MIR-to-LIR lowering failed for {}: {error}",

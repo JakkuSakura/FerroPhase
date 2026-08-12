@@ -503,6 +503,11 @@ pub enum Lit {
     Str(String),
     Char(char),
     Null,
+    /// A `b"..."` byte-string literal — typed as `&[u8; N]`.
+    Bytes(Vec<u8>),
+    /// A `c"..."` C-string literal (implicitly NUL-terminated, no interior
+    /// NULs) — typed as `&std::ffi::CStr`.
+    CStr(Vec<u8>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

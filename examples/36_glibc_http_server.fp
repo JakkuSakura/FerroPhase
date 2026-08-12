@@ -29,11 +29,11 @@ const SOL_SOCKET: i32 = 1;
 const SO_REUSEADDR: i32 = 2;
 const SOCKADDR_LEN: u32 = 16;
 const RESPONSE: &std::ffi::CStr =
-    "HTTP/1.1 200 OK\r\nContent-Length: 12\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nHello world\n";
-const SOCKET_ERR: &std::ffi::CStr = "socket";
-const BIND_ERR: &std::ffi::CStr = "bind";
-const LISTEN_ERR: &std::ffi::CStr = "listen";
-const ACCEPT_ERR: &std::ffi::CStr = "accept";
+    c"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nHello world\n";
+const SOCKET_ERR: &std::ffi::CStr = c"socket";
+const BIND_ERR: &std::ffi::CStr = c"bind";
+const LISTEN_ERR: &std::ffi::CStr = c"listen";
+const ACCEPT_ERR: &std::ffi::CStr = c"accept";
 #[cfg(target_os = "linux")]
 fn make_addr(port: u16) -> SockAddrIn {
     [
