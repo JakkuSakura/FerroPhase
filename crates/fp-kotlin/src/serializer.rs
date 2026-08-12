@@ -1234,10 +1234,19 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                     // `map_kt_method` alone can't tell which, so check whether the
                     // receiver's name is a known List (see `field_element_types`).
                     let is_len_on_list = sel.field.name.as_str() == "len" && is_known_list_receiver(&sel.obj, e);
+                    // `.find` is also ambiguous: Rust's `str::find(pat: &str)` (a
+                    // substring search, needs Kotlin's `indexOf`, which takes a
+                    // `String` and returns `Int`) vs. `Iterator::find(predicate)`
+                    // (needs Kotlin's own identically-named, closure-taking
+                    // `find` — unchanged). Disambiguate by the argument's shape.
+                    let is_string_find = sel.field.name.as_str() == "find"
+                        && !matches!(inv.args.first().map(|a| a.kind()), Some(ExprKind::Closure(_)));
                     let method_name = if is_iterator_map {
                         "map".to_string()
                     } else if is_len_on_list {
                         "size".to_string()
+                    } else if is_string_find {
+                        "indexOf".to_string()
                     } else {
                         map_kt_method(sel.field.name.as_str())
                     };
