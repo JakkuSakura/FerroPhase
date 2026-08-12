@@ -1402,7 +1402,30 @@ impl LoweredProgram {
                 self.package_id
             )));
         }
-        let mut lir = package.lir_workspace.to_program();
+        // Native/LLVM/Cranelift emitters all consume a single flattened
+        // `LirProgram` built from just this package's own workspace — a
+        // cross-package call (e.g. `std::json::parse`) type-checks and
+        // lowers fine (its *signature* is predeclared into this package's
+        // generator, see `predeclare_dependency_function_signatures`), but
+        // without folding dependency workspaces in here too, the callee's
+        // actual function *body* never reaches the emitted binary, leaving
+        // an unresolved external symbol at load time. Merge every
+        // dependency's compiled LIR workspace in before this package's own,
+        // mirroring the same merge `evaluate_comptime_lir` already does for
+        // comptime execution.
+        let mut combined = fp_core::lir::LirWorkspace::new(package.lir_workspace.data_layout.clone());
+        for (dependency_id, dep_package) in self.driver.state.typing_ctx.env_ctx.crates().iter() {
+            if *dependency_id == self.package_id {
+                continue;
+            }
+            combined
+                .add_workspace(&dep_package.borrow().lir_workspace)
+                .map_err(|error| CliError::Compilation(error.to_string()))?;
+        }
+        combined
+            .add_workspace(&package.lir_workspace)
+            .map_err(|error| CliError::Compilation(error.to_string()))?;
+        let mut lir = combined.to_program();
         // Native/asm emitters locate the process entry point by its final,
         // bare symbol name (see `CompilerDriver::rename_lir_function`).
         // This path builds its own `LirProgram` straight from the

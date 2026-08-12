@@ -3922,9 +3922,13 @@ fn emit_intrinsic_call(
     match kind {
         AsmIntrinsicKind::Print | AsmIntrinsicKind::Println => {}
         AsmIntrinsicKind::Format => {
-            if !matches!(result_ty, AsmType::Ptr(_)) {
-                return Err(Error::from("Format expects pointer result"));
-            }
+            let fat_ptr_dst = if matches!(result_ty, AsmType::Ptr(_)) {
+                None
+            } else if is_fat_ptr_layout(result_ty) {
+                Some(agg_offset(layout, dst_id)?)
+            } else {
+                return Err(Error::from("Format expects pointer or {ptr, len} result"));
+            };
             let format_offset = intern_cstring(rodata, rodata_pool, format);
             let arg_regs = [
                 Reg::X0,
@@ -4011,14 +4015,32 @@ fn emit_intrinsic_call(
 
             asm.emit_bl_external("snprintf");
 
+            // `X9`/`X16`/`X17` are caller-saved (and `X16`/`X17` doubly so,
+            // as the linker's intra-call scratch registers for PLT stubs) —
+            // none of them survive an external `bl`. Every value that needs
+            // to outlive `malloc`/the second `snprintf` below is spilled to
+            // this instruction's own stack slot (always reserved, 8 bytes,
+            // unused by aggregates otherwise) and reloaded after.
+            let scratch_offset = vreg_offset(layout, dst_id)?;
             emit_mov_reg(asm, Reg::X16, Reg::X0);
+            if let Some(offset) = fat_ptr_dst {
+                // Persist the raw (no-NUL) length directly into the
+                // destination's own len field now — that memory is stable
+                // across both remaining external calls.
+                emit_store_to_sp(asm, Reg::X16, offset + 8);
+            }
             emit_add_imm12(asm, Reg::X16, Reg::X16, 1);
+            emit_store_to_sp(asm, Reg::X16, scratch_offset);
             emit_mov_reg(asm, Reg::X0, Reg::X16);
             asm.emit_bl_external("malloc");
             emit_mov_reg(asm, Reg::X9, Reg::X0);
 
             emit_mov_reg(asm, Reg::X0, Reg::X9);
-            emit_mov_reg(asm, Reg::X1, Reg::X16);
+            emit_load_from_sp(asm, Reg::X1, scratch_offset);
+            // `scratch_offset`'s length value has now been consumed; reuse
+            // the same slot to carry the buffer pointer across the second
+            // `snprintf` call below.
+            emit_store_to_sp(asm, Reg::X9, scratch_offset);
             emit_load_rodata_addr(asm, Reg::X2, format_offset as i64)?;
 
             int_idx = 3usize;
@@ -4080,8 +4102,14 @@ fn emit_intrinsic_call(
             }
 
             asm.emit_bl_external("snprintf");
-            emit_mov_reg(asm, Reg::X0, Reg::X9);
-            store_vreg(asm, layout, dst_id, Reg::X0)?;
+            emit_load_from_sp(asm, Reg::X9, scratch_offset);
+            match fat_ptr_dst {
+                Some(offset) => emit_store_to_sp(asm, Reg::X9, offset),
+                None => {
+                    emit_mov_reg(asm, Reg::X0, Reg::X9);
+                    store_vreg(asm, layout, dst_id, Reg::X0)?;
+                }
+            }
             return Ok(());
         }
         AsmIntrinsicKind::TimeNow => {
@@ -5634,6 +5662,21 @@ fn is_float_type(ty: &AsmType) -> bool {
 
 fn is_aggregate_type(ty: &AsmType) -> bool {
     matches!(ty, AsmType::Struct { .. } | AsmType::Array(_, _))
+}
+
+/// True if `ty` is a `{ptr, i64}` fat pointer (the `str`/slice
+/// representation), possibly wrapped in single-field newtype structs (e.g.
+/// `String`). A single-field wrapper has identical layout to its inner
+/// field (same size, field at offset 0), so callers can use the same
+/// offsets regardless of how many wrapper layers are present.
+fn is_fat_ptr_layout(ty: &AsmType) -> bool {
+    match ty {
+        AsmType::Struct { fields, .. } if fields.len() == 2 => {
+            matches!(fields[0], AsmType::Ptr(_))
+        }
+        AsmType::Struct { fields, .. } if fields.len() == 1 => is_fat_ptr_layout(&fields[0]),
+        _ => false,
+    }
 }
 
 #[allow(dead_code)]

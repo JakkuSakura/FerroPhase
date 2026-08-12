@@ -413,6 +413,14 @@ pub struct MirLowering {
     structural_defs: HashMap<StructuralLayoutKey, hir::DefId>,
     enum_defs: HashMap<hir::DefId, EnumDefinition>,
     enum_layouts: HashMap<EnumLayoutKey, EnumLayout>,
+    /// Exact reverse index from a flattened-tuple enum representation back
+    /// to the `EnumLayoutKey` that produced it — mirrors
+    /// `struct_layouts_by_ty`, which structs already had. Without this,
+    /// recovering an enum's concrete generic args from a flattened value
+    /// (e.g. during generic specialization) fell back to a fuzzy,
+    /// `Infer`-as-wildcard linear scan (`enum_layout_for_ty`) that could
+    /// silently fail to bind a type parameter.
+    enum_layouts_by_ty: HashMap<Ty, EnumLayoutKey>,
     enum_layouts_in_progress: HashSet<EnumLayoutKey>,
     enum_variants: HashMap<hir::DefId, EnumVariantInfo>,
     enum_variant_names: HashMap<String, hir::DefId>,
@@ -494,6 +502,7 @@ impl MirLowering {
             structural_defs: HashMap::new(),
             enum_defs: HashMap::new(),
             enum_layouts: HashMap::new(),
+            enum_layouts_by_ty: HashMap::new(),
             enum_layouts_in_progress: HashSet::new(),
             enum_variants: HashMap::new(),
             enum_variant_names: HashMap::new(),
@@ -882,8 +891,6 @@ impl MirLowering {
             .unwrap_or(hir::DefId::local(0))
             .saturating_add(1);
 
-        let reachable = self.collect_reachable_def_ids(program);
-
         for item in &program.items {
             match &item.kind {
                 hir::ItemKind::Struct(def) => {
@@ -896,17 +903,14 @@ impl MirLowering {
             }
         }
         self.finalize_adt_definitions(program);
-        let items: Vec<&hir::Item> = if reachable.is_empty() {
-            program.items.iter().collect()
-        } else {
-            program
-                .items
-                .iter()
-                .filter(|item| {
-                    reachable.contains(&item.def_id) || matches!(item.kind, hir::ItemKind::Impl(_))
-                })
-                .collect()
-        };
+        // Lower every item unconditionally. This function builds MIR for one
+        // package's own HIR in isolation (a dependency package's MIR is
+        // never re-filtered by a downstream package), so a `main`-rooted
+        // reachability pass here would silently drop library items with no
+        // caller inside their own package — e.g. `std::json::parse`, never
+        // called from any `std`-level `main`/const, but very much part of
+        // `std`'s public surface that `examples` needs to link against.
+        let items: Vec<&hir::Item> = program.items.iter().collect();
 
         for item in &items {
             if let hir::ItemKind::Const(const_item) = &item.kind {
@@ -953,131 +957,6 @@ impl MirLowering {
         Ok(mir_program)
     }
 
-    fn collect_reachable_def_ids(&self, program: &hir::Program) -> HashSet<hir::DefId> {
-        let (full_map, tail_map) = Self::build_item_name_maps(program);
-        let mut roots = VecDeque::new();
-        for item in &program.items {
-            match &item.kind {
-                hir::ItemKind::Function(func) => {
-                    let name = func.sig.name.as_str();
-                    if name == "main" || name.ends_with("::main") {
-                        roots.push_back(item.def_id);
-                    }
-                }
-                hir::ItemKind::Const(_) => roots.push_back(item.def_id),
-                hir::ItemKind::Query(_) => roots.push_back(item.def_id),
-                hir::ItemKind::Expr(_) => roots.push_back(item.def_id),
-                _ => {}
-            }
-        }
-
-        let mut reachable = HashSet::new();
-        let mut work = roots;
-        while let Some(def_id) = work.pop_front() {
-            if !reachable.insert(def_id) {
-                continue;
-            }
-            let Some(item) = program.def_map.get(&def_id) else {
-                continue;
-            };
-            Self::collect_def_ids_from_item(item, &full_map, &tail_map, &mut work);
-        }
-
-        reachable
-    }
-
-    fn build_item_name_maps(
-        program: &hir::Program,
-    ) -> (HashMap<String, hir::DefId>, HashMap<String, hir::DefId>) {
-        let mut full = HashMap::new();
-        for item in &program.items {
-            let name = match &item.kind {
-                hir::ItemKind::Function(func) => func.sig.name.as_str().to_string(),
-                hir::ItemKind::Struct(strukt) => strukt.name.as_str().to_string(),
-                hir::ItemKind::Enum(enm) => enm.name.as_str().to_string(),
-                hir::ItemKind::Const(konst) => konst.name.as_str().to_string(),
-                hir::ItemKind::Query(_) => continue,
-                _ => continue,
-            };
-            full.insert(name.clone(), item.def_id);
-        }
-        (full, HashMap::new())
-    }
-
-    fn collect_def_ids_from_item(
-        item: &hir::Item,
-        full_map: &HashMap<String, hir::DefId>,
-        tail_map: &HashMap<String, hir::DefId>,
-        work: &mut VecDeque<hir::DefId>,
-    ) {
-        match &item.kind {
-            hir::ItemKind::Function(func) => {
-                for param in &func.sig.inputs {
-                    Self::collect_def_ids_from_type(&param.ty, full_map, tail_map, work);
-                }
-                Self::collect_def_ids_from_type(&func.sig.output, full_map, tail_map, work);
-                if let Some(body) = &func.body {
-                    Self::collect_def_ids_from_block(body, full_map, tail_map, work);
-                }
-            }
-            hir::ItemKind::Const(konst) => {
-                Self::collect_def_ids_from_type(&konst.ty, full_map, tail_map, work);
-                Self::collect_def_ids_from_expr(&konst.body.value, full_map, tail_map, work);
-            }
-            hir::ItemKind::Struct(strukt) => {
-                for field in &strukt.fields {
-                    Self::collect_def_ids_from_type(&field.ty, full_map, tail_map, work);
-                }
-            }
-            hir::ItemKind::Enum(enm) => {
-                for variant in &enm.variants {
-                    if let Some(payload) = &variant.payload {
-                        Self::collect_def_ids_from_type(payload, full_map, tail_map, work);
-                    }
-                }
-            }
-            hir::ItemKind::Impl(impl_block) => {
-                Self::collect_def_ids_from_type(&impl_block.self_ty, full_map, tail_map, work);
-                if let Some(trait_ty) = &impl_block.trait_ty {
-                    Self::collect_def_ids_from_type(trait_ty, full_map, tail_map, work);
-                }
-                for item in &impl_block.items {
-                    match &item.kind {
-                        hir::ImplItemKind::Method(func) => {
-                            for param in &func.sig.inputs {
-                                Self::collect_def_ids_from_type(
-                                    &param.ty, full_map, tail_map, work,
-                                );
-                            }
-                            Self::collect_def_ids_from_type(
-                                &func.sig.output,
-                                full_map,
-                                tail_map,
-                                work,
-                            );
-                            if let Some(body) = &func.body {
-                                Self::collect_def_ids_from_block(body, full_map, tail_map, work);
-                            }
-                        }
-                        hir::ImplItemKind::AssocConst(konst) => {
-                            Self::collect_def_ids_from_type(&konst.ty, full_map, tail_map, work);
-                            Self::collect_def_ids_from_expr(
-                                &konst.body.value,
-                                full_map,
-                                tail_map,
-                                work,
-                            );
-                        }
-                    }
-                }
-            }
-            hir::ItemKind::Query(_) => {}
-            hir::ItemKind::Expr(expr) => {
-                Self::collect_def_ids_from_expr(expr, full_map, tail_map, work);
-            }
-        }
-    }
-
     fn lower_query(&mut self, item: &hir::Item, query: &hir::Query) -> mir::Item {
         let mir_item = mir::Item {
             mir_id: self.next_mir_id,
@@ -1089,277 +968,6 @@ impl MirLowering {
         };
         self.next_mir_id += 1;
         mir_item
-    }
-
-    fn resolve_def_id_from_path(
-        path: &hir::Path,
-        full_map: &HashMap<String, hir::DefId>,
-        tail_map: &HashMap<String, hir::DefId>,
-    ) -> Option<hir::DefId> {
-        if let Some(hir::Res::Def(def_id)) = &path.res {
-            return Some(*def_id);
-        }
-        let segments = path.segments.as_slice();
-        if segments.is_empty() {
-            return None;
-        }
-        let full = segments
-            .iter()
-            .map(|seg| seg.name.as_str())
-            .collect::<Vec<_>>()
-            .join("::");
-        if let Some(def_id) = full_map.get(&full) {
-            return Some(*def_id);
-        }
-        let _ = tail_map;
-        None
-    }
-
-    fn collect_def_ids_from_type(
-        ty: &hir::TypeExpr,
-        full_map: &HashMap<String, hir::DefId>,
-        tail_map: &HashMap<String, hir::DefId>,
-        work: &mut VecDeque<hir::DefId>,
-    ) {
-        match &ty.kind {
-            hir::TypeExprKind::Path(path) => {
-                if let Some(def_id) = Self::resolve_def_id_from_path(path, full_map, tail_map) {
-                    work.push_back(def_id);
-                }
-            }
-            hir::TypeExprKind::Structural(structural) => {
-                for field in &structural.fields {
-                    Self::collect_def_ids_from_type(&field.ty, full_map, tail_map, work);
-                }
-            }
-            hir::TypeExprKind::TypeBinaryOp(op) => {
-                Self::collect_def_ids_from_type(&op.lhs, full_map, tail_map, work);
-                Self::collect_def_ids_from_type(&op.rhs, full_map, tail_map, work);
-            }
-            hir::TypeExprKind::Tuple(items) => {
-                for item in items {
-                    Self::collect_def_ids_from_type(item, full_map, tail_map, work);
-                }
-            }
-            hir::TypeExprKind::Array(elem, len) => {
-                Self::collect_def_ids_from_type(elem, full_map, tail_map, work);
-                if let Some(len) = len {
-                    Self::collect_def_ids_from_expr(len, full_map, tail_map, work);
-                }
-            }
-            hir::TypeExprKind::Slice(elem)
-            | hir::TypeExprKind::Ptr(elem)
-            | hir::TypeExprKind::Ref(elem) => {
-                Self::collect_def_ids_from_type(elem, full_map, tail_map, work);
-            }
-            hir::TypeExprKind::FnPtr(fn_ptr) => {
-                for input in &fn_ptr.inputs {
-                    Self::collect_def_ids_from_type(input, full_map, tail_map, work);
-                }
-                Self::collect_def_ids_from_type(&fn_ptr.output, full_map, tail_map, work);
-            }
-            _ => {}
-        }
-    }
-
-    fn collect_def_ids_from_block(
-        block: &hir::Block,
-        full_map: &HashMap<String, hir::DefId>,
-        tail_map: &HashMap<String, hir::DefId>,
-        work: &mut VecDeque<hir::DefId>,
-    ) {
-        for stmt in &block.stmts {
-            match &stmt.kind {
-                hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
-                    Self::collect_def_ids_from_expr(expr, full_map, tail_map, work)
-                }
-                hir::StmtKind::Local(local) => {
-                    if let Some(init) = &local.init {
-                        Self::collect_def_ids_from_expr(init, full_map, tail_map, work);
-                    }
-                }
-                hir::StmtKind::Item(item) => {
-                    Self::collect_def_ids_from_item(item, full_map, tail_map, work)
-                }
-            }
-        }
-        if let Some(expr) = &block.expr {
-            Self::collect_def_ids_from_expr(expr, full_map, tail_map, work);
-        }
-    }
-
-    fn collect_def_ids_from_expr(
-        expr: &hir::Expr,
-        full_map: &HashMap<String, hir::DefId>,
-        tail_map: &HashMap<String, hir::DefId>,
-        work: &mut VecDeque<hir::DefId>,
-    ) {
-        match &expr.kind {
-            hir::ExprKind::Path(path) => {
-                if let Some(def_id) = Self::resolve_def_id_from_path(path, full_map, tail_map) {
-                    work.push_back(def_id);
-                }
-            }
-            hir::ExprKind::Binary(_, lhs, rhs) | hir::ExprKind::Assign(lhs, rhs) => {
-                Self::collect_def_ids_from_expr(lhs, full_map, tail_map, work);
-                Self::collect_def_ids_from_expr(rhs, full_map, tail_map, work);
-            }
-            hir::ExprKind::Unary(_, value)
-            | hir::ExprKind::FieldAccess(value, _)
-            | hir::ExprKind::Cast(value, _)
-            | hir::ExprKind::Return(Some(value))
-            | hir::ExprKind::Break(Some(value)) => {
-                Self::collect_def_ids_from_expr(value, full_map, tail_map, work);
-            }
-            hir::ExprKind::Call(callee, args) => {
-                Self::collect_def_ids_from_expr(callee, full_map, tail_map, work);
-                for arg in args {
-                    Self::collect_def_ids_from_expr(&arg.value, full_map, tail_map, work);
-                }
-            }
-            hir::ExprKind::MethodCall(receiver, _, args) => {
-                Self::collect_def_ids_from_expr(receiver, full_map, tail_map, work);
-                for arg in args {
-                    Self::collect_def_ids_from_expr(&arg.value, full_map, tail_map, work);
-                }
-            }
-            hir::ExprKind::Index(base, index) => {
-                Self::collect_def_ids_from_expr(base, full_map, tail_map, work);
-                Self::collect_def_ids_from_expr(index, full_map, tail_map, work);
-            }
-            hir::ExprKind::Struct(path, fields) => {
-                if let Some(def_id) = Self::resolve_def_id_from_path(path, full_map, tail_map) {
-                    work.push_back(def_id);
-                }
-                for field in fields {
-                    Self::collect_def_ids_from_expr(&field.expr, full_map, tail_map, work);
-                }
-            }
-            hir::ExprKind::If(cond, then_expr, else_expr) => {
-                Self::collect_def_ids_from_expr(cond, full_map, tail_map, work);
-                Self::collect_def_ids_from_expr(then_expr, full_map, tail_map, work);
-                if let Some(else_expr) = else_expr {
-                    Self::collect_def_ids_from_expr(else_expr, full_map, tail_map, work);
-                }
-            }
-            hir::ExprKind::Match(scrutinee, arms) => {
-                Self::collect_def_ids_from_expr(scrutinee, full_map, tail_map, work);
-                for arm in arms {
-                    Self::collect_def_ids_from_pat(&arm.pat, full_map, tail_map, work);
-                    if let Some(guard) = &arm.guard {
-                        Self::collect_def_ids_from_expr(guard, full_map, tail_map, work);
-                    }
-                    Self::collect_def_ids_from_expr(&arm.body, full_map, tail_map, work);
-                }
-            }
-            hir::ExprKind::Block(block) => {
-                for stmt in &block.stmts {
-                    Self::collect_def_ids_from_stmt(stmt, full_map, tail_map, work);
-                }
-                if let Some(expr) = &block.expr {
-                    Self::collect_def_ids_from_expr(expr, full_map, tail_map, work);
-                }
-            }
-            hir::ExprKind::IntrinsicCall(call) => {
-                for arg in &call.callargs {
-                    Self::collect_def_ids_from_expr(&arg.value, full_map, tail_map, work);
-                }
-            }
-            hir::ExprKind::Let(pat, ty, init) => {
-                Self::collect_def_ids_from_pat(pat, full_map, tail_map, work);
-                Self::collect_def_ids_from_type(ty, full_map, tail_map, work);
-                if let Some(init) = init {
-                    Self::collect_def_ids_from_expr(init, full_map, tail_map, work);
-                }
-            }
-            hir::ExprKind::Loop(block) | hir::ExprKind::While(_, block) => {
-                for stmt in &block.stmts {
-                    Self::collect_def_ids_from_stmt(stmt, full_map, tail_map, work);
-                }
-                if let Some(expr) = &block.expr {
-                    Self::collect_def_ids_from_expr(expr, full_map, tail_map, work);
-                }
-            }
-            hir::ExprKind::With(context, body) => {
-                Self::collect_def_ids_from_expr(context, full_map, tail_map, work);
-                Self::collect_def_ids_from_expr(body, full_map, tail_map, work);
-            }
-            hir::ExprKind::Array(elements) | hir::ExprKind::Tuple(elements) => {
-                for elem in elements {
-                    Self::collect_def_ids_from_expr(elem, full_map, tail_map, work);
-                }
-            }
-            hir::ExprKind::ArrayRepeat { elem, len } => {
-                Self::collect_def_ids_from_expr(elem, full_map, tail_map, work);
-                Self::collect_def_ids_from_expr(len, full_map, tail_map, work);
-            }
-            hir::ExprKind::ConstBlock(const_block) => {
-                Self::collect_def_ids_from_type(&const_block.ty, full_map, tail_map, work);
-                Self::collect_def_ids_from_expr(&const_block.body, full_map, tail_map, work);
-            }
-            _ => {}
-        }
-    }
-
-    fn collect_def_ids_from_stmt(
-        stmt: &hir::Stmt,
-        full_map: &HashMap<String, hir::DefId>,
-        tail_map: &HashMap<String, hir::DefId>,
-        work: &mut VecDeque<hir::DefId>,
-    ) {
-        match &stmt.kind {
-            hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
-                Self::collect_def_ids_from_expr(expr, full_map, tail_map, work);
-            }
-            hir::StmtKind::Local(local) => {
-                if let Some(ty) = &local.ty {
-                    Self::collect_def_ids_from_type(ty, full_map, tail_map, work);
-                }
-                if let Some(init) = &local.init {
-                    Self::collect_def_ids_from_expr(init, full_map, tail_map, work);
-                }
-            }
-            hir::StmtKind::Item(item) => {
-                Self::collect_def_ids_from_item(item, full_map, tail_map, work);
-            }
-        }
-    }
-
-    fn collect_def_ids_from_pat(
-        pat: &hir::Pat,
-        full_map: &HashMap<String, hir::DefId>,
-        tail_map: &HashMap<String, hir::DefId>,
-        work: &mut VecDeque<hir::DefId>,
-    ) {
-        match &pat.kind {
-            hir::PatKind::Struct(path, fields, _) => {
-                if let Some(def_id) = Self::resolve_def_id_from_path(path, full_map, tail_map) {
-                    work.push_back(def_id);
-                }
-                for field in fields {
-                    Self::collect_def_ids_from_pat(&field.pat, full_map, tail_map, work);
-                }
-            }
-            hir::PatKind::TupleStruct(path, parts) => {
-                if let Some(def_id) = Self::resolve_def_id_from_path(path, full_map, tail_map) {
-                    work.push_back(def_id);
-                }
-                for part in parts {
-                    Self::collect_def_ids_from_pat(part, full_map, tail_map, work);
-                }
-            }
-            hir::PatKind::Tuple(parts) => {
-                for part in parts {
-                    Self::collect_def_ids_from_pat(part, full_map, tail_map, work);
-                }
-            }
-            hir::PatKind::Variant(path) => {
-                if let Some(def_id) = Self::resolve_def_id_from_path(path, full_map, tail_map) {
-                    work.push_back(def_id);
-                }
-            }
-            _ => {}
-        }
     }
 
     fn append_runtime_stubs(&mut self, program: &mut mir::Program) {
@@ -2401,7 +2009,10 @@ impl MirLowering {
                     _ => Vec::new(),
                 };
                 if actual_type_args.is_empty() {
-                    if let Some(layout) = self.enum_layout_for_ty(expected_return) {
+                    let layout = self
+                        .enum_layout_for_ty_exact(expected_return)
+                        .or_else(|| self.enum_layout_for_ty(expected_return));
+                    if let Some(layout) = layout {
                         actual_type_args = layout
                             .args
                             .iter()
@@ -2447,7 +2058,10 @@ impl MirLowering {
                     TyKind::RawPtr(type_and_mut) => type_and_mut.ty.as_ref(),
                     _ => expected_return,
                 };
-                if let Some(layout) = self.enum_layout_for_ty(expected_return) {
+                let layout = self
+                    .enum_layout_for_ty_exact(expected_return)
+                    .or_else(|| self.enum_layout_for_ty(expected_return));
+                if let Some(layout) = layout {
                     let is_result_layout = self
                         .enum_defs
                         .get(&layout.def_id)
@@ -2585,7 +2199,10 @@ impl MirLowering {
         }
         if substs.len() != generics.len() {
             if let Some(self_arg_ty) = self_arg_ty {
-                if let Some(layout) = self.enum_layout_for_ty(self_arg_ty) {
+                let layout = self
+                    .enum_layout_for_ty_exact(self_arg_ty)
+                    .or_else(|| self.enum_layout_for_ty(self_arg_ty));
+                if let Some(layout) = layout {
                     let is_result_layout = self
                         .enum_defs
                         .get(&layout.def_id)
@@ -3376,7 +2993,17 @@ impl MirLowering {
                             _ => None,
                         });
                     if let Some(def_id) = def_id {
-                        if let Some(layout) = self.enum_layout_for_ty(actual_ty) {
+                        // Prefer the exact reverse-index lookup over the
+                        // fuzzy scan (`enum_layout_for_ty`, which treats
+                        // `TyKind::Infer` on either side as a wildcard and
+                        // can therefore return an unrelated or
+                        // not-yet-fully-specialized layout when multiple
+                        // instantiations of the same enum are registered)
+                        // — see `enum_layout_for_ty_exact`'s doc comment.
+                        let layout = self
+                            .enum_layout_for_ty_exact(actual_ty)
+                            .or_else(|| self.enum_layout_for_ty(actual_ty));
+                        if let Some(layout) = layout {
                             let enum_def_id = variant_enum_def.unwrap_or(def_id);
                             if layout.def_id == enum_def_id {
                                 let layout_args = layout.args.clone();
@@ -5208,6 +4835,16 @@ impl MirLowering {
         self.struct_layouts.get(key).cloned()
     }
 
+    /// Exact-match counterpart to `enum_layout_for_ty`'s fuzzy scan — an
+    /// O(1) lookup from a flattened-tuple enum shape back to its concrete
+    /// `EnumLayout` (which carries the original generic args in
+    /// `EnumLayout.args`). Prefer this everywhere a concrete instantiation
+    /// is expected; fall back to the fuzzy scan only when this misses.
+    fn enum_layout_for_ty_exact(&self, ty: &Ty) -> Option<&EnumLayout> {
+        let key = self.enum_layouts_by_ty.get(ty)?;
+        self.enum_layouts.get(key)
+    }
+
     fn enum_payload_types(
         &mut self,
         payload: &Option<hir::TypeExpr>,
@@ -5396,6 +5033,7 @@ impl MirLowering {
         };
 
         self.enum_layouts.insert(key.clone(), layout.clone());
+        self.enum_layouts_by_ty.insert(enum_ty.clone(), key.clone());
         self.enum_layouts_in_progress.remove(&key);
 
         let payload_tys = layout.payload_tys.clone();
@@ -8581,6 +8219,9 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn enum_layout_for_ty(&mut self, ty: &Ty, span: Span) -> Option<EnumLayout> {
+        if let Some(layout) = self.lowering.enum_layout_for_ty_exact(ty) {
+            return Some(layout.clone());
+        }
         self.lowering
             .enum_layout_for_concrete_ty(ty, span)
             .or_else(|| self.lowering.enum_layout_for_ty(ty).cloned())
@@ -14575,7 +14216,23 @@ impl<'a> BodyBuilder<'a> {
                                     &args,
                                     expr.span,
                                 );
-                            } else {
+                            } else if let Some(expected_ty) = expected {
+                                // `expected_ty` is often already the flattened
+                                // tuple representation (not `Adt(enum, args)`),
+                                // which `enum_layout_for_variant` above can't
+                                // match on directly — try the exact-index
+                                // lookup (via `enum_layout_for_ty`) before
+                                // giving up and minting a fresh generic
+                                // template below.
+                                if let Some(layout_from_ty) =
+                                    self.enum_layout_for_ty(expected_ty, expr.span)
+                                {
+                                    if layout_from_ty.def_id == variant.enum_def {
+                                        layout = Some(layout_from_ty);
+                                    }
+                                }
+                            }
+                            if layout.is_none() {
                                 layout = self
                                     .lowering
                                     .enum_layout_for_def(variant.enum_def, expr.span);
@@ -14632,7 +14289,23 @@ impl<'a> BodyBuilder<'a> {
                                     &args,
                                     expr.span,
                                 );
-                            } else {
+                            } else if let Some(expected_ty) = expected {
+                                // `expected_ty` is often already the flattened
+                                // tuple representation (not `Adt(enum, args)`),
+                                // which `enum_layout_for_variant` above can't
+                                // match on directly — try the exact-index
+                                // lookup (via `enum_layout_for_ty`) before
+                                // giving up and minting a fresh generic
+                                // template below.
+                                if let Some(layout_from_ty) =
+                                    self.enum_layout_for_ty(expected_ty, expr.span)
+                                {
+                                    if layout_from_ty.def_id == variant.enum_def {
+                                        layout = Some(layout_from_ty);
+                                    }
+                                }
+                            }
+                            if layout.is_none() {
                                 layout = self
                                     .lowering
                                     .enum_layout_for_def(variant.enum_def, expr.span);

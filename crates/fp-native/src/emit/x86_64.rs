@@ -2228,6 +2228,21 @@ fn is_aggregate_storage(ty: &AsmType, _data_layout: &LirDataLayout) -> bool {
     is_aggregate_type(ty)
 }
 
+/// True if `ty` is a `{ptr, i64}` fat pointer (the `str`/slice
+/// representation), possibly wrapped in single-field newtype structs (e.g.
+/// `String`). A single-field wrapper has identical layout to its inner
+/// field (same size, field at offset 0), so callers can use the same
+/// offsets regardless of how many wrapper layers are present.
+fn is_fat_ptr_layout(ty: &AsmType) -> bool {
+    match ty {
+        AsmType::Struct { fields, .. } if fields.len() == 2 => {
+            matches!(fields[0], AsmType::Ptr(_))
+        }
+        AsmType::Struct { fields, .. } if fields.len() == 1 => is_fat_ptr_layout(&fields[0]),
+        _ => false,
+    }
+}
+
 #[allow(dead_code)]
 fn is_vector_type(ty: &AsmType) -> bool {
     matches!(ty, AsmType::Vector(_, _))
@@ -4414,9 +4429,13 @@ fn emit_intrinsic_call(
     match kind {
         AsmIntrinsicKind::Print | AsmIntrinsicKind::Println => {}
         AsmIntrinsicKind::Format => {
-            if !matches!(result_ty, AsmType::Ptr(_)) {
-                return Err(Error::from("Format expects pointer result"));
-            }
+            let fat_ptr_dst = if matches!(result_ty, AsmType::Ptr(_)) {
+                None
+            } else if is_fat_ptr_layout(result_ty) {
+                Some(agg_offset(layout, dst_id)?)
+            } else {
+                return Err(Error::from("Format expects pointer or {ptr, len} result"));
+            };
             let format_offset = intern_cstring(rodata, rodata_pool, format);
             let (arg_regs, float_regs, use_al) = call_abi(target_format);
 
@@ -4460,6 +4479,13 @@ fn emit_intrinsic_call(
             asm.emit_call_external("snprintf");
 
             store_vreg(asm, layout, dst_id, Reg::Rax)?;
+            if let Some(offset) = fat_ptr_dst {
+                // Persist the raw (no-NUL) length directly into the
+                // destination's own len field now — real stack memory,
+                // stable across `malloc`/the second `snprintf` below
+                // (unlike a register, which neither call preserves).
+                emit_mov_mr64(asm, Reg::Rbp, offset + 8, Reg::Rax);
+            }
             emit_mov_rr(asm, Reg::R10, Reg::Rax);
             emit_add_ri32(asm, Reg::R10, 1);
             if arg_regs[0] != Reg::R10 {
@@ -4530,6 +4556,11 @@ fn emit_intrinsic_call(
             }
 
             asm.emit_call_external("snprintf");
+            if let Some(offset) = fat_ptr_dst {
+                let ptr_offset = vreg_offset(layout, dst_id)?;
+                emit_mov_rm64(asm, Reg::Rax, Reg::Rbp, ptr_offset);
+                emit_mov_mr64(asm, Reg::Rbp, offset, Reg::Rax);
+            }
             return Ok(());
         }
         AsmIntrinsicKind::TimeNow => {
