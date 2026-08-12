@@ -1055,14 +1055,15 @@ async fn compile_project(
     // (`.len()` -> `.size` not `.length`, range-index -> `.subList` not
     // `.substring`) are both decided workspace-wide: a struct's fields can
     // be defined in one package and mutated/read from another.
-    let (workspace_mutated_fields, workspace_list_fields) =
+    let (workspace_mutated_fields, workspace_list_fields, workspace_string_fields) =
         if matches!(target, crate::languages::backend::LanguageTarget::Kotlin) {
             (
                 fp_kotlin::collect_mutated_field_names(prepared.iter().flat_map(|(_, src)| &src.items)),
                 fp_kotlin::collect_list_field_names(prepared.iter().flat_map(|(_, src)| &src.items)),
+                fp_kotlin::collect_string_field_names(prepared.iter().flat_map(|(_, src)| &src.items)),
             )
         } else {
-            (Default::default(), Default::default())
+            (Default::default(), Default::default(), Default::default())
         };
 
     // Phase 2: serialize + write every package now that the workspace-wide
@@ -1074,7 +1075,7 @@ async fn compile_project(
         let files = if let crate::languages::backend::LanguageTarget::Kotlin = target {
             let serializer = fp_kotlin::KotlinSerializer;
             serializer
-                .serialize_package(source, &workspace_packages, &workspace_mutated_fields, &workspace_list_fields)
+                .serialize_package(source, &workspace_packages, &workspace_mutated_fields, &workspace_list_fields, &workspace_string_fields)
                 .map_err(|e| CliError::Compilation(e.to_string()))?
         } else {
             // Fallback: per-file emit_ast_target for other targets
