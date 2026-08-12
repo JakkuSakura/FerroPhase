@@ -1060,14 +1060,16 @@ pub fn typecheck_language_target(
     let executor = CompilerExecutor::new();
     let mut driver = compile_source_file(ast, &identity, compiler_workspace_for(language), lossy, &executor, PipelineMode::TypecheckedTranspile)?;
     drain_driver(&mut driver, lossy)?;
+    let hir_id = fp_compiler::HirId::new(format!("hir:{}:", package));
     let hir = driver
         .state
-        .hir(&fp_compiler::HirId::new(format!(
-            "hir:{}:",
-            package
-        )))
+        .hir(&hir_id)
         .map_err(|err| CliError::Compilation(err.to_string()))?;
-    fp_backend::transforms::hir_to_ast::lift_program(hir, path.to_path_buf())
+    // Real resolved types live here, keyed by the same `hir_id` — fetch them
+    // so the lifted AST's `Expr.ty()` slots get populated for real instead
+    // of staying `None`.
+    let typeck = driver.state.hir_typeck(&hir_id).ok();
+    fp_backend::transforms::hir_to_ast::lift_program(hir, typeck, path.to_path_buf())
         .map_err(|err| CliError::Compilation(err.to_string()))
 }
 

@@ -511,7 +511,11 @@ impl CompilerDriver {
         // TypecheckedTranspile: lift typed HIR back to AST, skip MIR/LIR
         if self.pipeline == PipelineMode::TypecheckedTranspile {
             let hir = self.state.hir(&hir_id)?;
-            let lifted = fp_backend::transforms::lift_program(hir, std::path::PathBuf::new())
+            // `typeck_results` was moved into `self.state` above (`insert_hir_typeck`) —
+            // fetch it back by the same `hir_id` to attach real resolved types
+            // onto the lifted AST's `Expr.ty()` slots.
+            let typeck = self.state.hir_typeck(&hir_id).ok();
+            let lifted = fp_backend::transforms::lift_program(hir, typeck, std::path::PathBuf::new())
                 .map_err(|e| {
                     CompilerDriverError::InternalCompilerError(format!("HIR→AST lift: {e}"))
                 })?;

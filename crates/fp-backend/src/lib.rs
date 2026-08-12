@@ -21,6 +21,7 @@ pub fn roundtrip_ast_file_via_hir(
     let program = generator.transform_file(file)?;
     Ok(transforms::hir_to_ast::lift_program(
         &program,
+        None,
         file.path.clone(),
     )?)
 }
@@ -34,6 +35,7 @@ pub fn roundtrip_ast_file_via_hir_dce(
     optimizer::hir::eliminate_dead_code(&mut program, None);
     Ok(transforms::hir_to_ast::lift_program(
         &program,
+        None,
         file.path.clone(),
     )?)
 }
