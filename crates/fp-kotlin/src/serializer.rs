@@ -1122,6 +1122,22 @@ fn is_byte_array_index(expr: &Expr) -> bool {
     false
 }
 
+/// True if `expr`'s name (a bare local/param name, or a struct field access)
+/// is a known List — i.e. present in `field_element_types` (populated from
+/// struct fields, `let`-bindings with an explicit `Vec<T>`/`List<T>`
+/// annotation, and List-typed function parameters). Used to disambiguate
+/// Rust operations that mean different things on a `String` vs. a `List`
+/// (`.len()` → `.size` not `.length`; range-indexing → `.subList(...)` not
+/// `.substring(...)`).
+fn is_known_list_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
+    let recv_name = match expr.kind() {
+        ExprKind::Name(n) => Some(name_to_string(n)),
+        ExprKind::Select(inner) => Some(inner.field.name.to_string()),
+        _ => None,
+    };
+    recv_name.is_some_and(|n| e.field_element_types.contains_key(&n))
+}
+
 fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
     match expr.kind() {
         ExprKind::Value(val) => {
@@ -1193,14 +1209,7 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                     // `.len()` needs `.size` on a List but `.length` on a String —
                     // `map_kt_method` alone can't tell which, so check whether the
                     // receiver's name is a known List (see `field_element_types`).
-                    let is_len_on_list = sel.field.name.as_str() == "len" && {
-                        let recv_name = match sel.obj.kind() {
-                            ExprKind::Name(n) => Some(name_to_string(n)),
-                            ExprKind::Select(inner) => Some(inner.field.name.to_string()),
-                            _ => None,
-                        };
-                        recv_name.is_some_and(|n| e.field_element_types.contains_key(&n))
-                    };
+                    let is_len_on_list = sel.field.name.as_str() == "len" && is_known_list_receiver(&sel.obj, e);
                     let method_name = if is_iterator_map {
                         "map".to_string()
                     } else if is_len_on_list {
@@ -1298,24 +1307,34 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
             // Rust's `&s[..end]`/`s[start..]`/`&s[start..end]` (slicing with an
             // omitted bound is common) has no direct Kotlin equivalent —
             // `obj[range]` isn't valid indexing syntax. `String.substring`
-            // takes the same start/end-exclusive semantics `..` already has.
+            // shares `..`'s start-inclusive/end-exclusive semantics; a slice/
+            // `Vec` (see `is_known_list_receiver`) needs `List.subList` instead
+            // — both require an explicit end, so an omitted one becomes `.size`.
             if let ExprKind::Range(r) = idx.index.kind() {
+                let is_list = is_known_list_receiver(&idx.obj, e);
                 let obj = render_expr(&idx.obj, e)?;
                 let start = match &r.start {
                     Some(s) => render_expr(s, e)?,
                     None => "0".to_string(),
                 };
-                return match &r.end {
+                if !is_list && r.end.is_none() {
+                    return Ok(format!("{}.substring({})", obj, start));
+                }
+                let end = match &r.end {
                     Some(end) => {
                         let end = render_expr(end, e)?;
-                        let end = if matches!(r.limit, fp_core::ast::ExprRangeLimit::Inclusive) {
+                        if matches!(r.limit, fp_core::ast::ExprRangeLimit::Inclusive) {
                             format!("({} + 1)", end)
                         } else {
                             end
-                        };
-                        Ok(format!("{}.substring({}, {})", obj, start, end))
+                        }
                     }
-                    None => Ok(format!("{}.substring({})", obj, start)),
+                    None => format!("{}.size", obj),
+                };
+                return if is_list {
+                    Ok(format!("{}.subList({}, {})", obj, start, end))
+                } else {
+                    Ok(format!("{}.substring({}, {})", obj, start, end))
                 };
             }
             Ok(format!("{}[{}]", render_expr(&idx.obj, e)?, render_expr(&idx.index, e)?))
