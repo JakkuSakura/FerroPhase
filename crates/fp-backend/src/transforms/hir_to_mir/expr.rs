@@ -973,7 +973,10 @@ impl MirLowering {
     fn append_runtime_stubs(&mut self, program: &mut mir::Program) {
         let span = Span::new(0, 0, 0);
         for name in self.synthetic_runtime_functions.clone() {
-            // C runtime intrinsics are resolved as externs during LIR/LLVM lowering.
+            // `printf` is only ever called through the dedicated
+            // `IntrinsicCall{Print}` MIR path, never as a normal call
+            // operand — it never reaches `function_value`'s lookup, so it
+            // genuinely needs no MIR-level representation at all.
             if self.is_extern_runtime_function(&name) {
                 continue;
             }
@@ -994,14 +997,31 @@ impl MirLowering {
             self.next_body_id += 1;
             program.bodies.insert(body_id, body);
 
+            // `fp_panic` *is* called as a normal `ConstantKind::Fn` operand
+            // (from `assert!`/`unwrap`/etc. lowering), so MIR→LIR's
+            // `function_value` needs a registered signature for it — but
+            // its actual implementation is hand-synthesized directly in
+            // each native backend (see `program_uses_fp_panic`/
+            // `needs_panic_stub`), not lowered from a MIR body. Declare it
+            // `extern` (a signature-only, body-less LIR declaration) rather
+            // than giving it the generic `Unreachable`-terminated stub body
+            // every other synthetic runtime function gets — that stub body
+            // would make every panic/assert trap instead of actually
+            // reporting a message, and would fight the backend's own
+            // definition for the same symbol.
+            let is_fp_panic = name == "fp_panic";
             let mir_function = mir::Function {
                 name: mir::Symbol::new(name.clone()),
                 def_id: None,
                 substs: Vec::new(),
                 sig: sig.clone(),
                 body_id,
-                abi: mir::ty::Abi::Rust,
-                is_extern: false,
+                abi: if is_fp_panic {
+                    mir::ty::Abi::C { unwind: false }
+                } else {
+                    mir::ty::Abi::Rust
+                },
+                is_extern: is_fp_panic,
                 attrs: Vec::new(),
             };
 
@@ -1014,7 +1034,7 @@ impl MirLowering {
     }
 
     fn is_extern_runtime_function(&self, name: &str) -> bool {
-        matches!(name, "printf" | "fp_panic")
+        matches!(name, "printf")
     }
 
     fn flush_extra_items(&mut self, program: &mut mir::Program) {
