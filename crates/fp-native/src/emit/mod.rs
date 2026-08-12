@@ -197,6 +197,23 @@ pub struct Relocation {
     pub addend: i64,
 }
 
+/// Rejects structurally malformed `AsmIR` (undeclared/duplicate virtual
+/// registers, missing results for result-defining opcodes) with a
+/// structured error, rather than letting it reach emission where it would
+/// surface as an unrelated panic or silently miscompiled output. `stage`
+/// identifies which pipeline step produced the program being checked, for
+/// the error message.
+fn validate_asmir(program: &AsmProgram, stage: &str) -> Result<()> {
+    program.validate().map_err(|errors| {
+        let details = errors
+            .iter()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+        Error::from(format!("malformed AsmIR after {stage}: {details}"))
+    })
+}
+
 pub fn emit_plan(
     lir_program: &LirProgram,
     format: TargetFormat,
@@ -204,11 +221,13 @@ pub fn emit_plan(
 ) -> Result<EmitPlan> {
     let lowered_lir = codegen::lower_program_for_native(lir_program)?;
     let asmir = asmir::select_program(&lowered_lir, format, arch)?;
+    validate_asmir(&asmir, "selection")?;
     let mut asmir = asmir;
     crate::system_api::rewrite_program_for_target(&mut asmir)?;
     crate::libc::normalize(&mut asmir);
     crate::libc::materialize(&mut asmir);
     crate::asmir::normalize_for_target(&mut asmir);
+    validate_asmir(&asmir, "system_api/libc synthesis")?;
     let output = codegen::emit_text_from_selection(&lowered_lir, &asmir, format, arch)?;
     output.validate_text_layout()?;
     Ok(EmitPlan {
@@ -246,6 +265,7 @@ pub fn emit_plan_from_asmir(
     crate::libc::normalize(&mut asmir);
     crate::libc::materialize(&mut asmir);
     crate::asmir::normalize_for_target(&mut asmir);
+    validate_asmir(&asmir, "system_api/libc synthesis")?;
 
     let output = match arch {
         TargetArch::X86_64 => crate::emit::x86_64::emit_text_from_asmir(&asmir, format)?,

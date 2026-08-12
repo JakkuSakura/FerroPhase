@@ -687,6 +687,19 @@ impl AsmProgram {
             type_definitions: Vec::new(),
         }
     }
+
+    /// Runs `AsmFunction::validate()` over every function, aggregating
+    /// errors across the whole program rather than stopping at the first
+    /// invalid function.
+    pub fn validate(&self) -> Result<(), Vec<AsmValidationError>> {
+        let mut errors = Vec::new();
+        for function in &self.functions {
+            if let Err(function_errors) = function.validate() {
+                errors.extend(function_errors);
+            }
+        }
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
+    }
 }
 
 impl AsmTarget {
