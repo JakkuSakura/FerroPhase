@@ -1,7 +1,8 @@
 use fp_core::asmir::{
-    AsmArchitecture, AsmBlock, AsmConstant, AsmEndianness, AsmFunction, AsmFunctionSignature,
-    AsmGenericOpcode, AsmInstruction, AsmInstructionKind, AsmObjectFormat, AsmOpcode, AsmProgram,
-    AsmSection, AsmSectionFlag, AsmSectionKind, AsmTarget, AsmTerminator, AsmType, AsmValue,
+    AsmArchitecture, AsmAttr, AsmBlock, AsmConstant, AsmEndianness, AsmFunction,
+    AsmFunctionSignature, AsmGenericOpcode, AsmInstruction, AsmObjectFormat, AsmOpcode,
+    AsmOperand, AsmProgram, AsmSection, AsmSectionFlag, AsmSectionKind, AsmTarget, AsmTerminator,
+    AsmType,
 };
 use fp_core::lir::{CallingConvention, Linkage, LirDataLayout, Name, Visibility};
 
@@ -35,50 +36,40 @@ fn macho_aarch64_rodata_addresses_use_adrp_add_relocations() {
     });
 
     // puts("hello")
-    program.functions.push(AsmFunction {
-        name: Name::new("main"),
-        signature: AsmFunctionSignature {
+    let mut function = AsmFunction::new(
+        Name::new("main"),
+        AsmFunctionSignature {
             params: Vec::new(),
             return_type: AsmType::I32,
             is_variadic: false,
         },
-        basic_blocks: vec![AsmBlock {
-            id: 0,
-            label: None,
-            instructions: vec![AsmInstruction {
-                id: 0,
-                opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("puts".to_string()),
-                    args: vec![AsmValue::Constant(AsmConstant::String("hello".to_string()))],
-                    calling_convention: CallingConvention::C,
-                    tail_call: false,
-                },
-                ty: AsmType::I32,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            }],
-            terminator: AsmTerminator::Return(Some(AsmValue::Constant(AsmConstant::Int(
-                0,
-                AsmType::I32,
-            )))),
-            terminator_encoding: None,
-            predecessors: Vec::new(),
-            successors: Vec::new(),
-        }],
-        locals: Vec::new(),
-        stack_slots: Vec::new(),
-        frame: None,
-        linkage: Linkage::External,
-        visibility: Visibility::Default,
-        calling_convention: Some(CallingConvention::C),
-        section: Some(".text".to_string()),
-        is_declaration: false,
-    });
+    );
+    function.basic_blocks = vec![AsmBlock {
+        id: 0,
+        label: None,
+        instructions: vec![AsmInstruction::new(
+            0,
+            AsmOpcode::Generic(AsmGenericOpcode::Call),
+            vec![
+                AsmOperand::Attr(AsmAttr::CallingConv(CallingConvention::C)),
+                AsmOperand::Symbol(Name::new("puts")),
+                AsmOperand::Constant(AsmConstant::String("hello".to_string())),
+            ],
+        )],
+        terminator: AsmTerminator::Return(Some(AsmOperand::Constant(AsmConstant::Int(
+            0,
+            AsmType::I32,
+        )))),
+        terminator_encoding: None,
+        predecessors: Vec::new(),
+        successors: Vec::new(),
+    }];
+    function.linkage = Linkage::External;
+    function.visibility = Visibility::Default;
+    function.calling_convention = Some(CallingConvention::C);
+    function.section = Some(".text".to_string());
+    function.is_declaration = false;
+    program.functions.push(function);
 
     let plan = fp_native::emit::emit_plan_from_asmir(
         program,

@@ -1,7 +1,8 @@
 use fp_core::asmir::{
-    AsmBlock, AsmConstant, AsmFunction, AsmFunctionSignature, AsmGlobal, AsmInstruction,
-    AsmInstructionKind, AsmObjectFormat, AsmOpcode, AsmProgram, AsmSection, AsmSectionFlag,
-    AsmSectionKind, AsmSymbolAddressKind, AsmTarget, AsmTerminator, AsmType, AsmValue,
+    AsmAttr, AsmBlock, AsmConstant, AsmFunction, AsmFunctionSignature, AsmGenericOpcode,
+    AsmGlobal, AsmInstruction, AsmObjectFormat, AsmOpcode, AsmOperand, AsmProgram, AsmRegister,
+    AsmRegisterBank, AsmSection, AsmSectionFlag, AsmSectionKind, AsmSymbolAddressKind, AsmTarget,
+    AsmTerminator, AsmType, OperandAccess,
 };
 use fp_core::container::{
     ContainerArchitecture, ContainerEndianness, ContainerFile, ContainerKind,
@@ -17,8 +18,7 @@ fn layout() -> LirDataLayout {
     .expect("valid test data layout")
 }
 
-#[test]
-fn materialize_maps_stderr_to_darwin_global() {
+fn base_program() -> AsmProgram {
     let mut program = AsmProgram::new(
         AsmTarget {
             architecture: fp_core::asmir::AsmArchitecture::Aarch64,
@@ -41,6 +41,58 @@ fn materialize_maps_stderr_to_darwin_global() {
         flags: vec![AsmSectionFlag::Allocate, AsmSectionFlag::Execute],
         alignment: Some(16),
     });
+    program
+}
+
+fn new_function() -> AsmFunction {
+    let mut function = AsmFunction::new(
+        Name::new("fp_lifted_main"),
+        AsmFunctionSignature {
+            params: Vec::new(),
+            return_type: AsmType::I32,
+            is_variadic: false,
+        },
+    );
+    function.linkage = Linkage::External;
+    function.visibility = Visibility::Default;
+    function.calling_convention = Some(CallingConvention::C);
+    function.section = Some(".text".to_string());
+    function.is_declaration = false;
+    function
+}
+
+fn finish_block(function: &mut AsmFunction, instructions: Vec<AsmInstruction>) {
+    function.basic_blocks = vec![AsmBlock {
+        id: 0,
+        label: None,
+        instructions,
+        terminator: AsmTerminator::Return(Some(AsmOperand::Constant(AsmConstant::Int(
+            0,
+            AsmType::I32,
+        )))),
+        terminator_encoding: None,
+        predecessors: Vec::new(),
+        successors: Vec::new(),
+    }];
+}
+
+fn write_reg(id: fp_core::asmir::AsmVirtualRegId) -> AsmOperand {
+    AsmOperand::Register {
+        reg: AsmRegister::Virtual(id),
+        access: OperandAccess::Write,
+    }
+}
+
+fn read_reg(id: fp_core::asmir::AsmVirtualRegId) -> AsmOperand {
+    AsmOperand::Register {
+        reg: AsmRegister::Virtual(id),
+        access: OperandAccess::Read,
+    }
+}
+
+#[test]
+fn materialize_maps_stderr_to_darwin_global() {
+    let mut program = base_program();
     program.globals.push(AsmGlobal {
         name: Name::new("stderr"),
         ty: AsmType::Ptr(Box::new(AsmType::I8)),
@@ -52,91 +104,42 @@ fn materialize_maps_stderr_to_darwin_global() {
         alignment: Some(8),
         is_constant: false,
     });
-    program.functions.push(AsmFunction {
-        name: Name::new("fp_lifted_main"),
-        signature: AsmFunctionSignature {
-            params: Vec::new(),
-            return_type: AsmType::I32,
-            is_variadic: false,
-        },
-        basic_blocks: vec![AsmBlock {
-            id: 0,
-            label: None,
-            instructions: vec![AsmInstruction {
-                id: 0,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Load),
-                kind: AsmInstructionKind::Load {
-                    address: AsmValue::Global(
-                        "stderr".to_string(),
-                        AsmType::Ptr(Box::new(AsmType::I8)),
-                    ),
-                    alignment: None,
-                    volatile: false,
-                },
-                ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            }],
-            terminator: AsmTerminator::Return(Some(AsmValue::Constant(AsmConstant::Int(
-                0,
-                AsmType::I32,
-            )))),
-            terminator_encoding: None,
-            predecessors: Vec::new(),
-            successors: Vec::new(),
-        }],
-        locals: Vec::new(),
-        stack_slots: Vec::new(),
-        frame: None,
-        linkage: Linkage::External,
-        visibility: Visibility::Default,
-        calling_convention: Some(CallingConvention::C),
-        section: Some(".text".to_string()),
-        is_declaration: false,
-    });
+
+    let mut function = new_function();
+    let v0 = function.alloc_virtual_register(
+        AsmType::Ptr(Box::new(AsmType::I8)),
+        AsmRegisterBank::General,
+        64,
+    );
+    finish_block(
+        &mut function,
+        vec![AsmInstruction::new(
+            0,
+            AsmOpcode::Generic(AsmGenericOpcode::Load),
+            vec![write_reg(v0), AsmOperand::Symbol(Name::new("stderr"))],
+        )],
+    );
+    program.functions.push(function);
 
     fp_native::libc::materialize(&mut program);
 
     let block = &program.functions[0].basic_blocks[0];
     assert_eq!(block.instructions.len(), 1);
 
-    let AsmInstructionKind::Load { address, .. } = &block.instructions[0].kind else {
-        panic!("expected load");
+    let address = block.instructions[0]
+        .operands
+        .iter()
+        .find(|op| matches!(op, AsmOperand::Symbol(_)))
+        .expect("expected symbol address operand");
+    let AsmOperand::Symbol(name) = address else {
+        unreachable!()
     };
-    let AsmValue::Global(name, _) = address else {
-        panic!("expected global address");
-    };
-    assert_eq!(name, "__stderrp");
+    assert_eq!(name.as_str(), "__stderrp");
 }
 
 #[test]
 fn materialize_removes_elf_copy_reloc_getopt_globals_for_darwin() {
-    let mut program = AsmProgram::new(
-        AsmTarget {
-            architecture: fp_core::asmir::AsmArchitecture::Aarch64,
-            object_format: AsmObjectFormat::MachO,
-            endianness: fp_core::asmir::AsmEndianness::Little,
-            pointer_width: 64,
-            default_calling_convention: Some(CallingConvention::C),
-        },
-        layout(),
-    );
-    program.container = Some(ContainerFile::new(
-        ContainerKind::Executable,
-        AsmObjectFormat::Elf,
-        ContainerArchitecture::X86_64,
-        ContainerEndianness::Little,
-    ));
-    program.sections.push(AsmSection {
-        name: ".text".to_string(),
-        kind: AsmSectionKind::Text,
-        flags: vec![AsmSectionFlag::Allocate, AsmSectionFlag::Execute],
-        alignment: Some(16),
-    });
+    let mut program = base_program();
 
     program.globals.push(AsmGlobal {
         name: Name::new("optind"),
@@ -164,282 +167,114 @@ fn materialize_removes_elf_copy_reloc_getopt_globals_for_darwin() {
 
 #[test]
 fn materialize_rewrites_indirect_exit_calls_to_exit_on_darwin_cross_materialization() {
-    let mut program = AsmProgram::new(
-        AsmTarget {
-            architecture: fp_core::asmir::AsmArchitecture::Aarch64,
-            object_format: AsmObjectFormat::MachO,
-            endianness: fp_core::asmir::AsmEndianness::Little,
-            pointer_width: 64,
-            default_calling_convention: Some(CallingConvention::C),
-        },
-        layout(),
-    );
-    program.container = Some(ContainerFile::new(
-        ContainerKind::Executable,
-        AsmObjectFormat::Elf,
-        ContainerArchitecture::X86_64,
-        ContainerEndianness::Little,
-    ));
-    program.sections.push(AsmSection {
-        name: ".text".to_string(),
-        kind: AsmSectionKind::Text,
-        flags: vec![AsmSectionFlag::Allocate, AsmSectionFlag::Execute],
-        alignment: Some(16),
-    });
-
+    let mut program = base_program();
     let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
 
-    program.functions.push(AsmFunction {
-        name: Name::new("fp_lifted_main"),
-        signature: AsmFunctionSignature {
-            params: Vec::new(),
-            return_type: AsmType::I32,
-            is_variadic: false,
-        },
-        basic_blocks: vec![AsmBlock {
-            id: 0,
-            label: None,
-            instructions: vec![
-                AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::SymbolAddress),
-                    kind: AsmInstructionKind::SymbolAddress {
-                        symbol: "exit".to_string(),
-                        kind: AsmSymbolAddressKind::Got,
-                    },
-                    ty: ptr_i8.clone(),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                },
-                AsmInstruction {
-                    id: 1,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Register(0),
-                        args: vec![AsmValue::Constant(AsmConstant::Int(2, AsmType::I32))],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::Void,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                },
-            ],
-            terminator: AsmTerminator::Return(Some(AsmValue::Constant(AsmConstant::Int(
+    let mut function = new_function();
+    let v0 = function.alloc_virtual_register(ptr_i8.clone(), AsmRegisterBank::General, 64);
+    finish_block(
+        &mut function,
+        vec![
+            AsmInstruction::new(
                 0,
-                AsmType::I32,
-            )))),
-            terminator_encoding: None,
-            predecessors: Vec::new(),
-            successors: Vec::new(),
-        }],
-        locals: Vec::new(),
-        stack_slots: Vec::new(),
-        frame: None,
-        linkage: Linkage::External,
-        visibility: Visibility::Default,
-        calling_convention: Some(CallingConvention::C),
-        section: Some(".text".to_string()),
-        is_declaration: false,
-    });
+                AsmOpcode::Generic(AsmGenericOpcode::SymbolAddress),
+                vec![
+                    write_reg(v0),
+                    AsmOperand::Symbol(Name::new("exit")),
+                    AsmOperand::Attr(AsmAttr::SymbolAddressKind(AsmSymbolAddressKind::Got)),
+                ],
+            ),
+            AsmInstruction::new(
+                1,
+                AsmOpcode::Generic(AsmGenericOpcode::Call),
+                vec![
+                    AsmOperand::Attr(AsmAttr::CallingConv(CallingConvention::C)),
+                    read_reg(v0),
+                    AsmOperand::Constant(AsmConstant::Int(2, AsmType::I32)),
+                ],
+            ),
+        ],
+    );
+    program.functions.push(function);
 
     fp_native::libc::materialize(&mut program);
 
     let block = &program.functions[0].basic_blocks[0];
-    let call = block
+    let target = block
         .instructions
         .iter()
-        .find_map(|inst| match &inst.kind {
-            AsmInstructionKind::Call { function, .. } => Some(function),
-            _ => None,
-        })
+        .find_map(|inst| inst.call_target_and_args())
+        .map(|(target, _)| target)
         .unwrap();
-    assert!(matches!(call, AsmValue::Function(name) if name == "_exit"));
+    assert!(matches!(target, AsmOperand::Symbol(name) if name.as_str() == "_exit"));
 }
 
 #[test]
 fn materialize_rewrites_exit_to_exit_on_darwin_cross_materialization() {
-    let mut program = AsmProgram::new(
-        AsmTarget {
-            architecture: fp_core::asmir::AsmArchitecture::Aarch64,
-            object_format: AsmObjectFormat::MachO,
-            endianness: fp_core::asmir::AsmEndianness::Little,
-            pointer_width: 64,
-            default_calling_convention: Some(CallingConvention::C),
-        },
-        layout(),
+    let mut program = base_program();
+
+    let mut function = new_function();
+    finish_block(
+        &mut function,
+        vec![AsmInstruction::new(
+            0,
+            AsmOpcode::Generic(AsmGenericOpcode::Call),
+            vec![
+                AsmOperand::Attr(AsmAttr::CallingConv(CallingConvention::C)),
+                AsmOperand::Symbol(Name::new("exit")),
+                AsmOperand::Constant(AsmConstant::Int(2, AsmType::I32)),
+            ],
+        )],
     );
-    program.container = Some(ContainerFile::new(
-        ContainerKind::Executable,
-        AsmObjectFormat::Elf,
-        ContainerArchitecture::X86_64,
-        ContainerEndianness::Little,
-    ));
-    program.sections.push(AsmSection {
-        name: ".text".to_string(),
-        kind: AsmSectionKind::Text,
-        flags: vec![AsmSectionFlag::Allocate, AsmSectionFlag::Execute],
-        alignment: Some(16),
-    });
-    program.functions.push(AsmFunction {
-        name: Name::new("fp_lifted_main"),
-        signature: AsmFunctionSignature {
-            params: Vec::new(),
-            return_type: AsmType::I32,
-            is_variadic: false,
-        },
-        basic_blocks: vec![AsmBlock {
-            id: 0,
-            label: None,
-            instructions: vec![AsmInstruction {
-                id: 0,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call),
-                kind: AsmInstructionKind::Call {
-                    function: AsmValue::Function("exit".to_string()),
-                    args: vec![AsmValue::Constant(AsmConstant::Int(2, AsmType::I32))],
-                    calling_convention: CallingConvention::C,
-                    tail_call: false,
-                },
-                ty: AsmType::Void,
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            }],
-            terminator: AsmTerminator::Return(Some(AsmValue::Constant(AsmConstant::Int(
-                0,
-                AsmType::I32,
-            )))),
-            terminator_encoding: None,
-            predecessors: Vec::new(),
-            successors: Vec::new(),
-        }],
-        locals: Vec::new(),
-        stack_slots: Vec::new(),
-        frame: None,
-        linkage: Linkage::External,
-        visibility: Visibility::Default,
-        calling_convention: Some(CallingConvention::C),
-        section: Some(".text".to_string()),
-        is_declaration: false,
-    });
+    program.functions.push(function);
 
     fp_native::libc::materialize(&mut program);
 
     let block = &program.functions[0].basic_blocks[0];
-    let call = block
+    let target = block
         .instructions
         .iter()
-        .find_map(|inst| match &inst.kind {
-            AsmInstructionKind::Call { function, .. } => Some(function),
-            _ => None,
-        })
+        .find_map(|inst| inst.call_target_and_args())
+        .map(|(target, _)| target)
         .unwrap();
-    assert!(matches!(call, AsmValue::Function(name) if name == "_exit"));
+    assert!(matches!(target, AsmOperand::Symbol(name) if name.as_str() == "_exit"));
 }
 
 #[test]
 fn materialize_rewrites_indirect_cxa_atexit_calls_to_noop_stub() {
-    let mut program = AsmProgram::new(
-        AsmTarget {
-            architecture: fp_core::asmir::AsmArchitecture::Aarch64,
-            object_format: AsmObjectFormat::MachO,
-            endianness: fp_core::asmir::AsmEndianness::Little,
-            pointer_width: 64,
-            default_calling_convention: Some(CallingConvention::C),
-        },
-        layout(),
-    );
-    program.container = Some(ContainerFile::new(
-        ContainerKind::Executable,
-        AsmObjectFormat::Elf,
-        ContainerArchitecture::X86_64,
-        ContainerEndianness::Little,
-    ));
-    program.sections.push(AsmSection {
-        name: ".text".to_string(),
-        kind: AsmSectionKind::Text,
-        flags: vec![AsmSectionFlag::Allocate, AsmSectionFlag::Execute],
-        alignment: Some(16),
-    });
-
+    let mut program = base_program();
     let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
 
-    program.functions.push(AsmFunction {
-        name: Name::new("fp_lifted_main"),
-        signature: AsmFunctionSignature {
-            params: Vec::new(),
-            return_type: AsmType::I32,
-            is_variadic: false,
-        },
-        basic_blocks: vec![AsmBlock {
-            id: 0,
-            label: None,
-            instructions: vec![
-                AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::SymbolAddress),
-                    kind: AsmInstructionKind::SymbolAddress {
-                        symbol: "__cxa_atexit".to_string(),
-                        kind: AsmSymbolAddressKind::Got,
-                    },
-                    ty: ptr_i8.clone(),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                },
-                AsmInstruction {
-                    id: 1,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Register(0),
-                        args: vec![
-                            AsmValue::Null(ptr_i8.clone()),
-                            AsmValue::Null(ptr_i8.clone()),
-                            AsmValue::Null(ptr_i8.clone()),
-                        ],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::I32,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                },
-            ],
-            terminator: AsmTerminator::Return(Some(AsmValue::Constant(AsmConstant::Int(
+    let mut function = new_function();
+    let v0 = function.alloc_virtual_register(ptr_i8.clone(), AsmRegisterBank::General, 64);
+    let v1 = function.alloc_virtual_register(AsmType::I32, AsmRegisterBank::General, 32);
+    finish_block(
+        &mut function,
+        vec![
+            AsmInstruction::new(
                 0,
-                AsmType::I32,
-            )))),
-            terminator_encoding: None,
-            predecessors: Vec::new(),
-            successors: Vec::new(),
-        }],
-        locals: Vec::new(),
-        stack_slots: Vec::new(),
-        frame: None,
-        linkage: Linkage::External,
-        visibility: Visibility::Default,
-        calling_convention: Some(CallingConvention::C),
-        section: Some(".text".to_string()),
-        is_declaration: false,
-    });
+                AsmOpcode::Generic(AsmGenericOpcode::SymbolAddress),
+                vec![
+                    write_reg(v0),
+                    AsmOperand::Symbol(Name::new("__cxa_atexit")),
+                    AsmOperand::Attr(AsmAttr::SymbolAddressKind(AsmSymbolAddressKind::Got)),
+                ],
+            ),
+            AsmInstruction::new(
+                1,
+                AsmOpcode::Generic(AsmGenericOpcode::Call),
+                vec![
+                    write_reg(v1),
+                    AsmOperand::Attr(AsmAttr::CallingConv(CallingConvention::C)),
+                    read_reg(v0),
+                    AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                    AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                    AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                ],
+            ),
+        ],
+    );
+    program.functions.push(function);
 
     fp_native::libc::materialize(&mut program);
 
@@ -456,44 +291,21 @@ fn materialize_rewrites_indirect_cxa_atexit_calls_to_noop_stub() {
         .find(|func| func.name.as_str() == "fp_lifted_main")
         .unwrap()
         .basic_blocks[0];
-    let call = block
+    let target = block
         .instructions
         .iter()
-        .find_map(|inst| match &inst.kind {
-            AsmInstructionKind::Call { function, .. } => Some(function),
-            _ => None,
-        })
+        .find_map(|inst| inst.call_target_and_args())
+        .map(|(target, _)| target)
         .unwrap();
     assert!(matches!(
-        call,
-        AsmValue::Function(name) if name == "fp_noop_cxa_atexit"
+        target,
+        AsmOperand::Symbol(name) if name.as_str() == "fp_noop_cxa_atexit"
     ));
 }
 
 #[test]
 fn materialize_inserts_getprogname_for_try_help_diagnostics() {
-    let mut program = AsmProgram::new(
-        AsmTarget {
-            architecture: fp_core::asmir::AsmArchitecture::Aarch64,
-            object_format: AsmObjectFormat::MachO,
-            endianness: fp_core::asmir::AsmEndianness::Little,
-            pointer_width: 64,
-            default_calling_convention: Some(CallingConvention::C),
-        },
-        layout(),
-    );
-    program.container = Some(ContainerFile::new(
-        ContainerKind::Executable,
-        AsmObjectFormat::Elf,
-        ContainerArchitecture::X86_64,
-        ContainerEndianness::Little,
-    ));
-    program.sections.push(AsmSection {
-        name: ".text".to_string(),
-        kind: AsmSectionKind::Text,
-        flags: vec![AsmSectionFlag::Allocate, AsmSectionFlag::Execute],
-        alignment: Some(16),
-    });
+    let mut program = base_program();
     program.globals.push(AsmGlobal {
         name: Name::new("fp_str_45"),
         ty: AsmType::Array(Box::new(AsmType::I8), 0),
@@ -509,266 +321,152 @@ fn materialize_inserts_getprogname_for_try_help_diagnostics() {
     });
 
     let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
-    program.functions.push(AsmFunction {
-        name: Name::new("fp_lifted_main"),
-        signature: AsmFunctionSignature {
-            params: Vec::new(),
-            return_type: AsmType::I32,
-            is_variadic: false,
-        },
-        basic_blocks: vec![AsmBlock {
-            id: 0,
-            label: None,
-            instructions: vec![
-                AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                    kind: AsmInstructionKind::Freeze(AsmValue::Constant(AsmConstant::GlobalRef(
+    let mut function = new_function();
+    let v0 = function.alloc_virtual_register(ptr_i8.clone(), AsmRegisterBank::General, 64);
+    let v1 = function.alloc_virtual_register(ptr_i8.clone(), AsmRegisterBank::General, 64);
+    finish_block(
+        &mut function,
+        vec![
+            AsmInstruction::new(
+                0,
+                AsmOpcode::Generic(AsmGenericOpcode::Freeze),
+                vec![
+                    write_reg(v0),
+                    AsmOperand::Constant(AsmConstant::GlobalRef(
                         Name::new("fp_str_45"),
                         ptr_i8.clone(),
                         vec![0],
-                    ))),
-                    ty: ptr_i8.clone(),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                },
-                AsmInstruction {
-                    id: 1,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("dcgettext".to_string()),
-                        args: vec![
-                            AsmValue::Null(ptr_i8.clone()),
-                            AsmValue::Register(0),
-                            AsmValue::Constant(AsmConstant::Int(5, AsmType::I32)),
-                        ],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: ptr_i8.clone(),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                },
-                AsmInstruction {
-                    id: 2,
-                    opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("fprintf".to_string()),
-                        args: vec![
-                            AsmValue::Null(ptr_i8.clone()),
-                            AsmValue::Register(1),
-                            AsmValue::Null(ptr_i8.clone()),
-                        ],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::Void,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                },
-            ],
-            terminator: AsmTerminator::Return(Some(AsmValue::Constant(AsmConstant::Int(
-                0,
-                AsmType::I32,
-            )))),
-            terminator_encoding: None,
-            predecessors: Vec::new(),
-            successors: Vec::new(),
-        }],
-        locals: Vec::new(),
-        stack_slots: Vec::new(),
-        frame: None,
-        linkage: Linkage::External,
-        visibility: Visibility::Default,
-        calling_convention: Some(CallingConvention::C),
-        section: Some(".text".to_string()),
-        is_declaration: false,
-    });
+                    )),
+                ],
+            ),
+            AsmInstruction::new(
+                1,
+                AsmOpcode::Generic(AsmGenericOpcode::Call),
+                vec![
+                    write_reg(v1),
+                    AsmOperand::Attr(AsmAttr::CallingConv(CallingConvention::C)),
+                    AsmOperand::Symbol(Name::new("dcgettext")),
+                    AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                    read_reg(v0),
+                    AsmOperand::Constant(AsmConstant::Int(5, AsmType::I32)),
+                ],
+            ),
+            AsmInstruction::new(
+                2,
+                AsmOpcode::Generic(AsmGenericOpcode::Call),
+                vec![
+                    AsmOperand::Attr(AsmAttr::CallingConv(CallingConvention::C)),
+                    AsmOperand::Symbol(Name::new("fprintf")),
+                    AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                    read_reg(v1),
+                    AsmOperand::Constant(AsmConstant::Null(ptr_i8.clone())),
+                ],
+            ),
+        ],
+    );
+    program.functions.push(function);
 
     fp_native::libc::materialize(&mut program);
 
     let block = &program.functions[0].basic_blocks[0];
-    let call_sites = block
+    let call_sites: Vec<&AsmInstruction> = block
         .instructions
         .iter()
-        .filter_map(|inst| match &inst.kind {
-            AsmInstructionKind::Call { function, args, .. } => Some((inst.id, function, args)),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+        .filter(|inst| inst.call_target_and_args().is_some())
+        .collect();
     assert_eq!(call_sites.len(), 3);
-    assert!(matches!(call_sites[1].1, AsmValue::Function(name) if name == "getprogname"));
-    assert!(matches!(call_sites[2].1, AsmValue::Function(name) if name == "fprintf"));
-    assert_eq!(call_sites[2].2.len(), 3);
-    assert_eq!(call_sites[2].2[2], AsmValue::Register(call_sites[1].0));
+
+    let (target1, _) = call_sites[1].call_target_and_args().unwrap();
+    assert!(matches!(target1, AsmOperand::Symbol(name) if name.as_str() == "getprogname"));
+
+    let (target2, args2) = call_sites[2].call_target_and_args().unwrap();
+    assert!(matches!(target2, AsmOperand::Symbol(name) if name.as_str() == "fprintf"));
+    assert_eq!(args2.len(), 3);
+
+    let getprogname_result = call_sites[1]
+        .result_register()
+        .cloned()
+        .expect("getprogname call should define a result");
+    assert_eq!(
+        args2[2],
+        AsmOperand::Register {
+            reg: getprogname_result,
+            access: OperandAccess::Read,
+        }
+    );
 }
 
 #[test]
 fn materialize_rewrites_globalref_constants_for_stdio_got_slots() {
-    let mut program = AsmProgram::new(
-        AsmTarget {
-            architecture: fp_core::asmir::AsmArchitecture::Aarch64,
-            object_format: AsmObjectFormat::MachO,
-            endianness: fp_core::asmir::AsmEndianness::Little,
-            pointer_width: 64,
-            default_calling_convention: Some(CallingConvention::C),
-        },
-        layout(),
-    );
-    program.container = Some(ContainerFile::new(
-        ContainerKind::Executable,
-        AsmObjectFormat::Elf,
-        ContainerArchitecture::X86_64,
-        ContainerEndianness::Little,
-    ));
-    program.sections.push(AsmSection {
-        name: ".text".to_string(),
-        kind: AsmSectionKind::Text,
-        flags: vec![AsmSectionFlag::Allocate, AsmSectionFlag::Execute],
-        alignment: Some(16),
-    });
-    program.functions.push(AsmFunction {
-        name: Name::new("fp_lifted_main"),
-        signature: AsmFunctionSignature {
-            params: Vec::new(),
-            return_type: AsmType::I32,
-            is_variadic: false,
-        },
-        basic_blocks: vec![AsmBlock {
-            id: 0,
-            label: None,
-            instructions: vec![AsmInstruction {
-                id: 0,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::Freeze),
-                kind: AsmInstructionKind::Freeze(AsmValue::Constant(AsmConstant::GlobalRef(
+    let mut program = base_program();
+
+    let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
+    let mut function = new_function();
+    let v0 = function.alloc_virtual_register(ptr_i8.clone(), AsmRegisterBank::General, 64);
+    finish_block(
+        &mut function,
+        vec![AsmInstruction::new(
+            0,
+            AsmOpcode::Generic(AsmGenericOpcode::Freeze),
+            vec![
+                write_reg(v0),
+                AsmOperand::Constant(AsmConstant::GlobalRef(
                     Name::new("stderr"),
-                    AsmType::Ptr(Box::new(AsmType::I8)),
+                    ptr_i8.clone(),
                     vec![0],
-                ))),
-                ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            }],
-            terminator: AsmTerminator::Return(Some(AsmValue::Constant(AsmConstant::Int(
-                0,
-                AsmType::I32,
-            )))),
-            terminator_encoding: None,
-            predecessors: Vec::new(),
-            successors: Vec::new(),
-        }],
-        locals: Vec::new(),
-        stack_slots: Vec::new(),
-        frame: None,
-        linkage: Linkage::External,
-        visibility: Visibility::Default,
-        calling_convention: Some(CallingConvention::C),
-        section: Some(".text".to_string()),
-        is_declaration: false,
-    });
+                )),
+            ],
+        )],
+    );
+    program.functions.push(function);
 
     fp_native::libc::materialize(&mut program);
 
     let block = &program.functions[0].basic_blocks[0];
-    let AsmInstructionKind::Freeze(value) = &block.instructions[0].kind else {
-        panic!("expected freeze");
-    };
-    let AsmValue::Constant(AsmConstant::GlobalRef(name, _, _)) = value else {
-        panic!("expected globalref constant");
+    let src = block.instructions[0]
+        .operands
+        .iter()
+        .find(|op| matches!(op, AsmOperand::Constant(AsmConstant::GlobalRef(..))))
+        .expect("expected globalref constant operand");
+    let AsmOperand::Constant(AsmConstant::GlobalRef(name, _, _)) = src else {
+        unreachable!()
     };
     assert_eq!(name.as_str(), "__stderrp");
 }
 
 #[test]
 fn materialize_dereferences_stdio_got_slot_on_darwin() {
-    let mut program = AsmProgram::new(
-        AsmTarget {
-            architecture: fp_core::asmir::AsmArchitecture::Aarch64,
-            object_format: AsmObjectFormat::MachO,
-            endianness: fp_core::asmir::AsmEndianness::Little,
-            pointer_width: 64,
-            default_calling_convention: Some(CallingConvention::C),
-        },
-        layout(),
+    let mut program = base_program();
+
+    let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
+    let mut function = new_function();
+    let v0 = function.alloc_virtual_register(ptr_i8.clone(), AsmRegisterBank::General, 64);
+    finish_block(
+        &mut function,
+        vec![AsmInstruction::new(
+            0,
+            AsmOpcode::Generic(AsmGenericOpcode::SymbolAddress),
+            vec![
+                write_reg(v0),
+                AsmOperand::Symbol(Name::new("stderr")),
+                AsmOperand::Attr(AsmAttr::SymbolAddressKind(AsmSymbolAddressKind::Got)),
+            ],
+        )],
     );
-    program.container = Some(ContainerFile::new(
-        ContainerKind::Executable,
-        AsmObjectFormat::Elf,
-        ContainerArchitecture::X86_64,
-        ContainerEndianness::Little,
-    ));
-    program.sections.push(AsmSection {
-        name: ".text".to_string(),
-        kind: AsmSectionKind::Text,
-        flags: vec![AsmSectionFlag::Allocate, AsmSectionFlag::Execute],
-        alignment: Some(16),
-    });
-    program.functions.push(AsmFunction {
-        name: Name::new("fp_lifted_main"),
-        signature: AsmFunctionSignature {
-            params: Vec::new(),
-            return_type: AsmType::I32,
-            is_variadic: false,
-        },
-        basic_blocks: vec![AsmBlock {
-            id: 0,
-            label: None,
-            instructions: vec![AsmInstruction {
-                id: 0,
-                opcode: AsmOpcode::Generic(fp_core::asmir::AsmGenericOpcode::SymbolAddress),
-                kind: AsmInstructionKind::SymbolAddress {
-                    symbol: "stderr".to_string(),
-                    kind: AsmSymbolAddressKind::Got,
-                },
-                ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                operands: Vec::new(),
-                implicit_uses: Vec::new(),
-                implicit_defs: Vec::new(),
-                encoding: None,
-                debug_info: None,
-                annotations: Vec::new(),
-            }],
-            terminator: AsmTerminator::Return(Some(AsmValue::Constant(AsmConstant::Int(
-                0,
-                AsmType::I32,
-            )))),
-            terminator_encoding: None,
-            predecessors: Vec::new(),
-            successors: Vec::new(),
-        }],
-        locals: Vec::new(),
-        stack_slots: Vec::new(),
-        frame: None,
-        linkage: Linkage::External,
-        visibility: Visibility::Default,
-        calling_convention: Some(CallingConvention::C),
-        section: Some(".text".to_string()),
-        is_declaration: false,
-    });
+    program.functions.push(function);
 
     fp_native::libc::materialize(&mut program);
 
     let block = &program.functions[0].basic_blocks[0];
     assert_eq!(block.instructions.len(), 1);
 
-    let AsmInstructionKind::SymbolAddress { symbol, .. } = &block.instructions[0].kind else {
-        panic!("expected symbol address");
+    let symbol = block.instructions[0]
+        .operands
+        .iter()
+        .find(|op| matches!(op, AsmOperand::Symbol(_)))
+        .expect("expected symbol address operand");
+    let AsmOperand::Symbol(name) = symbol else {
+        unreachable!()
     };
-    assert_eq!(symbol, "__stderrp");
+    assert_eq!(name.as_str(), "__stderrp");
 }

@@ -1973,11 +1973,11 @@ fn aarch64_machine_operands(
         }
         AsmGenericOpcode::Store => {
             let mut out = Vec::new();
-            if let Some(address) = operands.get(1) {
-                out.push(aarch64_address_like_operand(address, None, ctx));
-            }
             if let Some(value) = operands.first() {
                 out.push(asm_operand_to_aarch64(value, ctx));
+            }
+            if let Some(address) = operands.get(1) {
+                out.push(aarch64_address_like_operand(address, None, ctx));
             }
             out
         }
@@ -3551,8 +3551,8 @@ mod tests {
     use crate::asm::x86_64::{X86CallTarget, X86ConditionCode, X86Opcode, X86TerminatorOpcode};
     use crate::emit::{TargetArch, TargetFormat};
     use fp_core::asmir::{
-        AsmConditionCode, AsmGenericOpcode, AsmOpcode, AsmOperand, AsmRegister, AsmTerminator,
-        OperandAccess,
+        AsmConditionCode, AsmConstant, AsmGenericOpcode, AsmOpcode, AsmOperand, AsmRegister,
+        AsmTerminator, OperandAccess,
     };
     use fp_core::lir::{
         CallingConvention, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature,
@@ -3718,7 +3718,10 @@ mod tests {
             }
         ));
         assert!(matches!(&inst.operands[1], AsmOperand::Register { .. }));
-        assert!(matches!(&inst.operands[2], AsmOperand::Immediate(4)));
+        assert!(matches!(
+            &inst.operands[2],
+            AsmOperand::Constant(AsmConstant::UInt(4, _))
+        ));
 
         let x86 = lower_to_x86_64(&program);
         let inst = &x86.functions[0].blocks[0].instructions[1];

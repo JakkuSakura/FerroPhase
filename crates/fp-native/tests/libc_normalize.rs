@@ -1,7 +1,8 @@
 use fp_core::asmir::{
-    AsmArchitecture, AsmBlock, AsmConstant, AsmFunction, AsmFunctionSignature, AsmGenericOpcode,
-    AsmGlobal, AsmInstruction, AsmInstructionKind, AsmObjectFormat, AsmOpcode, AsmProgram,
-    AsmSection, AsmSectionFlag, AsmSectionKind, AsmTarget, AsmTerminator, AsmType, AsmValue,
+    AsmArchitecture, AsmAttr, AsmBlock, AsmConstant, AsmFunction, AsmFunctionSignature,
+    AsmGenericOpcode, AsmGlobal, AsmInstruction, AsmObjectFormat, AsmOpcode, AsmOperand,
+    AsmProgram, AsmRegister, AsmRegisterBank, AsmSection, AsmSectionFlag, AsmSectionKind,
+    AsmTarget, AsmTerminator, AsmType, OperandAccess,
 };
 use fp_core::lir::{CallingConvention, Linkage, LirDataLayout, Name, Visibility};
 
@@ -48,89 +49,84 @@ fn normalize_materializes_printf_format_strings_from_elf_rodata() {
     // v0 = &fp_elf_rodata_0
     // v1 = v0 + 0
     // call printf(v1)
-    program.functions.push(AsmFunction {
-        name: Name::new("fp_lifted_main"),
-        signature: AsmFunctionSignature {
+    let mut function = AsmFunction::new(
+        Name::new("fp_lifted_main"),
+        AsmFunctionSignature {
             params: Vec::new(),
             return_type: AsmType::I32,
             is_variadic: false,
         },
-        basic_blocks: vec![AsmBlock {
-            id: 0,
-            label: None,
-            instructions: vec![
-                AsmInstruction {
-                    id: 0,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Freeze),
-                    kind: AsmInstructionKind::Freeze(AsmValue::Constant(AsmConstant::GlobalRef(
-                        Name::new("fp_elf_rodata_0"),
-                        AsmType::Ptr(Box::new(AsmType::I8)),
-                        vec![0],
-                    ))),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                },
-                AsmInstruction {
-                    id: 1,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Add),
-                    kind: AsmInstructionKind::Add(
-                        AsmValue::Register(0),
-                        AsmValue::Constant(AsmConstant::Int(0, AsmType::I64)),
-                    ),
-                    ty: AsmType::Ptr(Box::new(AsmType::I8)),
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                },
-                AsmInstruction {
-                    id: 2,
-                    opcode: AsmOpcode::Generic(AsmGenericOpcode::Call),
-                    kind: AsmInstructionKind::Call {
-                        function: AsmValue::Function("printf".to_string()),
-                        args: vec![AsmValue::Register(1)],
-                        calling_convention: CallingConvention::C,
-                        tail_call: false,
-                    },
-                    ty: AsmType::Void,
-                    operands: Vec::new(),
-                    implicit_uses: Vec::new(),
-                    implicit_defs: Vec::new(),
-                    encoding: None,
-                    debug_info: None,
-                    annotations: Vec::new(),
-                },
-            ],
-            terminator: AsmTerminator::Return(Some(AsmValue::Constant(AsmConstant::Int(
+    );
+    let ptr_i8 = AsmType::Ptr(Box::new(AsmType::I8));
+    let v0 = function.alloc_virtual_register(ptr_i8.clone(), AsmRegisterBank::General, 64);
+    let v1 = function.alloc_virtual_register(ptr_i8.clone(), AsmRegisterBank::General, 64);
+    function.basic_blocks = vec![AsmBlock {
+        id: 0,
+        label: None,
+        instructions: vec![
+            AsmInstruction::new(
                 0,
-                AsmType::I32,
-            )))),
-            terminator_encoding: None,
-            predecessors: Vec::new(),
-            successors: Vec::new(),
-        }],
-        locals: Vec::new(),
-        stack_slots: Vec::new(),
-        frame: None,
-        linkage: Linkage::External,
-        visibility: Visibility::Default,
-        calling_convention: Some(CallingConvention::C),
-        section: Some(".text".to_string()),
-        is_declaration: false,
-    });
+                AsmOpcode::Generic(AsmGenericOpcode::Freeze),
+                vec![
+                    AsmOperand::Register {
+                        reg: AsmRegister::Virtual(v0),
+                        access: OperandAccess::Write,
+                    },
+                    AsmOperand::Constant(AsmConstant::GlobalRef(
+                        Name::new("fp_elf_rodata_0"),
+                        ptr_i8.clone(),
+                        vec![0],
+                    )),
+                ],
+            ),
+            AsmInstruction::new(
+                1,
+                AsmOpcode::Generic(AsmGenericOpcode::Add),
+                vec![
+                    AsmOperand::Register {
+                        reg: AsmRegister::Virtual(v1),
+                        access: OperandAccess::Write,
+                    },
+                    AsmOperand::Register {
+                        reg: AsmRegister::Virtual(v0),
+                        access: OperandAccess::Read,
+                    },
+                    AsmOperand::Constant(AsmConstant::Int(0, AsmType::I64)),
+                ],
+            ),
+            AsmInstruction::new(
+                2,
+                AsmOpcode::Generic(AsmGenericOpcode::Call),
+                vec![
+                    AsmOperand::Attr(AsmAttr::CallingConv(CallingConvention::C)),
+                    AsmOperand::Symbol(Name::new("printf")),
+                    AsmOperand::Register {
+                        reg: AsmRegister::Virtual(v1),
+                        access: OperandAccess::Read,
+                    },
+                ],
+            ),
+        ],
+        terminator: AsmTerminator::Return(Some(AsmOperand::Constant(AsmConstant::Int(
+            0,
+            AsmType::I32,
+        )))),
+        terminator_encoding: None,
+        predecessors: Vec::new(),
+        successors: Vec::new(),
+    }];
+    function.linkage = Linkage::External;
+    function.visibility = Visibility::Default;
+    function.calling_convention = Some(CallingConvention::C);
+    function.section = Some(".text".to_string());
+    function.is_declaration = false;
+    program.functions.push(function);
 
     fp_native::libc::normalize(&mut program);
 
     let call = &program.functions[0].basic_blocks[0].instructions[2];
-    let AsmInstructionKind::Call { args, .. } = &call.kind else {
-        panic!("expected call");
-    };
-    assert!(matches!(args[0], AsmValue::Constant(AsmConstant::String(ref s)) if s == "hello %s"));
+    let (_, args) = call.call_target_and_args().expect("expected call");
+    assert!(
+        matches!(args[0], AsmOperand::Constant(AsmConstant::String(ref s)) if s == "hello %s")
+    );
 }

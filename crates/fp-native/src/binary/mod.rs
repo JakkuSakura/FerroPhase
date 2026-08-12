@@ -154,7 +154,7 @@ mod tests {
     fn x86_64_lifter_splits_blocks_for_unconditional_jump() {
         let bytes = [0xEB, 0x01, 0xC3, 0xC3];
         let lifted =
-            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64))
+            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64), &mut scratch_function())
                 .unwrap();
         assert_eq!(lifted.basic_blocks.len(), 2);
         assert_eq!(lifted.basic_blocks[0].id, 0);
@@ -207,6 +207,7 @@ mod tests {
             0,
             true,
             false,
+                    &mut scratch_function(),
         )
         .unwrap();
 
@@ -264,7 +265,7 @@ mod tests {
         ];
 
         let lifted =
-            x86_64::lift_function_bytes(&bytes, &relocs, Some(AsmSyscallConvention::LinuxX86_64))
+            x86_64::lift_function_bytes(&bytes, &relocs, Some(AsmSyscallConvention::LinuxX86_64), &mut scratch_function())
                 .unwrap();
         let instructions = &lifted.basic_blocks[0].instructions;
 
@@ -312,7 +313,7 @@ mod tests {
         ];
 
         let lifted =
-            x86_64::lift_function_bytes(&bytes, &relocs, Some(AsmSyscallConvention::LinuxX86_64))
+            x86_64::lift_function_bytes(&bytes, &relocs, Some(AsmSyscallConvention::LinuxX86_64), &mut scratch_function())
                 .unwrap();
         let instructions = &lifted.basic_blocks[0].instructions;
 
@@ -348,6 +349,7 @@ mod tests {
             0,
             true,
             true,
+                    &mut scratch_function(),
         )
         .unwrap();
 
@@ -408,7 +410,7 @@ mod tests {
         bytes.push(0xC3);
 
         let lifted =
-            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64))
+            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64), &mut scratch_function())
                 .unwrap();
         assert_eq!(lifted.basic_blocks.len(), 3);
         assert!(matches!(
@@ -510,7 +512,7 @@ mod tests {
         // - absolute = 7 + 0x10 = 0x17
         let bytes = [0x48, 0x8B, 0x05, 0x10, 0x00, 0x00, 0x00, 0xC3];
         let lifted =
-            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64))
+            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64), &mut scratch_function())
                 .unwrap();
 
         let mut has_address_constant = false;
@@ -542,7 +544,7 @@ mod tests {
             0x22, 0x11, 0xC3,
         ];
         let lifted =
-            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64))
+            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64), &mut scratch_function())
                 .unwrap();
 
         let mut has_build_vector = false;
@@ -566,7 +568,7 @@ mod tests {
         // movd xmm0, dword ptr [r10 + 0x8]; ret
         let bytes = [0x66, 0x41, 0x0F, 0x6E, 0x42, 0x08, 0xC3];
         let lifted =
-            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64))
+            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64), &mut scratch_function())
                 .unwrap();
 
         let mut saw_load = false;
@@ -592,7 +594,7 @@ mod tests {
         // ret
         let bytes = [0x66, 0x0F, 0x7E, 0x4D, 0xF0, 0xC3];
         let lifted =
-            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64))
+            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64), &mut scratch_function())
                 .unwrap();
 
         let mut saw_extract_lane = false;
@@ -618,7 +620,7 @@ mod tests {
         // ret
         let bytes = [0x66, 0x0F, 0x7E, 0xC0, 0xC3];
         let lifted =
-            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64))
+            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64), &mut scratch_function())
                 .unwrap();
 
         let mut saw_extract_lane = false;
@@ -639,7 +641,7 @@ mod tests {
         // ret
         let bytes = [0x66, 0x48, 0x0F, 0x3A, 0x16, 0xF0, 0x01, 0xC3];
         let lifted =
-            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64))
+            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64), &mut scratch_function())
                 .unwrap();
 
         let mut saw_extract_lane_1 = false;
@@ -666,7 +668,7 @@ mod tests {
         // ret
         let bytes = [0x44, 0x0F, 0x38, 0xF0, 0x54, 0x24, 0x20, 0xC3];
         let lifted =
-            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64))
+            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64), &mut scratch_function())
                 .unwrap();
 
         let mut has_load = false;
@@ -693,7 +695,7 @@ mod tests {
         // cdq; ret
         let bytes = [0x99, 0xC3];
         let lifted =
-            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64))
+            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64), &mut scratch_function())
                 .unwrap();
 
         let mut saw_trunc = false;
@@ -719,7 +721,7 @@ mod tests {
         // ret
         let bytes = [0xC4, 0xE2, 0x79, 0x17, 0x43, 0x18, 0xC3];
         let lifted =
-            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64))
+            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64), &mut scratch_function())
                 .unwrap();
 
         let mut has_compare = false;
@@ -740,7 +742,7 @@ mod tests {
         // ret
         let bytes = [0x48, 0xF7, 0x64, 0x24, 0x10, 0xC3];
         let lifted =
-            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64))
+            x86_64::lift_function_bytes(&bytes, &[], Some(AsmSyscallConvention::LinuxX86_64), &mut scratch_function())
                 .unwrap();
 
         let mut has_mul = false;
