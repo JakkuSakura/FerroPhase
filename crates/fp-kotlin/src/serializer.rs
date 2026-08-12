@@ -1277,6 +1277,17 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                             return Ok(format!("{} ?: {}", obj, rhs));
                         }
                     }
+                    // `Option::map_or(default, |x| body)` has no Kotlin equivalent method —
+                    // rewrite structurally as `obj?.let { x -> body } ?: default`.
+                    if sel.field.name.as_str() == "map_or" && inv.args.len() == 2 {
+                        if let ExprKind::Closure(cl) = inv.args[1].kind() {
+                            let obj = render_expr(&sel.obj, e)?;
+                            let default = render_expr(&inv.args[0], e)?;
+                            let param = cl.params.first().map(ident_from_pattern).unwrap_or_else(|| "it".to_string());
+                            let body = render_expr(&cl.body, e)?;
+                            return Ok(format!("{}?.let {{ {} -> {} }} ?: {}", obj, param, body, default));
+                        }
+                    }
                     // `Option::take()` — replaces a `var` with `None`/`null`, returning
                     // the old value. Kotlin has no equivalent method; model it directly.
                     if sel.field.name.as_str() == "take" && inv.args.is_empty() {
@@ -2010,6 +2021,9 @@ fn map_kt_method(name: &str) -> String {
         "strip_suffix" => "removeSuffix".into(),
         "trim_end_matches" => "removeSuffix".into(),
         "unwrap_or" => "".into(),
+        // `Option<T>::as_ref()` -> `Option<&T>` has no Kotlin equivalent step —
+        // nullable types don't need one — so drop the call entirely.
+        "as_ref" => "".into(),
         "as_bytes" => "toByteArray()".into(),
         "map" => "let".into(),
         "parse_next" => "parse".into(),
