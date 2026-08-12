@@ -779,6 +779,34 @@ fn parse_string(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
         return parse_f_string_literal_local(&token.lexeme, file)
             .map_err(|_| ErrMode::Cut(ContextError::new()));
     }
+    // `b'x'` (a `u8` byte literal) and `'x'` (a `char` literal) are single-quote
+    // delimited — distinguish them from double-quoted strings before decoding,
+    // or both collapse into an indistinguishable `Value::String`.
+    if let Some(inner) = token
+        .lexeme
+        .strip_prefix("b'")
+        .and_then(|rest| rest.strip_suffix('\''))
+    {
+        if let Some(ch) = decode_single_char_literal(inner) {
+            let byte = u32::from(ch).min(u8::MAX as u32) as u64;
+            let ty = Ty::Primitive(TypePrimitive::Int(TypeInt::U8));
+            return Ok(Expr::value(Value::UInt(ValueUInt::new(byte)))
+                .with_ty_slot(Some(ty))
+                .with_span(token_span_to_span(&token)));
+        }
+    }
+    if let Some(inner) = token
+        .lexeme
+        .strip_prefix('\'')
+        .and_then(|rest| rest.strip_suffix('\''))
+    {
+        if let Some(ch) = decode_single_char_literal(inner) {
+            let ty = Ty::Primitive(TypePrimitive::Char);
+            return Ok(Expr::value(Value::Char(ValueChar::new(ch)))
+                .with_ty_slot(Some(ty))
+                .with_span(token_span_to_span(&token)));
+        }
+    }
     let value =
         decode_string_literal(&token.lexeme).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
     let ty = Ty::Reference(TypeReference {

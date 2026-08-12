@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
@@ -31,6 +32,17 @@ struct KotlinEmitter {
     /// paired `__fp_assert_left`/`__fp_assert_right` statements it generates).
     long_field_names: HashSet<String>,
     pending_assert_long: bool,
+    /// Variables bound from `.split(...)` — Kotlin's version returns a `List`, not
+    /// a stateful iterator, so a later `.next()?` on one of these needs indexed
+    /// access instead of the usual (erasing) method-call rendering.
+    split_iter_vars: HashSet<String>,
+    /// Per-variable consumed-index counter for the `split_iter_vars` rewrite.
+    next_call_counters: HashMap<String, usize>,
+    /// Stack of currently-open block scopes (only pushed around match-arm body
+    /// rendering, where Rust's `let`-shadowing shows up) — used to detect a
+    /// same-scope re-`let` of a name, which Kotlin doesn't allow as a flat
+    /// re-declaration. Empty outside that context, so this is a no-op elsewhere.
+    declared_names: Vec<HashSet<String>>,
 }
 
 impl KotlinEmitter {
@@ -43,6 +55,30 @@ impl KotlinEmitter {
             local_modules: HashSet::new(),
             long_field_names: HashSet::new(),
             pending_assert_long: false,
+            split_iter_vars: HashSet::new(),
+            next_call_counters: HashMap::new(),
+            declared_names: Vec::new(),
+        }
+    }
+
+    fn push_scope(&mut self) {
+        self.declared_names.push(HashSet::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.declared_names.pop();
+    }
+
+    /// True if `name` is already declared in any currently-open scope.
+    fn is_declared(&self, name: &str) -> bool {
+        self.declared_names.iter().any(|s| s.contains(name))
+    }
+
+    /// Record `name` as declared in the innermost currently-open scope. A no-op
+    /// if no scope is open (i.e. outside match-arm body rendering).
+    fn declare_name(&mut self, name: &str) {
+        if let Some(top) = self.declared_names.last_mut() {
+            top.insert(name.to_string());
         }
     }
 
@@ -519,6 +555,11 @@ fn expr_contains_winnow(expr: &Expr) -> bool {
             let winnow_methods = &["parse_next", "take_while", "verify", "alt", "preceded",
                 "delimited", "terminated", "separated_pair", "tuple", "many0", "many1"];
             if winnow_methods.contains(&method.as_str()) { return true; }
+            // A winnow call can be the *receiver* of a further chained call
+            // (`"...".parse_next(input).map(...)`), not just an argument.
+            if let ExprInvokeTarget::Method(sel) = &inv.target {
+                if expr_contains_winnow(&sel.obj) { return true; }
+            }
             for arg in &inv.args { if expr_contains_winnow(arg) { return true; } }
             false
         }
@@ -641,12 +682,53 @@ fn emit_stmt(stmt: &BlockStmt, e: &mut KotlinEmitter, is_tail: bool) -> Result<(
             let var_name = ident_from_pattern(&l.pat);
             let type_ann = extract_type_annotation(&l.pat, e);
             let decl_kw = if is_mut_pattern(&l.pat) { "var" } else { "val" };
+            if var_name != "_" {
+                e.declare_name(&var_name);
+            }
+            // `let mut parts = s.split(sep);` — Kotlin's `.split()` returns a `List`,
+            // not a stateful iterator; remember `parts` so subsequent `.next()?` calls
+            // on it (see below) can be modeled as indexed access instead of erased.
+            if let Some(init) = &l.init {
+                if let ExprKind::Invoke(inv) = init.kind() {
+                    if let ExprInvokeTarget::Method(sel) = &inv.target {
+                        if sel.field.name.as_str() == "split" {
+                            e.split_iter_vars.insert(var_name.clone());
+                        }
+                    }
+                }
+            }
             if var_name == "_" {
                 if let Some(init) = &l.init {
                     let val = render_expr(init, e)?;
                     e.push_line(&val);
                 }
             } else if let Some(init) = &l.init {
+                // Rust's manual-iterator `.next()?` extraction (e.g. `parts.next()?`
+                // after `let mut parts = s.split(sep)`) — render as an indexed access
+                // with an early return on exhaustion, matching `?`'s None-propagation.
+                if let ExprKind::Try(t) = init.kind() {
+                    if let ExprKind::Invoke(inv) = t.expr.kind() {
+                        if let ExprInvokeTarget::Method(sel) = &inv.target {
+                            if sel.field.name.as_str() == "next" && inv.args.is_empty() {
+                                if let ExprKind::Name(name) = sel.obj.kind() {
+                                    let obj_name = name.to_string();
+                                    if e.split_iter_vars.contains(&obj_name) {
+                                        let idx = *e.next_call_counters.get(&obj_name).unwrap_or(&0);
+                                        e.next_call_counters.insert(obj_name.clone(), idx + 1);
+                                        let obj_rendered = render_expr(&sel.obj, e)?;
+                                        let val = format!("{}.getOrNull({}) ?: return null", obj_rendered, idx);
+                                        if let Some(ref ty) = type_ann {
+                                            e.push_line(&format!("{} {} : {} = {}", decl_kw, var_name, ty, val));
+                                        } else {
+                                            e.push_line(&format!("{} {} = {}", decl_kw, var_name, val));
+                                        }
+                                        return Ok(());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // `assert_eq!`/`assert_ne!` lift each side of the comparison into its own
                 // `let`, discarding the field type the literal is compared against — track
                 // it across the pair so a `Long`-typed field's literal gets an `L` suffix.
@@ -806,9 +888,36 @@ fn is_mut_pattern(pat: &Pattern) -> bool {
 
 // ── Expressions ──────────────────────────────────────────────────────────────
 
+/// True if `expr` is `<obj>.as_bytes()[<idx>]` — indexing into a byte array,
+/// which renders to Kotlin `Byte`, not `Char`.
+fn is_byte_array_index(expr: &Expr) -> bool {
+    if let ExprKind::Index(idx) = expr.kind() {
+        if let ExprKind::Invoke(inv) = idx.obj.kind() {
+            if let ExprInvokeTarget::Method(sel) = &inv.target {
+                return sel.field.name.as_str() == "as_bytes";
+            }
+        }
+    }
+    false
+}
+
 fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
     match expr.kind() {
-        ExprKind::Value(val) => Ok(render_value(val)),
+        ExprKind::Value(val) => {
+            let rendered = render_value(val);
+            // Kotlin has no byte-literal syntax — a `u8` value (e.g. from a Rust
+            // byte literal `b':'`) needs an explicit `.toByte()` conversion to be
+            // usable where an actual `Byte` (not `Int`) is expected.
+            let is_u8 = matches!(
+                expr.ty(),
+                Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U8)))
+            );
+            if is_u8 && matches!(val.as_ref(), Value::Int(_) | Value::UInt(_)) {
+                Ok(format!("{}.toByte()", rendered))
+            } else {
+                Ok(rendered)
+            }
+        }
         ExprKind::Name(name) => {
             let raw = name.to_string();
             let dotted = raw.replace("::", ".");
@@ -822,8 +931,32 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                 ExprInvokeTarget::Method(sel) => {
                     let obj = render_expr(&sel.obj, e)?;
                     let method_name = map_kt_method(sel.field.name.as_str());
+                    // `is_ascii_alphabetic`/etc. map to Kotlin `Char` methods (`isLetter()`),
+                    // but their receiver here is a `Byte` (indexed out of `.as_bytes()`) —
+                    // bridge it to a `Char` first.
+                    let obj = if matches!(method_name.as_str(), "isLetter()" | "isDigit()" | "isWhitespace()" | "isLetterOrDigit()")
+                        && is_byte_array_index(&sel.obj)
+                    {
+                        format!("{}.toInt().toChar()", obj)
+                    } else {
+                        obj
+                    };
+                    // Kotlin's `String.replace` only overloads `(Char, Char)` or
+                    // `(String, String)` — Rust's `str::replace` allows a char pattern
+                    // with a string replacement, so a `Char` arg here needs coercing to
+                    // a one-character string to match the mixed-type call.
+                    let is_replace = sel.field.name.as_str() == "replace";
                     let args: Vec<String> = inv.args.iter()
-                        .map(|a| render_expr(a, e))
+                        .map(|a| {
+                            if is_replace {
+                                if let ExprKind::Value(v) = a.kind() {
+                                    if let Value::Char(c) = v.as_ref() {
+                                        return Ok(format!("\"{}\"", escape_str_for_kt(&c.value.to_string())));
+                                    }
+                                }
+                            }
+                            render_expr(a, e)
+                        })
                         .collect::<Result<Vec<_>>>()?;
                     if method_name.is_empty() {
                         Ok(obj)
@@ -904,36 +1037,52 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
 
             if is_single_arm || is_two_arm {
                 let case = &mt.cases[0];
+
+                // Determine the binding shape via pure pattern inspection (no rendering
+                // yet), so any names it introduces can be pre-seeded into a scope before
+                // the arm body renders — a same-named `let`-shadow inside that body (see
+                // the `ExprKind::Block` arm) needs to see these as already declared.
+                let non_monadic = if is_two_arm { non_monadic_tuple_variant(&case.pat) } else { None };
+                let effective_var = if non_monadic.is_some() {
+                    None
+                } else if is_two_arm {
+                    stripped_tuple_binding(&case.pat).or_else(|| match_case_binding(&case.pat))
+                } else {
+                    match_case_binding(&case.pat)
+                };
+
+                e.push_scope();
+                if let Some((_, ref binding)) = non_monadic {
+                    e.declare_name(binding);
+                }
+                if let Some(ref var) = effective_var {
+                    if let Some(names) = var.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+                        for name in names.split(", ") { e.declare_name(name); }
+                    }
+                }
                 let body = render_expr(&case.body, e)?;
+                e.pop_scope();
                 let multiline = body.contains('\n');
 
                 // A 2-arm match on an ordinary enum variant (not Some/Ok/Err/None) isn't a
                 // null-check equivalent — the scrutinee itself isn't interchangeable with its
                 // payload, so it needs a smart-cast + field access, not `val x = scrutinee`.
-                if is_two_arm {
-                    if let Some((variant_path, binding)) = non_monadic_tuple_variant(&case.pat) {
-                        let else_body = render_expr(&mt.cases[1].body, e)?;
-                        let else_trimmed = else_body.trim();
-                        let body_lines: String = body.lines()
-                            .map(|l| format!("        {}", l))
-                            .collect::<Vec<_>>().join("\n");
-                        let else_clause = if else_trimmed.is_empty() {
-                            " else {\n        null\n    }".to_string()
-                        } else {
-                            format!(" else {{\n        {}\n    }}", else_body)
-                        };
-                        return Ok(format!(
-                            "if ({0} is {1}) {{\n    val {2} = {0}.__data\n{3}\n}}{4}",
-                            scrutinee, variant_path, binding, body_lines, else_clause
-                        ));
-                    }
+                if let Some((variant_path, binding)) = non_monadic {
+                    let else_body = render_expr(&mt.cases[1].body, e)?;
+                    let else_trimmed = else_body.trim();
+                    let body_lines: String = body.lines()
+                        .map(|l| format!("        {}", l))
+                        .collect::<Vec<_>>().join("\n");
+                    let else_clause = if else_trimmed.is_empty() {
+                        " else {\n        null\n    }".to_string()
+                    } else {
+                        format!(" else {{\n        {}\n    }}", else_body)
+                    };
+                    return Ok(format!(
+                        "if ({0} is {1}) {{\n    val {2} = {0}.__data\n{3}\n}}{4}",
+                        scrutinee, variant_path, binding, body_lines, else_clause
+                    ));
                 }
-
-                let effective_var = if is_two_arm {
-                    stripped_tuple_binding(&case.pat).or_else(|| match_case_binding(&case.pat))
-                } else {
-                    match_case_binding(&case.pat)
-                };
                 let else_body = if mt.cases.len() > 1 {
                     Some(render_expr(&mt.cases[1].body, e)?)
                 } else {
@@ -1019,15 +1168,36 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
         }
 
         ExprKind::Block(block) => {
+            e.push_scope();
             let mut buf = String::new();
+            // Rust allows re-`let`-ing a name in the same scope (shadowing); Kotlin
+            // doesn't allow a flat re-declaration. When that would happen, nest the
+            // remainder of the block in a fresh `run { }` scope instead — each nested
+            // `val` then legitimately shadows the outer one.
+            let mut nest_depth: usize = 0;
             for stmt in &block.stmts {
+                if let BlockStmt::Let(l) = stmt {
+                    let name = ident_from_pattern(&l.pat);
+                    if name != "_" && !name.starts_with('(') && e.is_declared(&name) {
+                        for _ in 0..=nest_depth { buf.push_str("    "); }
+                        buf.push_str("run {\n");
+                        nest_depth += 1;
+                        e.push_scope();
+                    }
+                }
                 let saved = std::mem::take(&mut e.code);
-                e.indent += 1;
+                e.indent += 1 + nest_depth;
                 emit_stmt(stmt, e, false)?;
                 let stmt_text = std::mem::replace(&mut e.code, saved);
                 buf.push_str(&stmt_text);
-                e.indent -= 1;
+                e.indent -= 1 + nest_depth;
             }
+            for d in (0..nest_depth).rev() {
+                for _ in 0..=d { buf.push_str("    "); }
+                buf.push_str("}\n");
+                e.pop_scope();
+            }
+            e.pop_scope();
             Ok(buf)
         }
 
@@ -1784,6 +1954,11 @@ fn map_name_to_kt(name: &str) -> String {
         let comma = s.find(',')?;
         Some(&s[..comma])
     }) {
+        return map_name_to_kt(inner);
+    }
+    // winnow's `ModalResult<T>` (≈ `Result<T, ContextError>`) — single type
+    // argument, unlike `Result`, so just unwrap to T directly.
+    if let Some(inner) = strip_generic_wrapper(&dot_name, "ModalResult") {
         return map_name_to_kt(inner);
     }
 

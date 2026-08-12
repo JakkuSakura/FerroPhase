@@ -83,6 +83,33 @@ pub(crate) fn split_parameter_path_prefix(
     }
 }
 
+/// Decode a single-character/byte literal's escaped inner text (e.g. the `x` in
+/// `'x'`, or `\n` in `'\n'`) into one `char`. Returns `None` if the escape isn't
+/// recognized or the literal doesn't contain exactly one character/escape.
+pub(crate) fn decode_single_char_literal(inner: &str) -> Option<char> {
+    let mut chars = inner.chars();
+    let first = chars.next()?;
+    if first != '\\' {
+        return if chars.next().is_none() { Some(first) } else { None };
+    }
+    let esc = chars.next()?;
+    let decoded = match esc {
+        'n' => '\n',
+        'r' => '\r',
+        't' => '\t',
+        '0' => '\0',
+        '\\' => '\\',
+        '\'' => '\'',
+        '"' => '"',
+        'x' => {
+            let hex: String = chars.by_ref().take(2).collect();
+            u8::from_str_radix(&hex, 16).ok()? as char
+        }
+        _ => return None,
+    };
+    if chars.next().is_none() { Some(decoded) } else { None }
+}
+
 pub(crate) fn decode_string_literal(raw: &str) -> Option<String> {
     fn unescape_cooked(s: &str) -> Option<String> {
         let mut out = String::with_capacity(s.len());
