@@ -1288,7 +1288,107 @@ impl LirFunction {
     pub fn span(&self) -> Span {
         Span::null()
     }
+
+    /// Structural SSA well-formedness checks: every result register is
+    /// defined exactly once with a consistent type, and every register use
+    /// resolves to some definition in the function.
+    pub fn validate(&self) -> Result<(), Vec<LirValidationError>> {
+        let mut errors = Vec::new();
+        let mut defined: HashMap<RegisterId, LirType> = HashMap::new();
+
+        for block in &self.basic_blocks {
+            for instruction in &block.instructions {
+                let Some(result) = &instruction.result else {
+                    continue;
+                };
+                match defined.get(&result.id) {
+                    Some(existing_ty) if existing_ty == &result.ty => {
+                        errors.push(LirValidationError {
+                            function: self.name.clone(),
+                            block: Some(block.id),
+                            instruction: Some(instruction.id),
+                            register: Some(result.id),
+                            message: format!("register %{} is defined more than once", result.id),
+                        });
+                    }
+                    Some(existing_ty) => {
+                        errors.push(LirValidationError {
+                            function: self.name.clone(),
+                            block: Some(block.id),
+                            instruction: Some(instruction.id),
+                            register: Some(result.id),
+                            message: format!(
+                                "register %{} redefined with conflicting type ({:?} vs {:?})",
+                                result.id, existing_ty, result.ty
+                            ),
+                        });
+                    }
+                    None => {
+                        defined.insert(result.id, result.ty.clone());
+                    }
+                }
+            }
+        }
+
+        for block in &self.basic_blocks {
+            for instruction in &block.instructions {
+                for register in instruction.kind.used_registers() {
+                    if !defined.contains_key(&register) {
+                        errors.push(LirValidationError {
+                            function: self.name.clone(),
+                            block: Some(block.id),
+                            instruction: Some(instruction.id),
+                            register: Some(register),
+                            message: format!("use of undefined register %{register}"),
+                        });
+                    }
+                }
+            }
+            for register in block.terminator.used_registers() {
+                if !defined.contains_key(&register) {
+                    errors.push(LirValidationError {
+                        function: self.name.clone(),
+                        block: Some(block.id),
+                        instruction: None,
+                        register: Some(register),
+                        message: format!("use of undefined register %{register} in terminator"),
+                    });
+                }
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LirValidationError {
+    pub function: Name,
+    pub block: Option<BasicBlockId>,
+    pub instruction: Option<LirId>,
+    pub register: Option<RegisterId>,
+    pub message: String,
+}
+
+impl std::fmt::Display for LirValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.function, self.message)?;
+        if let Some(block) = self.block {
+            write!(f, " (block bb{block}")?;
+            if let Some(instruction) = self.instruction {
+                write!(f, ", instruction #{instruction}")?;
+            }
+            write!(f, ")")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for LirValidationError {}
 
 impl LirBasicBlock {
     pub fn span(&self) -> Span {
@@ -1306,17 +1406,289 @@ impl LirInstructionKind {
     pub fn span(&self) -> Span {
         Span::null()
     }
+
+    /// Every register this instruction reads, in operand order. Does not
+    /// include the instruction's own `result` (a definition, not a use).
+    pub fn used_registers(&self) -> Vec<RegisterId> {
+        fn collect(value: &LirValue, regs: &mut Vec<RegisterId>) {
+            if let LirValueKind::Register(id) = &value.kind {
+                regs.push(*id);
+            }
+        }
+
+        let mut regs = Vec::new();
+        match self {
+            LirInstructionKind::Add(a, b)
+            | LirInstructionKind::Sub(a, b)
+            | LirInstructionKind::Mul(a, b)
+            | LirInstructionKind::Div(a, b)
+            | LirInstructionKind::Rem(a, b)
+            | LirInstructionKind::And(a, b)
+            | LirInstructionKind::Or(a, b)
+            | LirInstructionKind::Xor(a, b)
+            | LirInstructionKind::Shl(a, b)
+            | LirInstructionKind::Shr(a, b)
+            | LirInstructionKind::Eq(a, b)
+            | LirInstructionKind::Ne(a, b)
+            | LirInstructionKind::Lt(a, b)
+            | LirInstructionKind::Le(a, b)
+            | LirInstructionKind::Gt(a, b)
+            | LirInstructionKind::Ge(a, b) => {
+                collect(a, &mut regs);
+                collect(b, &mut regs);
+            }
+            LirInstructionKind::Not(v)
+            | LirInstructionKind::PtrToInt(v)
+            | LirInstructionKind::IntToPtr(v)
+            | LirInstructionKind::Freeze(v)
+            | LirInstructionKind::Trunc(v, _)
+            | LirInstructionKind::ZExt(v, _)
+            | LirInstructionKind::SExt(v, _)
+            | LirInstructionKind::FPTrunc(v, _)
+            | LirInstructionKind::FPExt(v, _)
+            | LirInstructionKind::FPToUI(v, _)
+            | LirInstructionKind::FPToSI(v, _)
+            | LirInstructionKind::UIToFP(v, _)
+            | LirInstructionKind::SIToFP(v, _)
+            | LirInstructionKind::Bitcast(v, _)
+            | LirInstructionKind::SextOrTrunc(v, _) => collect(v, &mut regs),
+            LirInstructionKind::Load { address, .. } => collect(address, &mut regs),
+            LirInstructionKind::Store { value, address, .. } => {
+                collect(value, &mut regs);
+                collect(address, &mut regs);
+            }
+            LirInstructionKind::Alloca { size, .. } => collect(size, &mut regs),
+            LirInstructionKind::GetElementPtr { ptr, indices, .. } => {
+                collect(ptr, &mut regs);
+                for index in indices {
+                    collect(index, &mut regs);
+                }
+            }
+            LirInstructionKind::ExtractValue { aggregate, .. } => collect(aggregate, &mut regs),
+            LirInstructionKind::InsertValue {
+                aggregate, element, ..
+            } => {
+                collect(aggregate, &mut regs);
+                collect(element, &mut regs);
+            }
+            LirInstructionKind::Call { function, args, .. } => {
+                collect(function, &mut regs);
+                for arg in args {
+                    collect(arg, &mut regs);
+                }
+            }
+            LirInstructionKind::ExecQuery(_) => {}
+            LirInstructionKind::ComptimeOp(op) => match op {
+                ComptimeOp::CreateStruct { name } => collect(name, &mut regs),
+                ComptimeOp::AddField {
+                    struct_handle,
+                    field_name,
+                    field_type,
+                } => {
+                    collect(struct_handle, &mut regs);
+                    collect(field_name, &mut regs);
+                    collect(field_type, &mut regs);
+                }
+                ComptimeOp::IntoType { value } => collect(value, &mut regs),
+            },
+            LirInstructionKind::IntrinsicCall { args, .. } => {
+                for arg in args {
+                    collect(arg, &mut regs);
+                }
+            }
+            LirInstructionKind::Phi { incoming } => {
+                for (value, _) in incoming {
+                    collect(value, &mut regs);
+                }
+            }
+            LirInstructionKind::Select {
+                condition,
+                if_true,
+                if_false,
+            } => {
+                collect(condition, &mut regs);
+                collect(if_true, &mut regs);
+                collect(if_false, &mut regs);
+            }
+            LirInstructionKind::InlineAsm { inputs, .. } => {
+                for input in inputs {
+                    collect(input, &mut regs);
+                }
+            }
+            LirInstructionKind::LandingPad {
+                personality,
+                clauses,
+                ..
+            } => {
+                if let Some(personality) = personality {
+                    collect(personality, &mut regs);
+                }
+                for clause in clauses {
+                    match clause {
+                        LandingPadClause::Catch(value) => collect(value, &mut regs),
+                        LandingPadClause::Filter(values) => {
+                            for value in values {
+                                collect(value, &mut regs);
+                            }
+                        }
+                    }
+                }
+            }
+            LirInstructionKind::Unreachable => {}
+        }
+        regs
+    }
 }
 
 impl LirTerminator {
     pub fn span(&self) -> Span {
         Span::null()
     }
+
+    /// Every register this terminator reads, in operand order.
+    pub fn used_registers(&self) -> Vec<RegisterId> {
+        fn collect(value: &LirValue, regs: &mut Vec<RegisterId>) {
+            if let LirValueKind::Register(id) = &value.kind {
+                regs.push(*id);
+            }
+        }
+
+        let mut regs = Vec::new();
+        match self {
+            LirTerminator::Return(value) => {
+                if let Some(value) = value {
+                    collect(value, &mut regs);
+                }
+            }
+            LirTerminator::Br(_) => {}
+            LirTerminator::CondBr { condition, .. } => collect(condition, &mut regs),
+            LirTerminator::Switch { value, .. } => collect(value, &mut regs),
+            LirTerminator::IndirectBr { address, .. } => collect(address, &mut regs),
+            LirTerminator::Invoke { function, args, .. } => {
+                collect(function, &mut regs);
+                for arg in args {
+                    collect(arg, &mut regs);
+                }
+            }
+            LirTerminator::Resume(value) => collect(value, &mut regs),
+            LirTerminator::Unreachable => {}
+            LirTerminator::CleanupRet { cleanup_pad, .. } => collect(cleanup_pad, &mut regs),
+            LirTerminator::CatchRet { catch_pad, .. } => collect(catch_pad, &mut regs),
+            LirTerminator::CatchSwitch { parent_pad, .. } => {
+                if let Some(parent_pad) = parent_pad {
+                    collect(parent_pad, &mut regs);
+                }
+            }
+        }
+        regs
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{LirApInt, LirConstant, LirDataLayout, LirInteger, LirProgram, LirType};
+    use super::{
+        BasicBlockId, CallingConvention, LirApInt, LirBasicBlock, LirConstant, LirDataLayout,
+        LirFunction, LirFunctionSignature, LirInstruction, LirInstructionKind, LirInteger,
+        LirProgram, LirTerminator, LirType, LirValue, Linkage, Name,
+    };
+
+    fn empty_function() -> LirFunction {
+        LirFunction {
+            def_id: None,
+            name: Name::new("test"),
+            signature: LirFunctionSignature {
+                params: Vec::new(),
+                return_type: LirType::I32,
+                is_variadic: false,
+            },
+            basic_blocks: Vec::new(),
+            locals: Vec::new(),
+            stack_slots: Vec::new(),
+            calling_convention: CallingConvention::C,
+            linkage: Linkage::External,
+            is_declaration: false,
+        }
+    }
+
+    fn block_with(id: BasicBlockId, instructions: Vec<LirInstruction>, terminator: LirTerminator) -> LirBasicBlock {
+        let mut block = LirBasicBlock::new(id, None);
+        for instruction in instructions {
+            block.add_instruction(instruction);
+        }
+        block.set_terminator(terminator);
+        block
+    }
+
+    #[test]
+    fn validate_accepts_well_formed_function() {
+        let mut function = empty_function();
+        let def = LirInstruction::new(0, LirInstructionKind::Not(LirValue::register(1, LirType::I1)))
+            .with_result(LirType::I1);
+        function.basic_blocks.push(block_with(
+            0,
+            vec![
+                LirInstruction::new(1, LirInstructionKind::Freeze(LirValue::register(0, LirType::I1)))
+                    .with_result(LirType::I1),
+                def,
+            ],
+            LirTerminator::Return(Some(LirValue::register(1, LirType::I1))),
+        ));
+        assert!(function.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_use_of_undefined_register() {
+        let mut function = empty_function();
+        function.basic_blocks.push(block_with(
+            0,
+            vec![],
+            LirTerminator::Return(Some(LirValue::register(7, LirType::I32))),
+        ));
+        let errors = function.validate().expect_err("undefined register");
+        assert!(errors.iter().any(|e| e.register == Some(7)));
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_definition() {
+        let mut function = empty_function();
+        let first = LirInstruction::new(
+            0,
+            LirInstructionKind::Freeze(LirValue::register(0, LirType::I32)),
+        )
+        .with_result(LirType::I32);
+        let mut second = LirInstruction::new(
+            1,
+            LirInstructionKind::Freeze(LirValue::register(0, LirType::I32)),
+        )
+        .with_result(LirType::I32);
+        second.result.as_mut().unwrap().id = first.result.as_ref().unwrap().id;
+        function.basic_blocks.push(block_with(
+            0,
+            vec![first, second],
+            LirTerminator::Unreachable,
+        ));
+        let errors = function.validate().expect_err("duplicate definition");
+        assert!(errors.iter().any(|e| e.message.contains("defined more than once")));
+    }
+
+    #[test]
+    fn validate_rejects_conflicting_types_for_same_register() {
+        let mut function = empty_function();
+        let first =
+            LirInstruction::new(0, LirInstructionKind::Freeze(LirValue::register(0, LirType::I32)))
+                .with_result(LirType::I32);
+        let mut second =
+            LirInstruction::new(1, LirInstructionKind::Freeze(LirValue::register(0, LirType::I32)))
+                .with_result(LirType::I64);
+        second.result.as_mut().unwrap().id = first.result.as_ref().unwrap().id;
+        function.basic_blocks.push(block_with(
+            0,
+            vec![first, second],
+            LirTerminator::Unreachable,
+        ));
+        let errors = function.validate().expect_err("conflicting type");
+        assert!(errors.iter().any(|e| e.message.contains("conflicting type")));
+    }
 
     fn data_layout() -> LirDataLayout {
         LirDataLayout::new(
