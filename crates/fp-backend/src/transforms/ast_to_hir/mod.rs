@@ -75,6 +75,17 @@ pub struct HirGenerator {
     lowering_config: HirLoweringConfig,
     intrinsic_normalizer: Option<Box<dyn IntrinsicNormalizer>>,
     workspace: Option<std::rc::Rc<fp_core::workspace::WorkspaceContext>>,
+    /// `impl` items whose self-type didn't resolve on a *tolerant*
+    /// `predeclare_items` pass because the name is only reachable through
+    /// an import that hadn't been processed yet — see `transform_package`,
+    /// which retries these once imports are resolved.
+    pending_impls: Vec<(fp_core::module::path::QualifiedPath, ast::Item)>,
+    /// `(module_path, alias)` pairs already registered by
+    /// `register_import_binding`, so re-running it (e.g. `append_item`'s
+    /// own `ItemKind::Import` handling, after `transform_package`'s
+    /// upfront import worklist already ran) is a guaranteed no-op instead
+    /// of an assumed-safe duplicate.
+    resolved_import_aliases: HashSet<(fp_core::module::path::QualifiedPath, String)>,
 }
 
 enum MaterializedTypeAlias {
@@ -259,13 +270,23 @@ impl HirGenerator {
         Ok(())
     }
 
-    fn register_import_binding(&mut self, binding: ImportBinding, visibility: &ast::Visibility) {
+    /// Returns whether `binding` actually resolved to something (module,
+    /// value, or type). Idempotent *by construction*, not by assumption:
+    /// once `(module_path, alias)` has resolved once, every later call
+    /// (e.g. `append_item`'s own `ItemKind::Import` handling re-running
+    /// after `transform_package`'s upfront import worklist already
+    /// resolved it) is a guaranteed no-op — see `resolved_import_aliases`.
+    fn register_import_binding(&mut self, binding: ImportBinding, visibility: &ast::Visibility) -> bool {
         let alias = binding
             .alias
             .clone()
             .unwrap_or_else(|| binding.target.last().cloned().unwrap_or_default());
         if alias.is_empty() {
-            return;
+            return false;
+        }
+        let resolved_key = (self.module_path.clone(), alias.clone());
+        if self.resolved_import_aliases.contains(&resolved_key) {
+            return true;
         }
         let target_path = fp_core::module::path::QualifiedPath::new(binding.target.clone());
         let mut candidates = vec![target_path.clone()];
@@ -292,7 +313,8 @@ impl HirGenerator {
                 // which sibling item introduced the `use`.
                 self.record_value_symbol(&alias, res.clone(), visibility);
                 self.record_type_symbol(&alias, res, visibility);
-                return;
+                self.resolved_import_aliases.insert(resolved_key);
+                return true;
             }
 
             let key = candidate.to_key();
@@ -311,8 +333,10 @@ impl HirGenerator {
                 self.current_type_scope().insert(alias.clone(), res.clone());
                 self.record_type_symbol(&alias, res, visibility);
             }
-            return;
+            self.resolved_import_aliases.insert(resolved_key);
+            return true;
         }
+        false
     }
 
     pub fn with_file<P: AsRef<Path>>(path: P) -> Self {
@@ -356,6 +380,8 @@ impl HirGenerator {
             lowering_config: HirLoweringConfig::default(),
             intrinsic_normalizer: None,
             workspace: None,
+            pending_impls: Vec::new(),
+            resolved_import_aliases: HashSet::new(),
         }
     }
 
@@ -585,17 +611,12 @@ impl HirGenerator {
                     .first()
                     .map(|s| s.name.as_str())
                     .unwrap_or("");
-                match name {
-                    "str" | "char" | "bool" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
-                    | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "f32" | "f64" => {
-                        return Ok(fp_core::module::path::QualifiedPath::new(vec![
-                            name.to_string(),
-                        ]));
-                    }
-                    _ => {
-                        return Err(fp_core::Error::from("unresolved impl self type"));
-                    }
+                if is_primitive_type_name(name) {
+                    return Ok(fp_core::module::path::QualifiedPath::new(vec![
+                        name.to_string(),
+                    ]));
                 }
+                return Err(fp_core::Error::from("unresolved impl self type"));
             }
         };
 
@@ -688,6 +709,8 @@ impl HirGenerator {
         self.module_defs.clear();
         self.prelude_value_defs.clear();
         self.prelude_type_defs.clear();
+        self.pending_impls.clear();
+        self.resolved_import_aliases.clear();
         // Keep predeclared struct fields available for struct update lowering.
     }
 
@@ -749,7 +772,7 @@ impl HirGenerator {
             .extend(workspace.module_paths().into_iter());
     }
 
-    fn predeclare_items(&mut self, items: &[ast::Item]) -> Result<()> {
+    fn predeclare_items(&mut self, items: &[ast::Item], tolerant: bool) -> Result<()> {
         for item in items {
             if !self.item_enabled_by_cfg(item) {
                 continue;
@@ -765,7 +788,7 @@ impl HirGenerator {
                     self.allocate_def_id_for_item(item);
                     self.record_module_def(module.name.as_str());
                     self.push_module_scope(&module.name.name, &module.visibility);
-                    self.predeclare_items(&module.items)?;
+                    self.predeclare_items(&module.items, tolerant)?;
                     self.pop_module_scope();
                 }
                 ItemKind::DefConst(def_const) => {
@@ -910,22 +933,43 @@ impl HirGenerator {
                     let ItemKind::Impl(impl_block) = item.kind() else {
                         unreachable!();
                     };
-                    self.allocate_def_id_for_item(item);
-                    let self_path =
-                        self.ast_expr_to_hir_path(&impl_block.self_ty, PathResolutionScope::Type)?;
-                    let mut method_path = self.canonical_type_path(&self_path)?.segments;
-                    for impl_item in &impl_block.items {
-                        let ast::ItemKind::DefFunction(function) = impl_item.kind() else {
-                            continue;
-                        };
-                        let method_def_id = self.allocate_def_id_for_item(impl_item);
-                        method_path.push(function.name.name.clone());
-                        self.record_value_path(
-                            &fp_core::module::path::QualifiedPath::new(method_path.clone()),
-                            hir::Res::Def(method_def_id),
-                            &function.visibility,
-                        );
-                        method_path.pop();
+                    // Only single-segment bare names (`Vec`, not
+                    // `crate::vec::Vec` or a blanket `T`) can plausibly be
+                    // waiting on an import that hasn't been processed yet
+                    // — everything else keeps today's immediate behavior,
+                    // including its immediate failure modes. Checked via
+                    // `resolve_type_symbol` (non-mutating) *before* the
+                    // first mutation below (`allocate_def_id_for_item`),
+                    // so a deferred item has made zero state changes and
+                    // is safe to fully re-run later, unmodified.
+                    let defer = tolerant
+                        && single_segment_self_type_name(&impl_block.self_ty)
+                            .map(|name| {
+                                self.resolve_type_symbol(name).is_none()
+                                    && !is_primitive_type_name(name)
+                            })
+                            .unwrap_or(false);
+                    if defer {
+                        self.pending_impls
+                            .push((self.module_path.clone(), item.clone()));
+                    } else {
+                        self.allocate_def_id_for_item(item);
+                        let self_path = self
+                            .ast_expr_to_hir_path(&impl_block.self_ty, PathResolutionScope::Type)?;
+                        let mut method_path = self.canonical_type_path(&self_path)?.segments;
+                        for impl_item in &impl_block.items {
+                            let ast::ItemKind::DefFunction(function) = impl_item.kind() else {
+                                continue;
+                            };
+                            let method_def_id = self.allocate_def_id_for_item(impl_item);
+                            method_path.push(function.name.name.clone());
+                            self.record_value_path(
+                                &fp_core::module::path::QualifiedPath::new(method_path.clone()),
+                                hir::Res::Def(method_def_id),
+                                &function.visibility,
+                            );
+                            method_path.pop();
+                        }
                     }
                 }
                 _ => {}
@@ -1075,7 +1119,7 @@ impl HirGenerator {
         self.reset_file_context("<expr>");
         self.prepare_lowering_state();
         self.load_default_prelude_defs();
-        self.predeclare_items(&generated_items)?;
+        self.predeclare_items(&generated_items, false)?;
 
         let mut hir_program = hir::Program::new();
         self.program_def_map = HashMap::new();
@@ -1180,13 +1224,34 @@ impl HirGenerator {
         self.seed_workspace_definitions(&mut program);
         self.load_default_prelude_defs();
 
+        // 1: definitions (tolerant — impls whose self-type isn't resolvable
+        // yet, because it's only reachable through an import that hasn't
+        // been processed, get deferred into `pending_impls` instead of
+        // failing immediately; see `predeclare_items`'s `ItemKind::Impl` arm).
         for package_item in &package.items {
             self.with_module_scope(&package_item.path, |this| {
-                this.predeclare_items(std::slice::from_ref(&package_item.item))
+                this.predeclare_items(std::slice::from_ref(&package_item.item), true)
+            })?;
+        }
+
+        // 2: imports — needs every definition above to already exist,
+        // crate-wide, since an import can reference any file's item
+        // regardless of processing order. Never attempted before append
+        // until now; this fixed-point worklist also makes re-export
+        // chains resolve, not just direct single-hop imports.
+        self.resolve_pending_imports(package)?;
+
+        // 3: retry deferred impls, now strict — imports are resolved, so
+        // anything that still fails here is a genuine error, not a
+        // forward-reference timing issue.
+        for (module_path, item) in std::mem::take(&mut self.pending_impls) {
+            self.with_module_scope(&module_path, |this| {
+                this.predeclare_items(std::slice::from_ref(&item), false)
             })?;
         }
         self.program_def_map = program.def_map.clone();
 
+        // 4: append — unchanged.
         for package_item in &package.items {
             self.with_module_scope(&package_item.path, |this| {
                 this.append_item(&mut program, &package_item.item)
@@ -1204,6 +1269,60 @@ impl HirGenerator {
         program.def_map = self.program_def_map.clone();
         program.def_paths = self.def_paths.clone();
         Ok(program)
+    }
+
+    /// Resolves every `ItemKind::Import` item in `package` as a small
+    /// fixed-point worklist: collect all bindings up front (this needs no
+    /// global state, just each import's own `module_path` context), then
+    /// keep sweeping whatever's still unresolved until a full sweep makes
+    /// no further progress. This is what makes re-export chains resolve
+    /// (`pub use` re-exporting another `pub use`), not just direct,
+    /// single-hop imports — a single sweep would only catch the latter.
+    /// Whatever's left unresolved after the fixed point is left as-is,
+    /// exactly like today's single-sweep behavior — not a new error
+    /// surface, genuinely-unresolvable imports behave the same as before.
+    fn resolve_pending_imports(&mut self, package: &fp_core::package::CompiledPackage) -> Result<()> {
+        let mut pending: Vec<(
+            fp_core::module::path::QualifiedPath,
+            ImportBinding,
+            ast::Visibility,
+        )> = Vec::new();
+        for package_item in &package.items {
+            if let ItemKind::Import(import) = package_item.item.kind() {
+                self.with_module_scope(&package_item.path, |this| {
+                    let mut bindings = Vec::new();
+                    this.collect_imports(Vec::new(), &import.tree, &mut bindings)?;
+                    for binding in bindings {
+                        pending.push((
+                            package_item.path.clone(),
+                            binding,
+                            import.visibility.clone(),
+                        ));
+                    }
+                    Ok(())
+                })?;
+            }
+        }
+
+        loop {
+            let mut progressed = false;
+            let mut still_pending = Vec::with_capacity(pending.len());
+            for (module_path, binding, visibility) in pending {
+                let resolved = self.with_module_scope(&module_path, |this| {
+                    Ok(this.register_import_binding(binding.clone(), &visibility))
+                })?;
+                if resolved {
+                    progressed = true;
+                } else {
+                    still_pending.push((module_path, binding, visibility));
+                }
+            }
+            pending = still_pending;
+            if !progressed || pending.is_empty() {
+                break;
+            }
+        }
+        Ok(())
     }
 
     /// Transform a query document node into HIR.
@@ -1249,7 +1368,7 @@ impl HirGenerator {
         let mut program = hir::Program::new();
         self.seed_workspace_definitions(&mut program);
         self.load_default_prelude_defs();
-        self.predeclare_items(items)?;
+        self.predeclare_items(items, false)?;
         self.program_def_map = program.def_map.clone();
         for item in &self.synthetic_items {
             self.program_def_map.insert(item.def_id, item.clone());
@@ -3057,6 +3176,53 @@ fn should_drop_quote_item(item: &ast::Item) -> bool {
 fn should_drop_const_type_item(item: &ast::Item) -> bool {
     let _ = item;
     false
+}
+
+/// Shared with `canonical_type_path`'s own primitive-name check, and with
+/// the tolerant-predeclare deferral check below, so both places recognize
+/// the same set of names as "not a real registered type, don't bother
+/// looking it up."
+fn is_primitive_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "str" | "char"
+            | "bool"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "f32"
+            | "f64"
+    )
+}
+
+/// Returns the self-type's head name only when it's exactly one
+/// unqualified segment (`Vec`, or `Vec<u8>` via a single-segment
+/// `Name::ParameterPath`) — the only shape where a bare name could
+/// plausibly still be waiting on an import that hasn't been processed
+/// yet. Already-qualified paths (`crate::vec::Vec`), multi-segment
+/// paths, and non-name self-types (blanket `impl<T> Trait for T`) all
+/// return `None` — those are never deferred, they fall straight through
+/// to today's immediate resolution/failure.
+fn single_segment_self_type_name(self_ty: &ast::Expr) -> Option<&str> {
+    let ast::ExprKind::Name(name) = self_ty.kind() else {
+        return None;
+    };
+    match name {
+        Name::Ident(ident) => Some(ident.name.as_str()),
+        Name::ParameterPath(param_path) if param_path.segments.len() == 1 => {
+            Some(param_path.segments[0].ident.name.as_str())
+        }
+        _ => None,
+    }
 }
 
 fn signature_contains_quote(sig: &ast::FunctionSignature) -> bool {
