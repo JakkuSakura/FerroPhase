@@ -194,7 +194,6 @@ impl LirGenerator {
             mir::ItemKind::ExecutableConst(konst) => {
                 let mir_func = mir::Function {
                     name: konst.function_name,
-                    path: Vec::new(),
                     def_id: None,
                     substs: Vec::new(),
                     sig: mir::FunctionSig {
@@ -410,14 +409,7 @@ impl LirGenerator {
     }
 
     fn mangle_function_name(&mut self, mir_func: &mir::Function) -> String {
-        let base = if !mir_func.path.is_empty() {
-            mir_func
-                .path
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>()
-                .join("::")
-        } else if !mir_func.name.as_str().is_empty() {
+        let base = if !mir_func.name.as_str().is_empty() {
             String::from(mir_func.name.clone())
         } else {
             "anonymous_fn".to_string()

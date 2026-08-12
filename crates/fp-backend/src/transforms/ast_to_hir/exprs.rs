@@ -106,6 +106,14 @@ impl HirGenerator {
             ExprKind::ArrayRepeat(array_repeat) => {
                 self.transform_array_repeat_to_hir(array_repeat)?
             }
+            ExprKind::Tuple(tuple_expr) => {
+                let values = tuple_expr
+                    .values
+                    .iter()
+                    .map(|value| self.transform_expr_to_hir(value))
+                    .collect::<Result<Vec<_>>>()?;
+                hir::ExprKind::Tuple(values)
+            }
             ExprKind::Range(_range) => {
                 self.add_error(
                     Diagnostic::warning(
@@ -973,6 +981,15 @@ impl HirGenerator {
             if let Some(iter_spec) = self.extract_iter_loop_spec(for_expr)? {
                 return self.lower_iter_for_loop(for_expr, iter_spec);
             }
+            if for_expr.pat.as_ident().is_some() {
+                // Last resort: an arbitrary expression that isn't a range,
+                // `.iter()`, or `.enumerate()` call but is nonetheless
+                // Vec/slice-typed (e.g. `type(source).fields`, a
+                // reflection intrinsic result) — index over it directly
+                // rather than hard-erroring just because it lacks an
+                // explicit `.iter()` suffix.
+                return self.lower_bare_iter_for_loop(for_expr);
+            }
             self.add_error(
                 Diagnostic::error(
                     "`for` loop lowering only supports range iterators, iter(), and enumerate()"
@@ -1543,8 +1560,6 @@ impl HirGenerator {
     ) -> Result<hir::ExprKind> {
         use fp_core::intrinsics::IntrinsicKind;
 
-        let mut stmts = Vec::new();
-
         let base_path = ast::Path::new(spec.base_prefix, spec.base_segments.clone());
         let base_name = ast::Name::path(base_path);
         let base_expr = hir::Expr {
@@ -1555,6 +1570,122 @@ impl HirGenerator {
             span: Span::new(self.current_file, 0, 0),
         };
 
+        let len_expr = if let Some(len) = self.lookup_const_list_length(&spec.base_segments) {
+            hir::Expr {
+                hir_id: self.next_id(),
+                kind: hir::ExprKind::Literal(hir::Lit::Integer(len as i64)),
+                span: Span::new(self.current_file, 0, 0),
+            }
+        } else {
+            hir::Expr {
+                hir_id: self.next_id(),
+                kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
+                    kind: IntrinsicKind::Len,
+                    callargs: vec![hir::CallArg {
+                        name: hir::Symbol::new("arg0"),
+                        value: base_expr.clone(),
+                    }],
+                }),
+                span: Span::new(self.current_file, 0, 0),
+            }
+        };
+
+        self.build_indexed_for_loop(for_expr, Vec::new(), base_expr, len_expr, &spec.value_ident)
+    }
+
+    /// Desugars `for field in <expr>` when `<expr>` isn't a `.iter()`/
+    /// `.enumerate()` call or a range — the last-resort shape for an
+    /// arbitrary expression that already evaluates to a Vec/slice-typed
+    /// value (e.g. `type(source).fields`, a reflection intrinsic result).
+    /// Unlike `lower_iter_for_loop`, which cheaply re-derives its base
+    /// expression from path segments, `<expr>` here may not be a
+    /// side-effect-free path, so it's lowered and evaluated exactly once
+    /// into a synthetic local, which the index/length machinery then reads
+    /// from repeatedly.
+    fn lower_bare_iter_for_loop(&mut self, for_expr: &ast::ExprFor) -> Result<hir::ExprKind> {
+        use fp_core::intrinsics::IntrinsicKind;
+
+        let value_ident = match for_expr.pat.as_ident() {
+            Some(ident) => ident.clone(),
+            None => {
+                self.add_error(
+                    Diagnostic::error("`for` loop pattern must be a simple binding".to_string())
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(for_expr.span()),
+                );
+                return Err(fp_core::error::Error::from(
+                    "`for` loop pattern must be a simple binding",
+                ));
+            }
+        };
+
+        let base_lowered = self.transform_expr_to_hir(&for_expr.iter)?;
+        let base_hir_id = self.next_id();
+        let base_name = hir::Symbol::new(format!("__fp_iter_base{}", base_hir_id));
+        let base_pat = hir::Pat {
+            hir_id: base_hir_id,
+            kind: hir::PatKind::Binding {
+                name: base_name.clone(),
+                mutable: false,
+            },
+        };
+        let base_local = hir::Local {
+            hir_id: self.next_id(),
+            pat: base_pat.clone(),
+            ty: None,
+            init: Some(base_lowered),
+        };
+        self.register_pattern_bindings(&base_pat);
+        let base_local_stmt = hir::Stmt {
+            hir_id: self.next_id(),
+            kind: hir::StmtKind::Local(base_local),
+        };
+        let base_expr = hir::Expr {
+            hir_id: self.next_id(),
+            kind: hir::ExprKind::Path(hir::Path {
+                segments: vec![hir::PathSegment {
+                    name: base_name,
+                    args: None,
+                }],
+                res: Some(hir::Res::Local(base_pat.hir_id)),
+            }),
+            span: Span::new(self.current_file, 0, 0),
+        };
+
+        let len_expr = hir::Expr {
+            hir_id: self.next_id(),
+            kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
+                kind: IntrinsicKind::Len,
+                callargs: vec![hir::CallArg {
+                    name: hir::Symbol::new("arg0"),
+                    value: base_expr.clone(),
+                }],
+            }),
+            span: Span::new(self.current_file, 0, 0),
+        };
+
+        self.build_indexed_for_loop(
+            for_expr,
+            vec![base_local_stmt],
+            base_expr,
+            len_expr,
+            &value_ident,
+        )
+    }
+
+    /// Shared index-based desugaring for both `lower_iter_for_loop` and
+    /// `lower_bare_iter_for_loop`: `let mut idx = 0; while idx < <len_expr>
+    /// { let <value_ident> = <base_expr>[idx]; <body>; idx += 1; }`,
+    /// prefixed by whatever setup statements the caller already needs
+    /// (e.g. binding `base_expr` to a local).
+    fn build_indexed_for_loop(
+        &mut self,
+        for_expr: &ast::ExprFor,
+        mut stmts: Vec<hir::Stmt>,
+        base_expr: hir::Expr,
+        len_expr: hir::Expr,
+        value_ident: &ast::Ident,
+    ) -> Result<hir::ExprKind> {
         let idx_hir_id = self.next_id();
         let idx_name = hir::Symbol::new(format!("__fp_idx{}", idx_hir_id));
         let idx_pat = hir::Pat {
@@ -1593,26 +1724,6 @@ impl HirGenerator {
             span: Span::new(self.current_file, 0, 0),
         };
 
-        let len_expr = if let Some(len) = self.lookup_const_list_length(&spec.base_segments) {
-            hir::Expr {
-                hir_id: self.next_id(),
-                kind: hir::ExprKind::Literal(hir::Lit::Integer(len as i64)),
-                span: Span::new(self.current_file, 0, 0),
-            }
-        } else {
-            hir::Expr {
-                hir_id: self.next_id(),
-                kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-                    kind: IntrinsicKind::Len,
-                    callargs: vec![hir::CallArg {
-                        name: hir::Symbol::new("arg0"),
-                        value: base_expr.clone(),
-                    }],
-                }),
-                span: Span::new(self.current_file, 0, 0),
-            }
-        };
-
         let cond_expr = hir::Expr {
             hir_id: self.next_id(),
             kind: hir::ExprKind::Binary(
@@ -1626,7 +1737,7 @@ impl HirGenerator {
         let value_pat = hir::Pat {
             hir_id: self.next_id(),
             kind: hir::PatKind::Binding {
-                name: hir::Symbol::new(spec.value_ident.name.clone()),
+                name: hir::Symbol::new(value_ident.name.clone()),
                 mutable: false,
             },
         };

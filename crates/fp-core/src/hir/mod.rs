@@ -58,6 +58,16 @@ pub struct Program {
     pub items: Vec<Item>,
     pub def_map: HashMap<DefId, Item>,
     pub next_hir_id: HirId,
+    /// Fully-qualified path for a definition's `DefId`, recorded once at
+    /// first registration (module segments + the definition's own bare
+    /// name as the last segment). Analogous to rustc's `DefPathTable`:
+    /// item `name` fields are always bare, local identifiers, and a
+    /// qualified path — when one is needed for lookup/diagnostics — is
+    /// computed by consulting this table rather than stored redundantly
+    /// on the item itself. A missing entry means the definition has no
+    /// meaningful module qualification (e.g. impl methods, addressed by
+    /// (type, method) pair instead, or synthetic items).
+    pub def_paths: HashMap<DefId, Vec<Symbol>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -221,6 +231,7 @@ pub enum ExprKind {
     With(Box<Expr>, Box<Expr>),
     Array(Vec<Expr>),
     ArrayRepeat { elem: Box<Expr>, len: Box<Expr> },
+    Tuple(Vec<Expr>),
     /// A `const { ... }` block. Structurally this node IS the const
     /// context indicator: the type checker eagerly resolves `body`'s
     /// value via `TypingContext::request_comptime` whenever it encounters
@@ -557,6 +568,7 @@ impl Program {
             items: Vec::new(),
             def_map: HashMap::new(),
             next_hir_id: 0,
+            def_paths: HashMap::new(),
         }
     }
 
@@ -823,6 +835,7 @@ impl ExprKind {
             ExprKind::With(context, body) => Span::union([context.span(), body.span()]),
             ExprKind::Array(exprs) => Span::union(exprs.iter().map(Expr::span)),
             ExprKind::ArrayRepeat { elem, len } => Span::union([elem.span(), len.span()]),
+            ExprKind::Tuple(exprs) => Span::union(exprs.iter().map(Expr::span)),
             ExprKind::ConstBlock(const_block) => {
                 Span::union([const_block.ty.span(), const_block.body.span()])
             }

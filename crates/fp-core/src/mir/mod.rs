@@ -38,8 +38,12 @@ pub enum ItemKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
+    /// Already-qualified name used for mangling/diagnostics (module
+    /// segments joined with `::`, or bare when the function has no
+    /// meaningful module qualification). Computed once at HIR->MIR
+    /// lowering time from `hir::Program::def_paths` — MIR does not carry
+    /// its own separate path table.
     pub name: Symbol,
-    pub path: Vec<Symbol>,
     pub def_id: Option<ty::DefId>,
     /// Generic substitutions used to produce this concrete function body.
     /// Empty for non-generic source functions.

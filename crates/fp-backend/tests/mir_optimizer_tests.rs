@@ -57,7 +57,6 @@ fn build_program(statements: Vec<mir::Statement>) -> mir::Program {
             mir_id: 0,
             kind: mir::ItemKind::Function(mir::Function {
                 name: mir::Symbol::new("test_fn"),
-                path: vec![mir::Symbol::new("test_fn")],
                 def_id: None,
                 substs: Vec::new(),
                 sig: mir::FunctionSig {
@@ -97,7 +96,6 @@ fn build_program_with_locals(
             mir_id: 0,
             kind: mir::ItemKind::Function(mir::Function {
                 name: mir::Symbol::new("test_fn"),
-                path: vec![mir::Symbol::new("test_fn")],
                 def_id: None,
                 substs: Vec::new(),
                 sig: mir::FunctionSig {
@@ -339,7 +337,6 @@ fn simplify_branches_rewrites_constant_switch() {
             mir_id: 0,
             kind: mir::ItemKind::Function(mir::Function {
                 name: mir::Symbol::new("test_fn"),
-                path: vec![mir::Symbol::new("test_fn")],
                 def_id: None,
                 substs: Vec::new(),
                 sig: mir::FunctionSig {

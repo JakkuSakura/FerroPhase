@@ -49,6 +49,12 @@ pub struct HirGenerator {
     module_visibility: Vec<bool>,
     global_value_defs: HashMap<String, SymbolEntry>,
     global_type_defs: HashMap<String, SymbolEntry>,
+    /// `DefId -> qualified path` table mirrored into the final
+    /// `hir::Program::def_paths` (see its doc comment). Populated
+    /// centrally by `record_def_path`, called from every symbol
+    /// registration helper; never cleared per-file since `DefId`s are
+    /// unique for the lifetime of this generator.
+    def_paths: HashMap<hir::DefId, Vec<hir::Symbol>>,
     prelude_value_defs: HashMap<String, hir::Res>,
     prelude_type_defs: HashMap<String, hir::Res>,
     preassigned_def_ids: HashMap<u64, hir::DefId>,
@@ -272,8 +278,20 @@ impl HirGenerator {
 
         for candidate in candidates {
             if self.module_defs.contains(&candidate) {
-                self.current_value_scope()
-                    .insert(alias.clone(), hir::Res::Module(candidate.segments.clone()));
+                let res = hir::Res::Module(candidate.segments.clone());
+                self.current_value_scope().insert(alias.clone(), res.clone());
+                self.current_type_scope().insert(alias.clone(), res.clone());
+                // Every top-level item gets its own transient
+                // `with_module_scope` push/pop cycle (see
+                // `transform_package`), so a scope-only insert here is
+                // invisible to sibling items processed afterward (e.g. a
+                // `use std::json;` above `fn main() {}` would otherwise
+                // never be visible inside `main`'s body). Persist the
+                // alias the same way value/type re-exports already do
+                // below, so `module::item()` resolves regardless of
+                // which sibling item introduced the `use`.
+                self.record_value_symbol(&alias, res.clone(), visibility);
+                self.record_type_symbol(&alias, res, visibility);
                 return;
             }
 
@@ -317,6 +335,7 @@ impl HirGenerator {
             module_visibility: vec![true],
             global_value_defs: HashMap::new(),
             global_type_defs: HashMap::new(),
+            def_paths: HashMap::new(),
             prelude_value_defs: HashMap::new(),
             prelude_type_defs: HashMap::new(),
             preassigned_def_ids: HashMap::new(),
@@ -470,6 +489,7 @@ impl HirGenerator {
 
     fn record_value_symbol(&mut self, name: &str, res: hir::Res, visibility: &ast::Visibility) {
         let path = self.qualify_path(name);
+        self.record_def_path(&res, &path);
         let qualified = path.to_key();
         let export = self.symbol_export_marker(visibility);
         self.global_value_defs.insert(
@@ -488,6 +508,7 @@ impl HirGenerator {
         res: hir::Res,
         visibility: &ast::Visibility,
     ) {
+        self.record_def_path(&res, path);
         let export = self.symbol_export_marker(visibility);
         self.global_value_defs.insert(
             path.to_key(),
@@ -501,6 +522,7 @@ impl HirGenerator {
 
     fn record_type_symbol(&mut self, name: &str, res: hir::Res, visibility: &ast::Visibility) {
         let path = self.qualify_path(name);
+        self.record_def_path(&res, &path);
         let qualified = path.to_key();
         let export = self.symbol_export_marker(visibility);
         self.global_type_defs.insert(
@@ -511,6 +533,20 @@ impl HirGenerator {
                 path: Some(path),
             },
         );
+    }
+
+    /// Records a definition's qualified path the first time its `DefId` is
+    /// registered (see `hir::Program::def_paths`). Uses `entry().or_insert`
+    /// rather than overwriting so that later re-registrations under an
+    /// alias (`register_import_binding` re-registers an existing
+    /// `Res::Def` under a `use ... as` name through these same helpers)
+    /// never clobber a def's one true canonical path.
+    fn record_def_path(&mut self, res: &hir::Res, path: &fp_core::module::path::QualifiedPath) {
+        if let hir::Res::Def(def_id) = res {
+            self.def_paths
+                .entry(*def_id)
+                .or_insert_with(|| path.segments.iter().cloned().map(hir::Symbol::new).collect());
+        }
     }
 
     fn symbol_export_marker(&self, visibility: &ast::Visibility) -> SymbolExport {
@@ -691,6 +727,7 @@ impl HirGenerator {
                 }
             }
             program.def_map.extend(hir_program.def_map);
+            program.def_paths.extend(hir_program.def_paths);
             for (path_str, res) in exports {
                 let path = fp_core::module::path::QualifiedPath::new(
                     path_str
@@ -777,11 +814,6 @@ impl HirGenerator {
 
                     for variant in &def_enum.value.variants {
                         let variant_def_id = self.next_def_id();
-                        self.register_value_def(
-                            &variant.name.name,
-                            variant_def_id,
-                            &def_enum.visibility,
-                        );
 
                         let variant_path = fp_core::module::path::QualifiedPath::new(vec![
                             def_enum.name.name.clone(),
@@ -793,9 +825,19 @@ impl HirGenerator {
                         } else {
                             self.module_path.join(&variant_path.segments).to_key()
                         };
+                        // Record the `Enum::Variant`-qualified registration
+                        // first so its more complete path wins the
+                        // `def_paths` entry over the bare-name
+                        // registration below (see the analogous comment in
+                        // `transform_item_to_hir`'s `DefEnum` arm).
                         self.record_value_symbol(
                             &qualified_variant,
                             hir::Res::Def(variant_def_id),
+                            &def_enum.visibility,
+                        );
+                        self.register_value_def(
+                            &variant.name.name,
+                            variant_def_id,
                             &def_enum.visibility,
                         );
                         self.enum_variant_def_ids
@@ -835,11 +877,6 @@ impl HirGenerator {
                             MaterializedTypeAlias::Enum(enum_ty) => {
                                 for variant in &enum_ty.variants {
                                     let variant_def_id = self.next_def_id();
-                                    self.register_value_def(
-                                        &variant.name.name,
-                                        variant_def_id,
-                                        &def_type.visibility,
-                                    );
 
                                     let variant_path =
                                         fp_core::module::path::QualifiedPath::new(vec![
@@ -855,6 +892,11 @@ impl HirGenerator {
                                     self.record_value_symbol(
                                         &qualified_variant,
                                         hir::Res::Def(variant_def_id),
+                                        &def_type.visibility,
+                                    );
+                                    self.register_value_def(
+                                        &variant.name.name,
+                                        variant_def_id,
                                         &def_type.visibility,
                                     );
                                     self.enum_variant_def_ids
@@ -1160,6 +1202,7 @@ impl HirGenerator {
             program.items.extend(synthetic.drain(..));
         }
         program.def_map = self.program_def_map.clone();
+        program.def_paths = self.def_paths.clone();
         Ok(program)
     }
 
@@ -1189,6 +1232,7 @@ impl HirGenerator {
         program.def_map.insert(item.def_id, item.clone());
         self.program_def_map.insert(item.def_id, item.clone());
         program.items.push(item);
+        program.def_paths = self.def_paths.clone();
         Ok(program)
     }
 
@@ -1236,6 +1280,7 @@ impl HirGenerator {
         // Keep them in the program index even though they are not top-level
         // program items.
         program.def_map = self.program_def_map.clone();
+        program.def_paths = self.def_paths.clone();
 
         Ok(program)
     }
@@ -1495,7 +1540,7 @@ impl HirGenerator {
                 self.register_value_def(&struct_def.name.name, def_id, &struct_def.visibility);
                 self.push_type_scope();
                 let generics = self.transform_generics(&struct_def.value.generics_params);
-                let name = hir::Symbol::new(self.qualify_name(&struct_def.name.name));
+                let name = hir::Symbol::new(struct_def.name.name.clone());
                 let fields = struct_def
                     .value
                     .fields
@@ -1524,7 +1569,7 @@ impl HirGenerator {
             ItemKind::DefStructural(struct_def) => {
                 self.register_type_def(&struct_def.name.name, def_id, &struct_def.visibility);
                 self.register_value_def(&struct_def.name.name, def_id, &struct_def.visibility);
-                let name = hir::Symbol::new(self.qualify_name(&struct_def.name.name));
+                let name = hir::Symbol::new(struct_def.name.name.clone());
                 let fields = struct_def
                     .value
                     .fields
@@ -1551,7 +1596,7 @@ impl HirGenerator {
             }
             ItemKind::OpaqueType(opaque_def) => {
                 self.register_type_def(&opaque_def.name.name, def_id, &opaque_def.visibility);
-                let name = hir::Symbol::new(self.qualify_name(&opaque_def.name.name));
+                let name = hir::Symbol::new(opaque_def.name.name.clone());
                 (
                     hir::ItemKind::Struct(hir::Struct {
                         name,
@@ -1566,7 +1611,7 @@ impl HirGenerator {
                 self.register_type_def(&enum_def.name.name, def_id, &enum_def.visibility);
                 self.push_type_scope();
                 let generics = self.transform_generics(&enum_def.value.generics_params);
-                let qualified_enum_name = hir::Symbol::new(self.qualify_name(&enum_def.name.name));
+                let qualified_enum_name = hir::Symbol::new(enum_def.name.name.clone());
 
                 let variants = enum_def
                     .value
@@ -1595,14 +1640,21 @@ impl HirGenerator {
                             new_id
                         };
 
-                        self.register_value_def(
-                            &variant.name.name,
-                            variant_def_id,
-                            &enum_def.visibility,
-                        );
+                        // Record the `Enum::Variant`-qualified registration
+                        // first so its more complete path (including the
+                        // enum name segment) wins the `def_paths` entry —
+                        // `register_value_def` below re-registers the same
+                        // `def_id` under the bare variant name alone (for
+                        // unqualified in-scope lookup), which must not
+                        // clobber the canonical path.
                         self.record_value_symbol(
                             &qualified_variant,
                             hir::Res::Def(variant_def_id),
+                            &enum_def.visibility,
+                        );
+                        self.register_value_def(
+                            &variant.name.name,
+                            variant_def_id,
                             &enum_def.visibility,
                         );
 
@@ -1657,13 +1709,7 @@ impl HirGenerator {
                 self.register_value_def(&func_def.name.name, def_id, &func_def.visibility);
                 let lower_body =
                     !self.is_std_module() && !attrs_has_name(&func_def.attrs, "unimplemented");
-                let mut function = self.transform_function_with_body(func_def, None, lower_body)?;
-                // Top-level functions (unlike impl methods, which share this
-                // lowering path but must keep their bare method name) need
-                // their module path baked into `sig.name` so items found by
-                // walking `program.items` are addressable the same way
-                // `global_value_defs` already indexes them.
-                function.sig.name = hir::Symbol::new(self.qualify_name(&func_def.name.name));
+                let function = self.transform_function_with_body(func_def, None, lower_body)?;
                 (
                     hir::ItemKind::Function(function),
                     self.map_visibility(&func_def.visibility),
@@ -1691,7 +1737,7 @@ impl HirGenerator {
                     value: unit_expr,
                 };
                 let konst = hir::Const {
-                    name: hir::Symbol::new(self.qualify_name(&def_type.name.name)),
+                    name: hir::Symbol::new(def_type.name.name.clone()),
                     ty: self.create_simple_type("bool"),
                     body,
                 };
@@ -1709,7 +1755,7 @@ impl HirGenerator {
                     value: unit_expr,
                 };
                 let konst = hir::Const {
-                    name: hir::Symbol::new(self.qualify_name(&def_trait.name.name)),
+                    name: hir::Symbol::new(def_trait.name.name.clone()),
                     ty: self.create_simple_type("bool"),
                     body,
                 };
@@ -2367,7 +2413,7 @@ impl HirGenerator {
         ast_fields: Vec<ast::StructuralField>,
     ) -> StructuralValueDef {
         let def_id = self.next_def_id();
-        let name_symbol = hir::Symbol::new(self.qualify_name(&name));
+        let name_symbol = hir::Symbol::new(name.clone());
         let hir_id = self.next_id();
         let span = self.create_span(1);
 
@@ -2429,7 +2475,7 @@ impl HirGenerator {
             def_id,
             visibility: hir::Visibility::Private,
             kind: hir::ItemKind::Struct(hir::Struct {
-                name: hir::Symbol::new(self.qualify_name(&name)),
+                name: hir::Symbol::new(name.clone()),
                 fields,
                 generics: hir::Generics::default(),
                 repr: ast::ReprOptions::default(),
@@ -2440,7 +2486,7 @@ impl HirGenerator {
         self.synthetic_items.push(item);
         let path = hir::Path {
             segments: vec![hir::PathSegment {
-                name: hir::Symbol::new(self.qualify_name(&name)),
+                name: hir::Symbol::new(name.clone()),
                 args: None,
             }],
             res: Some(hir::Res::Def(def_id)),
@@ -2817,7 +2863,7 @@ impl HirGenerator {
                 self.register_type_def(&def_type.name.name, def_id, &def_type.visibility);
                 self.push_type_scope();
                 let generics = self.transform_generics(&struct_ty.generics_params);
-                let name = hir::Symbol::new(self.qualify_name(&def_type.name.name));
+                let name = hir::Symbol::new(def_type.name.name.clone());
 
                 // Merge fields from source struct for TypeBuilder::from(Type)
                 let fields: Vec<ast::StructuralField> = if struct_ty.name != def_type.name {
@@ -2871,7 +2917,7 @@ impl HirGenerator {
             }
             Some(MaterializedTypeAlias::Structural(structural)) => {
                 self.register_type_def(&def_type.name.name, def_id, &def_type.visibility);
-                let name = hir::Symbol::new(self.qualify_name(&def_type.name.name));
+                let name = hir::Symbol::new(def_type.name.name.clone());
                 let fields = structural
                     .fields
                     .iter()
@@ -2899,7 +2945,7 @@ impl HirGenerator {
                 self.register_type_def(&def_type.name.name, def_id, &def_type.visibility);
                 self.push_type_scope();
                 let generics = self.transform_generics(&enum_ty.generics_params);
-                let qualified_enum_name = hir::Symbol::new(self.qualify_name(&def_type.name.name));
+                let qualified_enum_name = hir::Symbol::new(def_type.name.name.clone());
 
                 let variants = enum_ty
                     .variants
@@ -2927,14 +2973,14 @@ impl HirGenerator {
                             new_id
                         };
 
-                        self.register_value_def(
-                            &variant.name.name,
-                            variant_def_id,
-                            &def_type.visibility,
-                        );
                         self.record_value_symbol(
                             &qualified_variant,
                             hir::Res::Def(variant_def_id),
+                            &def_type.visibility,
+                        );
+                        self.register_value_def(
+                            &variant.name.name,
+                            variant_def_id,
                             &def_type.visibility,
                         );
 

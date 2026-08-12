@@ -887,10 +887,10 @@ impl MirLowering {
         for item in &program.items {
             match &item.kind {
                 hir::ItemKind::Struct(def) => {
-                    self.register_struct(item.def_id, def, item.span);
+                    self.register_struct(program, item.def_id, def, item.span);
                 }
                 hir::ItemKind::Enum(def) => {
-                    self.register_enum(item.def_id, def, item.span);
+                    self.register_enum(program, item.def_id, def, item.span);
                 }
                 _ => {}
             }
@@ -1284,7 +1284,7 @@ impl MirLowering {
                 Self::collect_def_ids_from_expr(context, full_map, tail_map, work);
                 Self::collect_def_ids_from_expr(body, full_map, tail_map, work);
             }
-            hir::ExprKind::Array(elements) => {
+            hir::ExprKind::Array(elements) | hir::ExprKind::Tuple(elements) => {
                 for elem in elements {
                     Self::collect_def_ids_from_expr(elem, full_map, tail_map, work);
                 }
@@ -1388,7 +1388,6 @@ impl MirLowering {
 
             let mir_function = mir::Function {
                 name: mir::Symbol::new(name.clone()),
-                path: Vec::new(),
                 def_id: None,
                 substs: Vec::new(),
                 sig: sig.clone(),
@@ -1442,8 +1441,11 @@ impl MirLowering {
         };
 
         let mir_function = mir::Function {
-            name: mir::Symbol::from(function.sig.name.clone()),
-            path: Vec::new(),
+            name: mir::Symbol::new(Self::qualified_display_name(
+                program,
+                item.def_id,
+                function.sig.name.as_str(),
+            )),
             def_id: Some(item.def_id),
             substs: Vec::new(),
             sig,
@@ -1523,7 +1525,6 @@ impl MirLowering {
 
         let mir_function = mir::Function {
             name: mir::Symbol::new(name_override),
-            path: Vec::new(),
             def_id: Some(item.def_id),
             substs: function_substs,
             sig: sig.clone(),
@@ -2021,7 +2022,6 @@ impl MirLowering {
 
         let mir_function = mir::Function {
             name: mir::Symbol::new(name.clone()),
-            path: Vec::new(),
             def_id: Some(def.def_id),
             substs: method_substs.clone(),
             sig: sig.clone(),
@@ -2130,7 +2130,6 @@ impl MirLowering {
 
         let mir_function = mir::Function {
             name: mir::Symbol::new(name.clone()),
-            path: Vec::new(),
             def_id: Some(def.def_id),
             substs: method_substs.clone(),
             sig: sig.clone(),
@@ -4905,7 +4904,35 @@ impl MirLowering {
         self.error_ty()
     }
 
-    fn register_struct(&mut self, def_id: hir::DefId, strukt: &hir::Struct, _span: Span) {
+    /// Qualified display name for a definition, sourced from
+    /// `hir::Program::def_paths` (the item's `name` field is always bare —
+    /// see that table's doc comment). Falls back to the bare name itself
+    /// when no path is recorded (e.g. synthetic items).
+    fn qualified_display_name(
+        program: &hir::Program,
+        def_id: hir::DefId,
+        bare_name: &str,
+    ) -> String {
+        program
+            .def_paths
+            .get(&def_id)
+            .map(|segments| {
+                segments
+                    .iter()
+                    .map(|segment| segment.as_str())
+                    .collect::<Vec<_>>()
+                    .join("::")
+            })
+            .unwrap_or_else(|| bare_name.to_string())
+    }
+
+    fn register_struct(
+        &mut self,
+        program: &hir::Program,
+        def_id: hir::DefId,
+        strukt: &hir::Struct,
+        _span: Span,
+    ) {
         if self.struct_defs.contains_key(&def_id) {
             return;
         }
@@ -4931,7 +4958,7 @@ impl MirLowering {
         self.struct_defs.insert(
             def_id,
             StructDefinition {
-                name: String::from(strukt.name.clone()),
+                name: Self::qualified_display_name(program, def_id, strukt.name.as_str()),
                 generics,
                 fields,
                 field_index,
@@ -4939,7 +4966,13 @@ impl MirLowering {
         );
                 }
 
-    fn register_enum(&mut self, def_id: hir::DefId, enm: &hir::Enum, _span: Span) {
+    fn register_enum(
+        &mut self,
+        program: &hir::Program,
+        def_id: hir::DefId,
+        enm: &hir::Enum,
+        _span: Span,
+    ) {
         if self.enum_defs.contains_key(&def_id) {
             return;
         }
@@ -4950,6 +4983,7 @@ impl MirLowering {
             .iter()
             .map(|param| param.name.as_str().to_string())
             .collect::<Vec<_>>();
+        let enum_qualified_name = Self::qualified_display_name(program, def_id, enm.name.as_str());
 
         let mut variants = Vec::new();
         let mut next_value: i64 = 0;
@@ -5004,7 +5038,7 @@ impl MirLowering {
                 },
             );
 
-            let qualified_name = format!("{}::{}", enm.name.as_str(), variant.name.as_str());
+            let qualified_name = format!("{}::{}", enum_qualified_name, variant.name.as_str());
             self.enum_variant_names
                 .insert(qualified_name.clone(), variant.def_id);
             self.enum_variant_names
@@ -5016,7 +5050,7 @@ impl MirLowering {
             def_id,
             EnumDefinition {
                 def_id,
-                name: enm.name.as_str().to_string(),
+                name: enum_qualified_name,
                 generics,
                 variants,
             },
@@ -5898,7 +5932,6 @@ impl MirLowering {
 
         let mir_function = mir::Function {
             name: mir::Symbol::new(qualified_name),
-            path: Vec::new(),
             def_id: Some(def_id),
             substs: Vec::new(),
             sig: sig.clone(),
@@ -10394,10 +10427,12 @@ impl<'a> BodyBuilder<'a> {
     fn lower_inner_item(&mut self, item: &hir::Item) -> Result<()> {
         match &item.kind {
             hir::ItemKind::Struct(def) => {
-                self.lowering.register_struct(item.def_id, def, item.span);
+                self.lowering
+                    .register_struct(self.program, item.def_id, def, item.span);
             }
             hir::ItemKind::Enum(enm) => {
-                self.lowering.register_enum(item.def_id, enm, item.span);
+                self.lowering
+                    .register_enum(self.program, item.def_id, enm, item.span);
             }
             hir::ItemKind::Const(konst) => {
                 self.lowering
@@ -19331,6 +19366,31 @@ impl<'a> BodyBuilder<'a> {
                     kind: mir::StatementKind::Assign(
                         place.clone(),
                         mir::Rvalue::Repeat(lowered_elem.operand, repeat_len),
+                    ),
+                };
+                self.push_statement(statement);
+            }
+            hir::ExprKind::Tuple(elements) => {
+                let mut operands = Vec::with_capacity(elements.len());
+                let mut element_types = Vec::with_capacity(elements.len());
+                for element in elements {
+                    let lowered = self.lower_operand(element, None)?;
+                    element_types.push(lowered.ty.clone());
+                    operands.push(lowered.operand);
+                }
+                if place.projection.is_empty() {
+                    let tuple_ty = Ty {
+                        kind: TyKind::Tuple(element_types.into_iter().map(Box::new).collect()),
+                    };
+                    if let Some(local) = self.locals.get_mut(place.local as usize) {
+                        local.ty = tuple_ty;
+                    }
+                }
+                let statement = mir::Statement {
+                    source_info: expr.span,
+                    kind: mir::StatementKind::Assign(
+                        place.clone(),
+                        mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, operands),
                     ),
                 };
                 self.push_statement(statement);

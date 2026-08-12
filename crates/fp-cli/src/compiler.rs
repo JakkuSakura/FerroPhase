@@ -817,6 +817,7 @@ fn lower_file(
     Ok(LoweredProgram {
         driver,
         package_id,
+        module_path: identity.path.path().clone(),
         executor,
     })
 }
@@ -984,6 +985,7 @@ pub fn compile_file_to_lir_bundle(
         package_id: PackageId::new(identity.path.path().head().ok_or_else(|| {
             CliError::Compilation("source file has no package identity".to_string())
         })?),
+        module_path: identity.path.path().clone(),
         executor,
     };
     Ok(LirBundle {
@@ -1184,6 +1186,7 @@ struct CompilerIdentity {
 struct LoweredProgram {
     driver: CompilerDriver,
     package_id: PackageId,
+    module_path: QualifiedPath,
     executor: CompilerExecutor,
 }
 
@@ -1226,7 +1229,21 @@ impl LoweredProgram {
                 self.package_id
             )));
         }
-        Ok(package.lir_workspace.to_program())
+        let mut lir = package.lir_workspace.to_program();
+        // Native/asm emitters locate the process entry point by its final,
+        // bare symbol name (see `CompilerDriver::rename_lir_function`).
+        // This path builds its own `LirProgram` straight from the
+        // workspace rather than going through `select_entrypoint`, so
+        // resolve and rename the entrypoint here too — otherwise a
+        // module-nested `main` keeps its qualified, mangled name and
+        // native emission can't find it.
+        if let Ok(def_id) =
+            self.driver
+                .resolve_entrypoint_def_id(&self.package_id, &self.module_path, "main")
+        {
+            CompilerDriver::rename_lir_function(&mut lir, def_id, "main");
+        }
+        Ok(lir)
     }
 
     fn compiled_package(

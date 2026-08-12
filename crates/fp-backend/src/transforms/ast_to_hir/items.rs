@@ -246,6 +246,15 @@ impl HirGenerator {
         self.push_type_scope();
         self.current_type_scope()
             .insert("Self".to_string(), hir::Res::SelfTy);
+        // `Self` in type position (`-> Self`, `&Self`) resolves through the
+        // type scope above. `Self { x, y }` struct-literal construction in
+        // method bodies resolves through the *value* namespace instead
+        // (mirroring how real struct names are registered in both
+        // namespaces, `register_type_def` + `register_value_def`) — needs
+        // its own registration here or it stays unresolved.
+        self.push_value_scope();
+        self.current_value_scope()
+            .insert("Self".to_string(), hir::Res::SelfTy);
         let result = (|| {
             // Register impl generics in the current type scope.
             let generics = self.transform_generics(&impl_block.generics_params);
@@ -352,6 +361,7 @@ impl HirGenerator {
             })
         })();
 
+        self.pop_value_scope();
         self.pop_type_scope();
 
         result

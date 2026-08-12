@@ -55,7 +55,6 @@ fn builds_function_signature_and_locals() {
             mir_id: 0,
             kind: mir::ItemKind::Function(mir::Function {
                 name: MirSymbol::new("test_fn"),
-                path: vec![MirSymbol::new("test_fn")],
                 def_id: None,
                 substs: Vec::new(),
                 sig: mir::FunctionSig {
@@ -146,7 +145,6 @@ fn lowers_general_call_and_branches() {
 
     let foo = mir::Function {
         name: MirSymbol::new("foo"),
-        path: vec![MirSymbol::new("foo")],
         def_id: None,
         substs: Vec::new(),
         sig: mir::FunctionSig {
@@ -169,7 +167,6 @@ fn lowers_general_call_and_branches() {
                 mir_id: 0,
                 kind: mir::ItemKind::Function(mir::Function {
                     name: MirSymbol::new("test_fn"),
-                    path: vec![MirSymbol::new("test_fn")],
                     def_id: None,
                     substs: Vec::new(),
                     sig: mir::FunctionSig {

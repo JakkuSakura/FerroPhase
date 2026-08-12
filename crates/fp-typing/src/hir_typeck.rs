@@ -584,6 +584,15 @@ impl HirTypeChecker {
                         kind: TyKind::Array(Box::new(element), length),
                     }
                 }
+                hir::ExprKind::Tuple(values) => {
+                    let mut element_types = Vec::with_capacity(values.len());
+                    for value in values {
+                        element_types.push(Box::new(self.check_expr(value).await?));
+                    }
+                    Ty {
+                        kind: TyKind::Tuple(element_types),
+                    }
+                }
                 hir::ExprKind::Assign(lhs, rhs) => {
                     let lhs = self.check_expr(lhs).await?;
                     let rhs = self.check_expr(rhs).await?;

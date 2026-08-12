@@ -574,6 +574,14 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
                 format_expr_inline(len, ctx)
             )
         }
+        ExprKind::Tuple(elements) => {
+            let elems = elements
+                .iter()
+                .map(|elem| format_expr_inline(elem, ctx))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("({})", elems)
+        }
         ExprKind::With(context, body) => format!(
             "with ({}) {}",
             format_expr_inline(context, ctx),

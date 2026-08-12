@@ -4,87 +4,90 @@ AsmIR:
 asmir target=Aarch64 format=MachO endian=Little ptr=64
 section .text kind=Text align=Some(16)
 section .rodata kind=ReadOnlyData align=Some(16)
+global ::AF_INET ty=I32 constant=true initializer=Some(Bytes([2, 0, 0, 0]))
+global ::SOCK_DGRAM ty=I32 constant=true initializer=Some(Bytes([2, 0, 0, 0]))
+global ::SOCKADDR_LEN ty=I32 constant=true initializer=Some(Bytes([16, 0, 0, 0]))
 fn socket
 fn bind
 fn recvfrom
 fn sendto
 fn close
-fn make_addr
+fn examples__38_async_udp_echo__make_addr
   bb0 bb0
-    alloca Virtual { id: 3, bank: General, size_bits: 64 }, 1
-    sextortrunc Virtual { id: 4, bank: General, size_bits: 8 }, 16
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 3, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 4, bank: General, size_bits: 64 }
-    alloca Virtual { id: 6, bank: General, size_bits: 64 }, 1
-    sextortrunc Virtual { id: 7, bank: General, size_bits: 8 }, 2
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 6, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 7, bank: General, size_bits: 64 }
-    alloca Virtual { id: 9, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 10, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 3, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
-    load Virtual { id: 11, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 6, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
-    insertvalue Virtual { id: 12, bank: General, size_bits: 128 }, 0, Virtual { id: 10, bank: General, size_bits: 64 }, 0
-    insertvalue Virtual { id: 13, bank: General, size_bits: 128 }, Virtual { id: 12, bank: General, size_bits: 64 }, Virtual { id: 11, bank: General, size_bits: 64 }, 1
-    insertvalue Virtual { id: 14, bank: General, size_bits: 128 }, Virtual { id: 13, bank: General, size_bits: 64 }, symbol(local.1), 2
-    insertvalue Virtual { id: 15, bank: General, size_bits: 128 }, Virtual { id: 14, bank: General, size_bits: 64 }, symbol(local.2), 3
-    insertvalue Virtual { id: 16, bank: General, size_bits: 128 }, Virtual { id: 15, bank: General, size_bits: 64 }, 0, 4
-    insertvalue Virtual { id: 17, bank: General, size_bits: 128 }, Virtual { id: 16, bank: General, size_bits: 64 }, 0, 5
-    insertvalue Virtual { id: 18, bank: General, size_bits: 128 }, Virtual { id: 17, bank: General, size_bits: 64 }, 0, 6
-    insertvalue Virtual { id: 19, bank: General, size_bits: 128 }, Virtual { id: 18, bank: General, size_bits: 64 }, 0, 7
-    insertvalue Virtual { id: 20, bank: General, size_bits: 128 }, Virtual { id: 19, bank: General, size_bits: 64 }, 0, 8
-    insertvalue Virtual { id: 21, bank: General, size_bits: 128 }, Virtual { id: 20, bank: General, size_bits: 64 }, 0, 9
-    insertvalue Virtual { id: 22, bank: General, size_bits: 128 }, Virtual { id: 21, bank: General, size_bits: 64 }, 0, 10
-    insertvalue Virtual { id: 23, bank: General, size_bits: 128 }, Virtual { id: 22, bank: General, size_bits: 64 }, 0, 11
-    insertvalue Virtual { id: 24, bank: General, size_bits: 128 }, Virtual { id: 23, bank: General, size_bits: 64 }, 0, 12
-    insertvalue Virtual { id: 25, bank: General, size_bits: 128 }, Virtual { id: 24, bank: General, size_bits: 64 }, 0, 13
-    insertvalue Virtual { id: 26, bank: General, size_bits: 128 }, Virtual { id: 25, bank: General, size_bits: 64 }, 0, 14
-    insertvalue Virtual { id: 27, bank: General, size_bits: 128 }, Virtual { id: 26, bank: General, size_bits: 64 }, 0, 15
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 9, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 27, bank: General, size_bits: 64 }
-    load Virtual { id: 29, bank: General, size_bits: 128 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 9, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(16), address_space: None, pre_indexed: false, post_indexed: false })
+    alloca Virtual { id: 0, bank: General, size_bits: 64 }, 1
+    alloca Virtual { id: 1, bank: General, size_bits: 64 }, 1
+    sextortrunc Virtual { id: 2, bank: General, size_bits: 8 }, 16
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 1, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 2, bank: General, size_bits: 8 }
+    alloca Virtual { id: 4, bank: General, size_bits: 64 }, 1
+    sextortrunc Virtual { id: 5, bank: General, size_bits: 8 }, 2
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 4, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 5, bank: General, size_bits: 8 }
+    load Virtual { id: 7, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 1, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 8, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 4, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
+    insertvalue Virtual { id: 9, bank: General, size_bits: 64 }, 0, Virtual { id: 7, bank: General, size_bits: 8 }, 0
+    insertvalue Virtual { id: 10, bank: General, size_bits: 64 }, Virtual { id: 9, bank: General, size_bits: 64 }, Virtual { id: 8, bank: General, size_bits: 8 }, 1
+    insertvalue Virtual { id: 11, bank: General, size_bits: 64 }, Virtual { id: 10, bank: General, size_bits: 64 }, symbol(local.1), 2
+    insertvalue Virtual { id: 12, bank: General, size_bits: 64 }, Virtual { id: 11, bank: General, size_bits: 64 }, symbol(local.2), 3
+    insertvalue Virtual { id: 13, bank: General, size_bits: 64 }, Virtual { id: 12, bank: General, size_bits: 64 }, 0, 4
+    insertvalue Virtual { id: 14, bank: General, size_bits: 64 }, Virtual { id: 13, bank: General, size_bits: 64 }, 0, 5
+    insertvalue Virtual { id: 15, bank: General, size_bits: 64 }, Virtual { id: 14, bank: General, size_bits: 64 }, 0, 6
+    insertvalue Virtual { id: 16, bank: General, size_bits: 64 }, Virtual { id: 15, bank: General, size_bits: 64 }, 0, 7
+    insertvalue Virtual { id: 17, bank: General, size_bits: 64 }, Virtual { id: 16, bank: General, size_bits: 64 }, 0, 8
+    insertvalue Virtual { id: 18, bank: General, size_bits: 64 }, Virtual { id: 17, bank: General, size_bits: 64 }, 0, 9
+    insertvalue Virtual { id: 19, bank: General, size_bits: 64 }, Virtual { id: 18, bank: General, size_bits: 64 }, 0, 10
+    insertvalue Virtual { id: 20, bank: General, size_bits: 64 }, Virtual { id: 19, bank: General, size_bits: 64 }, 0, 11
+    insertvalue Virtual { id: 21, bank: General, size_bits: 64 }, Virtual { id: 20, bank: General, size_bits: 64 }, 0, 12
+    insertvalue Virtual { id: 22, bank: General, size_bits: 64 }, Virtual { id: 21, bank: General, size_bits: 64 }, 0, 13
+    insertvalue Virtual { id: 23, bank: General, size_bits: 64 }, Virtual { id: 22, bank: General, size_bits: 64 }, 0, 14
+    insertvalue Virtual { id: 24, bank: General, size_bits: 64 }, Virtual { id: 23, bank: General, size_bits: 64 }, 0, 15
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 0, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 24, bank: General, size_bits: 64 }
+    load Virtual { id: 26, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 0, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(16), address_space: None, pre_indexed: false, post_indexed: false })
     ret
 fn main
   bb0 bb0
     call symbol(socket)(2, 2, 0) cc=C tail=false
     br
   bb1 bb1
-    alloca Virtual { id: 31, bank: General, size_bits: 64 }, 1
-    lt Virtual { id: 32, bank: General, size_bits: 8 }, Virtual { id: 30, bank: General, size_bits: 64 }, 0
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 31, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 32, bank: General, size_bits: 64 }
-    load Virtual { id: 34, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 31, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
-    eq Virtual { id: 35, bank: General, size_bits: 8 }, Virtual { id: 34, bank: General, size_bits: 64 }, 1
+    alloca Virtual { id: 28, bank: General, size_bits: 64 }, 1
+    lt Virtual { id: 29, bank: General, size_bits: 8 }, Virtual { id: 27, bank: General, size_bits: 32 }, 0
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 28, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 29, bank: General, size_bits: 8 }
+    load Virtual { id: 31, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 28, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
+    eq Virtual { id: 32, bank: General, size_bits: 8 }, Virtual { id: 31, bank: General, size_bits: 8 }, 1
     condbr
   bb2 bb2
     ret
   bb3 bb3
     br
   bb4 bb4
-    call symbol(make_addr)(35, 131) cc=C tail=false
-    alloca Virtual { id: 37, bank: General, size_bits: 64 }, 1
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 37, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 36, bank: General, size_bits: 64 }
+    call symbol(examples__38_async_udp_echo__make_addr)(35, 131) cc=C tail=false
+    alloca Virtual { id: 34, bank: General, size_bits: 64 }, 1
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 34, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 33, bank: General, size_bits: 64 }
     br
   bb6 bb6
-    alloca Virtual { id: 39, bank: General, size_bits: 64 }, 1
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 39, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 37, bank: General, size_bits: 64 }
-    alloca Virtual { id: 41, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 42, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 39, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    bitcast Virtual { id: 43, bank: General, size_bits: 64 }, Virtual { id: 42, bank: General, size_bits: 64 }
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 41, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 43, bank: General, size_bits: 64 }
+    alloca Virtual { id: 36, bank: General, size_bits: 64 }, 1
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 36, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 34, bank: General, size_bits: 64 }
+    alloca Virtual { id: 38, bank: General, size_bits: 64 }, 1
+    load Virtual { id: 39, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 36, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    bitcast Virtual { id: 40, bank: General, size_bits: 64 }, Virtual { id: 39, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 38, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 40, bank: General, size_bits: 64 }
+    alloca Virtual { id: 42, bank: General, size_bits: 64 }, 1
+    load Virtual { id: 43, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 38, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 42, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 43, bank: General, size_bits: 64 }
     alloca Virtual { id: 45, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 46, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 41, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 45, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 46, bank: General, size_bits: 64 }
-    alloca Virtual { id: 48, bank: General, size_bits: 64 }, 1
+    load Virtual { id: 46, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 42, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    bitcast Virtual { id: 47, bank: General, size_bits: 64 }, Virtual { id: 46, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 45, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 47, bank: General, size_bits: 64 }
     load Virtual { id: 49, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 45, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    bitcast Virtual { id: 50, bank: General, size_bits: 64 }, Virtual { id: 49, bank: General, size_bits: 64 }
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 48, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 50, bank: General, size_bits: 64 }
-    load Virtual { id: 52, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 48, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    call symbol(bind)(v30, v52, 16) cc=C tail=false
+    call symbol(bind)(v27, v49, 16) cc=C tail=false
     br
   bb7 bb7
-    alloca Virtual { id: 54, bank: General, size_bits: 64 }, 1
-    ne Virtual { id: 55, bank: General, size_bits: 8 }, Virtual { id: 53, bank: General, size_bits: 64 }, 0
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 54, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 55, bank: General, size_bits: 64 }
-    load Virtual { id: 57, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 54, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
-    eq Virtual { id: 58, bank: General, size_bits: 8 }, Virtual { id: 57, bank: General, size_bits: 64 }, 1
+    alloca Virtual { id: 51, bank: General, size_bits: 64 }, 1
+    ne Virtual { id: 52, bank: General, size_bits: 8 }, Virtual { id: 50, bank: General, size_bits: 32 }, 0
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 51, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 52, bank: General, size_bits: 8 }
+    load Virtual { id: 54, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 51, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
+    eq Virtual { id: 55, bank: General, size_bits: 8 }, Virtual { id: 54, bank: General, size_bits: 8 }, 1
     condbr
   bb8 bb8
-    call symbol(close)(v30) cc=C tail=false
+    call symbol(close)(v27) cc=C tail=false
     br
   bb9 bb9
     br
@@ -92,86 +95,86 @@ fn main
     ret
   bb10 bb10
     intrinsic.call symbol(intrinsic.println)
-    alloca Virtual { id: 61, bank: General, size_bits: 64 }, 1
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 61, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), symbol(const.array)
-    alloca Virtual { id: 63, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 64, bank: General, size_bits: 8192 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 61, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1024), address_space: None, pre_indexed: false, post_indexed: false })
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 63, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 64, bank: General, size_bits: 64 }
+    alloca Virtual { id: 58, bank: General, size_bits: 64 }, 1
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 58, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), symbol(const.array)
+    alloca Virtual { id: 60, bank: General, size_bits: 64 }, 1
+    load Virtual { id: 61, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 58, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1024), address_space: None, pre_indexed: false, post_indexed: false })
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 60, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 61, bank: General, size_bits: 64 }
     br
   bb13 bb13
     br
   bb14 bb14
-    call symbol(make_addr)(0, 0) cc=C tail=false
-    alloca Virtual { id: 67, bank: General, size_bits: 64 }, 1
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 67, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 66, bank: General, size_bits: 64 }
+    call symbol(examples__38_async_udp_echo__make_addr)(0, 0) cc=C tail=false
+    alloca Virtual { id: 64, bank: General, size_bits: 64 }, 1
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 64, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 63, bank: General, size_bits: 64 }
     br
   bb16 bb16
-    alloca Virtual { id: 69, bank: General, size_bits: 64 }, 1
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 69, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 16
-    alloca Virtual { id: 71, bank: General, size_bits: 64 }, 1
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 71, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 67, bank: General, size_bits: 64 }
-    alloca Virtual { id: 73, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 74, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 71, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    bitcast Virtual { id: 75, bank: General, size_bits: 64 }, Virtual { id: 74, bank: General, size_bits: 64 }
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 73, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 75, bank: General, size_bits: 64 }
+    alloca Virtual { id: 66, bank: General, size_bits: 64 }, 1
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 66, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 16
+    alloca Virtual { id: 68, bank: General, size_bits: 64 }, 1
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 68, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 64, bank: General, size_bits: 64 }
+    alloca Virtual { id: 70, bank: General, size_bits: 64 }, 1
+    load Virtual { id: 71, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 68, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    bitcast Virtual { id: 72, bank: General, size_bits: 64 }, Virtual { id: 71, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 70, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 72, bank: General, size_bits: 64 }
+    alloca Virtual { id: 74, bank: General, size_bits: 64 }, 1
+    load Virtual { id: 75, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 70, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 74, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 75, bank: General, size_bits: 64 }
     alloca Virtual { id: 77, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 78, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 73, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 77, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 78, bank: General, size_bits: 64 }
-    alloca Virtual { id: 80, bank: General, size_bits: 64 }, 1
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 80, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 69, bank: General, size_bits: 64 }
-    alloca Virtual { id: 82, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 83, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 80, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    bitcast Virtual { id: 84, bank: General, size_bits: 64 }, Virtual { id: 83, bank: General, size_bits: 64 }
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 82, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 84, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 77, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 66, bank: General, size_bits: 64 }
+    alloca Virtual { id: 79, bank: General, size_bits: 64 }, 1
+    load Virtual { id: 80, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 77, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    bitcast Virtual { id: 81, bank: General, size_bits: 64 }, Virtual { id: 80, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 79, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 81, bank: General, size_bits: 64 }
+    alloca Virtual { id: 83, bank: General, size_bits: 64 }, 1
+    load Virtual { id: 84, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 79, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 83, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 84, bank: General, size_bits: 64 }
     alloca Virtual { id: 86, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 87, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 82, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 86, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 87, bank: General, size_bits: 64 }
-    alloca Virtual { id: 89, bank: General, size_bits: 64 }, 1
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 89, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 63, bank: General, size_bits: 64 }
-    alloca Virtual { id: 91, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 92, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 89, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    bitcast Virtual { id: 93, bank: General, size_bits: 64 }, Virtual { id: 92, bank: General, size_bits: 64 }
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 91, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 93, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 86, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 60, bank: General, size_bits: 64 }
+    alloca Virtual { id: 88, bank: General, size_bits: 64 }, 1
+    load Virtual { id: 89, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 86, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    bitcast Virtual { id: 90, bank: General, size_bits: 64 }, Virtual { id: 89, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 88, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 90, bank: General, size_bits: 64 }
+    alloca Virtual { id: 92, bank: General, size_bits: 64 }, 1
+    load Virtual { id: 93, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 88, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 92, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 93, bank: General, size_bits: 64 }
     alloca Virtual { id: 95, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 96, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 91, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 95, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 96, bank: General, size_bits: 64 }
-    alloca Virtual { id: 98, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 99, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 95, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    bitcast Virtual { id: 100, bank: General, size_bits: 64 }, Virtual { id: 99, bank: General, size_bits: 64 }
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 98, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 100, bank: General, size_bits: 64 }
-    alloca Virtual { id: 102, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 103, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 77, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    bitcast Virtual { id: 104, bank: General, size_bits: 64 }, Virtual { id: 103, bank: General, size_bits: 64 }
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 102, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 104, bank: General, size_bits: 64 }
-    load Virtual { id: 106, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 98, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    load Virtual { id: 107, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 102, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    load Virtual { id: 108, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 86, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    call symbol(recvfrom)(v30, v106, 1024, 0, v107, v108) cc=C tail=false
+    load Virtual { id: 96, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 92, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    bitcast Virtual { id: 97, bank: General, size_bits: 64 }, Virtual { id: 96, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 95, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 97, bank: General, size_bits: 64 }
+    alloca Virtual { id: 99, bank: General, size_bits: 64 }, 1
+    load Virtual { id: 100, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 74, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    bitcast Virtual { id: 101, bank: General, size_bits: 64 }, Virtual { id: 100, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 99, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 101, bank: General, size_bits: 64 }
+    load Virtual { id: 103, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 95, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 104, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 99, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 105, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 83, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    call symbol(recvfrom)(v27, v103, 1024, 0, v104, v105) cc=C tail=false
     br
   bb17 bb17
-    alloca Virtual { id: 110, bank: General, size_bits: 64 }, 1
-    gt Virtual { id: 111, bank: General, size_bits: 8 }, Virtual { id: 109, bank: General, size_bits: 64 }, 0
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 110, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 111, bank: General, size_bits: 64 }
-    load Virtual { id: 113, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 110, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
-    eq Virtual { id: 114, bank: General, size_bits: 8 }, Virtual { id: 113, bank: General, size_bits: 64 }, 1
+    alloca Virtual { id: 107, bank: General, size_bits: 64 }, 1
+    gt Virtual { id: 108, bank: General, size_bits: 8 }, Virtual { id: 106, bank: General, size_bits: 64 }, 0
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 107, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 108, bank: General, size_bits: 8 }
+    load Virtual { id: 110, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 107, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
+    eq Virtual { id: 111, bank: General, size_bits: 8 }, Virtual { id: 110, bank: General, size_bits: 8 }, 1
     condbr
   bb18 bb18
-    alloca Virtual { id: 115, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 116, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 95, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    bitcast Virtual { id: 117, bank: General, size_bits: 64 }, Virtual { id: 116, bank: General, size_bits: 64 }
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 115, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 117, bank: General, size_bits: 64 }
+    alloca Virtual { id: 112, bank: General, size_bits: 64 }, 1
+    load Virtual { id: 113, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 92, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    bitcast Virtual { id: 114, bank: General, size_bits: 64 }, Virtual { id: 113, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 112, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 114, bank: General, size_bits: 64 }
+    alloca Virtual { id: 116, bank: General, size_bits: 64 }, 1
+    bitcast Virtual { id: 117, bank: General, size_bits: 64 }, Virtual { id: 106, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 116, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 117, bank: General, size_bits: 64 }
     alloca Virtual { id: 119, bank: General, size_bits: 64 }, 1
-    bitcast Virtual { id: 120, bank: General, size_bits: 64 }, Virtual { id: 109, bank: General, size_bits: 64 }
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 119, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 120, bank: General, size_bits: 64 }
-    alloca Virtual { id: 122, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 123, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 77, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    bitcast Virtual { id: 124, bank: General, size_bits: 64 }, Virtual { id: 123, bank: General, size_bits: 64 }
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 122, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 124, bank: General, size_bits: 64 }
-    load Virtual { id: 126, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 115, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    load Virtual { id: 127, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 119, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    load Virtual { id: 128, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 122, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    load Virtual { id: 129, bank: General, size_bits: 32 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 69, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(4), address_space: None, pre_indexed: false, post_indexed: false })
-    call symbol(sendto)(v30, v126, v127, 0, v128, v129) cc=C tail=false
+    load Virtual { id: 120, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 74, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    bitcast Virtual { id: 121, bank: General, size_bits: 64 }, Virtual { id: 120, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 119, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 121, bank: General, size_bits: 64 }
+    load Virtual { id: 123, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 112, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 124, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 116, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 125, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 119, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 126, bank: General, size_bits: 32 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 66, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(4), address_space: None, pre_indexed: false, post_indexed: false })
+    call symbol(sendto)(v27, v123, v124, 0, v125, v126) cc=C tail=false
     br
   bb19 bb19
     br
@@ -188,7 +191,7 @@ fn main
 
 
 Symbols:
-  make_addr                        0x00000000
+  examples__38_async_udp_echo__make_addr 0x00000000
   main                             0x0000036c
 
 Text relocations:
@@ -203,15 +206,15 @@ Text relocations:
 .text (35500 bytes):
   00000000  ff 43 09 d1 f0 03 00 91  10 02 09 91 1d 7a 00 a9 
   00000010  fd 03 00 91 e0 87 00 f9  e1 a3 03 39 e2 c3 03 39 
-  00000020  f0 03 00 91 10 82 08 91  f0 03 00 f9 10 02 80 d2 
-  00000030  f1 1f 80 d2 11 00 a0 f2  11 00 c0 f2 11 00 e0 f2 
-  00000040  10 02 11 8a f0 07 00 f9  f1 03 40 f9 f0 23 c0 39 
-  00000050  30 02 00 39 f0 03 00 91  10 a2 08 91 f0 0f 00 f9 
-  00000060  50 00 80 d2 f1 1f 80 d2  11 00 a0 f2 11 00 c0 f2 
-  00000070  11 00 e0 f2 10 02 11 8a  f0 13 00 f9 f1 0f 40 f9 
-  00000080  f0 83 c0 39 30 02 00 39  f0 03 00 91 10 c2 08 91 
-  00000090  f0 1b 00 f9 f0 03 40 f9  11 02 c0 39 f1 1f 00 f9 
-  000000a0  f0 0f 40 f9 11 02 c0 39  f1 23 00 f9 10 00 80 d2 
+  00000020  f0 03 00 91 10 82 08 91  f0 03 00 f9 f0 03 00 91 
+  00000030  10 c2 08 91 f0 07 00 f9  10 02 80 d2 f1 1f 80 d2 
+  00000040  11 00 a0 f2 11 00 c0 f2  11 00 e0 f2 10 02 11 8a 
+  00000050  f0 0b 00 f9 f1 07 40 f9  f0 43 c0 39 30 02 00 39 
+  00000060  f0 03 00 91 10 e2 08 91  f0 13 00 f9 50 00 80 d2 
+  00000070  f1 1f 80 d2 11 00 a0 f2  11 00 c0 f2 11 00 e0 f2 
+  00000080  10 02 11 8a f0 17 00 f9  f1 13 40 f9 f0 a3 c0 39 
+  00000090  30 02 00 39 f0 07 40 f9  11 02 c0 39 f1 1f 00 f9 
+  000000a0  f0 13 40 f9 11 02 c0 39  f1 23 00 f9 10 00 80 d2 
   000000b0  f0 8b 00 f9 f0 8f 00 f9  f0 e3 c0 39 f0 43 04 39 
   000000c0  f0 03 00 91 10 42 04 91  f0 27 00 f9 f0 8b 40 f9 
   000000d0  f0 93 00 f9 f0 8f 40 f9  f0 97 00 f9 f0 03 c1 39 
@@ -247,9 +250,9 @@ Text relocations:
   000002b0  10 00 80 d2 f0 fb 07 39  f0 03 00 91 10 c2 07 91 
   000002c0  f0 5f 00 f9 f0 fb 40 f9  f0 03 01 f9 f0 ff 40 f9 
   000002d0  f0 07 01 f9 10 00 80 d2  f0 3f 08 39 f0 03 00 91 
-  000002e0  10 02 08 91 f0 63 00 f9  f1 1b 40 f9 f0 03 41 f9 
+  000002e0  10 02 08 91 f0 63 00 f9  f1 03 40 f9 f0 03 41 f9 
   000002f0  e9 03 11 aa 30 01 00 f9  f0 07 41 f9 e9 03 11 aa 
-  00000300  29 21 00 91 30 01 00 f9  f1 1b 40 f9 e9 03 11 aa 
+  00000300  29 21 00 91 30 01 00 f9  f1 03 40 f9 e9 03 11 aa 
   00000310  30 01 40 f9 f0 0b 01 f9  e9 03 11 aa 29 21 00 91 
   00000320  30 01 40 f9 f0 0f 01 f9  f0 03 00 91 10 42 08 91 
   00000330  f0 6b 00 f9 f1 87 40 f9  f0 0b 41 f9 e9 03 11 aa 

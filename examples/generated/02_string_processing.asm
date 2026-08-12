@@ -4,6 +4,28 @@ AsmIR:
 asmir target=Aarch64 format=MachO endian=Little ptr=64
 section .text kind=Text align=Some(16)
 section .rodata kind=ReadOnlyData align=Some(16)
+global __const_data_0 ty=Array(I8, 11) constant=true initializer=Some(Bytes([70, 101, 114, 114, 111, 80, 104, 97, 115, 101, 0]))
+global __const_data_1 ty=Array(I8, 6) constant=true initializer=Some(Bytes([48, 46, 49, 46, 48, 0]))
+global __const_data_2 ty=Array(I8, 6) constant=true initializer=Some(Bytes([70, 101, 114, 114, 111, 0]))
+global __const_data_3 ty=Array(I8, 6) constant=true initializer=Some(Bytes([80, 104, 97, 115, 101, 0]))
+global __const_data_4 ty=Array(I8, 6) constant=true initializer=Some(Bytes([97, 108, 112, 104, 97, 0]))
+global __const_data_5 ty=Array(I8, 5) constant=true initializer=Some(Bytes([98, 101, 116, 97, 0]))
+global __const_data_6 ty=Array(I8, 6) constant=true initializer=Some(Bytes([103, 97, 109, 109, 97, 0]))
+global __const_data_7 ty=Array(I8, 6) constant=true initializer=Some(Bytes([100, 101, 108, 116, 97, 0]))
+global __const_data_8 ty=Array(I8, 18) constant=true initializer=Some(Bytes([70, 101, 114, 114, 111, 80, 104, 97, 115, 101, 32, 118, 48, 46, 49, 46, 48, 0]))
+global ::NAME ty=Struct { fields: [Ptr(I8), I64], packed: false, name: Some("__slice") } constant=true initializer=Some(Bytes([0, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0]))
+global ::VERSION ty=Struct { fields: [Ptr(I8), I64], packed: false, name: Some("__slice") } constant=true initializer=Some(Bytes([0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0]))
+global ::NAME_LEN ty=I64 constant=true initializer=Some(Bytes([10, 0, 0, 0, 0, 0, 0, 0]))
+global ::VERSION_LEN ty=I64 constant=true initializer=Some(Bytes([5, 0, 0, 0, 0, 0, 0, 0]))
+global ::PREFIX_OK ty=I1 constant=true initializer=Some(Bytes([1]))
+global ::SUFFIX_OK ty=I1 constant=true initializer=Some(Bytes([1]))
+global ::HAS_PHASE ty=I1 constant=true initializer=Some(Bytes([1]))
+global ::SHORT ty=Struct { fields: [Ptr(I8), I64], packed: false, name: Some("__slice") } constant=true initializer=Some(Bytes([0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0]))
+global ::TAIL ty=Struct { fields: [Ptr(I8), I64], packed: false, name: Some("__slice") } constant=true initializer=Some(Bytes([0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0]))
+global ::WORDS ty=Array(Struct { fields: [Ptr(I8), I64], packed: false, name: Some("__slice") }, 4) constant=true initializer=Some(Bytes([0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0]))
+global ::WORD_LENGTHS ty=Array(I64, 4) constant=true initializer=Some(Bytes([5, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0]))
+global ::TOTAL_WORD_LEN ty=I64 constant=true initializer=Some(Bytes([19, 0, 0, 0, 0, 0, 0, 0]))
+global ::BANNER ty=Struct { fields: [Ptr(I8), I64], packed: false, name: Some("__slice") } constant=true initializer=Some(Bytes([0, 0, 0, 0, 0, 0, 0, 0, 17, 0, 0, 0, 0, 0, 0, 0]))
 fn main
   bb0 bb0
     alloca Virtual { id: 0, bank: General, size_bits: 64 }, 1
@@ -23,9 +45,9 @@ fn main
     alloca Virtual { id: 12, bank: General, size_bits: 64 }, 1
     load Virtual { id: 13, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 0, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     lt Virtual { id: 14, bank: General, size_bits: 8 }, Virtual { id: 13, bank: General, size_bits: 64 }, 4
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 12, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 14, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 12, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 14, bank: General, size_bits: 8 }
     load Virtual { id: 16, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 12, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
-    eq Virtual { id: 17, bank: General, size_bits: 8 }, Virtual { id: 16, bank: General, size_bits: 64 }, 1
+    eq Virtual { id: 17, bank: General, size_bits: 8 }, Virtual { id: 16, bank: General, size_bits: 8 }, 1
     condbr
   bb2 bb2
     alloca Virtual { id: 18, bank: General, size_bits: 64 }, 1
@@ -62,45 +84,45 @@ fn main
     intrinsic.call symbol(intrinsic.println), symbol(__const_data_8)
     intrinsic.call symbol(intrinsic.println), 256
     ret
-fn __fp_comptime_const_IS_EMPTY_12768764456387974082
+fn __fp_comptime_const_IS_EMPTY_2183903305011928236
   bb0 bb0
-    alloca Virtual { id: 61, bank: General, size_bits: 64 }, 1
-    eq Virtual { id: 62, bank: General, size_bits: 8 }, 10, 0
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 61, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 62, bank: General, size_bits: 64 }
-    load Virtual { id: 64, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 61, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
+    alloca Virtual { id: 49, bank: General, size_bits: 64 }, 1
+    eq Virtual { id: 50, bank: General, size_bits: 8 }, 10, 0
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 49, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 50, bank: General, size_bits: 8 }
+    load Virtual { id: 52, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 49, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
     ret
-fn __fp_comptime_const_IS_LONG_8594841449804628874
+fn __fp_comptime_const_IS_LONG_10589113863933626846
   bb0 bb0
-    alloca Virtual { id: 65, bank: General, size_bits: 64 }, 1
-    gt Virtual { id: 66, bank: General, size_bits: 8 }, 10, 5
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 65, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 66, bank: General, size_bits: 64 }
-    load Virtual { id: 68, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 65, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
+    alloca Virtual { id: 53, bank: General, size_bits: 64 }, 1
+    gt Virtual { id: 54, bank: General, size_bits: 8 }, 10, 5
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 53, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 54, bank: General, size_bits: 8 }
+    load Virtual { id: 56, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 53, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
     ret
-fn __fp_comptime_const_BUFFER_SIZE_1466670016178464282
+fn __fp_comptime_const_BUFFER_SIZE_5203167445245413666
   bb0 bb0
-    alloca Virtual { id: 70, bank: General, size_bits: 64 }, 1
-    alloca Virtual { id: 71, bank: General, size_bits: 64 }, 1
-    gt Virtual { id: 72, bank: General, size_bits: 8 }, 10, 8
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 71, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 72, bank: General, size_bits: 64 }
-    load Virtual { id: 74, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 71, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
-    eq Virtual { id: 75, bank: General, size_bits: 8 }, Virtual { id: 74, bank: General, size_bits: 64 }, 1
+    alloca Virtual { id: 57, bank: General, size_bits: 64 }, 1
+    alloca Virtual { id: 58, bank: General, size_bits: 64 }, 1
+    gt Virtual { id: 59, bank: General, size_bits: 8 }, 10, 8
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 58, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 59, bank: General, size_bits: 8 }
+    load Virtual { id: 61, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 58, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
+    eq Virtual { id: 62, bank: General, size_bits: 8 }, Virtual { id: 61, bank: General, size_bits: 8 }, 1
     condbr
   bb1 bb1
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 70, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 256
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 57, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 256
     br
   bb2 bb2
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 70, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 128
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 57, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), 128
     br
   bb3 bb3
-    load Virtual { id: 78, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 70, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 65, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 57, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     ret
 
 
 Symbols:
   main                             0x00000000
-  __fp_comptime_const_IS_EMPTY_12768764456387974082 0x000004c4
-  __fp_comptime_const_IS_LONG_8594841449804628874 0x00000518
-  __fp_comptime_const_BUFFER_SIZE_1466670016178464282 0x0000056c
+  __fp_comptime_const_IS_EMPTY_2183903305011928236 0x000004c4
+  __fp_comptime_const_IS_LONG_10589113863933626846 0x00000518
+  __fp_comptime_const_BUFFER_SIZE_5203167445245413666 0x0000056c
 
 Text relocations:
   offset=0x00000020 kind=Aarch64AdrpAdd symbol=fp_rodata_base addend=0

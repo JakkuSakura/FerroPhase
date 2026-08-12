@@ -221,13 +221,16 @@ fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
     let add_item = program
         .items
         .iter()
-        .find(|item| {
-            matches!(
-                &item.kind,
-                ItemKind::Function(func) if func.sig.name == "math::add"
-            )
-        })
+        .find(|item| matches!(&item.kind, ItemKind::Function(func) if func.sig.name == "add"))
         .expect("math::add present in program");
+    assert_eq!(
+        program
+            .def_paths
+            .get(&add_item.def_id)
+            .map(|p| p.iter().map(|s| s.as_str()).collect::<Vec<_>>()),
+        Some(vec!["math", "add"]),
+        "add's qualified path should be recorded in def_paths, not baked into sig.name"
+    );
 
     let call_item = program
         .items
@@ -351,24 +354,30 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
     let add_item = program
         .items
         .iter()
-        .find(|item| {
-            matches!(
-                &item.kind,
-                ItemKind::Function(func) if func.sig.name == "math::add"
-            )
-        })
+        .find(|item| matches!(&item.kind, ItemKind::Function(func) if func.sig.name == "add"))
         .expect("math::add present in program");
+    assert_eq!(
+        program
+            .def_paths
+            .get(&add_item.def_id)
+            .map(|p| p.iter().map(|s| s.as_str()).collect::<Vec<_>>()),
+        Some(vec!["math", "add"]),
+        "add's qualified path should be recorded in def_paths, not baked into sig.name"
+    );
 
     let callers_item = program
         .items
         .iter()
-        .find(|item| {
-            matches!(
-                &item.kind,
-                ItemKind::Function(func) if func.sig.name == "callers::call"
-            )
-        })
+        .find(|item| matches!(&item.kind, ItemKind::Function(func) if func.sig.name == "call"))
         .expect("callers::call present in program");
+    assert_eq!(
+        program
+            .def_paths
+            .get(&callers_item.def_id)
+            .map(|p| p.iter().map(|s| s.as_str()).collect::<Vec<_>>()),
+        Some(vec!["callers", "call"]),
+        "call's qualified path should be recorded in def_paths, not baked into sig.name"
+    );
 
     let add_def_id = add_item.def_id;
 

@@ -169,6 +169,82 @@ impl CompilerDriver {
         Ok(value)
     }
 
+    /// Resolves the `DefId` of the function named `function_name` declared
+    /// in `module_path` within `package_id`. `sig.name` is always the bare,
+    /// local identifier — HIR items never carry a qualified path on
+    /// themselves (see `hir::Program::def_paths`). Disambiguating
+    /// candidates by that table's recorded path lets a package with
+    /// several nested modules each defining their own `main` resolve the
+    /// one actually in `module_path`, rather than the first bare-name hit.
+    /// A function with no `def_paths` entry (e.g. the synthetic `main`
+    /// `create_main_function` builds for a bare top-level expression,
+    /// which is never registered via `register_value_def`) is trusted on
+    /// the bare-name match alone.
+    pub fn resolve_entrypoint_def_id(
+        &self,
+        package_id: &PackageId,
+        module_path: &QualifiedPath,
+        function_name: &str,
+    ) -> Result<hir::DefId, CompilerDriverError> {
+        let package = self
+            .state
+            .typing_ctx
+            .env_ctx
+            .compiled_package(package_id)
+            .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
+        let expected_path = module_path.with_segment(function_name.to_string()).segments;
+        package
+            .borrow()
+            .hir_program
+            .as_ref()
+            .and_then(|program| {
+                program.items.iter().find_map(|item| match &item.kind {
+                    hir::ItemKind::Function(function)
+                        if function.sig.name.as_str() == function_name
+                            && program
+                                .def_paths
+                                .get(&item.def_id)
+                                .map(|path| {
+                                    path.iter()
+                                        .map(|segment| segment.as_str())
+                                        .eq(expected_path.iter().map(String::as_str))
+                                })
+                                .unwrap_or(true) =>
+                    {
+                        Some(item.def_id)
+                    }
+                    _ => None,
+                })
+            })
+            .ok_or_else(|| {
+                CompilerDriverError::Interpreter(format!(
+                    "package `{package_id}` module `{}` has no `{function_name}` entrypoint",
+                    module_path.to_key()
+                ))
+            })
+    }
+
+    /// Renames the LIR function identified by `def_id` to `bare_name` in
+    /// place. The process entry point is located downstream (native/asm
+    /// emission) by its final, bare symbol name — a linkage requirement,
+    /// not a display convention. Normal mangling gives a module-nested
+    /// `main` a qualified name (e.g. `module__main`), but the OS/runtime
+    /// always calls the bare `main`, so the resolved entrypoint needs
+    /// renaming back to the name it was looked up by, regardless of its
+    /// module qualification.
+    pub fn rename_lir_function(
+        lir: &mut fp_core::lir::LirProgram,
+        def_id: hir::DefId,
+        bare_name: &str,
+    ) {
+        for lir_function in lir.functions.iter_mut() {
+            if lir_function.def_id == Some(def_id) {
+                lir_function.name = fp_core::lir::Name::new(bare_name.to_string());
+                break;
+            }
+        }
+    }
+
     pub fn select_entrypoint(
         &mut self,
         package_id: &PackageId,
@@ -181,28 +257,10 @@ impl CompilerDriver {
             .env_ctx
             .compiled_package(package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
-        let function = package
-            .borrow()
-            .hir_program
-            .as_ref()
-            .and_then(|program| {
-                program.items.iter().find_map(|item| match &item.kind {
-                    hir::ItemKind::Function(function)
-                        if function.sig.name.as_str() == function_name =>
-                    {
-                        Some(item.def_id)
-                    }
-                    _ => None,
-                })
-            })
-            .ok_or_else(|| {
-                CompilerDriverError::Interpreter(format!(
-                    "package `{package_id}` module `{}` has no `{function_name}` entrypoint",
-                    module_path.to_key()
-                ))
-            })?;
+        let function = self.resolve_entrypoint_def_id(package_id, module_path, function_name)?;
         let lir_id = Self::package_module_lir_id(package_id, module_path);
-        let lir = package.borrow().lir_workspace.to_program();
+        let mut lir = package.borrow().lir_workspace.to_program();
+        Self::rename_lir_function(&mut lir, function, function_name);
         self.state.insert_lir(lir_id.clone(), lir);
         self.state.lir(&lir_id)?;
         self.state
@@ -613,10 +671,24 @@ impl CompilerDriver {
                     .last()
                     .map(|segment| segment.name.as_str())
                     .ok_or_else(|| fp_core::error::Error::from("empty const path"))?;
-                let item = program.def_map.values().find(|item| match &item.kind {
-                    hir::ItemKind::Const(constant) => constant.name.as_str().ends_with(name),
-                    _ => false,
-                });
+                // Prefer the already-resolved `DefId` (unambiguous, and
+                // correct across modules) over a name scan. Only fall back
+                // to scanning by name when resolution didn't attach one,
+                // and even then require an exact bare-name match or a
+                // `::`-bounded suffix — `Const.name` is always bare (see
+                // `hir::Program::def_paths`), so an unqualified substring
+                // match like the old `ends_with(name)` could wrongly hit
+                // an unrelated const whose name merely ends with `name`.
+                let item = match path.res {
+                    Some(hir::Res::Def(def_id)) => program.def_map.get(&def_id),
+                    _ => program.def_map.values().find(|item| match &item.kind {
+                        hir::ItemKind::Const(constant) => {
+                            let const_name = constant.name.as_str();
+                            const_name == name || const_name.ends_with(&format!("::{name}"))
+                        }
+                        _ => false,
+                    }),
+                };
                 let Some(item) = item else {
                     return Err(fp_core::error::Error::from(format!(
                         "const path `{name}` is not available during comptime evaluation"

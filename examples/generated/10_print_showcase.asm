@@ -4,6 +4,18 @@ AsmIR:
 asmir target=Aarch64 format=MachO endian=Little ptr=64
 section .text kind=Text align=Some(16)
 section .rodata kind=ReadOnlyData align=Some(16)
+global __const_data_0 ty=Array(I8, 5) constant=true initializer=Some(Bytes([116, 101, 120, 116, 0]))
+global __const_data_1 ty=Array(I8, 12) constant=true initializer=Some(Bytes([115, 116, 105, 108, 108, 32, 119, 111, 114, 107, 115, 0]))
+global __const_data_2 ty=Array(I8, 2) constant=true initializer=Some(Bytes([97, 0]))
+global __const_data_3 ty=Array(I8, 2) constant=true initializer=Some(Bytes([90, 0]))
+global __const_data_4 ty=Array(I8, 6) constant=true initializer=Some(Bytes([115, 116, 97, 121, 115, 0]))
+global __const_data_5 ty=Array(I8, 3) constant=true initializer=Some(Bytes([111, 110, 0]))
+global __const_data_6 ty=Array(I8, 4) constant=true initializer=Some(Bytes([111, 110, 101, 0]))
+global __const_data_7 ty=Array(I8, 5) constant=true initializer=Some(Bytes([108, 105, 110, 101, 0]))
+global __const_data_8 ty=Array(I8, 3) constant=true initializer=Some(Bytes([40, 41, 0]))
+global __const_data_9 ty=Array(I8, 5) constant=true initializer=Some(Bytes([110, 117, 108, 108, 0]))
+global __const_data_10 ty=Array(I8, 12) constant=true initializer=Some(Bytes([108, 105, 110, 101, 49, 10, 108, 105, 110, 101, 50, 0]))
+global __const_data_11 ty=Array(I8, 8) constant=true initializer=Some(Bytes([116, 97, 98, 9, 101, 110, 100, 0]))
 fn main
   bb0 bb0
     intrinsic.call symbol(intrinsic.println)

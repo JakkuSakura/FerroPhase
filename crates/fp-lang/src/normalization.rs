@@ -442,20 +442,34 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                             kwargs: invoke.kwargs,
                         }),
                     ))),
-                    None => Ok(NormalizeOutcome::Normalized(Expr::from_parts(
-                        id,
-                        ty_slot,
-                        span,
-                        ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                            CallKind::Intrinsic(
-                                CallKind::Op(op)
-                                    .intrinsic_kind()
-                                    .expect("operation mapping"),
-                            ),
-                            invoke.args,
-                            invoke.kwargs,
-                        )),
-                    ))),
+                    // Some ops (e.g. `Some`/`None`/`Vec::new`) are recognized
+                    // above purely by bare identifier text, before any name
+                    // resolution has run, and have no dedicated Compile-mode
+                    // intrinsic. Rather than force a mapping that doesn't
+                    // exist, leave the expression untouched — it falls
+                    // through to ordinary name resolution, which correctly
+                    // finds whatever the identifier actually resolves to in
+                    // scope (the prelude `Option`, or a user's own locally
+                    // shadowing `enum Option`), instead of assuming the
+                    // builtin regardless of shadowing.
+                    None => match CallKind::Op(op).intrinsic_kind() {
+                        Some(kind) => Ok(NormalizeOutcome::Normalized(Expr::from_parts(
+                            id,
+                            ty_slot,
+                            span,
+                            ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                                CallKind::Intrinsic(kind),
+                                invoke.args,
+                                invoke.kwargs,
+                            )),
+                        ))),
+                        None => Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                            id,
+                            ty_slot,
+                            span,
+                            ExprKind::Invoke(invoke),
+                        ))),
+                    },
                 },
                 CallKind::Intrinsic(kind) => Ok(NormalizeOutcome::Normalized(Expr::from_parts(
                     id,

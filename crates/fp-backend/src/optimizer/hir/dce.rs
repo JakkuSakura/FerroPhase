@@ -2,25 +2,40 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use fp_core::hir;
 
-pub fn eliminate_dead_code(program: &mut hir::Program) -> usize {
+/// Eliminates functions unreachable from the roots. `entrypoint`, when
+/// given, is trusted as the sole function root instead of re-deriving
+/// "which function is main" by scanning for a bare `main` name — a
+/// second, independent name-based heuristic that can disagree with
+/// whatever `CompilerDriver::select_entrypoint` already resolved (e.g.
+/// for a package with several nested modules each defining their own
+/// `main`). Pass `None` to fall back to that by-name scan.
+pub fn eliminate_dead_code(program: &mut hir::Program, entrypoint: Option<hir::DefId>) -> usize {
     if has_unresolved_paths(program) {
         return 0;
     }
 
-    let full_map = build_full_name_map(program);
     let tail_map = build_tail_name_map(program);
-    let root_ids: Vec<_> = program
-        .items
-        .iter()
-        .filter_map(|item| match &item.kind {
-            hir::ItemKind::Function(function) if function.sig.name.as_str() == "main" => {
-                Some(item.def_id)
-            }
-            hir::ItemKind::Query(_) => Some(item.def_id),
-            hir::ItemKind::Expr(_) => Some(item.def_id),
-            _ => None,
-        })
-        .collect();
+    let root_ids: Vec<_> = if let Some(def_id) = entrypoint {
+        std::iter::once(def_id)
+            .chain(program.items.iter().filter_map(|item| match &item.kind {
+                hir::ItemKind::Query(_) | hir::ItemKind::Expr(_) => Some(item.def_id),
+                _ => None,
+            }))
+            .collect()
+    } else {
+        program
+            .items
+            .iter()
+            .filter_map(|item| match &item.kind {
+                hir::ItemKind::Function(function) if function.sig.name.as_str() == "main" => {
+                    Some(item.def_id)
+                }
+                hir::ItemKind::Query(_) => Some(item.def_id),
+                hir::ItemKind::Expr(_) => Some(item.def_id),
+                _ => None,
+            })
+            .collect()
+    };
 
     if root_ids.is_empty() {
         return 0;
@@ -35,7 +50,7 @@ pub fn eliminate_dead_code(program: &mut hir::Program) -> usize {
         let Some(item) = program.def_map.get(&def_id) else {
             continue;
         };
-        collect_item_refs(item, &full_map, &tail_map, &mut work);
+        collect_item_refs(item, &tail_map, &mut work);
     }
 
     let before = program.items.len();
@@ -190,7 +205,9 @@ fn expr_has_unresolved_paths(expr: &hir::Expr) -> bool {
                     .as_ref()
                     .is_some_and(|expr| expr_has_unresolved_paths(expr))
         }
-        hir::ExprKind::Array(elements) => elements.iter().any(expr_has_unresolved_paths),
+        hir::ExprKind::Array(elements) | hir::ExprKind::Tuple(elements) => {
+            elements.iter().any(expr_has_unresolved_paths)
+        }
         hir::ExprKind::ArrayRepeat { elem, len } => {
             expr_has_unresolved_paths(elem) || expr_has_unresolved_paths(len)
         }
@@ -253,16 +270,6 @@ fn path_has_unresolved_segments(path: &hir::Path) -> bool {
     path.res.is_none() && path.segments.len() > 1
 }
 
-fn build_full_name_map(program: &hir::Program) -> HashMap<String, hir::DefId> {
-    let mut names = HashMap::new();
-    for item in &program.items {
-        if let Some(name) = item_name(item) {
-            names.insert(name.to_string(), item.def_id);
-        }
-    }
-    names
-}
-
 fn build_tail_name_map(program: &hir::Program) -> HashMap<String, hir::DefId> {
     let mut names = HashMap::new();
     for item in &program.items {
@@ -288,45 +295,44 @@ fn item_name(item: &hir::Item) -> Option<&str> {
 
 fn collect_item_refs(
     item: &hir::Item,
-    full_map: &HashMap<String, hir::DefId>,
     tail_map: &HashMap<String, hir::DefId>,
     work: &mut VecDeque<hir::DefId>,
 ) {
     match &item.kind {
         hir::ItemKind::Function(function) => {
             for param in &function.sig.inputs {
-                collect_type_refs(&param.ty, full_map, tail_map, work);
+                collect_type_refs(&param.ty, tail_map, work);
                 if let Some(default) = &param.default {
-                    collect_expr_refs(default, full_map, tail_map, work);
+                    collect_expr_refs(default, tail_map, work);
                 }
             }
-            collect_type_refs(&function.sig.output, full_map, tail_map, work);
+            collect_type_refs(&function.sig.output, tail_map, work);
             if let Some(body) = &function.body {
-                collect_block_refs(body, full_map, tail_map, work);
+                collect_block_refs(body, tail_map, work);
             }
         }
         hir::ItemKind::Const(def) => {
-            collect_type_refs(&def.ty, full_map, tail_map, work);
-            collect_expr_refs(&def.body.value, full_map, tail_map, work);
+            collect_type_refs(&def.ty, tail_map, work);
+            collect_expr_refs(&def.body.value, tail_map, work);
         }
         hir::ItemKind::Struct(def) => {
             for field in &def.fields {
-                collect_type_refs(&field.ty, full_map, tail_map, work);
+                collect_type_refs(&field.ty, tail_map, work);
             }
         }
         hir::ItemKind::Enum(def) => {
             for variant in &def.variants {
                 if let Some(payload) = &variant.payload {
-                    collect_type_refs(payload, full_map, tail_map, work);
+                    collect_type_refs(payload, tail_map, work);
                 }
                 if let Some(discriminant) = &variant.discriminant {
-                    collect_expr_refs(discriminant, full_map, tail_map, work);
+                    collect_expr_refs(discriminant, tail_map, work);
                 }
             }
         }
         hir::ItemKind::Impl(_) => {}
         hir::ItemKind::Query(_) => {}
-        hir::ItemKind::Expr(expr) => collect_expr_refs(expr, full_map, tail_map, work),
+        hir::ItemKind::Expr(expr) => collect_expr_refs(expr, tail_map, work),
     }
 }
 
@@ -340,127 +346,125 @@ fn block_has_unresolved_paths(block: &hir::Block) -> bool {
 
 fn collect_expr_refs(
     expr: &hir::Expr,
-    full_map: &HashMap<String, hir::DefId>,
     tail_map: &HashMap<String, hir::DefId>,
     work: &mut VecDeque<hir::DefId>,
 ) {
     match &expr.kind {
-        hir::ExprKind::Path(path) => collect_path_refs(path, full_map, tail_map, work),
+        hir::ExprKind::Path(path) => collect_path_refs(path, tail_map, work),
         hir::ExprKind::Query(_) => {}
         hir::ExprKind::Binary(_, lhs, rhs) | hir::ExprKind::Assign(lhs, rhs) => {
-            collect_expr_refs(lhs, full_map, tail_map, work);
-            collect_expr_refs(rhs, full_map, tail_map, work);
+            collect_expr_refs(lhs, tail_map, work);
+            collect_expr_refs(rhs, tail_map, work);
         }
         hir::ExprKind::Unary(_, value)
         | hir::ExprKind::FieldAccess(value, _)
         | hir::ExprKind::Cast(value, _)
         | hir::ExprKind::Return(Some(value))
-        | hir::ExprKind::Break(Some(value)) => collect_expr_refs(value, full_map, tail_map, work),
+        | hir::ExprKind::Break(Some(value)) => collect_expr_refs(value, tail_map, work),
         hir::ExprKind::Reference(reference) => {
-            collect_expr_refs(&reference.expr, full_map, tail_map, work)
+            collect_expr_refs(&reference.expr, tail_map, work)
         }
         hir::ExprKind::Call(callee, args) => {
-            collect_expr_refs(callee, full_map, tail_map, work);
+            collect_expr_refs(callee, tail_map, work);
             for arg in args {
-                collect_expr_refs(&arg.value, full_map, tail_map, work);
+                collect_expr_refs(&arg.value, tail_map, work);
             }
         }
         hir::ExprKind::MethodCall(receiver, _, args) => {
-            collect_expr_refs(receiver, full_map, tail_map, work);
+            collect_expr_refs(receiver, tail_map, work);
             for arg in args {
-                collect_expr_refs(&arg.value, full_map, tail_map, work);
+                collect_expr_refs(&arg.value, tail_map, work);
             }
         }
         hir::ExprKind::Index(base, index) => {
-            collect_expr_refs(base, full_map, tail_map, work);
-            collect_expr_refs(index, full_map, tail_map, work);
+            collect_expr_refs(base, tail_map, work);
+            collect_expr_refs(index, tail_map, work);
         }
         hir::ExprKind::Slice(slice) => {
-            collect_expr_refs(&slice.base, full_map, tail_map, work);
+            collect_expr_refs(&slice.base, tail_map, work);
             if let Some(start) = &slice.start {
-                collect_expr_refs(start.as_ref(), full_map, tail_map, work);
+                collect_expr_refs(start.as_ref(), tail_map, work);
             }
             if let Some(end) = &slice.end {
-                collect_expr_refs(end.as_ref(), full_map, tail_map, work);
+                collect_expr_refs(end.as_ref(), tail_map, work);
             }
         }
         hir::ExprKind::Struct(path, fields) => {
-            collect_path_refs(path, full_map, tail_map, work);
+            collect_path_refs(path, tail_map, work);
             for field in fields {
-                collect_expr_refs(&field.expr, full_map, tail_map, work);
+                collect_expr_refs(&field.expr, tail_map, work);
             }
         }
         hir::ExprKind::If(cond, then_branch, else_branch) => {
-            collect_expr_refs(cond, full_map, tail_map, work);
-            collect_expr_refs(then_branch, full_map, tail_map, work);
+            collect_expr_refs(cond, tail_map, work);
+            collect_expr_refs(then_branch, tail_map, work);
             if let Some(elze) = else_branch {
-                collect_expr_refs(elze, full_map, tail_map, work);
+                collect_expr_refs(elze, tail_map, work);
             }
         }
         hir::ExprKind::Match(scrutinee, arms) => {
-            collect_expr_refs(scrutinee, full_map, tail_map, work);
+            collect_expr_refs(scrutinee, tail_map, work);
             for arm in arms {
                 if let Some(guard) = &arm.guard {
-                    collect_expr_refs(guard, full_map, tail_map, work);
+                    collect_expr_refs(guard, tail_map, work);
                 }
-                collect_expr_refs(&arm.body, full_map, tail_map, work);
+                collect_expr_refs(&arm.body, tail_map, work);
             }
         }
         hir::ExprKind::Try(expr_try) => {
-            collect_expr_refs(&expr_try.expr, full_map, tail_map, work);
+            collect_expr_refs(&expr_try.expr, tail_map, work);
             for catch in &expr_try.catches {
-                collect_expr_refs(&catch.body, full_map, tail_map, work);
+                collect_expr_refs(&catch.body, tail_map, work);
             }
             if let Some(elze) = &expr_try.elze {
-                collect_expr_refs(elze, full_map, tail_map, work);
+                collect_expr_refs(elze, tail_map, work);
             }
             if let Some(finally) = &expr_try.finally {
-                collect_expr_refs(finally, full_map, tail_map, work);
+                collect_expr_refs(finally, tail_map, work);
             }
         }
         hir::ExprKind::Block(block) | hir::ExprKind::Loop(block) => {
-            collect_block_refs(block, full_map, tail_map, work)
+            collect_block_refs(block, tail_map, work)
         }
         hir::ExprKind::While(cond, block) => {
-            collect_expr_refs(cond, full_map, tail_map, work);
-            collect_block_refs(block, full_map, tail_map, work);
+            collect_expr_refs(cond, tail_map, work);
+            collect_block_refs(block, tail_map, work);
         }
         hir::ExprKind::With(context, body) => {
-            collect_expr_refs(context, full_map, tail_map, work);
-            collect_expr_refs(body, full_map, tail_map, work);
+            collect_expr_refs(context, tail_map, work);
+            collect_expr_refs(body, tail_map, work);
         }
         hir::ExprKind::IntrinsicCall(call) => {
             for arg in &call.callargs {
-                collect_expr_refs(&arg.value, full_map, tail_map, work);
+                collect_expr_refs(&arg.value, tail_map, work);
             }
         }
         hir::ExprKind::FormatString(_) | hir::ExprKind::Continue | hir::ExprKind::Literal(_) => {}
         hir::ExprKind::Let(_, ty, init) => {
-            collect_type_refs(ty, full_map, tail_map, work);
+            collect_type_refs(ty, tail_map, work);
             if let Some(init) = init {
-                collect_expr_refs(init, full_map, tail_map, work);
+                collect_expr_refs(init, tail_map, work);
             }
         }
         hir::ExprKind::Return(None) | hir::ExprKind::Break(None) => {}
-        hir::ExprKind::Array(elements) => {
+        hir::ExprKind::Array(elements) | hir::ExprKind::Tuple(elements) => {
             for elem in elements {
-                collect_expr_refs(elem, full_map, tail_map, work);
+                collect_expr_refs(elem, tail_map, work);
             }
         }
         hir::ExprKind::ArrayRepeat { elem, len } => {
-            collect_expr_refs(elem, full_map, tail_map, work);
-            collect_expr_refs(len, full_map, tail_map, work);
+            collect_expr_refs(elem, tail_map, work);
+            collect_expr_refs(len, tail_map, work);
         }
         hir::ExprKind::ConstBlock(const_block) => {
-            collect_type_refs(&const_block.ty, full_map, tail_map, work);
-            collect_expr_refs(&const_block.body, full_map, tail_map, work);
+            collect_type_refs(&const_block.ty, tail_map, work);
+            collect_expr_refs(&const_block.body, tail_map, work);
         }
     }
 }
 
 fn collect_block_refs(
     block: &hir::Block,
-    full_map: &HashMap<String, hir::DefId>,
     tail_map: &HashMap<String, hir::DefId>,
     work: &mut VecDeque<hir::DefId>,
 ) {
@@ -468,58 +472,57 @@ fn collect_block_refs(
         match &stmt.kind {
             hir::StmtKind::Local(local) => {
                 if let Some(init) = &local.init {
-                    collect_expr_refs(init, full_map, tail_map, work);
+                    collect_expr_refs(init, tail_map, work);
                 }
             }
-            hir::StmtKind::Item(item) => collect_item_refs(item, full_map, tail_map, work),
+            hir::StmtKind::Item(item) => collect_item_refs(item, tail_map, work),
             hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
-                collect_expr_refs(expr, full_map, tail_map, work)
+                collect_expr_refs(expr, tail_map, work)
             }
         }
     }
     if let Some(expr) = &block.expr {
-        collect_expr_refs(expr, full_map, tail_map, work);
+        collect_expr_refs(expr, tail_map, work);
     }
 }
 
 fn collect_type_refs(
     ty: &hir::TypeExpr,
-    full_map: &HashMap<String, hir::DefId>,
     tail_map: &HashMap<String, hir::DefId>,
     work: &mut VecDeque<hir::DefId>,
 ) {
     match &ty.kind {
-        hir::TypeExprKind::Path(path) => collect_path_refs(path, full_map, tail_map, work),
+        hir::TypeExprKind::Path(path) => collect_path_refs(path, tail_map, work),
         hir::TypeExprKind::Structural(structural) => {
             for field in &structural.fields {
-                collect_type_refs(&field.ty, full_map, tail_map, work);
+                collect_type_refs(&field.ty, tail_map, work);
             }
         }
         hir::TypeExprKind::TypeBinaryOp(binop) => {
-            collect_type_refs(&binop.lhs, full_map, tail_map, work);
-            collect_type_refs(&binop.rhs, full_map, tail_map, work);
+            collect_type_refs(&binop.lhs, tail_map, work);
+            collect_type_refs(&binop.rhs, tail_map, work);
         }
         hir::TypeExprKind::Tuple(items) => {
             for item in items {
-                collect_type_refs(item, full_map, tail_map, work);
+                collect_type_refs(item, tail_map, work);
             }
         }
         hir::TypeExprKind::Array(elem, len) => {
-            collect_type_refs(elem, full_map, tail_map, work);
+            collect_type_refs(elem, tail_map, work);
             if let Some(len) = len {
-                collect_expr_refs(len, full_map, tail_map, work);
+                collect_expr_refs(len, tail_map, work);
             }
         }
         hir::TypeExprKind::Slice(inner)
         | hir::TypeExprKind::Ptr(inner)
-        | hir::TypeExprKind::Ref(inner) => collect_type_refs(inner, full_map, tail_map, work),
+        | hir::TypeExprKind::Ref(inner) => collect_type_refs(inner, tail_map, work),
         hir::TypeExprKind::FnPtr(function) => {
             for input in &function.inputs {
-                collect_type_refs(input, full_map, tail_map, work);
+                collect_type_refs(input, tail_map, work);
             }
-            collect_type_refs(&function.output, full_map, tail_map, work);
+            collect_type_refs(&function.output, tail_map, work);
         }
-        hir::TypeExprKind::ConstBlock(body) => collect_expr_refs(body, full_map, tail_map, work),
+        hir::TypeExprKind::ConstBlock(body) => collect_expr_refs(body, tail_map, work),
         hir::TypeExprKind::Primitive(_)
         | hir::TypeExprKind::Never
         | hir::TypeExprKind::Infer
@@ -529,7 +532,6 @@ fn collect_type_refs(
 
 fn collect_path_refs(
     path: &hir::Path,
-    full_map: &HashMap<String, hir::DefId>,
     tail_map: &HashMap<String, hir::DefId>,
     work: &mut VecDeque<hir::DefId>,
 ) {
@@ -539,15 +541,6 @@ fn collect_path_refs(
     }
     let segments = path.segments.as_slice();
     if segments.is_empty() {
-        return;
-    }
-    let full = segments
-        .iter()
-        .map(|seg| seg.name.as_str())
-        .collect::<Vec<_>>()
-        .join("::");
-    if let Some(def_id) = full_map.get(&full) {
-        work.push_back(*def_id);
         return;
     }
     let tail = segments
@@ -667,6 +660,7 @@ mod tests {
             items,
             def_map,
             next_hir_id: 100,
+            def_paths: HashMap::new(),
         }
     }
 
@@ -680,7 +674,7 @@ mod tests {
         );
         let mut program = program(vec![used, unused, root]);
 
-        let removed = eliminate_dead_code(&mut program);
+        let removed = eliminate_dead_code(&mut program, None);
 
         assert_eq!(removed, 1);
         assert!(program.items.iter().any(|item| matches!(
@@ -705,7 +699,7 @@ mod tests {
         let root = expr_item(2, call_expr(20, &["std", "server", "shell"], None));
         let mut program = program(vec![helper, root]);
 
-        let removed = eliminate_dead_code(&mut program);
+        let removed = eliminate_dead_code(&mut program, None);
 
         assert_eq!(removed, 0);
         assert!(program.items.iter().any(|item| matches!(

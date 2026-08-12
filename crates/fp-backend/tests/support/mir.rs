@@ -55,7 +55,6 @@ pub fn function_item(body_id: BodyId) -> Item {
 
     let function = Function {
         name: symbol.clone(),
-        path: vec![symbol],
         def_id: None,
         substs: Vec::new(),
         sig,

@@ -66,9 +66,12 @@ fn mangles_function_path_into_lir_name() {
     bodies.insert(body_id, body);
 
     let return_ty = Ty::int(IntTy::I32);
+    // `mir::Function.name` is already the fully-qualified name by the time
+    // HIR->MIR lowering constructs it (see `hir::Program::def_paths`) —
+    // there is no separate `path` field for LIR mangling to reconstruct
+    // from.
     let function = mir::Function {
-        name: mir::Symbol::new("leaf"),
-        path: vec![mir::Symbol::new("module"), mir::Symbol::new("leaf")],
+        name: mir::Symbol::new("module::leaf"),
         def_id: None,
         substs: Vec::new(),
         sig: FunctionSig {
@@ -331,7 +334,6 @@ fn lowers_single_case_switchint_as_equality_compare() {
     let body_id = mir::BodyId(0);
     let function = mir::Function {
         name: mir::Symbol::new("switch_test"),
-        path: vec![mir::Symbol::new("switch_test")],
         def_id: None,
         substs: Vec::new(),
         sig: FunctionSig {
@@ -413,7 +415,6 @@ fn rejects_slice_intrinsic_assignment_with_wrong_arity() {
     let body_id = mir::BodyId(0);
     let function = mir::Function {
         name: mir::Symbol::new("bad_slice"),
-        path: vec![mir::Symbol::new("bad_slice")],
         def_id: None,
         substs: Vec::new(),
         sig: FunctionSig {
@@ -472,7 +473,6 @@ fn rejects_unsupported_intrinsic_assignment() {
     let body_id = mir::BodyId(0);
     let function = mir::Function {
         name: mir::Symbol::new("bad_intrinsic"),
-        path: vec![mir::Symbol::new("bad_intrinsic")],
         def_id: None,
         substs: Vec::new(),
         sig: FunctionSig {
@@ -519,7 +519,6 @@ fn rejects_unhandled_mir_terminator() {
     let body_id = mir::BodyId(0);
     let function = mir::Function {
         name: mir::Symbol::new("bad_term"),
-        path: vec![mir::Symbol::new("bad_term")],
         def_id: None,
         substs: Vec::new(),
         sig: FunctionSig {
@@ -578,7 +577,6 @@ fn rejects_call_terminator_without_destination() {
     let body_id = mir::BodyId(0);
     let function = mir::Function {
         name: mir::Symbol::new("bad_call"),
-        path: vec![mir::Symbol::new("bad_call")],
         def_id: None,
         substs: Vec::new(),
         sig: FunctionSig {
@@ -639,7 +637,6 @@ fn rejects_downcast_place_projection() {
     let body_id = mir::BodyId(0);
     let function = mir::Function {
         name: mir::Symbol::new("downcast_test"),
-        path: vec![mir::Symbol::new("downcast_test")],
         def_id: None,
         substs: Vec::new(),
         sig: FunctionSig {

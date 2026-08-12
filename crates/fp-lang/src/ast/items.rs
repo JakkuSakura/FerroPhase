@@ -159,6 +159,19 @@ pub(crate) fn parse_item_winnow(input: &mut &[Token], file: FileId) -> ModalResu
         Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) if looks_like_item_macro(*input) => {
             parse_item_macro(input, attrs)
         }
+        // `splice expr(..);` is valid at file scope too (e.g. calling a
+        // `quote fn`/`quote<item>`-returning function to inject items) —
+        // it just isn't a *declaration* keyword like the arms above, so it
+        // needs its own case rather than falling through to the
+        // expression-statement catch-all `parse_file_tokens` doesn't have
+        // (unlike `parse_item_or_expr_winnow`, used inside quoted blocks
+        // and scripts, which already falls back to expression parsing for
+        // any non-item shape).
+        Some(TokenKind::Keyword(Keyword::Splice)) => {
+            let expr = parse_expr_winnow(input, file)?;
+            let _ = expect_symbol(input, ";");
+            Ok(Item::from(ItemKind::Expr(expr)))
+        }
         _ => Err(ErrMode::Backtrack(ContextError::new())),
     }
 }
@@ -377,7 +390,24 @@ fn parse_fn_item_core(
     if expect_keyword(input, Keyword::Where).is_ok() {
         skip_where_clause(input)?;
     }
-    let body = parse_function_block(input, file)?;
+    // `quote fn f(..) -> item { <items> }` is sugar for
+    // `const fn f(..) -> item { quote<item> { <items> } }` — the whole
+    // body is implicitly quoted, so it must be parsed the same
+    // token-balanced way `quote<item> { .. }`'s contents are (raw item
+    // syntax, not ordinary expression syntax; struct/enum/etc. items
+    // aren't valid expressions on their own).
+    let body = if quoted {
+        let quote_block = parse_balanced_quote_block(input, file)?;
+        let quote_expr = Expr::from(ExprKind::Quote(fp_core::ast::ExprQuote {
+            span: quote_block.span,
+            collected_items: Vec::new(),
+            block: quote_block,
+            kind: Some(QuoteFragmentKind::Item),
+        }));
+        ExprBlock::new_expr(quote_expr)
+    } else {
+        parse_function_block(input, file)?
+    };
     let mut sig = FunctionSignature {
         name: Some(name.clone()),
         receiver,

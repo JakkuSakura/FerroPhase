@@ -42,9 +42,6 @@ fn collect_fp_files(root: &Path, dir: &Path, files: &mut Vec<(String, String)>) 
     for entry in entries {
         let path = entry.path();
         if path.is_dir() {
-            if path.file_name().and_then(|name| name.to_str()) == Some("bench") {
-                continue;
-            }
             collect_fp_files(root, &path, files);
             continue;
         }

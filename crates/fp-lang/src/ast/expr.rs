@@ -1381,7 +1381,10 @@ fn parse_quote_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     .into())
 }
 
-fn parse_balanced_quote_block(input: &mut &[Token], file: FileId) -> ModalResult<ExprBlock> {
+pub(crate) fn parse_balanced_quote_block(
+    input: &mut &[Token],
+    file: FileId,
+) -> ModalResult<ExprBlock> {
     expect_symbol(input, "{")?;
     let mut depth = 1usize;
     let start = *input;

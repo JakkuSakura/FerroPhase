@@ -875,7 +875,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
             }
             hir::ExprKind::Reference(reference) => collect_paths(&reference.expr, out),
             hir::ExprKind::Cast(expr, _) => collect_paths(expr, out),
-            hir::ExprKind::Array(elements) => {
+            hir::ExprKind::Array(elements) | hir::ExprKind::Tuple(elements) => {
                 for elem in elements {
                     collect_paths(elem, out);
                 }

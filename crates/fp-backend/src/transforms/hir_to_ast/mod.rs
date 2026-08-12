@@ -4,7 +4,7 @@ use fp_core::ast::{
     self, BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprAssign, ExprBinOp, ExprBlock, ExprBreak,
     ExprCast, ExprContinue, ExprIf, ExprIndex, ExprIntrinsicCall, ExprKwArg, ExprLet, ExprLoop,
     ExprMatch, ExprMatchCase, ExprReference, ExprReturn, ExprSelect, ExprSelectType,
-    ExprStringTemplate, ExprStruct, ExprTry, ExprTryCatch, ExprUnOp, ExprWhile, ExprWith,
+    ExprStringTemplate, ExprStruct, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp, ExprWhile, ExprWith,
     FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction, ItemDefConst, ItemDefEnum,
     ItemDefFunction, ItemDefStruct, ItemKind, Name, Path, Pattern, PatternIdent, PatternKind,
     PatternStruct, PatternStructField, PatternTuple, PatternTupleStruct, PatternVariant,
@@ -468,6 +468,10 @@ fn lift_expr(expr: &hir::Expr) -> Result<Expr> {
                 len: Box::new(lift_expr(len)?),
             }))
         }
+        hir::ExprKind::Tuple(values) => Expr::new(ast::ExprKind::Tuple(ExprTuple {
+            span: expr.span,
+            values: values.iter().map(lift_expr).collect::<Result<Vec<_>>>()?,
+        })),
         hir::ExprKind::ConstBlock(const_block) => {
             Expr::new(ast::ExprKind::ConstBlock(ast::ExprConstBlock {
                 span: expr.span,

@@ -4,7 +4,8 @@ AsmIR:
 asmir target=Aarch64 format=MachO endian=Little ptr=64
 section .text kind=Text align=Some(16)
 section .rodata kind=ReadOnlyData align=Some(16)
-fn sum
+global __const_data_0 ty=Array(I8, 21) constant=true initializer=Some(Bytes([69, 76, 70, 32, 80, 73, 69, 32, 114, 111, 100, 97, 116, 97, 32, 99, 104, 101, 99, 107, 0]))
+fn examples__28_elf_pie_rodata__sum
   bb0 bb0
     alloca Virtual { id: 0, bank: General, size_bits: 64 }, 1
     alloca Virtual { id: 1, bank: General, size_bits: 64 }, 1
@@ -16,9 +17,9 @@ fn sum
     alloca Virtual { id: 5, bank: General, size_bits: 64 }, 1
     load Virtual { id: 6, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 1, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
     lt Virtual { id: 7, bank: General, size_bits: 8 }, Virtual { id: 6, bank: General, size_bits: 64 }, 4
-    store mem(AsmMemoryOperand { base: Some(Virtual { id: 5, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 7, bank: General, size_bits: 64 }
+    store mem(AsmMemoryOperand { base: Some(Virtual { id: 5, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 7, bank: General, size_bits: 8 }
     load Virtual { id: 9, bank: General, size_bits: 8 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 5, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(1), address_space: None, pre_indexed: false, post_indexed: false })
-    eq Virtual { id: 10, bank: General, size_bits: 8 }, Virtual { id: 9, bank: General, size_bits: 64 }, 1
+    eq Virtual { id: 10, bank: General, size_bits: 8 }, Virtual { id: 9, bank: General, size_bits: 8 }, 1
     condbr
   bb2 bb2
     alloca Virtual { id: 11, bank: General, size_bits: 64 }, 1
@@ -49,12 +50,12 @@ fn main
     alloca Virtual { id: 31, bank: General, size_bits: 64 }, 1
     store mem(AsmMemoryOperand { base: Some(Virtual { id: 31, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), symbol(const.array)
     alloca Virtual { id: 33, bank: General, size_bits: 64 }, 1
-    load Virtual { id: 34, bank: General, size_bits: 256 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 31, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(32), address_space: None, pre_indexed: false, post_indexed: false })
+    load Virtual { id: 34, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 31, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(32), address_space: None, pre_indexed: false, post_indexed: false })
     store mem(AsmMemoryOperand { base: Some(Virtual { id: 33, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 34, bank: General, size_bits: 64 }
     alloca Virtual { id: 36, bank: General, size_bits: 64 }, 1
     store mem(AsmMemoryOperand { base: Some(Virtual { id: 36, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: None, address_space: None, pre_indexed: false, post_indexed: false }), Virtual { id: 33, bank: General, size_bits: 64 }
     load Virtual { id: 38, bank: General, size_bits: 64 }, mem(AsmMemoryOperand { base: Some(Virtual { id: 36, bank: General, size_bits: 64 }), index: None, scale: 1, displacement: 0, segment: None, size_bytes: Some(8), address_space: None, pre_indexed: false, post_indexed: false })
-    call symbol(sum)(v38) cc=C tail=false
+    call symbol(examples__28_elf_pie_rodata__sum)(v38) cc=C tail=false
     br
   bb1 bb1
     bitcast Virtual { id: 40, bank: General, size_bits: 64 }, Virtual { id: 29, bank: General, size_bits: 64 }
@@ -64,15 +65,15 @@ fn main
 
 
 Symbols:
-  sum                              0x00000000
+  examples__28_elf_pie_rodata__sum 0x00000000
   main                             0x000001a4
 
 Text relocations:
-  offset=0x000001c0 kind=Aarch64AdrpAdd symbol=__const_data_0 addend=0
-  offset=0x00000348 kind=Aarch64AdrpAdd symbol=fp_rodata_base addend=0
-  offset=0x0000036c kind=CallRel32 symbol=printf addend=0
+  offset=0x000001c4 kind=Aarch64AdrpAdd symbol=__const_data_0 addend=0
+  offset=0x0000034c kind=Aarch64AdrpAdd symbol=fp_rodata_base addend=0
+  offset=0x00000370 kind=CallRel32 symbol=printf addend=0
 
-.text (900 bytes):
+.text (904 bytes):
   00000000  ff 43 05 d1 fd 7b 14 a9  fd 03 00 91 e0 7b 00 f9 
   00000010  f0 03 00 91 10 62 04 91  f0 03 00 f9 f0 03 00 91 
   00000020  10 82 04 91 f0 07 00 f9  f0 03 00 91 10 a2 04 91 
@@ -101,35 +102,35 @@ Text relocations:
   00000190  e0 73 40 f9 bf 03 00 91  fd 7b 54 a9 ff 43 05 91 
   000001a0  c0 03 5f d6 ff 03 06 d1  fd 7b 17 a9 fd 03 00 91 
   000001b0  f0 03 00 91 10 42 04 91  f0 0b 00 f9 f1 0b 40 f9 
-  000001c0  10 00 00 90 10 02 00 91  e9 03 11 aa 30 01 00 f9 
-  000001d0  90 02 80 d2 10 00 a0 f2  10 00 c0 f2 10 00 e0 f2 
-  000001e0  e9 03 11 aa 29 21 00 91  30 01 00 f9 f0 03 00 91 
-  000001f0  10 82 04 91 f0 13 00 f9  f1 13 40 f9 50 01 80 d2 
-  00000200  10 00 a0 f2 10 00 c0 f2  10 00 e0 f2 e9 03 11 aa 
-  00000210  30 01 00 f9 90 02 80 d2  10 00 a0 f2 10 00 c0 f2 
-  00000220  10 00 e0 f2 e9 03 11 aa  29 21 00 91 30 01 00 f9 
-  00000230  d0 03 80 d2 10 00 a0 f2  10 00 c0 f2 10 00 e0 f2 
-  00000240  e9 03 11 aa 29 41 00 91  30 01 00 f9 10 05 80 d2 
-  00000250  10 00 a0 f2 10 00 c0 f2  10 00 e0 f2 e9 03 11 aa 
-  00000260  29 61 00 91 30 01 00 f9  f0 03 00 91 10 02 05 91 
-  00000270  f0 1b 00 f9 f1 13 40 f9  e9 03 11 aa 30 01 40 f9 
-  00000280  f0 7b 00 f9 e9 03 11 aa  29 21 00 91 30 01 40 f9 
-  00000290  f0 7f 00 f9 e9 03 11 aa  29 41 00 91 30 01 40 f9 
-  000002a0  f0 83 00 f9 e9 03 11 aa  29 61 00 91 30 01 40 f9 
-  000002b0  f0 87 00 f9 f0 03 00 91  10 c2 03 91 f0 1f 00 f9 
-  000002c0  f1 1b 40 f9 f0 7b 40 f9  e9 03 11 aa 30 01 00 f9 
-  000002d0  f0 7f 40 f9 e9 03 11 aa  29 21 00 91 30 01 00 f9 
-  000002e0  f0 83 40 f9 e9 03 11 aa  29 41 00 91 30 01 00 f9 
-  000002f0  f0 87 40 f9 e9 03 11 aa  29 61 00 91 30 01 00 f9 
-  00000300  f0 03 00 91 10 82 05 91  f0 27 00 f9 f1 27 40 f9 
-  00000310  f0 1b 40 f9 30 02 00 f9  f0 27 40 f9 11 02 40 f9 
-  00000320  f1 2f 00 f9 e0 2f 40 f9  36 ff ff 97 e0 33 00 f9 
-  00000330  01 00 00 14 f0 0b 40 f9  f0 37 00 f9 f0 37 40 f9 
-  00000340  11 02 40 f9 f1 3b 00 f9  00 00 00 90 00 00 00 91 
-  00000350  00 60 00 91 e1 3b 40 f9  f0 3b 40 f9 f0 03 00 f9 
-  00000360  e2 33 40 f9 f0 33 40 f9  f0 07 00 f9 00 00 00 94 
-  00000370  bf 03 00 91 fd 7b 57 a9  ff 03 06 91 00 00 80 d2 
-  00000380  c0 03 5f d6 
+  000001c0  eb 03 11 aa 10 00 00 90  10 02 00 91 ea 03 0b aa 
+  000001d0  50 01 00 f9 90 02 80 d2  10 00 a0 f2 10 00 c0 f2 
+  000001e0  10 00 e0 f2 ea 03 0b aa  4a 21 00 91 50 01 00 f9 
+  000001f0  f0 03 00 91 10 82 04 91  f0 13 00 f9 f1 13 40 f9 
+  00000200  50 01 80 d2 10 00 a0 f2  10 00 c0 f2 10 00 e0 f2 
+  00000210  e9 03 11 aa 30 01 00 f9  90 02 80 d2 10 00 a0 f2 
+  00000220  10 00 c0 f2 10 00 e0 f2  e9 03 11 aa 29 21 00 91 
+  00000230  30 01 00 f9 d0 03 80 d2  10 00 a0 f2 10 00 c0 f2 
+  00000240  10 00 e0 f2 e9 03 11 aa  29 41 00 91 30 01 00 f9 
+  00000250  10 05 80 d2 10 00 a0 f2  10 00 c0 f2 10 00 e0 f2 
+  00000260  e9 03 11 aa 29 61 00 91  30 01 00 f9 f0 03 00 91 
+  00000270  10 02 05 91 f0 1b 00 f9  f1 13 40 f9 e9 03 11 aa 
+  00000280  30 01 40 f9 f0 7b 00 f9  e9 03 11 aa 29 21 00 91 
+  00000290  30 01 40 f9 f0 7f 00 f9  e9 03 11 aa 29 41 00 91 
+  000002a0  30 01 40 f9 f0 83 00 f9  e9 03 11 aa 29 61 00 91 
+  000002b0  30 01 40 f9 f0 87 00 f9  f0 03 00 91 10 c2 03 91 
+  000002c0  f0 1f 00 f9 f1 1b 40 f9  f0 7b 40 f9 e9 03 11 aa 
+  000002d0  30 01 00 f9 f0 7f 40 f9  e9 03 11 aa 29 21 00 91 
+  000002e0  30 01 00 f9 f0 83 40 f9  e9 03 11 aa 29 41 00 91 
+  000002f0  30 01 00 f9 f0 87 40 f9  e9 03 11 aa 29 61 00 91 
+  00000300  30 01 00 f9 f0 03 00 91  10 82 05 91 f0 27 00 f9 
+  00000310  f1 27 40 f9 f0 1b 40 f9  30 02 00 f9 f0 27 40 f9 
+  00000320  11 02 40 f9 f1 2f 00 f9  e0 2f 40 f9 35 ff ff 97 
+  00000330  e0 33 00 f9 01 00 00 14  f0 0b 40 f9 f0 37 00 f9 
+  00000340  f0 37 40 f9 11 02 40 f9  f1 3b 00 f9 00 00 00 90 
+  00000350  00 00 00 91 00 60 00 91  e1 3b 40 f9 f0 3b 40 f9 
+  00000360  f0 03 00 f9 e2 33 40 f9  f0 33 40 f9 f0 07 00 f9 
+  00000370  00 00 00 94 bf 03 00 91  fd 7b 57 a9 ff 03 06 91 
+  00000380  00 00 80 d2 c0 03 5f d6 
 
 .rodata (38 bytes):
   00000000  45 4c 46 20 50 49 45 20  72 6f 64 61 74 61 20 63 
