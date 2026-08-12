@@ -381,23 +381,29 @@ impl CompilerDriver {
                     source,
                     self.state.typing_ctx.data_layout.clone(),
                 );
-                if self.pipeline == PipelineMode::Native {
+                // `TypecheckedTranspile` needs HIR generation + typing too (it lifts the
+                // typed HIR back to AST inside `compile_items_to_lir_units`, returning no
+                // LIR units) — only comptime evaluation below is genuinely Native-only.
+                if matches!(self.pipeline, PipelineMode::Native | PipelineMode::TypecheckedTranspile) {
                     let mut units = self.compile_items_to_lir_units(&package).await?;
-                    Self::publish_lir_units(&package, package_id, &units)?;
-
-                    let lir = package.borrow().lir_workspace.to_program();
-                    if !lir.comptime_entries.is_empty() {
-                        let module_path = QualifiedPath::new(Vec::new());
-                        let lir_id = Self::package_module_lir_id(package_id, &module_path);
-                        self.state.insert_lir(lir_id.clone(), lir);
-                        self.evaluate_comptime_lir(
-                            &lir_id,
-                            &FullyQualifiedPath::new(module_path),
-                        )
-                        .await?;
-                        units = self.relower_cached_lir_units(&package).await?;
+                    if self.pipeline == PipelineMode::Native {
                         Self::publish_lir_units(&package, package_id, &units)?;
+
+                        let lir = package.borrow().lir_workspace.to_program();
+                        if !lir.comptime_entries.is_empty() {
+                            let module_path = QualifiedPath::new(Vec::new());
+                            let lir_id = Self::package_module_lir_id(package_id, &module_path);
+                            self.state.insert_lir(lir_id.clone(), lir);
+                            self.evaluate_comptime_lir(
+                                &lir_id,
+                                &FullyQualifiedPath::new(module_path),
+                            )
+                            .await?;
+                            units = self.relower_cached_lir_units(&package).await?;
+                            Self::publish_lir_units(&package, package_id, &units)?;
+                        }
                     }
+                    let _ = units;
                 }
                 Ok(package)
             }

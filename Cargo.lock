@@ -1582,6 +1582,7 @@ name = "fp-rust"
 version = "0.1.0"
 dependencies = [
  "fp-core",
+ "fp-lang",
 ]
 
 [[package]]

@@ -2,6 +2,8 @@
 name = "fp-rust"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
 
 [dependencies]
 fp-core = { path = "../fp-core" }
+fp-lang = { path = "../fp-lang" }

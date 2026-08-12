@@ -1,226 +1,114 @@
-# Modules in FerroPhase
+# Packages and Modules in FerroPhase
 
-The FerroPhase toolchain treats *modules* as the canonical unit of
-namespacing, compilation, and binding generation. A module corresponds to one
-or more source files under a package and is preserved all the way through typed
-AST annotations, scoped lowering, optimization, and language-specific backends. This
-document captures the rules for defining, resolving, and consuming modules
-across the multi-language ecosystem.
+This document describes the actual in-memory data model the compiler uses —
+`PackageProvider`, `PackageDescriptor`/`PackageSource`, `ModuleDescriptor`,
+`PackageItem` — as found in `fp-core/src/package/` and `fp-core/src/module/`.
 
-## Core Concepts
+## Package is the real compilation unit
 
-- **Module Path** – A double-colon (`::`) separated namespace anchored at the
-  package root: `physics::solvers::newton`. Paths are case-sensitive and map to
-  directory hierarchies inside `src/`.
-- **Primary Source** – The canonical FerroPhase file for a module. For
-  `physics::solvers::newton`, the primary source lives at
-  `src/physics/solvers/newton.fp`.
-- **Bindings** – Optional façades emitted for other languages. Generated files
-  mirror the module path, e.g. `bindings/typescript/physics/solvers/newton.ts`
-  or `bindings/python/physics/solvers/newton.py`.
-- **Crate Scope** – `crate::` refers to the current package; `super::` climbs up
-  the module hierarchy; absolute paths begin with the package name.
+A **package** is one crate/project — the embedded `std`, a Cargo workspace
+member, a `.fp`-native project, etc. It's identified by a `PackageId` (a
+plain string wrapper) and described by two structs:
 
-## Directory Layout
+```rust
+pub struct PackageDescriptor {
+    pub id: PackageId,
+    pub name: String,
+    pub version: Option<Version>,
+    pub manifest_path: VirtualPath,
+    pub root: VirtualPath,
+    pub metadata: PackageMetadata,   // dependencies, features, ...
+    pub modules: Vec<ModuleId>,
+}
 
-```
-my_package/
-├── Ferrophase.toml
-├── src/
-│   ├── lib.fp                # optional root module shim
-│   └── physics/
-│       ├── mod.fp            # re-exports submodules
-│       └── solvers/
-│           ├── mod.fp
-│           └── newton.fp     # physics::solvers::newton
-└── bindings/
-    ├── typescript/
-    │   └── physics/solvers/newton.ts
-    └── python/
-        └── physics/solvers/newton.py
+/// What a `PackageProvider` actually returns for `load_package_source`.
+pub struct PackageSource {
+    pub package_id: PackageId,
+    pub name: String,
+    pub graph: PackageGraph,
+    pub module_paths: HashSet<QualifiedPath>,
+    pub items: Vec<PackageItem>,     // the real payload
+}
 ```
 
-- `mod.fp` files collect and re-export sibling modules; they are optional when
-  a directory only hosts a single leaf module.
-- Packages may expose a `src/lib.fp` as the root module when they provide a
-  library-style API. Binary targets declare entrypoints elsewhere (see
-  `Packages.md`).
+Packages are discovered and parsed by implementations of `PackageProvider`
+(`fp-core/src/package/provider.rs`):
 
-## Declaring Modules
-
-Inside a `mod.fp`, list child modules explicitly:
-
-```ferro
-pub mod solvers;
-pub use solvers::newton::step;
+```rust
+pub trait PackageProvider {
+    fn list_packages(&self) -> ProviderResult<Vec<PackageId>>;
+    fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>>;
+    fn refresh(&self) -> ProviderResult<()>;
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource>;
+}
 ```
 
-Each `mod` statement causes the toolchain to load `solvers/mod.fp` (if present)
-and all leaf `.fp` files underneath. Re-exports (`pub use`) produce typed
-aliases in the AST so other packages can import `physics::step` directly.
+Each source language/layout has its own provider:
 
-## Import Rules
+- `fp_lang::cargo_provider::CargoWorkspaceProvider` — discovers a Cargo/Magnet
+  workspace's member crates and parses every source file in each with
+  `FerroFrontend` (the `.fp`-and-Rust-superset parser). This is what
+  `magnet transpile`/`fp compile <dir>` actually uses today for directory inputs.
+- `fp_lang::provider::FerroPhaseProvider` — serves the embedded `std`/`libc`
+  packages (baked into the `fp-lang` binary from `.fp` source at build time;
+  see `fp-lang/build.rs` / `embedded_std.rs`).
+- `fp_rust::RustPackageProvider` — planned/in-progress provider specifically
+  for real `.rs` Cargo projects, with its own `std` backed by real rustc
+  source (see `docs/RustStd.md`). Not wired into language detection yet.
 
-- `use crate::physics::solvers::newton::step;`
-- `use package_name::physics::solvers::*;`
-- Relative paths: `use super::solvers::broyden;`
+`WorkspaceContext::provider_for(package_id)` picks whichever registered
+provider's `list_packages()` includes the requested ID — there's no separate
+routing table; providers self-report what they own.
 
-Imports are resolved during AST normalization work. The resolver consults
-the package manifest (`Ferrophase.toml`) to ensure the dependency graph permits
-cross-package references and records feature requirements for each edge.
+## Module is a per-source-file grouping key, not a nested-namespace feature
 
-### Glob Imports
-
-`use foo::bar::*;` expands to the set of public items defined in the referenced
-module at type-check time. The expansion is cached per feature set so const
-evaluation and transpiled outputs stay in sync.
-
-### Qualified Names in Comptime
-
-During comptime work, request answers are stored under their fully qualified
-module path (e.g. `physics::solvers::newton::STEP_SIZE`). This allows other
-modules, including bindings, to access results without depending on scheduler
-order.
-
-## Module Metadata
-
-The typed AST retains per-module metadata:
-
-- `module_id`: stable identifier used by dependency graphs and caches.
-- `features`: required feature flags to compile or import the module.
-- `targets`: list of language backends that must generate bindings for the
-  module (derived from the manifest).
-- `doc`: pulled from the leading doc comments.
-
-This metadata is embedded into generated bindings (e.g. TypeScript `/** */`
-headers) and emitted alongside diagnostics.
-
-### In-Memory Representation
-
-Tooling that operates on packages in memory uses a `ModuleDescriptor` struct to
-capture the same concepts exposed in the source tree:
+This is the part worth being explicit about, since "module" strongly suggests
+Rust's own `mod`/`pub mod` system. It's a **different, smaller thing** here:
 
 ```rust
 pub struct ModuleDescriptor {
-    pub id: ModuleId,
-    pub package: PackageId,
-    pub path: VirtualPath,
-    pub module_path: Vec<String>,
-    pub language: ModuleLanguage,    // Ferro, Rust, TypeScript, Python, ...
+    pub id: ModuleId,                 // stable string key, e.g. a path key
+    pub package: PackageId,           // owning package
+    pub language: ModuleLanguage,     // Ferro, Rust, TypeScript, Python, Other(_)
+    pub module_path: Vec<String>,     // e.g. ["repo_backend"] for repo_backend.rs
+    pub source: VirtualPath,          // the file it came from
     pub exports: Vec<SymbolDescriptor>,
     pub requires_features: Vec<FeatureRef>,
 }
 ```
 
-- `path` points at the canonical source file inside the virtual filesystem.
-- `module_path` mirrors the namespace segments (e.g. `physics`, `solvers`,
-  `newton`).
-- `language` indicates which backend generated the module (useful when treating
-  Rust crates and FerroPhase sources uniformly).
-- `exports` enumerate public symbols; providers may enrich them with signatures
-  or docstrings.
+A `ModuleDescriptor` exists mainly to answer "which source file (and which
+language) did this group of items come from" for bookkeeping/diagnostics
+purposes (`ModuleLanguage` is used, e.g., to treat Rust crates and embedded
+`.fp` std uniformly). It is **not** a nested namespace with its own
+declaration syntax at the compiler-infrastructure level — providers construct
+one `ModuleDescriptor` per source file (see `CargoWorkspaceProvider::load_package_source`,
+which maps each file's relative path to a `QualifiedPath` via
+`module_path_from_relative`), not per `pub mod` block.
 
-Providers such as the FerroPhase module loader populate
-these descriptors from the virtual filesystem, allowing language servers and
-build tools to reason about modules without touching the real disk.
+The actual fine-grained unit the compiler operates on below the module level
+is `PackageItem`:
 
-## Interplay With Language Bindings
-
-- TypeScript/JavaScript bindings mirror module paths and export the same public
-  API. Tree-shaking works because each FerroPhase module maps to its own ES
-  module.
-- Python bindings create packages (`__init__.py`) reflecting the module tree.
-  Public members become Python functions/classes with type hints derived from
-  the FerroPhase signature.
-- Rust bindings expose modules under `bindings::rust::physics::solvers`. Users
-  can `use bindings::rust::physics::solvers::newton;` after adding the generated
-  crate as a dependency.
-
-## Cross-Package Modules
-
-To consume another package’s module:
-
-```toml
-[dependencies]
-ferro-math = "1.2"
-
-[targets.transpile]
-languages = ["typescript", "python"]
+```rust
+pub struct PackageItem {
+    pub path: QualifiedPath,   // which module (source file) this came from
+    pub item: Item,            // one top-level AST item: a fn/struct/enum/impl/...
+}
 ```
 
-```ferro
-use ferro_math::matrix::linalg::solve;
-```
+`PackageSource::items: Vec<PackageItem>` is a flat list of every top-level
+item across every file in the package, each tagged with its originating
+module path. Normalization, (optional) typechecking, and serialization all
+operate over this flat list — grouped back by `path` where a pass needs
+per-file context (e.g. the Kotlin serializer's `serialize_package` groups by
+`path.segments.join("/")` to emit one `.kt` file per source module).
 
-The resolver ensures the dependency supports the selected targets; the
-transpiler only generates bindings for modules declared as public.
+### `pub mod` / `use` — a real language feature, separate concern
 
-### Magnet-Aware Layouts
-
-When working inside a Magnet super-workspace the directory structure typically
-looks like:
-
-```
-Magnet.toml
-crates/
-  ├── ferro-physics/
-  │   ├── Cargo.toml        # generated by magnet
-  │   ├── Ferrophase.toml   # authored by you
-  │   └── src/...
-  └── ferro-render/
-      └── ...
-```
-
-- Magnet orchestrates Rust crate metadata; FerroPhase modules remain under the
-  same `src/` tree.
-- Module paths still resolve via the package name (`ferro-physics::...`). The
-  CLI derives the package name from `Ferrophase.toml` rather than the enclosing
-  Cargo manifest, so FerroPhase imports remain stable even if Magnet rewrites
-  Cargo metadata.
-- Generated bindings (e.g. `bindings/typescript/...`) can coexist with Magnet’s
-  output. Add them to `.gitignore` or commit them depending on your deployment
-  strategy.
-
-## Module Initialisation
-
-- `const` items evaluated at compile time populate module-level constants before
-  dependent scopes are lowered or emitted.
-- `static` items remain runtime initialized; execution records store their
-  default expressions for targets that need deferred initialization.
-- Compiler intrinsics are declared with `#[intrinsic = "..."]` under
-  `std::intrinsics::*`. High-level operations use `#[op = "..."]`; compile
-  mode may lower them to ordinary `std` wrappers while transpile mode keeps
-  the operation at the AST level.
-- C ABI declarations live in the provider-owned top-level `::libc` package.
-  The former `std::libc` compatibility module is retired.
-
-## Stdlib Layering and Deprecation
-
-The standard library is layered to keep semantics stable across frontends:
-
-- **core**: mandatory primitives and invariants required by the semantic
-  contract.
-- **extended**: portable helpers with stable semantics but optional inclusion.
-- **experimental**: feature-gated APIs that may change without long stability
-  windows.
-
-Deprecation windows and compatibility guarantees follow
-`docs/VersionGovernance.md`. Module owners must mark deprecations explicitly and
-provide migration guidance before removal.
-
-## Best Practices
-
-- Keep module boundaries small and cohesive; they become re-exportable units for
-  other languages.
-- Use `mod.rs`-style aggregators (`mod.fp`) to curate public APIs instead of
-  re-exporting entire directory trees.
-- Document modules with leading doc comments – generated bindings surface them
-  in language-appropriate formats.
-- Prefer `pub(crate)` for package-internal APIs so accidental exports do not
-  leak into bindings.
-- Ensure comptime work for module-level items has no side effects unless an
-  explicit capability allows them; answers are cached and shared across targets.
-
-Modules are the backbone of the multi-language story: design them carefully and
-the rest of the compiler work, including comptime requests, optimization, and
-bindings, will fit around stable module identities.
+`.fp` source files do have `pub mod foo;` / `use foo::bar;` syntax (parsed by
+`FerroFrontend`), and that's a genuine nested-namespace language feature —
+but it's resolved during parsing/normalization into flat items with qualified
+names, not preserved as a `ModuleDescriptor` tree. Don't conflate the two: a
+`.fp` file with three `pub mod` blocks inside it is still exactly *one*
+`ModuleDescriptor` (one source file) containing however many `PackageItem`s
+its parsed items flatten into.

@@ -203,6 +203,26 @@ pub fn detect_source_language(path: &Path) -> Option<&'static Language> {
         .find(|lang| lang.extensions.contains(&ext))
 }
 
+/// Detect source language for a directory project by manifest presence.
+///
+/// A real `Cargo.toml` means real `.rs` sources meant to resolve against
+/// rustc's actual std (`"rust"`, see `fp_rust`/`docs/RustStd.md`). A
+/// `Magnet.toml`-only project is FerroPhase's own `.fp` dialect (`"ferrophase"`)
+/// regardless of whether its files happen to be named `.rs` or `.fp` —
+/// `FerroFrontend` accepts both extensions for that dialect. Walks up from
+/// `dir` to find the nearest manifest, mirroring `fp_lang::project::find_manifest`.
+pub fn detect_project_language(dir: &Path) -> Option<&'static Language> {
+    let root = fp_lang::project::find_manifest(dir)?;
+    let name = if root.join("Cargo.toml").exists() {
+        RUST
+    } else if root.join("Magnet.toml").exists() {
+        FERROPHASE
+    } else {
+        return None;
+    };
+    SUPPORTED_LANGUAGES.iter().find(|lang| lang.name == name)
+}
+
 /// Detect target language from string identifier
 pub fn detect_target_language(target: &str) -> Option<&'static Language> {
     SUPPORTED_LANGUAGES.iter().find(|lang| {

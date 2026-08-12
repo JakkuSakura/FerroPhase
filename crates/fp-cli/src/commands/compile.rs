@@ -844,12 +844,19 @@ async fn compile_emit_target(
     }
 
     use crate::languages::frontend::{LanguageSource, detect_language_source_by_path};
+    use crate::languages::{FERROPHASE, detect_source_language};
     let detected = detect_language_source_by_path(input);
     let is_wit_input = matches!(detected, Some(LanguageSource::Wit));
     let is_typescript_input = matches!(
         detected,
         Some(LanguageSource::TypeScript | LanguageSource::JavaScript)
     );
+    let language = args
+        .source_language
+        .as_deref()
+        .map(|l| l.trim().to_ascii_lowercase())
+        .or_else(|| detect_source_language(input).map(|l| l.name.to_ascii_lowercase()))
+        .unwrap_or_else(|| FERROPHASE.to_string());
 
     let mut ast = compiler::parse_language_target_file(input, args.source_language.as_deref())?;
     if !is_wit_input && !is_typescript_input {
@@ -867,6 +874,7 @@ async fn compile_emit_target(
             LossyCompileOptions {
                 enabled: args.lossy || fp_core::config::lossy_mode(),
             },
+            &language,
         )?;
     }
 
@@ -897,12 +905,21 @@ async fn compile_project(
     args: &CompileArgs,
     target: crate::languages::backend::LanguageTarget,
 ) -> Result<()> {
-    use crate::languages::detect_source_language;
+    use crate::languages::detect_project_language;
     use crate::languages::discovery::provider_for_language;
 
-    let lang = detect_source_language(input)
-        .map(|l| l.name)
-        .unwrap_or("ferrophase");
+    let lang = args
+        .source_language
+        .as_deref()
+        .map(|l| l.trim().to_ascii_lowercase())
+        .or_else(|| detect_project_language(input).map(|l| l.name.to_string()))
+        .ok_or_else(|| {
+            CliError::Compilation(format!(
+                "could not detect source language for project at {}: no Cargo.toml or Magnet.toml found; pass --source-language explicitly",
+                input.display()
+            ))
+        })?;
+    let lang = lang.as_str();
 
     let provider = provider_for_language(lang, input)
         .ok_or_else(|| CliError::Compilation(format!("no provider for language: {lang}")))?;
@@ -910,6 +927,8 @@ async fn compile_project(
     let packages = provider
         .list_packages()
         .map_err(|e| CliError::Compilation(e.to_string()))?;
+    let workspace_packages: std::collections::HashSet<String> =
+        packages.iter().map(|p| p.as_str().to_string()).collect();
 
     info!("Project: {} package(s), language: {}", packages.len(), lang);
 
@@ -954,13 +973,26 @@ async fn compile_project(
         // Typecheck: resolve types via HIR to populate AST type slots
         // NOTE: currently disabled by default (--skip-typing) because the full
         // HIR→MIR→LIR pipeline panics for some ADTs.
+        //
+        // Batched by originating source *file* (`pkg_item.path`), not per-item:
+        // typechecking one item in isolation makes its siblings in the same file
+        // (e.g. an `impl` block and the `enum` it implements) invisible to each
+        // other, causing spurious "unresolved impl self type"/"variant pattern is
+        // unresolved" errors. Batching by file keeps some fault isolation (one bad
+        // file falls back to untyped without dragging down the whole package)
+        // while giving the typechecker the context it needs.
         if !args.skip_typing {
-            for pkg_item in &mut source.items {
+            use std::collections::BTreeMap;
+            let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+            for (idx, pkg_item) in source.items.iter().enumerate() {
+                groups.entry(pkg_item.path.segments.join("/")).or_default().push(idx);
+            }
+            for (mod_path, indices) in groups {
                 let file = File {
-                    path: PathBuf::from(pkg_item.path.segments.join("/")),
+                    path: PathBuf::from(&mod_path),
                     attrs: vec![],
                     collected_items: vec![],
-                    items: vec![pkg_item.item.clone()],
+                    items: indices.iter().map(|&i| source.items[i].item.clone()).collect(),
                 };
                 match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     compiler::typecheck_language_target(
@@ -970,18 +1002,30 @@ async fn compile_project(
                         LossyCompileOptions {
                             enabled: args.lossy || fp_core::config::lossy_mode(),
                         },
+                        lang,
                     )
                 })) {
                     Ok(Ok(typed)) => {
-                        if let Some(item) = typed.items.into_iter().next() {
-                            pkg_item.item = item;
+                        let typed_items: Vec<Item> = typed.items.into_iter().collect();
+                        if typed_items.len() == indices.len() {
+                            for (&idx, item) in indices.iter().zip(typed_items) {
+                                source.items[idx].item = item;
+                            }
+                        } else {
+                            warn!(
+                                "typecheck for {}::{} returned {} item(s), expected {} — falling back to untyped",
+                                package_id.as_str(),
+                                mod_path,
+                                typed_items.len(),
+                                indices.len()
+                            );
                         }
                     }
                     Ok(Err(e)) => {
                         warn!(
                             "typecheck failed for {}::{}: {} — falling back to untyped",
                             package_id.as_str(),
-                            pkg_item.path.segments.join("::"),
+                            mod_path,
                             e
                         );
                     }
@@ -994,7 +1038,7 @@ async fn compile_project(
                         warn!(
                             "typecheck panicked for {}::{}: {} — falling back to untyped",
                             package_id.as_str(),
-                            pkg_item.path.segments.join("::"),
+                            mod_path,
                             msg
                         );
                     }
@@ -1005,7 +1049,7 @@ async fn compile_project(
         // Serialize package via language-specific serializer
         let files = if let crate::languages::backend::LanguageTarget::Kotlin = target {
             let serializer = fp_kotlin::KotlinSerializer;
-            serializer.serialize_package(&source)
+            serializer.serialize_package(&source, &workspace_packages)
                 .map_err(|e| CliError::Compilation(e.to_string()))?
         } else {
             // Fallback: per-file emit_ast_target for other targets
@@ -1042,8 +1086,13 @@ async fn compile_project(
     // Generate workspace-level Gradle project for multi-module builds
     if matches!(target, crate::languages::backend::LanguageTarget::Kotlin) {
         let pkg_names: Vec<String> = packages.iter().map(|p| p.as_str().to_string()).collect();
+        let root_name = input
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("workspace")
+            .replace('-', "_");
         let settings = format!(
-            "rootProject.name = \"skln\"\n\n{}\n",
+            "rootProject.name = \"{root_name}\"\n\n{}\n",
             pkg_names.iter()
                 .map(|n| format!("include(\":{}\")", n))
                 .collect::<Vec<_>>().join("\n")
@@ -1612,7 +1661,15 @@ fn determine_output_path(
         CompileTarget::Ast(ast_target) => {
             let extension = crate::languages::backend::output_extension_for(ast_target);
             if let Some(output) = output {
-                if output_is_dir {
+                // A directory input (a whole project/package) always compiles into
+                // `output` as a directory root — never derive a single filename+
+                // extension from it. `output_is_dir` only reflects whether the
+                // *output* path happens to already exist as a directory (e.g. from
+                // a prior run), which is unrelated and previously caused a second
+                // transpile into an existing output dir to nest everything under a
+                // spurious `<input-dir-name>.<ext>` subdirectory instead of
+                // overwriting in place.
+                if output_is_dir && !input.is_dir() {
                     let stem = input.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
                         CliError::InvalidInput("Invalid input filename".to_string())
                     })?;

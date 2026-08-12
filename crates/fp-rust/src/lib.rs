@@ -1,3 +1,6 @@
+pub mod embedded_std;
+pub mod frontend;
 pub mod provider;
 
-pub use provider::RustPackageProvider;
+pub use frontend::RustFrontend;
+pub use provider::{RustPackageProvider, RustStdProvider};
