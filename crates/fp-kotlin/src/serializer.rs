@@ -590,7 +590,16 @@ fn emit_impl_function(f: &ItemDefFunction, self_name: &str, e: &mut KotlinEmitte
 fn emit_function(f: &ItemDefFunction, e: &mut KotlinEmitter) -> Result<()> {
     let name = f.name.name.as_str();
     let params = f.sig.params.iter()
-        .map(|p| format!("{}: {}", p.name.name, kotlin_type_from_ty(&p.ty, e)))
+        .map(|p| {
+            let kt = kotlin_type_from_ty(&p.ty, e);
+            // Same `.len()` vs `.size` tracking as `let`-bound locals (see
+            // `field_element_types`'s doc comment) — a List-typed parameter
+            // needs to be known by name too.
+            if let Some(elem) = kt.strip_prefix("MutableList<").or_else(|| kt.strip_prefix("List<")).and_then(|s| s.strip_suffix('>')) {
+                e.field_element_types.insert(p.name.name.clone(), elem.to_string());
+            }
+            format!("{}: {}", p.name.name, kt)
+        })
         .collect::<Vec<_>>().join(", ");
     let ret = f.sig.ret_ty.as_ref()
         .map(|ty| format!(": {}", kotlin_type_from_ty(ty, e)))
@@ -869,6 +878,14 @@ fn emit_stmt(stmt: &BlockStmt, e: &mut KotlinEmitter, is_tail: bool) -> Result<(
             let decl_kw = if is_mut_pattern(&l.pat) { "var" } else { "val" };
             if var_name != "_" {
                 e.declare_name(&var_name);
+            }
+            // `.len()` needs `.size` on a List but `.length` on a String — record
+            // this name as list-typed (reusing `field_element_types`, which the
+            // `.len()` call site below checks by name) so it renders correctly.
+            if let Some(elem) = type_ann.as_deref().and_then(|t|
+                t.strip_prefix("MutableList<").or_else(|| t.strip_prefix("List<")).and_then(|s| s.strip_suffix('>'))
+            ) {
+                e.field_element_types.insert(var_name.clone(), elem.to_string());
             }
             // `let mut parts = s.split(sep);` — Kotlin's `.split()` returns a `List`,
             // not a stateful iterator; remember `parts` so subsequent `.next()?` calls
@@ -1169,8 +1186,21 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                             } else { false }
                         } else { false }
                     };
+                    // `.len()` needs `.size` on a List but `.length` on a String —
+                    // `map_kt_method` alone can't tell which, so check whether the
+                    // receiver's name is a known List (see `field_element_types`).
+                    let is_len_on_list = sel.field.name.as_str() == "len" && {
+                        let recv_name = match sel.obj.kind() {
+                            ExprKind::Name(n) => Some(name_to_string(n)),
+                            ExprKind::Select(inner) => Some(inner.field.name.to_string()),
+                            _ => None,
+                        };
+                        recv_name.is_some_and(|n| e.field_element_types.contains_key(&n))
+                    };
                     let method_name = if is_iterator_map {
                         "map".to_string()
+                    } else if is_len_on_list {
+                        "size".to_string()
                     } else {
                         map_kt_method(sel.field.name.as_str())
                     };
@@ -1189,9 +1219,15 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                     // with a string replacement, so a `Char` arg here needs coercing to
                     // a one-character string to match the mixed-type call.
                     let is_replace = sel.field.name.as_str() == "replace";
+                    // `removePrefix`/`removeSuffix` (mapped from Rust's
+                    // `strip_prefix`/`strip_suffix`/`trim_end_matches`) take a
+                    // `CharSequence`, not `Char` — Rust's char-pattern overloads
+                    // need the same char-to-one-character-string coercion `replace` does.
+                    let needs_char_as_string = is_replace
+                        || matches!(sel.field.name.as_str(), "strip_prefix" | "strip_suffix" | "trim_end_matches");
                     let args: Vec<String> = inv.args.iter()
                         .map(|a| {
-                            if is_replace {
+                            if needs_char_as_string {
                                 if let ExprKind::Value(v) = a.kind() {
                                     if let Value::Char(c) = v.as_ref() {
                                         return Ok(format!("\"{}\"", escape_str_for_kt(&c.value.to_string())));
