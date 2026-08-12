@@ -1856,10 +1856,20 @@ fn map_kt_path(name: &str) -> String {
         if matches!(method, "from" | "new") && KnownClass::from_source_type(prefix_last) == Some(KnownClass::Path) {
             return "Paths.get".to_string();
         }
-        // `Vec::new()` — there's no Kotlin class named `Vec`; the portable
-        // constructor is the top-level `mutableListOf()` function.
-        if prefix_last == "Vec" && method == "new" {
-            return "mutableListOf".to_string();
+        // `Vec::new()`/`HashSet::new()`/`HashMap::new()` — there's no Kotlin
+        // class named `Vec`, and `HashSet`/`HashMap` don't have a portable
+        // no-arg factory reachable this way (this falls through to generic
+        // path resolution otherwise, producing unresolvable `HashSet.of()`);
+        // the portable constructors are these top-level functions. (The
+        // `"HashSet::new" => "mutableSetOf"` entry in `map_kt_method` below
+        // is unreachable from here — this function always splits `::` before
+        // calling it, so it only ever sees the bare method name.)
+        if method == "new" && matches!(prefix_last, "Vec" | "HashSet" | "HashMap") {
+            return match prefix_last {
+                "Vec" => "mutableListOf",
+                "HashSet" => "mutableSetOf",
+                _ => "mutableMapOf",
+            }.to_string();
         }
 
         let pkg = known_package(&normalized);
@@ -1898,10 +1908,11 @@ fn map_kt_path(name: &str) -> String {
 fn map_kt_method(name: &str) -> String {
     // Portable method mappings (no Rust-specific names)
     match name {
-        // Collecion constructors (portable)
-        "Vec::new" | "Vec" => "mutableListOf".into(),
-        "HashSet::new" => "mutableSetOf".into(),
-        "HashMap::new" => "mutableMapOf".into(),
+        // Collecion constructors (portable). Note: a qualified `X::new` never
+        // reaches here — `map_kt_path` always splits on `::` first and only
+        // passes the bare method name — so this only matters for a bare
+        // "Vec" (no `::`) reaching this function directly.
+        "Vec" => "mutableListOf".into(),
         // Collection operations (portable names)
         "unwrap" | "expect" => "!!".into(),
         "is_empty" => "isEmpty()".into(),
@@ -2373,6 +2384,17 @@ fn map_name_to_kt(name: &str) -> String {
     // qualified path like `std::io::Result<()>` gets misclassified as plain `std::io`.
     if let Some(inner) = strip_generic_wrapper(&dot_name, "Vec") {
         return format!("MutableList<{}>", map_name_to_kt(inner));
+    }
+    // `HashSet<T>`/`HashMap<K, V>` as a type annotation need to agree with
+    // `HashSet::new()`/`HashMap::new()`'s constructor mapping (`map_kt_path`,
+    // `mutableSetOf`/`mutableMapOf` — which return `MutableSet`/`MutableMap`,
+    // not `HashSet`/`HashMap`) or a `let x: HashSet<T> = HashSet::new();`
+    // binding is a declared-vs-actual type mismatch.
+    if let Some(inner) = strip_generic_wrapper(&dot_name, "HashSet") {
+        return format!("MutableSet<{}>", map_name_to_kt(inner));
+    }
+    if let Some(inner) = strip_generic_wrapper(&dot_name, "HashMap") {
+        return format!("MutableMap<{}>", map_name_to_kt(inner));
     }
     if let Some(inner) = strip_generic_wrapper(&dot_name, "Option") {
         return format!("{}?", map_name_to_kt(inner));
