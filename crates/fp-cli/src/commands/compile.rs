@@ -10,6 +10,7 @@ use crate::compiler::{
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
 use fp_core::ast::{AstSerializer, AstTargetOutput, File, Item};
+use fp_core::package::{PackageId, PackageSource};
 use fp_core::config;
 #[cfg(feature = "lang-csharp")]
 use fp_csharp::CSharpSerializer;
@@ -149,10 +150,6 @@ pub struct CompileArgs {
     /// Disable pipeline stages by name (repeatable).
     #[arg(long = "disable-stage", action = ArgAction::Append)]
     pub disable_stage: Vec<String>,
-
-    /// Perform const evaluation before AST target emission.
-    #[arg(long, default_value_t = true)]
-    pub const_eval: bool,
 
     /// Generate type definitions for TypeScript target.
     #[arg(long)]
@@ -860,10 +857,7 @@ async fn compile_emit_target(
 
     let mut ast = compiler::parse_language_target_file(input, args.source_language.as_deref())?;
     if !is_wit_input && !is_typescript_input {
-        if args.const_eval {
-            warn!("--const-eval is ignored: AST const evaluation has been removed");
-        }
-        compiler::prepare_language_target(&mut ast, input, args.source_language.as_deref(), false)?;
+        compiler::prepare_language_target(&mut ast, input, args.source_language.as_deref())?;
     }
 
     if !args.skip_typing && !is_wit_input && !is_typescript_input {
@@ -941,12 +935,20 @@ async fn compile_project(
         &crate::languages::backend::output_extension_for(target)
     );
 
+    // Phase 1: load + materialize + normalize + typecheck every package before
+    // serializing any of them. A struct's fields can be defined in one
+    // package and mutated through a `&mut` reference in another (e.g.
+    // skln-core's `FileChange` mutated from skln-git's diff parser) — Kotlin
+    // needs to know which fields are ever mutated *anywhere in the workspace*
+    // to decide `val` vs `var` when emitting the struct, so that has to be
+    // computed from every package's fully-processed AST, not just the one
+    // currently being serialized.
+    let mut prepared: Vec<(PackageId, PackageSource)> = Vec::with_capacity(packages.len());
+
     for package_id in &packages {
         let mut source = provider
             .load_package_source(package_id)
             .map_err(|e| CliError::Compilation(e.to_string()))?;
-
-        let name = package_id.as_str();
 
         // Materialize: portable ops → target-language idioms (optional)
         if let Some(ref mat) = materializer {
@@ -1046,10 +1048,29 @@ async fn compile_project(
             }
         }
 
+        prepared.push((package_id.clone(), source));
+    }
+
+    // Field mutability (`val` vs `var`) is decided workspace-wide: a struct's
+    // fields can be defined in one package and mutated through a `&mut`
+    // reference in another.
+    let workspace_mutated_fields: std::collections::HashSet<String> =
+        if matches!(target, crate::languages::backend::LanguageTarget::Kotlin) {
+            fp_kotlin::collect_mutated_field_names(prepared.iter().flat_map(|(_, src)| &src.items))
+        } else {
+            Default::default()
+        };
+
+    // Phase 2: serialize + write every package now that the workspace-wide
+    // mutability set (and any other cross-package info) is complete.
+    for (package_id, source) in &prepared {
+        let name = package_id.as_str();
+
         // Serialize package via language-specific serializer
         let files = if let crate::languages::backend::LanguageTarget::Kotlin = target {
             let serializer = fp_kotlin::KotlinSerializer;
-            serializer.serialize_package(&source, &workspace_packages)
+            serializer
+                .serialize_package(source, &workspace_packages, &workspace_mutated_fields)
                 .map_err(|e| CliError::Compilation(e.to_string()))?
         } else {
             // Fallback: per-file emit_ast_target for other targets

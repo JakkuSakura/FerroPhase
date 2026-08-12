@@ -40,7 +40,6 @@ fn base_args(
         max_errors: 10,
         source_language: Some("urcl".to_string()),
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     }

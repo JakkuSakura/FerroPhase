@@ -33,7 +33,6 @@ fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileAr
         max_errors: 10,
         source_language: Some("jvm-bytecode".to_string()),
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     }

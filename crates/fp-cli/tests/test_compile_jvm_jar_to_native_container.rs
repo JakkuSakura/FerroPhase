@@ -63,7 +63,6 @@ async fn compile_jvm_jar_to_native_object() {
         max_errors: 10,
         source_language: Some("jvm-bytecode".to_string()),
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     };

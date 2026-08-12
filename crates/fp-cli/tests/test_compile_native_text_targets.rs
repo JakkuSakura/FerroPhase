@@ -37,7 +37,6 @@ fn base_args(
         max_errors: 10,
         source_language: None,
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     }
@@ -217,7 +216,6 @@ async fn compile_native_asm_reemits_same_isa_text() {
         max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     };
@@ -267,7 +265,6 @@ async fn compile_native_asm_transpiles_triplet_architecture() {
         max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     };
@@ -319,7 +316,6 @@ async fn compile_native_asm_transpiles_memory_load() {
         max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     };
@@ -369,7 +365,6 @@ async fn compile_native_asm_transpiles_memory_store() {
         max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     };
@@ -420,7 +415,6 @@ async fn compile_native_asm_transpiles_indirect_register_call() {
         max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     };
@@ -469,7 +463,6 @@ async fn compile_native_asm_transpiles_compare_branch() {
         max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     };
@@ -519,7 +512,6 @@ async fn compile_native_asm_reemits_same_isa_physical_operands() {
         max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     };
@@ -569,7 +561,6 @@ async fn compile_native_asm_translates_x86_physical_registers_to_aarch64() {
         max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     };
@@ -620,7 +611,6 @@ async fn compile_native_asm_translates_aarch64_physical_registers_to_x86() {
         max_errors: 10,
         source_language: Some("aarch64-asm".to_string()),
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     };
@@ -671,7 +661,6 @@ async fn compile_native_asm_translates_indexed_x86_address_to_aarch64() {
         max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     };
@@ -721,7 +710,6 @@ async fn compile_native_asm_translates_indexed_aarch64_address_to_x86() {
         max_errors: 10,
         source_language: Some("aarch64-asm".to_string()),
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     };

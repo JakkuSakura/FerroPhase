@@ -34,7 +34,6 @@ fn base_compile_args(input: std::path::PathBuf, output: std::path::PathBuf) -> C
         max_errors: 0,
         source_language: None,
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     }

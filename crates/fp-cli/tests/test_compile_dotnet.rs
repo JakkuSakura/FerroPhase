@@ -67,7 +67,6 @@ fn main() -> i64 {
         max_errors: 50,
         source_language: None,
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     };
@@ -122,7 +121,6 @@ fn main() -> i64 {
         max_errors: 50,
         source_language: None,
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     };

@@ -1035,7 +1035,6 @@ pub fn prepare_language_target(
     ast: &mut File,
     path: &Path,
     source_language: Option<&str>,
-    _run_const_eval: bool,
 ) -> Result<()> {
     let parsed = parse_file_with_context(
         path,

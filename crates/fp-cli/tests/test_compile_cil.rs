@@ -52,7 +52,6 @@ fn main() -> i64 {
         max_errors: 0,
         source_language: None,
         disable_stage: Vec::new(),
-        const_eval: true,
         type_defs: false,
         single_world: false,
     };
