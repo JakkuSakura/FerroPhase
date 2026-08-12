@@ -13,7 +13,6 @@ use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult}
 use fp_core::package::{PackageDescriptor, PackageId, PackageSource};
 use fp_core::vfs::{UnixFileSystem, VirtualPath};
 use fp_core::{
-    ast::register_threadlocal_serializer,
     ast::{
         Expr, ExprBlock, File, Ident, Item, ItemDefConst, ItemDefFunction, ItemKind, ScriptBlock,
         Value, Visibility,
@@ -905,6 +904,22 @@ impl PackageProvider for InputPackageProvider {
     }
 }
 
+/// Wraps an already-parsed single file as a one-member `PackageProvider`,
+/// via the existing `InputPackageProvider` (disk-based sibling-module
+/// discovery through `FerroModuleSourceResolver` — the correct mechanism
+/// for a genuinely standalone file with no enclosing package/manifest).
+/// Used by `compile_emit_target`'s single-file pipeline when no real
+/// package can be discovered for the input file.
+pub fn single_file_provider(
+    package_id: PackageId,
+    module_path: QualifiedPath,
+    source: File,
+) -> Result<Arc<dyn PackageProvider>> {
+    let provider = InputPackageProvider::new(package_id, module_path, source)
+        .map_err(|e| CliError::Compilation(e.to_string()))?;
+    Ok(Arc::new(provider))
+}
+
 fn compile_source_file(
     ast: File,
     identity: &CompilerIdentity,
@@ -984,6 +999,25 @@ pub fn parse_language_target_file(path: &Path, source_language: Option<&str>) ->
     .map(|parsed| parsed.ast)
 }
 
+/// Like `parse_language_target_file`, but also returns the frontend's
+/// `AstSerializer` — needed by callers that construct a `PackageProvider`
+/// directly from the parsed `File` (e.g. `single_file_provider`) rather
+/// than going through a path that already registers it internally (real
+/// providers like `RustPackageProvider` call
+/// `register_threadlocal_serializer` themselves during `load_package_source`).
+pub fn parse_language_target_file_with_serializer(
+    path: &Path,
+    source_language: Option<&str>,
+) -> Result<(File, Arc<dyn fp_core::ast::AstSerializer>)> {
+    let parsed = parse_file_with_context(
+        path,
+        source_language,
+        FrontendParseMode::Strict,
+        LossyCompileOptions::default(),
+    )?;
+    Ok((parsed.ast, parsed.serializer))
+}
+
 pub fn compile_file_to_lir_bundle(
     path: &Path,
     package: &str,
@@ -1030,22 +1064,6 @@ pub fn parse_file_with_mode(
     lossy: LossyCompileOptions,
 ) -> Result<File> {
     parse_file_with_context(path, source_language, parse_mode, lossy).map(|parsed| parsed.ast)
-}
-
-pub fn prepare_language_target(
-    ast: &mut File,
-    path: &Path,
-    source_language: Option<&str>,
-) -> Result<()> {
-    let parsed = parse_file_with_context(
-        path,
-        source_language,
-        FrontendParseMode::Strict,
-        LossyCompileOptions::default(),
-    )?;
-    register_threadlocal_serializer(parsed.serializer.clone());
-    let _ = ast;
-    Ok(())
 }
 
 /// Wraps a real, already-discovered `PackageProvider` (e.g. `RustPackageProvider`,
@@ -1176,7 +1194,7 @@ pub fn typecheck_package(
             }
         } else {
             return Err(CliError::Compilation(format!(
-                "typecheck for {} produced a mismatched item count — falling back to untyped",
+                "typecheck for {} produced a mismatched item count",
                 package_id.as_str()
             )));
         }
@@ -1190,32 +1208,6 @@ pub fn typecheck_package(
         items,
     };
     Ok(source)
-}
-
-/// Run the shared AST through HIR generation and typing, then lift the typed
-/// HIR back to AST for the existing target printers.
-pub fn typecheck_language_target(
-    ast: File,
-    package: &str,
-    path: &Path,
-    lossy: LossyCompileOptions,
-    language: &str,
-) -> Result<File> {
-    let identity = CompilerIdentity::for_file(package, path);
-    let executor = CompilerExecutor::new();
-    let mut driver = compile_source_file(ast, &identity, compiler_workspace_for(language), lossy, &executor, PipelineMode::TypecheckedTranspile)?;
-    drain_driver(&mut driver, lossy)?;
-    let hir_id = fp_compiler::HirId::new(format!("hir:{}:", package));
-    let hir = driver
-        .state
-        .hir(&hir_id)
-        .map_err(|err| CliError::Compilation(err.to_string()))?;
-    // Real resolved types live here, keyed by the same `hir_id` — fetch them
-    // so the lifted AST's `Expr.ty()` slots get populated for real instead
-    // of staying `None`.
-    let typeck = driver.state.hir_typeck(&hir_id).ok();
-    fp_backend::transforms::hir_to_ast::lift_program(hir, typeck, path.to_path_buf())
-        .map_err(|err| CliError::Compilation(err.to_string()))
 }
 
 fn parse_file_with_context(

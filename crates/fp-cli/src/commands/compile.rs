@@ -855,22 +855,43 @@ async fn compile_emit_target(
         .or_else(|| detect_source_language(input).map(|l| l.name.to_ascii_lowercase()))
         .unwrap_or_else(|| FERROPHASE.to_string());
 
-    let mut ast = compiler::parse_language_target_file(input, args.source_language.as_deref())?;
-    if !is_wit_input && !is_typescript_input {
-        compiler::prepare_language_target(&mut ast, input, args.source_language.as_deref())?;
-    }
-
-    if !args.skip_typing && !is_wit_input && !is_typescript_input {
-        ast = compiler::typecheck_language_target(
-            ast,
-            args.package(),
-            input,
-            LossyCompileOptions {
+    let ast = if is_wit_input || is_typescript_input {
+        compiler::parse_language_target_file(input, args.source_language.as_deref())?
+    } else {
+        let (provider, package_id, tag) = provider_and_package_for_input(input, &language)?;
+        let wrapped: std::sync::Arc<dyn fp_core::package::provider::PackageProvider> =
+            std::sync::Arc::new(compiler::MaterializingPackageProvider::new(
+                provider,
+                crate::languages::materializer::materializer_for_language(
+                    &crate::languages::backend::output_extension_for(target),
+                ),
+                crate::languages::normalizer::normalizer_for_language(&language).ok_or_else(
+                    || CliError::Compilation(format!("no normalizer for source language: {language}")),
+                )?,
+            ));
+        let source = if args.skip_typing {
+            wrapped
+                .load_package_source(&package_id)
+                .map_err(|e| CliError::Compilation(e.to_string()))?
+        } else {
+            let lossy = LossyCompileOptions {
                 enabled: args.lossy || fp_core::config::lossy_mode(),
-            },
-            &language,
-        )?;
-    }
+            };
+            compiler::typecheck_package(wrapped, &package_id, lossy, &language)?
+        };
+        let items: Vec<Item> = source
+            .items
+            .into_iter()
+            .filter(|pkg_item| pkg_item.path == tag)
+            .map(|pkg_item| pkg_item.item)
+            .collect();
+        File {
+            path: input.to_path_buf(),
+            attrs: vec![],
+            collected_items: vec![],
+            items,
+        }
+    };
 
     let result = emit_ast_target(&ast, target, args.type_defs, input, args.single_world)?;
 
@@ -891,6 +912,143 @@ async fn compile_emit_target(
 
     info!("Generated AST target output: {}", output.display());
     Ok(())
+}
+
+/// Computes the same `PackageItem` path tag a discovered package's real
+/// provider already tagged `input` with — one of the real (non-`todo!()`)
+/// providers' own already-exported module-path estimators, not a
+/// reimplementation. No fallback: an unsupported language is a real error,
+/// not a silent drop to the old single-file resolver.
+fn estimate_module_path(
+    language: &str,
+    root: &Path,
+    input: &Path,
+) -> Result<fp_core::module::path::QualifiedPath> {
+    match language {
+        "rust" | "rs" => {
+            let rel = input.strip_prefix(root.join("src")).map_err(|_| {
+                CliError::Compilation(format!(
+                    "{} is not inside {}'s src/ directory",
+                    input.display(),
+                    root.display()
+                ))
+            })?;
+            Ok(fp_rust::provider::rs_relative_to_module_path(
+                &rel.display().to_string(),
+            ))
+        }
+        "ferrophase" | "fp" => {
+            let rel = input.strip_prefix(root.join("src")).map_err(|_| {
+                CliError::Compilation(format!(
+                    "{} is not inside {}'s src/ directory",
+                    input.display(),
+                    root.display()
+                ))
+            })?;
+            Ok(fp_lang::magnet_provider::module_path_from_relative(
+                &rel.display().to_string(),
+            ))
+        }
+        "typescript" | "ts" | "javascript" | "js" => estimate_typescript_module_path(root, input),
+        other => Err(CliError::Compilation(format!(
+            "no module-path estimator for source language: {other}"
+        ))),
+    }
+}
+
+#[cfg(feature = "lang-typescript")]
+fn estimate_typescript_module_path(
+    root: &Path,
+    input: &Path,
+) -> Result<fp_core::module::path::QualifiedPath> {
+    Ok(fp_core::module::path::QualifiedPath::new(
+        fp_typescript::package::estimate_module_path(root, input),
+    ))
+}
+
+#[cfg(not(feature = "lang-typescript"))]
+fn estimate_typescript_module_path(
+    _root: &Path,
+    _input: &Path,
+) -> Result<fp_core::module::path::QualifiedPath> {
+    Err(CliError::Compilation(
+        "typescript support not compiled into this build".to_string(),
+    ))
+}
+
+/// A single file is a package with one member — find (and prefer) the real
+/// one if `input` belongs to a discoverable multi-file package; otherwise
+/// wrap it as a synthetic single-member package. Either way, everything
+/// downstream (materialize/normalize/typecheck) goes through the same
+/// `PackageProvider`-shaped pipeline `compile_project` already uses — no
+/// separate hand-threaded `ast::File` path, and no fallback-on-failure:
+/// once a manifest is found, any further failure (no provider for this
+/// language, no package contains this file, no estimator) is a real error.
+fn provider_and_package_for_input(
+    input: &Path,
+    language: &str,
+) -> Result<(
+    std::sync::Arc<dyn fp_core::package::provider::PackageProvider>,
+    PackageId,
+    fp_core::module::path::QualifiedPath,
+)> {
+    let input_abs = input.canonicalize().unwrap_or_else(|_| input.to_path_buf());
+
+    if let Some(root) = fp_lang::project::find_manifest(&input_abs) {
+        let provider = crate::languages::discovery::provider_for_language(language, &root)
+            .ok_or_else(|| {
+                CliError::Compilation(format!("no package provider for source language: {language}"))
+            })?;
+        let packages = provider
+            .list_packages()
+            .map_err(|e| CliError::Compilation(e.to_string()))?;
+        let mut found = None;
+        for package_id in &packages {
+            let metadata = provider
+                .load_package_metadata(package_id)
+                .map_err(|e| CliError::Compilation(e.to_string()))?;
+            let package_root = metadata.root.to_path_buf();
+            let package_root_abs = package_root
+                .canonicalize()
+                .unwrap_or_else(|_| package_root.clone());
+            if input_abs.starts_with(&package_root_abs) {
+                found = Some((package_id.clone(), package_root_abs));
+                break;
+            }
+        }
+        let (package_id, package_root_abs) = found.ok_or_else(|| {
+            CliError::Compilation(format!(
+                "no package in {} contains {}",
+                root.display(),
+                input.display()
+            ))
+        })?;
+        let tag = estimate_module_path(language, &package_root_abs, &input_abs)?;
+        return Ok((provider, package_id, tag));
+    }
+
+    // No manifest found: a genuinely standalone file, no larger package to
+    // discover — wrap it as its own single-member package.
+    let (source, serializer) =
+        compiler::parse_language_target_file_with_serializer(input, Some(language))?;
+    fp_core::ast::register_threadlocal_serializer(serializer);
+    let package_id = PackageId::new(
+        input
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unnamed"),
+    );
+    // `FerroModuleSourceResolver::resolve_package_source` (reached via
+    // `single_file_provider` → `InputPackageProvider::new`) requires the
+    // module path's head segment to equal the package id
+    // (`package_name_from_path`), and tags every one of the root file's own
+    // top-level items with that *same, full* module path (`flatten_items`)
+    // — not an empty one. One segment (the package id itself) is both the
+    // minimum that satisfies the head-segment check and exactly what the
+    // resulting items get tagged with, so it doubles as the filter tag.
+    let tag = fp_core::module::path::QualifiedPath::new(vec![package_id.as_str().to_string()]);
+    let provider = compiler::single_file_provider(package_id.clone(), tag.clone(), source)?;
+    Ok((provider, package_id, tag))
 }
 
 async fn compile_project(
