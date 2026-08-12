@@ -213,6 +213,29 @@ impl AsmInstruction {
             _ => None,
         })
     }
+
+    /// For `Call`-opcode instructions: the call target and its argument
+    /// operands, in that order. Operand layout is `[dest?] [Attr...] target
+    /// arg...` — dest (if present) is always the sole `Write` register, and
+    /// every `Attr` is metadata (calling convention, tail-call), so the
+    /// first non-Attr, non-dest operand is unambiguously the target.
+    /// Returns `None` for non-`Call` opcodes.
+    pub fn call_target_and_args(&self) -> Option<(&AsmOperand, &[AsmOperand])> {
+        if !matches!(self.opcode, AsmOpcode::Generic(AsmGenericOpcode::Call)) {
+            return None;
+        }
+        let target_idx = self.operands.iter().position(|op| {
+            !matches!(op, AsmOperand::Attr(_))
+                && !matches!(
+                    op,
+                    AsmOperand::Register {
+                        access: OperandAccess::Write,
+                        ..
+                    }
+                )
+        })?;
+        Some((&self.operands[target_idx], &self.operands[target_idx + 1..]))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -235,23 +258,21 @@ pub enum AsmOperand {
     Local(u32),
     /// Reference to a function-local stack slot, by id (see `AsmFunction::stack_slots`).
     StackSlot(u32),
-    /// A type payload for opcodes whose semantics depend on a type that
-    /// isn't recoverable from any register in the operand list (e.g. the
-    /// type of an `undef`/`null` literal, which has no defining register).
-    Type(AsmType),
+    /// A full-fidelity constant value (int/float/bool/string/bytes/array/
+    /// struct/global-ref/function-ref/null/undef). Kept as one payload
+    /// rather than decomposed, so no information is lost converting from
+    /// the LIR-level constant and passes like string interning can pattern
+    /// match on it directly.
+    Constant(AsmConstant),
     /// A condition code, e.g. the third operand of a decomposed comparison
     /// (`lhs`, `rhs`, `Condition(cc)`).
     Condition(AsmConditionCode),
-    Undef(AsmType),
-    Null(AsmType),
-    /// Free-form string data (inline-asm text/constraints, intrinsic format
-    /// strings) that has no register or symbol identity of its own.
-    StringData(String),
     SysOp(Box<AsmSysOp>),
     /// Non-def/use instruction metadata (alignment, volatility, calling
-    /// convention, tail-call, landing-pad clause tags, ...). Kept as
-    /// operands rather than instruction fields so `operands` remains the
-    /// single source of truth for everything the instruction carries.
+    /// convention, tail-call, landing-pad clause tags, inline-asm/intrinsic
+    /// syntax text, ...). Kept as operands rather than instruction fields
+    /// so `operands` remains the single source of truth for everything the
+    /// instruction carries.
     Attr(AsmAttr),
 }
 
@@ -267,6 +288,12 @@ pub enum AsmAttr {
     CallingConv(CallingConvention),
     SyscallConvention(AsmSyscallConvention),
     Intrinsic(AsmIntrinsicKind),
+    /// `IntrinsicCall`'s format string.
+    Format(String),
+    /// `InlineAsm`'s assembly text.
+    AsmText(String),
+    /// `InlineAsm`'s constraint string.
+    Constraints(String),
     SymbolAddressKind(AsmSymbolAddressKind),
     /// Tags one value operand as a landing-pad `catch` clause.
     LandingPadCatch,

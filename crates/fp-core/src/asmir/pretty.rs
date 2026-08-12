@@ -86,11 +86,8 @@ fn format_operand(operand: &AsmOperand) -> String {
         }
         AsmOperand::Local(id) => format!("local.{id}"),
         AsmOperand::StackSlot(id) => format!("stack.{id}"),
-        AsmOperand::Type(ty) => format!("ty({:?})", ty),
+        AsmOperand::Constant(constant) => format!("{:?}", constant),
         AsmOperand::Condition(cond) => format!("cond({:?})", cond),
-        AsmOperand::Undef(_) => "undef".to_string(),
-        AsmOperand::Null(_) => "null".to_string(),
-        AsmOperand::StringData(text) => format!("\"{}\"", text.escape_default()),
         AsmOperand::SysOp(op) => format!("sysop({:?})", op),
         AsmOperand::Attr(attr) => format_attr(attr),
     }
@@ -108,6 +105,9 @@ fn format_attr(attr: &AsmAttr) -> String {
         AsmAttr::CallingConv(cc) => format!("cc={:?}", cc),
         AsmAttr::SyscallConvention(cc) => format!("syscall_cc={:?}", cc),
         AsmAttr::Intrinsic(kind) => format!("intrinsic={:?}", kind),
+        AsmAttr::Format(text) => format!("format=\"{}\"", text.escape_default()),
+        AsmAttr::AsmText(text) => format!("asm=\"{}\"", text.escape_default()),
+        AsmAttr::Constraints(text) => format!("constraints=\"{}\"", text.escape_default()),
         AsmAttr::SymbolAddressKind(kind) => format!("symaddr={:?}", kind),
         AsmAttr::LandingPadCatch => "catch".to_string(),
         AsmAttr::LandingPadFilter(count) => format!("filter({count})"),
