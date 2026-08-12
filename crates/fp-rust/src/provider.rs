@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
-use fp_core::ast::{AttrMeta, Attribute, Item, ItemKind};
+use fp_core::ast::{AttrMeta, Attribute, Item, ItemKind, register_threadlocal_serializer};
 use fp_core::frontend::LanguageFrontend;
 use fp_core::module::path::QualifiedPath;
 use fp_core::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
@@ -107,6 +107,11 @@ impl PackageProvider for RustPackageProvider {
             let result = frontend
                 .parse_file(&source, &abs)
                 .map_err(|e| ProviderError::other(format!("parse {}: {}", abs.display(), e)))?;
+            // The typed-HIR pipeline (Display/Debug-formatting AST nodes for
+            // diagnostics, etc.) panics without a thread-local serializer
+            // registered — `parse_file_with_context`'s single-file path
+            // already does this; this provider-based path didn't.
+            register_threadlocal_serializer(result.serializer.clone());
             let path = rs_relative_to_module_path(&rel);
             items.extend(
                 result
@@ -320,6 +325,7 @@ fn load_real_std_package() -> ProviderResult<PackageSource> {
                 continue;
             }
         };
+        register_threadlocal_serializer(result.serializer.clone());
         parsed += 1;
         flatten_items(
             &QualifiedPath::new(module_path.clone()),
@@ -385,6 +391,7 @@ fn load_embedded_fp_package(
         let result = frontend
             .parse_file(source, &path)
             .map_err(|e| ProviderError::other(format!("failed to parse {relative_str}: {e}")))?;
+        register_threadlocal_serializer(result.serializer.clone());
         flatten_items(
             &QualifiedPath::new(module_path.clone()),
             &result.ast.items,

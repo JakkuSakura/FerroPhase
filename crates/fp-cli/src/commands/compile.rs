@@ -972,78 +972,70 @@ async fn compile_project(
             fp_lang::normalization::normalize_items(std::slice::from_mut(&mut pkg_item.item), normalizer.as_ref())?;
         }
 
-        // Typecheck: resolve types via HIR to populate AST type slots
-        // NOTE: currently disabled by default (--skip-typing) because the full
-        // HIR→MIR→LIR pipeline panics for some ADTs.
+        // Typecheck: resolve types via HIR to populate AST type slots.
         //
-        // Batched by originating source *file* (`pkg_item.path`), not per-item:
-        // typechecking one item in isolation makes its siblings in the same file
-        // (e.g. an `impl` block and the `enum` it implements) invisible to each
-        // other, causing spurious "unresolved impl self type"/"variant pattern is
-        // unresolved" errors. Batching by file keeps some fault isolation (one bad
-        // file falls back to untyped without dragging down the whole package)
-        // while giving the typechecker the context it needs.
-        if !args.skip_typing {
-            use std::collections::BTreeMap;
-            let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-            for (idx, pkg_item) in source.items.iter().enumerate() {
-                groups.entry(pkg_item.path.segments.join("/")).or_default().push(idx);
-            }
-            for (mod_path, indices) in groups {
-                let file = File {
-                    path: PathBuf::from(&mod_path),
-                    attrs: vec![],
-                    collected_items: vec![],
-                    items: indices.iter().map(|&i| source.items[i].item.clone()).collect(),
-                };
-                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    compiler::typecheck_language_target(
-                        file,
-                        package_id.as_str(),
-                        &std::path::Path::new(package_id.as_str()),
-                        LossyCompileOptions {
-                            enabled: args.lossy || fp_core::config::lossy_mode(),
-                        },
-                        lang,
-                    )
-                })) {
-                    Ok(Ok(typed)) => {
-                        let typed_items: Vec<Item> = typed.items.into_iter().collect();
-                        if typed_items.len() == indices.len() {
-                            for (&idx, item) in indices.iter().zip(typed_items) {
-                                source.items[idx].item = item;
-                            }
-                        } else {
-                            warn!(
-                                "typecheck for {}::{} returned {} item(s), expected {} — falling back to untyped",
-                                package_id.as_str(),
-                                mod_path,
-                                typed_items.len(),
-                                indices.len()
-                            );
+        // Batched by whole *package*, not per-file: a package's `impl SomeType`
+        // block routinely lives in a different file than `SomeType`'s own
+        // definition (e.g. types.rs defines the struct, other files add impls
+        // for it) — typechecking file-by-file makes those siblings invisible
+        // to each other, causing spurious "unresolved impl self type" errors
+        // for essentially every real multi-file package. Whole-package batching
+        // gives the typechecker the full context it needs at the cost of
+        // coarser fault isolation (one bad item anywhere in the package falls
+        // the *whole* package back to untyped, not just its one file) — still
+        // safe either way, since the call is wrapped in `catch_unwind` below.
+        if !args.skip_typing && !source.items.is_empty() {
+            let file = File {
+                path: PathBuf::from(package_id.as_str()),
+                attrs: vec![],
+                collected_items: vec![],
+                items: source.items.iter().map(|pkg_item| pkg_item.item.clone()).collect(),
+            };
+            let expected_len = source.items.len();
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                compiler::typecheck_language_target(
+                    file,
+                    package_id.as_str(),
+                    &std::path::Path::new(package_id.as_str()),
+                    LossyCompileOptions {
+                        enabled: args.lossy || fp_core::config::lossy_mode(),
+                    },
+                    lang,
+                )
+            })) {
+                Ok(Ok(typed)) => {
+                    let typed_items: Vec<Item> = typed.items.into_iter().collect();
+                    if typed_items.len() == expected_len {
+                        for (pkg_item, item) in source.items.iter_mut().zip(typed_items) {
+                            pkg_item.item = item;
                         }
-                    }
-                    Ok(Err(e)) => {
+                    } else {
                         warn!(
-                            "typecheck failed for {}::{}: {} — falling back to untyped",
+                            "typecheck for {} returned {} item(s), expected {} — falling back to untyped",
                             package_id.as_str(),
-                            mod_path,
-                            e
+                            typed_items.len(),
+                            expected_len
                         );
                     }
-                    Err(panic_info) => {
-                        let msg = panic_info
-                            .downcast_ref::<String>()
-                            .map(|s| s.as_str())
-                            .or_else(|| panic_info.downcast_ref::<&str>().copied())
-                            .unwrap_or("(unknown)");
-                        warn!(
-                            "typecheck panicked for {}::{}: {} — falling back to untyped",
-                            package_id.as_str(),
-                            mod_path,
-                            msg
-                        );
-                    }
+                }
+                Ok(Err(e)) => {
+                    warn!(
+                        "typecheck failed for {}: {} — falling back to untyped",
+                        package_id.as_str(),
+                        e
+                    );
+                }
+                Err(panic_info) => {
+                    let msg = panic_info
+                        .downcast_ref::<String>()
+                        .map(|s| s.as_str())
+                        .or_else(|| panic_info.downcast_ref::<&str>().copied())
+                        .unwrap_or("(unknown)");
+                    warn!(
+                        "typecheck panicked for {}: {} — falling back to untyped",
+                        package_id.as_str(),
+                        msg
+                    );
                 }
             }
         }
