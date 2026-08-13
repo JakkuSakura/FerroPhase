@@ -4828,6 +4828,13 @@ impl MirLowering {
             return Some(layout.clone());
         }
         if self.struct_layouts_in_progress.contains(&key) {
+            self.emit_error(
+                span,
+                format!(
+                    "recursive type `{}` has infinite size",
+                    struct_def.name
+                ),
+            );
             let opaque = self.opaque_ty(&struct_def.name);
             return Some(StructLayout {
                 ty: opaque,
@@ -5009,6 +5016,10 @@ impl MirLowering {
             return Some(layout.clone());
         }
         if self.enum_layouts_in_progress.contains(&key) {
+            self.emit_error(
+                span,
+                format!("recursive type `{}` has infinite size", enum_def.name),
+            );
             let opaque = self.opaque_ty(&enum_def.name);
             return Some(EnumLayout {
                 def_id,
@@ -5282,7 +5293,7 @@ impl MirLowering {
                                     .iter()
                                     .filter_map(|arg| match arg {
                                         hir::GenericArg::Type(ty) => {
-                                            Some(self.lower_type_expr_with_substs(ty, substs))
+                                            Some(self.lower_generic_type_arg(ty, substs))
                                         }
                                         hir::GenericArg::Const(_) => {
                                             self.emit_warning(
@@ -5312,7 +5323,7 @@ impl MirLowering {
                                     .iter()
                                     .filter_map(|arg| match arg {
                                         hir::GenericArg::Type(ty) => {
-                                            Some(self.lower_type_expr_with_substs(ty, substs))
+                                            Some(self.lower_generic_type_arg(ty, substs))
                                         }
                                         hir::GenericArg::Const(_) => {
                                             self.emit_warning(
@@ -7109,6 +7120,120 @@ impl MirLowering {
         ty
     }
 
+    /// Builds a lazy `TyKind::Adt` reference to a *real* (already
+    /// registered) struct/enum def, without computing its layout. Unlike
+    /// `opaque_ty`, this carries the type's actual `def_id`, so a later
+    /// `struct_layout_for_instance`/`enum_layout_for_instance(adt.did, ..)`
+    /// call can still resolve it on demand — it's an identity reference,
+    /// not a dead end.
+    fn adt_shell_ty(&mut self, def_id: hir::DefId, args: &[Ty]) -> Option<Ty> {
+        let generic_args: Vec<mir::ty::GenericArg> = args
+            .iter()
+            .cloned()
+            .map(mir::ty::GenericArg::Type)
+            .collect();
+        if let Some(enum_def) = self.enum_defs.get(&def_id).cloned() {
+            let variants = enum_def
+                .variants
+                .iter()
+                .enumerate()
+                .map(|(idx, variant)| VariantDef {
+                    def_id: variant.def_id,
+                    ctor_def_id: None,
+                    ident: Symbol::new(&variant.name),
+                    discr: VariantDiscr::Relative(idx as u32),
+                    fields: Vec::new(),
+                    ctor_kind: if variant.payload.is_some() {
+                        CtorKind::Fn
+                    } else {
+                        CtorKind::Const
+                    },
+                    is_recovered: false,
+                })
+                .collect();
+            let adt = AdtDef {
+                did: def_id,
+                variants,
+                flags: AdtFlags::IS_ENUM,
+                repr: ReprOptions {
+                    int: None,
+                    align: None,
+                    pack: None,
+                    flags: ReprFlags::empty(),
+                    field_shuffle_seed: 0,
+                },
+            };
+            return Some(Ty {
+                kind: TyKind::Adt(adt, generic_args),
+            });
+        }
+        if self.struct_defs.contains_key(&def_id) {
+            // Structs carry an *empty* `variants` list (only enums populate
+            // it) — see `display_type_name`'s doc comment. A dummy variant
+            // here would shadow the `struct_defs` name lookup with an empty
+            // ident, breaking name resolution for this shell.
+            let adt = AdtDef {
+                did: def_id,
+                variants: Vec::new(),
+                flags: AdtFlags::IS_STRUCT,
+                repr: ReprOptions {
+                    int: None,
+                    align: None,
+                    pack: None,
+                    flags: ReprFlags::empty(),
+                    field_shuffle_seed: 0,
+                },
+            };
+            return Some(Ty {
+                kind: TyKind::Adt(adt, generic_args),
+            });
+        }
+        None
+    }
+
+    /// Resolves a type used as a *generic argument* (e.g. `Field` in
+    /// `Vec<Field>`) lazily: if it names a registered struct/enum, this
+    /// returns a cheap identity reference (`adt_shell_ty`) instead of
+    /// eagerly computing that type's full layout via
+    /// `lower_type_expr_with_substs`'s `Path` arm. A generic argument's own
+    /// byte layout is irrelevant to building the outer type's substitution
+    /// map, and forcing it here is what causes self-referential types (e.g.
+    /// `std::json::Value`, which reaches itself through `Vec<Field>` where
+    /// `Field` directly embeds `Value`) to re-enter their own in-progress
+    /// layout computation.
+    fn lower_generic_type_arg(
+        &mut self,
+        ty_expr: &hir::TypeExpr,
+        substs: &HashMap<String, Ty>,
+    ) -> Ty {
+        if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
+            if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
+                if self.struct_defs.contains_key(def_id) || self.enum_defs.contains_key(def_id) {
+                    let nested_args: Vec<Ty> = path
+                        .segments
+                        .last()
+                        .and_then(|segment| segment.args.as_ref())
+                        .map(|args| {
+                            args.args
+                                .iter()
+                                .filter_map(|arg| match arg {
+                                    hir::GenericArg::Type(ty) => {
+                                        Some(self.lower_generic_type_arg(ty, substs))
+                                    }
+                                    hir::GenericArg::Const(_) => None,
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if let Some(shell) = self.adt_shell_ty(*def_id, &nested_args) {
+                        return shell;
+                    }
+                }
+            }
+        }
+        self.lower_type_expr_with_substs(ty_expr, substs)
+    }
+
     fn display_type_name(&self, ty: &Ty) -> Option<String> {
         match &ty.kind {
             // `AdtDef`s built for a *struct* (e.g. `path_ty` in
@@ -7238,6 +7363,20 @@ impl MirLowering {
         match &ty.kind {
             TyKind::Ref(_, inner, _) => self.enum_layout_for_ty(inner),
             TyKind::RawPtr(type_and_mut) => self.enum_layout_for_ty(&type_and_mut.ty),
+            TyKind::Adt(adt, substs) if self.enum_defs.contains_key(&adt.did) => {
+                let args: Vec<Ty> = substs
+                    .iter()
+                    .filter_map(|arg| match arg {
+                        mir::ty::GenericArg::Type(t) => Some(t.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                let key = EnumLayoutKey {
+                    def_id: adt.did,
+                    args,
+                };
+                self.enum_layouts.get(&key)
+            }
             _ => self
                 .enum_layouts
                 .values()
@@ -8421,6 +8560,13 @@ impl<'a> BodyBuilder<'a> {
         match &ty.kind {
             TyKind::Ref(_, inner, _) => self.enum_def_from_ty(inner.as_ref()),
             TyKind::RawPtr(type_and_mut) => self.enum_def_from_ty(type_and_mut.ty.as_ref()),
+            // Mirrors `struct_def_from_ty`'s `Adt`-shell check: a lazily
+            // resolved generic argument (`adt_shell_ty`) carries the real
+            // `DefId` directly, so it's checked before falling back to the
+            // by-value `enum_layouts` scan below.
+            TyKind::Adt(adt, _) if self.lowering.enum_defs.contains_key(&adt.did) => {
+                Some(adt.did)
+            }
             _ => self
                 .lowering
                 .enum_layouts
@@ -11573,7 +11719,11 @@ impl<'a> BodyBuilder<'a> {
         if let Some(expected_ty) = annotated_ty {
             if let Some(def_id) = self.struct_def_from_ty(expected_ty) {
                 if let Some(info) = self.lowering.struct_defs.get(&def_id).cloned() {
-                    if let Some(layout) = self.lowering.struct_layout_for_ty(expected_ty) {
+                    if let Some(layout) = self
+                        .lowering
+                        .struct_layout_for_ty(expected_ty)
+                        .or_else(|| self.lowering.struct_layout_for_instance(def_id, &[], span))
+                    {
                         return self.lower_registered_struct_literal(
                             local_id,
                             annotated_ty,
@@ -17774,7 +17924,10 @@ impl<'a> BodyBuilder<'a> {
                             _ => break,
                         }
                     }
-                    if self.is_list_container(&base_ty) || self.is_map_container(&base_ty) {
+                    if self.real_indexable_struct_def_id(&base_ty).is_some()
+                        || self.is_list_container(&base_ty)
+                        || self.is_map_container(&base_ty)
+                    {
                         return Ok(None);
                     }
                     let element_ty = match &base_ty.kind {
