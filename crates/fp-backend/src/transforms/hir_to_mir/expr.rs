@@ -949,6 +949,15 @@ impl MirLowering {
             }
         }
         self.finalize_adt_definitions(program);
+        // Signature-only pre-pass (see `register_impl_signatures`'s own doc
+        // comment) so non-generic method/associated-function calls resolve
+        // regardless of which module declares the caller vs. the callee —
+        // lookup success must not depend on `program.items` order.
+        for item in &program.items {
+            if let hir::ItemKind::Impl(impl_block) = &item.kind {
+                self.register_impl_signatures(impl_block);
+            }
+        }
         // Lower every item unconditionally. This function builds MIR for one
         // package's own HIR in isolation (a dependency package's MIR is
         // never re-filtered by a downstream package), so a `main`-rooted
@@ -5474,6 +5483,110 @@ impl MirLowering {
         }
     }
 
+    /// Signature-only pre-pass over every non-generic impl in the package,
+    /// run before any bodies are lowered (see `lower_program`) — so a call
+    /// to a non-generic method/associated function resolves via
+    /// `method_lookup_by_def` regardless of which module declares the
+    /// caller vs. the callee. Without this, `lower_impl`'s per-method
+    /// registration (only inserted *after* a body successfully lowers)
+    /// makes lookup success depend on `program.items` order, so a forward
+    /// reference across modules (e.g. `std::alloc`'s `Vec::join` calling
+    /// `std::string::String::new`, where `alloc` is declared before
+    /// `string` in `std/mod.fp`) fails with "unresolved call target"
+    /// purely because of declaration order, aborting the rest of the pass.
+    /// Mirrors `lower_impl`'s own skip conditions (HashMap special-case,
+    /// generic impl/method) verbatim so this pre-pass never registers
+    /// something the main pass would skip.
+    fn register_impl_signatures(&mut self, impl_block: &hir::Impl) {
+        let struct_name = self.struct_name_from_type(&impl_block.self_ty);
+        let method_context = self.make_method_context(&impl_block.self_ty);
+        let impl_is_generic = !impl_block.generics.params.is_empty();
+
+        for impl_item in &impl_block.items {
+            let hir::ImplItemKind::Method(function) = &impl_item.kind else {
+                continue;
+            };
+            let method_name = function.sig.name.as_str();
+            let is_hashmap_impl = struct_name
+                .as_deref()
+                .map(|name| name.ends_with("HashMap"))
+                .unwrap_or(false);
+            let is_hashmap_method = matches!(method_name, "from" | "len" | "get_unchecked")
+                || method_name.ends_with("::from")
+                || method_name.ends_with("::len")
+                || method_name.ends_with("::get_unchecked");
+            if is_hashmap_impl && is_hashmap_method {
+                continue;
+            }
+            if impl_is_generic || !function.sig.generics.params.is_empty() {
+                continue;
+            }
+            let Some(struct_name) = struct_name.as_deref() else {
+                continue;
+            };
+            let sig = self.lower_function_sig(&function.sig, method_context.as_ref());
+            self.register_method_lowering_info(
+                struct_name,
+                method_context.as_ref(),
+                impl_item,
+                function,
+                sig,
+            );
+        }
+    }
+
+    /// Shared by `register_impl_signatures` (signature-only pre-pass) and
+    /// `lower_impl` (real lowering) so the two paths can never drift apart.
+    fn register_method_lowering_info(
+        &mut self,
+        struct_name: &str,
+        method_context: Option<&MethodContext>,
+        impl_item: &hir::ImplItem,
+        function: &hir::Function,
+        sig: mir::FunctionSig,
+    ) {
+        let struct_prefix = method_context
+            .and_then(|ctx| {
+                if ctx.path.is_empty() {
+                    None
+                } else {
+                    Some(
+                        ctx.path
+                            .iter()
+                            .map(|seg| seg.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join("::"),
+                    )
+                }
+            })
+            .unwrap_or_else(|| struct_name.to_string());
+        let fn_name = format!("{}::{}", struct_prefix, function.sig.name.as_str());
+        let fn_ty = self.function_pointer_ty(&sig);
+        let struct_def = method_context.and_then(|ctx| ctx.def_id);
+        let method_name = function.sig.name.as_str().to_string();
+        let impl_item_name = impl_item.name.as_str().to_string();
+        let info = MethodLoweringInfo {
+            def_id: Some(impl_item.def_id),
+            substs: Vec::new(),
+            sig,
+            fn_name: fn_name.clone(),
+            fn_ty,
+            struct_def,
+        };
+
+        self.method_lookup_by_def
+            .insert(impl_item.def_id, info.clone());
+        self.method_lookup.insert(fn_name, info.clone());
+        self.method_lookup
+            .insert(format!("{}::{}", struct_name, method_name), info.clone());
+        self.method_lookup
+            .insert(format!("{}::{}", struct_name, impl_item_name), info.clone());
+        self.struct_methods
+            .entry(struct_name.to_string())
+            .or_default()
+            .insert(method_name, info);
+    }
+
     fn lower_impl(
         &mut self,
         program: &hir::Program,
@@ -5543,47 +5656,13 @@ impl MirLowering {
                     emit_function(self, mir_item, body_id, body);
 
                     if let Some(struct_name) = struct_name.as_deref() {
-                        let struct_prefix = method_context
-                            .as_ref()
-                            .and_then(|ctx| {
-                                if ctx.path.is_empty() {
-                                    None
-                                } else {
-                                    Some(
-                                        ctx.path
-                                            .iter()
-                                            .map(|seg| seg.name.as_str())
-                                            .collect::<Vec<_>>()
-                                            .join("::"),
-                                    )
-                                }
-                            })
-                            .unwrap_or_else(|| struct_name.to_string());
-                        let fn_name = format!("{}::{}", struct_prefix, function.sig.name.as_str());
-                        let fn_ty = self.function_pointer_ty(&sig);
-                        let struct_def = method_context.as_ref().and_then(|ctx| ctx.def_id);
-                        let method_name = function.sig.name.as_str().to_string();
-                        let impl_item_name = impl_item.name.as_str().to_string();
-                        let info = MethodLoweringInfo {
-                            def_id: Some(impl_item.def_id),
-                            substs: Vec::new(),
-                            sig: sig.clone(),
-                            fn_name: fn_name.clone(),
-                            fn_ty: fn_ty.clone(),
-                            struct_def,
-                        };
-
-                        self.method_lookup_by_def
-                            .insert(impl_item.def_id, info.clone());
-                        self.method_lookup.insert(fn_name.clone(), info.clone());
-                        self.method_lookup
-                            .insert(format!("{}::{}", struct_name, method_name), info.clone());
-                        self.method_lookup
-                            .insert(format!("{}::{}", struct_name, impl_item_name), info.clone());
-                        self.struct_methods
-                            .entry(struct_name.to_string())
-                            .or_default()
-                            .insert(method_name, info);
+                        self.register_method_lowering_info(
+                            struct_name,
+                            method_context.as_ref(),
+                            impl_item,
+                            function,
+                            sig,
+                        );
                     }
                 }
                 hir::ImplItemKind::AssocConst(_const_item) => {
