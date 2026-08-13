@@ -813,7 +813,7 @@ impl HirGenerator {
                     .iter()
                     .map(|seg| seg.name.as_str().to_string())
                     .collect::<Vec<_>>();
-                let Some(alias) = self.lookup_type_alias(&segments).cloned() else {
+                let Some(alias) = self.lookup_type_alias(&segments) else {
                     self.add_error(
                         Diagnostic::error(
                             "struct update requires a resolved struct definition".to_string(),
@@ -2383,10 +2383,15 @@ impl HirGenerator {
             return None;
         }
         let key = path.to_key();
-        match scope {
+        let local = match scope {
             PathResolutionScope::Value => self.lookup_symbol(&key, &self.global_value_defs),
             PathResolutionScope::Type => self.lookup_symbol(&key, &self.global_type_defs),
-        }
+        };
+        // A cross-package export (e.g. `libc::macos::getenv`) is looked up
+        // lazily against the workspace on a local-lookup miss, instead of
+        // being eagerly copied into `global_value_defs`/`global_type_defs`
+        // up front (see `seed_workspace_definitions`).
+        local.or_else(|| self.workspace.as_ref()?.find_export(&key))
     }
 
     // make_path_segment moved to helpers.rs
@@ -2455,7 +2460,7 @@ impl HirGenerator {
                         .iter()
                         .map(|seg| seg.name.clone())
                         .collect::<Vec<_>>();
-                    if let Some(alias) = self.lookup_type_alias(&segments).cloned() {
+                    if let Some(alias) = self.lookup_type_alias(&segments) {
                         return self.struct_fields_from_type(&alias, span);
                     }
                 }

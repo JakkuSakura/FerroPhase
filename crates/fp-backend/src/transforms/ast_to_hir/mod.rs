@@ -838,7 +838,7 @@ impl HirGenerator {
         let Some(ref workspace) = self.workspace else {
             return;
         };
-        for (_module_path, hir_program, exports) in workspace.hir_definitions() {
+        for (_module_path, hir_program, _exports) in workspace.hir_definitions() {
             // Deliberately *not* pushed into `program.items` — that would
             // duplicate every dependency's struct/enum into this package's
             // own output/lifted AST regardless of whether anything here
@@ -851,30 +851,19 @@ impl HirGenerator {
             }
             program.def_map.extend(hir_program.def_map);
             program.def_paths.extend(hir_program.def_paths);
-            for (path_str, res) in exports {
-                let path = fp_core::module::path::QualifiedPath::new(
-                    path_str
-                        .split("::")
-                        .map(|s| s.to_owned())
-                        .collect::<Vec<_>>(),
-                );
-                let entry = SymbolEntry {
-                    res,
-                    export: SymbolExport::Public,
-                    path: Some(path),
-                };
-                self.global_value_defs
-                    .insert(path_str.clone(), entry.clone());
-                self.global_type_defs.insert(path_str, entry);
-            }
+            // Cross-package exported value/type symbols (`_exports`) are
+            // *not* eagerly copied into `global_value_defs`/
+            // `global_type_defs` here — `resolve_type_symbol`/
+            // `resolve_value_symbol`/`lookup_global_res`/`item_exists` all
+            // fall back to `workspace.find_export` lazily on a
+            // local-lookup miss instead.
         }
         self.module_defs
             .extend(workspace.module_paths().into_iter());
-        // Cross-package `type X = Y;` aliases (e.g. `libc::char`) — merged
-        // as-is since every entry's key already carries its own defining
-        // package's full qualified path, so entries from different
-        // packages can never collide.
-        self.type_aliases.extend(workspace.type_alias_definitions());
+        // Cross-package `type X = Y;` aliases (e.g. `libc::char`) are
+        // *not* eagerly copied in here either — `lookup_type_alias`/
+        // `lookup_type_alias_with_key` fall back to `workspace.
+        // find_type_alias` lazily on a local-lookup miss instead.
     }
 
     fn predeclare_items(&mut self, items: &[ast::Item], tolerant: bool) -> Result<()> {
@@ -1194,23 +1183,26 @@ impl HirGenerator {
     }
 
     fn resolve_type_symbol(&self, name: &str) -> Option<hir::Res> {
+        let qualified = self.module_path.with_segment(name.to_string()).to_key();
         self.resolve_lexical_type_symbol(name)
-            .or_else(|| {
-                let qualified = self.module_path.with_segment(name.to_string());
-                self.lookup_symbol(&qualified.to_key(), &self.global_type_defs)
-            })
+            .or_else(|| self.lookup_symbol(&qualified, &self.global_type_defs))
             .or_else(|| self.prelude_type_defs.get(name).cloned())
             .or_else(|| self.lookup_symbol(name, &self.global_type_defs))
+            // Cross-package export (e.g. `libc::char`), looked up lazily
+            // against the workspace on a local-lookup miss — see
+            // `lookup_global_res`'s identical fallback.
+            .or_else(|| self.workspace.as_ref()?.find_export(&qualified))
+            .or_else(|| self.workspace.as_ref()?.find_export(name))
     }
 
     fn resolve_value_symbol(&self, name: &str) -> Option<hir::Res> {
+        let qualified = self.module_path.with_segment(name.to_string()).to_key();
         self.resolve_lexical_value_symbol(name)
-            .or_else(|| {
-                let qualified = self.module_path.with_segment(name.to_string());
-                self.lookup_symbol(&qualified.to_key(), &self.global_value_defs)
-            })
+            .or_else(|| self.lookup_symbol(&qualified, &self.global_value_defs))
             .or_else(|| self.prelude_value_defs.get(name).cloned())
             .or_else(|| self.lookup_symbol(name, &self.global_value_defs))
+            .or_else(|| self.workspace.as_ref()?.find_export(&qualified))
+            .or_else(|| self.workspace.as_ref()?.find_export(name))
     }
 
     fn push_value_scope(&mut self) {
@@ -2990,26 +2982,37 @@ impl HirGenerator {
         None
     }
 
-    fn lookup_type_alias(&self, segments: &[String]) -> Option<&ast::Ty> {
+    /// Lazily consult `self.workspace` for a cross-package alias (e.g.
+    /// `libc::char`) on a local-lookup miss, instead of relying on it
+    /// having been eagerly copied into `self.type_aliases` up front.
+    fn find_workspace_type_alias(&self, key: &str) -> Option<ast::Ty> {
+        self.workspace.as_ref()?.find_type_alias(key)
+    }
+
+    fn lookup_type_alias(&self, segments: &[String]) -> Option<ast::Ty> {
         let qualified = if segments.len() == 1 {
             self.qualify_name(&segments[0])
         } else {
             fp_core::module::path::QualifiedPath::new(segments.to_vec()).to_key()
         };
         if let Some(alias) = self.type_aliases.get(&qualified) {
-            return Some(alias);
+            return Some(alias.clone());
         }
         if segments.len() == 1 {
             if let Some(ancestor_key) = self.qualify_name_in_ancestor(&segments[0]) {
                 if let Some(alias) = self.type_aliases.get(&ancestor_key) {
-                    return Some(alias);
+                    return Some(alias.clone());
                 }
             }
         }
-        segments.get(0).and_then(|name| self.type_aliases.get(name))
+        if let Some(alias) = segments.get(0).and_then(|name| self.type_aliases.get(name)) {
+            return Some(alias.clone());
+        }
+        self.find_workspace_type_alias(&qualified)
+            .or_else(|| segments.get(0).and_then(|name| self.find_workspace_type_alias(name)))
     }
 
-    fn lookup_type_alias_with_key(&self, segments: &[String]) -> Option<(String, &ast::Ty)> {
+    fn lookup_type_alias_with_key(&self, segments: &[String]) -> Option<(String, ast::Ty)> {
         let qualified = if segments.len() == 1 {
             self.qualify_name(&segments[0])
         } else {
@@ -3019,7 +3022,7 @@ impl HirGenerator {
             if self.ty_is_simple_path(alias, segments) {
                 return None;
             }
-            return Some((qualified, alias));
+            return Some((qualified, alias.clone()));
         }
         if segments.len() == 1 {
             if let Some(ancestor_key) = self.qualify_name_in_ancestor(&segments[0]) {
@@ -3027,13 +3030,27 @@ impl HirGenerator {
                     if self.ty_is_simple_path(alias, segments) {
                         return None;
                     }
-                    return Some((ancestor_key, alias));
+                    return Some((ancestor_key, alias.clone()));
                 }
             }
         }
         if let Some(name) = segments.get(0) {
             if let Some(alias) = self.type_aliases.get(name) {
                 if self.ty_is_simple_path(alias, segments) {
+                    return None;
+                }
+                return Some((name.clone(), alias.clone()));
+            }
+        }
+        if let Some(alias) = self.find_workspace_type_alias(&qualified) {
+            if self.ty_is_simple_path(&alias, segments) {
+                return None;
+            }
+            return Some((qualified, alias));
+        }
+        if let Some(name) = segments.get(0) {
+            if let Some(alias) = self.find_workspace_type_alias(name) {
+                if self.ty_is_simple_path(&alias, segments) {
                     return None;
                 }
                 return Some((name.clone(), alias));

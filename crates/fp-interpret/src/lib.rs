@@ -102,22 +102,34 @@ impl LirInterpreter {
         self.run_function(program, &func, &[])
     }
 
+    /// Run a named function that may live in any of `workspaces` (the
+    /// current package's own, plus each dependency's own, in order) —
+    /// queried directly against each one's own artifacts instead of
+    /// requiring the caller to first clone every workspace's artifacts
+    /// into one throwaway combined `LirWorkspace`.
     pub fn run_function_named_in_workspace(
         &mut self,
-        workspace: &LirWorkspace,
+        workspaces: &[&LirWorkspace],
         package_id: &fp_core::package::PackageId,
         name: &fp_core::lir::Name,
     ) -> LirResult<Value> {
-        self.data_layout = workspace.data_layout.clone();
-        self.populate_functions_from_workspace(workspace);
-        self.populate_globals_from_workspace(workspace)?;
-        let function = workspace
-            .find_function(package_id.clone(), name)
+        let data_layout = workspaces
+            .first()
+            .map(|ws| ws.data_layout.clone())
+            .ok_or_else(|| VmError::Runtime("no workspace to run a function from".to_string()))?;
+        self.data_layout = data_layout.clone();
+        for workspace in workspaces {
+            self.populate_functions_from_workspace(workspace);
+            self.populate_globals_from_workspace(workspace)?;
+        }
+        let function = workspaces
+            .iter()
+            .find_map(|workspace| workspace.find_function(package_id.clone(), name))
             .cloned()
             .ok_or_else(|| {
                 VmError::Runtime(format!("missing function {name} in package {package_id}"))
             })?;
-        let program = LirProgram::new(workspace.data_layout.clone());
+        let program = LirProgram::new(data_layout);
         self.run_function(&program, &function, &[])
     }
 

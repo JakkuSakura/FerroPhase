@@ -49,6 +49,13 @@ pub struct LirGenerator {
     /// cross-package functions.
     function_package_ids: HashMap<String, fp_core::package::PackageId>,
     runtime_symbol_map: fn(&str) -> Option<lir::RuntimeSymbol>,
+    /// Dependency packages, queried lazily by `lookup_adt_def`/
+    /// `lookup_mir_layout` on a local-lookup miss — a cheap `Rc` snapshot,
+    /// not a copy of their MIR data. Replaces eagerly flattening every
+    /// dependency's `mir_adt_defs`/`mir_struct_fields` into `adt_defs`/
+    /// `mir_layouts` up front (see `driver.rs`'s old `all_adt_defs`/
+    /// `all_layouts`).
+    dependency_packages: Vec<std::rc::Rc<RefCell<fp_core::package::CompiledPackage>>>,
 }
 
 #[derive(Clone)]
@@ -120,6 +127,7 @@ impl LirGenerator {
             function_declarations: HashMap::new(),
             function_package_ids: HashMap::new(),
             runtime_symbol_map,
+            dependency_packages: Vec::new(),
         }
     }
 
@@ -149,6 +157,41 @@ impl LirGenerator {
     pub fn with_adt_defs(mut self, defs: HashMap<mir::DefId, mir::ty::AdtDef>) -> Self {
         self.adt_defs = defs;
         self
+    }
+
+    /// Dependency packages to fall back to, lazily, when `adt_defs`/
+    /// `mir_layouts` (this package's own maps) miss — see
+    /// `lookup_adt_def`/`lookup_mir_layout`.
+    pub fn with_dependency_packages(
+        mut self,
+        packages: Vec<std::rc::Rc<RefCell<fp_core::package::CompiledPackage>>>,
+    ) -> Self {
+        self.dependency_packages = packages;
+        self
+    }
+
+    fn lookup_adt_def(&self, def_id: &mir::DefId) -> Option<mir::ty::AdtDef> {
+        if let Some(def) = self.adt_defs.get(def_id) {
+            return Some(def.clone());
+        }
+        for package in &self.dependency_packages {
+            if let Some(def) = package.borrow().mir_adt_defs.get(def_id) {
+                return Some(def.clone());
+            }
+        }
+        None
+    }
+
+    fn lookup_mir_layout(&self, def_id: &mir::DefId) -> Option<Vec<mir::Ty>> {
+        if let Some(layout) = self.mir_layouts.get(def_id) {
+            return Some(layout.clone());
+        }
+        for package in &self.dependency_packages {
+            if let Some(layout) = package.borrow().mir_struct_fields.get(def_id) {
+                return Some(layout.clone());
+            }
+        }
+        None
     }
 
     fn resolve_global_symbol(&self, path: &mir::Path) -> lir::Name {
@@ -6144,7 +6187,7 @@ impl LirGenerator {
                     name: None,
                 }
             }
-            TyKind::Adt(adt, substs) if self.mir_layouts.contains_key(&adt.did) => {
+            TyKind::Adt(adt, substs) if self.lookup_mir_layout(&adt.did).is_some() => {
                 if substs.iter().any(|arg| {
                     matches!(
                         arg,
@@ -6157,7 +6200,7 @@ impl LirGenerator {
                         adt.did, ty
                     );
                 }
-                let field_tys = self.mir_layouts.get(&adt.did).unwrap().clone();
+                let field_tys = self.lookup_mir_layout(&adt.did).unwrap();
                 let fields: Vec<Option<lir::LirType>> = field_tys
                     .iter()
                     .map(|ty| Some(self.lir_type_from_ty(ty)))
@@ -6196,7 +6239,7 @@ impl LirGenerator {
                         name: None,
                     };
                 }
-                if let Some(populated) = self.adt_defs.get(&adt.did) {
+                if let Some(populated) = self.lookup_adt_def(&adt.did) {
                     if let Some(variant) = populated.variants.first() {
                         let fields: Vec<Option<lir::LirType>> = variant
                             .fields

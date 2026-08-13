@@ -8,6 +8,7 @@ use fp_core::ast::{
 };
 use fp_core::frontend::LanguageFrontend;
 use fp_lang::FerroFrontend;
+use std::cell::OnceCell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -213,46 +214,106 @@ fn merge_runtime_helpers(
     let mut user_file = ast;
 
     ensure_std_module(&mut user_file);
-    merge_core_std_tree(&frontend, &mut user_file)?;
-    merge_embedded_std_tree(&frontend, &mut user_file)?;
+    with_cached_std_trees(|trees| {
+        merge_std_tree(&trees.core, &mut user_file)?;
+        merge_std_tree(&trees.embedded, &mut user_file)
+    })?;
     if let Some(inventory) = inventory {
         merge_inventory_items(&frontend, &mut user_file, inventory)?;
     }
     Ok(user_file)
 }
 
-fn merge_core_std_tree(
-    frontend: &FerroFrontend,
-    user_file: &mut fp_core::ast::File,
-) -> Result<(), ShellError> {
+/// A module's fully-qualified path (owned, since the parsed source it
+/// borrowed from doesn't outlive one merge call) paired with its parsed
+/// items.
+type StdTreeEntry = (Vec<String>, Vec<Item>);
+
+struct StdTrees {
+    core: Vec<StdTreeEntry>,
+    embedded: Vec<StdTreeEntry>,
+}
+
+/// Parse the on-disk core-std tree (`fp-lang/src/std/**/*.fp`) and the
+/// compiled-in embedded-std tree exactly once per thread and cache the
+/// result — this used to re-read and re-parse all ~167 files on every
+/// single call, even though neither tree ever changes within a process's
+/// lifetime. This doesn't remove the eager splice into the user's AST
+/// (that needs the larger `ModuleResolver` rework described in the
+/// architecture audit), but it does remove the real, repeated disk I/O +
+/// parsing cost underneath it. Thread-local rather than a global
+/// `static`, since the AST types here aren't `Sync`. Both trees are
+/// parsed by one shared `FerroFrontend` (matching the original code),
+/// since the frontend accumulates parse state across files — splitting
+/// it into two independent instances broke cross-tree resolution.
+fn with_cached_std_trees<R>(
+    f: impl FnOnce(&StdTrees) -> Result<R, ShellError>,
+) -> Result<R, ShellError> {
+    thread_local! {
+        static CACHE: OnceCell<std::result::Result<StdTrees, String>> = OnceCell::new();
+    }
+    CACHE.with(|cache| {
+        match cache.get_or_init(|| build_std_trees().map_err(|err| err.to_string())) {
+            Ok(trees) => f(trees),
+            Err(err) => Err(ShellError::Lower(err.clone())),
+        }
+    })
+}
+
+fn build_std_trees() -> Result<StdTrees, ShellError> {
+    let frontend = FerroFrontend::new();
+    Ok(StdTrees {
+        core: build_core_std_tree(&frontend)?,
+        embedded: build_embedded_std_tree(&frontend)?,
+    })
+}
+
+fn build_core_std_tree(frontend: &FerroFrontend) -> Result<Vec<StdTreeEntry>, ShellError> {
     let core_std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fp-lang/src/std");
     let mut files = Vec::new();
     collect_fp_files(core_std_root.as_path(), &mut files)?;
+    let mut tree = Vec::with_capacity(files.len());
     for path in files {
         let relative = path
             .strip_prefix(core_std_root.as_path())
             .map_err(|err| ShellError::Lower(err.to_string()))?;
         let embedded_path = relative.to_string_lossy().replace('\\', "/");
         let module_path = module_path_for_core_std(embedded_path.as_str())?;
-        merge_source_items(
-            frontend,
-            user_file,
-            &module_path,
-            embedded_path.as_str(),
-            embedded_path.as_str(),
-            true,
-        )?;
+        let items = parse_source_items(frontend, embedded_path.as_str(), embedded_path.as_str(), true)?;
+        tree.push((
+            module_path.iter().map(|s| s.to_string()).collect(),
+            items,
+        ));
     }
-    Ok(())
+    Ok(tree)
 }
 
-fn merge_embedded_std_tree(
-    frontend: &FerroFrontend,
-    user_file: &mut fp_core::ast::File,
-) -> Result<(), ShellError> {
+fn build_embedded_std_tree(frontend: &FerroFrontend) -> Result<Vec<StdTreeEntry>, ShellError> {
+    let mut tree = Vec::new();
     for embedded_path in embedded_std::paths() {
         let module_path = module_path_for_embedded_std(embedded_path)?;
-        merge_embedded_std_items(frontend, user_file, &module_path, embedded_path)?;
+        let items = parse_source_items(
+            frontend,
+            embedded_path,
+            &format!("<fp-shell-std>/{embedded_path}"),
+            false,
+        )?;
+        tree.push((
+            module_path.iter().map(|s| s.to_string()).collect(),
+            items,
+        ));
+    }
+    Ok(tree)
+}
+
+fn merge_std_tree(
+    tree: &[StdTreeEntry],
+    user_file: &mut fp_core::ast::File,
+) -> Result<(), ShellError> {
+    for (module_path, items) in tree {
+        let module_path: Vec<&str> = module_path.iter().map(|s| s.as_str()).collect();
+        let target = ensure_nested_module(user_file, &module_path)?;
+        target.items.extend(items.clone());
     }
     Ok(())
 }
@@ -276,30 +337,16 @@ fn ensure_std_module(user_file: &mut fp_core::ast::File) {
     }
 }
 
-fn merge_embedded_std_items(
+/// Read and parse one embedded std source file, returning its items —
+/// pure (no `user_file` mutation), so the result can be cached (see
+/// `cached_core_std_tree`/`cached_embedded_std_tree`) instead of re-read
+/// and re-parsed on every merge.
+fn parse_source_items(
     frontend: &FerroFrontend,
-    user_file: &mut fp_core::ast::File,
-    module_path: &[&str],
-    embedded_path: &str,
-) -> Result<(), ShellError> {
-    merge_source_items(
-        frontend,
-        user_file,
-        module_path,
-        embedded_path,
-        &format!("<fp-shell-std>/{embedded_path}"),
-        false,
-    )
-}
-
-fn merge_source_items(
-    frontend: &FerroFrontend,
-    user_file: &mut fp_core::ast::File,
-    module_path: &[&str],
     embedded_path: &str,
     display_path: &str,
     core_std: bool,
-) -> Result<(), ShellError> {
+) -> Result<Vec<Item>, ShellError> {
     let source = if core_std {
         fs::read_to_string(
             Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -324,10 +371,7 @@ fn merge_source_items(
                 err
             ))
         })?;
-    let file = parsed.ast;
-    let target = ensure_nested_module(user_file, module_path)?;
-    target.items.extend(file.items);
-    Ok(())
+    Ok(parsed.ast.items)
 }
 
 fn collect_fp_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), ShellError> {

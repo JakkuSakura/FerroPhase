@@ -554,16 +554,16 @@ impl CompilerDriver {
                 .extend(struct_layouts);
             package.borrow_mut().mir_adt_defs.extend(adt_defs.clone());
         }
-        let mut all_adt_defs = HashMap::new();
-        for (_dep_id, dep_package) in self.state.typing_ctx.env_ctx.crates().iter() {
-            all_adt_defs.extend(dep_package.borrow().mir_adt_defs.clone());
-        }
+        // `lower_to_lir` falls back to the workspace's other packages'
+        // `mir_adt_defs` lazily on a miss (see `LirGenerator::
+        // lookup_adt_def`) — no need to pre-flatten every dependency's
+        // ADT defs into a combined map here.
         let lir_id = self.lower_to_lir(
             &mir_id,
             &fqp,
             &current_package_id,
             &full_layouts,
-            &all_adt_defs,
+            &adt_defs,
         )?;
 
         let lir = self.state.lir(&lir_id)?.clone();
@@ -607,16 +607,15 @@ impl CompilerDriver {
             package.mir_struct_fields.extend(struct_layouts);
             package.mir_adt_defs.extend(adt_defs.clone());
         }
-        let mut all_adt_defs = HashMap::new();
-        for (_dependency_id, dependency) in self.state.typing_ctx.env_ctx.crates().iter() {
-            all_adt_defs.extend(dependency.borrow().mir_adt_defs.clone());
-        }
+        // See the identical comment in `compile_items_to_lir_units` —
+        // `lower_to_lir` falls back to the workspace's other packages
+        // lazily, no pre-flatten needed.
         let lir_id = self.lower_to_lir(
             &mir_id,
             &fqp,
             &package_id,
             &full_layouts,
-            &all_adt_defs,
+            &adt_defs,
         )?;
         Ok(vec![fp_core::lir::LirCompileUnit {
             package_id: hir_package_id,
@@ -821,19 +820,38 @@ impl CompilerDriver {
                 .insert_const_value(value_id.clone(), Value::unit());
             return Ok(0);
         }
-        let mut execution_workspace = fp_core::lir::LirWorkspace::new(lir.data_layout.clone());
-        for (_dependency_id, package) in self.state.typing_ctx.env_ctx.crates().iter() {
-            execution_workspace
-                .add_workspace(&package.borrow().lir_workspace)
+        // Query each package's own `lir_workspace` directly instead of
+        // cloning every artifact from every dependency into one throwaway
+        // combined workspace first — `run_function_named_in_workspace`
+        // now accepts a chain and checks each in turn.
+        let dependency_packages: Vec<_> = self
+            .state
+            .typing_ctx
+            .env_ctx
+            .crates()
+            .values()
+            .cloned()
+            .collect();
+        let dependency_borrows: Vec<_> = dependency_packages.iter().map(|p| p.borrow()).collect();
+        let mut workspaces: Vec<&fp_core::lir::LirWorkspace> = dependency_borrows
+            .iter()
+            .map(|package| &package.lir_workspace)
+            .collect();
+        // This package's own just-compiled `lir` may not be stored in any
+        // package's `lir_workspace` yet — fall back to a small
+        // single-program workspace holding just it, same as before.
+        let mut temp_workspace = None;
+        if !workspaces.iter().any(|ws| {
+            ws.find_function(package_id.clone(), &comptime_entries[0].function)
+                .is_some()
+        }) {
+            let mut ws = fp_core::lir::LirWorkspace::new(lir.data_layout.clone());
+            ws.add_program(package_id.clone(), path.path().clone(), lir)
                 .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
+            temp_workspace = Some(ws);
         }
-        if execution_workspace
-            .find_function(package_id.clone(), &comptime_entries[0].function)
-            .is_none()
-        {
-            execution_workspace
-                .add_program(package_id.clone(), path.path().clone(), lir)
-                .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
+        if let Some(ws) = temp_workspace.as_ref() {
+            workspaces.insert(0, ws);
         }
 
         let mut count = 0usize;
@@ -845,14 +863,15 @@ impl CompilerDriver {
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         for entry in &comptime_entries {
             let result = self.interpreter.run_function_named_in_workspace(
-                &execution_workspace,
+                &workspaces,
                 &package_id,
                 &entry.function,
             );
             let mut value =
                 result.map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
-            let entry_lir_ty = execution_workspace
-                .find_function(package_id.clone(), &entry.function)
+            let entry_lir_ty = workspaces
+                .iter()
+                .find_map(|ws| ws.find_function(package_id.clone(), &entry.function))
                 .map(|function| function.signature.return_type.clone())
                 .ok_or_else(|| {
                     CompilerDriverError::UnsupportedWork(format!(
@@ -1004,22 +1023,27 @@ impl CompilerDriver {
         adt_defs: &HashMap<fp_core::hir::DefId, fp_core::mir::ty::AdtDef>,
     ) -> Result<LirId, CompilerDriverError> {
         let mir = self.state.mir(mir_id)?.clone();
-        let mut all_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> = HashMap::new();
-        for (_dep_id, dep_package) in self.state.typing_ctx.env_ctx.crates().iter() {
-            all_layouts.extend(
-                dep_package
-                    .borrow()
-                    .mir_struct_fields
-                    .iter()
-                    .map(|(k, v)| (*k, v.clone())),
-            );
-        }
+        // Dependency packages (this package's own entry is included too,
+        // and by this point already carries this call's freshly-extended
+        // `mir_struct_fields`/`mir_adt_defs` — see the callers) are handed
+        // to `LirGenerator` as a cheap `Rc` snapshot, queried lazily on a
+        // miss by `lookup_adt_def`/`lookup_mir_layout`, instead of eagerly
+        // flattening every package's struct-field layouts into one map
+        // here on every call.
+        let dependency_packages: Vec<_> = self
+            .state
+            .typing_ctx
+            .env_ctx
+            .crates()
+            .values()
+            .cloned()
+            .collect();
         let mut lowering = LirGenerator::new(self.state.typing_ctx.data_layout.clone())
             .with_package_id(package_id.clone())
             .with_module_path(path.path().to_key())
-            .with_mir_layouts(all_layouts)
             .with_full_layouts(full_layouts.clone())
-            .with_adt_defs(adt_defs.clone());
+            .with_adt_defs(adt_defs.clone())
+            .with_dependency_packages(dependency_packages);
         // Thread dependency packages' compiled function signatures into
         // this generator too, mirroring the `mir_struct_fields` merge
         // above — otherwise a cross-package call (e.g. `json::parse`)

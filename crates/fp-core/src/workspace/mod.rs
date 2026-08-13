@@ -317,18 +317,34 @@ impl WorkspaceContext {
             .collect()
     }
 
-    /// Return `type X = Y;` aliases published by every imported package
-    /// (e.g. `libc`'s `pub type char = u8;`), keyed by their fully-qualified
-    /// defining path (`"libc::char"`) — so a dependent package's own
-    /// `type_aliases` lookup can resolve an explicitly-qualified reference
-    /// like `::libc::char` the same way it already resolves same-package
-    /// aliases.
-    pub fn type_alias_definitions(&self) -> HashMap<String, crate::ast::Ty> {
-        let mut merged = HashMap::new();
+    /// Cross-package counterpart to `find_struct`/`find_enum`, for a
+    /// `type X = Y;` alias (e.g. `libc`'s `pub type char = u8;`) by its
+    /// fully-qualified defining path (`"libc::char"`) — so a dependent
+    /// package's own alias lookup can resolve an explicitly-qualified
+    /// reference like `::libc::char` the same way it already resolves
+    /// same-package aliases, without eagerly copying every package's
+    /// aliases into the caller's own map first.
+    pub fn find_type_alias(&self, key: &str) -> Option<crate::ast::Ty> {
         for package in self.sorted_packages() {
-            merged.extend(package.borrow().type_alias_exports.clone());
+            if let Some(ty) = package.borrow().type_alias_exports.get(key) {
+                return Some(ty.clone());
+            }
         }
-        merged
+        None
+    }
+
+    /// Cross-package counterpart to `find_struct`/`find_enum`, for a
+    /// value/type symbol exported by some other package's `hir_exports`
+    /// (e.g. `libc::macos::getenv`), looked up lazily by its fully
+    /// qualified key instead of being eagerly copied into the caller's
+    /// own `global_value_defs`/`global_type_defs`.
+    pub fn find_export(&self, key: &str) -> Option<crate::hir::Res> {
+        for package in self.sorted_packages() {
+            if let Some(res) = package.borrow().hir_exports.get(key) {
+                return Some(res.clone());
+            }
+        }
+        None
     }
 
     pub fn is_loaded(&self, package_id: &PackageId) -> bool {

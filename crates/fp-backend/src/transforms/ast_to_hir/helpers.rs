@@ -342,7 +342,12 @@ impl HirGenerator {
                         }
                     }
                 }
-                false
+                // Cross-package export (e.g. `libc::macos::getenv`),
+                // looked up lazily against the workspace on a local-lookup
+                // miss — see `lookup_global_res`'s identical fallback.
+                self.workspace
+                    .as_ref()
+                    .is_some_and(|ws| ws.find_export(&key).is_some())
             };
             let scope_contains = |name: &str| match scope {
                 PathResolutionScope::Value => self.resolve_value_symbol(name).is_some(),
