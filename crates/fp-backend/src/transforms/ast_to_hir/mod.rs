@@ -1355,6 +1355,32 @@ impl HirGenerator {
         self.reset_file_context("<package>");
         self.prepare_lowering_state();
 
+        // Unlike `transform_file` (the single-file path), `transform_package`
+        // never ran the `lower_closures_in_file` pre-pass that decomposes a
+        // closure literal into an ordinary struct+function pair before HIR
+        // lowering sees it — see `lower_closures_in_items`'s doc comment.
+        // Run it here, once, on a local mutable copy; its generated
+        // `__ClosureN`/`__closureN_call` items are synthetic and not tied to
+        // any one source module, so they're scoped to the package root.
+        let mut lowered_items: Vec<ast::Item> =
+            package.items.iter().map(|pi| pi.item.clone()).collect();
+        let original_len = lowered_items.len();
+        lower_closures_in_items(&mut lowered_items)?;
+        let generated_count = lowered_items.len() - original_len;
+        let root_path = fp_core::module::path::QualifiedPath::new(Vec::new());
+        let package_items: Vec<fp_core::package::PackageItem> = lowered_items
+            .into_iter()
+            .enumerate()
+            .map(|(i, item)| {
+                let path = if i < generated_count {
+                    root_path.clone()
+                } else {
+                    package.items[i - generated_count].path.clone()
+                };
+                fp_core::package::PackageItem { path, item }
+            })
+            .collect();
+
         let mut program = hir::Program::new();
         self.seed_workspace_definitions(&mut program);
         self.load_default_prelude_defs();
@@ -1363,7 +1389,7 @@ impl HirGenerator {
         // yet, because it's only reachable through an import that hasn't
         // been processed, get deferred into `pending_impls` instead of
         // failing immediately; see `predeclare_items`'s `ItemKind::Impl` arm).
-        for package_item in &package.items {
+        for package_item in &package_items {
             self.with_module_scope(&package_item.path, |this| {
                 this.predeclare_items(std::slice::from_ref(&package_item.item), true)
             })?;
@@ -1387,7 +1413,7 @@ impl HirGenerator {
         self.program_def_map = program.def_map.clone();
 
         // 4: append — unchanged.
-        for package_item in &package.items {
+        for package_item in &package_items {
             self.with_module_scope(&package_item.path, |this| {
                 this.append_item(&mut program, &package_item.item)
             })?;
@@ -3589,14 +3615,30 @@ impl Default for HirGenerator {
 }
 
 fn lower_closures_in_file(file: &mut ast::File) -> Result<Vec<Diagnostic>> {
+    lower_closures_in_items(&mut file.items)
+}
+
+/// Decomposes every `ExprKind::Closure` reachable from `items` into an
+/// ordinary `__ClosureN` struct + `__closureN_call` function pair
+/// (`ClosureLowering`), same as `lower_closures_in_file` — factored out
+/// so `transform_package` (which has no single `ast::File` to run the
+/// existing pass on) can run it directly over a package's flattened item
+/// list. Without this pre-pass, a closure literal reaching
+/// `transform_expr_to_hir_inner`'s `ExprKind::Closure` arm has no other
+/// lowering support and gets discarded entirely (see that arm's explicit
+/// "closure lowering not implemented" placeholder) — previously
+/// unnoticed for `transform_package`'s callers (whole-package/typed
+/// compiles) since typed content never exercised this path for a real
+/// multi-file package before.
+fn lower_closures_in_items(items: &mut Vec<ast::Item>) -> Result<Vec<Diagnostic>> {
     let mut pass = ClosureLowering::new();
-    pass.find_and_transform_functions(&mut file.items)?;
-    pass.rewrite_usage(&mut file.items)?;
+    pass.find_and_transform_functions(items)?;
+    pass.rewrite_usage(items)?;
 
     if !pass.generated_items.is_empty() {
         let mut new_items = pass.generated_items;
-        new_items.append(&mut file.items);
-        file.items = new_items;
+        new_items.append(items);
+        *items = new_items;
     }
     Ok(pass.diagnostics)
 }

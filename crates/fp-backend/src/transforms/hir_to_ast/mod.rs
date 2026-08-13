@@ -605,9 +605,16 @@ impl<'a> HirToAstLifter<'a> {
                         .and_then(|t| t.pat_types.get(&local.pat.hir_id))
                         .and_then(|ty| self.hir_ty_to_ast(ty)),
                 };
-                let pat = match ty_ann {
-                    Some(ty) => Pattern::new(PatternKind::Type(ast::PatternType::new(pat, ty))),
-                    None => pat,
+                // Kotlin destructuring declarations (`val (a, b) = ...`)
+                // can't carry an explicit type annotation at all (the
+                // component types are always inferred from `component1()`/
+                // `component2()`) — only attach the resolved type for a
+                // simple single-name binding.
+                let pat = match (ty_ann, pat.kind()) {
+                    (Some(ty), PatternKind::Ident(_)) => {
+                        Pattern::new(PatternKind::Type(ast::PatternType::new(pat, ty)))
+                    }
+                    _ => pat,
                 };
                 Ok(BlockStmt::Let(ast::StmtLet {
                     pat,
@@ -973,16 +980,29 @@ impl<'a> HirToAstLifter<'a> {
         match &ty.kind {
             TyKind::Adt(adt, substs) => {
                 let name = self.program.def_paths.get(&adt.did)?.last()?.as_str();
-                let args: Vec<String> = substs
+                let type_substs: Vec<&hir::ty::Ty> = substs
                     .iter()
                     .filter_map(|arg| match arg {
-                        hir::ty::GenericArg::Type(t) => self.resolved_ty_source_name(t),
+                        hir::ty::GenericArg::Type(t) => Some(t),
                         _ => None,
                     })
                     .collect();
-                if args.is_empty() {
+                if type_substs.is_empty() {
                     Some(name.to_string())
                 } else {
+                    // A real generic argument that itself can't be
+                    // resolved (an unresolved inference variable, or any
+                    // other not-yet-handled `TyKind`) falls back to `Any`
+                    // rather than being silently dropped — dropping it
+                    // would shift the remaining args over (wrong for
+                    // multi-param wrappers like `HashMap<K, V>`) and,
+                    // when it's the only arg, collapse the whole
+                    // reference to a bare, ungenericized (and always
+                    // invalid) wrapper name.
+                    let args: Vec<String> = type_substs
+                        .iter()
+                        .map(|t| self.resolved_ty_source_name(t).unwrap_or_else(|| "Any".to_string()))
+                        .collect();
                     Some(format!("{}<{}>", name, args.join(", ")))
                 }
             }
@@ -991,6 +1011,22 @@ impl<'a> HirToAstLifter<'a> {
             TyKind::Char => Some("char".to_string()),
             TyKind::Int(_) | TyKind::Uint(_) => Some("i64".to_string()),
             TyKind::Float(_) => Some("f64".to_string()),
+            // `dyn Trait` (as in `Arc<dyn GitTransport>`) — Kotlin has no
+            // trait-object syntax of its own, but its interface types work
+            // the same way at the use site, so the trait's own name is
+            // the right Kotlin name too. Without this, `Arc<dyn Trait>`'s
+            // inner arg silently resolves to nothing, `args` ends up
+            // empty, and the caller falls back to bare, wrapper-only
+            // "Arc" (dropping the trait name entirely).
+            TyKind::Dynamic(predicates, _) => predicates.iter().find_map(|p| match p {
+                hir::ty::ExistentialPredicate::Trait(trait_ref) => self
+                    .program
+                    .def_paths
+                    .get(&trait_ref.def_id)
+                    .and_then(|segments| segments.last())
+                    .map(|s| s.as_str().to_string()),
+                _ => None,
+            }),
             _ => None,
         }
     }
