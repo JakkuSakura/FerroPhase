@@ -5477,20 +5477,26 @@ impl MirLowering {
         }
     }
 
-    /// Signature-only pre-pass over every non-generic impl in the package,
-    /// run before any bodies are lowered (see `lower_program`) — so a call
-    /// to a non-generic method/associated function resolves via
-    /// `method_lookup_by_def` regardless of which module declares the
-    /// caller vs. the callee. Without this, `lower_impl`'s per-method
-    /// registration (only inserted *after* a body successfully lowers)
-    /// makes lookup success depend on `program.items` order, so a forward
-    /// reference across modules (e.g. `std::alloc`'s `Vec::join` calling
-    /// `std::string::String::new`, where `alloc` is declared before
-    /// `string` in `std/mod.fp`) fails with "unresolved call target"
-    /// purely because of declaration order, aborting the rest of the pass.
-    /// Mirrors `lower_impl`'s own skip conditions (HashMap special-case,
-    /// generic impl/method) verbatim so this pre-pass never registers
-    /// something the main pass would skip.
+    /// Signature-only pre-pass over every impl in the package, run before
+    /// any bodies are lowered (see `lower_program`) — so a call to a
+    /// method/associated function resolves regardless of which module
+    /// declares the caller vs. the callee. Without this, `lower_impl`'s
+    /// per-method registration (only inserted *after* a body successfully
+    /// lowers, or — for generic methods — only when `lower_impl` itself
+    /// reaches that impl item) makes lookup success depend on
+    /// `program.items` order, so a forward reference across modules (e.g.
+    /// `std::alloc`'s `Vec::join` calling `std::string::String::new`, where
+    /// `alloc` is declared before `string` in `std/mod.fp`) fails with
+    /// "unresolved call target" purely because of declaration order,
+    /// aborting the rest of the pass. Non-generic methods get a fully
+    /// lowered signature registered now (`register_method_lowering_info`);
+    /// generic methods (e.g. `impl<T> Vec<T>`) can't — their signature
+    /// needs concrete substs only known at a call site — so they instead
+    /// get their raw, unspecialized HIR registered
+    /// (`register_generic_method_definition`), which specialization can
+    /// find and lower on demand regardless of order. Mirrors `lower_impl`'s
+    /// own skip conditions (HashMap special-case) verbatim so this
+    /// pre-pass never registers something the main pass would skip.
     fn register_impl_signatures(&mut self, impl_block: &hir::Impl) {
         let struct_name = self.struct_name_from_type(&impl_block.self_ty);
         let method_context = self.make_method_context(&impl_block.self_ty);
@@ -5513,6 +5519,13 @@ impl MirLowering {
                 continue;
             }
             if impl_is_generic || !function.sig.generics.params.is_empty() {
+                self.register_generic_method_definition(
+                    struct_name.as_deref(),
+                    method_context.as_ref(),
+                    impl_item,
+                    function,
+                    impl_block,
+                );
                 continue;
             }
             let Some(struct_name) = struct_name.as_deref() else {
@@ -5527,6 +5540,46 @@ impl MirLowering {
                 sig,
             );
         }
+    }
+
+    /// Shared by `register_impl_signatures` (order-independent pre-pass)
+    /// and `lower_impl` (real per-item pass) so the two paths can't drift
+    /// apart — the generic-method counterpart to
+    /// `register_method_lowering_info`. Registers a generic method's raw,
+    /// unspecialized HIR so call-site specialization
+    /// (`ensure_method_specialization`) can find it regardless of
+    /// `program.items` order; the body itself is only ever lowered later,
+    /// once specialized for a concrete call site's substs. `entry(...)
+    /// .or_insert` rather than an unconditional overwrite since this can
+    /// now run twice for the same method (once from the pre-pass, once
+    /// from `lower_impl` reaching the same item) — both calls would
+    /// produce an identical `MethodDefinition` from the same immutable
+    /// HIR, so it doesn't matter which one wins, only that neither panics
+    /// or does redundant work.
+    fn register_generic_method_definition(
+        &mut self,
+        struct_name: Option<&str>,
+        method_context: Option<&MethodContext>,
+        impl_item: &hir::ImplItem,
+        function: &hir::Function,
+        impl_block: &hir::Impl,
+    ) {
+        let qualified_name = match struct_name {
+            Some(name) => format!("{}::{}", name, function.sig.name),
+            None => function.sig.name.as_str().to_string(),
+        };
+        let def = MethodDefinition {
+            def_id: impl_item.def_id,
+            function: function.clone(),
+            impl_generics: impl_block.generics.clone(),
+            self_ty: impl_block.self_ty.clone(),
+            self_def: method_context.and_then(|ctx| ctx.def_id),
+            method_name: qualified_name.clone(),
+        };
+        self.method_defs_by_def
+            .entry(impl_item.def_id)
+            .or_insert_with(|| def.clone());
+        self.method_defs.entry(qualified_name).or_insert(def);
     }
 
     /// Shared by `register_impl_signatures` (signature-only pre-pass) and
@@ -5622,21 +5675,13 @@ impl MirLowering {
                         continue;
                     }
                     if impl_is_generic || !function.sig.generics.params.is_empty() {
-                        let qualified_name = match struct_name.as_deref() {
-                            Some(name) => format!("{}::{}", name, function.sig.name),
-                            None => function.sig.name.as_str().to_string(),
-                        };
-                        let def = MethodDefinition {
-                            def_id: impl_item.def_id,
-                            function: function.clone(),
-                            impl_generics: impl_block.generics.clone(),
-                            self_ty: impl_block.self_ty.clone(),
-                            self_def: method_context.as_ref().and_then(|ctx| ctx.def_id),
-                            method_name: qualified_name.clone(),
-                        };
-                        self.method_defs_by_def
-                            .insert(impl_item.def_id, def.clone());
-                        self.method_defs.insert(qualified_name, def);
+                        self.register_generic_method_definition(
+                            struct_name.as_deref(),
+                            method_context.as_ref(),
+                            impl_item,
+                            function,
+                            impl_block,
+                        );
                         continue;
                     }
 
@@ -8530,6 +8575,28 @@ impl<'a> BodyBuilder<'a> {
             .enum_variant_payloads_for_args(variant, &args, span)
     }
 
+    /// Struct-literal counterpart to `payload_types_from_type_substs`: when
+    /// the current function body is a specific generic specialization
+    /// (`self.type_substs` non-empty), resolve a struct's generic args from
+    /// that specialization's own substitution map — the authoritative
+    /// source for *this* specialization — before falling back to inferring
+    /// them from field literals (which can't work for a field-less generic
+    /// struct like `Vec<T> { }`, whose constructor body has no fields to
+    /// infer `T` from).
+    fn struct_generic_args_from_type_substs(&mut self, info: &StructDefinition) -> Option<Vec<Ty>> {
+        if self.type_substs.is_empty() {
+            return None;
+        }
+        if info.generics.is_empty() {
+            return None;
+        }
+        let mut args = Vec::with_capacity(info.generics.len());
+        for name in &info.generics {
+            args.push(self.type_substs.get(name)?.clone());
+        }
+        Some(args)
+    }
+
     fn variant_payloads_from_layout_or_ty(
         &mut self,
         layout: &EnumLayout,
@@ -10382,6 +10449,41 @@ impl<'a> BodyBuilder<'a> {
                 self.lower_block_as_statement(block)?;
             }
             hir::ExprKind::Assign(place_expr, value_expr) => {
+                // `x[i] = v` where `x`'s type has a real `index_set`
+                // method (e.g. `Vec<T>`'s `Index`-trait-style impl) isn't a
+                // real addressable MIR place at all — the struct's memory
+                // is behind a raw pointer field, reachable only through a
+                // method call, not a field/array projection — so it can't
+                // go through `lower_place` (see its `Index` projection
+                // case bailing out for exactly this reason). Detect it
+                // here, before `lower_place` gets a chance to report
+                // "assignment target is not addressable", and dispatch to
+                // a real method call instead. `typeck_exprs` gives the
+                // receiver's type without lowering it (no side effects
+                // from lowering something we might not use).
+                if let hir::ExprKind::Index(receiver, index) = &place_expr.kind {
+                    let receiver_ty = self.lowering.typeck_exprs.get(&receiver.hir_id).cloned();
+                    if let Some(struct_def_id) = receiver_ty
+                        .as_ref()
+                        .and_then(|ty| self.real_indexable_struct_def_id(ty))
+                    {
+                        let unit_ty = Ty {
+                            kind: TyKind::Tuple(Vec::new()),
+                        };
+                        let local_id = self.allocate_temp(unit_ty.clone(), expr.span);
+                        let place = mir::Place::from_local(local_id);
+                        self.call_real_method_into_place(
+                            struct_def_id,
+                            "index_set",
+                            receiver,
+                            &[index, value_expr],
+                            place,
+                            Some(&unit_ty),
+                            expr.span,
+                        )?;
+                        return Ok(());
+                    }
+                }
                 let place_info = match self.lower_place(place_expr)? {
                     Some(info) => info,
                     None => {
@@ -11348,7 +11450,9 @@ impl<'a> BodyBuilder<'a> {
         if let Some(def_id) = def_id {
             if let Some(info) = self.lowering.struct_defs.get(&def_id).cloned() {
                 if generic_args.is_empty() && !info.generics.is_empty() {
-                    if let Some(inferred) =
+                    if let Some(from_substs) = self.struct_generic_args_from_type_substs(&info) {
+                        generic_args = from_substs;
+                    } else if let Some(inferred) =
                         self.infer_struct_generics_from_literals(&info, fields, span)?
                     {
                         generic_args = inferred;
@@ -14659,6 +14763,24 @@ impl<'a> BodyBuilder<'a> {
                     Some(const_info) => const_info,
                     None => self.lower_operand(base, None)?,
                 };
+                if let Some(struct_def_id) = self.real_indexable_struct_def_id(&base_info.ty) {
+                    let element_ty = expected.cloned().unwrap_or_else(|| self.lowering.error_ty());
+                    let local_id = self.allocate_temp(element_ty.clone(), expr.span);
+                    let local_place = mir::Place::from_local(local_id);
+                    let result_ty = self.call_real_method_into_place(
+                        struct_def_id,
+                        "index",
+                        base,
+                        &[index],
+                        local_place.clone(),
+                        Some(&element_ty),
+                        expr.span,
+                    )?;
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::copy(local_place),
+                        ty: result_ty,
+                    });
+                }
                 if self.is_list_container(&base_info.ty) {
                     let index_ty = Ty {
                         kind: TyKind::Uint(UintTy::Usize),
@@ -15757,6 +15879,37 @@ impl<'a> BodyBuilder<'a> {
                         return None;
                     }
                 };
+
+                // `sizeof!(T)` where `T` is the enclosing function/method's
+                // own generic type parameter (e.g. `impl<T> Vec<T> { fn
+                // push(&mut self, value: T) { ... sizeof!(T) ... } }`) — `T`
+                // has no struct definition for `resolve_struct_ref` to find,
+                // but by the time this specialized body is lowered,
+                // `self.type_substs` (the same per-specialization map
+                // `payload_types_from_type_substs` reads for enum payloads)
+                // already holds the concrete substitution for it. AST→HIR
+                // still lowers an unresolved bare identifier like `T` to a
+                // usable `hir::Path` (segment name preserved, `res: None`),
+                // so check `type_substs` by name before falling through to
+                // the struct-only path below.
+                if let hir::ExprKind::Path(path) = &target_expr.kind {
+                    if let [segment] = path.segments.as_slice() {
+                        if let Some(resolved_ty) =
+                            self.type_substs.get(segment.name.as_str()).cloned()
+                        {
+                            let size = match self.compute_ty_size(span, &resolved_ty) {
+                                Some(value) => value,
+                                None => return None,
+                            };
+                            return Some((
+                                mir::ConstantKind::UInt(size),
+                                Ty {
+                                    kind: TyKind::Uint(UintTy::U64),
+                                },
+                            ));
+                        }
+                    }
+                }
 
                 let struct_ref = match self.resolve_struct_ref(target_expr) {
                     Some(value) => value,
@@ -17217,6 +17370,19 @@ impl<'a> BodyBuilder<'a> {
                             total = total.saturating_add(size);
                         }
                         return Some(total);
+                    }
+                }
+                // `sizeof!(T)` called on a function/method's own generic type
+                // parameter (e.g. inside `impl<T> Vec<T> { fn push(&mut self,
+                // value: T) { ... sizeof!(T) ... } }`) — `T` isn't a concrete
+                // type in general, but `self.type_substs` (populated per
+                // specialization by the same mechanism
+                // `payload_types_from_type_substs` already reads for enum
+                // payloads) holds the concrete substitution for *this*
+                // specialization. Resolve and recurse before giving up.
+                if let TyKind::Param(param) = &ty.kind {
+                    if let Some(resolved) = self.type_substs.get(param.name.as_str()).cloned() {
+                        return self.compute_ty_size(span, &resolved);
                     }
                 }
                 self.lowering.emit_error(
@@ -19595,6 +19761,114 @@ impl<'a> BodyBuilder<'a> {
         self.container_type_name(ty)
             .map(|name| name == "HashMap")
             .unwrap_or(false)
+    }
+
+    /// Whether `ty` is a nominal struct with a real, registered `index`
+    /// method — i.e. it has a genuine `Index`-trait-style impl (like
+    /// `Vec<T>`'s in `crates/fp-lang/src/std/alloc/mod.fp`) to dispatch
+    /// `x[i]` through, as opposed to a genuine slice/array (no struct to
+    /// dispatch a method on at all) or an ADT with no such method (e.g.
+    /// `HashMap`, which keeps its own hardcoded `is_map_container` path
+    /// unchanged — out of scope here). Deliberately checks for the method
+    /// itself, not any struct name: this is what makes indexing dispatch
+    /// work generically for *any* type that implements `Index`, not just
+    /// `Vec` specifically.
+    fn real_indexable_struct_def_id(&self, ty: &Ty) -> Option<hir::DefId> {
+        let TyKind::Adt(adt, _) = &ty.kind else {
+            return None;
+        };
+        let has_index_method = self.lowering.method_defs_by_def.values().any(|def| {
+            def.self_def == Some(adt.did) && def.function.sig.name.as_str() == "index"
+        });
+        has_index_method.then_some(adt.did)
+    }
+
+    /// Look up a real method named `method_name` on the struct identified
+    /// by `struct_def_id` (matched structurally via `MethodDefinition
+    /// ::self_def`, not by re-deriving a qualified-name string — the
+    /// struct's own `DefId` is already unambiguous), lower `receiver` and
+    /// each of `extra_args` against the method's own declared parameter
+    /// types (so `receiver` becomes a proper `&Self`/`&mut Self` reference
+    /// rather than a bare value copy, matching how every other real
+    /// method-call receiver in this file is lowered — see the
+    /// `tentative_sig`/`receiver_expected` pattern in the `MethodCall`
+    /// lowering above), specialize via `ensure_method_specialization`, and
+    /// emit a `Call` terminator writing the result into `place`. Used to
+    /// dispatch `x[i]`/`x[i] = v` through a real `index`/`index_set`
+    /// method exactly as `receiver.index(i)`/`receiver.index_set(i, v)`
+    /// would — indexing has no receiver-expression HIR shape of its own to
+    /// fall into the ordinary `MethodCall` lowering paths, but it can
+    /// still reuse the same specialization/`Call`-terminator machinery.
+    fn call_real_method_into_place(
+        &mut self,
+        struct_def_id: hir::DefId,
+        method_name: &str,
+        receiver: &hir::Expr,
+        extra_args: &[&hir::Expr],
+        place: mir::Place,
+        expected_return: Option<&Ty>,
+        span: Span,
+    ) -> Result<Ty> {
+        let def = self
+            .lowering
+            .method_defs_by_def
+            .values()
+            .find(|def| {
+                def.self_def == Some(struct_def_id) && def.function.sig.name.as_str() == method_name
+            })
+            .cloned()
+            .ok_or_else(|| {
+                crate::error::optimization_error(format!(
+                    "no method `{}` found on struct {:?}",
+                    method_name, struct_def_id
+                ))
+            })?;
+        let method_ctx = self.lowering.make_method_context(&def.self_ty);
+        let tentative_sig = self
+            .lowering
+            .lower_function_sig(&def.function.sig, method_ctx.as_ref());
+        let receiver_operand = self.lower_operand(receiver, tentative_sig.inputs.get(0))?;
+        let mut lowered_args = Vec::with_capacity(extra_args.len() + 1);
+        let mut arg_types = Vec::with_capacity(extra_args.len() + 1);
+        arg_types.push(receiver_operand.ty.clone());
+        lowered_args.push(receiver_operand.operand);
+        for (idx, arg) in extra_args.iter().enumerate() {
+            let operand = self.lower_operand(arg, tentative_sig.inputs.get(idx + 1))?;
+            arg_types.push(operand.ty.clone());
+            lowered_args.push(operand.operand);
+        }
+        let info = self.lowering.ensure_method_specialization(
+            self.program,
+            &def,
+            &[],
+            &arg_types,
+            expected_return,
+            span,
+        )?;
+        let func_operand = mir::Operand::Constant(mir::Constant {
+            span,
+            ty: info.fn_ty.clone(),
+            user_ty: None,
+            literal: mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
+        });
+        let continue_block = self.new_block();
+        let terminator = mir::Terminator {
+            source_info: span,
+            kind: mir::TerminatorKind::Call {
+                func: func_operand,
+                args: lowered_args,
+                destination: Some((place.clone(), continue_block)),
+                cleanup: self.current_unwind_target,
+                from_hir_call: true,
+                fn_span: span,
+            },
+        };
+        self.blocks[self.current_block as usize].terminator = Some(terminator);
+        self.current_block = continue_block;
+        if (place.local as usize) < self.locals.len() {
+            self.locals[place.local as usize].ty = info.sig.output.clone();
+        }
+        Ok(info.sig.output.clone())
     }
 
     fn local_id_from_expr(&self, expr: &hir::Expr) -> Option<mir::LocalId> {

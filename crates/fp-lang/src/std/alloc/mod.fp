@@ -1,13 +1,54 @@
-pub struct Vec<T> {}
+pub trait Index<Idx> {
+    type Output;
+    fn index(&self, idx: Idx) -> Self::Output;
+    fn index_set(&mut self, idx: Idx, value: Self::Output);
+}
+
+pub struct Vec<T> {
+    ptr: *mut T,
+    len: i64,
+    capacity: i64,
+}
 
 impl<T> Vec<T> {
     pub const fn new() -> Vec<T> {
-        Vec {}
+        Vec { ptr: 0 as *mut T, len: 0, capacity: 0 }
     }
 
-    pub fn len(&self) -> usize { compile_error!("compiler intrinsic") }
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
 
-    pub fn push(&mut self, value: T) { compile_error!("compiler intrinsic") }
+    pub fn push(&mut self, value: T) {
+        if self.len == self.capacity {
+            let new_capacity = if self.capacity == 0 { 4 } else { self.capacity * 2 };
+            let elem_size = sizeof!(T) as i64;
+            let new_ptr = if self.capacity == 0 {
+                ::libc::malloc((new_capacity * elem_size) as u64) as *mut T
+            } else {
+                ::libc::realloc(self.ptr as *mut void, (new_capacity * elem_size) as u64) as *mut T
+            };
+            self.ptr = new_ptr;
+            self.capacity = new_capacity;
+        }
+        let dest = (self.ptr as i64 + self.len * (sizeof!(T) as i64)) as *mut T;
+        *dest = value;
+        self.len = self.len + 1;
+    }
+}
+
+impl<T> Index<usize> for Vec<T> {
+    type Output = T;
+
+    fn index(&self, idx: usize) -> Self::Output {
+        let addr = (self.ptr as i64 + (idx as i64) * (sizeof!(T) as i64)) as *mut T;
+        *addr
+    }
+
+    fn index_set(&mut self, idx: usize, value: Self::Output) {
+        let addr = (self.ptr as i64 + (idx as i64) * (sizeof!(T) as i64)) as *mut T;
+        *addr = value;
+    }
 }
 
 impl Vec<&str> {

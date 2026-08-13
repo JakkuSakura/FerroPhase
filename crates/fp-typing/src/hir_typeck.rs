@@ -582,21 +582,15 @@ impl HirTypeChecker {
                             self.require_same(&index_ty, &Ty::int(ty::IntTy::I64))?;
                             (**inner).clone()
                         }
-                        // `Vec<T>`/`HashMap<K, V>` are real structs (see
+                        // `HashMap<K, V>` is a real struct (see
                         // `collection_constructor_signature`), not
-                        // `Array`/`Slice`, so `[]` on them needs its own
-                        // case here rather than falling out of the generic
-                        // shape check above.
-                        TyKind::Adt(adt, args)
-                            if Some(adt.did) == self.well_known_struct_def_id("Vec")
-                                || Some(adt.did) == self.well_known_struct_def_id("List") =>
-                        {
-                            self.require_same(&index_ty, &Ty::int(ty::IntTy::I64))?;
-                            match args.first() {
-                                Some(GenericArg::Type(elem)) => elem.clone(),
-                                _ => self.error_ty("Vec index requires a type argument"),
-                            }
-                        }
+                        // `Array`/`Slice`, so `[]` on it needs its own case
+                        // here rather than falling out of the generic shape
+                        // check above. `Vec<T>` used to need the identical
+                        // treatment, but it's a real struct with a real
+                        // `Index<usize>` impl now (`crates/fp-lang/src/std/alloc/mod.fp`),
+                        // so it goes through the general method-dispatch
+                        // fallback below like any other type would.
                         TyKind::Adt(adt, args)
                             if Some(adt.did) == self.well_known_struct_def_id("HashMap") =>
                         {
@@ -609,6 +603,52 @@ impl HirTypeChecker {
                             };
                             self.require_same(&index_ty, key_ty)?;
                             value_ty.clone()
+                        }
+                        // Any other nominal (struct) type — dispatch `x[i]`
+                        // through ordinary method resolution (the same
+                        // `method_output` path `MethodCall` uses) by
+                        // looking for an `index` method, the way `Vec<T>`'s
+                        // `Index<usize>` impl provides one. This is what
+                        // lets a type support indexing simply by
+                        // implementing `fn index(&self, idx: ...) ->
+                        // Output` — mirroring Rust's `Index` trait in
+                        // spirit, using this language's existing
+                        // structural (name + signature based, no vtables)
+                        // method dispatch rather than inventing new
+                        // trait-object machinery. Scoped to `Adt` only
+                        // (not a catch-all `_`): every `impl` block targets
+                        // a nominal type, so a primitive/error/other kind
+                        // can never have an `index` method to find, and
+                        // trying anyway would burn a full-program method
+                        // scan and risk a confusing second diagnostic on
+                        // top of a plain type error (e.g. indexing an
+                        // `i32`).
+                        TyKind::Adt(_, _) => {
+                            let arg_types = vec![receiver_ty.clone(), index_ty.clone()];
+                            match self.method_output(
+                                receiver_ty,
+                                &hir::Symbol::from("index"),
+                                &arg_types,
+                            ) {
+                                Ok((method_def_id, generic_args, output)) => {
+                                    self.results
+                                        .method_resolutions
+                                        .insert(expr.hir_id, method_def_id);
+                                    if let Some(args) = generic_args {
+                                        self.results.generic_method_args.insert(
+                                            expr.hir_id,
+                                            GenericCallResolution {
+                                                def_id: method_def_id,
+                                                args,
+                                            },
+                                        );
+                                    }
+                                    output
+                                }
+                                Err(_) => self.error_ty(
+                                    "indexing requires an array or slice, or a type implementing Index",
+                                ),
+                            }
                         }
                         _ => self.error_ty("indexing requires an array or slice"),
                     }
@@ -2264,11 +2304,31 @@ impl HirTypeChecker {
     }
 
     async fn check_intrinsic(&mut self, call: &hir::IntrinsicCallExpr) -> Result<Ty> {
+        use fp_core::intrinsics::IntrinsicKind;
+        // `sizeof!`/`field_count!`/`method_count!`'s single argument names
+        // a *type* (a struct, or — inside a generic function/impl body —
+        // the function's own type parameter, e.g. `sizeof!(T)` in
+        // `Vec<T>::push`), not a value, even though it's parsed with
+        // expression syntax. Their own result type is always `u64`
+        // regardless of what the argument resolves to (matching the match
+        // arm this used to fall into below), so — unlike every other
+        // intrinsic here — checking the argument as an ordinary value
+        // expression is both unnecessary and actively wrong: a bare type
+        // parameter name has no value-namespace binding to resolve
+        // against (`register_type_generic` in
+        // `crates/fp-backend/src/transforms/ast_to_hir/items.rs` only
+        // registers it in the type namespace) and would otherwise fail
+        // with "unresolved value path".
+        if matches!(
+            call.kind,
+            IntrinsicKind::SizeOf | IntrinsicKind::FieldCount | IntrinsicKind::MethodCount
+        ) {
+            return Ok(Ty::uint(ty::UintTy::U64));
+        }
         let mut arg_types = Vec::with_capacity(call.callargs.len());
         for arg in &call.callargs {
             arg_types.push(self.check_expr(&arg.value).await?);
         }
-        use fp_core::intrinsics::IntrinsicKind;
         Ok(match call.kind {
             IntrinsicKind::Print | IntrinsicKind::Println => Ty {
                 kind: TyKind::Tuple(Vec::new()),
@@ -2342,9 +2402,6 @@ impl HirTypeChecker {
                         kind: TyKind::Tuple(arg_types.into_iter().map(Box::new).collect()),
                     }
                 }
-            }
-            IntrinsicKind::SizeOf | IntrinsicKind::FieldCount | IntrinsicKind::MethodCount => {
-                Ty::uint(ty::UintTy::U64)
             }
             IntrinsicKind::FieldNameAt
             | IntrinsicKind::TypeName
