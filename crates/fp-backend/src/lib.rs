@@ -85,7 +85,7 @@ pub fn roundtrip_items_via_hir_dce(
 mod tests {
     use super::*;
     use fp_core::ast::{
-        self, Expr, ExprInvoke, ExprInvokeTarget, File, Ident, Item, ItemKind, Name, Ty,
+        self, BlockStmt, Expr, ExprInvoke, ExprInvokeTarget, File, Ident, Item, ItemKind, Name, Ty,
     };
     use fp_core::span::Span;
     use std::path::PathBuf;
@@ -141,5 +141,83 @@ mod tests {
                 .iter()
                 .any(|item| matches!(item.kind(), ItemKind::Expr(_)))
         );
+    }
+
+    /// `let x = 1; let x = x + 1; x` is valid Rust shadowing (each `let`
+    /// introduces a distinct binding), but re-emitting both as literal
+    /// `val x = ...` would be a "conflicting declarations" error in Kotlin
+    /// and similar targets. `HirToAstLifter` must rename the second binding
+    /// (and any later reference to it) instead of reusing the same-block
+    /// stale name.
+    #[test]
+    fn roundtrip_via_hir_renames_shadowed_let_bindings_for_target_emission() {
+        let x_plus_one = Expr::from(ast::ExprKind::BinOp(ast::ExprBinOp {
+            span: Span::null(),
+            kind: fp_core::ops::BinOpKind::Add,
+            lhs: Box::new(Expr::ident(ident("x"))),
+            rhs: Box::new(Expr::value(ast::Value::int(1))),
+        }));
+        let block = ast::ExprBlock::new_stmts_expr(
+            vec![
+                ast::BlockStmt::Let(ast::StmtLet::new_simple(
+                    ident("x"),
+                    Expr::value(ast::Value::int(1)),
+                )),
+                ast::BlockStmt::Let(ast::StmtLet::new_simple(ident("x"), x_plus_one)),
+            ],
+            Expr::ident(ident("x")),
+        );
+        let func = ast::ItemDefFunction::new_simple(ident("shadow_test"), block)
+            .with_ret_ty(Ty::Primitive(ast::TypePrimitive::Int(ast::TypeInt::I64)));
+        let file = File {
+            path: PathBuf::from("shadow.fp"),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![Item::from(ItemKind::DefFunction(func))],
+        };
+
+        let items = roundtrip_items_via_hir(&file).expect("roundtrip should succeed");
+        let ItemKind::DefFunction(function) = items[0].kind() else {
+            panic!("expected a function item, got {:?}", items[0].kind());
+        };
+        let stmts = &function.body.stmts;
+        assert_eq!(stmts.len(), 3, "two lets + a tail expression");
+
+        let first_name = let_binding_name(&stmts[0]);
+        let second_name = let_binding_name(&stmts[1]);
+        assert_eq!(first_name, "x", "first `let` keeps its source name");
+        assert_ne!(
+            second_name, "x",
+            "second (shadowing) `let x` must be renamed to avoid a same-block redeclaration"
+        );
+
+        let tail_name = tail_expr_name(&stmts[2]);
+        assert_eq!(
+            tail_name, second_name,
+            "the trailing `x` must resolve to the renamed second binding, not the stale first one"
+        );
+    }
+
+    fn let_binding_name(stmt: &BlockStmt) -> String {
+        let BlockStmt::Let(stmt_let) = stmt else {
+            panic!("expected a let statement, got {stmt:?}");
+        };
+        match stmt_let.pat.kind() {
+            ast::PatternKind::Ident(ident_pat) => ident_pat.ident.name.clone(),
+            other => panic!("expected a simple ident pattern, got {other:?}"),
+        }
+    }
+
+    fn tail_expr_name(stmt: &BlockStmt) -> String {
+        let BlockStmt::Expr(expr_stmt) = stmt else {
+            panic!("expected a trailing expression statement, got {stmt:?}");
+        };
+        match expr_stmt.expr.kind() {
+            ast::ExprKind::Name(Name::Path(path)) => {
+                path.segments.last().expect("non-empty path").name.clone()
+            }
+            ast::ExprKind::Name(Name::Ident(ident)) => ident.name.clone(),
+            other => panic!("expected a name/path expression, got {other:?}"),
+        }
     }
 }

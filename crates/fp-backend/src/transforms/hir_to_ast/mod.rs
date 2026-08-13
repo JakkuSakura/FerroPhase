@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 
 use fp_core::ast::{
     self, BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprAssign, ExprBinOp, ExprBlock, ExprBreak,
@@ -33,11 +34,53 @@ use fp_typing::TypeckResults;
 pub struct HirToAstLifter<'a> {
     program: &'a hir::Program,
     typeck: Option<&'a TypeckResults>,
+    /// Target-language (Kotlin, ...) lexical scopes currently open during a
+    /// lift, one frame per emitted block — tracks which surface names have
+    /// already been declared directly in that block (not nested ones),
+    /// since unlike Rust, most target languages reject two `val`/`var`
+    /// declarations of the same name in one block (`let x = 1; let x = 2;`
+    /// is valid Rust shadowing, but `val x = 1; val x = 2` is a Kotlin
+    /// "conflicting declarations" error). A function's own parameters seed
+    /// its body's top-level frame (see `lift_function_item`), since Kotlin
+    /// parameters and the body's own top-level `val`s share one scope too.
+    scope_names: RefCell<Vec<HashSet<String>>>,
+    /// `HirId` of a binding whose surface name collided with something
+    /// already active in its target-language scope -> the fresh name it
+    /// was given instead (same `HirId`-suffixing convention already used
+    /// for synthetic loop-desugaring variables, e.g. `__fp_idx123`).
+    /// Consulted by `lift_path` so later references to a renamed binding
+    /// (resolved via `hir::Res::Local`) use the new name too.
+    renamed_locals: RefCell<HashMap<hir::HirId, String>>,
 }
 
 impl<'a> HirToAstLifter<'a> {
     pub fn new(program: &'a hir::Program, typeck: Option<&'a TypeckResults>) -> Self {
-        Self { program, typeck }
+        Self {
+            program,
+            typeck,
+            scope_names: RefCell::new(Vec::new()),
+            renamed_locals: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// Declares `name` (for the binding identified by `hir_id`) in the
+    /// innermost open scope, returning the name to actually emit — `name`
+    /// itself if this is the first declaration of it in this scope, or a
+    /// freshly suffixed alternative (recorded in `renamed_locals`) if it
+    /// collides with one already declared here.
+    fn declare_binding_name(&self, hir_id: hir::HirId, name: &str) -> String {
+        let mut scopes = self.scope_names.borrow_mut();
+        let frame = scopes
+            .last_mut()
+            .expect("declare_binding_name called outside any lifted block scope");
+        if frame.insert(name.to_string()) {
+            name.to_string()
+        } else {
+            let renamed = format!("{name}{hir_id}");
+            frame.insert(renamed.clone());
+            self.renamed_locals.borrow_mut().insert(hir_id, renamed.clone());
+            renamed
+        }
     }
 
     /// Lifts a typechecked `hir::Program` back into a plain item list — the
@@ -211,6 +254,12 @@ impl<'a> HirToAstLifter<'a> {
             .with_span(item.span))
         } else {
             let block = function.body.as_ref().expect("checked body presence");
+            // Parameters and the body's own top-level `val`s share one
+            // scope in Kotlin and friends — seed the body block's scope
+            // frame with them so a same-named top-level `let` gets renamed
+            // instead of colliding (see `declare_binding_name`).
+            let param_names: HashSet<String> =
+                sig.params.iter().map(|param| param.name.name.clone()).collect();
             Ok(Item::from(ItemKind::DefFunction(ItemDefFunction {
                 ty_annotation: None,
                 attrs: function.attrs.clone(),
@@ -227,7 +276,7 @@ impl<'a> HirToAstLifter<'a> {
                     ret_ty: Some(Box::new(self.lift_type(&function.sig.output)?)),
                 }),
                 sig,
-                body: self.lift_block(block)?,
+                body: self.lift_block_with_scope(block, param_names)?,
                 is_async: false,
                 visibility: lift_visibility(&item.visibility),
             }))
@@ -292,7 +341,7 @@ impl<'a> HirToAstLifter<'a> {
                     Value::Bytes(ast::ValueBytes::from(bytes.as_slice()))
                 }
             }),
-            hir::ExprKind::Path(path) => Expr::name(Name::path(lift_path(path))),
+            hir::ExprKind::Path(path) => Expr::name(Name::path(self.lift_path(path))),
             hir::ExprKind::Query(_) => {
                 return Err(fp_core::error::Error::from(
                     "HIR query expressions cannot be lifted back into AST expressions".to_string(),
@@ -377,7 +426,7 @@ impl<'a> HirToAstLifter<'a> {
             })),
             hir::ExprKind::Struct(path, fields) => Expr::new(ast::ExprKind::Struct(ExprStruct {
                 span: expr.span,
-                name: Box::new(Expr::path(lift_path(path))),
+                name: Box::new(Expr::path(self.lift_path(path))),
                 fields: fields
                     .iter()
                     .map(|field| {
@@ -566,6 +615,21 @@ impl<'a> HirToAstLifter<'a> {
     }
 
     fn lift_block(&self, block: &hir::Block) -> Result<ExprBlock> {
+        self.lift_block_with_scope(block, HashSet::new())
+    }
+
+    /// Like `lift_block`, but seeds the block's own target-language scope
+    /// frame with `seed` before lifting its statements — used to seed a
+    /// function body's top-level scope with its parameter names (see
+    /// `lift_function_item`), since they share one scope in most targets.
+    fn lift_block_with_scope(&self, block: &hir::Block, seed: HashSet<String>) -> Result<ExprBlock> {
+        self.scope_names.borrow_mut().push(seed);
+        let result = self.lift_block_stmts(block);
+        self.scope_names.borrow_mut().pop();
+        result
+    }
+
+    fn lift_block_stmts(&self, block: &hir::Block) -> Result<ExprBlock> {
         let mut stmts = Vec::with_capacity(block.stmts.len() + usize::from(block.expr.is_some()));
         for stmt in &block.stmts {
             stmts.push(self.lift_stmt(stmt)?);
@@ -586,6 +650,26 @@ impl<'a> HirToAstLifter<'a> {
         match &stmt.kind {
             hir::StmtKind::Local(local) => {
                 let pat = self.lift_pat(&local.pat)?;
+                // A simple `let x = ...` declares `x` in this block's own
+                // target-language scope — rename it if that collides with
+                // something already declared here (shadowing an outer
+                // scope's binding is fine in Kotlin and friends; declaring
+                // the same name twice in the *same* block isn't). Other
+                // pattern shapes (destructuring) aren't renamed here; they
+                // remain as-is, matching prior behavior.
+                let pat = match pat.kind() {
+                    PatternKind::Ident(ident_pat) => {
+                        let resolved = self.declare_binding_name(
+                            local.pat.hir_id,
+                            ident_pat.ident.name.as_str(),
+                        );
+                        Pattern::new(PatternKind::Ident(PatternIdent {
+                            ident: Ident::new(resolved),
+                            mutability: ident_pat.mutability,
+                        }))
+                    }
+                    _ => pat,
+                };
                 // Prefer an explicit source-level annotation (`let x: T = ...`);
                 // otherwise fall back to the typer's own resolved binding type
                 // (`TypeckResults::pat_types`, keyed by the pattern's `HirId`) —
@@ -656,7 +740,7 @@ impl<'a> HirToAstLifter<'a> {
             })),
             hir::PatKind::TupleStruct(path, items) => {
                 Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
-                    name: Name::path(lift_path(path)),
+                    name: Name::path(self.lift_path(path)),
                     patterns: items.iter().map(|p| self.lift_pat(p)).collect::<Result<Vec<_>>>()?,
                 }))
             }
@@ -681,7 +765,7 @@ impl<'a> HirToAstLifter<'a> {
                 }))
             }
             hir::PatKind::Variant(path) => Pattern::new(PatternKind::Variant(PatternVariant {
-                name: Expr::path(lift_path(path)),
+                name: Expr::path(self.lift_path(path)),
                 pattern: None,
             })),
             hir::PatKind::Lit(lit) => Pattern::new(PatternKind::Variant(PatternVariant {
@@ -717,7 +801,7 @@ impl<'a> HirToAstLifter<'a> {
                 Some(ty) => ty,
                 None => match self.type_expr_path_source_name(path) {
                     Some(name) => Ty::expr(Expr::name(Name::path(Path::plain(vec![Ident::new(name)])))),
-                    None => Ty::path(lift_path(path)),
+                    None => Ty::path(self.lift_path(path)),
                 },
             },
             hir::TypeExprKind::Tuple(items) => Ty::Tuple(TypeTuple {
@@ -1074,6 +1158,25 @@ impl<'a> HirToAstLifter<'a> {
 
         Ok(items)
     }
+
+    /// Lifts an `hir::Path` to an `ast::Path`, substituting a renamed
+    /// local's new name (see `declare_binding_name`) for its original one
+    /// when this path is a reference to it (`hir::Res::Local`) — a bare
+    /// single-segment local variable reference is the only path shape
+    /// `renamed_locals` ever has an entry for.
+    fn lift_path(&self, path: &hir::Path) -> Path {
+        if let Some(hir::Res::Local(hir_id)) = &path.res {
+            if let Some(renamed) = self.renamed_locals.borrow().get(hir_id) {
+                return Path::plain(vec![Ident::new(renamed.clone())]);
+            }
+        }
+        Path::plain(
+            path.segments
+                .iter()
+                .map(|segment| Ident::new(segment.name.as_str()))
+                .collect(),
+        )
+    }
 }
 
 fn lift_visibility(vis: &hir::Visibility) -> ast::Visibility {
@@ -1111,15 +1214,6 @@ fn rust_primitive_source_name(primitive: &fp_core::ast::TypePrimitive) -> String
         }
         .to_string(),
     }
-}
-
-fn lift_path(path: &hir::Path) -> Path {
-    Path::plain(
-        path.segments
-            .iter()
-            .map(|segment| Ident::new(segment.name.as_str()))
-            .collect(),
-    )
 }
 
 fn lift_binop(op: &hir::BinOp) -> BinOpKind {
