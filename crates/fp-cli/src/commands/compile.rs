@@ -1194,6 +1194,17 @@ async fn compile_project(
             (Default::default(), Default::default(), Default::default())
         };
 
+    // Every item's own qualified path -> qualified paths it references,
+    // merged across every package in the workspace (see `PackageSource::
+    // referenced_paths`) — lets the Kotlin serializer compute imports for
+    // spliced-in content from actual usage rather than only echoing the
+    // source file's pre-existing `use` items.
+    let workspace_referenced_paths: std::collections::HashMap<Vec<String>, Vec<Vec<String>>> = prepared
+        .iter()
+        .flat_map(|(_, src)| src.referenced_paths.iter())
+        .map(|(path, refs)| (path.clone(), refs.clone()))
+        .collect();
+
     // Phase 2: serialize + write every package now that the workspace-wide
     // mutability set (and any other cross-package info) is complete.
     for (package_id, source) in &prepared {
@@ -1203,7 +1214,7 @@ async fn compile_project(
         let files = if let crate::languages::backend::LanguageTarget::Kotlin = target {
             let serializer = fp_kotlin::KotlinSerializer;
             serializer
-                .serialize_package(source, &workspace_packages, &workspace_mutated_fields, &workspace_list_fields, &workspace_string_fields)
+                .serialize_package(source, &workspace_packages, &workspace_mutated_fields, &workspace_list_fields, &workspace_string_fields, &workspace_referenced_paths)
                 .map_err(|e| CliError::Compilation(e.to_string()))?
         } else {
             // Fallback: per-file emit_ast_target for other targets

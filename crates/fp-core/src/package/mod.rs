@@ -136,6 +136,7 @@ pub mod provider;
 
 use crate::ast::{FunctionSignature, Item, ItemId, MethodSignature, TypeEnum, TypeStruct};
 use crate::hir::PackageId as HirPackageId;
+use crate::hir::Symbol;
 use crate::lir::{LirCompileUnit, LirWorkspace};
 use crate::ast::path::QualifiedPath;
 use std::collections::{HashMap, HashSet};
@@ -161,6 +162,15 @@ pub struct PackageSource {
 
     /// All parsed source items with their fully qualified source paths.
     pub items: Vec<PackageItem>,
+
+    /// For typed compiles (`typecheck_package`): each item's own
+    /// qualified path (module path + name, plain `"::"`-free segments) ->
+    /// qualified paths of every other definition it references — raw
+    /// facts a target backend can use to compute which imports it
+    /// actually needs for spliced-in content, instead of only ever
+    /// echoing whatever `use` items happened to already exist in the
+    /// source file. Empty for untyped/fallback loads.
+    pub referenced_paths: HashMap<Vec<String>, Vec<Vec<String>>>,
 }
 
 impl PackageSource {
@@ -177,6 +187,7 @@ impl PackageSource {
             graph,
             module_paths,
             items: Vec::new(),
+            referenced_paths: HashMap::new(),
         }
     }
 }
@@ -235,6 +246,22 @@ pub struct CompiledPackage {
     /// Lifted AST from typed HIR (TypecheckedTranspile mode).
     pub lifted_ast: Option<crate::ast::File>,
 
+    /// Typed HIR lifted back to AST, keyed by each item's own qualified
+    /// name (`HirToAstLifter::lift_items_by_path`) rather than by list
+    /// position — lets a source item be spliced with its typed
+    /// counterpart by identity, tolerating extra (synthetic) or missing
+    /// (e.g. per-item lift failures) entries on either side instead of
+    /// requiring the two lists to match 1:1 in the same order.
+    pub lifted_items_by_path: Option<HashMap<Vec<Symbol>, Item>>,
+
+    /// For each item in `lifted_items_by_path` (same key), the qualified
+    /// paths of every other definition it references
+    /// (`HirToAstLifter::referenced_paths_by_path`) — raw facts a target
+    /// backend can use to compute which imports it actually needs for
+    /// spliced-in content, rather than only echoing the source file's
+    /// pre-existing `use` items.
+    pub referenced_paths_by_path: Option<HashMap<Vec<Symbol>, Vec<Vec<Symbol>>>>,
+
     /// MIR produced for this package.
     pub mir_program: Option<crate::mir::Program>,
 
@@ -284,6 +311,8 @@ impl CompiledPackage {
             lir_workspace: LirWorkspace::new(data_layout),
             hir_program: None,
             lifted_ast: None,
+            lifted_items_by_path: None,
+            referenced_paths_by_path: None,
             mir_program: None,
             hir_exports: HashMap::new(),
             type_alias_exports: HashMap::new(),

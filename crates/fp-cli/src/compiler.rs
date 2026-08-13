@@ -1140,6 +1140,37 @@ impl PackageProvider for MaterializingPackageProvider {
     }
 }
 
+/// The name an `ast::Item` is registered under during AST→HIR lowering
+/// (`HirGenerator::predeclare_items`'s `register_type_def`/
+/// `register_value_def` calls, `fp-backend/src/transforms/ast_to_hir/
+/// mod.rs:788+`) — `None` for item kinds with no name of their own
+/// (`Impl`, `Import`, bare `Expr`, ...), which therefore can never be
+/// looked up in a qualified-path-keyed map.
+fn item_own_name(item: &Item) -> Option<&str> {
+    match item.kind() {
+        ItemKind::Module(module) => Some(module.name.name.as_str()),
+        ItemKind::DefStruct(def) => Some(def.name.name.as_str()),
+        ItemKind::DefStructural(def) => Some(def.name.name.as_str()),
+        ItemKind::DefEnum(def) => Some(def.name.name.as_str()),
+        ItemKind::DefType(def) => Some(def.name.name.as_str()),
+        ItemKind::OpaqueType(def) => Some(def.name.name.as_str()),
+        ItemKind::DefConst(def) => Some(def.name.name.as_str()),
+        ItemKind::DefStatic(def) => Some(def.name.name.as_str()),
+        ItemKind::DefFunction(def) => Some(def.name.name.as_str()),
+        ItemKind::DefTrait(def) => Some(def.name.name.as_str()),
+        ItemKind::DeclType(def) => Some(def.name.name.as_str()),
+        ItemKind::DeclConst(def) => Some(def.name.name.as_str()),
+        ItemKind::DeclStatic(def) => Some(def.name.name.as_str()),
+        ItemKind::DeclFunction(def) => Some(def.name.name.as_str()),
+        ItemKind::Macro(item_macro) => item_macro.declared_name.as_ref().map(|ident| ident.name.as_str()),
+        ItemKind::Impl(_)
+        | ItemKind::Import(_)
+        | ItemKind::Expr(_)
+        | ItemKind::ConstBlock(_)
+        | ItemKind::Any(_) => None,
+    }
+}
+
 /// Typecheck a whole package by registering its real `PackageProvider` with
 /// a fresh `CompilerDriver` under `PipelineMode::TypecheckedTranspile`,
 /// instead of flattening the package's items into a single tag-less `File`
@@ -1152,7 +1183,9 @@ impl PackageProvider for MaterializingPackageProvider {
 ///
 /// Returns the package's items with real resolved types spliced in where
 /// typing succeeded (module declarations, which HIR has no representation
-/// for, pass through untouched).
+/// for, pass through untouched), plus, on `PackageSource.referenced_paths`,
+/// the qualified paths each item references — raw facts a target backend
+/// can use to compute which imports it actually needs.
 pub fn typecheck_package(
     provider: Arc<dyn PackageProvider>,
     package_id: &PackageId,
@@ -1181,41 +1214,52 @@ pub fn typecheck_package(
 
     let package = package.borrow();
     let mut items = package.items.clone();
-    if let Some(lifted) = &package.lifted_ast {
-        let mut typed_iter = lifted.items.iter().cloned();
-        let mut mismatched = false;
-        let mut typed_items = Vec::with_capacity(items.len());
-        for pkg_item in &items {
-            if matches!(pkg_item.item.kind(), ItemKind::Module(_)) {
-                typed_items.push(pkg_item.item.clone());
+    if let Some(lifted_by_path) = &package.lifted_items_by_path {
+        for pkg_item in &mut items {
+            let Some(name) = item_own_name(&pkg_item.item) else {
+                // No natural qualified name (`Impl`, `Import`, a bare
+                // `Module` declaration, ...) — never a key in
+                // `lifted_by_path`, so it keeps its original source form.
                 continue;
+            };
+            let mut path = pkg_item.path.segments.clone();
+            path.push(name.to_string());
+            let key: Vec<fp_core::hir::Symbol> =
+                path.into_iter().map(fp_core::hir::Symbol::new).collect();
+            if let Some(typed) = lifted_by_path.get(&key) {
+                pkg_item.item = typed.clone();
             }
-            match typed_iter.next() {
-                Some(typed) => typed_items.push(typed),
-                None => {
-                    mismatched = true;
-                    break;
-                }
-            }
-        }
-        if !mismatched && typed_iter.next().is_none() {
-            for (pkg_item, typed) in items.iter_mut().zip(typed_items) {
-                pkg_item.item = typed;
-            }
-        } else {
-            return Err(CliError::Compilation(format!(
-                "typecheck for {} produced a mismatched item count",
-                package_id.as_str()
-            )));
+            // Else: this item's typed form wasn't produced — e.g. a
+            // per-item lift failure (a nested `hir::ExprKind::Query`) —
+            // keep the original, untyped item rather than failing
+            // typed-splice for the whole package.
         }
     }
 
+    let referenced_paths = package
+        .referenced_paths_by_path
+        .as_ref()
+        .map(|by_path| {
+            by_path
+                .iter()
+                .map(|(path, refs)| {
+                    let path = path.iter().map(|s| s.as_str().to_string()).collect();
+                    let refs = refs
+                        .iter()
+                        .map(|r| r.iter().map(|s| s.as_str().to_string()).collect())
+                        .collect();
+                    (path, refs)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let source = PackageSource {
         package_id: package_id.clone(),
         name: package.name.clone(),
         graph: package.graph.clone(),
         module_paths: package.module_paths.clone(),
         items,
+        referenced_paths,
     };
     Ok(source)
 }

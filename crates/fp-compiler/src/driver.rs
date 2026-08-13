@@ -524,6 +524,16 @@ impl CompilerDriver {
                 .map_err(|e| {
                     CompilerDriverError::InternalCompilerError(format!("HIR→AST lift: {e}"))
                 })?;
+            // Best-effort, per-item companion to `lifted` above — keyed by
+            // qualified name instead of list position, so `typecheck_package`
+            // (fp-cli) can splice typed content back onto the original
+            // source items by identity even when the two lists don't match
+            // 1:1 (synthetic items with no source counterpart, `use` items
+            // with no HIR counterpart, or an individual item that fails to
+            // lift without poisoning the rest of the package).
+            let lifter = fp_backend::transforms::HirToAstLifter::new(hir, typeck);
+            let lifted_items_by_path = lifter.lift_items_by_path();
+            let referenced_paths_by_path = lifter.referenced_paths_by_path();
             if let Some(pkg) = self
                 .state
                 .typing_ctx
@@ -531,6 +541,8 @@ impl CompilerDriver {
                 .compiled_package(&current_package_id)
             {
                 pkg.borrow_mut().lifted_ast = Some(lifted);
+                pkg.borrow_mut().lifted_items_by_path = Some(lifted_items_by_path);
+                pkg.borrow_mut().referenced_paths_by_path = Some(referenced_paths_by_path);
             }
             return Ok(Vec::new()); // No LIR units needed
         }

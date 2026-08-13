@@ -67,6 +67,67 @@ impl<'a> HirToAstLifter<'a> {
         })
     }
 
+    /// Best-effort variant of [`lift_program`](Self::lift_program) for
+    /// splicing typed content back onto an existing source AST
+    /// (`fp-cli::compiler::typecheck_package`), keyed by each item's own
+    /// qualified name (`program.def_paths`) rather than list position.
+    ///
+    /// Unlike `lift_program`, a single item that fails to lift (e.g. a
+    /// nested `hir::ExprKind::Query`, or any other not-yet-supported
+    /// shape) is simply omitted from the result instead of aborting the
+    /// whole program — the caller keeps that one item's original,
+    /// untyped source form rather than losing typed info for every other
+    /// item in the package. Items with no entry in `def_paths` (e.g.
+    /// synthetic struct definitions for anonymous/structural literals,
+    /// `register_structural_value_def`/`materialize_enum_struct_payload`
+    /// in `ast_to_hir/mod.rs`) have no source counterpart to splice onto
+    /// and are likewise omitted.
+    pub fn lift_items_by_path(&self) -> HashMap<Vec<hir::Symbol>, Item> {
+        let mut lifted = Vec::new();
+        for item in &self.program.items {
+            let Some(path) = self.program.def_paths.get(&item.def_id) else {
+                continue;
+            };
+            let Ok(ast_item) = self.lift_item(item) else {
+                continue;
+            };
+            lifted.push((path.clone(), ast_item));
+        }
+        let (paths, items): (Vec<_>, Vec<_>) = lifted.into_iter().unzip();
+        let items = self
+            .reconstruct_closures(items.clone())
+            .unwrap_or(items);
+        paths.into_iter().zip(items).collect()
+    }
+
+    /// For each item (keyed by its own qualified path, same key shape as
+    /// [`lift_items_by_path`](Self::lift_items_by_path)), the qualified
+    /// paths of every OTHER definition it references — used to compute
+    /// which imports a target backend actually needs for spliced-in
+    /// content, instead of only ever echoing whatever `use` items
+    /// happened to already exist in the source file (`fp-kotlin`'s
+    /// `emit_import`). Deliberately just facts (fully-qualified paths),
+    /// not a target-specific "is this external" classification — that
+    /// judgment belongs in each backend, not here.
+    pub fn referenced_paths_by_path(&self) -> HashMap<Vec<hir::Symbol>, Vec<Vec<hir::Symbol>>> {
+        let empty_tail_map = HashMap::new();
+        let mut result = HashMap::new();
+        for item in &self.program.items {
+            let Some(path) = self.program.def_paths.get(&item.def_id) else {
+                continue;
+            };
+            let mut work = std::collections::VecDeque::new();
+            crate::optimizer::hir::collect_item_refs(item, &empty_tail_map, &mut work);
+            let referenced = work
+                .into_iter()
+                .filter(|def_id| *def_id != item.def_id)
+                .filter_map(|def_id| self.program.def_paths.get(&def_id).cloned())
+                .collect::<Vec<_>>();
+            result.insert(path.clone(), referenced);
+        }
+        result
+    }
+
     fn lift_item(&self, item: &hir::Item) -> Result<Item> {
         let lifted = match &item.kind {
             hir::ItemKind::Function(function) => self.lift_function_item(item, function)?,
@@ -527,11 +588,33 @@ impl<'a> HirToAstLifter<'a> {
 
     fn lift_stmt(&self, stmt: &hir::Stmt) -> Result<BlockStmt> {
         match &stmt.kind {
-            hir::StmtKind::Local(local) => Ok(BlockStmt::Let(ast::StmtLet {
-                pat: self.lift_pat(&local.pat)?,
-                init: local.init.as_ref().map(|expr| self.lift_expr(expr)).transpose()?,
-                diverge: None,
-            })),
+            hir::StmtKind::Local(local) => {
+                let pat = self.lift_pat(&local.pat)?;
+                // Prefer an explicit source-level annotation (`let x: T = ...`);
+                // otherwise fall back to the typer's own resolved binding type
+                // (`TypeckResults::pat_types`, keyed by the pattern's `HirId`) —
+                // needed for bindings like `let mut x = None;` whose real type
+                // is only known once later reassignments/usage are unified,
+                // not from the initializer expression alone. Without this,
+                // backends (`fp-kotlin`) have to *guess* a var's type from the
+                // literal `null` initializer alone and can't.
+                let ty_ann = match &local.ty {
+                    Some(ty) => Some(self.lift_type(ty)?),
+                    None => self
+                        .typeck
+                        .and_then(|t| t.pat_types.get(&local.pat.hir_id))
+                        .and_then(|ty| self.hir_ty_to_ast(ty)),
+                };
+                let pat = match ty_ann {
+                    Some(ty) => Pattern::new(PatternKind::Type(ast::PatternType::new(pat, ty))),
+                    None => pat,
+                };
+                Ok(BlockStmt::Let(ast::StmtLet {
+                    pat,
+                    init: local.init.as_ref().map(|expr| self.lift_expr(expr)).transpose()?,
+                    diverge: None,
+                }))
+            }
             hir::StmtKind::Item(item) => Ok(BlockStmt::Item(Box::new(self.lift_item(item)?))),
             hir::StmtKind::Expr(expr) => Ok(BlockStmt::Expr(
                 BlockStmtExpr::new(self.lift_expr(expr)?).with_semicolon(false),
@@ -618,7 +701,22 @@ impl<'a> HirToAstLifter<'a> {
     fn lift_type(&self, ty: &hir::TypeExpr) -> Result<Ty> {
         Ok(match &ty.kind {
             hir::TypeExprKind::Primitive(primitive) => Ty::Primitive(*primitive),
-            hir::TypeExprKind::Path(path) => Ty::path(lift_path(path)),
+            // A written type reference's generic arguments (`Vec<Hunk>`,
+            // `Arc<GitBackend>`, ...) live on the path's last `PathSegment.
+            // args` — `lift_path` alone drops them (it only carries
+            // segment names), which would otherwise let a struct field or
+            // parameter's declared type lose its element/wrapped type
+            // entirely. Preserve them the same way `hir_ty_to_ast`'s `Adt`
+            // case does for resolved types: render as a source-shaped name
+            // (`"Vec<Hunk>"`) and let `kotlin_type_from_ty`'s `Ty::Expr`
+            // case (`map_name_to_kt`) do the actual Kotlin mapping.
+            hir::TypeExprKind::Path(path) => match self.inline_synthetic_struct_ty(path)? {
+                Some(ty) => ty,
+                None => match self.type_expr_path_source_name(path) {
+                    Some(name) => Ty::expr(Expr::name(Name::path(Path::plain(vec![Ident::new(name)])))),
+                    None => Ty::path(lift_path(path)),
+                },
+            },
             hir::TypeExprKind::Tuple(items) => Ty::Tuple(TypeTuple {
                 types: items.iter().map(|ty| self.lift_type(ty)).collect::<Result<Vec<_>>>()?,
             }),
@@ -668,6 +766,76 @@ impl<'a> HirToAstLifter<'a> {
                 expr: Box::new(self.lift_expr(body)?),
             }),
         })
+    }
+
+    /// Source-shaped name (`"Vec<Hunk>"`) for a written type path if its
+    /// last segment carries generic arguments — `None` if there are none
+    /// (the caller falls back to `lift_path`'s plain-path behavior, which
+    /// is already correct for a non-generic reference).
+    /// A struct-shaped enum-variant payload or anonymous/structural
+    /// literal gets a synthesized, source-less nominal struct
+    /// (`register_structural_value_def`/`materialize_enum_struct_payload`
+    /// in `ast_to_hir/mod.rs`) purely so it has a real `DefId` to carry
+    /// through type-checking — nothing ever emits a standalone class for
+    /// it (it has no source item to attach to via the qualified-path
+    /// splice), so a plain by-name reference to it would dangle. Detected
+    /// by its `__enum_payload_`/`__structural_value_` naming convention;
+    /// inline its real fields directly (`Ty::Structural`, which
+    /// `fp-kotlin`'s `emit_enum` already expands inline for a struct-
+    /// shaped variant) instead of referencing it by a name nothing defines.
+    fn inline_synthetic_struct_ty(&self, path: &hir::Path) -> Result<Option<Ty>> {
+        let Some(hir::Res::Def(def_id)) = &path.res else {
+            return Ok(None);
+        };
+        let Some(item) = self.program.def_map.get(def_id) else {
+            return Ok(None);
+        };
+        let hir::ItemKind::Struct(def) = &item.kind else {
+            return Ok(None);
+        };
+        let is_synthetic = def.name.as_str().starts_with("__enum_payload_")
+            || def.name.as_str().starts_with("__structural_value_");
+        if !is_synthetic {
+            return Ok(None);
+        }
+        let fields = def
+            .fields
+            .iter()
+            .map(|field| Ok(StructuralField::new(Ident::new(field.name.as_str()), self.lift_type(&field.ty)?)))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Some(Ty::Structural(ast::TypeStructural { fields })))
+    }
+
+    fn type_expr_path_source_name(&self, path: &hir::Path) -> Option<String> {
+        let last = path.segments.last()?;
+        let args = last.args.as_ref()?;
+        let arg_names: Vec<String> = args
+            .args
+            .iter()
+            .filter_map(|arg| match arg {
+                hir::GenericArg::Type(inner) => self.type_expr_source_name(inner),
+                hir::GenericArg::Const(_) => None,
+            })
+            .collect();
+        if arg_names.is_empty() {
+            None
+        } else {
+            Some(format!("{}<{}>", last.name.as_str(), arg_names.join(", ")))
+        }
+    }
+
+    /// Recursive helper for `type_expr_path_source_name` — same
+    /// source-shaped-name rendering, for a generic argument position
+    /// (which may itself be a further-nested generic type).
+    fn type_expr_source_name(&self, ty: &hir::TypeExpr) -> Option<String> {
+        match &ty.kind {
+            hir::TypeExprKind::Path(path) => match self.type_expr_path_source_name(path) {
+                Some(name) => Some(name),
+                None => path.segments.last().map(|s| s.name.as_str().to_string()),
+            },
+            hir::TypeExprKind::Primitive(primitive) => Some(rust_primitive_source_name(primitive)),
+            _ => None,
+        }
     }
 
     /// Converts a *resolved* (post-typecheck) HIR type — `fp_core::hir::ty::Ty`,
@@ -741,7 +909,37 @@ impl<'a> HirToAstLifter<'a> {
                     lifetime: None,
                 })
             }),
-            TyKind::Adt(adt, _substs) => self.def_id_to_ty(&adt.did),
+            // A bare `def_id_to_ty` lookup (no generic args) is correct for
+            // a plain, non-generic struct/enum reference. When `substs`
+            // carries real type arguments (`Vec<Hunk>`, `Arc<GitBackend>`,
+            // `Option<Foo>`, ...), dropping them here would let a struct
+            // field or local variable's declared type lose its element/
+            // wrapped type entirely (previously unnoticed since typed
+            // content never flowed through this path for a real
+            // multi-file package before). Render as a source-shaped name
+            // (`"Vec<Hunk>"`) instead and let `kotlin_type_from_ty`'s
+            // `Ty::Expr` case (`map_name_to_kt`) do the actual Kotlin
+            // mapping — it already recognizes `Vec`/`Option`/`HashMap`/
+            // `HashSet`/`Arc`/`Rc`/`Box`/etc. wrapper names and unwraps/
+            // renders them correctly, so this reuses that instead of
+            // duplicating it here.
+            TyKind::Adt(adt, substs) => {
+                let args: Vec<String> = substs
+                    .iter()
+                    .filter_map(|arg| match arg {
+                        hir::ty::GenericArg::Type(t) => self.resolved_ty_source_name(t),
+                        _ => None,
+                    })
+                    .collect();
+                if args.is_empty() {
+                    self.def_id_to_ty(&adt.did)
+                } else {
+                    let name = self.program.def_paths.get(&adt.did)?.last()?.as_str();
+                    Some(Ty::expr(Expr::name(Name::path(Path::plain(vec![Ident::new(
+                        format!("{}<{}>", name, args.join(", ")),
+                    )])))))
+                }
+            }
             TyKind::FnDef(def_id, _) | TyKind::Closure(def_id, _) | TyKind::Opaque(def_id, _) => {
                 self.def_id_to_ty(def_id)
             }
@@ -759,6 +957,41 @@ impl<'a> HirToAstLifter<'a> {
             | TyKind::Placeholder(_)
             | TyKind::Infer(_)
             | TyKind::Error(_) => None,
+        }
+    }
+
+    /// Renders a resolved (post-typecheck) `hir::ty::Ty` as a Rust-syntax
+    /// shaped name (`"Vec<Hunk>"`, `"Option<GitBackend>"`, ...) — NOT a
+    /// Kotlin name. Used only to embed into a `Ty::Expr` so
+    /// `kotlin_type_from_ty`'s existing `map_name_to_kt`-based wrapper
+    /// recognition (Vec/Option/HashMap/HashSet/Arc/Rc/Box/Result/...) can
+    /// do the actual Kotlin rendering, instead of duplicating that table
+    /// here. `None` for anything not nominally named (primitives are
+    /// handled directly by the caller before ever reaching here).
+    fn resolved_ty_source_name(&self, ty: &hir::ty::Ty) -> Option<String> {
+        use hir::ty::TyKind;
+        match &ty.kind {
+            TyKind::Adt(adt, substs) => {
+                let name = self.program.def_paths.get(&adt.did)?.last()?.as_str();
+                let args: Vec<String> = substs
+                    .iter()
+                    .filter_map(|arg| match arg {
+                        hir::ty::GenericArg::Type(t) => self.resolved_ty_source_name(t),
+                        _ => None,
+                    })
+                    .collect();
+                if args.is_empty() {
+                    Some(name.to_string())
+                } else {
+                    Some(format!("{}<{}>", name, args.join(", ")))
+                }
+            }
+            TyKind::Ref(_, inner, _) => self.resolved_ty_source_name(inner),
+            TyKind::Bool => Some("bool".to_string()),
+            TyKind::Char => Some("char".to_string()),
+            TyKind::Int(_) | TyKind::Uint(_) => Some("i64".to_string()),
+            TyKind::Float(_) => Some("f64".to_string()),
+            _ => None,
         }
     }
 
@@ -836,6 +1069,27 @@ fn lift_abi(abi: &hir::Abi) -> ast::Abi {
         hir::Abi::C { .. } => ast::Abi::Named("C".to_string()),
         hir::Abi::Named(name) => ast::Abi::Named(name.clone()),
         other => ast::Abi::Named(format!("{other:?}").to_ascii_lowercase()),
+    }
+}
+
+/// A `fp_core::ast::TypePrimitive` rendered as the Rust-syntax name
+/// `map_name_to_kt` (in `fp-kotlin`) expects when it appears nested inside
+/// a generic-wrapper source name built by `type_expr_source_name` (e.g.
+/// the `i64` in `"Vec<i64>"`).
+fn rust_primitive_source_name(primitive: &fp_core::ast::TypePrimitive) -> String {
+    use fp_core::ast::{TypeInt, TypePrimitive};
+    match primitive {
+        TypePrimitive::Bool => "bool".to_string(),
+        TypePrimitive::Char => "char".to_string(),
+        TypePrimitive::String => "String".to_string(),
+        TypePrimitive::Decimal(_) => "f64".to_string(),
+        TypePrimitive::List => "Vec".to_string(),
+        TypePrimitive::Int(int_ty) => match int_ty {
+            TypeInt::I8 => "i8", TypeInt::I16 => "i16", TypeInt::I32 => "i32", TypeInt::I64 => "i64",
+            TypeInt::U8 => "u8", TypeInt::U16 => "u16", TypeInt::U32 => "u32", TypeInt::U64 => "u64",
+            _ => "i64",
+        }
+        .to_string(),
     }
 }
 

@@ -293,7 +293,7 @@ fn item_name(item: &hir::Item) -> Option<&str> {
     }
 }
 
-fn collect_item_refs(
+pub(crate) fn collect_item_refs(
     item: &hir::Item,
     tail_map: &HashMap<String, hir::DefId>,
     work: &mut VecDeque<hir::DefId>,
