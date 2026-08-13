@@ -16,7 +16,6 @@ pub mod intrinsics;
 pub mod lang;
 pub mod lir;
 pub mod mir;
-pub mod module;
 pub mod ops;
 pub mod package;
 pub mod place;

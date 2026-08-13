@@ -4,7 +4,7 @@ use fp_core::ast::{
     QuoteItemKind, Value,
 };
 use fp_core::ast::{QuoteFragmentKind, Ty};
-use fp_core::module::path::PathPrefix;
+use fp_core::ast::path::PathPrefix;
 use fp_core::ops::BinOpKind;
 
 #[test]

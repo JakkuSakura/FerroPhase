@@ -2,7 +2,7 @@ use super::*;
 use fp_core::ast::ExprLet;
 use fp_core::ast::PatternBind;
 use fp_core::ast::PatternRef;
-use fp_core::module::path::PathPrefix;
+use fp_core::ast::path::PathPrefix;
 use winnow::Parser;
 
 pub(crate) fn parse_expr_winnow(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {

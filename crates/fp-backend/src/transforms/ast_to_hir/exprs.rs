@@ -1,6 +1,6 @@
 use super::*;
 use fp_core::intrinsics::{CallKind, OpKind};
-use fp_core::module::path::PathPrefix;
+use fp_core::ast::path::PathPrefix;
 use fp_core::query::lower_fp_expr_to_query;
 
 struct EnumerateLoopSpec {
@@ -2376,7 +2376,7 @@ impl HirGenerator {
 
     pub(super) fn lookup_global_res(
         &self,
-        path: &fp_core::module::path::QualifiedPath,
+        path: &fp_core::ast::path::QualifiedPath,
         scope: PathResolutionScope,
     ) -> Option<hir::Res> {
         if path.segments.is_empty() {

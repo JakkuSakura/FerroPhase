@@ -2,7 +2,7 @@ use super::*;
 use fp_core::ast;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::intrinsics::IntrinsicNormalizationMode;
-use fp_core::module::path::QualifiedPath;
+use fp_core::ast::path::QualifiedPath;
 use fp_core::ops::BinOpKind;
 use fp_core::span::Span;
 use fp_typing::{ResolvedName, ResolvedNameNamespace, ResolvedNameTable};

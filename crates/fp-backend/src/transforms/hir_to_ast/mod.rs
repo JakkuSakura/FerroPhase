@@ -763,12 +763,11 @@ impl<'a> HirToAstLifter<'a> {
     }
 
     fn def_id_to_ty(&self, def_id: &DefId) -> Option<ast::Ty> {
-        let segments = self.program.def_paths.get(def_id)?;
-        if segments.is_empty() {
+        let path = self.program.def_paths.get(def_id)?;
+        if path.segments.is_empty() {
             return None;
         }
-        let idents: Vec<Ident> = segments.iter().map(|s| Ident::new(s.as_str())).collect();
-        Some(Ty::path(Path::plain(idents)))
+        Some(Ty::path(path.to_ast_path()))
     }
 
     /// After HIR→AST lifting, closures have been lowered to `__Closure{N}`

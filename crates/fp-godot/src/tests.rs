@@ -5,7 +5,7 @@ use fp_core::ast::{
     StructuralField, Ty, TypeEnum, TypePrimitive, TypeStructural, Value, Visibility,
 };
 
-use fp_core::module::path::PathPrefix;
+use fp_core::ast::path::PathPrefix;
 
 use crate::GdscriptSerializer;
 

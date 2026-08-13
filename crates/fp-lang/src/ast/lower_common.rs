@@ -1,7 +1,7 @@
 use crate::lexer::lexeme::Lexeme;
 use crate::lexer::tokenizer::Span as LexSpan;
 use fp_core::ast::{Ident, MacroDelimiter, MacroTokenTree, ParameterPathSegment};
-use fp_core::module::path::PathPrefix;
+use fp_core::ast::path::PathPrefix;
 use fp_core::span::Span;
 
 pub(crate) fn split_path_prefix(

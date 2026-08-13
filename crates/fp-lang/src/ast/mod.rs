@@ -210,7 +210,7 @@ use fp_core::ast::{
     ValueUInt, Visibility,
 };
 use fp_core::intrinsics::CallKind;
-use fp_core::module::path::PathPrefix;
+use fp_core::ast::path::PathPrefix;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::{FileId, Span};
 use num_bigint::BigInt;

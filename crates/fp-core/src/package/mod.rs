@@ -3,7 +3,7 @@ use std::fmt::{self, Display};
 
 use semver::{Version, VersionReq};
 
-use crate::module::{FeatureRef, ModuleId};
+use crate::ast::module::{FeatureRef, ModuleId};
 use crate::vfs::VirtualPath;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -137,7 +137,7 @@ pub mod provider;
 use crate::ast::{FunctionSignature, Item, ItemId, MethodSignature, TypeEnum, TypeStruct};
 use crate::hir::PackageId as HirPackageId;
 use crate::lir::{LirCompileUnit, LirWorkspace};
-use crate::module::path::QualifiedPath;
+use crate::ast::path::QualifiedPath;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug)]

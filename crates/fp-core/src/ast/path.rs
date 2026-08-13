@@ -1,3 +1,11 @@
+//! Path-value machinery for resolving a syntactic AST path (`ast::Path`)
+//! against a module tree: parsing a textual path spec (`ParsedPath`), the
+//! fully-resolved absolute form used as a lookup key (`QualifiedPath`), and
+//! the resolution itself (`resolve_path`/`resolve_item_path`). Lives under
+//! `ast` rather than a shared crate-root module — like every other IR here
+//! (`hir::Path`/`hir::DefPath`, `mir::ident::Path`), path values are owned by
+//! the stage that defines them, not centralized across stages.
+
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};

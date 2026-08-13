@@ -923,7 +923,7 @@ fn estimate_module_path(
     language: &str,
     root: &Path,
     input: &Path,
-) -> Result<fp_core::module::path::QualifiedPath> {
+) -> Result<fp_core::ast::path::QualifiedPath> {
     match language {
         "rust" | "rs" => {
             let rel = input.strip_prefix(root.join("src")).map_err(|_| {
@@ -960,8 +960,8 @@ fn estimate_module_path(
 fn estimate_typescript_module_path(
     root: &Path,
     input: &Path,
-) -> Result<fp_core::module::path::QualifiedPath> {
-    Ok(fp_core::module::path::QualifiedPath::new(
+) -> Result<fp_core::ast::path::QualifiedPath> {
+    Ok(fp_core::ast::path::QualifiedPath::new(
         fp_typescript::package::estimate_module_path(root, input),
     ))
 }
@@ -970,7 +970,7 @@ fn estimate_typescript_module_path(
 fn estimate_typescript_module_path(
     _root: &Path,
     _input: &Path,
-) -> Result<fp_core::module::path::QualifiedPath> {
+) -> Result<fp_core::ast::path::QualifiedPath> {
     Err(CliError::Compilation(
         "typescript support not compiled into this build".to_string(),
     ))
@@ -990,7 +990,7 @@ fn provider_and_package_for_input(
 ) -> Result<(
     std::sync::Arc<dyn fp_core::package::provider::PackageProvider>,
     PackageId,
-    fp_core::module::path::QualifiedPath,
+    fp_core::ast::path::QualifiedPath,
 )> {
     let input_abs = input.canonicalize().unwrap_or_else(|_| input.to_path_buf());
 
@@ -1046,7 +1046,7 @@ fn provider_and_package_for_input(
     // — not an empty one. One segment (the package id itself) is both the
     // minimum that satisfies the head-segment check and exactly what the
     // resulting items get tagged with, so it doubles as the filter tag.
-    let tag = fp_core::module::path::QualifiedPath::new(vec![package_id.as_str().to_string()]);
+    let tag = fp_core::ast::path::QualifiedPath::new(vec![package_id.as_str().to_string()]);
     let provider = compiler::single_file_provider(package_id.clone(), tag.clone(), source)?;
     Ok((provider, package_id, tag))
 }

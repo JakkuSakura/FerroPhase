@@ -190,7 +190,7 @@ impl WorkspaceDependency {
 
 use crate::ast::{FunctionSignature, MethodSignature, TypeEnum, TypeStruct};
 use crate::hir::PackageId as HirPackageId;
-use crate::module::path::QualifiedPath;
+use crate::ast::path::QualifiedPath;
 use crate::package::provider::PackageProvider;
 use crate::package::{CompiledPackage, PackageId, PackageSource};
 use std::cell::{Cell, Ref, RefCell};

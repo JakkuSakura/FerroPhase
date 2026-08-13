@@ -8,7 +8,7 @@ use fp_compiler::{
     PipelineMode,
 };
 use fp_core::intrinsics::{IntrinsicMaterializer, IntrinsicNormalizer};
-use fp_core::module::path::QualifiedPath;
+use fp_core::ast::path::QualifiedPath;
 use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::package::{PackageDescriptor, PackageId, PackageSource};
 use fp_core::vfs::{UnixFileSystem, VirtualPath};

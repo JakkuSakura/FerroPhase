@@ -1,3 +1,9 @@
+//! Cross-language module descriptor metadata (which package a module
+//! belongs to, what it exports, which language/features it needs) — a
+//! minor, AST-adjacent concept describing a source module from the outside,
+//! as distinct from `ast::item::Module` (the AST node for a `mod` block
+//! itself) and from path *resolution* (`ast::path`).
+
 use std::fmt::{self, Display};
 
 use crate::vfs::VirtualPath;
@@ -73,5 +79,3 @@ pub struct ModuleDescriptor {
     pub exports: Vec<SymbolDescriptor>,
     pub requires_features: Vec<FeatureRef>,
 }
-
-pub mod path;

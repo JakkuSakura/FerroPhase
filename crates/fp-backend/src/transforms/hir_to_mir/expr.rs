@@ -462,7 +462,7 @@ pub struct MirLowering {
     /// dependency's ADTs being eagerly duplicated into `program.items`
     /// whether anything here references them or not.
     hir_def_map: HashMap<hir::DefId, hir::Item>,
-    hir_def_paths: HashMap<hir::DefId, Vec<hir::Symbol>>,
+    hir_def_paths: HashMap<hir::DefId, hir::DefPath>,
 }
 
 impl MirLowering {
@@ -1124,7 +1124,7 @@ impl MirLowering {
         };
 
         let mir_function = mir::Function {
-            name: mir::Symbol::new(Self::qualified_display_name(
+            name: mir::Symbol::new(Self::def_path_str(
                 &program.def_paths,
                 item.def_id,
                 function.sig.name.as_str(),
@@ -4614,26 +4614,20 @@ impl MirLowering {
     /// `register_struct`/`register_enum` can be called from a context that
     /// only has `def_paths` on hand (`compute_adt_layout`'s lazy foreign-type
     /// lookup, which runs after the original `hir::Program` is out of scope).
-    fn qualified_display_name(
-        def_paths: &HashMap<hir::DefId, Vec<hir::Symbol>>,
+    fn def_path_str(
+        def_paths: &HashMap<hir::DefId, hir::DefPath>,
         def_id: hir::DefId,
         bare_name: &str,
     ) -> String {
         def_paths
             .get(&def_id)
-            .map(|segments| {
-                segments
-                    .iter()
-                    .map(|segment| segment.as_str())
-                    .collect::<Vec<_>>()
-                    .join("::")
-            })
+            .map(|path| path.to_string())
             .unwrap_or_else(|| bare_name.to_string())
     }
 
     fn register_struct(
         &mut self,
-        def_paths: &HashMap<hir::DefId, Vec<hir::Symbol>>,
+        def_paths: &HashMap<hir::DefId, hir::DefPath>,
         def_id: hir::DefId,
         strukt: &hir::Struct,
         _span: Span,
@@ -4663,7 +4657,7 @@ impl MirLowering {
         self.struct_defs.insert(
             def_id,
             StructDefinition {
-                name: Self::qualified_display_name(def_paths, def_id, strukt.name.as_str()),
+                name: Self::def_path_str(def_paths, def_id, strukt.name.as_str()),
                 generics,
                 fields,
                 field_index,
@@ -4673,7 +4667,7 @@ impl MirLowering {
 
     fn register_enum(
         &mut self,
-        def_paths: &HashMap<hir::DefId, Vec<hir::Symbol>>,
+        def_paths: &HashMap<hir::DefId, hir::DefPath>,
         def_id: hir::DefId,
         enm: &hir::Enum,
         _span: Span,
@@ -4688,7 +4682,7 @@ impl MirLowering {
             .iter()
             .map(|param| param.name.as_str().to_string())
             .collect::<Vec<_>>();
-        let enum_qualified_name = Self::qualified_display_name(def_paths, def_id, enm.name.as_str());
+        let enum_qualified_name = Self::def_path_str(def_paths, def_id, enm.name.as_str());
 
         let mut variants = Vec::new();
         let mut next_value: i64 = 0;

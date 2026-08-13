@@ -3,7 +3,7 @@ use fp_core::ast::{Ty, TypeStruct, TypeType, Value};
 use fp_core::hir;
 use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
-use fp_core::module::path::QualifiedPath;
+use fp_core::ast::path::QualifiedPath;
 use fp_core::package::PackageId;
 use fp_core::span::Span;
 use fp_interpret::LirInterpreter;
@@ -192,7 +192,8 @@ impl CompilerDriver {
             .env_ctx
             .compiled_package(package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
-        let expected_path = module_path.with_segment(function_name.to_string()).segments;
+        let expected_path =
+            hir::DefPath::from_qualified_path(&module_path.with_segment(function_name.to_string()));
         package
             .borrow()
             .hir_program
@@ -204,11 +205,7 @@ impl CompilerDriver {
                             && program
                                 .def_paths
                                 .get(&item.def_id)
-                                .map(|path| {
-                                    path.iter()
-                                        .map(|segment| segment.as_str())
-                                        .eq(expected_path.iter().map(String::as_str))
-                                })
+                                .map(|path| path == &expected_path)
                                 .unwrap_or(true) =>
                     {
                         Some(item.def_id)

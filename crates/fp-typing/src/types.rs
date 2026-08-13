@@ -2,7 +2,7 @@ use fp_core::ast::{Ty, Value};
 use fp_core::hir;
 use fp_core::hir::HirId;
 use fp_core::hir::ty::Ty as HirTy;
-use fp_core::module::path::QualifiedPath;
+use fp_core::ast::path::QualifiedPath;
 use fp_core::span::Span;
 use std::collections::HashMap;
 

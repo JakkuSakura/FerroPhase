@@ -45,7 +45,7 @@ pub struct HirGenerator {
     current_position: u32,
     type_scopes: Vec<HashMap<String, hir::Res>>,
     value_scopes: Vec<HashMap<String, hir::Res>>,
-    module_path: fp_core::module::path::QualifiedPath,
+    module_path: fp_core::ast::path::QualifiedPath,
     module_visibility: Vec<bool>,
     global_value_defs: HashMap<String, SymbolEntry>,
     global_type_defs: HashMap<String, SymbolEntry>,
@@ -54,7 +54,7 @@ pub struct HirGenerator {
     /// centrally by `record_def_path`, called from every symbol
     /// registration helper; never cleared per-file since `DefId`s are
     /// unique for the lifetime of this generator.
-    def_paths: HashMap<hir::DefId, Vec<hir::Symbol>>,
+    def_paths: HashMap<hir::DefId, hir::DefPath>,
     prelude_value_defs: HashMap<String, hir::Res>,
     prelude_type_defs: HashMap<String, hir::Res>,
     preassigned_def_ids: HashMap<u64, hir::DefId>,
@@ -65,7 +65,7 @@ pub struct HirGenerator {
     structural_value_defs: HashMap<String, StructuralValueDef>,
     const_list_length_scopes: Vec<HashMap<String, usize>>,
     synthetic_items: Vec<hir::Item>,
-    module_defs: HashSet<fp_core::module::path::QualifiedPath>,
+    module_defs: HashSet<fp_core::ast::path::QualifiedPath>,
     program_def_map: HashMap<hir::DefId, hir::Item>,
     unimplemented_type_def_ids: HashSet<hir::DefId>,
     resolving_type_aliases: HashSet<String>,
@@ -79,13 +79,13 @@ pub struct HirGenerator {
     /// `predeclare_items` pass because the name is only reachable through
     /// an import that hadn't been processed yet — see `transform_package`,
     /// which retries these once imports are resolved.
-    pending_impls: Vec<(fp_core::module::path::QualifiedPath, ast::Item)>,
+    pending_impls: Vec<(fp_core::ast::path::QualifiedPath, ast::Item)>,
     /// `(module_path, alias)` pairs already registered by
     /// `register_import_binding`, so re-running it (e.g. `append_item`'s
     /// own `ItemKind::Import` handling, after `transform_package`'s
     /// upfront import worklist already ran) is a guaranteed no-op instead
     /// of an assumed-safe duplicate.
-    resolved_import_aliases: HashSet<(fp_core::module::path::QualifiedPath, String)>,
+    resolved_import_aliases: HashSet<(fp_core::ast::path::QualifiedPath, String)>,
 }
 
 enum MaterializedTypeAlias {
@@ -98,7 +98,7 @@ enum MaterializedTypeAlias {
 struct SymbolEntry {
     res: hir::Res,
     export: SymbolExport,
-    path: Option<fp_core::module::path::QualifiedPath>,
+    path: Option<fp_core::ast::path::QualifiedPath>,
 }
 
 #[derive(Debug, Clone)]
@@ -273,7 +273,7 @@ impl HirGenerator {
     /// contents resolvable under the importing module's own path — this
     /// pass previously treated every glob import as a silent no-op.
     fn expand_glob_import(&self, prefix: Vec<String>, out: &mut Vec<ImportBinding>) {
-        let target_path = fp_core::module::path::QualifiedPath::new(prefix.clone());
+        let target_path = fp_core::ast::path::QualifiedPath::new(prefix.clone());
         let mut candidates = vec![target_path.clone()];
         if !self.module_path.is_empty() {
             let relative = self.module_path.join(&prefix);
@@ -354,7 +354,7 @@ impl HirGenerator {
         if self.resolved_import_aliases.contains(&resolved_key) {
             return true;
         }
-        let target_path = fp_core::module::path::QualifiedPath::new(binding.target.clone());
+        let target_path = fp_core::ast::path::QualifiedPath::new(binding.target.clone());
         let mut candidates = vec![target_path.clone()];
         if !self.module_path.is_empty() {
             let relative = self.module_path.join(&target_path.segments);
@@ -432,7 +432,7 @@ impl HirGenerator {
             current_position: 0,
             type_scopes: vec![HashMap::new()],
             value_scopes: vec![HashMap::new()],
-            module_path: fp_core::module::path::QualifiedPath::new(Vec::new()),
+            module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
             module_visibility: vec![true],
             global_value_defs: HashMap::new(),
             global_type_defs: HashMap::new(),
@@ -547,7 +547,7 @@ impl HirGenerator {
         self.type_scopes.push(HashMap::new());
         self.value_scopes.clear();
         self.value_scopes.push(HashMap::new());
-        self.module_path = fp_core::module::path::QualifiedPath::new(Vec::new());
+        self.module_path = fp_core::ast::path::QualifiedPath::new(Vec::new());
         self.module_visibility.clear();
         self.module_visibility.push(true);
         self.global_value_defs.clear();
@@ -617,7 +617,7 @@ impl HirGenerator {
 
     fn record_value_path(
         &mut self,
-        path: &fp_core::module::path::QualifiedPath,
+        path: &fp_core::ast::path::QualifiedPath,
         res: hir::Res,
         visibility: &ast::Visibility,
     ) {
@@ -654,11 +654,11 @@ impl HirGenerator {
     /// alias (`register_import_binding` re-registers an existing
     /// `Res::Def` under a `use ... as` name through these same helpers)
     /// never clobber a def's one true canonical path.
-    fn record_def_path(&mut self, res: &hir::Res, path: &fp_core::module::path::QualifiedPath) {
+    fn record_def_path(&mut self, res: &hir::Res, path: &fp_core::ast::path::QualifiedPath) {
         if let hir::Res::Def(def_id) = res {
             self.def_paths
                 .entry(*def_id)
-                .or_insert_with(|| path.segments.iter().cloned().map(hir::Symbol::new).collect());
+                .or_insert_with(|| hir::DefPath::from_qualified_path(path));
         }
     }
 
@@ -673,13 +673,13 @@ impl HirGenerator {
     fn canonical_type_path(
         &self,
         self_path: &hir::Path,
-    ) -> Result<fp_core::module::path::QualifiedPath> {
+    ) -> Result<fp_core::ast::path::QualifiedPath> {
         // Non-nominal self-type shapes (`&T`, `[T]`, `[T; N]`) carry a typed
         // `Res::Builtin` tag rather than resolving to a `DefId` — mirrors
         // rustc's `SimplifiedType` fast-reject bucketing. Check this first,
         // via the tag rather than sniffing the segment name.
         if let Some(hir::Res::Builtin(kind)) = &self_path.res {
-            return Ok(fp_core::module::path::QualifiedPath::new(vec![
+            return Ok(fp_core::ast::path::QualifiedPath::new(vec![
                 kind.bucket_key().to_string(),
             ]));
         }
@@ -708,7 +708,7 @@ impl HirGenerator {
                     .map(|s| s.name.as_str())
                     .unwrap_or("");
                 if is_primitive_type_name(name) {
-                    return Ok(fp_core::module::path::QualifiedPath::new(vec![
+                    return Ok(fp_core::ast::path::QualifiedPath::new(vec![
                         name.to_string(),
                     ]));
                 }
@@ -791,7 +791,7 @@ impl HirGenerator {
         self.type_scopes.push(HashMap::new());
         self.value_scopes.clear();
         self.value_scopes.push(HashMap::new());
-        self.module_path = fp_core::module::path::QualifiedPath::new(Vec::new());
+        self.module_path = fp_core::ast::path::QualifiedPath::new(Vec::new());
         self.module_visibility.clear();
         self.module_visibility.push(true);
         self.next_hir_id = 0;
@@ -932,7 +932,7 @@ impl HirGenerator {
                     for variant in &def_enum.value.variants {
                         let variant_def_id = self.next_def_id();
 
-                        let variant_path = fp_core::module::path::QualifiedPath::new(vec![
+                        let variant_path = fp_core::ast::path::QualifiedPath::new(vec![
                             def_enum.name.name.clone(),
                             variant.name.name.clone(),
                         ]);
@@ -1006,7 +1006,7 @@ impl HirGenerator {
                                     let variant_def_id = self.next_def_id();
 
                                     let variant_path =
-                                        fp_core::module::path::QualifiedPath::new(vec![
+                                        fp_core::ast::path::QualifiedPath::new(vec![
                                             def_type.name.name.clone(),
                                             variant.name.name.clone(),
                                         ]);
@@ -1096,7 +1096,7 @@ impl HirGenerator {
                             let method_def_id = self.allocate_def_id_for_item(impl_item);
                             method_path.push(function.name.name.clone());
                             self.record_value_path(
-                                &fp_core::module::path::QualifiedPath::new(method_path.clone()),
+                                &fp_core::ast::path::QualifiedPath::new(method_path.clone()),
                                 hir::Res::Def(method_def_id),
                                 &function.visibility,
                             );
@@ -1143,9 +1143,9 @@ impl HirGenerator {
         self.qualify_path(name).to_key()
     }
 
-    fn qualify_path(&self, name: &str) -> fp_core::module::path::QualifiedPath {
+    fn qualify_path(&self, name: &str) -> fp_core::ast::path::QualifiedPath {
         if self.module_path.is_empty() {
-            fp_core::module::path::QualifiedPath::new(vec![name.to_string()])
+            fp_core::ast::path::QualifiedPath::new(vec![name.to_string()])
         } else {
             self.module_path.with_segment(name.to_string())
         }
@@ -1318,7 +1318,7 @@ impl HirGenerator {
             return self.transform_query_document(&query);
         }
         let path = lowered.path.clone();
-        let root = fp_core::module::path::QualifiedPath::new(Vec::new());
+        let root = fp_core::ast::path::QualifiedPath::new(Vec::new());
         self.transform_module_inner(&root, path, &lowered.items)
     }
 
@@ -1330,7 +1330,7 @@ impl HirGenerator {
     /// leaving it empty.
     pub fn transform_module(
         &mut self,
-        module_path: &fp_core::module::path::QualifiedPath,
+        module_path: &fp_core::ast::path::QualifiedPath,
         items: &[ast::Item],
     ) -> Result<hir::Program> {
         self.transform_module_inner(module_path, module_path.to_key(), items)
@@ -1340,7 +1340,7 @@ impl HirGenerator {
     /// available in the typing context.
     pub async fn transform_module_async(
         &mut self,
-        module_path: &fp_core::module::path::QualifiedPath,
+        module_path: &fp_core::ast::path::QualifiedPath,
         items: &[ast::Item],
         typing_context: std::rc::Rc<fp_typing::TypingContext>,
     ) -> Result<hir::Program> {
@@ -1418,7 +1418,7 @@ impl HirGenerator {
     /// surface, genuinely-unresolvable imports behave the same as before.
     fn resolve_pending_imports(&mut self, package: &fp_core::package::CompiledPackage) -> Result<()> {
         let mut pending: Vec<(
-            fp_core::module::path::QualifiedPath,
+            fp_core::ast::path::QualifiedPath,
             ImportBinding,
             ast::Visibility,
         )> = Vec::new();
@@ -1492,7 +1492,7 @@ impl HirGenerator {
 
     fn transform_module_inner<P: AsRef<Path>>(
         &mut self,
-        module_path: &fp_core::module::path::QualifiedPath,
+        module_path: &fp_core::ast::path::QualifiedPath,
         file_label: P,
         items: &[ast::Item],
     ) -> Result<hir::Program> {
@@ -1541,7 +1541,7 @@ impl HirGenerator {
 
     fn with_module_scope<T>(
         &mut self,
-        module_path: &fp_core::module::path::QualifiedPath,
+        module_path: &fp_core::ast::path::QualifiedPath,
         action: impl FnOnce(&mut Self) -> Result<T>,
     ) -> Result<T> {
         let depth = module_path.segments.len();
@@ -1872,7 +1872,7 @@ impl HirGenerator {
                     .variants
                     .iter()
                     .map(|variant| {
-                        let variant_path = fp_core::module::path::QualifiedPath::new(vec![
+                        let variant_path = fp_core::ast::path::QualifiedPath::new(vec![
                             enum_def.name.name.clone(),
                             variant.name.name.clone(),
                         ]);
@@ -2972,7 +2972,7 @@ impl HirGenerator {
     fn qualify_name_in_ancestor(&self, name: &str) -> Option<String> {
         let segments = &self.module_path.segments;
         for len in (0..segments.len()).rev() {
-            let candidate = fp_core::module::path::QualifiedPath::new(segments[..len].to_vec())
+            let candidate = fp_core::ast::path::QualifiedPath::new(segments[..len].to_vec())
                 .with_segment(name.to_string())
                 .to_key();
             if self.type_aliases.contains_key(&candidate) {
@@ -2993,7 +2993,7 @@ impl HirGenerator {
         let qualified = if segments.len() == 1 {
             self.qualify_name(&segments[0])
         } else {
-            fp_core::module::path::QualifiedPath::new(segments.to_vec()).to_key()
+            fp_core::ast::path::QualifiedPath::new(segments.to_vec()).to_key()
         };
         if let Some(alias) = self.type_aliases.get(&qualified) {
             return Some(alias.clone());
@@ -3016,7 +3016,7 @@ impl HirGenerator {
         let qualified = if segments.len() == 1 {
             self.qualify_name(&segments[0])
         } else {
-            fp_core::module::path::QualifiedPath::new(segments.to_vec()).to_key()
+            fp_core::ast::path::QualifiedPath::new(segments.to_vec()).to_key()
         };
         if let Some(alias) = self.type_aliases.get(&qualified) {
             if self.ty_is_simple_path(alias, segments) {
@@ -3244,7 +3244,7 @@ impl HirGenerator {
                     .variants
                     .iter()
                     .map(|variant| {
-                        let variant_path = fp_core::module::path::QualifiedPath::new(vec![
+                        let variant_path = fp_core::ast::path::QualifiedPath::new(vec![
                             def_type.name.name.clone(),
                             variant.name.name.clone(),
                         ]);
@@ -3394,11 +3394,11 @@ fn self_type_first_segment_name(self_ty: &ast::Expr) -> Option<&str> {
     };
     match name {
         Name::Ident(ident) => Some(ident.name.as_str()),
-        Name::Path(path) if path.prefix == fp_core::module::path::PathPrefix::Plain => {
+        Name::Path(path) if path.prefix == fp_core::ast::path::PathPrefix::Plain => {
             path.segments.first().map(|seg| seg.name.as_str())
         }
         Name::ParameterPath(param_path)
-            if param_path.prefix == fp_core::module::path::PathPrefix::Plain =>
+            if param_path.prefix == fp_core::ast::path::PathPrefix::Plain =>
         {
             param_path
                 .segments

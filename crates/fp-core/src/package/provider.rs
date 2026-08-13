@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::module::ModuleId;
+use crate::ast::module::ModuleId;
 use crate::package::{PackageDescriptor, PackageId, PackageSource};
 
 pub type ProviderResult<T> = Result<T, ProviderError>;

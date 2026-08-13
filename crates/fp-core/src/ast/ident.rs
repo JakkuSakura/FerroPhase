@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::module::path::PathPrefix;
+use crate::ast::path::PathPrefix;
 use crate::span::Span;
 
 /// A simple identifier - a single name like `foo` or `MyStruct`

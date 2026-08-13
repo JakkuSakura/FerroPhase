@@ -1,6 +1,6 @@
 use std::fmt::{self, Display};
 
-use fp_core::module::path::QualifiedPath;
+use fp_core::ast::path::QualifiedPath;
 use serde::{Deserialize, Serialize};
 
 /// Resolved semantic identity for a work subject after identity-forming

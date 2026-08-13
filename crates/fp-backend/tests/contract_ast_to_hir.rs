@@ -227,8 +227,8 @@ fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
         program
             .def_paths
             .get(&add_item.def_id)
-            .map(|p| p.iter().map(|s| s.as_str()).collect::<Vec<_>>()),
-        Some(vec!["math", "add"]),
+            .map(|p| p.to_segments()),
+        Some(vec!["math".to_string(), "add".to_string()]),
         "add's qualified path should be recorded in def_paths, not baked into sig.name"
     );
 
@@ -360,8 +360,8 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
         program
             .def_paths
             .get(&add_item.def_id)
-            .map(|p| p.iter().map(|s| s.as_str()).collect::<Vec<_>>()),
-        Some(vec!["math", "add"]),
+            .map(|p| p.to_segments()),
+        Some(vec!["math".to_string(), "add".to_string()]),
         "add's qualified path should be recorded in def_paths, not baked into sig.name"
     );
 
@@ -374,8 +374,8 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
         program
             .def_paths
             .get(&callers_item.def_id)
-            .map(|p| p.iter().map(|s| s.as_str()).collect::<Vec<_>>()),
-        Some(vec!["callers", "call"]),
+            .map(|p| p.to_segments()),
+        Some(vec!["callers".to_string(), "call".to_string()]),
         "call's qualified path should be recorded in def_paths, not baked into sig.name"
     );
 

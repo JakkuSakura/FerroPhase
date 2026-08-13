@@ -3,7 +3,7 @@ use crate::ast::{
     ExprInvokeTarget, ExprKind, ExprMatch, ExprTry, ExprWhile, File, Item, ItemChunk,
     ItemDefFunction, ItemDefTrait, ItemImpl, ItemKind, Module, Value,
 };
-use crate::module::path::QualifiedPath;
+use crate::ast::path::QualifiedPath;
 
 pub fn annotate_collected_items(file: &mut File) {
     let root = QualifiedPath::new(Vec::new());

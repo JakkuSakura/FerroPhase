@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::module::ModuleDescriptor;
-use crate::module::ModuleId;
+use crate::ast::module::ModuleDescriptor;
+use crate::ast::module::ModuleId;
 use crate::package::{PackageDescriptor, PackageId};
 
 #[derive(Clone, Debug, Default)]

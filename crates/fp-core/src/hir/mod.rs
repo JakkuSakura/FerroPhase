@@ -9,7 +9,7 @@ pub mod place;
 pub mod pretty;
 pub mod ty;
 
-pub use ident::Symbol;
+pub use ident::{DefPath, Symbol};
 pub use ty::{Abi, Ty};
 
 pub type HirId = u32;
@@ -67,7 +67,7 @@ pub struct Program {
     /// on the item itself. A missing entry means the definition has no
     /// meaningful module qualification (e.g. impl methods, addressed by
     /// (type, method) pair instead, or synthetic items).
-    pub def_paths: HashMap<DefId, Vec<Symbol>>,
+    pub def_paths: HashMap<DefId, DefPath>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -66,7 +66,7 @@ impl RuntimeSymbol {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirCompileUnit {
     pub package_id: crate::hir::PackageId,
-    pub module_path: crate::module::path::QualifiedPath,
+    pub module_path: crate::ast::path::QualifiedPath,
     pub program: LirProgram,
 }
 
@@ -84,7 +84,7 @@ pub struct LirProgram {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirArtifact {
     pub package_id: crate::package::PackageId,
-    pub module_path: crate::module::path::QualifiedPath,
+    pub module_path: crate::ast::path::QualifiedPath,
     pub kind: LirArtifactKind,
 }
 
@@ -156,7 +156,7 @@ impl LirWorkspace {
     pub fn add_program(
         &mut self,
         package_id: crate::package::PackageId,
-        module_path: crate::module::path::QualifiedPath,
+        module_path: crate::ast::path::QualifiedPath,
         program: LirProgram,
     ) -> Result<(), LirProgramError> {
         if self.data_layout != program.data_layout {
