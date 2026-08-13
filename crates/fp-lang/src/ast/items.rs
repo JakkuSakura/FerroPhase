@@ -1319,7 +1319,7 @@ fn const_struct_attr() -> Attribute {
     }
 }
 
-fn parse_attr_meta_direct(input: &mut &[Token], file: FileId) -> ModalResult<AttrMeta> {
+pub(crate) fn parse_attr_meta_direct(input: &mut &[Token], file: FileId) -> ModalResult<AttrMeta> {
     let name = parse_module_path(input)?;
     if expect_symbol(input, "=").is_ok() {
         let value = parse_expr_winnow_no_struct(input, file)?;

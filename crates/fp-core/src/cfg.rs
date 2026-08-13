@@ -87,7 +87,11 @@ fn cfg_list_items_enabled(items: &[ast::AttrMeta], env: &TargetEnv) -> bool {
     items.iter().all(|item| cfg_meta_enabled(item, env))
 }
 
-fn cfg_meta_enabled(meta: &ast::AttrMeta, env: &TargetEnv) -> bool {
+/// Evaluates a single `cfg` predicate (the parsed inner content of
+/// `#[cfg(...)]`, or of a `cfg!(...)` macro invocation, which uses the
+/// identical grammar). `pub` so it can also be reused to normalize `cfg!()`
+/// as an expression-position macro, not just attribute-position filtering.
+pub fn cfg_meta_enabled(meta: &ast::AttrMeta, env: &TargetEnv) -> bool {
     match meta {
         ast::AttrMeta::Path(path) => match path.last().as_str() {
             "unix" => env.os == "linux" || env.os == "macos",

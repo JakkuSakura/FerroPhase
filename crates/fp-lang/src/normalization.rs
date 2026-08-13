@@ -144,6 +144,65 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     ExprKind::Macro(macro_expr),
                 )));
             }
+            // `cfg!(...)` uses the identical grammar as `#[cfg(...)]`
+            // attributes (`name`, `name = "value"`, `name(...)`) — parse its
+            // tokens the same way (`parse_attr_meta_direct`, normally used
+            // for attributes) and evaluate with the same predicate
+            // (`cfg_meta_enabled`) already used for attribute-position
+            // `#[cfg(...)]` item filtering. `TargetEnv::host()` matches
+            // `HirGenerator`'s own default (`ast_to_hir/mod.rs`) — this
+            // transpiler has no real cross-compilation target, so cfg
+            // predicates are evaluated against the host machine either way.
+            if macro_name == "cfg" {
+                let tokens = macro_token_trees_to_tokens(&macro_expr.invocation.token_trees);
+                let file_id = macro_tokens_file_id(&macro_expr.invocation.token_trees);
+                let mut input = tokens.as_slice();
+                return match crate::ast::parse_attr_meta_direct(&mut input, file_id) {
+                    Ok(meta) => {
+                        let enabled = fp_core::cfg::cfg_meta_enabled(
+                            &meta,
+                            &fp_core::cfg::TargetEnv::host(),
+                        );
+                        let replacement = Expr::value(Value::bool(enabled)).with_ty_slot(ty_slot);
+                        Ok(NormalizeOutcome::Normalized(replacement))
+                    }
+                    Err(_) => Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                        id,
+                        ty_slot,
+                        span,
+                        ExprKind::Macro(macro_expr),
+                    ))),
+                };
+            }
+            // `cfg_select! { pred1 => { ... } pred2 => { ... } _ => { ... } }`
+            // — a multi-arm cfg-gated selector (std's own polyfill wraps the
+            // nightly builtin of the same name). Each arm's predicate uses
+            // the same grammar as `cfg!`/`#[cfg(...)]`; pick the first arm
+            // whose predicate holds (or a bare `_` wildcard) and normalize
+            // to *that* arm's block — same "wrap raw tokens in the matching
+            // delimiter, then run the real expression parser" trick already
+            // used by `parse_vec_macro_tokens` below, just with `{`/`}`
+            // instead of `[`/`]` (a block can mix items and statements, so
+            // it needs the full parser, not a bespoke one here).
+            if macro_name == "cfg_select" {
+                return match select_cfg_select_arm(&macro_expr.invocation.token_trees) {
+                    Some(arm_tokens) => {
+                        let file_id = macro_tokens_file_id(&arm_tokens);
+                        let flat = macro_token_trees_to_tokens(&arm_tokens);
+                        let wrapped = wrap_tokens_in_group(&flat, "{", "}", macro_expr.span());
+                        let block = crate::ast::parse_expr_tokens(&wrapped, file_id)
+                            .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+                        let replacement = block.with_ty_slot(ty_slot);
+                        Ok(NormalizeOutcome::Normalized(replacement))
+                    }
+                    None => Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                        id,
+                        ty_slot,
+                        span,
+                        ExprKind::Macro(macro_expr),
+                    ))),
+                };
+            }
             if macro_name == "vec" {
                 let expr =
                     parse_vec_macro_tokens(&macro_expr.invocation.token_trees, macro_expr.span())?;
@@ -935,6 +994,71 @@ fn flatten_or_literal_pattern(expr: &Expr) -> Option<Vec<Expr>> {
         }
         ExprKind::Value(_) => Some(vec![expr.clone()]),
         _ => None,
+    }
+}
+
+/// Walks a `cfg_select!` invocation's top-level token trees — a flat
+/// sequence of `[predicate tokens...] "=>" [body] ","?` repeated per arm —
+/// and returns the inner tokens of the first arm whose predicate holds (a
+/// bare `_` predicate always holds, matching Rust's wildcard arm). A body
+/// is either one brace-delimited `MacroTokenTree::Group` (block form,
+/// already captured as a single tree — no manual brace-depth tracking
+/// needed) or a bare token sequence up to the next top-level comma (expr
+/// form, e.g. `pred => true,`) — like a `match` arm, both are allowed.
+/// The caller always wraps the returned tokens in `{ }` before parsing,
+/// which is semantically identical to the bare form in expression
+/// position, so both shapes return the same way.
+fn select_cfg_select_arm(token_trees: &[MacroTokenTree]) -> Option<Vec<MacroTokenTree>> {
+    let mut iter = token_trees.iter().peekable();
+    loop {
+        iter.peek()?;
+        let mut predicate_tokens: Vec<MacroTokenTree> = Vec::new();
+        loop {
+            match iter.next() {
+                Some(MacroTokenTree::Token(t)) if t.text == "=>" => break,
+                Some(other) => predicate_tokens.push(other.clone()),
+                None => return None,
+            }
+        }
+        let body_tokens: Vec<MacroTokenTree> =
+            if let Some(MacroTokenTree::Group(group)) = iter.peek() {
+                let tokens = group.tokens.clone();
+                iter.next();
+                tokens
+            } else {
+                let mut tokens = Vec::new();
+                while !matches!(iter.peek(), Some(MacroTokenTree::Token(t)) if t.text == ",")
+                    && iter.peek().is_some()
+                {
+                    tokens.push(iter.next().unwrap().clone());
+                }
+                tokens
+            };
+        // Optional trailing comma between arms.
+        if matches!(iter.peek(), Some(MacroTokenTree::Token(t)) if t.text == ",") {
+            iter.next();
+        }
+
+        let is_wildcard = matches!(
+            predicate_tokens.as_slice(),
+            [MacroTokenTree::Token(t)] if t.text == "_"
+        );
+        let matched = if is_wildcard {
+            true
+        } else {
+            let file_id = macro_tokens_file_id(&predicate_tokens);
+            let flat = macro_token_trees_to_tokens(&predicate_tokens);
+            let mut input = flat.as_slice();
+            match crate::ast::parse_attr_meta_direct(&mut input, file_id) {
+                Ok(meta) => {
+                    fp_core::cfg::cfg_meta_enabled(&meta, &fp_core::cfg::TargetEnv::host())
+                }
+                Err(_) => false,
+            }
+        };
+        if matched {
+            return Some(body_tokens);
+        }
     }
 }
 
