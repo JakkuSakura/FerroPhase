@@ -951,6 +951,35 @@ fn parse_expr_ast_supports_match_or_patterns() {
 }
 
 #[test]
+fn parse_expr_ast_expands_nested_or_pattern_cartesian_product() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            "match pair { (Some(1) | Some(2), y) => y, (None, y) => y, _ => 0 }",
+        )
+        .unwrap();
+    let ExprKind::Match(match_expr) = expr.kind() else {
+        panic!("expected match expr");
+    };
+    // `(Some(1) | Some(2), y)` is a nested or-pattern (the `|` sits
+    // inside a tuple element, not at the arm's top level) — it must
+    // expand into the cartesian product of `Or`-free cases: `(Some(1), y)`
+    // and `(Some(2), y)`, plus the two other arms: 4 total. Before this
+    // fix, `parse_pattern_alternatives` silently discarded every
+    // alternative but the first, making `Some(2)` unreachable dead code.
+    assert_eq!(match_expr.cases.len(), 4);
+    let patterns: Vec<_> = match_expr
+        .cases
+        .iter()
+        .map(|case| format!("{:?}", case.pat))
+        .collect();
+    assert!(!patterns[0].contains("PatternKind::Or") && !patterns[0].contains("\"Or\""));
+    assert!(patterns[0].contains('1'));
+    assert!(patterns[1].contains('2'));
+}
+
+#[test]
 fn parse_items_ast_supports_impl_trait_bounds_in_params() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();

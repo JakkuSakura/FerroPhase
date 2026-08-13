@@ -3,9 +3,9 @@ use crate::pretty::{PrettyCtx, PrettyPrintable, escape_char, escape_string};
 use std::fmt::{self, Formatter};
 
 use super::{
-    BinOp, Block, Body, Const, Enum, Expr, ExprKind, FormatArgRef, FormatTemplatePart, Function,
-    GenericArg, GenericParamKind, Generics, Impl, ImplItemKind, Item, ItemKind, Lit, Pat, PatKind,
-    Path, Program, Query, Stmt, StmtKind, Struct, TypeExpr, TypeExprKind, UnOp, Visibility,
+    AssocType, BinOp, Block, Body, Const, Enum, Expr, ExprKind, FormatArgRef, FormatTemplatePart,
+    Function, GenericArg, GenericParamKind, Generics, Impl, ImplItemKind, Item, ItemKind, Lit, Pat,
+    PatKind, Path, Program, Query, Stmt, StmtKind, Struct, TypeExpr, TypeExprKind, UnOp, Visibility,
 };
 
 fn query_statement_lines(ir: &crate::query::QueryIrDocument) -> Vec<String> {
@@ -260,6 +260,7 @@ fn write_impl(
             match &impl_item.kind {
                 ImplItemKind::Method(func) => write_impl_method(func, f, ctx)?,
                 ImplItemKind::AssocConst(konst) => write_impl_const(konst, f, ctx)?,
+                ImplItemKind::AssocType(assoc) => write_impl_assoc_type(assoc, f, ctx)?,
             }
             if idx + 1 < imp.items.len() {
                 writeln!(f)?;
@@ -329,6 +330,17 @@ fn write_impl_const(konst: &Const, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_
 
     ctx.writeln(f, format!("const {}{} =", konst.name, ty))?;
     ctx.with_indent(|ctx| write_const_expr(&konst.body, f, ctx))
+}
+
+fn write_impl_assoc_type(
+    assoc: &AssocType,
+    f: &mut Formatter<'_>,
+    ctx: &mut PrettyCtx<'_>,
+) -> fmt::Result {
+    ctx.writeln(
+        f,
+        format!("type {} = {};", assoc.name, fmt_type_expr(&assoc.ty, ctx)),
+    )
 }
 
 fn write_block(block: &Block, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {

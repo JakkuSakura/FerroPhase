@@ -27,6 +27,20 @@ common_enum! {
         QuotePlural(PatternQuotePlural),
         Type(PatternType),
         Wildcard(PatternWildcard),
+        Or(PatternOr),
+    }
+}
+
+common_struct! {
+    /// A real `A | B | ...` or-pattern, at any nesting depth (not just a
+    /// top-level match-arm alternative) — e.g. `(Some(1) | Some(2), y)`.
+    /// Only exists for parsing to be structurally correct; nothing past
+    /// parse time (`expand_pattern_alternatives`, `fp-lang/src/ast/
+    /// expr.rs`) ever sees one — every match/if-let arm containing an
+    /// `Or` anywhere in its pattern gets expanded into the cartesian
+    /// product of concrete, `Or`-free cases before HIR lowering.
+    pub struct PatternOr {
+        pub patterns: Vec<Pattern>,
     }
 }
 
@@ -326,6 +340,12 @@ impl PatternQuotePlural {
     }
 }
 
+impl PatternOr {
+    pub fn span(&self) -> Span {
+        Span::union(self.patterns.iter().map(Pattern::span))
+    }
+}
+
 impl PatternKind {
     pub fn span(&self) -> Span {
         match self {
@@ -342,6 +362,7 @@ impl PatternKind {
             PatternKind::QuotePlural(pattern) => pattern.span(),
             PatternKind::Type(pattern) => pattern.span(),
             PatternKind::Wildcard(pattern) => pattern.span(),
+            PatternKind::Or(pattern) => pattern.span(),
         }
     }
 }

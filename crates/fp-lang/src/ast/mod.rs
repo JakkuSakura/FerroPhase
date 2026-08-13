@@ -201,7 +201,8 @@ use fp_core::ast::{
     ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct,
     ItemDefTrait, ItemDefType, ItemImpl, ItemKind, ItemMacro, ItemOpaqueType, MacroDelimiter,
     MacroGroup, MacroInvocation, MacroToken, MacroTokenTree, Module, Name, ParameterPath,
-    ParameterPathSegment, Path, Pattern, PatternIdent, PatternKind, PatternQuote, PatternTuple,
+    ParameterPathSegment, Path, Pattern, PatternBox, PatternIdent, PatternKind, PatternOr,
+    PatternQuote, PatternStruct, PatternStructural, PatternTuple,
     PatternTupleStruct, PatternType, PatternVariant, PatternWildcard, QuoteFragmentKind,
     QuoteItemKind, ReprOptions, ScriptBlock, StmtDefer, StmtLet, StructuralField, Ty, TypeArray,
     TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum, TypeFunction, TypeInt, TypePrimitive,
@@ -252,6 +253,20 @@ pub fn parse_expr_tokens(tokens: &[Token], file: FileId) -> Result<Expr, DirectP
         return Err(error_at_current(input, "trailing tokens after expression"));
     }
     Ok(expr)
+}
+
+/// Like `parse_expr_tokens`, but tolerates trailing tokens and reports how
+/// many were consumed — used by `macro_rules!` fragment matching (an
+/// `$x:expr` metavariable consumes exactly one expression's worth of
+/// tokens out of a longer invocation stream, not the whole thing).
+pub(crate) fn parse_expr_prefix_tokens(
+    tokens: &[Token],
+    file: FileId,
+) -> Result<(Expr, usize), DirectParseError> {
+    let mut input = tokens;
+    let expr = parse_expr_winnow(&mut input, file).map_err(|err| map_err(err, input))?;
+    let consumed = tokens.len() - input.len();
+    Ok((expr, consumed))
 }
 
 pub fn parse_type_tokens(tokens: &[Token], _file: FileId) -> Result<Ty, DirectParseError> {

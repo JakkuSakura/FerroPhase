@@ -1169,6 +1169,16 @@ pub fn typecheck_package(
         .run(session.driver().compile_package(package_id))
         .map_err(|err| CliError::Compilation(err.to_string()))?;
 
+    // `hir_typeck.rs` now records most errors as diagnostics and keeps
+    // going (see `HirTypeChecker::record_error`/`error_ty`) instead of
+    // aborting `compile_package` on the first one, so a successful
+    // `Result` above no longer means "fully, correctly typed" by itself —
+    // check what actually got recorded, same as the single-file path
+    // already does (`drain_driver`), so a genuinely broken package still
+    // falls back to untyped instead of silently carrying `Ty::error()`
+    // placeholders through as if nothing were wrong.
+    drain_driver(session.driver(), lossy)?;
+
     let package = package.borrow();
     let mut items = package.items.clone();
     if let Some(lifted) = &package.lifted_ast {

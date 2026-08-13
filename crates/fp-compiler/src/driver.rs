@@ -459,15 +459,18 @@ impl CompilerDriver {
                     .map(|package| package.borrow().package_id)
             })
             .unwrap_or_default();
+        let package_source = package.borrow().clone();
+        let macro_rules_defs =
+            fp_lang::collect_macro_rules_defs(package_source.items.iter().map(|item| &item.item));
         let mut generator = HirGenerator::new()
-            .with_intrinsic_normalizer(FerroIntrinsicNormalizer::new(
-                fp_core::intrinsics::IntrinsicNormalizationMode::Compile,
-            ))
+            .with_intrinsic_normalizer(
+                FerroIntrinsicNormalizer::new(fp_core::intrinsics::IntrinsicNormalizationMode::Compile)
+                    .with_macro_rules_defs(macro_rules_defs),
+            )
             .with_package_id(hir_package_id)
             .with_def_id_start(self.next_hir_def_id)
             .with_lowering_config(HirLoweringConfig)
             .with_workspace(self.state.typing_ctx.env_ctx.clone());
-        let package_source = package.borrow().clone();
         let hir_program = generator.transform_package(&package_source)?;
         self.next_hir_def_id = self.next_hir_def_id.max(generator.next_def_id_value());
         let package_exports = generator.exported_symbols();

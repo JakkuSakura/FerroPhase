@@ -127,3 +127,78 @@ pub trait MacroExpansionParser: Send + Sync {
     fn parse_expr(&self, tokens: &[MacroTokenTree]) -> Result<Expr>;
     fn parse_type(&self, tokens: &[MacroTokenTree]) -> Result<Ty>;
 }
+
+common_enum! {
+    /// Repetition operator on a `$(...)` group inside a `macro_rules!` matcher
+    /// or transcriber: `*` (zero or more), `+` (one or more), `?` (zero or one).
+    pub enum MacroRepetitionOp {
+        Star,
+        Plus,
+        Question,
+    }
+}
+
+common_struct! {
+    /// A `$name:fragment` metavariable inside a `macro_rules!` matcher, e.g.
+    /// `$future:expr`.
+    pub struct MacroMetavar {
+        pub name: String,
+        /// The fragment specifier text (`expr`, `ident`, `ty`, `pat`, `tt`,
+        /// `literal`, `block`, `path`, ...), unvalidated at parse time.
+        pub fragment: String,
+    }
+}
+
+common_struct! {
+    /// A `$(...)sep? op` repetition group inside a `macro_rules!` matcher,
+    /// e.g. `$($future:expr),+`.
+    pub struct MacroRepetition {
+        pub inner: Vec<MacroMatcherToken>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub separator: Option<MacroToken>,
+        pub op: MacroRepetitionOp,
+    }
+}
+
+common_struct! {
+    /// A literal delimited group inside a matcher (e.g. matching a literal
+    /// `(a, b)` shape in the invocation) — distinct from a `$(...)`
+    /// repetition group, which is `MacroMatcherToken::Repetition` instead.
+    pub struct MacroMatcherGroup {
+        pub delimiter: MacroDelimiter,
+        pub tokens: Vec<MacroMatcherToken>,
+    }
+}
+
+common_enum! {
+    /// One node in a `macro_rules!` matcher (the left side of `=>`) — the
+    /// structured counterpart to `MacroTokenTree`, distinguishing literal
+    /// tokens from metavariables and repetition groups.
+    pub enum MacroMatcherToken {
+        Token(MacroToken),
+        Metavar(MacroMetavar),
+        Repetition(MacroRepetition),
+        Group(MacroMatcherGroup),
+    }
+}
+
+common_struct! {
+    /// A single `(matcher) => { transcriber };` rule inside a `macro_rules!`
+    /// definition.
+    pub struct MacroRule {
+        pub matcher: Vec<MacroMatcherToken>,
+        pub transcriber: Vec<MacroTokenTree>,
+    }
+}
+
+common_struct! {
+    /// A parsed `macro_rules! name { rule; rule; ... }` definition, structured
+    /// enough to match invocations against and substitute their bindings into
+    /// the winning rule's transcriber. Derived on demand from an `ItemMacro`'s
+    /// raw `token_trees` (see `parse_macro_rules_def`), not stored on
+    /// `ItemMacro` itself.
+    pub struct MacroRulesDef {
+        pub name: String,
+        pub rules: Vec<MacroRule>,
+    }
+}

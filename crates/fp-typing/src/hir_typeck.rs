@@ -18,6 +18,13 @@ pub struct HirTypeChecker {
     locals: Vec<HashMap<hir::Symbol, Ty>>,
     generic_scopes: Vec<HashMap<hir::DefId, Ty>>,
     self_types: Vec<Ty>,
+    /// The current impl block's own associated-type bindings (`type
+    /// Target = Y;`), pushed/popped in lockstep with `self_types` — lets
+    /// `path_ty` resolve `Self::Target` for code lexically inside that
+    /// impl. Deliberately scoped to the impl's own bindings only (no
+    /// trait-default fallback, no cross-impl projection resolution for
+    /// code outside the impl) — see `impl_assoc_types`.
+    assoc_types: Vec<HashMap<hir::Symbol, Ty>>,
     typing_context: Option<Rc<TypingContext>>,
     expected_expr_types: Vec<Ty>,
     /// Type-position `const { ... }` blocks encountered while checking
@@ -44,6 +51,33 @@ impl DerefMut for GenericScope<'_> {
     }
 }
 
+impl HirTypeChecker {
+    /// Records a typing diagnostic instead of hard-aborting the whole
+    /// package's typecheck over one error — mirrors `ast_to_hir`'s
+    /// `error_placeholder_expr_kind` precedent (`fp-backend/src/
+    /// transforms/ast_to_hir/exprs.rs`). `self.typing_context` (already
+    /// carried by every `HirTypeChecker`) is the real sink
+    /// (`TypingContext.diagnostics`, previously never populated by
+    /// anything); `typecheck_package` inspects it after the whole pass
+    /// finishes to decide overall pass/fail, so this doesn't silently
+    /// let a genuinely broken package look fully typed.
+    fn record_error(&self, message: impl Into<String>) {
+        if let Some(context) = &self.typing_context {
+            context
+                .diagnostics
+                .borrow_mut()
+                .push(crate::types::TypingDiagnostic::error(message));
+        }
+    }
+
+    /// `record_error` plus a `Ty::error()` placeholder, for `Result<Ty>`
+    /// call sites that need *some* type to keep going with.
+    fn error_ty(&self, message: impl Into<String>) -> Ty {
+        self.record_error(message);
+        Ty::error()
+    }
+}
+
 impl Drop for GenericScope<'_> {
     fn drop(&mut self) {
         self.checker.generic_scopes.pop();
@@ -58,6 +92,7 @@ impl HirTypeChecker {
             locals: vec![HashMap::new()],
             generic_scopes: Vec::new(),
             self_types: Vec::new(),
+            assoc_types: Vec::new(),
             typing_context: None,
             expected_expr_types: Vec::new(),
             pending_type_const_blocks: Vec::new(),
@@ -120,6 +155,25 @@ impl HirTypeChecker {
         Ok(())
     }
 
+    /// Type-checks and collects an impl block's own `type Target = Y;`
+    /// associated-type bindings, ready to push onto `assoc_types` alongside
+    /// `self_types` — see that field's doc comment for the deliberate scope
+    /// limit (impl's own bindings only, no trait-default consultation, no
+    /// cross-impl resolution).
+    fn impl_assoc_types(
+        &mut self,
+        impl_items: &[hir::ImplItem],
+    ) -> Result<HashMap<hir::Symbol, Ty>> {
+        let mut out = HashMap::new();
+        for item in impl_items {
+            if let hir::ImplItemKind::AssocType(assoc) = &item.kind {
+                let ty = self.check_type_expr(&assoc.ty)?;
+                out.insert(assoc.name.clone(), ty);
+            }
+        }
+        Ok(out)
+    }
+
     fn check_item<'a>(&'a mut self, item: &'a hir::Item) -> crate::BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             match &item.kind {
@@ -154,6 +208,8 @@ impl HirTypeChecker {
                     // "definition `{def_id}` is not a type" — this
                     // position was never meant to type-check as a
                     // concrete type in the first place.
+                    let assoc_types = scope.impl_assoc_types(&impl_item.items)?;
+                    scope.assoc_types.push(assoc_types);
                     for item in &impl_item.items {
                         match &item.kind {
                             hir::ImplItemKind::Method(function) => {
@@ -163,8 +219,12 @@ impl HirTypeChecker {
                                 scope.check_type_expr(&constant.ty)?;
                                 scope.check_body(&constant.body).await?;
                             }
+                            hir::ImplItemKind::AssocType(_) => {
+                                // Already type-checked into `assoc_types` above.
+                            }
                         }
                     }
+                    scope.assoc_types.pop();
                     scope.self_types.pop();
                 }
                 hir::ItemKind::Struct(def) => {
@@ -337,7 +397,7 @@ impl HirTypeChecker {
                         hir::UnOp::Deref => match value_ty.kind {
                             TyKind::Ref(_, inner, _)
                             | TyKind::RawPtr(ty::TypeAndMut { ty: inner, .. }) => *inner,
-                            _ => return Err(Error::from("cannot dereference a non-pointer value")),
+                            _ => self.error_ty("cannot dereference a non-pointer value"),
                         },
                         hir::UnOp::Neg | hir::UnOp::Box => value_ty,
                     }
@@ -381,7 +441,7 @@ impl HirTypeChecker {
                     let Some((mut substitutions, _)) =
                         self.instantiate_call(&callee_ty, &arg_types)?
                     else {
-                        return Err(Error::from("called expression is not a function"));
+                        return Ok(self.error_ty("called expression is not a function"));
                     };
                     if substitutions.is_empty() {
                         if let Some(expected) = self.expected_expr_types.last() {
@@ -423,21 +483,30 @@ impl HirTypeChecker {
                     for arg in args {
                         arg_types.push(self.check_expr(&arg.value).await?);
                     }
-                    let (method_def_id, generic_args, output) =
-                        self.method_output(&receiver_ty, method, &arg_types)?;
-                    self.results
-                        .method_resolutions
-                        .insert(expr.hir_id, method_def_id);
-                    if let Some(args) = generic_args {
-                        self.results.generic_method_args.insert(
-                            expr.hir_id,
-                            GenericCallResolution {
-                                def_id: method_def_id,
-                                args,
-                            },
-                        );
+                    // Method resolution has no natural "error" `DefId` to
+                    // substitute (unlike `Ty::error()`), so the whole
+                    // `Result` from `method_output` (and anything it calls
+                    // via `?` internally, like `method_generic_args`) is
+                    // caught right here instead of inside those functions —
+                    // one catch point covers all of them.
+                    match self.method_output(&receiver_ty, method, &arg_types) {
+                        Ok((method_def_id, generic_args, output)) => {
+                            self.results
+                                .method_resolutions
+                                .insert(expr.hir_id, method_def_id);
+                            if let Some(args) = generic_args {
+                                self.results.generic_method_args.insert(
+                                    expr.hir_id,
+                                    GenericCallResolution {
+                                        def_id: method_def_id,
+                                        args,
+                                    },
+                                );
+                            }
+                            output
+                        }
+                        Err(error) => self.error_ty(error.to_string()),
                     }
-                    output
                 }
                 hir::ExprKind::FieldAccess(receiver, field) => {
                     let receiver_ty = self.check_expr(receiver).await?;
@@ -467,7 +536,7 @@ impl HirTypeChecker {
                             self.require_same(&index_ty, &Ty::int(ty::IntTy::I64))?;
                             match args.first() {
                                 Some(GenericArg::Type(elem)) => elem.clone(),
-                                _ => return Err(Error::from("Vec index requires a type argument")),
+                                _ => self.error_ty("Vec index requires a type argument"),
                             }
                         }
                         TyKind::Adt(adt, args)
@@ -476,14 +545,14 @@ impl HirTypeChecker {
                             let (Some(GenericArg::Type(key_ty)), Some(GenericArg::Type(value_ty))) =
                                 (args.first(), args.get(1))
                             else {
-                                return Err(Error::from(
+                                return Ok(self.error_ty(
                                     "HashMap index requires key and value type arguments",
                                 ));
                             };
                             self.require_same(&index_ty, key_ty)?;
                             value_ty.clone()
                         }
-                        _ => return Err(Error::from("indexing requires an array or slice")),
+                        _ => self.error_ty("indexing requires an array or slice"),
                     }
                 }
                 hir::ExprKind::Cast(value, target) => {
@@ -535,7 +604,7 @@ impl HirTypeChecker {
                 hir::ExprKind::Match(scrutinee, arms) => {
                     let scrutinee_ty = self.check_expr(scrutinee).await?;
                     if arms.is_empty() {
-                        return Err(Error::from("match expression requires at least one arm"));
+                        return Ok(self.error_ty("match expression requires at least one arm"));
                     }
                     let mut result = None;
                     for arm in arms {
@@ -546,8 +615,9 @@ impl HirTypeChecker {
                             result = Some(arm_ty);
                         }
                     }
-                    result
-                        .ok_or_else(|| Error::from("match expression requires at least one arm"))?
+                    result.unwrap_or_else(|| {
+                        self.error_ty("match expression requires at least one arm")
+                    })
                 }
                 hir::ExprKind::Block(block) | hir::ExprKind::Loop(block) => {
                     self.check_block(block).await?
@@ -583,7 +653,7 @@ impl HirTypeChecker {
                 }
                 hir::ExprKind::Array(values) => {
                     if values.is_empty() {
-                        return Err(Error::from("empty array has no inferable element type"));
+                        return Ok(self.error_ty("empty array has no inferable element type"));
                     }
                     let mut value_types = Vec::with_capacity(values.len());
                     for value in values {
@@ -710,12 +780,10 @@ impl HirTypeChecker {
                         TyKind::Slice(inner) => Ty {
                             kind: TyKind::Slice(inner),
                         },
-                        _ => return Err(Error::from("slicing requires an array or slice")),
+                        _ => self.error_ty("slicing requires an array or slice"),
                     }
                 }
-                hir::ExprKind::Query(_) => {
-                    return Err(Error::from("query typing is not implemented"));
-                }
+                hir::ExprKind::Query(_) => self.error_ty("query typing is not implemented"),
                 hir::ExprKind::IntrinsicCall(call) => self.check_intrinsic(call).await?,
                 hir::ExprKind::FormatString(format) => {
                     for part in &format.parts {
@@ -768,7 +836,7 @@ impl HirTypeChecker {
                         (Some(annotation), None) => self.check_type_expr(annotation)?,
                         (None, Some(init)) => self.check_expr(init).await?,
                         (None, None) => {
-                            return Err(Error::from("local binding needs a type or initializer"));
+                            self.error_ty("local binding needs a type or initializer")
                         }
                     };
                     self.bind_pattern(&local.pat, ty)?;
@@ -895,18 +963,12 @@ impl HirTypeChecker {
                     kind: TyKind::Infer(ty::InferTy::FreshTy(expr.hir_id)),
                 }
             }
-            hir::TypeExprKind::Error => {
-                return Err(Error::from("invalid type expression"));
-            }
+            hir::TypeExprKind::Error => self.error_ty("invalid type expression"),
             hir::TypeExprKind::Structural(_) => {
-                return Err(Error::from(
-                    "structural types are not supported by HIR typing",
-                ));
+                self.error_ty("structural types are not supported by HIR typing")
             }
             hir::TypeExprKind::TypeBinaryOp(_) => {
-                return Err(Error::from(
-                    "type expressions cannot be combined with a type operator",
-                ));
+                self.error_ty("type expressions cannot be combined with a type operator")
             }
         };
         self.results.record_type_expr_type(expr.hir_id, ty.clone());
@@ -920,13 +982,30 @@ impl HirTypeChecker {
             }
         }
         if let Some(hir::Res::Local(local)) = path.res {
-            return Err(Error::from(format!("local `{local}` is not a type")));
+            return Ok(self.error_ty(format!("local `{local}` is not a type")));
         }
         if matches!(path.res, Some(hir::Res::SelfTy)) {
-            let Some(self_ty) = self.self_types.last().cloned() else {
-                return Err(Error::from("Self is not available in this type context"));
-            };
-            return Ok(self_ty);
+            if self.self_types.is_empty() {
+                return Ok(self.error_ty("Self is not available in this type context"));
+            }
+            // `Self::Target` (an associated-type path rooted at `Self`,
+            // e.g. inside `impl Deref for X { fn deref(&self) -> &Self::
+            // Target { .. } }`) — resolved from the enclosing impl's own
+            // `type Target = Y;` binding (`assoc_types`, pushed alongside
+            // `self_types`). Deliberately doesn't consult a trait default
+            // or resolve `Self::X` for code outside the impl — see
+            // `impl_assoc_types`'s doc comment.
+            if let Some(assoc_segment) = path.segments.get(1) {
+                let scope = self.assoc_types.last();
+                if let Some(ty) = scope.and_then(|scope| scope.get(&assoc_segment.name)) {
+                    return Ok(ty.clone());
+                }
+                return Ok(self.error_ty(format!(
+                    "associated type `Self::{}` is not defined in this impl",
+                    assoc_segment.name
+                )));
+            }
+            return Ok(self.self_types.last().cloned().unwrap());
         }
         let Some(def_id) = (match path.res {
             Some(hir::Res::Def(def_id)) => Some(def_id),
@@ -941,7 +1020,7 @@ impl HirTypeChecker {
             if path.segments.len() == 1 && path.res.is_none() {
                 return Ok(hir::Ty { kind: hir::ty::TyKind::Tuple(vec![]) });
             }
-            return Err(Error::from(format!(
+            return Ok(self.error_ty(format!(
                 "unresolved type path `{}`",
                 path.segments
                     .iter()
@@ -954,9 +1033,7 @@ impl HirTypeChecker {
             return Ok(generic);
         }
         let Some(item) = self.program.def_map.get(&def_id).cloned() else {
-            return Err(Error::from(format!(
-                "type definition `{def_id}` was not found"
-            )));
+            return Ok(self.error_ty(format!("type definition `{def_id}` was not found")));
         };
         let (flags, variants) = match &item.kind {
             hir::ItemKind::Struct(_) => (AdtFlags::IS_STRUCT, Vec::new()),
@@ -976,7 +1053,7 @@ impl HirTypeChecker {
                     })
                     .collect(),
             ),
-            _ => return Err(Error::from(format!("definition `{def_id}` is not a type"))),
+            _ => return Ok(self.error_ty(format!("definition `{def_id}` is not a type"))),
         };
         let args = match path
             .segments
@@ -988,9 +1065,9 @@ impl HirTypeChecker {
                 .iter()
                 .map(|arg| match arg {
                     hir::GenericArg::Type(ty) => self.check_type_expr(ty).map(GenericArg::Type),
-                    hir::GenericArg::Const(_) => {
-                        Err(Error::from("const generic arguments are not supported"))
-                    }
+                    hir::GenericArg::Const(_) => Ok(GenericArg::Type(
+                        self.error_ty("const generic arguments are not supported"),
+                    )),
                 })
                 .collect::<Result<Vec<_>>>()?,
             None => match &item.kind {
@@ -1085,11 +1162,7 @@ impl HirTypeChecker {
                 };
                 let output = match self.well_known_struct_ty("Vec", vec![GenericArg::Type(t.clone())]) {
                     Some(ty) => ty,
-                    None => {
-                        return Some(Err(Error::from(
-                            "`Vec` struct definition was not found",
-                        )))
-                    }
+                    None => return Some(Ok(self.error_ty("`Vec` struct definition was not found"))),
                 };
                 let input = Ty {
                     kind: TyKind::Slice(Box::new(t)),
@@ -1115,17 +1188,13 @@ impl HirTypeChecker {
                 ) {
                     Some(ty) => ty,
                     None => {
-                        return Some(Err(Error::from(
-                            "`HashMapEntry` struct definition was not found",
-                        )))
+                        return Some(Ok(self.error_ty("`HashMapEntry` struct definition was not found")))
                     }
                 };
                 let output = match self.well_known_struct_ty("HashMap", vec![GenericArg::Type(k), GenericArg::Type(v)]) {
                     Some(ty) => ty,
                     None => {
-                        return Some(Err(Error::from(
-                            "`HashMap` struct definition was not found",
-                        )))
+                        return Some(Ok(self.error_ty("`HashMap` struct definition was not found")))
                     }
                 };
                 let input = Ty {
@@ -1197,7 +1266,7 @@ impl HirTypeChecker {
             // (for example generated closure parameters), so preserve the
             // resolved value path and let MIR handle its value semantics.
             let _ = local;
-            return Err(Error::from(format!("local `{local}` has no inferred type")));
+            return Ok(self.error_ty(format!("local `{local}` has no inferred type")));
         }
         let Some(hir::Res::Def(def_id)) = path.res else {
             if let Some(sig) = self.collection_constructor_signature(path) {
@@ -1206,7 +1275,7 @@ impl HirTypeChecker {
             // A value path can refer to a definition supplied by a loaded
             // crate. It is resolved by HIR lowering, while this pass only
             // needs a semantic value type for subsequent expression checks.
-            return Err(Error::from(format!(
+            return Ok(self.error_ty(format!(
                 "unresolved value path `{}`",
                 path.segments
                     .iter()
@@ -1230,15 +1299,19 @@ impl HirTypeChecker {
                     Some((
                         impl_item.generics.clone(),
                         impl_item.self_ty.clone(),
+                        impl_item.items.clone(),
                         function.clone(),
                     ))
                 })
             });
-            if let Some((generics, self_ty, function)) = associated {
+            if let Some((generics, self_ty, impl_items, function)) = associated {
                 let mut scope = self.generic_scope(&generics);
                 let self_ty = scope.check_type_expr(&self_ty)?;
                 scope.self_types.push(self_ty);
+                let assoc_types = scope.impl_assoc_types(&impl_items)?;
+                scope.assoc_types.push(assoc_types);
                 let result = scope.function_signature(&function);
+                scope.assoc_types.pop();
                 scope.self_types.pop();
                 return result;
             }
@@ -1258,15 +1331,19 @@ impl HirTypeChecker {
                             Some((
                                 impl_item.generics.clone(),
                                 impl_item.self_ty.clone(),
+                                impl_item.items.clone(),
                                 function.clone(),
                             ))
                         })
                     });
-                    if let Some((generics, self_ty, function)) = associated {
+                    if let Some((generics, self_ty, impl_items, function)) = associated {
                         let mut scope = self.generic_scope(&generics);
                         let self_ty = scope.check_type_expr(&self_ty)?;
                         scope.self_types.push(self_ty);
+                        let assoc_types = scope.impl_assoc_types(&impl_items)?;
+                        scope.assoc_types.push(assoc_types);
                         let result = scope.function_signature(&function);
+                        scope.assoc_types.pop();
                         scope.self_types.pop();
                         return result;
                     }
@@ -1309,9 +1386,7 @@ impl HirTypeChecker {
                 }
                 return Ok(enum_ty);
             }
-            return Err(Error::from(format!(
-                "value definition `{def_id}` was not found"
-            )));
+            return Ok(self.error_ty(format!("value definition `{def_id}` was not found")));
         };
         match &item.kind {
             hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) => self.path_ty(path),
@@ -1323,20 +1398,20 @@ impl HirTypeChecker {
             {
                 self.check_type_expr(&constant.ty)
             }
-            hir::ItemKind::Const(_) => self
+            hir::ItemKind::Const(_) => Ok(self
                 .results
                 .const_types
                 .get(&def_id)
                 .cloned()
-                .ok_or_else(|| Error::from("constant type was not recorded")),
+                .unwrap_or_else(|| self.error_ty("constant type was not recorded"))),
             hir::ItemKind::Function(function) => self.function_signature(function),
-            _ => Err(Error::from("resolved path is not a value")),
+            _ => Ok(self.error_ty("resolved path is not a value")),
         }
     }
 
     fn enum_item_ty(&mut self, item: &hir::Item, path: &hir::Path) -> Result<Ty> {
         let hir::ItemKind::Enum(enum_def) = &item.kind else {
-            return Err(Error::from("enum path does not resolve to an enum"));
+            return Ok(self.error_ty("enum path does not resolve to an enum"));
         };
         let variants = enum_def
             .variants
@@ -1361,9 +1436,9 @@ impl HirTypeChecker {
                     .iter()
                     .map(|arg| match arg {
                         hir::GenericArg::Type(ty) => self.check_type_expr(ty).map(GenericArg::Type),
-                        hir::GenericArg::Const(_) => {
-                            Err(Error::from("const generic arguments are not supported"))
-                        }
+                        hir::GenericArg::Const(_) => Ok(GenericArg::Type(
+                            self.error_ty("const generic arguments are not supported"),
+                        )),
                     })
                     .collect::<Result<Vec<_>>>()
             })
@@ -1438,9 +1513,12 @@ impl HirTypeChecker {
             return Ok(None);
         };
         if signature.binder.value.inputs.len() != actuals.len() {
-            return Err(Error::from(
-                "call argument count does not match function signature",
-            ));
+            // `None` already means "not callable with these args" to every
+            // caller (see the `TyKind::FnPtr` mismatch case just above) —
+            // an arity mismatch is the same kind of "doesn't match", not a
+            // hard error, so report it the same way instead of aborting.
+            self.record_error("call argument count does not match function signature");
+            return Ok(None);
         }
         let mut substitutions: HashMap<ty::ParamTy, Ty> = HashMap::new();
         for (expected, actual) in signature.binder.value.inputs.iter().zip(actuals) {
@@ -1471,10 +1549,11 @@ impl HirTypeChecker {
                 name: parameter.name.clone(),
             };
             let Some(argument) = substitutions.get(&param) else {
-                return Err(Error::from(format!(
+                self.record_error(format!(
                     "could not infer generic parameter `{}` for `{def_id}`",
                     parameter.name
-                )));
+                ));
+                return Ok(None);
             };
             args.push(argument.clone());
         }
@@ -1657,6 +1736,8 @@ impl HirTypeChecker {
                 continue;
             }
             scope.self_types.push(checked_self_ty);
+            let assoc_types = scope.impl_assoc_types(&impl_item.items)?;
+            scope.assoc_types.push(assoc_types);
             let impl_generics = impl_item.generics.clone();
             for impl_item in impl_item.items {
                 let hir::ImplItemKind::Method(function) = impl_item.kind else {
@@ -1674,10 +1755,12 @@ impl HirTypeChecker {
                         &function.sig.generics,
                         &substitutions,
                     )?;
+                    scope.assoc_types.pop();
                     scope.self_types.pop();
                     return Ok((impl_item.def_id, args, result));
                 }
             }
+            scope.assoc_types.pop();
             scope.self_types.pop();
         }
         Err(Error::from(format!("method `{method}` was not found")))
@@ -1727,7 +1810,8 @@ impl HirTypeChecker {
         match &pattern.kind {
             hir::PatKind::Binding { name, .. } => {
                 let Some(scope) = self.locals.last_mut() else {
-                    return Err(Error::from("no local scope is active"));
+                    self.record_error("no local scope is active");
+                    return Ok(());
                 };
                 scope.insert(name.clone(), ty);
             }
@@ -1741,10 +1825,12 @@ impl HirTypeChecker {
             }
             hir::PatKind::Tuple(patterns) => {
                 let TyKind::Tuple(fields) = ty.kind else {
-                    return Err(Error::from("tuple pattern requires a tuple scrutinee"));
+                    self.record_error("tuple pattern requires a tuple scrutinee");
+                    return Ok(());
                 };
                 if patterns.len() != fields.len() {
-                    return Err(Error::from("tuple pattern arity does not match scrutinee"));
+                    self.record_error("tuple pattern arity does not match scrutinee");
+                    return Ok(());
                 }
                 for (pattern, field) in patterns.iter().zip(fields) {
                     self.bind_pattern(pattern, *field)?;
@@ -1754,9 +1840,8 @@ impl HirTypeChecker {
                 if self.enum_variant_ty(path)?.is_some() {
                     let (_, payloads) = self.variant_payload_types(path, &ty)?;
                     let [payload] = payloads.as_slice() else {
-                        return Err(Error::from(
-                            "struct enum pattern requires exactly one payload type",
-                        ));
+                        self.record_error("struct enum pattern requires exactly one payload type");
+                        return Ok(());
                     };
                     for field in fields {
                         let field_ty = self.field_ty(payload, &field.name)?;
@@ -1778,9 +1863,8 @@ impl HirTypeChecker {
             hir::PatKind::TupleStruct(path, patterns) => {
                 let (_, payloads) = self.variant_payload_types(path, &ty)?;
                 if patterns.len() != payloads.len() {
-                    return Err(Error::from(
-                        "tuple struct pattern arity does not match variant",
-                    ));
+                    self.record_error("tuple struct pattern arity does not match variant");
+                    return Ok(());
                 }
                 for (pattern, payload) in patterns.iter().zip(payloads) {
                     self.bind_pattern(pattern, payload)?;
@@ -1789,9 +1873,7 @@ impl HirTypeChecker {
             hir::PatKind::Variant(path) => {
                 let (_, payloads) = self.variant_payload_types(path, &ty)?;
                 if !payloads.is_empty() {
-                    return Err(Error::from(
-                        "payload variant requires a tuple or struct pattern",
-                    ));
+                    self.record_error("payload variant requires a tuple or struct pattern");
                 }
             }
         }
@@ -1804,19 +1886,19 @@ impl HirTypeChecker {
             _ => receiver,
         };
         let TyKind::Adt(adt, args) = &receiver.kind else {
-            return Err(Error::from(format!(
+            return Ok(self.error_ty(format!(
                 "field access `{field}` requires a struct, found {:?}",
                 receiver.kind
             )));
         };
         let Some(item) = self.program.def_map.get(&adt.did).cloned() else {
-            return Err(Error::from("struct definition was not found"));
+            return Ok(self.error_ty("struct definition was not found"));
         };
         let hir::ItemKind::Struct(def) = item.kind else {
-            return Err(Error::from("field access requires a struct"));
+            return Ok(self.error_ty("field access requires a struct"));
         };
         let Some(field_def) = def.fields.iter().find(|candidate| candidate.name == *field) else {
-            return Err(Error::from(format!("field `{field}` was not found")));
+            return Ok(self.error_ty(format!("field `{field}` was not found")));
         };
         let mut scope = self.generic_scope(&def.generics);
         let result = scope.check_type_expr(&field_def.ty);
@@ -1828,7 +1910,7 @@ impl HirTypeChecker {
 
     fn variant_payload_types(&mut self, path: &hir::Path, scrutinee: &Ty) -> Result<(Ty, Vec<Ty>)> {
         let Some(hir::Res::Def(variant_id)) = path.res else {
-            return Err(Error::from("variant pattern is unresolved"));
+            return Ok((self.error_ty("variant pattern is unresolved"), Vec::new()));
         };
         if let Some((item, variant)) = self.enum_variant_by_def_id(variant_id) {
             let hir::ItemKind::Enum(def) = &item.kind else {
@@ -1847,10 +1929,13 @@ impl HirTypeChecker {
                     TyKind::Adt(adt, _) => format!("{}", adt.did),
                     _ => format!("<non-adt {:?}>", scrutinee.kind),
                 };
-                return Err(Error::from(format!(
-                    "variant pattern does not match scrutinee type (variant={}, owner={}, scrutinee={})",
-                    variant_id, item.def_id, scrutinee_def
-                )));
+                return Ok((
+                    self.error_ty(format!(
+                        "variant pattern does not match scrutinee type (variant={}, owner={}, scrutinee={})",
+                        variant_id, item.def_id, scrutinee_def
+                    )),
+                    Vec::new(),
+                ));
             }
             let scrutinee_args = match &scrutinee.kind {
                 TyKind::Adt(_, args) => args,
@@ -1870,7 +1955,10 @@ impl HirTypeChecker {
             };
             return Ok((enum_ty, payloads));
         }
-        Err(Error::from("variant definition was not found"))
+        Ok((
+            self.error_ty("variant definition was not found"),
+            Vec::new(),
+        ))
     }
 
     fn enum_struct_payload_type(&mut self, path: &hir::Path, scrutinee: &Ty) -> Result<Option<Ty>> {
@@ -1973,21 +2061,15 @@ impl HirTypeChecker {
                 kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
             },
             IntrinsicKind::Len => Ty::uint(ty::UintTy::U64),
-            IntrinsicKind::Slice => {
-                let Some(base) = arg_types.first() else {
-                    return Err(Error::from("slice intrinsic requires a base expression"));
-                };
-                match &base.kind {
+            IntrinsicKind::Slice => match arg_types.first() {
+                None => self.error_ty("slice intrinsic requires a base expression"),
+                Some(base) => match &base.kind {
                     TyKind::Array(inner, _) | TyKind::Slice(inner) => Ty {
                         kind: TyKind::Slice(inner.clone()),
                     },
-                    _ => {
-                        return Err(Error::from(
-                            "slice intrinsic base must be an array or slice",
-                        ));
-                    }
-                }
-            }
+                    _ => self.error_ty("slice intrinsic base must be an array or slice"),
+                },
+            },
             IntrinsicKind::DebugAssertions
             | IntrinsicKind::FsExists
             | IntrinsicKind::FsIsDir
@@ -2019,30 +2101,21 @@ impl HirTypeChecker {
             IntrinsicKind::PathIsAbsolute => Ty::bool(),
             IntrinsicKind::TimeNow => Ty::float(ty::FloatTy::F64),
             IntrinsicKind::CatchUnwind => Ty::bool(),
-            IntrinsicKind::CatchUnwindResult => {
-                let Some(value) = arg_types.first().cloned() else {
-                    return Err(Error::from(
-                        "catch_unwind_result requires a callable argument",
-                    ));
-                };
-                Ty {
+            IntrinsicKind::CatchUnwindResult => match arg_types.first().cloned() {
+                None => self.error_ty("catch_unwind_result requires a callable argument"),
+                Some(value) => Ty {
                     kind: TyKind::Tuple(vec![Box::new(Ty::bool()), Box::new(value)]),
-                }
-            }
-            IntrinsicKind::Spawn | IntrinsicKind::Select => {
-                let Some(value) = arg_types.first() else {
-                    return Err(Error::from(format!(
-                        "{:?} intrinsic requires an argument",
-                        call.kind
-                    )));
-                };
-                value.clone()
-            }
+                },
+            },
+            IntrinsicKind::Spawn | IntrinsicKind::Select => match arg_types.first() {
+                Some(value) => value.clone(),
+                None => self.error_ty(format!("{:?} intrinsic requires an argument", call.kind)),
+            },
             IntrinsicKind::Join => {
                 if arg_types.len() == 1 {
                     arg_types[0].clone()
                 } else if arg_types.is_empty() {
-                    return Err(Error::from("join intrinsic requires an argument"));
+                    self.error_ty("join intrinsic requires an argument")
                 } else {
                     Ty {
                         kind: TyKind::Tuple(arg_types.into_iter().map(Box::new).collect()),
@@ -2058,17 +2131,13 @@ impl HirTypeChecker {
                 kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
             },
             IntrinsicKind::FieldType | IntrinsicKind::VecType => {
-                return Err(Error::from(
-                    "type-valued intrinsic has no HIR type representation",
-                ));
+                self.error_ty("type-valued intrinsic has no HIR type representation")
             }
             IntrinsicKind::TypeOf
             | IntrinsicKind::CreateStruct
             | IntrinsicKind::AddField
             | IntrinsicKind::BuildType => {
-                return Err(Error::from(
-                    "type-valued intrinsic typing is not implemented",
-                ));
+                self.error_ty("type-valued intrinsic typing is not implemented")
             }
             IntrinsicKind::FsWriteString
             | IntrinsicKind::FsAppendString
@@ -2084,22 +2153,24 @@ impl HirTypeChecker {
             | IntrinsicKind::Yield
             | IntrinsicKind::CompileWarning => self.unit_ty(),
             IntrinsicKind::CompileError => {
-                return Err(Error::from("compile_error intrinsic requested an error"));
+                self.error_ty("compile_error intrinsic requested an error")
             }
-            _ => {
-                return Err(Error::from(format!(
-                    "intrinsic `{:?}` has no HIR type rule",
-                    call.kind
-                )));
-            }
+            _ => self.error_ty(format!("intrinsic `{:?}` has no HIR type rule", call.kind)),
         })
     }
 
+    /// A type mismatch is recorded as a diagnostic, not a hard error — this
+    /// is called from dozens of sites across `check_expr`/`check_block`/etc
+    /// via `?`, so making it non-fatal is what lets typechecking continue
+    /// past an isolated mismatch anywhere in a package instead of the whole
+    /// package's typecheck aborting on the first one found (previously the
+    /// single highest-leverage source of "one hard error, every time").
     fn require_same(&self, lhs: &Ty, rhs: &Ty) -> Result<()> {
         if lhs == rhs || matches!(lhs.kind, TyKind::Never) || matches!(rhs.kind, TyKind::Never) {
             Ok(())
         } else {
-            Err(Error::from(format!("HIR type mismatch: {lhs} and {rhs}")))
+            self.record_error(format!("HIR type mismatch: {lhs} and {rhs}"));
+            Ok(())
         }
     }
 
@@ -2107,12 +2178,12 @@ impl HirTypeChecker {
         let (TyKind::Adt(actual_def, actual_args), TyKind::Adt(expected_def, expected_args)) =
             (&actual.kind, &expected.kind)
         else {
-            return Err(Error::from(format!("{context} requires an ADT scrutinee")));
+            self.record_error(format!("{context} requires an ADT scrutinee"));
+            return Ok(());
         };
         if actual_def.did != expected_def.did || actual_args.len() != expected_args.len() {
-            return Err(Error::from(format!(
-                "{context} does not match scrutinee type"
-            )));
+            self.record_error(format!("{context} does not match scrutinee type"));
+            return Ok(());
         }
         let mut substitutions = HashMap::new();
         for (actual, expected) in actual_args.iter().zip(expected_args) {
@@ -2122,9 +2193,8 @@ impl HirTypeChecker {
                 }
                 (actual, expected) if actual == expected => {}
                 _ => {
-                    return Err(Error::from(format!(
-                        "{context} does not match scrutinee type"
-                    )));
+                    self.record_error(format!("{context} does not match scrutinee type"));
+                    return Ok(());
                 }
             }
         }

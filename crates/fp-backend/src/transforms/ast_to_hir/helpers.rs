@@ -176,6 +176,23 @@ impl HirGenerator {
             }
         }
 
+        // `Self::Target` (an associated-type path) — only the single-
+        // segment bare `Self` case above (line ~139-150, via
+        // `resolve_type_symbol`) is otherwise recognized; a multi-segment
+        // path starting with `Self` would never resolve through the
+        // module-path/global-lookup logic below (there's no real module
+        // named "Self"), so short-circuit here instead of falling through
+        // to certain failure. Keeps all segments (including `Self`
+        // itself) so `path_ty` can see both the root and the assoc-type
+        // name it's projecting.
+        if segments.len() > 1 && path_prefix == PathPrefix::Plain && segments[0].name.as_str() == "Self"
+        {
+            return Ok(hir::Path {
+                segments,
+                res: Some(hir::Res::SelfTy),
+            });
+        }
+
         if segments.len() > 1 && path_prefix == PathPrefix::Plain {
             let local_path = self.module_path.join(
                 &segments

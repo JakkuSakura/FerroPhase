@@ -45,6 +45,23 @@ impl HirGenerator {
                 None,
                 false,
             )),
+            // Every match/if-let arm containing a `PatternKind::Or` gets
+            // expanded into the cartesian product of `Or`-free cases
+            // before reaching HIR lowering (`expand_pattern_alternatives`,
+            // `fp-lang/src/ast/expr.rs`) — this arm should be unreachable
+            // in practice. Falls back to `Wild` (matching the same
+            // graceful-fallback convention as `Quote`/`QuotePlural` just
+            // above) rather than panicking, in case an or-pattern ever
+            // reaches here through some other, not-yet-expanding pattern
+            // position (e.g. a future `let`/parameter pattern context).
+            PatternKind::Or(_) => Ok((
+                hir::Pat {
+                    hir_id: self.next_id(),
+                    kind: hir::PatKind::Wild,
+                },
+                None,
+                false,
+            )),
             PatternKind::Type(pattern_type) => {
                 let ty_expr = self.transform_type_to_hir(&pattern_type.ty)?;
                 let (inner_pat, _inner_ty, mutable) =

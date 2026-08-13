@@ -1746,7 +1746,9 @@ fn parse_catch_pattern_and_body(
     Ok((pat, body))
 }
 
-fn parse_pattern_prefix_tokens(tokens: &[Token]) -> Result<(Pattern, usize), DirectParseError> {
+pub(crate) fn parse_pattern_prefix_tokens(
+    tokens: &[Token],
+) -> Result<(Pattern, usize), DirectParseError> {
     let mut input = tokens;
     let pat = parse_general_pattern(&mut input).map_err(|err| map_err(err, input))?;
     let consumed = tokens.len() - input.len();
@@ -1786,10 +1788,16 @@ fn parse_match_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
             arm_probe = comma_probe;
         }
         probe = arm_probe;
-        // `A | B => body` desugars into one `ExprMatchCase` per
-        // alternative, all sharing the same guard/body — mirrors
+        // `A | B => body` (top-level or nested, e.g. `(A | B, C)`)
+        // desugars into one `ExprMatchCase` per alternative in the
+        // cartesian expansion, all sharing the same guard/body — mirrors
         // `build_if_let_match`'s handling of `if let A | B = x {...}`.
-        for pat in patterns {
+        let full_pattern = if patterns.len() == 1 {
+            patterns.into_iter().next().unwrap()
+        } else {
+            Pattern::new(PatternKind::Or(PatternOr { patterns }))
+        };
+        for pat in expand_pattern_alternatives(&full_pattern) {
             cases.push(fp_core::ast::ExprMatchCase {
                 span: union_spans(pat.span(), body.span()),
                 pat: Some(Box::new(pat)),
@@ -2165,11 +2173,159 @@ fn parse_literal_pattern_expr(input: &mut &[Token]) -> ModalResult<Expr> {
 }
 
 fn parse_pattern_alternatives(input: &mut &[Token]) -> ModalResult<Pattern> {
-    let pat = parse_general_pattern(input)?;
+    let mut alternatives = vec![parse_general_pattern(input)?];
     while expect_symbol(input, "|").is_ok() {
-        let _ = parse_general_pattern(input)?;
+        alternatives.push(parse_general_pattern(input)?);
     }
-    Ok(pat)
+    if alternatives.len() == 1 {
+        return Ok(alternatives.into_iter().next().unwrap());
+    }
+    Ok(Pattern::new(PatternKind::Or(PatternOr {
+        patterns: alternatives,
+    })))
+}
+
+/// Recursively expands every `PatternKind::Or` node in `pat`, at any
+/// nesting depth, into the cartesian product of concrete, `Or`-free
+/// patterns — e.g. `(Some(1) | Some(2), y)` becomes `(Some(1), y)` and
+/// `(Some(2), y)`. A pattern containing no `Or` anywhere returns itself,
+/// unchanged, as the sole element.
+fn expand_pattern_alternatives(pat: &Pattern) -> Vec<Pattern> {
+    match pat.kind() {
+        PatternKind::Or(or_pat) => or_pat
+            .patterns
+            .iter()
+            .flat_map(expand_pattern_alternatives)
+            .collect(),
+        PatternKind::Tuple(tuple) => cartesian_patterns(&tuple.patterns)
+            .into_iter()
+            .map(|patterns| Pattern::new(PatternKind::Tuple(PatternTuple { patterns })))
+            .collect(),
+        PatternKind::TupleStruct(tuple_struct) => cartesian_patterns(&tuple_struct.patterns)
+            .into_iter()
+            .map(|patterns| {
+                Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
+                    name: tuple_struct.name.clone(),
+                    patterns,
+                }))
+            })
+            .collect(),
+        PatternKind::Struct(struct_pat) => cartesian_struct_fields(&struct_pat.fields)
+            .into_iter()
+            .map(|fields| {
+                Pattern::new(PatternKind::Struct(PatternStruct {
+                    name: struct_pat.name.clone(),
+                    fields,
+                    has_rest: struct_pat.has_rest,
+                }))
+            })
+            .collect(),
+        PatternKind::Structural(structural) => cartesian_struct_fields(&structural.fields)
+            .into_iter()
+            .map(|fields| {
+                Pattern::new(PatternKind::Structural(PatternStructural {
+                    fields,
+                    has_rest: structural.has_rest,
+                }))
+            })
+            .collect(),
+        PatternKind::Box(box_pat) => expand_pattern_alternatives(&box_pat.pattern)
+            .into_iter()
+            .map(|inner| {
+                Pattern::new(PatternKind::Box(PatternBox {
+                    pattern: Box::new(inner),
+                }))
+            })
+            .collect(),
+        PatternKind::Ref(reference) => expand_pattern_alternatives(&reference.pattern)
+            .into_iter()
+            .map(|inner| {
+                Pattern::new(PatternKind::Ref(PatternRef {
+                    mutability: reference.mutability,
+                    pattern: Box::new(inner),
+                }))
+            })
+            .collect(),
+        PatternKind::Bind(bind) => expand_pattern_alternatives(&bind.pattern)
+            .into_iter()
+            .map(|inner| {
+                Pattern::new(PatternKind::Bind(PatternBind {
+                    ident: bind.ident.clone(),
+                    pattern: Box::new(inner),
+                }))
+            })
+            .collect(),
+        PatternKind::Type(pattern_type) => expand_pattern_alternatives(&pattern_type.pat)
+            .into_iter()
+            .map(|inner| {
+                Pattern::new(PatternKind::Type(PatternType {
+                    pat: Box::new(inner),
+                    ty: pattern_type.ty.clone(),
+                }))
+            })
+            .collect(),
+        PatternKind::Variant(variant) => match &variant.pattern {
+            Some(nested) => expand_pattern_alternatives(nested)
+                .into_iter()
+                .map(|inner| {
+                    Pattern::new(PatternKind::Variant(PatternVariant {
+                        name: variant.name.clone(),
+                        pattern: Some(Box::new(inner)),
+                    }))
+                })
+                .collect(),
+            None => vec![pat.clone()],
+        },
+        PatternKind::Ident(_)
+        | PatternKind::Quote(_)
+        | PatternKind::QuotePlural(_)
+        | PatternKind::Wildcard(_) => vec![pat.clone()],
+    }
+}
+
+/// Cartesian product of each pattern's own expansion — `patterns[i]`'s
+/// alternatives are independent of every other element's.
+fn cartesian_patterns(patterns: &[Pattern]) -> Vec<Vec<Pattern>> {
+    patterns.iter().fold(vec![Vec::new()], |acc, pat| {
+        let alts = expand_pattern_alternatives(pat);
+        acc.into_iter()
+            .flat_map(|prefix| {
+                alts.iter().map(move |alt| {
+                    let mut next = prefix.clone();
+                    next.push(alt.clone());
+                    next
+                })
+            })
+            .collect()
+    })
+}
+
+/// Same idea as `cartesian_patterns`, but for struct/structural pattern
+/// fields, whose `Or`-bearing part (if any) lives in `field.rename`.
+fn cartesian_struct_fields(
+    fields: &[fp_core::ast::PatternStructField],
+) -> Vec<Vec<fp_core::ast::PatternStructField>> {
+    fields.iter().fold(vec![Vec::new()], |acc, field| {
+        let alts: Vec<Option<Box<Pattern>>> = match &field.rename {
+            Some(rename) => expand_pattern_alternatives(rename)
+                .into_iter()
+                .map(|p| Some(Box::new(p)))
+                .collect(),
+            None => vec![None],
+        };
+        acc.into_iter()
+            .flat_map(|prefix| {
+                alts.iter().map(move |rename| {
+                    let mut next = prefix.clone();
+                    next.push(fp_core::ast::PatternStructField {
+                        name: field.name.clone(),
+                        rename: rename.clone(),
+                    });
+                    next
+                })
+            })
+            .collect()
+    })
 }
 
 fn starts_ref_pattern_target(input: &[Token]) -> bool {
@@ -2331,7 +2487,12 @@ fn build_if_let_match<'a>(
         .map(|expr| expr.span())
         .unwrap_or_else(Span::null);
     let else_body = elze.unwrap_or_else(|| Box::new(Expr::unit()));
-    let mut cases = patterns
+    let full_pattern = if patterns.len() == 1 {
+        patterns.into_iter().next().unwrap()
+    } else {
+        Pattern::new(PatternKind::Or(PatternOr { patterns }))
+    };
+    let mut cases = expand_pattern_alternatives(&full_pattern)
         .into_iter()
         .map(|pat| fp_core::ast::ExprMatchCase {
             span: union_spans(pat.span(), then_expr.span()),
@@ -2462,30 +2623,32 @@ fn parse_while_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
 }
 
 fn build_while_let_loop(pat: Pattern, scrutinee: Expr, body: Expr) -> Expr {
+    let mut cases = expand_pattern_alternatives(&pat)
+        .into_iter()
+        .map(|pat| fp_core::ast::ExprMatchCase {
+            span: union_spans(pat.span(), body.span()),
+            pat: Some(Box::new(pat)),
+            cond: Box::new(Expr::value(Value::bool(true))),
+            guard: None,
+            body: Box::new(body.clone()),
+        })
+        .collect::<Vec<_>>();
+    cases.push(fp_core::ast::ExprMatchCase {
+        span: Span::null(),
+        pat: Some(Box::new(Pattern::new(PatternKind::Wildcard(
+            PatternWildcard {},
+        )))),
+        cond: Box::new(Expr::value(Value::bool(true))),
+        guard: None,
+        body: Box::new(Expr::new(ExprKind::Break(ExprBreak {
+            span: Span::null(),
+            value: None,
+        }))),
+    });
     let match_expr = Expr::new(ExprKind::Match(fp_core::ast::ExprMatch {
         span: union_spans(scrutinee.span(), body.span()),
         scrutinee: Some(Box::new(scrutinee)),
-        cases: vec![
-            fp_core::ast::ExprMatchCase {
-                span: union_spans(pat.span(), body.span()),
-                pat: Some(Box::new(pat)),
-                cond: Box::new(Expr::value(Value::bool(true))),
-                guard: None,
-                body: Box::new(body.clone()),
-            },
-            fp_core::ast::ExprMatchCase {
-                span: Span::null(),
-                pat: Some(Box::new(Pattern::new(PatternKind::Wildcard(
-                    PatternWildcard {},
-                )))),
-                cond: Box::new(Expr::value(Value::bool(true))),
-                guard: None,
-                body: Box::new(Expr::new(ExprKind::Break(ExprBreak {
-                    span: Span::null(),
-                    value: None,
-                }))),
-            },
-        ],
+        cases,
     }));
     let loop_block = ExprBlock::new_stmts(vec![BlockStmt::Expr(BlockStmtExpr::new(match_expr))]);
     ExprKind::Loop(ExprLoop {

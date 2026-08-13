@@ -1,8 +1,9 @@
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprIf, ExprIntrinsicCall,
+    BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprField, ExprIf, ExprIntrinsicCall,
     ExprIntrinsicContainer, ExprInvoke, ExprLet, ExprMatch,
-    ExprInvokeTarget, ExprKind, ExprStringTemplate, ExprUnOp, FormatArgRef, FormatPlaceholder,
-    FormatSpec, FormatTemplatePart, Ident, MacroTokenTree, Name, Path, PatternKind, StmtLet, Ty, Value,
+    ExprInvokeTarget, ExprKind, ExprReference, ExprStringTemplate, ExprStruct, ExprUnOp,
+    FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident, MacroTokenTree, Name,
+    Path, PatternKind, StmtLet, Ty, Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{
@@ -12,17 +13,32 @@ use fp_core::intrinsics::{
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use fp_core::ast::MacroRulesDef;
+
 use crate::ast::lower_common::{macro_token_trees_to_lexemes, macro_tokens_file_id};
 use crate::lexer::lexeme::LexemeKind;
 use crate::macro_parser::{
-    macro_token_trees_to_tokens, tokens_to_top_level_slices, wrap_tokens_in_group,
+    macro_token_trees_to_tokens, match_macro_rule, substitute_template, tokens_to_top_level_slices,
+    wrap_tokens_in_group,
 };
 
 /// FerroPhase intrinsic normalizer that adds `t!` macro lowering for type expressions,
 /// delegating all other macros to the Rust normalizer.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct FerroIntrinsicNormalizer {
     mode: IntrinsicNormalizationMode,
+    /// Every `macro_rules!` definition reachable in the package being
+    /// compiled (see `collect_macro_rules_defs`), consulted by
+    /// `normalize_macro`'s fallback for any macro name that isn't one of
+    /// the compiler-intrinsic-like builtins (`cfg!`, `vec!`, etc.) handled
+    /// above it. `Arc` so cloning this normalizer (it's `Clone`, stored
+    /// behind `Option<Box<dyn IntrinsicNormalizer>>` elsewhere) doesn't
+    /// deep-copy the whole map. Empty by default — populated via
+    /// `with_macro_rules_defs`.
+    macro_rules_defs: Arc<HashMap<String, MacroRulesDef>>,
 }
 
 impl Default for FerroIntrinsicNormalizer {
@@ -32,8 +48,16 @@ impl Default for FerroIntrinsicNormalizer {
 }
 
 impl FerroIntrinsicNormalizer {
-    pub const fn new(mode: IntrinsicNormalizationMode) -> Self {
-        Self { mode }
+    pub fn new(mode: IntrinsicNormalizationMode) -> Self {
+        Self {
+            mode,
+            macro_rules_defs: Arc::new(HashMap::new()),
+        }
+    }
+
+    pub fn with_macro_rules_defs(mut self, defs: HashMap<String, MacroRulesDef>) -> Self {
+        self.macro_rules_defs = Arc::new(defs);
+        self
     }
 }
 
@@ -202,6 +226,52 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                         ExprKind::Macro(macro_expr),
                     ))),
                 };
+            }
+            // `io::const_error!(ErrorKind::X, "message")` — a std-internal
+            // macro with no `macro_rules!` definition present in this
+            // vendored snapshot to expand generically (confirmed absent),
+            // so hand-expand it to match real Rust's actual expansion:
+            // `Error::from_static_message(&SimpleMessage { kind, message })`
+            // (`SimpleMessage { kind: ErrorKind, message: &'static str }`,
+            // `Error::from_static_message(&'static SimpleMessage) -> Error`
+            // — both plain, no custom constructor, confirmed in
+            // `fp-rust/std/core/io/error.rs`).
+            if macro_name == "const_error" {
+                let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
+                if args.len() != 2 {
+                    return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                        id,
+                        ty_slot,
+                        span,
+                        ExprKind::Macro(macro_expr),
+                    )));
+                }
+                let mut iter = args.into_iter();
+                let kind_expr = iter.next().unwrap();
+                let message_expr = iter.next().unwrap();
+                let struct_lit = Expr::from(ExprKind::Struct(ExprStruct::new_ident(
+                    Ident::new("SimpleMessage"),
+                    vec![
+                        ExprField::new(Ident::new("kind"), kind_expr),
+                        ExprField::new(Ident::new("message"), message_expr),
+                    ],
+                )));
+                let reference = Expr::from(ExprKind::Reference(ExprReference {
+                    span: macro_expr.span(),
+                    referee: Box::new(struct_lit),
+                    mutable: None,
+                }));
+                let invoke = ExprInvoke {
+                    target: ExprInvokeTarget::Function(Name::path(Path::plain(vec![
+                        Ident::new("Error"),
+                        Ident::new("from_static_message"),
+                    ]))),
+                    args: vec![reference],
+                    kwargs: vec![],
+                    span: macro_expr.span(),
+                };
+                let replacement = Expr::from_parts(id, ty_slot, span, ExprKind::Invoke(invoke));
+                return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "vec" {
                 let expr =
@@ -425,6 +495,32 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     ExprKind::IntrinsicCall(ExprIntrinsicCall::new(kind, args, Vec::new())),
                 );
                 return Ok(NormalizeOutcome::Normalized(replacement));
+            }
+            // Not a compiler-intrinsic-like builtin (those are all handled
+            // above) — try expanding it as a real user/std `macro_rules!`
+            // definition, if one by this name was collected from the
+            // package being compiled (`collect_macro_rules_defs`). Tries
+            // each rule in declaration order, same as real `macro_rules!`
+            // resolution; falls through to `Ignored` below if none match
+            // (either the name is unknown, or every rule's matcher failed
+            // to match this invocation's actual tokens).
+            if let Some(def) = self.macro_rules_defs.get(macro_name) {
+                let invocation_tokens = &macro_expr.invocation.token_trees;
+                let file_id = macro_tokens_file_id(invocation_tokens);
+                for rule in &def.rules {
+                    let Some(bindings) = match_macro_rule(&rule.matcher, invocation_tokens, file_id)
+                    else {
+                        continue;
+                    };
+                    let substituted = substitute_template(&rule.transcriber, &bindings);
+                    let flat = macro_token_trees_to_tokens(&substituted);
+                    let wrapped = wrap_tokens_in_group(&flat, "{", "}", macro_expr.span());
+                    if let Ok(replacement) = crate::ast::parse_expr_tokens(&wrapped, file_id) {
+                        return Ok(NormalizeOutcome::Normalized(
+                            replacement.with_ty_slot(ty_slot.clone()),
+                        ));
+                    }
+                }
             }
         }
 

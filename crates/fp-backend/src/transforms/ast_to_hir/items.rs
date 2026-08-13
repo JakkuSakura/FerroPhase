@@ -306,6 +306,24 @@ impl HirGenerator {
                             kind: hir::ImplItemKind::AssocConst(assoc_const),
                         });
                     }
+                    // `type Target = Y;` — an impl's own binding for one of
+                    // its trait's associated types. Lets `Self::Target`
+                    // resolve during typecheck (`HirTypeChecker::
+                    // impl_assoc_types`) instead of being silently dropped
+                    // like before (this arm used to fall into the `_ => {}`
+                    // catch-all).
+                    ast::ItemKind::DefType(type_item) => {
+                        let ty = self.transform_type_to_hir(&type_item.value)?;
+                        items.push(hir::ImplItem {
+                            def_id: self.next_def_id(),
+                            hir_id: self.next_id(),
+                            name: type_item.name.clone().into(),
+                            kind: hir::ImplItemKind::AssocType(hir::AssocType {
+                                name: type_item.name.clone().into(),
+                                ty,
+                            }),
+                        });
+                    }
                     _ => {}
                 }
             }

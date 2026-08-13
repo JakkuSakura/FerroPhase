@@ -5589,6 +5589,10 @@ impl MirLowering {
                 hir::ImplItemKind::AssocConst(_const_item) => {
                     // TODO: lower associated constants when needed
                 }
+                hir::ImplItemKind::AssocType(_assoc_type) => {
+                    // Type-level only — nothing to lower into MIR (no
+                    // runtime representation), mirrors AssocConst above.
+                }
             }
         }
 

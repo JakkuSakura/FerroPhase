@@ -184,6 +184,18 @@ pub struct ImplItem {
 pub enum ImplItemKind {
     Method(Function),
     AssocConst(Const),
+    AssocType(AssocType),
+}
+
+/// An impl block's own `type Target = Y;` binding for one of its trait's
+/// associated types. No `body`/default resolution here — this is always
+/// the CURRENT impl's own concrete binding (see `HirTypeChecker::
+/// impl_assoc_types`, which is deliberately scoped to just this, not full
+/// trait-default/witness resolution).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssocType {
+    pub name: Symbol,
+    pub ty: TypeExpr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -786,6 +798,7 @@ impl ImplItemKind {
         match self {
             ImplItemKind::Method(func) => func.span(),
             ImplItemKind::AssocConst(cons) => cons.span(),
+            ImplItemKind::AssocType(assoc) => assoc.ty.span(),
         }
     }
 }

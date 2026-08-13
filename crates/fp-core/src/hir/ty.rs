@@ -599,6 +599,19 @@ impl Ty {
         }
     }
 
+    /// Placeholder for a type that couldn't be checked (some HIR construct
+    /// this pass doesn't yet handle, or a genuine type error) — recorded
+    /// as a diagnostic by the caller, not silently ignored. Already
+    /// handled leniently throughout `hir_to_mir`/`hir_to_ast`/`mir_to_lir`
+    /// (matched alongside `TyKind::Projection` as "erase/skip" in
+    /// multiple places), so typechecking can continue past an isolated
+    /// gap instead of aborting the whole package on the first one.
+    pub fn error() -> Self {
+        Self {
+            kind: TyKind::Error(ErrorGuaranteed { index: 0 }),
+        }
+    }
+
     pub fn is_primitive(&self) -> bool {
         matches!(
             self.kind,

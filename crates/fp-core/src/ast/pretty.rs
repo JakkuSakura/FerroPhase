@@ -1562,6 +1562,12 @@ fn render_pattern(pattern: &Pattern) -> String {
             )
         }
         PatternKind::Wildcard(_) => "_".into(),
+        PatternKind::Or(or_pat) => or_pat
+            .patterns
+            .iter()
+            .map(render_pattern)
+            .collect::<Vec<_>>()
+            .join(" | "),
     };
     if let Some(ty) = pattern.ty() {
         base.push_str(" : ");
