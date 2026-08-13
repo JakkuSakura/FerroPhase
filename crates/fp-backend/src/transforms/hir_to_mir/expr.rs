@@ -17431,8 +17431,27 @@ impl<'a> BodyBuilder<'a> {
             | TyKind::Bound(_, _)
             | TyKind::Infer(_)
             | TyKind::Type => {
-                if let TyKind::Adt(_, _) = &ty.kind {
-                    if let Some(layout) = self.lowering.struct_layout_for_ty(ty) {
+                if let TyKind::Adt(adt, substs) = &ty.kind {
+                    // `struct_layout_for_ty` is a cache-only reverse lookup
+                    // (`&self`, can't trigger computation) — if nothing has
+                    // needed this struct's layout yet (e.g. `sizeof!(T)` is
+                    // the *first* thing to ask for `String`'s size while
+                    // specializing `Vec<String>::push`), it simply misses.
+                    // Fall back to `struct_layout_for_instance`, which
+                    // computes and caches the layout on demand from the
+                    // struct's own `DefId` + concrete generic args, exactly
+                    // as a struct-literal use of this same type would.
+                    let layout = self.lowering.struct_layout_for_ty(ty).or_else(|| {
+                        let args: Vec<Ty> = substs
+                            .iter()
+                            .filter_map(|arg| match arg {
+                                mir::ty::GenericArg::Type(inner) => Some(inner.clone()),
+                                _ => None,
+                            })
+                            .collect();
+                        self.lowering.struct_layout_for_instance(adt.did, &args, span)
+                    });
+                    if let Some(layout) = layout {
                         let mut total = 0u64;
                         for field in &layout.field_tys {
                             let size = match self.compute_ty_size(span, field) {
