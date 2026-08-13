@@ -198,6 +198,89 @@ mod tests {
         );
     }
 
+    /// Rust allows a `mut` (or `&mut`-by-value-lowered) parameter to be
+    /// reassigned directly in the body (`x = x + 1;`), but Kotlin parameters
+    /// are always an implicit `val` — reassigning one is a compile error.
+    /// `HirToAstLifter` must give such a parameter a renamed mutable local
+    /// shadow instead of emitting a direct reassignment of the parameter.
+    #[test]
+    fn roundtrip_via_hir_renames_reassigned_parameters_for_target_emission() {
+        let x_plus_one = Expr::from(ast::ExprKind::BinOp(ast::ExprBinOp {
+            span: Span::null(),
+            kind: fp_core::ops::BinOpKind::Add,
+            lhs: Box::new(Expr::ident(ident("x"))),
+            rhs: Box::new(Expr::value(ast::Value::int(1))),
+        }));
+        let assign = Expr::from(ast::ExprKind::Assign(ast::ExprAssign {
+            span: Span::null(),
+            target: Box::new(Expr::ident(ident("x"))),
+            value: Box::new(x_plus_one),
+        }));
+        let block = ast::ExprBlock::new_stmts_expr(
+            vec![BlockStmt::Expr(
+                ast::BlockStmtExpr::new(assign).with_semicolon(true),
+            )],
+            Expr::ident(ident("x")),
+        );
+        let mut func = ast::ItemDefFunction::new_simple(ident("reassign_param"), block)
+            .with_ret_ty(Ty::Primitive(ast::TypePrimitive::Int(ast::TypeInt::I64)));
+        func.sig.params.push(ast::FunctionParam::new(
+            ident("x"),
+            Ty::Primitive(ast::TypePrimitive::Int(ast::TypeInt::I64)),
+        ));
+        let file = File {
+            path: PathBuf::from("reassign_param.fp"),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![Item::from(ItemKind::DefFunction(func))],
+        };
+
+        let items = roundtrip_items_via_hir(&file).expect("roundtrip should succeed");
+        let ItemKind::DefFunction(function) = items[0].kind() else {
+            panic!("expected a function item, got {:?}", items[0].kind());
+        };
+        assert_eq!(
+            function.sig.params.len(),
+            1,
+            "the parameter itself must not be duplicated/removed"
+        );
+        let param_name = function.sig.params[0].name.name.clone();
+        assert_eq!(param_name, "x", "the parameter itself keeps its source name");
+
+        let stmts = &function.body.stmts;
+        assert_eq!(
+            stmts.len(),
+            3,
+            "a synthetic shadow `let` + the reassignment + a tail expression"
+        );
+
+        let shadow_name = let_binding_name(&stmts[0]);
+        assert_ne!(
+            shadow_name, "x",
+            "the shadow local must be renamed to avoid colliding with the parameter"
+        );
+
+        let BlockStmt::Expr(assign_stmt) = &stmts[1] else {
+            panic!("expected an expression statement, got {:?}", stmts[1]);
+        };
+        let ast::ExprKind::Assign(assign) = assign_stmt.expr.kind() else {
+            panic!("expected an assignment, got {:?}", assign_stmt.expr.kind());
+        };
+        let ast::ExprKind::Name(Name::Ident(assign_target)) = assign.target.kind() else {
+            panic!("expected a bare name target, got {:?}", assign.target.kind());
+        };
+        assert_eq!(
+            assign_target.name, shadow_name,
+            "the reassignment must target the renamed shadow, not the (unassignable) parameter"
+        );
+
+        let tail_name = tail_expr_name(&stmts[2]);
+        assert_eq!(
+            tail_name, shadow_name,
+            "the trailing `x` must resolve to the renamed shadow local"
+        );
+    }
+
     fn let_binding_name(stmt: &BlockStmt) -> String {
         let BlockStmt::Let(stmt_let) = stmt else {
             panic!("expected a let statement, got {stmt:?}");

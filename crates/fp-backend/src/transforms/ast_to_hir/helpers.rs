@@ -83,6 +83,49 @@ impl HirGenerator {
         Ok(hir::GenericArgs { args: hir_args })
     }
 
+    /// `root_modules` (used by `resolve_item_path`'s root-module heuristic
+    /// in `name_to_hir_path_with_scope`) is derived from `module_defs`/
+    /// `global_type_defs`/`global_value_defs`, which only grow as more
+    /// items get processed — but the caller used to rebuild it (including
+    /// a `parse_path` string-parse per global def key) from scratch on
+    /// *every* unresolved path reference. For a large package (the
+    /// vendored std library) with many still-unresolved references, that
+    /// made each one pay an O(workspace definition count) cost. Cache it,
+    /// keyed by a cheap size snapshot of its three inputs — invalidated
+    /// (and rebuilt) only when one of them has actually grown since the
+    /// last call.
+    fn cached_root_modules(&mut self) -> HashSet<String> {
+        let sizes = (
+            self.module_defs.len(),
+            self.global_type_defs.len(),
+            self.global_value_defs.len(),
+        );
+        if let Some((a, b, c, cached)) = &self.root_modules_cache {
+            if (*a, *b, *c) == sizes {
+                return cached.clone();
+            }
+        }
+        let mut root_modules = HashSet::new();
+        for path in &self.module_defs {
+            if let Some(first) = path.head() {
+                root_modules.insert(first.to_string());
+            }
+        }
+        for key in self
+            .global_type_defs
+            .keys()
+            .chain(self.global_value_defs.keys())
+        {
+            if let Ok(parsed) = parse_path(key) {
+                if let Some(head) = parsed.segments.first() {
+                    root_modules.insert(head.clone());
+                }
+            }
+        }
+        self.root_modules_cache = Some((sizes.0, sizes.1, sizes.2, root_modules.clone()));
+        root_modules
+    }
+
     pub(super) fn name_to_hir_path_with_scope(
         &mut self,
         name: &Name,
@@ -299,23 +342,7 @@ impl HirGenerator {
         }
 
         if !matches!(resolved, Some(hir::Res::Local(_))) {
-            let mut root_modules = HashSet::new();
-            for path in &self.module_defs {
-                if let Some(first) = path.head() {
-                    root_modules.insert(first.to_string());
-                }
-            }
-            for key in self
-                .global_type_defs
-                .keys()
-                .chain(self.global_value_defs.keys())
-            {
-                if let Ok(parsed) = parse_path(key) {
-                    if let Some(head) = parsed.segments.first() {
-                        root_modules.insert(head.clone());
-                    }
-                }
-            }
+            let root_modules = self.cached_root_modules();
             let extern_prelude: HashSet<String> = ["std", "core", "alloc"]
                 .into_iter()
                 .map(|name| name.to_string())

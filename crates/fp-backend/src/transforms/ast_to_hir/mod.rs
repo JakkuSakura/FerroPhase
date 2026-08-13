@@ -86,6 +86,11 @@ pub struct HirGenerator {
     /// upfront import worklist already ran) is a guaranteed no-op instead
     /// of an assumed-safe duplicate.
     resolved_import_aliases: HashSet<(fp_core::ast::path::QualifiedPath, String)>,
+    /// Memoized result of `cached_root_modules` — see its doc comment.
+    /// `(module_defs.len(), global_type_defs.len(), global_value_defs.len())`
+    /// at computation time, paired with the computed set; recomputed only
+    /// when one of those sizes has grown since.
+    root_modules_cache: Option<(usize, usize, usize, HashSet<String>)>,
 }
 
 enum MaterializedTypeAlias {
@@ -490,6 +495,7 @@ impl HirGenerator {
             workspace: None,
             pending_impls: Vec::new(),
             resolved_import_aliases: HashSet::new(),
+            root_modules_cache: None,
         }
     }
 

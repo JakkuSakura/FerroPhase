@@ -9,8 +9,8 @@ use fp_core::ast::{
     FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction, ItemDefConst, ItemDefEnum,
     ItemDefFunction, ItemDefStruct, ItemKind, Name, Path, Pattern, PatternIdent, PatternKind,
     PatternStruct, PatternStructField, PatternTuple, PatternTupleStruct, PatternVariant,
-    StructuralField, Ty, TypeArray, TypeEnum, TypeFunction, TypeReference, TypeSlice, TypeStruct,
-    TypeTuple, Value,
+    StmtLet, StructuralField, Ty, TypeArray, TypeEnum, TypeFunction, TypeReference, TypeSlice,
+    TypeStruct, TypeTuple, Value,
 };
 use fp_core::error::Result;
 use fp_core::hir;
@@ -260,6 +260,24 @@ impl<'a> HirToAstLifter<'a> {
             // instead of colliding (see `declare_binding_name`).
             let param_names: HashSet<String> =
                 sig.params.iter().map(|param| param.name.name.clone()).collect();
+            // A parameter reassigned in the body (e.g. Rust's `&mut`/`mut`
+            // parameter + `Option::take()`) can't be emitted as a direct
+            // reassignment in Kotlin and friends — parameters are always an
+            // implicit `val`. Give each such parameter a renamed mutable
+            // local shadow instead (see `lift_function_body`).
+            let reassigned_params: Vec<(hir::HirId, String)> = function
+                .sig
+                .inputs
+                .iter()
+                .filter_map(|param| match &param.pat.kind {
+                    hir::PatKind::Binding { name, .. }
+                        if block_assigns_local(block, param.pat.hir_id) =>
+                    {
+                        Some((param.pat.hir_id, name.as_str().to_string()))
+                    }
+                    _ => None,
+                })
+                .collect();
             Ok(Item::from(ItemKind::DefFunction(ItemDefFunction {
                 ty_annotation: None,
                 attrs: function.attrs.clone(),
@@ -276,7 +294,7 @@ impl<'a> HirToAstLifter<'a> {
                     ret_ty: Some(Box::new(self.lift_type(&function.sig.output)?)),
                 }),
                 sig,
-                body: self.lift_block_with_scope(block, param_names)?,
+                body: self.lift_function_body(block, param_names, &reassigned_params)?,
                 is_async: false,
                 visibility: lift_visibility(&item.visibility),
             }))
@@ -644,6 +662,50 @@ impl<'a> HirToAstLifter<'a> {
             collected_items: Vec::new(),
             stmts,
         })
+    }
+
+    /// Like `lift_block_with_scope`, but for a function body specifically:
+    /// `reassigned_params` (computed by `lift_function_item` via
+    /// `block_assigns_local`) names parameters the source body reassigns —
+    /// impossible to emit directly in Kotlin and friends, since a parameter
+    /// is always an implicit `val`. Each such parameter is given a renamed
+    /// mutable local shadow (through the same `declare_binding_name` collision
+    /// path a same-block shadowing `let` uses), declared as the very first
+    /// statement of the lifted body; `lift_path`'s `renamed_locals` lookup
+    /// then routes every later read/write of that parameter (matched by its
+    /// pattern `HirId`) to the shadow instead of the parameter itself.
+    fn lift_function_body(
+        &self,
+        block: &hir::Block,
+        param_names: HashSet<String>,
+        reassigned_params: &[(hir::HirId, String)],
+    ) -> Result<ExprBlock> {
+        self.scope_names.borrow_mut().push(param_names);
+        let shadows: Vec<(String, String)> = reassigned_params
+            .iter()
+            .map(|(hir_id, name)| (self.declare_binding_name(*hir_id, name), name.clone()))
+            .collect();
+        let result = self.lift_block_stmts(block);
+        self.scope_names.borrow_mut().pop();
+        let mut lifted = result?;
+        if !shadows.is_empty() {
+            let mut stmts: Vec<BlockStmt> = shadows
+                .into_iter()
+                .map(|(shadow_name, original_name)| {
+                    BlockStmt::Let(StmtLet {
+                        pat: Pattern::new(PatternKind::Ident(PatternIdent {
+                            ident: Ident::new(shadow_name),
+                            mutability: Some(true),
+                        })),
+                        init: Some(Expr::ident(Ident::new(original_name))),
+                        diverge: None,
+                    })
+                })
+                .collect();
+            stmts.append(&mut lifted.stmts);
+            lifted.stmts = stmts;
+        }
+        Ok(lifted)
     }
 
     fn lift_stmt(&self, stmt: &hir::Stmt) -> Result<BlockStmt> {
@@ -1176,6 +1238,119 @@ impl<'a> HirToAstLifter<'a> {
                 .map(|segment| Ident::new(segment.name.as_str()))
                 .collect(),
         )
+    }
+}
+
+/// True if `target` (some binding's pattern `HirId`) is ever the direct LHS
+/// of an assignment anywhere within `block` — see `lift_function_body`.
+/// Exhaustive over `hir::ExprKind` on purpose: HIR (unlike the full surface
+/// AST) has few enough variants that missing one is unlikely, and a missed
+/// variant only fails *open* (the parameter keeps its unfixed, pre-existing
+/// "reassigning a val" codegen error) rather than silently emitting wrong
+/// behavior.
+fn block_assigns_local(block: &hir::Block, target: hir::HirId) -> bool {
+    block.stmts.iter().any(|stmt| stmt_assigns_local(stmt, target))
+        || block
+            .expr
+            .as_deref()
+            .is_some_and(|expr| expr_assigns_local(expr, target))
+}
+
+fn stmt_assigns_local(stmt: &hir::Stmt, target: hir::HirId) -> bool {
+    match &stmt.kind {
+        hir::StmtKind::Local(local) => local
+            .init
+            .as_ref()
+            .is_some_and(|expr| expr_assigns_local(expr, target)),
+        hir::StmtKind::Item(_) => false,
+        hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
+            expr_assigns_local(expr, target)
+        }
+    }
+}
+
+fn expr_assigns_local(expr: &hir::Expr, target: hir::HirId) -> bool {
+    match &expr.kind {
+        hir::ExprKind::Assign(lhs, rhs) => {
+            let assigns_target = matches!(
+                &lhs.kind,
+                hir::ExprKind::Path(path) if matches!(path.res, Some(hir::Res::Local(id)) if id == target)
+            );
+            assigns_target
+                || expr_assigns_local(lhs, target)
+                || expr_assigns_local(rhs, target)
+        }
+        hir::ExprKind::Literal(_)
+        | hir::ExprKind::Path(_)
+        | hir::ExprKind::Continue
+        | hir::ExprKind::FormatString(_)
+        | hir::ExprKind::Query(_) => false,
+        hir::ExprKind::Binary(_, lhs, rhs) => {
+            expr_assigns_local(lhs, target) || expr_assigns_local(rhs, target)
+        }
+        hir::ExprKind::Unary(_, inner) => expr_assigns_local(inner, target),
+        hir::ExprKind::Reference(r) => expr_assigns_local(&r.expr, target),
+        hir::ExprKind::Call(callee, args) => {
+            expr_assigns_local(callee, target)
+                || args.iter().any(|arg| expr_assigns_local(&arg.value, target))
+        }
+        hir::ExprKind::MethodCall(recv, _, args) => {
+            expr_assigns_local(recv, target)
+                || args.iter().any(|arg| expr_assigns_local(&arg.value, target))
+        }
+        hir::ExprKind::FieldAccess(inner, _) => expr_assigns_local(inner, target),
+        hir::ExprKind::Index(base, index) => {
+            expr_assigns_local(base, target) || expr_assigns_local(index, target)
+        }
+        hir::ExprKind::Slice(s) => {
+            expr_assigns_local(&s.base, target)
+                || s.start.as_deref().is_some_and(|e| expr_assigns_local(e, target))
+                || s.end.as_deref().is_some_and(|e| expr_assigns_local(e, target))
+        }
+        hir::ExprKind::Cast(inner, _) => expr_assigns_local(inner, target),
+        hir::ExprKind::Struct(_, fields) => {
+            fields.iter().any(|field| expr_assigns_local(&field.expr, target))
+        }
+        hir::ExprKind::If(cond, then_expr, else_expr) => {
+            expr_assigns_local(cond, target)
+                || expr_assigns_local(then_expr, target)
+                || else_expr.as_deref().is_some_and(|e| expr_assigns_local(e, target))
+        }
+        hir::ExprKind::Match(scrutinee, arms) => {
+            expr_assigns_local(scrutinee, target)
+                || arms.iter().any(|arm| {
+                    arm.guard.as_ref().is_some_and(|g| expr_assigns_local(g, target))
+                        || expr_assigns_local(&arm.body, target)
+                })
+        }
+        hir::ExprKind::Try(t) => {
+            expr_assigns_local(&t.expr, target)
+                || t.catches.iter().any(|c| expr_assigns_local(&c.body, target))
+                || t.elze.as_deref().is_some_and(|e| expr_assigns_local(e, target))
+                || t.finally.as_deref().is_some_and(|e| expr_assigns_local(e, target))
+        }
+        hir::ExprKind::Block(b) => block_assigns_local(b, target),
+        hir::ExprKind::IntrinsicCall(ic) => {
+            ic.callargs.iter().any(|arg| expr_assigns_local(&arg.value, target))
+        }
+        hir::ExprKind::Let(_, _, init) => {
+            init.as_deref().is_some_and(|e| expr_assigns_local(e, target))
+        }
+        hir::ExprKind::Return(e) | hir::ExprKind::Break(e) => {
+            e.as_deref().is_some_and(|e| expr_assigns_local(e, target))
+        }
+        hir::ExprKind::Loop(b) => block_assigns_local(b, target),
+        hir::ExprKind::While(cond, b) => {
+            expr_assigns_local(cond, target) || block_assigns_local(b, target)
+        }
+        hir::ExprKind::With(a, b) => expr_assigns_local(a, target) || expr_assigns_local(b, target),
+        hir::ExprKind::Array(items) | hir::ExprKind::Tuple(items) => {
+            items.iter().any(|e| expr_assigns_local(e, target))
+        }
+        hir::ExprKind::ArrayRepeat { elem, len } => {
+            expr_assigns_local(elem, target) || expr_assigns_local(len, target)
+        }
+        hir::ExprKind::ConstBlock(cb) => expr_assigns_local(&cb.body, target),
     }
 }
 

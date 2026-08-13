@@ -56,6 +56,12 @@ struct KotlinEmitter {
     /// `field_element_types`/`collect_list_field_names`, see
     /// `collect_string_field_names`.
     string_field_names: HashSet<String>,
+    /// Workspace-wide struct field names whose declared type is an `enum
+    /// class` — same rationale and shape as `string_field_names`, backing
+    /// the same `.clone()`-vs-`.copy()` disambiguation (`is_known_enum_receiver`)
+    /// for a field whose defining struct lives in a different package than
+    /// the file reading it (so `expr.ty()` alone isn't reliably populated).
+    enum_field_names: HashSet<String>,
     /// Variables bound from `.split(...)` — Kotlin's version returns a `List`, not
     /// a stateful iterator, so a later `.next()?` on one of these needs indexed
     /// access instead of the usual (erasing) method-call rendering.
@@ -96,6 +102,7 @@ impl KotlinEmitter {
             next_call_counters: HashMap::new(),
             field_element_types: HashMap::new(),
             string_field_names: HashSet::new(),
+            enum_field_names: HashSet::new(),
             declared_names: Vec::new(),
             referenced_paths: HashSet::new(),
         }
@@ -172,6 +179,7 @@ impl KotlinSerializer {
         mutated_fields: &HashSet<String>,
         list_fields: &HashMap<String, String>,
         string_fields: &HashSet<String>,
+        enum_fields: &HashSet<String>,
         referenced_paths: &HashMap<Vec<String>, Vec<Vec<String>>>,
     ) -> Result<Vec<(String, String)>> {
         let modules = fp_core::package::split_package_into_modules(source);
@@ -231,6 +239,7 @@ impl KotlinSerializer {
             emitter.mutated_fields = mutated_fields.clone();
             emitter.field_element_types = list_fields.clone();
             emitter.string_field_names = string_fields.clone();
+            emitter.enum_field_names = enum_fields.clone();
             emitter.referenced_paths = file_referenced_paths;
             emit_file(&file, &mut emitter)
                 .map_err(|e| eyre::eyre!("serialize {}: {}", mod_path, e))?;
@@ -355,6 +364,43 @@ fn collect_string_fields_in_item(item: &Item, e: &KotlinEmitter, out: &mut HashS
         ItemKind::Module(m) => {
             for item in &m.items {
                 collect_string_fields_in_item(item, e, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Workspace-wide struct field names whose declared type is an `enum class`
+/// — same shape and rationale as `collect_string_field_names`, backing the
+/// `.clone()`-vs-`.copy()` disambiguation (see `enum_field_names`'s doc
+/// comment). Checks the field's `Ty` directly (`Ty::Enum(_)`) rather than
+/// a rendered-name comparison, since an enum and a struct with the same
+/// name would render identically as a bare Kotlin type name.
+pub fn collect_enum_field_names<'a>(items: impl Iterator<Item = &'a PackageItem>) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for pkg_item in items {
+        collect_enum_fields_in_item(&pkg_item.item, &mut out);
+    }
+    out
+}
+
+fn collect_enum_fields_in_item(item: &Item, out: &mut HashSet<String>) {
+    match item.kind() {
+        ItemKind::DefStruct(s) => {
+            for field in &s.value.fields {
+                if matches!(field.value, Ty::Enum(_)) {
+                    out.insert(field.name.name.clone());
+                }
+            }
+        }
+        ItemKind::Impl(impl_block) => {
+            for item in &impl_block.items {
+                collect_enum_fields_in_item(item, out);
+            }
+        }
+        ItemKind::Module(m) => {
+            for item in &m.items {
+                collect_enum_fields_in_item(item, out);
             }
         }
         _ => {}
@@ -1358,15 +1404,17 @@ fn is_known_string_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
     expr_receiver_name(expr).is_some_and(|n| e.string_field_names.contains(&n))
 }
 
-/// True if `expr`'s real inferred type is a Kotlin `enum class`. Used to
-/// disambiguate `.clone()`, same as `is_known_string_receiver` — an
-/// `enum class` has no synthesized `.copy()` either, so the call should
-/// drop entirely rather than map to Kotlin's data-class `.copy()`
-/// convention. Unlike `is_known_string_receiver`, there's no name-registry
-/// fallback: without a real inferred type there's no reliable way to tell
-/// an enum receiver from any other struct-shaped one by name alone.
-fn is_known_enum_receiver(expr: &Expr) -> bool {
-    matches!(expr.ty(), Some(Ty::Enum(_)))
+/// True if `expr`'s real inferred type is a Kotlin `enum class` — checks
+/// the real inferred type first, falling back to name-registry lookup
+/// (`enum_field_names`) only when no type is available, same pattern as
+/// `is_known_string_receiver`. Used to disambiguate `.clone()`, since an
+/// `enum class` has no synthesized `.copy()` either — the call should drop
+/// entirely rather than map to Kotlin's data-class `.copy()` convention.
+fn is_known_enum_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
+    if matches!(expr.ty(), Some(Ty::Enum(_))) {
+        return true;
+    }
+    expr_receiver_name(expr).is_some_and(|n| e.enum_field_names.contains(&n))
 }
 
 /// A bare local/param name, or a struct field access's field name — the
@@ -1488,7 +1536,7 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                     // already immutable, the call should just drop (see
                     // `is_known_string_receiver`/`is_known_enum_receiver`).
                     let is_clone_dropped = sel.field.name.as_str() == "clone"
-                        && (is_known_string_receiver(&sel.obj, e) || is_known_enum_receiver(&sel.obj));
+                        && (is_known_string_receiver(&sel.obj, e) || is_known_enum_receiver(&sel.obj, e));
                     let method_name = if is_iterator_map {
                         "map".to_string()
                     } else if is_len_on_list {

@@ -31,6 +31,17 @@ pub struct HirTypeChecker {
     /// types (which is synchronous). Resolved via comptime once the main
     /// item walk finishes; see `resolve_pending_type_const_blocks`.
     pending_type_const_blocks: Vec<(hir::HirId, hir::Expr)>,
+    /// Lazily-built, memoized snapshot of every item `method_output` scans
+    /// to find a method's owning `impl` — this program's own items plus
+    /// every other loaded package's (`typing_context`'s `env_ctx::
+    /// hir_definitions()`). Neither source changes once type checking of
+    /// this program has begun, but `method_output` runs once per method
+    /// call *expression*, and both sources were previously being cloned
+    /// (whole HIR programs, for every other package) from scratch on every
+    /// single call — for a large program (e.g. the vendored std library)
+    /// this made every method call pay an O(workspace size) cost. Built
+    /// once, reused (as a cheap `Rc` clone) for the rest of the check.
+    impl_lookup_items: Option<Rc<Vec<hir::Item>>>,
 }
 
 struct GenericScope<'a> {
@@ -96,6 +107,7 @@ impl HirTypeChecker {
             typing_context: None,
             expected_expr_types: Vec::new(),
             pending_type_const_blocks: Vec::new(),
+            impl_lookup_items: None,
         }
     }
 
@@ -1936,18 +1948,9 @@ impl HirTypeChecker {
             TyKind::Adt(receiver, _) => Some(receiver.did),
             _ => None,
         };
-        let mut impl_items = self.program.items.clone();
-        if let Some(context) = &self.typing_context {
-            impl_items.extend(
-                context
-                    .env_ctx
-                    .hir_definitions()
-                    .into_iter()
-                    .flat_map(|(_, program, _)| program.items),
-            );
-        }
-        for item in impl_items {
-            let hir::ItemKind::Impl(impl_item) = item.kind else {
+        let impl_items = self.impl_lookup_items();
+        for item in impl_items.iter() {
+            let hir::ItemKind::Impl(impl_item) = &item.kind else {
                 continue;
             };
             let mut scope = self.generic_scope(&impl_item.generics);
@@ -1979,12 +1982,12 @@ impl HirTypeChecker {
             let assoc_types = scope.impl_assoc_types(&impl_item.items)?;
             scope.assoc_types.push(assoc_types);
             let impl_generics = impl_item.generics.clone();
-            for impl_item in impl_item.items {
-                let hir::ImplItemKind::Method(function) = impl_item.kind else {
+            for impl_item in &impl_item.items {
+                let hir::ImplItemKind::Method(function) = &impl_item.kind else {
                     continue;
                 };
                 if impl_item.name == *method {
-                    let signature = scope.function_signature(&function)?;
+                    let signature = scope.function_signature(function)?;
                     let Some((substitutions, result)) =
                         scope.instantiate_call(&signature, actuals)?
                     else {
@@ -2004,6 +2007,25 @@ impl HirTypeChecker {
             scope.self_types.pop();
         }
         Err(Error::from(format!("method `{method}` was not found")))
+    }
+
+    /// Lazily builds and memoizes `impl_lookup_items` (see its doc comment)
+    /// on first use, then returns a cheap `Rc` clone on every later call.
+    fn impl_lookup_items(&mut self) -> Rc<Vec<hir::Item>> {
+        if self.impl_lookup_items.is_none() {
+            let mut items = self.program.items.clone();
+            if let Some(context) = &self.typing_context {
+                items.extend(
+                    context
+                        .env_ctx
+                        .hir_definitions()
+                        .into_iter()
+                        .flat_map(|(_, program, _)| program.items),
+                );
+            }
+            self.impl_lookup_items = Some(Rc::new(items));
+        }
+        self.impl_lookup_items.clone().expect("just populated above")
     }
 
     fn method_generic_args(
