@@ -4925,8 +4925,28 @@ impl MirLowering {
         let Some(payload) = payload else {
             return Vec::new();
         };
+        // A genuine multi-field tuple-variant declaration (`Bar(A, B)`) is
+        // represented at the HIR level as a single `TypeExprKind::Tuple`
+        // payload — one element per declared field — so unpacking it into
+        // one payload slot per element (below) is correct. But a
+        // single-field variant (`Ok(T)`) is represented as `T` directly,
+        // *not* wrapped in a one-element tuple, so it must always produce
+        // exactly one payload slot regardless of what `T` substitutes to —
+        // deciding arity from the *substituted* type instead (as
+        // `enum_payload_types_from_ty` alone would) breaks the moment `T`
+        // resolves to `()` (itself a tuple type, indistinguishable from a
+        // zero-field variant): `Result<(), E>::Ok(())` would wrongly
+        // compute 0 payload values instead of 1. Check the shape of the
+        // *declaration* first, before substitution, to keep genuine arity
+        // and "this one field's type happens to be a tuple" distinct.
+        if let hir::TypeExprKind::Tuple(elements) = &payload.kind {
+            return elements
+                .iter()
+                .map(|element| self.lower_type_expr_with_substs(element, substs))
+                .collect();
+        }
         let payload_ty = self.lower_type_expr_with_substs(payload, substs);
-        self.enum_payload_types_from_ty(&payload_ty)
+        vec![payload_ty]
     }
 
     fn enum_payload_types_from_ty(&self, ty: &Ty) -> Vec<Ty> {
@@ -16420,9 +16440,56 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
                 _ => {
-                    self.lowering
-                        .emit_error(span, "panic expects a string literal in compiled backends");
-                    "<panic message unavailable>".to_string()
+                    // A non-literal panic argument (e.g. `Option::expect`'s
+                    // forwarded `message: &str` parameter — `panic!(message)`
+                    // in `crates/fp-lang/src/std/option/mod.fp`) is a
+                    // legitimate, valid program: forwarding a caller-supplied
+                    // message is normal. `fp_panic`'s runtime call
+                    // convention already takes a *runtime* string pointer
+                    // (see the `FormatString`-with-placeholders branch
+                    // above), not a compile-time constant, so there's no
+                    // runtime-side reason to require a literal here either —
+                    // lower the argument as a normal operand and call
+                    // `fp_panic` with it directly.
+                    let string_ty = self.lowering.raw_string_ptr_ty();
+                    let message_operand =
+                        self.lower_operand(&call.callargs[0].value, Some(&string_ty))?;
+                    let sig = mir::FunctionSig {
+                        inputs: vec![string_ty.clone()],
+                        output: MirLowering::unit_ty(),
+                    };
+                    self.lowering.ensure_runtime_stub("fp_panic", &sig);
+                    let fn_ty = self.lowering.function_pointer_ty(&sig);
+                    let func = mir::Operand::Constant(mir::Constant {
+                        span,
+                        ty: fn_ty.clone(),
+                        user_ty: None,
+                        literal: mir::ConstantKind::Fn(mir::Symbol::new("fp_panic".to_string())),
+                    });
+                    let args = vec![message_operand.operand];
+
+                    let result_local = self.allocate_temp(MirLowering::unit_ty(), span);
+                    let after_block = self.new_block();
+                    let terminator = mir::Terminator {
+                        source_info: span,
+                        kind: mir::TerminatorKind::Call {
+                            func,
+                            args,
+                            destination: Some((mir::Place::from_local(result_local), after_block)),
+                            cleanup: self.current_unwind_target,
+                            from_hir_call: true,
+                            fn_span: span,
+                        },
+                    };
+                    self.blocks[self.current_block as usize].terminator = Some(terminator);
+
+                    self.current_block = after_block;
+                    self.set_current_terminator(mir::Terminator {
+                        source_info: span,
+                        kind: mir::TerminatorKind::Unreachable,
+                    });
+                    self.current_block = self.new_block();
+                    return Ok(());
                 }
             }
         } else {
@@ -16475,21 +16542,31 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn lower_panic(&mut self, span: Span, args: &[hir::CallArg]) -> Result<()> {
-        let message = if let Some(arg) = args.first() {
-            match &arg.value.kind {
-                hir::ExprKind::Literal(hir::Lit::Str(message)) => message.clone(),
-                _ => {
-                    self.lowering
-                        .emit_error(span, "panic expects a string literal in compiled backends");
-                    "<panic message unavailable>".to_string()
-                }
-            }
-        } else {
-            "panic".to_string()
+        let string_ty = self.lowering.raw_string_ptr_ty();
+        // Non-literal messages (e.g. a forwarded `&str` parameter) are a
+        // legitimate, valid program — see the identical fallback in
+        // `emit_panic_intrinsic` for the full reasoning. Lower the
+        // argument as a normal operand instead of requiring a literal.
+        let message_operand = match args.first() {
+            Some(arg) => match &arg.value.kind {
+                hir::ExprKind::Literal(hir::Lit::Str(message)) => mir::Operand::Constant(mir::Constant {
+                    span,
+                    ty: string_ty.clone(),
+                    user_ty: None,
+                    literal: mir::ConstantKind::Str(message.clone()),
+                }),
+                _ => self.lower_operand(&arg.value, Some(&string_ty))?.operand,
+            },
+            None => mir::Operand::Constant(mir::Constant {
+                span,
+                ty: string_ty.clone(),
+                user_ty: None,
+                literal: mir::ConstantKind::Str("panic".to_string()),
+            }),
         };
 
         let sig = mir::FunctionSig {
-            inputs: vec![self.lowering.raw_string_ptr_ty()],
+            inputs: vec![string_ty.clone()],
             output: MirLowering::unit_ty(),
         };
         self.lowering.ensure_runtime_stub("fp_panic", &sig);
@@ -16500,12 +16577,7 @@ impl<'a> BodyBuilder<'a> {
             user_ty: None,
             literal: mir::ConstantKind::Fn(mir::Symbol::new("fp_panic".to_string())),
         });
-        let args = vec![mir::Operand::Constant(mir::Constant {
-            span,
-            ty: self.lowering.raw_string_ptr_ty(),
-            user_ty: None,
-            literal: mir::ConstantKind::Str(message),
-        })];
+        let args = vec![message_operand];
 
         let result_local = self.allocate_temp(MirLowering::unit_ty(), span);
         let after_block = self.new_block();
@@ -17832,6 +17904,7 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::Literal(_)
             | hir::ExprKind::Path(_)
             | hir::ExprKind::Index(_, _)
+            | hir::ExprKind::FieldAccess(_, _)
             | hir::ExprKind::ConstBlock(_) => {
                 let assignment_place = place.clone();
                 let value = self.lower_operand(expr, Some(expected_ty))?;
@@ -19774,6 +19847,15 @@ impl<'a> BodyBuilder<'a> {
     /// work generically for *any* type that implements `Index`, not just
     /// `Vec` specifically.
     fn real_indexable_struct_def_id(&self, ty: &Ty) -> Option<hir::DefId> {
+        // `self[idx]` inside a `&self`/`&mut self` method (e.g. `Vec<&str>
+        // ::join`) has a receiver of type `&Vec<T>`, not `Vec<T>` directly
+        // — peel the reference the same way callers elsewhere in this file
+        // do (e.g. `hir_typeck`'s own `Index` type-checking) before
+        // checking for the underlying ADT.
+        let mut ty = ty;
+        if let TyKind::Ref(_, inner, _) = &ty.kind {
+            ty = inner.as_ref();
+        }
         let TyKind::Adt(adt, _) = &ty.kind else {
             return None;
         };
