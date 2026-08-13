@@ -3,10 +3,50 @@ use fp_core::ast;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::intrinsics::IntrinsicNormalizationMode;
 use fp_core::ast::path::QualifiedPath;
+use fp_core::lir::LirDataLayout;
 use fp_core::ops::BinOpKind;
+use fp_core::package::graph::PackageGraph;
+use fp_core::package::provider::{FixedPackageProvider, PackageProvider};
+use fp_core::package::{PackageId, PackageSource};
 use fp_core::span::Span;
+use fp_core::workspace::WorkspaceContext;
 use fp_typing::{ResolvedName, ResolvedNameNamespace, ResolvedNameTable};
 use std::collections::HashMap;
+
+fn test_data_layout() -> LirDataLayout {
+    LirDataLayout::new(
+        64,
+        8,
+        vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+    )
+    .expect("valid test data layout")
+}
+
+/// Wraps bare `ast::Item`s (no real file/frontend involved) as a
+/// one-member package, obtained the same way every real package is: via a
+/// `PackageProvider` (`FixedPackageProvider`, which just hands back an
+/// already-built `PackageSource`) followed by
+/// `WorkspaceContext::begin_package` — never a hand-rolled
+/// `CompiledPackage`.
+fn package_from_items(items: Vec<ast::Item>) -> Result<fp_core::package::CompiledPackage> {
+    let package_id = PackageId::new("test");
+    let mut source = PackageSource::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
+    source.items = items
+        .into_iter()
+        .map(|item| fp_core::package::PackageItem {
+            path: QualifiedPath::new(Vec::new()),
+            item,
+        })
+        .collect();
+    let provider = FixedPackageProvider::for_source(package_id.clone(), source);
+    let loaded = provider
+        .load_package_source(&package_id)
+        .map_err(|e| crate::error::optimization_error(e.to_string()))?;
+    let workspace = WorkspaceContext::new();
+    let package = workspace.begin_package(package_id, loaded, test_data_layout());
+    let package = package.borrow().clone();
+    Ok(package)
+}
 
 fn ident(name: &str) -> ast::Ident {
     ast::Ident::new(name)
@@ -165,15 +205,9 @@ fn const_block_type_alias_produces_no_synthetic_item() -> Result<()> {
         value: const_block_ty,
     }));
 
-    let ast_file = ast::File {
-        path: "const_type_alias.fp".into(),
-        attrs: Vec::new(),
-        collected_items: Vec::new(),
-        items: vec![type_item],
-    };
-
+    let package = package_from_items(vec![type_item])?;
     let mut generator = HirGenerator::new();
-    let program = generator.transform_file(&ast_file)?;
+    let program = generator.transform_package(&package)?;
 
     assert!(
         program.items.is_empty(),
@@ -303,15 +337,9 @@ fn transform_index_expression_to_hir() -> Result<()> {
         body,
     )];
 
-    let ast_file = ast::File {
-        path: "index.fp".into(),
-        attrs: Vec::new(),
-        collected_items: Vec::new(),
-        items,
-    };
-
+    let package = package_from_items(items)?;
     let mut generator = HirGenerator::new();
-    let program = generator.transform_file(&ast_file)?;
+    let program = generator.transform_package(&package)?;
 
     let pick = program
         .items
@@ -491,16 +519,10 @@ fn cfg_filters_items_by_target_os() -> Result<()> {
         def.attrs.push(cfg_target_os_attr("macos"));
     }
 
-    let ast_file = ast::File {
-        path: "cfg.fp".into(),
-        attrs: Vec::new(),
-        collected_items: Vec::new(),
-        items: vec![linux_fn, mac_fn],
-    };
-
+    let package = package_from_items(vec![linux_fn, mac_fn])?;
     let mut generator = HirGenerator::new();
     generator.set_target_triple(Some("x86_64-apple-darwin"));
-    let program = generator.transform_file(&ast_file)?;
+    let program = generator.transform_package(&package)?;
 
     let names = program
         .items
@@ -600,7 +622,7 @@ fn transform_intrinsic_container_to_hir() -> Result<()> {
 }
 
 #[test]
-fn transform_file_with_function_and_struct() -> Result<()> {
+fn transform_package_with_function_and_struct() -> Result<()> {
     let point = make_struct("Point", vec![("x", int_ty()), ("y", int_ty())]);
     let add_body = ast::Expr::from(ast::ExprKind::BinOp(ast::ExprBinOp {
         span: fp_core::span::Span::null(),
@@ -616,15 +638,9 @@ fn transform_file_with_function_and_struct() -> Result<()> {
     );
     let items = vec![point, add];
 
-    let ast_file = ast::File {
-        path: "test.fp".into(),
-        attrs: Vec::new(),
-        collected_items: Vec::new(),
-        items,
-    };
-
+    let package = package_from_items(items)?;
     let mut generator = HirGenerator::new();
-    let program = generator.transform_file(&ast_file)?;
+    let program = generator.transform_package(&package)?;
 
     assert_eq!(program.items.len(), 2);
     let names: Vec<String> = program
@@ -679,15 +695,9 @@ fn transform_generic_function_and_method() -> Result<()> {
         ast::Item::from(ast::ItemKind::DefFunction(identity)),
     ];
 
-    let ast_file = ast::File {
-        path: "generics.fp".into(),
-        attrs: Vec::new(),
-        collected_items: Vec::new(),
-        items,
-    };
-
+    let package = package_from_items(items)?;
     let mut generator = HirGenerator::new();
-    let program = generator.transform_file(&ast_file)?;
+    let program = generator.transform_package(&package)?;
 
     let identity = program
         .items
@@ -769,15 +779,9 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
         outer_body,
     )];
 
-    let ast_file = ast::File {
-        path: "scopes.fp".into(),
-        attrs: Vec::new(),
-        collected_items: Vec::new(),
-        items,
-    };
-
+    let package = package_from_items(items)?;
     let mut generator = HirGenerator::new();
-    let program = generator.transform_file(&ast_file)?;
+    let program = generator.transform_package(&package)?;
 
     let outer = program
         .items

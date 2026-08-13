@@ -1,6 +1,7 @@
+use std::path::Path;
 use std::sync::Arc;
 
-use fp_core::ast::{Item, ItemKind};
+use fp_core::ast::{File, Item, ItemKind};
 use fp_core::frontend::LanguageFrontend;
 use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
@@ -10,11 +11,12 @@ use fp_core::package::{
     DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
     PackageMetadata, PackageSource,
 };
-use fp_core::vfs::VirtualPath;
+use fp_core::vfs::{UnixFileSystem, VirtualPath};
 
 use crate::FerroFrontend;
 use crate::embedded_libc;
 use crate::embedded_std;
+use crate::module_source::FerroModuleSourceResolver;
 
 /// `PackageProvider` for the embedded Ferro standard library. `std` is
 /// baked into the binary (see `embedded_std`), so there's no real
@@ -157,6 +159,76 @@ impl PackageProvider for FerroPhaseProvider {
             _ => Err(ProviderError::PackageNotFound(id.clone())),
         }
     }
+}
+
+/// `PackageProvider` wrapping a single already-parsed `File` as a
+/// one-member package, discovering any real `mod foo;` sibling modules on
+/// disk via `FerroModuleSourceResolver` — the correct mechanism for a
+/// genuinely standalone file with no enclosing package/manifest.
+struct InputPackageProvider {
+    package_id: PackageId,
+    descriptor: Arc<PackageDescriptor>,
+    source: PackageSource,
+}
+
+impl InputPackageProvider {
+    fn new(package_id: PackageId, module_path: QualifiedPath, source: File) -> ProviderResult<Self> {
+        let descriptor = PackageDescriptor {
+            id: package_id.clone(),
+            name: package_id.as_str().to_owned(),
+            version: None,
+            manifest_path: VirtualPath::from_path(&source.path),
+            root: VirtualPath::from_path(source.path.parent().unwrap_or(Path::new("."))),
+            metadata: Default::default(),
+            modules: Vec::new(),
+        };
+        let resolver = FerroModuleSourceResolver::new(Arc::new(UnixFileSystem::new("/")));
+        let package_source =
+            resolver.resolve_package_source(descriptor.clone(), module_path, source)?;
+        Ok(Self {
+            package_id,
+            descriptor: Arc::new(descriptor),
+            source: package_source,
+        })
+    }
+}
+
+impl PackageProvider for InputPackageProvider {
+    fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        Ok(vec![self.package_id.clone()])
+    }
+
+    fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
+        if id != &self.package_id {
+            return Err(ProviderError::PackageNotFound(id.clone()));
+        }
+        Ok(self.descriptor.clone())
+    }
+
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
+        if id != &self.package_id {
+            return Err(ProviderError::PackageNotFound(id.clone()));
+        }
+        Ok(self.source.clone())
+    }
+
+    fn refresh(&self) -> ProviderResult<()> {
+        Ok(())
+    }
+}
+
+/// Wraps an already-parsed single file as a one-member `PackageProvider`,
+/// via `InputPackageProvider` (disk-based sibling-module discovery through
+/// `FerroModuleSourceResolver` — the correct mechanism for a genuinely
+/// standalone file with no enclosing package/manifest).
+pub fn single_file_provider(
+    package_id: PackageId,
+    module_path: QualifiedPath,
+    source: File,
+) -> fp_core::error::Result<Arc<dyn PackageProvider>> {
+    let provider = InputPackageProvider::new(package_id, module_path, source)
+        .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+    Ok(Arc::new(provider))
 }
 
 fn relative_to_module_segments(package_name: &str, relative: &str) -> Vec<String> {

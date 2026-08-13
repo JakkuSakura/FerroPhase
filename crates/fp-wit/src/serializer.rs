@@ -53,11 +53,38 @@ pub enum WorldMode {
     PerPackage,
 }
 
-impl AstSerializer for WitSerializer {
-    fn serialize_file(&self, file: &File) -> Result<String> {
+/// Marker impl — needed so `WitSerializer` can be stored as
+/// `Arc<dyn AstSerializer>` in `FrontendResult` (see `frontend.rs`).
+/// `serialize_file`/`serialize_package` are inherent methods below instead.
+impl AstSerializer for WitSerializer {}
+
+impl WitSerializer {
+    pub fn serialize_file(&self, file: &File) -> Result<String> {
         let mut emitter = WitEmitter::new(self.options.clone());
         emitter.emit_file(file)?;
         Ok(emitter.finish())
+    }
+
+    /// Serializes a package into one WIT source file per module.
+    /// Returns `Vec<(relative_path, code)>`.
+    pub fn serialize_package(
+        &self,
+        source: &fp_core::package::PackageSource,
+    ) -> Result<Vec<(String, String)>> {
+        fp_core::package::split_package_into_modules(source)
+            .into_iter()
+            .map(|module| {
+                let rel_path = module.relative_path();
+                let file = File {
+                    path: std::path::PathBuf::from(&rel_path),
+                    attrs: Vec::new(),
+                    collected_items: Vec::new(),
+                    items: module.items,
+                };
+                let code = self.serialize_file(&file)?;
+                Ok((rel_path, code))
+            })
+            .collect()
     }
 }
 

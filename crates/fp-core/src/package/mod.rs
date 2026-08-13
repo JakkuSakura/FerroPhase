@@ -136,7 +136,6 @@ pub mod provider;
 
 use crate::ast::{FunctionSignature, Item, ItemId, MethodSignature, TypeEnum, TypeStruct};
 use crate::hir::PackageId as HirPackageId;
-use crate::hir::Symbol;
 use crate::lir::{LirCompileUnit, LirWorkspace};
 use crate::ast::path::QualifiedPath;
 use std::collections::{HashMap, HashSet};
@@ -192,6 +191,45 @@ impl PackageSource {
     }
 }
 
+/// One module's worth of items within a package, grouped by module path.
+#[derive(Clone, Debug)]
+pub struct PackageModule {
+    pub path: QualifiedPath,
+    pub items: Vec<Item>,
+}
+
+impl PackageModule {
+    /// The module's path as a `/`-joined relative file path (e.g.
+    /// `"config"`, `"repo/backend"`) — the convention every backend
+    /// serializer uses to lay out one source file per module.
+    pub fn relative_path(&self) -> String {
+        self.path.segments.join("/")
+    }
+}
+
+/// Groups a package's items by their module path — the same per-module
+/// split every backend serializer needs to lay out one source file per
+/// module. Shared here instead of duplicated per-backend (previously
+/// reimplemented identically in `KotlinSerializer::serialize_package` and
+/// the CLI's per-module fallback loop). Returned in path-sorted order for
+/// stable output.
+pub fn split_package_into_modules(source: &PackageSource) -> Vec<PackageModule> {
+    let mut modules: BTreeMap<Vec<String>, Vec<Item>> = BTreeMap::new();
+    for pkg_item in &source.items {
+        modules
+            .entry(pkg_item.path.segments.clone())
+            .or_default()
+            .push(pkg_item.item.clone());
+    }
+    modules
+        .into_iter()
+        .map(|(segments, items)| PackageModule {
+            path: QualifiedPath::new(segments),
+            items,
+        })
+        .collect()
+}
+
 /// Compiler-owned state produced by type-checking a package.
 ///
 /// A compiled package is stored in the workspace so dependent packages can
@@ -243,16 +281,13 @@ pub struct CompiledPackage {
     /// HIR definitions published by this package.
     pub hir_program: Option<crate::hir::Program>,
 
-    /// Lifted AST from typed HIR (TypecheckedTranspile mode).
-    pub lifted_ast: Option<crate::ast::File>,
-
     /// Typed HIR lifted back to AST, keyed by each item's own qualified
     /// name (`HirToAstLifter::lift_items_by_path`) rather than by list
     /// position — lets a source item be spliced with its typed
     /// counterpart by identity, tolerating extra (synthetic) or missing
     /// (e.g. per-item lift failures) entries on either side instead of
     /// requiring the two lists to match 1:1 in the same order.
-    pub lifted_items_by_path: Option<HashMap<Vec<Symbol>, Item>>,
+    pub lifted_items_by_path: Option<HashMap<crate::hir::DefPath, Item>>,
 
     /// For each item in `lifted_items_by_path` (same key), the qualified
     /// paths of every other definition it references
@@ -260,7 +295,7 @@ pub struct CompiledPackage {
     /// backend can use to compute which imports it actually needs for
     /// spliced-in content, rather than only echoing the source file's
     /// pre-existing `use` items.
-    pub referenced_paths_by_path: Option<HashMap<Vec<Symbol>, Vec<Vec<Symbol>>>>,
+    pub referenced_paths_by_path: Option<HashMap<crate::hir::DefPath, Vec<crate::hir::DefPath>>>,
 
     /// MIR produced for this package.
     pub mir_program: Option<crate::mir::Program>,
@@ -310,7 +345,6 @@ impl CompiledPackage {
             lir_units: Vec::new(),
             lir_workspace: LirWorkspace::new(data_layout),
             hir_program: None,
-            lifted_ast: None,
             lifted_items_by_path: None,
             referenced_paths_by_path: None,
             mir_program: None,

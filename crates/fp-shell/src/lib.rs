@@ -104,10 +104,16 @@ pub fn compile_source_with_options(
     // Save std items before HIR strips #[command] attrs from extern declarations
     let pre_hir_items = ast.items.clone();
 
-    let mut lowered = fp_backend::roundtrip_ast_file_via_hir(&ast)
+    let lowered_items = fp_backend::roundtrip_items_via_hir(&ast)
         .map_err(|err| ShellError::Lower(err.to_string()))?;
+    let lowered_file = File {
+        path: source_path.to_path_buf(),
+        attrs: Vec::new(),
+        collected_items: Vec::new(),
+        items: lowered_items,
+    };
     let materializer = shell_materializer::ShellMaterializer::new(options.inventory.as_ref());
-    lowered = fp_cli::materialize::materialize_file(lowered, &materializer)
+    let mut lowered = fp_cli::materialize::materialize_file(lowered_file, &materializer)
         .map_err(|err| ShellError::Lower(err.to_string()))?;
 
     // Re-insert pre-HIR items (HIR strips #[command] attrs, const-evaluates fn bodies)

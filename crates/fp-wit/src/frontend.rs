@@ -43,8 +43,9 @@ impl LanguageFrontend for WitFrontend {
         let last = file.clone();
         let ast = file;
 
-        let serializer: Arc<dyn AstSerializer> = Arc::new(WitSerializer::new());
-        let serialized = serializer.serialize_file(&ast).ok();
+        let concrete_serializer = WitSerializer::new();
+        let serialized = concrete_serializer.serialize_file(&ast).ok();
+        let serializer: Arc<dyn AstSerializer> = Arc::new(concrete_serializer);
 
         let snapshot = FrontendSnapshot {
             language: self.language().to_string(),

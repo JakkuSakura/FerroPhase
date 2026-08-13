@@ -4,7 +4,6 @@
 //! framework that enables multi-language development with advanced compile-time capabilities.
 
 pub mod cli;
-pub mod codegen;
 pub mod commands;
 pub mod compilation;
 pub mod compile_options;

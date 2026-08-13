@@ -1,8 +1,6 @@
 use std::fmt::Write as _;
 
-use fp_core::ast::{
-    AstSerializer, BlockStmt, Expr, ExprKind, File, Item, Ty, TypePrimitive, TypeStruct,
-};
+use fp_core::ast::{BlockStmt, Expr, ExprKind, File, Item, Ty, TypePrimitive, TypeStruct};
 
 #[derive(Default)]
 struct CSharpContext {
@@ -11,11 +9,33 @@ struct CSharpContext {
 
 pub struct CSharpSerializer;
 
-impl AstSerializer for CSharpSerializer {
-    fn serialize_file(&self, file: &File) -> fp_core::error::Result<String> {
+impl CSharpSerializer {
+    pub fn serialize_file(&self, file: &File) -> fp_core::error::Result<String> {
         let mut context = CSharpContext::default();
         collect_from_file(file, &mut context);
         Ok(render_csharp(&context))
+    }
+
+    /// Serializes a package into one C# source file per module.
+    /// Returns `Vec<(relative_path, code)>`.
+    pub fn serialize_package(
+        &self,
+        source: &fp_core::package::PackageSource,
+    ) -> fp_core::error::Result<Vec<(String, String)>> {
+        fp_core::package::split_package_into_modules(source)
+            .into_iter()
+            .map(|module| {
+                let rel_path = module.relative_path();
+                let file = File {
+                    path: std::path::PathBuf::from(&rel_path),
+                    attrs: Vec::new(),
+                    collected_items: Vec::new(),
+                    items: module.items,
+                };
+                let code = self.serialize_file(&file)?;
+                Ok((rel_path, code))
+            })
+            .collect()
     }
 }
 

@@ -1,7 +1,5 @@
 use crate::ast::SchemaDocument;
-use crate::ast::{
-    BExpr, BlockStmt, Expr, ExprBlock, ExprInvoke, File, Item, ItemDefFunction, Module,
-};
+use crate::ast::{BExpr, BlockStmt, Expr, ExprBlock, ExprInvoke, Item, ItemDefFunction, Module};
 use crate::ast::{Ty, Value, ValueFunction};
 use crate::query::QueryDocument;
 use crate::workspace::WorkspaceDocument;
@@ -38,9 +36,6 @@ pub trait AstSerializer: Send + Sync {
     }
     fn serialize_block(&self, node: &ExprBlock) -> Result<String, crate::Error> {
         bail!("not implemented: serialize_block")
-    }
-    fn serialize_file(&self, node: &File) -> Result<String, crate::Error> {
-        bail!("not implemented: serialize_file")
     }
     fn serialize_module(&self, node: &Module) -> Result<String, crate::Error> {
         bail!("not implemented: serialize_module")
@@ -91,23 +86,6 @@ pub struct AstTargetOutput {
 pub struct AstTargetSideFile {
     pub extension: String,
     pub contents: String,
-}
-
-pub trait AstTarget: Send + Sync {
-    fn emit_file(&self, file: &File) -> Result<AstTargetOutput, crate::Error>;
-}
-
-impl<T> AstTarget for T
-where
-    T: AstSerializer + Send + Sync,
-{
-    fn emit_file(&self, file: &File) -> Result<AstTargetOutput, crate::Error> {
-        let code = self.serialize_file(file)?;
-        Ok(AstTargetOutput {
-            code,
-            side_files: Vec::new(),
-        })
-    }
 }
 
 thread_local! {

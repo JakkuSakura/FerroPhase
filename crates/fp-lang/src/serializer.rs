@@ -28,10 +28,6 @@ impl Default for PrettyAstSerializer {
 }
 
 impl AstSerializer for PrettyAstSerializer {
-    fn serialize_file(&self, file: &File) -> Result<String, fp_core::Error> {
-        Ok(format!("{}", pretty(file, self.options.clone())))
-    }
-
     fn serialize_expr(&self, node: &Expr) -> Result<String, fp_core::Error> {
         Ok(format!("{}", pretty(node, self.options.clone())))
     }
@@ -69,5 +65,33 @@ impl AstSerializer for PrettyAstSerializer {
 
     fn serialize_def_function(&self, node: &ItemDefFunction) -> Result<String, fp_core::Error> {
         Ok(format!("{node:?}"))
+    }
+}
+
+impl PrettyAstSerializer {
+    pub fn serialize_file(&self, file: &File) -> Result<String, fp_core::Error> {
+        Ok(format!("{}", pretty(file, self.options.clone())))
+    }
+
+    /// Serializes a package into one pretty-printed Rust-ish source file
+    /// per module. Returns `Vec<(relative_path, code)>`.
+    pub fn serialize_package(
+        &self,
+        source: &fp_core::package::PackageSource,
+    ) -> Result<Vec<(String, String)>, fp_core::Error> {
+        fp_core::package::split_package_into_modules(source)
+            .into_iter()
+            .map(|module| {
+                let rel_path = module.relative_path();
+                let file = File {
+                    path: std::path::PathBuf::from(&rel_path),
+                    attrs: Vec::new(),
+                    collected_items: Vec::new(),
+                    items: module.items,
+                };
+                let code = self.serialize_file(&file)?;
+                Ok((rel_path, code))
+            })
+            .collect()
     }
 }

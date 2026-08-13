@@ -11,6 +11,7 @@ use fp_core::ast::{
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::CallKind;
+use fp_core::package::PackageSource;
 
 /// Public entry point used by the CLI target emitter.
 #[derive(Clone, Debug)]
@@ -32,11 +33,39 @@ impl Default for GoSerializer {
     }
 }
 
-impl AstSerializer for GoSerializer {
-    fn serialize_file(&self, file: &File) -> Result<String> {
+/// Marker impl — `GoSerializer` carries no dynamic (trait-dispatched)
+/// serialization behavior of its own, but still needs to satisfy
+/// `AstSerializer` to be stored as `Arc<dyn AstSerializer>` in
+/// `FrontendResult` (see `frontend.rs`). `serialize_file`/`serialize_package`
+/// are inherent methods below instead, since callers that know the
+/// concrete type (the CLI's target dispatch, `serialize_package`) always
+/// do.
+impl AstSerializer for GoSerializer {}
+
+impl GoSerializer {
+    pub fn serialize_file(&self, file: &File) -> Result<String> {
         let mut emitter = GoEmitter::new(self.package.clone());
         emitter.emit_file(file)?;
         Ok(emitter.finish())
+    }
+
+    /// Serializes a package into one Go source file per module.
+    /// Returns `Vec<(relative_path, code)>`.
+    pub fn serialize_package(&self, source: &PackageSource) -> Result<Vec<(String, String)>> {
+        fp_core::package::split_package_into_modules(source)
+            .into_iter()
+            .map(|module| {
+                let rel_path = module.relative_path();
+                let file = File {
+                    path: std::path::PathBuf::from(&rel_path),
+                    attrs: Vec::new(),
+                    collected_items: Vec::new(),
+                    items: module.items,
+                };
+                let code = self.serialize_file(&file)?;
+                Ok((rel_path, code))
+            })
+            .collect()
     }
 }
 

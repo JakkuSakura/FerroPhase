@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use fp_core::ast::{
     self, BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprAssign, ExprBinOp, ExprBlock, ExprBreak,
@@ -20,7 +19,7 @@ use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 use fp_typing::TypeckResults;
 
-/// Lifts a typechecked `hir::Program` back into a plain `ast::File` — the
+/// Lifts a typechecked `hir::Program` back into a plain item list — the
 /// shape every backend serializer (Kotlin, Python, Go, ...) already knows
 /// how to consume, so `PipelineMode::TypecheckedTranspile` can reuse those
 /// serializers unchanged rather than each needing its own HIR-consuming path.
@@ -29,8 +28,8 @@ use fp_typing::TypeckResults;
 /// lookups: the single-`Query`-item check, closure-signature reconstruction,
 /// and now `DefId` → path resolution via `program.def_paths`) and an
 /// optional `&TypeckResults` — optional because two of the three call sites
-/// never run the typer at all (see `lift_program`'s free-function wrapper
-/// below), so there's nothing to attach in those cases.
+/// never run the typer at all (`fp-backend`'s own roundtrip helpers), so
+/// there's nothing to attach in those cases.
 pub struct HirToAstLifter<'a> {
     program: &'a hir::Program,
     typeck: Option<&'a TypeckResults>,
@@ -41,16 +40,19 @@ impl<'a> HirToAstLifter<'a> {
         Self { program, typeck }
     }
 
-    pub fn lift_program(&self, path: PathBuf) -> Result<ast::File> {
+    /// Lifts a typechecked `hir::Program` back into a plain item list — the
+    /// shape every backend serializer already knows how to consume.
+    /// Strict: propagates the first per-item lift error rather than
+    /// tolerating it (unlike the lenient, per-item-tolerant
+    /// [`lift_items_by_path`](Self::lift_items_by_path) used by the real
+    /// typed-splice pipeline) — appropriate for a correctness-oriented
+    /// roundtrip/test, where a silently-dropped item would hide a real bug.
+    pub fn lift_items(&self) -> Result<Vec<Item>> {
         if let [item] = self.program.items.as_slice() {
             if let hir::ItemKind::Query(_query) = &item.kind {
-                // Queries are returned as a File with no items for now
-                return Ok(ast::File {
-                    path,
-                    attrs: Vec::new(),
-                    collected_items: Vec::new(),
-                    items: Vec::new(),
-                });
+                // A whole program that's just one query document has no
+                // items to lift for now.
+                return Ok(Vec::new());
             }
         }
         let mut items = Vec::with_capacity(self.program.items.len());
@@ -58,13 +60,7 @@ impl<'a> HirToAstLifter<'a> {
             items.push(self.lift_item(item)?);
         }
         // Reconstruct closure expressions with typed params from lowered closure pairs
-        let items = self.reconstruct_closures(items)?;
-        Ok(ast::File {
-            path,
-            attrs: Vec::new(),
-            collected_items: Vec::new(),
-            items,
-        })
+        self.reconstruct_closures(items)
     }
 
     /// Best-effort variant of [`lift_program`](Self::lift_program) for
@@ -82,7 +78,7 @@ impl<'a> HirToAstLifter<'a> {
     /// `register_structural_value_def`/`materialize_enum_struct_payload`
     /// in `ast_to_hir/mod.rs`) have no source counterpart to splice onto
     /// and are likewise omitted.
-    pub fn lift_items_by_path(&self) -> HashMap<Vec<hir::Symbol>, Item> {
+    pub fn lift_items_by_path(&self) -> HashMap<hir::DefPath, Item> {
         let mut lifted = Vec::new();
         for item in &self.program.items {
             let Some(path) = self.program.def_paths.get(&item.def_id) else {
@@ -109,7 +105,7 @@ impl<'a> HirToAstLifter<'a> {
     /// `emit_import`). Deliberately just facts (fully-qualified paths),
     /// not a target-specific "is this external" classification — that
     /// judgment belongs in each backend, not here.
-    pub fn referenced_paths_by_path(&self) -> HashMap<Vec<hir::Symbol>, Vec<Vec<hir::Symbol>>> {
+    pub fn referenced_paths_by_path(&self) -> HashMap<hir::DefPath, Vec<hir::DefPath>> {
         let empty_tail_map = HashMap::new();
         let mut result = HashMap::new();
         for item in &self.program.items {
@@ -941,7 +937,7 @@ impl<'a> HirToAstLifter<'a> {
                 if args.is_empty() {
                     self.def_id_to_ty(&adt.did)
                 } else {
-                    let name = self.program.def_paths.get(&adt.did)?.last()?.as_str();
+                    let name = self.program.def_paths.get(&adt.did)?.segments.last()?.as_str();
                     Some(Ty::expr(Expr::name(Name::path(Path::plain(vec![Ident::new(
                         format!("{}<{}>", name, args.join(", ")),
                     )])))))
@@ -979,7 +975,7 @@ impl<'a> HirToAstLifter<'a> {
         use hir::ty::TyKind;
         match &ty.kind {
             TyKind::Adt(adt, substs) => {
-                let name = self.program.def_paths.get(&adt.did)?.last()?.as_str();
+                let name = self.program.def_paths.get(&adt.did)?.segments.last()?.as_str();
                 let type_substs: Vec<&hir::ty::Ty> = substs
                     .iter()
                     .filter_map(|arg| match arg {
@@ -1023,7 +1019,7 @@ impl<'a> HirToAstLifter<'a> {
                     .program
                     .def_paths
                     .get(&trait_ref.def_id)
-                    .and_then(|segments| segments.last())
+                    .and_then(|path| path.segments.last())
                     .map(|s| s.as_str().to_string()),
                 _ => None,
             }),
@@ -1078,18 +1074,6 @@ impl<'a> HirToAstLifter<'a> {
 
         Ok(items)
     }
-}
-
-/// Public entry point — unchanged for the two call sites that never run the
-/// typer (`fp-backend`'s own roundtrip helpers), and used by the one that
-/// does (`fp-cli`'s `typecheck_language_target`, `fp-compiler`'s driver)
-/// via `Some(&typeck_results)`.
-pub fn lift_program(
-    program: &hir::Program,
-    typeck: Option<&TypeckResults>,
-    path: PathBuf,
-) -> Result<ast::File> {
-    HirToAstLifter::new(program, typeck).lift_program(path)
 }
 
 fn lift_visibility(vis: &hir::Visibility) -> ast::Visibility {

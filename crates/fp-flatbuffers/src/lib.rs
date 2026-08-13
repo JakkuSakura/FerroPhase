@@ -49,8 +49,9 @@ impl LanguageFrontend for FlatbuffersFrontend {
             items,
         };
 
-        let serializer: Arc<dyn AstSerializer> = Arc::new(FlatbuffersSerializer);
-        let serialized = serializer.serialize_file(&file).ok();
+        let concrete_serializer = FlatbuffersSerializer;
+        let serialized = concrete_serializer.serialize_file(&file).ok();
+        let serializer: Arc<dyn AstSerializer> = Arc::new(concrete_serializer);
         let description = match path {
             Some(path) => format!("FlatBuffers file {}", path.display()),
             None => "FlatBuffers file <stdin>".to_string(),
@@ -71,7 +72,9 @@ impl LanguageFrontend for FlatbuffersFrontend {
 
 struct FlatbuffersSerializer;
 
-impl AstSerializer for FlatbuffersSerializer {
+impl AstSerializer for FlatbuffersSerializer {}
+
+impl FlatbuffersSerializer {
     fn serialize_file(&self, file: &File) -> CoreResult<String> {
         Ok(pretty(file, PrettyOptions::default()).to_string())
     }

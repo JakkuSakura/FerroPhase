@@ -421,14 +421,6 @@ fn is_const_qualified(ty: &ast::Type) -> bool {
 pub struct CSerializer;
 
 impl AstSerializer for CSerializer {
-    fn serialize_file(&self, file: &File) -> fp_core::Result<String> {
-        file.items
-            .iter()
-            .map(|item| self.serialize_item(item))
-            .collect::<fp_core::Result<Vec<_>>>()
-            .map(|items| items.join("\n"))
-    }
-
     fn serialize_item(&self, item: &Item) -> fp_core::Result<String> {
         match &item.kind {
             ItemKind::DefType(def) => Ok(format!(
@@ -496,9 +488,41 @@ impl AstSerializer for CSerializer {
     }
 }
 
+impl CSerializer {
+    pub fn serialize_file(&self, file: &File) -> fp_core::Result<String> {
+        file.items
+            .iter()
+            .map(|item| self.serialize_item(item))
+            .collect::<fp_core::Result<Vec<_>>>()
+            .map(|items| items.join("\n"))
+    }
+
+    /// Serializes a package into one C-ish source file per module.
+    /// Returns `Vec<(relative_path, code)>`.
+    pub fn serialize_package(
+        &self,
+        source: &fp_core::package::PackageSource,
+    ) -> fp_core::Result<Vec<(String, String)>> {
+        fp_core::package::split_package_into_modules(source)
+            .into_iter()
+            .map(|module| {
+                let rel_path = module.relative_path();
+                let file = File {
+                    path: PathBuf::from(&rel_path),
+                    attrs: Vec::new(),
+                    collected_items: Vec::new(),
+                    items: module.items,
+                };
+                let code = self.serialize_file(&file)?;
+                Ok((rel_path, code))
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CFrontend, CParser, CompileOptions, ast::Declaration};
+    use super::{CFrontend, CParser, CSerializer, CompileOptions, ast::Declaration};
     use fp_core::frontend::LanguageFrontend;
     use std::path::Path;
 
@@ -551,8 +575,7 @@ mod tests {
         let result = frontend
             .parse_file("void consume(const char *name);", Path::new("ffi.c"))
             .expect("C declarations should enter the normal frontend pipeline");
-        let output = result
-            .serializer
+        let output = CSerializer
             .serialize_file(&result.ast)
             .expect("C AST should serialize");
         assert!(output.contains("pub type void = ();"));

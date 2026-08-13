@@ -9,7 +9,7 @@ use crate::compiler::{
 };
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
-use fp_core::ast::{AstSerializer, AstTargetOutput, File, Item};
+use fp_core::ast::{AstTargetOutput, File, Item};
 use fp_core::package::{PackageId, PackageSource};
 use fp_core::config;
 #[cfg(feature = "lang-csharp")]
@@ -1217,20 +1217,7 @@ async fn compile_project(
                 .serialize_package(source, &workspace_packages, &workspace_mutated_fields, &workspace_list_fields, &workspace_string_fields, &workspace_referenced_paths)
                 .map_err(|e| CliError::Compilation(e.to_string()))?
         } else {
-            // Fallback: per-file emit_ast_target for other targets
-            use std::collections::BTreeMap;
-            let mut modules: BTreeMap<String, Vec<Item>> = BTreeMap::new();
-            for pkg_item in &source.items {
-                let key = pkg_item.path.segments.join("/");
-                modules.entry(key).or_default().push(pkg_item.item.clone());
-            }
-            let mut files = Vec::new();
-            for (mod_path, items) in modules {
-                let file = File { path: PathBuf::from(&mod_path), attrs: vec![], collected_items: vec![], items };
-                let result = emit_ast_target(&file, target, args.type_defs, &output.join(&mod_path), args.single_world)?;
-                files.push((mod_path, result.code));
-            }
-            files
+            serialize_package_for_target(source, target, &args, &output.join(name))?
         };
 
         for (mod_path, code) in files {
@@ -1276,6 +1263,153 @@ async fn compile_project(
         output.display()
     );
     Ok(())
+}
+
+/// Serializes a whole package via a target's own `serialize_package`,
+/// covering every target `compile_project` supports except Kotlin (which
+/// needs extra workspace-wide state — mutated fields, list/string field
+/// disambiguation, referenced-path imports — passed separately by its own
+/// caller). `package_root` stands in for the single-file `emit_ast_target`'s
+/// `input` path (used only by WIT to derive a namespace/interface name);
+/// here it's the package's own output directory.
+#[allow(unused_variables)]
+fn serialize_package_for_target(
+    source: &PackageSource,
+    target: crate::languages::backend::LanguageTarget,
+    args: &CompileArgs,
+    package_root: &Path,
+) -> Result<Vec<(String, String)>> {
+    match target {
+        crate::languages::backend::LanguageTarget::FerroPhase => fp_c::CSerializer
+            .serialize_package(source)
+            .map_err(|e| CliError::Compilation(e.to_string())),
+        crate::languages::backend::LanguageTarget::TypeScript => {
+            #[cfg(feature = "lang-typescript")]
+            {
+                TypeScriptSerializer::new(args.type_defs)
+                    .serialize_package(source)
+                    .map_err(|e| CliError::Compilation(e.to_string()))
+            }
+            #[cfg(not(feature = "lang-typescript"))]
+            {
+                Err(disabled_feature_error(
+                    "lang-typescript",
+                    "TypeScript package emission",
+                ))
+            }
+        }
+        crate::languages::backend::LanguageTarget::JavaScript => {
+            #[cfg(feature = "lang-typescript")]
+            {
+                JavaScriptSerializer
+                    .serialize_package(source)
+                    .map_err(|e| CliError::Compilation(e.to_string()))
+            }
+            #[cfg(not(feature = "lang-typescript"))]
+            {
+                Err(disabled_feature_error(
+                    "lang-typescript",
+                    "JavaScript package emission",
+                ))
+            }
+        }
+        crate::languages::backend::LanguageTarget::CSharp => {
+            #[cfg(feature = "lang-csharp")]
+            {
+                CSharpSerializer
+                    .serialize_package(source)
+                    .map_err(|e| CliError::Compilation(e.to_string()))
+            }
+            #[cfg(not(feature = "lang-csharp"))]
+            {
+                Err(disabled_feature_error("lang-csharp", "C# package emission"))
+            }
+        }
+        crate::languages::backend::LanguageTarget::Kotlin => {
+            unreachable!("Kotlin is dispatched by the caller before reaching this function")
+        }
+        crate::languages::backend::LanguageTarget::Python => {
+            #[cfg(feature = "lang-python")]
+            {
+                PythonSerializer
+                    .serialize_package(source)
+                    .map_err(|e| CliError::Compilation(e.to_string()))
+            }
+            #[cfg(not(feature = "lang-python"))]
+            {
+                Err(disabled_feature_error(
+                    "lang-python",
+                    "Python package emission",
+                ))
+            }
+        }
+        crate::languages::backend::LanguageTarget::Go => {
+            #[cfg(feature = "lang-golang")]
+            {
+                GoSerializer::default()
+                    .serialize_package(source)
+                    .map_err(|e| CliError::Compilation(e.to_string()))
+            }
+            #[cfg(not(feature = "lang-golang"))]
+            {
+                Err(disabled_feature_error("lang-golang", "Go package emission"))
+            }
+        }
+        crate::languages::backend::LanguageTarget::Gdscript => {
+            #[cfg(feature = "lang-godot")]
+            {
+                GdscriptSerializer
+                    .serialize_package(source)
+                    .map_err(|e| CliError::Compilation(e.to_string()))
+            }
+            #[cfg(not(feature = "lang-godot"))]
+            {
+                Err(disabled_feature_error(
+                    "lang-godot",
+                    "GDScript package emission",
+                ))
+            }
+        }
+        crate::languages::backend::LanguageTarget::Zig => {
+            #[cfg(feature = "lang-zig")]
+            {
+                ZigSerializer
+                    .serialize_package(source)
+                    .map_err(|e| CliError::Compilation(e.to_string()))
+            }
+            #[cfg(not(feature = "lang-zig"))]
+            {
+                Err(disabled_feature_error("lang-zig", "Zig package emission"))
+            }
+        }
+        crate::languages::backend::LanguageTarget::Sycl => {
+            #[cfg(feature = "lang-sycl")]
+            {
+                SyclSerializer
+                    .serialize_package(source)
+                    .map_err(|e| CliError::Compilation(e.to_string()))
+            }
+            #[cfg(not(feature = "lang-sycl"))]
+            {
+                Err(disabled_feature_error("lang-sycl", "SYCL package emission"))
+            }
+        }
+        crate::languages::backend::LanguageTarget::Rust => PrettyAstSerializer::new()
+            .serialize_package(source)
+            .map_err(|e| CliError::Compilation(e.to_string())),
+        crate::languages::backend::LanguageTarget::Wit => {
+            #[cfg(feature = "lang-wit")]
+            {
+                WitSerializer::with_options(build_wit_options(package_root, args.single_world))
+                    .serialize_package(source)
+                    .map_err(|e| CliError::Compilation(e.to_string()))
+            }
+            #[cfg(not(feature = "lang-wit"))]
+            {
+                Err(disabled_feature_error("lang-wit", "WIT package emission"))
+            }
+        }
+    }
 }
 
 #[allow(unused_variables)]

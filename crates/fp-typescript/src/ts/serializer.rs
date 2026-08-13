@@ -36,8 +36,13 @@ impl TypeScriptSerializer {
     }
 }
 
-impl AstSerializer for TypeScriptSerializer {
-    fn serialize_file(&self, file: &File) -> Result<String> {
+/// Marker impl — needed so `TypeScriptSerializer` can be stored as
+/// `Arc<dyn AstSerializer>` in `FrontendResult` (see `frontend.rs`).
+/// `serialize_file`/`serialize_package` are inherent methods below instead.
+impl AstSerializer for TypeScriptSerializer {}
+
+impl TypeScriptSerializer {
+    pub fn serialize_file(&self, file: &File) -> Result<String> {
         let mut emitter = ScriptEmitter::new(ScriptFlavor::TypeScript {
             emit_type_defs: self.emit_type_defs,
         });
@@ -49,16 +54,60 @@ impl AstSerializer for TypeScriptSerializer {
         }
         Ok(code)
     }
+
+    /// Serializes a package into one TypeScript source file per module.
+    /// Returns `Vec<(relative_path, code)>`.
+    pub fn serialize_package(
+        &self,
+        source: &fp_core::package::PackageSource,
+    ) -> Result<Vec<(String, String)>> {
+        fp_core::package::split_package_into_modules(source)
+            .into_iter()
+            .map(|module| {
+                let rel_path = module.relative_path();
+                let file = File {
+                    path: std::path::PathBuf::from(&rel_path),
+                    attrs: Vec::new(),
+                    collected_items: Vec::new(),
+                    items: module.items,
+                };
+                let code = self.serialize_file(&file)?;
+                Ok((rel_path, code))
+            })
+            .collect()
+    }
 }
 
 pub struct JavaScriptSerializer;
 
-impl AstSerializer for JavaScriptSerializer {
-    fn serialize_file(&self, file: &File) -> Result<String> {
+impl JavaScriptSerializer {
+    pub fn serialize_file(&self, file: &File) -> Result<String> {
         let mut emitter = ScriptEmitter::new(ScriptFlavor::JavaScript);
         emitter.visit_file(file)?;
         let (code, _) = emitter.finish();
         Ok(code)
+    }
+
+    /// Serializes a package into one JavaScript source file per module.
+    /// Returns `Vec<(relative_path, code)>`.
+    pub fn serialize_package(
+        &self,
+        source: &fp_core::package::PackageSource,
+    ) -> Result<Vec<(String, String)>> {
+        fp_core::package::split_package_into_modules(source)
+            .into_iter()
+            .map(|module| {
+                let rel_path = module.relative_path();
+                let file = File {
+                    path: std::path::PathBuf::from(&rel_path),
+                    attrs: Vec::new(),
+                    collected_items: Vec::new(),
+                    items: module.items,
+                };
+                let code = self.serialize_file(&file)?;
+                Ok((rel_path, code))
+            })
+            .collect()
     }
 }
 

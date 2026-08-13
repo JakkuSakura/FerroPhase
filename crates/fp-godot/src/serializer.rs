@@ -1,6 +1,6 @@
 use eyre::eyre;
 use fp_core::ast::{
-    AstSerializer, BlockStmt, EnumTypeVariant, Expr, ExprAssign, ExprBinOp, ExprBlock, ExprIf,
+    BlockStmt, EnumTypeVariant, Expr, ExprAssign, ExprBinOp, ExprBlock, ExprIf,
     ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop, ExprMatch,
     ExprRange, ExprRangeLimit, ExprReturn, ExprSelect, ExprStruct, ExprUnOp, ExprWhile, File,
     FunctionParam, Item, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemImpl, ItemKind, Name,
@@ -16,11 +16,33 @@ use std::collections::HashMap;
 /// Public entry point used by the CLI target emitter.
 pub struct GdscriptSerializer;
 
-impl AstSerializer for GdscriptSerializer {
-    fn serialize_file(&self, file: &File) -> Result<String> {
+impl GdscriptSerializer {
+    pub fn serialize_file(&self, file: &File) -> Result<String> {
         let mut emitter = GdscriptEmitter::new();
         emitter.emit_file(file)?;
         Ok(emitter.finish())
+    }
+
+    /// Serializes a package into one GDScript source file per module.
+    /// Returns `Vec<(relative_path, code)>`.
+    pub fn serialize_package(
+        &self,
+        source: &fp_core::package::PackageSource,
+    ) -> Result<Vec<(String, String)>> {
+        fp_core::package::split_package_into_modules(source)
+            .into_iter()
+            .map(|module| {
+                let rel_path = module.relative_path();
+                let file = File {
+                    path: std::path::PathBuf::from(&rel_path),
+                    attrs: Vec::new(),
+                    collected_items: Vec::new(),
+                    items: module.items,
+                };
+                let code = self.serialize_file(&file)?;
+                Ok((rel_path, code))
+            })
+            .collect()
     }
 }
 

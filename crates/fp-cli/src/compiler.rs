@@ -11,7 +11,6 @@ use fp_core::intrinsics::{IntrinsicMaterializer, IntrinsicNormalizer};
 use fp_core::ast::path::QualifiedPath;
 use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::package::{PackageDescriptor, PackageId, PackageSource};
-use fp_core::vfs::{UnixFileSystem, VirtualPath};
 use fp_core::{
     ast::{
         Expr, ExprBlock, File, Ident, Item, ItemDefConst, ItemDefFunction, ItemKind, ScriptBlock,
@@ -23,7 +22,6 @@ use fp_core::{
 };
 use fp_goasm::config::GoAsmTarget;
 use fp_lang::FerroFrontend;
-use fp_lang::module_source::FerroModuleSourceResolver;
 use fp_typing::{TypingDiagnostic, TypingDiagnosticLevel};
 
 #[cfg(feature = "lang-flatbuffers")]
@@ -848,76 +846,20 @@ fn compiler_workspace_for(language: &str) -> std::rc::Rc<fp_core::workspace::Wor
     std::rc::Rc::new(workspace)
 }
 
-struct InputPackageProvider {
-    package_id: PackageId,
-    descriptor: Arc<PackageDescriptor>,
-    source: PackageSource,
-}
-
-impl InputPackageProvider {
-    fn new(
-        package_id: PackageId,
-        module_path: QualifiedPath,
-        source: File,
-    ) -> ProviderResult<Self> {
-        let descriptor = PackageDescriptor {
-            id: package_id.clone(),
-            name: package_id.as_str().to_owned(),
-            version: None,
-            manifest_path: VirtualPath::from_path(&source.path),
-            root: VirtualPath::from_path(source.path.parent().unwrap_or(Path::new("."))),
-            metadata: Default::default(),
-            modules: Vec::new(),
-        };
-        let resolver = FerroModuleSourceResolver::new(Arc::new(UnixFileSystem::new("/")));
-        let package_source =
-            resolver.resolve_package_source(descriptor.clone(), module_path, source)?;
-        Ok(Self {
-            package_id,
-            descriptor: Arc::new(descriptor),
-            source: package_source,
-        })
-    }
-}
-
-impl PackageProvider for InputPackageProvider {
-    fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
-        Ok(vec![self.package_id.clone()])
-    }
-
-    fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
-        if id != &self.package_id {
-            return Err(ProviderError::PackageNotFound(id.clone()));
-        }
-        Ok(self.descriptor.clone())
-    }
-
-    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
-        if id != &self.package_id {
-            return Err(ProviderError::PackageNotFound(id.clone()));
-        }
-        Ok(self.source.clone())
-    }
-
-    fn refresh(&self) -> ProviderResult<()> {
-        Ok(())
-    }
-}
-
-/// Wraps an already-parsed single file as a one-member `PackageProvider`,
-/// via the existing `InputPackageProvider` (disk-based sibling-module
-/// discovery through `FerroModuleSourceResolver` — the correct mechanism
-/// for a genuinely standalone file with no enclosing package/manifest).
+/// Wraps an already-parsed single file as a one-member `PackageProvider`.
 /// Used by `compile_emit_target`'s single-file pipeline when no real
-/// package can be discovered for the input file.
+/// package can be discovered for the input file. Delegates to `fp-lang`'s
+/// `single_file_provider` (disk-based sibling-module discovery through
+/// `FerroModuleSourceResolver` — the correct mechanism for a genuinely
+/// standalone file with no enclosing package/manifest), reused as-is
+/// rather than duplicated here.
 pub fn single_file_provider(
     package_id: PackageId,
     module_path: QualifiedPath,
     source: File,
 ) -> Result<Arc<dyn PackageProvider>> {
-    let provider = InputPackageProvider::new(package_id, module_path, source)
-        .map_err(|e| CliError::Compilation(e.to_string()))?;
-    Ok(Arc::new(provider))
+    fp_lang::provider::single_file_provider(package_id, module_path, source)
+        .map_err(|e| CliError::Compilation(e.to_string()))
 }
 
 fn compile_source_file(
@@ -934,13 +876,12 @@ fn compile_source_file(
         PackageId::new(identity.path.path().head().ok_or_else(|| {
             CliError::Compilation("source file has no package identity".to_string())
         })?);
-    let input_provider = InputPackageProvider::new(
+    let input_provider = single_file_provider(
         package_id.clone(),
         identity.path.path().clone(),
         ast.clone(),
-    )
-    .map_err(|error| CliError::Compilation(error.to_string()))?;
-    session.register_provider(Arc::new(input_provider));
+    )?;
+    session.register_provider(input_provider);
     session.driver().state.set_lossy(lossy.enabled);
     executor
         .run(session.driver().compile_package(&package_id))
@@ -1224,8 +1165,9 @@ pub fn typecheck_package(
             };
             let mut path = pkg_item.path.segments.clone();
             path.push(name.to_string());
-            let key: Vec<fp_core::hir::Symbol> =
-                path.into_iter().map(fp_core::hir::Symbol::new).collect();
+            let key = fp_core::hir::DefPath::new(
+                path.into_iter().map(fp_core::hir::Symbol::new).collect(),
+            );
             if let Some(typed) = lifted_by_path.get(&key) {
                 pkg_item.item = typed.clone();
             }
@@ -1243,11 +1185,8 @@ pub fn typecheck_package(
             by_path
                 .iter()
                 .map(|(path, refs)| {
-                    let path = path.iter().map(|s| s.as_str().to_string()).collect();
-                    let refs = refs
-                        .iter()
-                        .map(|r| r.iter().map(|s| s.as_str().to_string()).collect())
-                        .collect();
+                    let path = path.to_segments();
+                    let refs = refs.iter().map(|r| r.to_segments()).collect();
                     (path, refs)
                 })
                 .collect()

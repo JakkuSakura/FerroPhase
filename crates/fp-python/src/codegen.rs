@@ -16,11 +16,35 @@ use itertools::Itertools;
 
 pub struct PythonSerializer;
 
-impl AstSerializer for PythonSerializer {
-    fn serialize_file(&self, file: &File) -> Result<String> {
+impl AstSerializer for PythonSerializer {}
+
+impl PythonSerializer {
+    pub fn serialize_file(&self, file: &File) -> Result<String> {
         let mut emitter = PythonEmitter::new();
         emitter.visit_file(file)?;
         Ok(emitter.finish())
+    }
+
+    /// Serializes a package into one Python source file per module.
+    /// Returns `Vec<(relative_path, code)>`.
+    pub fn serialize_package(
+        &self,
+        source: &fp_core::package::PackageSource,
+    ) -> Result<Vec<(String, String)>> {
+        fp_core::package::split_package_into_modules(source)
+            .into_iter()
+            .map(|module| {
+                let rel_path = module.relative_path();
+                let file = File {
+                    path: std::path::PathBuf::from(&rel_path),
+                    attrs: Vec::new(),
+                    collected_items: Vec::new(),
+                    items: module.items,
+                };
+                let code = self.serialize_file(&file)?;
+                Ok((rel_path, code))
+            })
+            .collect()
     }
 }
 

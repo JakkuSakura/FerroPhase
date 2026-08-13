@@ -1504,7 +1504,6 @@ version = "0.1.0"
 dependencies = [
  "bigdecimal",
  "eyre",
- "fp-backend",
  "fp-core",
  "fp-prql",
  "num-bigint",

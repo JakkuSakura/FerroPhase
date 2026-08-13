@@ -5,7 +5,7 @@ use fp_core::intrinsics::{IntrinsicKind, IntrinsicNormalizer};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::query::{
     QueryDocument, QueryIrDocument, QueryKind, QueryOrigin, lower_fp_expr_to_query,
-    lower_fp_file_to_query, statement_to_query_ir,
+    statement_to_query_ir,
 };
 use fp_core::span::{FileId, Span};
 use fp_core::{ast, ast::ItemKind, ast::attrs_repr, cfg::TargetEnv, hir};
@@ -1308,24 +1308,10 @@ impl HirGenerator {
         Ok(hir_program)
     }
 
-    /// Transform a parsed AST file into HIR
-    pub fn transform_file(&mut self, file: &ast::File) -> Result<hir::Program> {
-        let mut lowered = file.clone();
-        let closure_diagnostics = lower_closures_in_file(&mut lowered)?;
-        diagnostic_manager().add_diagnostics(closure_diagnostics);
-        strip_doc_attrs_in_file(&mut lowered);
-        if let Some(query) = lower_fp_file_to_query(&lowered, Some(&lowered.path)) {
-            return self.transform_query_document(&query);
-        }
-        let path = lowered.path.clone();
-        let root = fp_core::ast::path::QualifiedPath::new(Vec::new());
-        self.transform_module_inner(&root, path, &lowered.items)
-    }
-
     /// Transform a module's items into HIR directly, without an `ast::File`
     /// wrapper — used for on-demand compilation of workspace-crate modules
     /// (e.g. `std::meta`), where the driver already has
-    /// `(QualifiedPath, Vec<Item>)` in hand. Unlike `transform_file`, this
+    /// `(QualifiedPath, Vec<Item>)` in hand. Unlike `transform_package`, this
     /// sets `module_path` to the real module identity rather than always
     /// leaving it empty.
     pub fn transform_module(
@@ -1367,7 +1353,7 @@ impl HirGenerator {
         let original_len = lowered_items.len();
         lower_closures_in_items(&mut lowered_items)?;
         let generated_count = lowered_items.len() - original_len;
-        let root_path = fp_core::module::path::QualifiedPath::new(Vec::new());
+        let root_path = fp_core::ast::path::QualifiedPath::new(Vec::new());
         let package_items: Vec<fp_core::package::PackageItem> = lowered_items
             .into_iter()
             .enumerate()
@@ -3614,16 +3600,11 @@ impl Default for HirGenerator {
     }
 }
 
-fn lower_closures_in_file(file: &mut ast::File) -> Result<Vec<Diagnostic>> {
-    lower_closures_in_items(&mut file.items)
-}
-
 /// Decomposes every `ExprKind::Closure` reachable from `items` into an
 /// ordinary `__ClosureN` struct + `__closureN_call` function pair
-/// (`ClosureLowering`), same as `lower_closures_in_file` — factored out
-/// so `transform_package` (which has no single `ast::File` to run the
-/// existing pass on) can run it directly over a package's flattened item
-/// list. Without this pre-pass, a closure literal reaching
+/// (`ClosureLowering`) — run once, up front, over a package's flattened
+/// item list (`transform_package`). Without this pre-pass, a closure literal
+/// reaching
 /// `transform_expr_to_hir_inner`'s `ExprKind::Closure` arm has no other
 /// lowering support and gets discarded entirely (see that arm's explicit
 /// "closure lowering not implemented" placeholder) — previously
@@ -4926,11 +4907,12 @@ fn extract_ident(expr: &ast::Expr) -> Option<&ast::Ident> {
     }
 }
 
-fn strip_doc_attrs_in_file(file: &mut ast::File) {
-    strip_doc_attrs_in_items(&mut file.items);
-}
-
-fn strip_doc_attrs_in_items(items: &mut [ast::Item]) {
+/// Strips `#[doc = "..."]`/`///` attributes from every item (recursing
+/// into modules and impl blocks) — HIR carries no doc-comment concept, so
+/// backends that lower through it never see these; only callers that skip
+/// HIR-based typechecking and hand items to a renderer more directly
+/// (`fp-shell`'s roundtrip) need to strip them explicitly first.
+pub(crate) fn strip_doc_attrs_in_items(items: &mut [ast::Item]) {
     for item in items {
         strip_doc_attrs_in_item(item);
     }

@@ -1,8 +1,14 @@
 use fp_backend::transformations::HirGenerator;
+use fp_core::ast::path::QualifiedPath;
 use fp_core::error::Result as OptimizeResult;
 use fp_core::hir::{self, FormatTemplatePart, ItemKind, StmtKind};
 use fp_core::intrinsics::{CallKind, IntrinsicKind};
+use fp_core::lir::LirDataLayout;
 use fp_core::ops::BinOpKind;
+use fp_core::package::graph::PackageGraph;
+use fp_core::package::provider::{FixedPackageProvider, PackageProvider};
+use fp_core::package::{PackageId, PackageItem, PackageSource};
+use fp_core::workspace::WorkspaceContext;
 
 mod support;
 
@@ -51,9 +57,38 @@ fn make_fn(
     fp_core::ast::Item::from(fp_core::ast::ItemKind::DefFunction(func))
 }
 
+/// Wraps a file's items as a one-member package, obtained via a real
+/// `PackageProvider` (`FixedPackageProvider`, wrapping an already-built
+/// `PackageSource` — no real frontend/disk parsing involved here) followed
+/// by `WorkspaceContext::begin_package`, then lowers it with
+/// `transform_package` — `ast::File`'s `path` field carries no information
+/// `transform_package` needs.
 fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::Program> {
+    let package_id = PackageId::new("test");
+    let mut source = PackageSource::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
+    source.items = file
+        .items
+        .into_iter()
+        .map(|item| PackageItem {
+            path: QualifiedPath::new(Vec::new()),
+            item,
+        })
+        .collect();
+    let provider = FixedPackageProvider::for_source(package_id.clone(), source);
+    let loaded = provider
+        .load_package_source(&package_id)
+        .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+    let workspace = WorkspaceContext::new();
+    let data_layout = LirDataLayout::new(
+        64,
+        8,
+        vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
+    )
+    .expect("valid test data layout");
+    let package = workspace.begin_package(package_id, loaded, data_layout);
+    let package = package.borrow();
     let mut generator = HirGenerator::new();
-    generator.transform_file(&file)
+    generator.transform_package(&package)
 }
 
 #[test]
