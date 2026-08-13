@@ -30,7 +30,7 @@ fn run_tests() -> TestReport {
     let mut passed = 0;
     let mut failed = 0;
     let mut idx = 0;
-    while idx < tests.len() {
+    while idx < tests.len() as i64 {
         let test: TestCase = tests[idx];
         let ok = catch_unwind(test.run);
         if ok {

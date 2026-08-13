@@ -271,8 +271,7 @@ impl HirGenerator {
             } else {
                 None
             };
-            let stub_methods = self.is_std_module()
-                || attrs_has_name(&impl_block.attrs, "unimplemented")
+            let stub_methods = attrs_has_name(&impl_block.attrs, "unimplemented")
                 || self.is_unimplemented_type_expr(&self_ty);
 
             let mut items = Vec::new();
@@ -283,11 +282,18 @@ impl HirGenerator {
                 }
                 match item.kind() {
                     ast::ItemKind::DefFunction(func) => {
-                        let method = self.transform_function_with_body(
+                        let mut method = self.transform_function_with_body(
                             func,
                             Some(self_ty.clone()),
                             !stub_methods && !attrs_has_name(&func.attrs, "unimplemented"),
                         )?;
+                        // See `function_body_is_compiler_intrinsic_marker`'s
+                        // doc comment: a real, hand-written method's body
+                        // must survive; only a bare `compile_error!(...)`
+                        // marker body gets dropped back to a stub.
+                        if function_body_is_compiler_intrinsic_marker(&method) {
+                            method.body = None;
+                        }
                         let method_def_id = self.def_id_for_item(item);
                         method_names.insert(method.sig.name.as_str().to_string());
                         items.push(hir::ImplItem {

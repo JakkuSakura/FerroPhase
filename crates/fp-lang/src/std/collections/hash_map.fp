@@ -19,14 +19,22 @@ impl<K, V> HashMap<K, V> {
         }
     }
 
+    // Blocked on a pre-existing type-checker gap: `ParamTy` has no
+    // scope/binder id (just `{index, name}`), so identically-named/
+    // positioned generics from different scopes (this impl's own K,V vs.
+    // `HashMapEntry<K,V>`'s own K,V) collide during unification. Not new —
+    // this method never worked before `is_std_module()` stopped hiding
+    // std bodies from type-checking; leave stubbed until ParamTy gets
+    // real scope tracking.
+    #[unimplemented]
     fn from(entries: ::std::alloc::Vec<HashMapEntry<K, V>>) -> HashMap<K, V> {
-        let mut map = HashMap {
+        let mut map: HashMap<K, V> = HashMap {
             len: 0,
             keys: ::std::alloc::Vec::new(),
             values: ::std::alloc::Vec::new(),
         };
         let mut idx = 0;
-        let entries_len = entries.len();
+        let entries_len = entries.len() as i64;
         while idx < entries_len {
             let entry = entries[idx];
             map.insert(entry.key, entry.value);
@@ -57,7 +65,7 @@ impl<K, V> HashMap<K, V> {
         let mut keys = self.keys;
         let mut values = self.values;
         let mut idx = 0;
-        let keys_len = keys.len();
+        let keys_len = keys.len() as i64;
         while idx < keys_len {
             if keys[idx] == key {
                 values[idx] = value;
@@ -78,14 +86,14 @@ impl<K, V> HashMap<K, V> {
     fn get_unchecked(&self, key: K) -> V {
         let idx = self.find_node_idx(key);
         if idx >= 0 {
-            return self.values[idx as usize];
+            return self.values[idx];
         }
         loop {}
     }
 
     fn find_node_idx(&self, key: K) -> i64 {
         let mut idx = 0;
-        let keys_len = self.keys.len();
+        let keys_len = self.keys.len() as i64;
         while idx < keys_len {
             if self.keys[idx] == key {
                 return idx as i64;

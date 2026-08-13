@@ -72,7 +72,7 @@ impl Process {
     pub fn args(self, extra_args: ::std::alloc::Vec<&str>) -> Process {
         let mut process = self;
         let mut idx = 0;
-        let extra_len = extra_args.len();
+        let extra_len = extra_args.len() as i64;
         while idx < extra_len {
             process = process.arg(extra_args[idx]);
             idx = idx + 1;
@@ -92,7 +92,7 @@ impl Process {
     pub fn run(self) {
         let result = exec_command(self);
         if !result.success() {
-            panic(f"process exited with status {result.status()}: {result.stderr()}");
+            panic!(f"process exited with status {result.status()}: {result.stderr()}");
         }
 
         let stdout = result.into_stdout();
@@ -108,7 +108,7 @@ impl Process {
     pub fn output(self) -> str {
         let result = self.output_result();
         if !result.success() {
-            panic(f"process exited with status {result.status()}: {result.stderr()}");
+            panic!(f"process exited with status {result.status()}: {result.stderr()}");
         }
 
         result.into_stdout()
@@ -131,7 +131,7 @@ impl Process {
             ::std::option::Option::None => ProcessResult {
                 stdout: "",
                 stderr: "",
-                status: decode_exit_status(::libc::system(&rendered_command)),
+                status: decode_exit_status(::libc::system(&rendered_command) as i64),
             },
         }
     }
@@ -260,11 +260,11 @@ fn render_argv_command(program: &str, args: ::std::alloc::Vec<&str>) -> str {
     let mut parts: ::std::alloc::Vec<str> = ::std::alloc::Vec::new();
     parts.push(quote_shell_arg(program));
     let mut idx = 0;
-    while idx < args.len() {
+    while idx < args.len() as i64 {
         parts.push(quote_shell_arg(args[idx]));
         idx = idx + 1;
     }
-    parts.join(" ")
+    parts.join(" ").as_str()
 }
 
 fn decode_exit_status(status: i64) -> i64 {
@@ -283,5 +283,5 @@ fn wrap_command_with_cwd(cwd: &str, command: &str) -> str {
 
 fn quote_shell_arg(value: &str) -> str {
     let escaped = value.replace("'", "'\"'\"'");
-    f"'{escaped}'"
+    f"'{escaped.as_str()}'"
 }

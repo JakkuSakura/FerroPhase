@@ -1562,12 +1562,12 @@ fn assert_compare_macro_with_panic(
 
 fn panic_macro(args: Vec<Expr>) -> Expr {
     let message = panic_call_from_args(args);
-    Expr::block(ExprBlock::new_stmts_expr(
-        vec![BlockStmt::Expr(
-            BlockStmtExpr::new(message).with_semicolon(true),
-        )],
-        Expr::unit(),
-    ))
+    // `panic!` diverges (its intrinsic call types as `!`, see
+    // `IntrinsicKind::Panic` in `fp-typing`'s `check_intrinsic`) — the
+    // wrapping block's own result must be that same call, not a hardcoded
+    // `()` tail, so `panic!(...)` still type-checks when used as a match
+    // arm or `if`/`else` branch alongside a real value.
+    Expr::block(ExprBlock::new_stmts_expr(Vec::new(), message))
 }
 
 fn panic_call_from_args(args: Vec<Expr>) -> Expr {

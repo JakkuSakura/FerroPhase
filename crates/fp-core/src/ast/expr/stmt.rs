@@ -194,8 +194,15 @@ impl ExprBlock {
         self.stmts.extend(chunk);
     }
     pub fn push_stmt(&mut self, stmt: BlockStmt) {
-        self.stmts.push(stmt);
+        // Seal whatever was previously last *before* appending — it's no
+        // longer the block's tail now that something follows it. Sealing
+        // afterward (the old order) sealed the statement just pushed
+        // instead, so a block's trailing expression was converted to a
+        // discarded, semicolon'd statement the instant it was added —
+        // every block built via `push_expr`/`new_stmts_expr` silently lost
+        // its own value and always evaluated to `()`.
         self.seal();
+        self.stmts.push(stmt);
     }
     pub fn push_expr(&mut self, stmt: impl Into<BExpr>) {
         self.seal();

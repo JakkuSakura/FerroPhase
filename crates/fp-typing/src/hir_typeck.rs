@@ -266,7 +266,7 @@ impl HirTypeChecker {
                 ))
             })?;
             if let Some(body) = &function.body {
-                self.check_function_body(&function.sig.inputs, body)
+                self.check_function_body(&function.sig.inputs, &function.sig.output, body)
                     .await
                     .map_err(|error| {
                         Error::from(format!("in function `{}` body: {error}", function.sig.name))
@@ -329,6 +329,7 @@ impl HirTypeChecker {
     async fn check_function_body(
         &mut self,
         params: &[hir::Param],
+        output: &hir::TypeExpr,
         block: &hir::Block,
     ) -> Result<()> {
         self.locals.push(HashMap::new());
@@ -336,7 +337,17 @@ impl HirTypeChecker {
             let ty = self.check_type_expr(&param.ty)?;
             self.bind_pattern(&param.pat, ty)?;
         }
-        self.check_block(block).await?;
+        // Same expected-type hint `ConstBlock`/`Assign` already provide:
+        // without it, a trailing zero-arg generic call like
+        // `Option::none()` (no argument to infer `T` from) can't resolve
+        // its type parameter even though the function's own declared
+        // return type unambiguously determines it. Scoped to just the
+        // block's own trailing expression (see
+        // `check_block_with_expected_tail`) — not the whole body — so it
+        // doesn't leak into unrelated statements earlier in the function.
+        let output_ty = self.check_type_expr(output)?;
+        self.check_block_with_expected_tail(block, Some(output_ty))
+            .await?;
         self.locals.pop();
         Ok(())
     }
@@ -368,10 +379,17 @@ impl HirTypeChecker {
                             | hir::BinOp::Le
                             | hir::BinOp::Gt
                             | hir::BinOp::Ge => {
-                                self.require_same(&lhs, &rhs)?;
+                                // `unify_call_types`, not `require_same`: a
+                                // comparison's two sides should coerce the
+                                // same way a call argument would (e.g. a
+                                // `&str` value compared against a bare `str`
+                                // literal like `value == ""`).
+                                let mut substitutions = HashMap::new();
+                                self.unify_call_types(&lhs, &rhs, &mut substitutions)?;
                             }
                             _ => {
-                                self.require_same(&lhs, &rhs)?;
+                                let mut substitutions = HashMap::new();
+                                self.unify_call_types(&lhs, &rhs, &mut substitutions)?;
                             }
                         }
                     }
@@ -402,13 +420,22 @@ impl HirTypeChecker {
                         hir::UnOp::Neg | hir::UnOp::Box => value_ty,
                     }
                 }
-                hir::ExprKind::Reference(reference) => Ty {
-                    kind: TyKind::Ref(
-                        ty::Region::ReErased,
-                        Box::new(self.check_expr(&reference.expr).await?),
-                        reference.mutable,
-                    ),
-                },
+                hir::ExprKind::Reference(reference) => {
+                    let mut referent = self.check_expr(&reference.expr).await?;
+                    // Re-borrow, don't stack references: `&expr` where
+                    // `expr` is already a `&T`/`&mut T` (e.g. `&self.field`
+                    // when `field`'s own declared type is `&str`) produces
+                    // `&T`, not `&&T` — the same collapsing a real `&`
+                    // operator does when applied to an existing reference.
+                    // Collapse every existing layer, not just one, in case
+                    // `expr`'s own type is already multiply-referenced.
+                    while let TyKind::Ref(_, inner, _) = referent.kind {
+                        referent = *inner;
+                    }
+                    Ty {
+                        kind: TyKind::Ref(ty::Region::ReErased, Box::new(referent), reference.mutable),
+                    }
+                }
                 hir::ExprKind::Call(callee, args) => {
                     let callee_ty = self.check_expr(callee).await?;
                     let expected_inputs = match &callee_ty.kind {
@@ -417,7 +444,23 @@ impl HirTypeChecker {
                     };
                     let mut arg_types = Vec::with_capacity(args.len());
                     for (index, arg) in args.iter().enumerate() {
-                        let actual = self.check_expr(&arg.value).await?;
+                        // Scope the expected-type hint to *this parameter's*
+                        // declared type — same rationale as the struct
+                        // literal field case above, e.g. a call inside a
+                        // `ConstBlock`/`Assign`/function-tail context must
+                        // not leak that outer hint into its own arguments.
+                        let param_hint: Option<Ty> = expected_inputs
+                            .as_ref()
+                            .and_then(|inputs| inputs.get(index))
+                            .map(|ty| (**ty).clone());
+                        if let Some(hint) = &param_hint {
+                            self.expected_expr_types.push(hint.clone());
+                        }
+                        let actual = self.check_expr(&arg.value).await;
+                        if param_hint.is_some() {
+                            self.expected_expr_types.pop();
+                        }
+                        let actual = actual?;
                         let actual = match expected_inputs
                             .as_ref()
                             .and_then(|inputs| inputs.get(index))
@@ -446,11 +489,26 @@ impl HirTypeChecker {
                     if substitutions.is_empty() {
                         if let Some(expected) = self.expected_expr_types.last() {
                             if let TyKind::FnPtr(signature) = &callee_ty.kind {
-                                self.unify_call_types(
-                                    &signature.binder.value.output,
-                                    expected,
-                                    &mut substitutions,
-                                )?;
+                                // Only worth consulting the ambient
+                                // expected-type hint when the callee is
+                                // actually still generic here (a zero-arg
+                                // constructor like `Vec::new()`, which has
+                                // no argument to infer `T` from) — a fully
+                                // concrete, non-generic callee's result type
+                                // is already fully determined by its own
+                                // signature and must never be reconciled
+                                // against an outer hint that may belong to
+                                // an unrelated enclosing expression (e.g.
+                                // this call is just the receiver of a
+                                // further method call, not the tail
+                                // position the hint was pushed for).
+                                if ty_contains_param(&signature.binder.value.output) {
+                                    self.unify_call_types(
+                                        &signature.binder.value.output,
+                                        expected,
+                                        &mut substitutions,
+                                    )?;
+                                }
                             }
                         }
                     }
@@ -578,12 +636,23 @@ impl HirTypeChecker {
                     // the resulting substitutions back onto the ADT type.
                     let mut substitutions = HashMap::new();
                     for field in fields {
-                        let value_ty = self.check_expr(&field.expr).await?;
                         let field_ty = if let Some(payload) = payload_ty.as_ref() {
                             self.field_ty(payload, &field.name)?
                         } else {
                             self.field_ty(&ty, &field.name)?
                         };
+                        // Scope the expected-type hint to *this field's*
+                        // declared type, not whatever hint the enclosing
+                        // struct literal itself was checked under — e.g.
+                        // `BinaryHeap { values: Vec::new(), .. }` inside a
+                        // function returning `BinaryHeap<T>` must not leak
+                        // that outer `BinaryHeap<T>` hint into `values`'
+                        // own zero-arg `Vec::new()` call, which needs (and
+                        // has) its own field type, `Vec<T>`, to infer from.
+                        self.expected_expr_types.push(field_ty.clone());
+                        let value_ty = self.check_expr(&field.expr).await;
+                        self.expected_expr_types.pop();
+                        let value_ty = value_ty?;
                         self.unify_call_types(&field_ty, &value_ty, &mut substitutions)?;
                     }
                     self.substitute_param_map(&ty, &substitutions)
@@ -592,12 +661,13 @@ impl HirTypeChecker {
                     let condition = self.check_expr(condition).await?;
                     self.require_same(&condition, &Ty::bool())?;
                     let then_ty = self.check_expr(then_expr).await?;
+                    let mut result_ty = then_ty;
                     if let Some(else_expr) = else_expr {
                         let else_ty = self.check_expr(else_expr).await?;
-                        self.require_same(&then_ty, &else_ty)?;
+                        result_ty = self.unify_branch_types(&result_ty, &else_ty)?;
                     }
                     match else_expr.as_ref() {
-                        Some(_) => then_ty,
+                        Some(_) => result_ty,
                         None => self.unit_ty(),
                     }
                 }
@@ -606,11 +676,11 @@ impl HirTypeChecker {
                     if arms.is_empty() {
                         return Ok(self.error_ty("match expression requires at least one arm"));
                     }
-                    let mut result = None;
+                    let mut result: Option<Ty> = None;
                     for arm in arms {
                         let arm_ty = self.check_match_arm(arm, &scrutinee_ty).await?;
                         if let Some(result_ty) = &result {
-                            self.require_same(result_ty, &arm_ty)?;
+                            result = Some(self.unify_branch_types(result_ty, &arm_ty)?);
                         } else {
                             result = Some(arm_ty);
                         }
@@ -717,8 +787,25 @@ impl HirTypeChecker {
                 }
                 hir::ExprKind::Assign(lhs, rhs) => {
                     let lhs = self.check_expr(lhs).await?;
-                    let rhs = self.check_expr(rhs).await?;
-                    self.require_same(&lhs, &rhs)?;
+                    // Give the RHS the same expected-type hint `ConstBlock`
+                    // already provides its body: a zero-arg generic call
+                    // like `Vec::new()` has no argument types to infer `T`
+                    // from, so without this it leaves `T` unresolved and
+                    // `require_same` below fails a plain reassignment like
+                    // `self.keys = Vec::new();` even though the field's own
+                    // declared type unambiguously determines `T`.
+                    self.expected_expr_types.push(lhs.clone());
+                    let rhs = self.check_expr(rhs).await;
+                    self.expected_expr_types.pop();
+                    let rhs = rhs?;
+                    // `unify_call_types`, not `require_same`: an assignment
+                    // target's type should accept a value the same way a
+                    // call parameter of that type would (e.g. `self.field =
+                    // some_fn_returning_str();` into a `&str` field — the
+                    // same `Ref`-peeling coercion call arguments already
+                    // get), not require exact structural equality.
+                    let mut substitutions = HashMap::new();
+                    self.unify_call_types(&lhs, &rhs, &mut substitutions)?;
                     lhs
                 }
                 hir::ExprKind::Return(value) | hir::ExprKind::Break(value) => {
@@ -802,6 +889,21 @@ impl HirTypeChecker {
     }
 
     async fn check_block(&mut self, block: &hir::Block) -> Result<Ty> {
+        self.check_block_with_expected_tail(block, None).await
+    }
+
+    /// Like `check_block`, but with an optional expected-type hint for the
+    /// block's own trailing expression only (e.g. a function's declared
+    /// return type) — pushed onto `expected_expr_types` right before
+    /// checking the tail and popped immediately after, so it never leaks
+    /// into unrelated statements earlier in the same block (a zero-arg
+    /// generic call like `Vec::new()` mid-block has nothing to do with what
+    /// the block as a whole eventually evaluates to).
+    async fn check_block_with_expected_tail(
+        &mut self,
+        block: &hir::Block,
+        expected_tail: Option<Ty>,
+    ) -> Result<Ty> {
         self.locals.push(HashMap::new());
         for stmt in &block.stmts {
             match &stmt.kind {
@@ -848,7 +950,16 @@ impl HirTypeChecker {
             }
         }
         let ty = match block.expr.as_ref() {
-            Some(expr) => self.check_expr(expr).await?,
+            Some(expr) => {
+                if let Some(expected) = expected_tail {
+                    self.expected_expr_types.push(expected);
+                    let result = self.check_expr(expr).await;
+                    self.expected_expr_types.pop();
+                    result?
+                } else {
+                    self.check_expr(expr).await?
+                }
+            }
             None => self.unit_ty(),
         };
         self.locals.pop();
@@ -1589,6 +1700,15 @@ impl HirTypeChecker {
             (TyKind::Ref(_, expected, _), _) => {
                 self.unify_call_types(expected, actual, substitutions)
             }
+            // Symmetric to the rule above: a bare-expected/`Ref`-actual pair
+            // (e.g. a `str`-returning call's result reconciled against a
+            // `&str` expected-type hint) derefs the actual side the same
+            // way. Safe as a general rule — if the underlying shapes still
+            // don't match after peeling, the recursive call's own catch-all
+            // still reports a genuine mismatch.
+            (_, TyKind::Ref(_, actual, _)) => {
+                self.unify_call_types(expected, actual, substitutions)
+            }
             (TyKind::FnPtr(expected), TyKind::FnPtr(actual))
                 if expected.binder.value.inputs.len() == actual.binder.value.inputs.len() =>
             {
@@ -1633,8 +1753,80 @@ impl HirTypeChecker {
                 }
                 Ok(())
             }
+            // C-string/FFI decay: a `&str`/string-literal argument may be
+            // passed where a raw pointer (`*const char`/`*mut char`, an
+            // `extern "C"` parameter) is expected — the same implicit
+            // decay C itself performs for string literals and `&str`'s
+            // byte-slice representation already matches a C string's byte
+            // layout at the FFI boundary.
+            (TyKind::RawPtr(_), TyKind::Slice(_)) => Ok(()),
+            (TyKind::RawPtr(_), TyKind::Ref(_, inner, _))
+                if matches!(inner.kind, TyKind::Slice(_)) =>
+            {
+                Ok(())
+            }
+            // `void*`/any-object-pointer decay, same as C: a raw pointer of
+            // one pointee type may be passed where a raw pointer of another
+            // is expected (e.g. `*mut u8` into `memcpy`'s `*mut void`
+            // parameter) — this compiler has no real `void`/opaque-pointer
+            // distinction, just an ordinary `RawPtr(())`.
+            (TyKind::RawPtr(_), TyKind::RawPtr(_)) => Ok(()),
             _ => self.require_same(expected, actual),
         }
+    }
+
+    /// Whether an impl block's generic arguments (e.g. `Vec`'s `[&str]` in
+    /// `impl Vec<&str> { .. }`) are compatible with a call site's actual
+    /// receiver arguments (e.g. `Vec`'s `[str]` for a `Vec<str>` value) —
+    /// used by `method_output` to pick the right specialization instead of
+    /// letting any `impl SomeGeneric<T> { .. }` match every instantiation.
+    /// A still-generic impl argument (containing an uninstantiated
+    /// `Param`, e.g. `impl<T> Vec<T>`) always matches, since it has nothing
+    /// concrete to conflict with; a concrete one must coerce the same way
+    /// a call argument would (the same `Ref`-peeling rules as everywhere
+    /// else), not require exact structural equality.
+    fn generic_args_compatible(&self, impl_args: &[GenericArg], receiver_args: &[GenericArg]) -> bool {
+        if impl_args.len() != receiver_args.len() {
+            return false;
+        }
+        impl_args.iter().zip(receiver_args).all(|(impl_arg, receiver_arg)| {
+            match (impl_arg, receiver_arg) {
+                (GenericArg::Type(impl_ty), GenericArg::Type(receiver_ty)) => {
+                    if ty_contains_param(impl_ty) {
+                        return true;
+                    }
+                    let mut substitutions = HashMap::new();
+                    self.unify_call_types(impl_ty, receiver_ty, &mut substitutions)
+                        .is_ok()
+                }
+                _ => impl_arg == receiver_arg,
+            }
+        })
+    }
+
+    /// Unify two branches of the same control-flow join (`if`/`else`,
+    /// `match` arms) that are expected to produce the same type. Unlike
+    /// `require_same`, this tolerates one side still carrying an
+    /// uninstantiated `TyKind::Param` (e.g. `Option::None`'s type, which has
+    /// no argument of its own to infer `T` from) against the other side's
+    /// fully concrete type (e.g. `Option::Some(x)`'s `Option<i64>`) —
+    /// exactly the same substitution `unify_call_types` already performs for
+    /// call arguments, just tried in both directions since either branch
+    /// could be the concrete one.
+    fn unify_branch_types(&self, a: &Ty, b: &Ty) -> Result<Ty> {
+        if a == b {
+            return Ok(a.clone());
+        }
+        let mut substitutions = HashMap::new();
+        if self.unify_call_types(a, b, &mut substitutions).is_ok() {
+            return Ok(self.substitute_param_map(a, &substitutions));
+        }
+        let mut substitutions = HashMap::new();
+        if self.unify_call_types(b, a, &mut substitutions).is_ok() {
+            return Ok(self.substitute_param_map(b, &substitutions));
+        }
+        self.require_same(a, b)?;
+        Ok(a.clone())
     }
 
     fn substitute_param_map(&self, ty: &Ty, substitutions: &HashMap<ty::ParamTy, Ty>) -> Ty {
@@ -1725,8 +1917,16 @@ impl HirTypeChecker {
                 _ => &checked_self_ty,
             };
             let matches_receiver = match (receiver_def, &receiver_ty.kind, &self_ty.kind) {
-                (Some(receiver_def), _, TyKind::Adt(impl_receiver, _)) => {
+                (Some(receiver_def), TyKind::Adt(_, receiver_args), TyKind::Adt(impl_receiver, impl_args)) => {
+                    // Match the base ADT *and* its generic arguments — an
+                    // `impl Vec<&str> { .. }`/`impl Vec<String> { .. }`
+                    // specialization must only match the receiver it was
+                    // actually written for, not every `Vec<T>` regardless
+                    // of `T` (a still-generic impl like `impl<T> Vec<T>`
+                    // always matches, since its own args are bare `Param`s
+                    // with nothing concrete to mismatch against).
                     impl_receiver.did == receiver_def
+                        && scope.generic_args_compatible(impl_args, receiver_args)
                 }
                 (None, TyKind::Adt(_, _), _) => false,
                 (None, _, _) => self_ty == receiver_ty,
@@ -1807,6 +2007,22 @@ impl HirTypeChecker {
 
     fn bind_pattern(&mut self, pattern: &hir::Pat, ty: Ty) -> Result<()> {
         self.results.record_pat_type(pattern.hir_id, ty.clone());
+        // Match ergonomics: an ADT-shaped pattern (`Value::Null`, `Point {
+        // x, y }`, a tuple) matches against a `&Value`/`&(A, B)` scrutinee
+        // the same way it matches a bare one — e.g. matching on `self`
+        // inside a `&self` method. Only peel the reference for these
+        // structural shapes; `Binding`/`Wild`/`Lit` keep the original type
+        // (a bound name under a `&T` scrutinee must still bind as `&T`).
+        let adt_ty = match &pattern.kind {
+            hir::PatKind::Tuple(_)
+            | hir::PatKind::Struct(_, _, _)
+            | hir::PatKind::TupleStruct(_, _)
+            | hir::PatKind::Variant(_) => match &ty.kind {
+                TyKind::Ref(_, inner, _) => (**inner).clone(),
+                _ => ty.clone(),
+            },
+            _ => ty.clone(),
+        };
         match &pattern.kind {
             hir::PatKind::Binding { name, .. } => {
                 let Some(scope) = self.locals.last_mut() else {
@@ -1824,7 +2040,7 @@ impl HirTypeChecker {
                 }
             }
             hir::PatKind::Tuple(patterns) => {
-                let TyKind::Tuple(fields) = ty.kind else {
+                let TyKind::Tuple(fields) = adt_ty.kind else {
                     self.record_error("tuple pattern requires a tuple scrutinee");
                     return Ok(());
                 };
@@ -1838,7 +2054,7 @@ impl HirTypeChecker {
             }
             hir::PatKind::Struct(path, fields, _) => {
                 if self.enum_variant_ty(path)?.is_some() {
-                    let (_, payloads) = self.variant_payload_types(path, &ty)?;
+                    let (_, payloads) = self.variant_payload_types(path, &adt_ty)?;
                     let [payload] = payloads.as_slice() else {
                         self.record_error("struct enum pattern requires exactly one payload type");
                         return Ok(());
@@ -1849,11 +2065,11 @@ impl HirTypeChecker {
                     }
                 } else {
                     let struct_ty = if path.segments.is_empty() {
-                        ty.clone()
+                        adt_ty.clone()
                     } else {
                         self.path_ty(path)?
                     };
-                    self.require_same_adt(&ty, &struct_ty, "struct pattern")?;
+                    self.require_same_adt(&adt_ty, &struct_ty, "struct pattern")?;
                     for field in fields {
                         let field_ty = self.field_ty(&struct_ty, &field.name)?;
                         self.bind_pattern(&field.pat, field_ty)?;
@@ -1861,7 +2077,7 @@ impl HirTypeChecker {
                 }
             }
             hir::PatKind::TupleStruct(path, patterns) => {
-                let (_, payloads) = self.variant_payload_types(path, &ty)?;
+                let (_, payloads) = self.variant_payload_types(path, &adt_ty)?;
                 if patterns.len() != payloads.len() {
                     self.record_error("tuple struct pattern arity does not match variant");
                     return Ok(());
@@ -1871,7 +2087,7 @@ impl HirTypeChecker {
                 }
             }
             hir::PatKind::Variant(path) => {
-                let (_, payloads) = self.variant_payload_types(path, &ty)?;
+                let (_, payloads) = self.variant_payload_types(path, &adt_ty)?;
                 if !payloads.is_empty() {
                     self.record_error("payload variant requires a tuple or struct pattern");
                 }
@@ -2054,9 +2270,14 @@ impl HirTypeChecker {
         }
         use fp_core::intrinsics::IntrinsicKind;
         Ok(match call.kind {
-            IntrinsicKind::Print | IntrinsicKind::Println | IntrinsicKind::Panic => Ty {
+            IntrinsicKind::Print | IntrinsicKind::Println => Ty {
                 kind: TyKind::Tuple(Vec::new()),
             },
+            // `panic!` diverges — type it `!` so it unifies with whatever
+            // the surrounding context (a match arm, an `if`/`else` branch,
+            // a function's declared return type) actually expects, exactly
+            // like a genuinely unreachable expression already does.
+            IntrinsicKind::Panic => Ty::never(),
             IntrinsicKind::Format => Ty {
                 kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
             },
@@ -2247,6 +2468,35 @@ impl HirTypeChecker {
                 })
                 .unwrap_or_else(Ty::never),
         }
+    }
+}
+
+/// Whether `ty` still has an uninstantiated generic parameter anywhere in
+/// its structure — used to decide whether a call's result is worth
+/// reconciling against an ambient expected-type hint (only meaningful for
+/// still-generic results; a fully concrete type needs no such help).
+fn ty_contains_param(ty: &Ty) -> bool {
+    match &ty.kind {
+        TyKind::Param(_) => true,
+        TyKind::Ref(_, inner, _) => ty_contains_param(inner),
+        TyKind::RawPtr(value) => ty_contains_param(&value.ty),
+        TyKind::Slice(inner) => ty_contains_param(inner),
+        TyKind::Array(inner, _) => ty_contains_param(inner),
+        TyKind::Tuple(tys) => tys.iter().any(|ty| ty_contains_param(ty)),
+        TyKind::Adt(_, args) => args.iter().any(|arg| match arg {
+            GenericArg::Type(ty) => ty_contains_param(ty),
+            _ => false,
+        }),
+        TyKind::FnPtr(signature) => {
+            signature
+                .binder
+                .value
+                .inputs
+                .iter()
+                .any(|ty| ty_contains_param(ty))
+                || ty_contains_param(&signature.binder.value.output)
+        }
+        _ => false,
     }
 }
 

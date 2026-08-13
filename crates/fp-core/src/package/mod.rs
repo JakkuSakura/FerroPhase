@@ -241,6 +241,13 @@ pub struct CompiledPackage {
     /// Fully-qualified HIR lookup entries exported by this package.
     pub hir_exports: HashMap<String, crate::hir::Res>,
 
+    /// Fully-qualified `type X = Y;` aliases exported by this package (e.g.
+    /// `libc`'s `pub type char = u8;`) — unlike `hir_exports`, these are
+    /// consulted purely at AST-to-HIR type-lowering time, before a `Res` even
+    /// exists, so they need their own cross-package export/merge path (see
+    /// `seed_workspace_definitions`).
+    pub type_alias_exports: HashMap<String, crate::ast::Ty>,
+
     /// All parsed source items with their fully qualified source paths.
     pub items: Vec<PackageItem>,
 
@@ -279,6 +286,7 @@ impl CompiledPackage {
             lifted_ast: None,
             mir_program: None,
             hir_exports: HashMap::new(),
+            type_alias_exports: HashMap::new(),
             items: Vec::new(),
             mir_struct_fields: HashMap::new(),
             mir_adt_defs: HashMap::new(),

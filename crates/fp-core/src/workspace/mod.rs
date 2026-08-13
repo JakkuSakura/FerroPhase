@@ -317,6 +317,20 @@ impl WorkspaceContext {
             .collect()
     }
 
+    /// Return `type X = Y;` aliases published by every imported package
+    /// (e.g. `libc`'s `pub type char = u8;`), keyed by their fully-qualified
+    /// defining path (`"libc::char"`) — so a dependent package's own
+    /// `type_aliases` lookup can resolve an explicitly-qualified reference
+    /// like `::libc::char` the same way it already resolves same-package
+    /// aliases.
+    pub fn type_alias_definitions(&self) -> HashMap<String, crate::ast::Ty> {
+        let mut merged = HashMap::new();
+        for package in self.sorted_packages() {
+            merged.extend(package.borrow().type_alias_exports.clone());
+        }
+        merged
+    }
+
     pub fn is_loaded(&self, package_id: &PackageId) -> bool {
         self.crates.borrow().contains_key(package_id)
     }

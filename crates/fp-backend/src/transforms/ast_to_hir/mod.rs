@@ -1,7 +1,7 @@
 use fp_core::ast::Name;
 use fp_core::ast::Pattern;
 use fp_core::error::Result;
-use fp_core::intrinsics::IntrinsicNormalizer;
+use fp_core::intrinsics::{IntrinsicKind, IntrinsicNormalizer};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::query::{
     QueryDocument, QueryIrDocument, QueryKind, QueryOrigin, lower_fp_expr_to_query,
@@ -157,10 +157,6 @@ impl HirGenerator {
         !self.respect_cfg || fp_core::cfg::item_enabled_by_cfg(item, &self.target_env)
     }
 
-    fn is_std_module(&self) -> bool {
-        matches!(self.module_path.head(), Some(name) if name == "std")
-    }
-
     fn normalize_span(&self, span: Span) -> Span {
         span
     }
@@ -256,6 +252,7 @@ impl HirGenerator {
                     return Ok(());
                 }
                 ast::ItemImportTree::Glob => {
+                    self.expand_glob_import(prefix, out);
                     return Ok(());
                 }
             }
@@ -268,6 +265,75 @@ impl HirGenerator {
             });
         }
         Ok(())
+    }
+
+    /// Expand `use <prefix>::*;` into one `ImportBinding` per direct member
+    /// (value, type, or submodule) of the target module, so glob re-exports
+    /// like `pub use macos::*;` actually make the re-exported module's
+    /// contents resolvable under the importing module's own path — this
+    /// pass previously treated every glob import as a silent no-op.
+    fn expand_glob_import(&self, prefix: Vec<String>, out: &mut Vec<ImportBinding>) {
+        let target_path = fp_core::module::path::QualifiedPath::new(prefix.clone());
+        let mut candidates = vec![target_path.clone()];
+        if !self.module_path.is_empty() {
+            let relative = self.module_path.join(&prefix);
+            if relative != target_path {
+                candidates.push(relative);
+            }
+        }
+        for candidate in candidates {
+            if !self.module_defs.contains(&candidate) {
+                continue;
+            }
+            let mut seen = HashSet::new();
+            for key in self
+                .global_value_defs
+                .keys()
+                .chain(self.global_type_defs.keys())
+                .chain(self.type_aliases.keys())
+            {
+                let segments: Vec<&str> = key.split("::").collect();
+                if segments.len() != candidate.segments.len() + 1 {
+                    continue;
+                }
+                if !segments
+                    .iter()
+                    .zip(candidate.segments.iter())
+                    .all(|(a, b)| *a == b.as_str())
+                {
+                    continue;
+                }
+                let child = segments[candidate.segments.len()].to_string();
+                if !seen.insert(child.clone()) {
+                    continue;
+                }
+                let mut full = candidate.segments.clone();
+                full.push(child);
+                out.push(ImportBinding {
+                    target: full,
+                    alias: None,
+                });
+            }
+            for module in &self.module_defs {
+                if module.segments.len() != candidate.segments.len() + 1 {
+                    continue;
+                }
+                if module.segments[..candidate.segments.len()] != candidate.segments[..] {
+                    continue;
+                }
+                let child = module.segments[candidate.segments.len()].clone();
+                if !seen.insert(child.clone()) {
+                    continue;
+                }
+                let mut full = candidate.segments.clone();
+                full.push(child);
+                out.push(ImportBinding {
+                    target: full,
+                    alias: None,
+                });
+            }
+            return;
+        }
     }
 
     /// Returns whether `binding` actually resolved to something (module,
@@ -320,7 +386,14 @@ impl HirGenerator {
             let key = candidate.to_key();
             let value = self.lookup_symbol(&key, &self.global_value_defs);
             let ty = self.lookup_symbol(&key, &self.global_type_defs);
-            if value.is_none() && ty.is_none() {
+            // `type X = Y;` aliases (e.g. `libc::macos::useconds_t`) live in
+            // a separate table from `global_value_defs`/`global_type_defs`
+            // (see `register_type_alias`) — an import/glob-re-export needs
+            // its own explicit copy step here, or a re-exported alias (e.g.
+            // via `libc::mod.fp`'s `pub use macos::*;`) never becomes
+            // resolvable under the shorter path at all.
+            let type_alias = self.type_aliases.get(&key).cloned();
+            if value.is_none() && ty.is_none() && type_alias.is_none() {
                 continue;
             }
 
@@ -332,6 +405,10 @@ impl HirGenerator {
             if let Some(res) = ty {
                 self.current_type_scope().insert(alias.clone(), res.clone());
                 self.record_type_symbol(&alias, res, visibility);
+            }
+            if let Some(alias_ty) = type_alias {
+                let new_key = self.qualify_name(&alias);
+                self.type_aliases.insert(new_key, alias_ty);
             }
             self.resolved_import_aliases.insert(resolved_key);
             return true;
@@ -428,6 +505,16 @@ impl HirGenerator {
             .filter(|(_, entry)| matches!(entry.export, SymbolExport::Public))
             .map(|(path, entry)| (path.clone(), entry.res.clone()))
             .collect()
+    }
+
+    /// `type_aliases` (unlike `global_value_defs`/`global_type_defs`) has no
+    /// per-entry visibility tracking — `register_type_alias` is called for
+    /// every `type X = Y;` regardless of `pub`. Export all of them; a
+    /// dependent package can only ever reach one by spelling out its exact
+    /// qualified path (e.g. `::libc::char`), so there's no meaningful
+    /// privacy leak from exporting private aliases too.
+    pub fn exported_type_aliases(&self) -> HashMap<String, ast::Ty> {
+        self.type_aliases.clone()
     }
 
     pub fn with_intrinsic_normalizer<N>(mut self, normalizer: N) -> Self
@@ -783,6 +870,11 @@ impl HirGenerator {
         }
         self.module_defs
             .extend(workspace.module_paths().into_iter());
+        // Cross-package `type X = Y;` aliases (e.g. `libc::char`) — merged
+        // as-is since every entry's key already carries its own defining
+        // package's full qualified path, so entries from different
+        // packages can never collide.
+        self.type_aliases.extend(workspace.type_alias_definitions());
     }
 
     fn predeclare_items(&mut self, items: &[ast::Item], tolerant: bool) -> Result<()> {
@@ -883,6 +975,16 @@ impl HirGenerator {
                 ItemKind::DefFunction(def_fn) => {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_value_def(&def_fn.name.name, def_id, &def_fn.visibility);
+                }
+                ItemKind::DeclFunction(decl_fn) => {
+                    // Body-less `extern "C" fn foo(...);` declarations (e.g.
+                    // the embedded libc package's platform bindings) must be
+                    // registered here, not left to `append_item` (STEP 4),
+                    // so that STEP 2's import resolution (in particular glob
+                    // re-exports like `pub use macos::*;`) can already see
+                    // them when it enumerates `global_value_defs`.
+                    let def_id = self.allocate_def_id_for_item(item);
+                    self.register_value_def(&decl_fn.name.name, def_id, &ast::Visibility::Public);
                 }
                 ItemKind::DefTrait(def_trait) => {
                     let def_id = self.allocate_def_id_for_item(item);
@@ -1867,9 +1969,23 @@ impl HirGenerator {
             }
             ItemKind::DefFunction(func_def) => {
                 self.register_value_def(&func_def.name.name, def_id, &func_def.visibility);
-                let lower_body =
-                    !self.is_std_module() && !attrs_has_name(&func_def.attrs, "unimplemented");
-                let function = self.transform_function_with_body(func_def, None, lower_body)?;
+                let lower_body = !attrs_has_name(&func_def.attrs, "unimplemented");
+                let mut function = self.transform_function_with_body(func_def, None, lower_body)?;
+                // Many `std` functions have a fake body whose sole purpose is
+                // satisfying the type checker's signature requirements — the
+                // compiler synthesizes the real implementation elsewhere,
+                // e.g. `impl str { pub fn len(&self) -> usize {
+                // compile_error!("compiler intrinsic") } }`. Type-checking
+                // such a body for real would hard-error (see hir_typeck's
+                // `IntrinsicKind::CompileError` handling), so drop it back
+                // to a stub here — but only for genuine markers like this,
+                // not for every function that merely happens to live under
+                // `std::**` (a real, hand-written function such as
+                // `std::bench::run_benches` or `std::json::parse` must keep
+                // its real body).
+                if function_body_is_compiler_intrinsic_marker(&function) {
+                    function.body = None;
+                }
                 (
                     hir::ItemKind::Function(function),
                     self.map_visibility(&func_def.visibility),
@@ -4792,6 +4908,36 @@ fn item_attrs_mut(item: &mut ast::Item) -> Option<&mut Vec<ast::Attribute>> {
 
 fn attrs_has_name(attrs: &[ast::Attribute], name: &str) -> bool {
     attrs.iter().any(|attr| attr_has_name(attr, name))
+}
+
+/// True if `function`'s lowered body is nothing but a bare
+/// `compile_error!(...)` call — the established convention (throughout
+/// `crates/fp-lang/src/std/**/*.fp`) for a function whose real
+/// implementation the compiler synthesizes elsewhere, with the `.fp`-level
+/// body existing only to satisfy the type checker's signature
+/// requirements. See the `ItemKind::DefFunction` caller for why this can't
+/// just be type-checked/lowered normally.
+fn function_body_is_compiler_intrinsic_marker(function: &hir::Function) -> bool {
+    let Some(body) = &function.body else {
+        return false;
+    };
+    // Marker bodies are allowed any number of leading `let _ = param;`
+    // statements (silencing "unused parameter" for params only meaningful
+    // to the real, compiler-synthesized implementation) before the bare
+    // `compile_error!(...)` marker call itself.
+    let all_leading_stmts_are_discards = body.stmts.iter().all(|stmt| {
+        matches!(
+            &stmt.kind,
+            hir::StmtKind::Local(local) if matches!(local.pat.kind, hir::PatKind::Wild)
+        )
+    });
+    if !all_leading_stmts_are_discards {
+        return false;
+    }
+    matches!(
+        body.expr.as_deref().map(|expr| &expr.kind),
+        Some(hir::ExprKind::IntrinsicCall(call)) if call.kind == IntrinsicKind::CompileError
+    )
 }
 
 fn attr_has_name(attr: &ast::Attribute, name: &str) -> bool {

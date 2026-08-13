@@ -26,14 +26,14 @@ impl<T> Option<T> {
     pub fn unwrap(self) -> T {
         match self {
             Option::Some(value) => value,
-            Option::None => panic("called Option::unwrap() on a None value"),
+            Option::None => panic!("called Option::unwrap() on a None value"),
         }
     }
 
     pub fn expect(self, message: &str) -> T {
         match self {
             Option::Some(value) => value,
-            Option::None => panic(message),
+            Option::None => panic!(message),
         }
     }
 

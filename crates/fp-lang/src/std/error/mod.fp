@@ -1,5 +1,5 @@
 pub struct Error {
-    message: str,
+    message: &str,
 }
 
 impl Error {
@@ -9,7 +9,7 @@ impl Error {
         }
     }
 
-    pub fn message(&self) -> str {
+    pub fn message(&self) -> &str {
         self.message
     }
 }

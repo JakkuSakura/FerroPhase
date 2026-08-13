@@ -156,7 +156,7 @@ impl Value {
         match self {
             Value::Object(fields) => {
                 let mut idx = 0;
-                while idx < fields.len() {
+                while idx < fields.len() as i64 {
                     let field = fields[idx];
                     if field.key == key {
                         return ::std::option::Option::Some(field.value);
@@ -175,11 +175,10 @@ impl Value {
                 if index < 0 {
                     return ::std::option::Option::None;
                 }
-                if index >= values.len() {
+                if index >= values.len() as i64 {
                     return ::std::option::Option::None;
                 }
-                let idx = index as usize;
-                ::std::option::Option::Some(values[idx])
+                ::std::option::Option::Some(values[index])
             }
             _ => ::std::option::Option::None,
         }
@@ -196,21 +195,21 @@ pub fn is_null(value: Value) -> bool {
 pub fn get_string(value: Value) -> &str {
     match value.as_str() {
         ::std::option::Option::Some(text) => text,
-        ::std::option::Option::None => panic("expected json string"),
+        ::std::option::Option::None => panic!("expected json string"),
     }
 }
 
 pub fn get_array(value: Value) -> ::std::alloc::Vec<Value> {
     match value.as_array() {
         ::std::option::Option::Some(items) => items,
-        ::std::option::Option::None => panic("expected json array"),
+        ::std::option::Option::None => panic!("expected json array"),
     }
 }
 
 pub fn get_object_field(value: Value, key: &str) -> Value {
     match value.get(key) {
         ::std::option::Option::Some(found) => found,
-        ::std::option::Option::None => panic(f"missing json object field: {key}"),
+        ::std::option::Option::None => panic!(f"missing json object field: {key}"),
     }
 }
 
@@ -244,12 +243,12 @@ fn print_value(value: &Value) {
         Value::Array(items) => {
             print("[");
             let mut idx: i64 = 0;
-            let items_len: i64 = items.len();
+            let items_len: i64 = items.len() as i64;
             while idx < items_len {
                 if idx > 0 {
                     print(",");
                 }
-                let item = items[idx as usize];
+                let item = items[idx];
                 print_value(&item);
                 idx = idx + 1;
             }
@@ -259,12 +258,12 @@ fn print_value(value: &Value) {
         Value::Object(fields) => {
             print("{");
             let mut idx: i64 = 0;
-            let fields_len: i64 = fields.len();
+            let fields_len: i64 = fields.len() as i64;
             while idx < fields_len {
                 if idx > 0 {
                     print(",");
                 }
-                let field = fields[idx as usize];
+                let field = fields[idx];
                 print("\"");
                 print(field.key);
                 print("\":");

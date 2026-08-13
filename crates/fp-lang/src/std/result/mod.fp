@@ -26,7 +26,7 @@ impl<T, E> Result<T, E> {
     pub fn unwrap(self) -> T {
         match self {
             Result::Ok(value) => value,
-            Result::Err(_) => panic("called Result::unwrap() on an Err value"),
+            Result::Err(_) => panic!("called Result::unwrap() on an Err value"),
         }
     }
 }

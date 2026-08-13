@@ -247,6 +247,30 @@ pub enum Rvalue {
         container: Operand,
         key: Operand,
     },
+    /// Append `value` onto `container`, producing a new `{ptr,len}` value
+    /// (the old buffer, if any, is never mutated in place — every push
+    /// reallocates a fresh buffer sized to exactly `old_len + 1` elements
+    /// and copies the old contents into it). This is `Vec<T>::push`'s
+    /// entire runtime implementation: O(n) per push rather than amortized
+    /// O(1), but correct for a container built via any prior construction
+    /// path (literal, `Vec::new()`, or an earlier push), since it never
+    /// assumes any spare capacity or allocation header exists.
+    ContainerPush {
+        kind: ContainerKind,
+        container: Operand,
+        value: Operand,
+    },
+    /// Assemble a `&str`/`str` fat-pointer value `{ptr, len}` from an
+    /// already-computed pointer and byte length. Backs
+    /// `std::ffi::raw_parts_to_str`, the one primitive
+    /// `CStr::as_str_unchecked` needs that can't be expressed in ordinary
+    /// `.fp` code — everything else about `CStr` (fields, `from_ptr`,
+    /// `as_ptr`, the `strlen` call computing `len`) is real, non-intrinsic
+    /// code.
+    StrFromRawParts {
+        ptr: Operand,
+        len: Operand,
+    },
     ShallowInitBox(Operand, Ty),
 }
 
@@ -730,6 +754,10 @@ impl Rvalue {
             Rvalue::ContainerGet { container, key, .. } => {
                 Span::union([container.span(), key.span()])
             }
+            Rvalue::ContainerPush {
+                container, value, ..
+            } => Span::union([container.span(), value.span()]),
+            Rvalue::StrFromRawParts { ptr, len } => Span::union([ptr.span(), len.span()]),
             Rvalue::ShallowInitBox(op, _) => op.span(),
         }
     }

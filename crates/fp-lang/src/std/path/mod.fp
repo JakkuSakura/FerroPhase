@@ -1,6 +1,6 @@
 
 pub struct Path {
-    inner: str,
+    inner: &str,
 }
 
 impl Path {
@@ -11,7 +11,7 @@ impl Path {
     }
 
     pub fn as_str(&self) -> &str {
-        &self.inner
+        self.inner
     }
 
     pub fn to_path_buf(&self) -> PathBuf {
@@ -26,15 +26,15 @@ impl Path {
         option_path_buf(::std::intrinsics::path::parent(self.inner))
     }
 
-    pub fn file_name(&self) -> ::std::option::Option<str> {
+    pub fn file_name(&self) -> ::std::option::Option<&str> {
         option_str(::std::intrinsics::path::file_name(self.inner))
     }
 
-    pub fn extension(&self) -> ::std::option::Option<str> {
+    pub fn extension(&self) -> ::std::option::Option<&str> {
         option_str(::std::intrinsics::path::extension(self.inner))
     }
 
-    pub fn stem(&self) -> ::std::option::Option<str> {
+    pub fn stem(&self) -> ::std::option::Option<&str> {
         option_str(::std::intrinsics::path::stem(self.inner))
     }
 
@@ -55,7 +55,7 @@ impl Path {
 }
 
 pub struct PathBuf {
-    inner: str,
+    inner: &str,
 }
 
 impl PathBuf {
@@ -76,10 +76,10 @@ impl PathBuf {
     }
 
     pub fn as_str(&self) -> &str {
-        &self.inner
+        self.inner
     }
 
-    pub fn into_string(self) -> str {
+    pub fn into_string(self) -> &str {
         self.inner
     }
 
@@ -95,15 +95,15 @@ impl PathBuf {
         self.as_path().parent()
     }
 
-    pub fn file_name(&self) -> ::std::option::Option<str> {
+    pub fn file_name(&self) -> ::std::option::Option<&str> {
         self.as_path().file_name()
     }
 
-    pub fn extension(&self) -> ::std::option::Option<str> {
+    pub fn extension(&self) -> ::std::option::Option<&str> {
         self.as_path().extension()
     }
 
-    pub fn stem(&self) -> ::std::option::Option<str> {
+    pub fn stem(&self) -> ::std::option::Option<&str> {
         self.as_path().stem()
     }
 
@@ -120,7 +120,7 @@ impl PathBuf {
     }
 }
 
-fn option_str(value: str) -> ::std::option::Option<str> {
+fn option_str(value: &str) -> ::std::option::Option<&str> {
     if value == "" {
         ::std::option::none()
     } else {
@@ -128,7 +128,7 @@ fn option_str(value: str) -> ::std::option::Option<str> {
     }
 }
 
-fn option_path_buf(value: str) -> ::std::option::Option<PathBuf> {
+fn option_path_buf(value: &str) -> ::std::option::Option<PathBuf> {
     if value == "" {
         ::std::option::none()
     } else {

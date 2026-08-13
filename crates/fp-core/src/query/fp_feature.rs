@@ -126,7 +126,15 @@ fn collect_query_steps(expr: &Expr, pipeline: &mut QueryPipeline) -> Option<()> 
 }
 
 fn lower_root_invoke(name: &Name, invoke: &ExprInvoke, pipeline: &mut QueryPipeline) -> Option<()> {
-    if !invoke.kwargs.is_empty() || invoke.args.len() != 1 || name_tail(name) != "from" {
+    // Only a genuinely bare, unqualified `from(...)` call starts the
+    // query-DSL pipeline — matching on `name_tail` alone (the last path
+    // segment) made any unrelated qualified call ending in `from`, e.g.
+    // `PathBuf::from(value)`, get misdetected as a query root and silently
+    // reinterpreted as `SELECT * FROM value`.
+    if !matches!(name, Name::Ident(ident) if ident.as_str() == "from") {
+        return None;
+    }
+    if !invoke.kwargs.is_empty() || invoke.args.len() != 1 {
         return None;
     }
     pipeline.from = Some(relation_from_expr(&invoke.args[0])?);

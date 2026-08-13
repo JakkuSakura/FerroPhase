@@ -474,9 +474,14 @@ impl CompilerDriver {
         let hir_program = generator.transform_package(&package_source)?;
         self.next_hir_def_id = self.next_hir_def_id.max(generator.next_def_id_value());
         let package_exports = generator.exported_symbols();
+        let type_alias_exports = generator.exported_type_aliases();
         if let Some(package_id) = self.state.typing_ctx.env_ctx.current_package().cloned() {
             if let Some(package) = self.state.typing_ctx.env_ctx.compiled_package(&package_id) {
                 package.borrow_mut().hir_exports.extend(package_exports);
+                package
+                    .borrow_mut()
+                    .type_alias_exports
+                    .extend(type_alias_exports);
             }
         }
         let (hir_program, typeck_results) = self

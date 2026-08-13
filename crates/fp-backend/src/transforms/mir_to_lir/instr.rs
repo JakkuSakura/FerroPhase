@@ -183,6 +183,57 @@ impl LirGenerator {
         ))
     }
 
+    /// Emit a call to a C-ABI extern function by name (e.g. `malloc`,
+    /// `memcpy`), registering a declaration-only signature for it on first
+    /// use if one isn't already present — mirroring the generic extern-item
+    /// handling `predeclare_function_signatures_impl` already does for real
+    /// MIR items, just invoked directly from Rust-side lowering code rather
+    /// than from an actual `mir::ItemKind::Function{is_extern: true, ..}`.
+    /// Returns the id of the pushed `Call` instruction's result register,
+    /// typed as `return_type` (the exact param/return types used to
+    /// register the signature only matter for `function_declarations`
+    /// bookkeeping — the `Call` instruction built here always uses the
+    /// types the caller actually needs).
+    fn call_extern_c_function(
+        &mut self,
+        name: &str,
+        args: Vec<(lir::LirValue, lir::LirType)>,
+        return_type: lir::LirType,
+        instructions: &mut Vec<lir::LirInstruction>,
+    ) -> Result<u32> {
+        let arg_types: Vec<lir::LirType> = args.iter().map(|(_, ty)| ty.clone()).collect();
+        self.function_signatures
+            .entry(name.to_string())
+            .or_insert_with(|| lir::LirFunctionSignature {
+                params: arg_types,
+                return_type: return_type.clone(),
+                is_variadic: false,
+            });
+        self.function_call_conventions
+            .entry(name.to_string())
+            .or_insert(lir::CallingConvention::C);
+        self.function_declarations
+            .entry(name.to_string())
+            .or_insert(true);
+        let function = self.function_value(name.to_string())?;
+        let call_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: call_id,
+            kind: lir::LirInstructionKind::Call {
+                function,
+                args: args.into_iter().map(|(value, _)| value).collect(),
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            result: Some(lir::LirRegister {
+                id: call_id,
+                ty: return_type,
+            }),
+            debug_info: None,
+        });
+        Ok(call_id)
+    }
+
     pub fn prepare_program(&mut self, mir_program: &mir::Program) {
         self.predeclare_function_signatures(mir_program);
     }
@@ -2444,6 +2495,128 @@ impl LirGenerator {
                     }
                 }
             }
+            mir::Rvalue::ContainerPush {
+                kind,
+                container,
+                value,
+            } => {
+                let elem_lir_ty = self.container_element_lir_type(kind);
+                let elem_size = self.size_of_lir_type(&elem_lir_ty).max(1);
+                let ptr_ty = lir::LirType::Ptr(Box::new(elem_lir_ty.clone()));
+
+                let slice_value = self.transform_operand(container)?;
+                instructions.extend(self.take_queued_instructions());
+                let old_ptr =
+                    self.extract_slice_field(slice_value.clone(), 0, ptr_ty.clone(), &mut instructions);
+                let old_len =
+                    self.extract_slice_field(slice_value, 1, lir::LirType::I64, &mut instructions);
+
+                let value_operand = self.transform_operand(value)?;
+                instructions.extend(self.take_queued_instructions());
+                let value_operand = self.coerce_aggregate_value_with_source(
+                    value_operand,
+                    self.type_of_operand(value).as_ref(),
+                    &elem_lir_ty,
+                    &mut instructions,
+                )?;
+
+                let one = lir::LirValue::constant(self.integer_constant(&lir::LirType::I64, 1)?);
+                let new_len_id = self.next_id();
+                instructions.push(lir::LirInstruction {
+                    id: new_len_id,
+                    kind: lir::LirInstructionKind::Add(old_len.clone(), one),
+                    result: Some(lir::LirRegister {
+                        id: new_len_id,
+                        ty: lir::LirType::I64,
+                    }),
+                    debug_info: None,
+                });
+                let new_len = lir::LirValue::register(new_len_id, lir::LirType::I64);
+
+                let elem_size_val =
+                    lir::LirValue::constant(self.unsigned_constant(&lir::LirType::I64, elem_size)?);
+                let new_size_id = self.next_id();
+                instructions.push(lir::LirInstruction {
+                    id: new_size_id,
+                    kind: lir::LirInstructionKind::Mul(new_len.clone(), elem_size_val),
+                    result: Some(lir::LirRegister {
+                        id: new_size_id,
+                        ty: lir::LirType::I64,
+                    }),
+                    debug_info: None,
+                });
+                let new_byte_size = lir::LirValue::register(new_size_id, lir::LirType::I64);
+
+                let malloc_id = self.call_extern_c_function(
+                    "malloc",
+                    vec![(new_byte_size, lir::LirType::I64)],
+                    ptr_ty.clone(),
+                    &mut instructions,
+                )?;
+                let new_ptr = lir::LirValue::register(malloc_id, ptr_ty.clone());
+
+                let elem_size_val2 =
+                    lir::LirValue::constant(self.unsigned_constant(&lir::LirType::I64, elem_size)?);
+                let old_size_id = self.next_id();
+                instructions.push(lir::LirInstruction {
+                    id: old_size_id,
+                    kind: lir::LirInstructionKind::Mul(old_len.clone(), elem_size_val2),
+                    result: Some(lir::LirRegister {
+                        id: old_size_id,
+                        ty: lir::LirType::I64,
+                    }),
+                    debug_info: None,
+                });
+                let old_byte_size = lir::LirValue::register(old_size_id, lir::LirType::I64);
+
+                // Always copy, even when `old_byte_size` is 0 (a fresh/empty
+                // container) — `memcpy` with `n == 0` is a well-defined
+                // no-op, so no branch is needed here.
+                self.call_extern_c_function(
+                    "memcpy",
+                    vec![
+                        (new_ptr.clone(), ptr_ty.clone()),
+                        (old_ptr, ptr_ty.clone()),
+                        (old_byte_size, lir::LirType::I64),
+                    ],
+                    ptr_ty.clone(),
+                    &mut instructions,
+                )?;
+
+                let new_elem_ptr =
+                    self.element_ptr_at(new_ptr.clone(), &elem_lir_ty, old_len, &mut instructions);
+                instructions.push(lir::LirInstruction {
+                    id: self.next_id(),
+                    kind: lir::LirInstructionKind::Store {
+                        value: value_operand,
+                        address: new_elem_ptr,
+                        alignment: Some(self.alignment_for_lir_type(&elem_lir_ty)),
+                        volatile: false,
+                    },
+                    result: None,
+                    debug_info: None,
+                });
+
+                result_value = Some(self.build_slice_value_with_len_value(
+                    new_ptr,
+                    new_len,
+                    &elem_lir_ty,
+                    &mut instructions,
+                )?);
+            }
+            mir::Rvalue::StrFromRawParts { ptr, len } => {
+                let ptr_value = self.transform_operand(ptr)?;
+                instructions.extend(self.take_queued_instructions());
+                let len_value = self.transform_operand(len)?;
+                instructions.extend(self.take_queued_instructions());
+
+                result_value = Some(self.build_slice_value_with_len_value(
+                    ptr_value,
+                    len_value,
+                    &lir::LirType::I8,
+                    &mut instructions,
+                )?);
+            }
             mir::Rvalue::Ref(_, _, borrowed_place) => {
                 let borrowed_access = self.resolve_place(borrowed_place)?;
                 instructions.extend(self.take_queued_instructions());
@@ -3068,6 +3241,16 @@ impl LirGenerator {
             mir::Rvalue::ContainerGet { container, key, .. } => {
                 self.collect_operand_struct_layout(container, body);
                 self.collect_operand_struct_layout(key, body);
+            }
+            mir::Rvalue::ContainerPush {
+                container, value, ..
+            } => {
+                self.collect_operand_struct_layout(container, body);
+                self.collect_operand_struct_layout(value, body);
+            }
+            mir::Rvalue::StrFromRawParts { ptr, len } => {
+                self.collect_operand_struct_layout(ptr, body);
+                self.collect_operand_struct_layout(len, body);
             }
             mir::Rvalue::Ref(_, _, place)
             | mir::Rvalue::AddressOf(_, place)

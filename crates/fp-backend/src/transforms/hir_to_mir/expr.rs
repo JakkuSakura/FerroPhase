@@ -12085,6 +12085,47 @@ impl<'a> BodyBuilder<'a> {
                     }));
                 }
             }
+            if segments.last().map(|seg| seg.name.as_str()) == Some("raw_parts_to_str") {
+                // `std::ffi::raw_parts_to_str(ptr, len)` — the one genuinely
+                // backend-level primitive `CStr::as_str_unchecked` needs:
+                // assembling a `&str`/`str` fat pointer from an already
+                // runtime-computed `(ptr, len)` pair. Everything else about
+                // `CStr` (fields, `from_ptr`, `as_ptr`, the `strlen` call
+                // itself) is ordinary, real `.fp` code.
+                if let Some((place, expected_ty)) = destination {
+                    if arg_values.len() != 2 {
+                        self.lowering.emit_error(
+                            expr.span,
+                            "raw_parts_to_str expects (ptr, len) arguments",
+                        );
+                        return Ok(Some(PlaceInfo {
+                            place,
+                            ty: expected_ty,
+                            struct_def: None,
+                        }));
+                    }
+                    let ptr_operand = self.lower_operand(arg_values[0], None)?;
+                    let len_ty = Ty {
+                        kind: TyKind::Int(IntTy::I64),
+                    };
+                    let len_operand = self.lower_operand(arg_values[1], Some(&len_ty))?;
+                    self.push_statement(mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::StrFromRawParts {
+                                ptr: ptr_operand.operand,
+                                len: len_operand.operand,
+                            },
+                        ),
+                    });
+                    return Ok(Some(PlaceInfo {
+                        place,
+                        ty: expected_ty,
+                        struct_def: None,
+                    }));
+                }
+            }
         }
         if let hir::ExprKind::Path(path) = &callee.kind {
             let tail = path.segments.last().map(|seg| seg.name.as_str());
@@ -18706,6 +18747,44 @@ impl<'a> BodyBuilder<'a> {
 
                                 return Ok(());
                             }
+                        }
+                    }
+                }
+
+                if method_name.as_str() == "push" && args.len() == 1 {
+                    if let Some(receiver_place) = self.lower_place(receiver)? {
+                        if self.is_list_container(&receiver_place.ty) {
+                            let elem_ty = self
+                                .expect_array_element_ty(&receiver_place.ty)
+                                .unwrap_or_else(|| self.lowering.error_ty());
+                            let value_info = self.lower_operand(&args[0].value, Some(&elem_ty))?;
+                            let kind = mir::ContainerKind::List {
+                                elem_ty: elem_ty.clone(),
+                                len: 0,
+                            };
+                            self.push_statement(mir::Statement {
+                                source_info: expr.span,
+                                kind: mir::StatementKind::Assign(
+                                    receiver_place.place.clone(),
+                                    mir::Rvalue::ContainerPush {
+                                        kind,
+                                        container: mir::Operand::copy(
+                                            receiver_place.place.clone(),
+                                        ),
+                                        value: value_info.operand,
+                                    },
+                                ),
+                            });
+                            // `push` returns unit; still initialize the call
+                            // expression's own (unused) destination place.
+                            self.push_statement(mir::Statement {
+                                source_info: expr.span,
+                                kind: mir::StatementKind::Assign(
+                                    place,
+                                    mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                                ),
+                            });
+                            return Ok(());
                         }
                     }
                 }

@@ -13,7 +13,7 @@ pub enum ErrorKind {
 pub struct IoError {
     kind: ErrorKind,
     raw_os_error: i32,
-    message: str,
+    message: &str,
 }
 
 impl IoError {
@@ -25,7 +25,7 @@ impl IoError {
         self.raw_os_error
     }
 
-    pub fn message(&self) -> str {
+    pub fn message(&self) -> &str {
         self.message
     }
 }
@@ -75,7 +75,7 @@ impl OpenOptions {
             truncate: false,
             create: false,
             create_new: false,
-            mode: 0o666,
+            mode: 0o666 as i32,
         }
     }
 
@@ -163,6 +163,7 @@ impl OpenOptions {
         }
     }
 
+    #[unimplemented]
     pub fn open(self, path: &::std::path::Path) -> ::std::result::Result<File, IoError> {
         let _ = self;
         let _ = path;
@@ -191,16 +192,19 @@ impl File {
         OpenOptions::new()
     }
 
+    #[unimplemented]
     pub fn metadata(&self) -> ::std::result::Result<Metadata, IoError> {
         let _ = self.fd;
         compile_error!("::std::fs::File::metadata is not implemented for the current std surface")
     }
 
+    #[unimplemented]
     pub fn read_to_string(&mut self) -> ::std::result::Result<str, IoError> {
         let _ = self.fd;
         compile_error!("::std::fs::File::read_to_string is not implemented for the current std surface")
     }
 
+    #[unimplemented]
     pub fn write_all(&mut self, content: &str) -> ::std::result::Result<(), IoError> {
         let _ = self;
         let _ = content;
@@ -211,17 +215,20 @@ impl File {
         ::std::result::Result::Ok(())
     }
 
+    #[unimplemented]
     pub fn sync_all(&mut self) -> ::std::result::Result<(), IoError> {
         let _ = self;
         compile_error!("::std::fs::File::sync_all is not implemented for the current std surface")
     }
 
+    #[unimplemented]
     pub fn seek(&mut self, pos: SeekFrom) -> ::std::result::Result<i64, IoError> {
         let _ = self;
         let _ = pos;
         compile_error!("::std::fs::File::seek is not implemented for the current std surface")
     }
 
+    #[unimplemented]
     pub fn close(self) -> ::std::result::Result<(), IoError> {
         let _ = self;
         compile_error!("::std::fs::File::close is not implemented for the current std surface")
@@ -235,7 +242,7 @@ impl File {
 fn io_error_other(message: &str) -> IoError {
     IoError {
         kind: ErrorKind::Other,
-        raw_os_error: 0,
+        raw_os_error: 0 as i32,
         message,
     }
 }

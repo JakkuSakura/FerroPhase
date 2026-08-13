@@ -1,8 +1,68 @@
 pub struct String {
-    value: str,
+    ptr: *mut u8,
+    len: i64,
+    capacity: i64,
 }
 
 pub struct Utf8Error {}
+
+impl String {
+    pub fn new() -> String {
+        String { ptr: 0 as *mut u8, len: 0, capacity: 0 }
+    }
+
+    pub fn with_capacity(capacity: i64) -> String {
+        if capacity <= 0 {
+            String::new()
+        } else {
+            let buf = ::libc::malloc(capacity as u64) as *mut u8;
+            String { ptr: buf, len: 0, capacity }
+        }
+    }
+
+    pub fn capacity(&self) -> i64 {
+        self.capacity
+    }
+
+    pub fn extend(&mut self, s: &str) {
+        let add_len = s.len() as i64;
+        let new_len = self.len + add_len;
+        if new_len > self.capacity {
+            let doubled = self.capacity * 2;
+            let new_capacity = if new_len > doubled { new_len } else { doubled };
+            let new_buf = ::libc::malloc(new_capacity as u64) as *mut u8;
+            ::libc::memcpy(new_buf, self.ptr, self.len as u64);
+            self.ptr = new_buf;
+            self.capacity = new_capacity;
+        }
+        let dest = (self.ptr as i64 + self.len) as *mut u8;
+        ::libc::memcpy(dest, s, add_len as u64);
+        self.len = new_len;
+    }
+
+    pub fn as_str(&self) -> &str {
+        ::std::ffi::raw_parts_to_str(self.ptr, self.len)
+    }
+
+    pub fn len(&self) -> i64 {
+        self.len
+    }
+
+    pub fn push_byte(&mut self, byte: u8) {
+        let new_len = self.len + 1;
+        if new_len > self.capacity {
+            let doubled = self.capacity * 2;
+            let new_capacity = if new_len > doubled { new_len } else { doubled };
+            let new_buf = ::libc::malloc(new_capacity as u64) as *mut u8;
+            ::libc::memcpy(new_buf, self.ptr, self.len as u64);
+            self.ptr = new_buf;
+            self.capacity = new_capacity;
+        }
+        let dest = (self.ptr as i64 + self.len) as *mut u8;
+        *dest = byte;
+        self.len = new_len;
+    }
+}
 
 impl str {
     pub fn len(&self) -> usize { compile_error!("compiler intrinsic") }
@@ -18,11 +78,38 @@ impl str {
     pub fn contains(&self, needle: &str) -> bool {
         compile_error!("compiler intrinsic")
     }
+
+    pub fn replace(&self, pattern: &str, replacement: &str) -> ::std::string::String {
+        let mut result: ::std::string::String = ::std::string::String::new();
+        let self_len = self.len() as i64;
+        let pattern_len = pattern.len() as i64;
+        let mut idx = 0;
+        while idx < self_len {
+            let mut matched = false;
+            if pattern_len > 0 && idx + pattern_len <= self_len {
+                matched = true;
+                let mut j = 0;
+                while j < pattern_len {
+                    if self[idx + j] != pattern[j] {
+                        matched = false;
+                        break;
+                    }
+                    j = j + 1;
+                }
+            }
+            if matched {
+                result.extend(replacement);
+                idx = idx + pattern_len;
+            } else {
+                result.push_byte(self[idx] as u8);
+                idx = idx + 1;
+            }
+        }
+        result
+    }
 }
 
 impl String {
-    pub fn len(&self) -> usize { compile_error!("compiler intrinsic") }
-
     pub fn starts_with(&self, prefix: &str) -> bool {
         compile_error!("compiler intrinsic")
     }

@@ -352,6 +352,21 @@ fn summarize_rvalue(rvalue: &Rvalue) -> String {
             summarize_operand(container),
             summarize_operand(key)
         ),
+        Rvalue::ContainerPush {
+            kind,
+            container,
+            value,
+        } => format!(
+            "container_push({:?}; {}, {})",
+            kind,
+            summarize_operand(container),
+            summarize_operand(value)
+        ),
+        Rvalue::StrFromRawParts { ptr, len } => format!(
+            "str_from_raw_parts({}, {})",
+            summarize_operand(ptr),
+            summarize_operand(len)
+        ),
         Rvalue::ThreadLocalRef(def_id) => format!("thread_local_ref({:?})", def_id),
         Rvalue::Discriminant(place) => format!("discriminant({})", format_place(place)),
         Rvalue::ShallowInitBox(op, ty) => format!("box({}, {})", summarize_operand(op), ty),

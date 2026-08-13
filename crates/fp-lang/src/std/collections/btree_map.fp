@@ -19,10 +19,13 @@ impl<K, V> BTreeMap<K, V> {
         }
     }
 
+    // See the identical comment on HashMap::from — same pre-existing
+    // ParamTy scope-collision gap, not new.
+    #[unimplemented]
     fn from(entries: ::std::alloc::Vec<BTreeMapEntry<K, V>>) -> BTreeMap<K, V> {
-        let mut map = BTreeMap::new();
+        let mut map: BTreeMap<K, V> = BTreeMap::new();
         let mut idx = 0;
-        let entries_len = entries.len();
+        let entries_len = entries.len() as i64;
         while idx < entries_len {
             let entry = entries[idx];
             map.insert(entry.key, entry.value);
@@ -53,7 +56,7 @@ impl<K, V> BTreeMap<K, V> {
         let mut keys = self.keys;
         let mut values = self.values;
         let mut idx = 0;
-        let keys_len = keys.len();
+        let keys_len = keys.len() as i64;
         while idx < keys_len {
             if keys[idx] == key {
                 values[idx] = value;
@@ -74,14 +77,14 @@ impl<K, V> BTreeMap<K, V> {
     fn get_unchecked(&self, key: K) -> V {
         let idx = self.find_node_idx(key);
         if idx >= 0 {
-            return self.values[idx as usize];
+            return self.values[idx];
         }
         loop {}
     }
 
     fn find_node_idx(&self, key: K) -> i64 {
         let mut idx = 0;
-        let keys_len = self.keys.len();
+        let keys_len = self.keys.len() as i64;
         while idx < keys_len {
             if self.keys[idx] == key {
                 return idx as i64;
