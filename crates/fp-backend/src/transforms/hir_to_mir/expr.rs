@@ -12965,8 +12965,8 @@ impl<'a> BodyBuilder<'a> {
                             place.ty = inner_ty.as_ref().clone();
                             place.struct_def = self.struct_def_from_ty(&place.ty);
                         }
-                        let resolved_inner = if self.lowering.is_opaque_ty(inner.as_ref())
-                            && !self.lowering.is_opaque_ty(&place.ty)
+                        let resolved_inner = if self.lowering.has_unresolved_ty(inner.as_ref())
+                            && !self.lowering.has_unresolved_ty(&place.ty)
                         {
                             place.ty.clone()
                         } else {
@@ -13144,8 +13144,8 @@ impl<'a> BodyBuilder<'a> {
                         place.ty = inner_ty.as_ref().clone();
                         place.struct_def = self.struct_def_from_ty(&place.ty);
                     }
-                    let resolved_inner = if self.lowering.is_opaque_ty(inner.as_ref())
-                        && !self.lowering.is_opaque_ty(&place.ty)
+                    let resolved_inner = if self.lowering.has_unresolved_ty(inner.as_ref())
+                        && !self.lowering.has_unresolved_ty(&place.ty)
                     {
                         place.ty.clone()
                     } else {
@@ -14276,8 +14276,8 @@ impl<'a> BodyBuilder<'a> {
                         });
                     }
 
-                    let resolved_inner = if self.lowering.is_opaque_ty(inner.as_ref())
-                        && !self.lowering.is_opaque_ty(&place.ty)
+                    let resolved_inner = if self.lowering.has_unresolved_ty(inner.as_ref())
+                        && !self.lowering.has_unresolved_ty(&place.ty)
                     {
                         place.ty.clone()
                     } else {
