@@ -10779,7 +10779,16 @@ impl<'a> BodyBuilder<'a> {
             if let Some(def_id) = struct_def {
                 self.local_structs.insert(local_id, def_id);
             }
-            self.locals[local_id as usize].ty = value.ty.clone();
+            // Prefer the destination's already-known `expected_ty` (always
+            // populated above, either from the explicit annotation or the
+            // local's own prior declared type) over `value.ty` — see the
+            // identical reasoning in `lower_expr_into_place`'s
+            // `Literal|Path|Index|FieldAccess|ConstBlock` group: a
+            // comptime-frozen constant can lose its ADT identity on the
+            // way to a `mir::Constant`, and `value.ty` would then wrongly
+            // clobber a local whose real, declared type is already known.
+            self.locals[local_id as usize].ty =
+                expected_ty.unwrap_or_else(|| value.ty.clone());
             Ok(())
         }
     }
@@ -17473,7 +17482,19 @@ impl<'a> BodyBuilder<'a> {
                 // specialization. Resolve and recurse before giving up.
                 if let TyKind::Param(param) = &ty.kind {
                     if let Some(resolved) = self.type_substs.get(param.name.as_str()).cloned() {
-                        return self.compute_ty_size(span, &resolved);
+                        // Guard against a self-referential/unresolved
+                        // substitution (`type_substs["T"]` itself being
+                        // `Param("T")`, e.g. when specialization couldn't
+                        // infer a concrete type and left an identity
+                        // placeholder) — recursing on that would loop
+                        // forever instead of erroring.
+                        let made_progress = !matches!(
+                            &resolved.kind,
+                            TyKind::Param(resolved_param) if resolved_param.name == param.name
+                        );
+                        if made_progress {
+                            return self.compute_ty_size(span, &resolved);
+                        }
                     }
                 }
                 self.lowering.emit_error(
@@ -17957,8 +17978,19 @@ impl<'a> BodyBuilder<'a> {
                 };
                 self.push_statement(statement);
                 if assignment_place.projection.is_empty() {
-                    self.locals[assignment_place.local as usize].ty = value.ty.clone();
-                    if let Some(struct_def) = self.struct_def_from_ty(&value.ty) {
+                    // Prefer the destination's already-known `expected_ty`
+                    // (the declared/annotated type this value is being
+                    // assigned into) over `value.ty` (the operand's own,
+                    // independently-derived type) — a comptime-frozen
+                    // constant can lose its ADT identity on the way to a
+                    // `mir::Constant` (a struct value degrading to a bare
+                    // field tuple, since `mir::ConstValue`/`LirType` are
+                    // purely structural and don't carry it through), and
+                    // `value.ty` would then wrongly clobber a local whose
+                    // real, declared type (`Vec<BenchCase>`, say) is
+                    // already known and correct.
+                    self.locals[assignment_place.local as usize].ty = expected_ty.clone();
+                    if let Some(struct_def) = self.struct_def_from_ty(expected_ty) {
                         self.local_structs
                             .insert(assignment_place.local, struct_def);
                     }
