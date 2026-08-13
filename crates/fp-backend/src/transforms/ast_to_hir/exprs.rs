@@ -416,6 +416,15 @@ impl HirGenerator {
 
         match value.as_ref() {
             Value::Int(i) => Ok(hir::ExprKind::Literal(hir::Lit::Integer(i.value))),
+            Value::UInt(u) => Ok(hir::ExprKind::Literal(hir::Lit::Integer(u.value as i64))),
+            // `hir::Lit::Integer` is `i64`-only — no arbitrary-precision HIR
+            // literal exists. Best-effort narrow (saturating on overflow,
+            // matching `fp-kotlin`'s own `Value::BigInt` rendering, which
+            // already accepts the same imprecision for values this large).
+            Value::BigInt(b) => {
+                let narrowed = b.value.to_string().parse::<i64>().unwrap_or(i64::MAX);
+                Ok(hir::ExprKind::Literal(hir::Lit::Integer(narrowed)))
+            }
             Value::Bool(b) => Ok(hir::ExprKind::Literal(hir::Lit::Bool(b.value))),
             Value::String(s) => Ok(hir::ExprKind::Literal(hir::Lit::Str(s.value.clone()))),
             Value::Bytes(bytes) => {

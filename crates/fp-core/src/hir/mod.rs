@@ -569,6 +569,17 @@ pub enum BuiltinSelfType {
     Reference { mutable: bool },
     Slice,
     Array,
+    RawPtr { mutable: bool },
+    /// The never type `!` (`std::core::primitive_docs`'s `impl ! {}`).
+    Never,
+    /// The unit type `()`.
+    Unit,
+    /// Any tuple type (`(T,)`, `(T, U)`, ...) — arity-blind, same accepted
+    /// imprecision as `Reference`/`Slice`/`Array` above.
+    Tuple,
+    /// Any function-pointer type (`fn(T) -> Ret`) — arity-blind, same
+    /// accepted imprecision.
+    Function,
 }
 
 impl BuiltinSelfType {
@@ -578,6 +589,12 @@ impl BuiltinSelfType {
             BuiltinSelfType::Reference { mutable: true } => "&mut",
             BuiltinSelfType::Slice => "[]",
             BuiltinSelfType::Array => "[;N]",
+            BuiltinSelfType::RawPtr { mutable: false } => "*const",
+            BuiltinSelfType::RawPtr { mutable: true } => "*mut",
+            BuiltinSelfType::Never => "!",
+            BuiltinSelfType::Unit => "()",
+            BuiltinSelfType::Tuple => "(,)",
+            BuiltinSelfType::Function => "fn(..)",
         }
     }
 }

@@ -1289,6 +1289,17 @@ fn is_known_string_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
     expr_receiver_name(expr).is_some_and(|n| e.string_field_names.contains(&n))
 }
 
+/// True if `expr`'s real inferred type is a Kotlin `enum class`. Used to
+/// disambiguate `.clone()`, same as `is_known_string_receiver` — an
+/// `enum class` has no synthesized `.copy()` either, so the call should
+/// drop entirely rather than map to Kotlin's data-class `.copy()`
+/// convention. Unlike `is_known_string_receiver`, there's no name-registry
+/// fallback: without a real inferred type there's no reliable way to tell
+/// an enum receiver from any other struct-shaped one by name alone.
+fn is_known_enum_receiver(expr: &Expr) -> bool {
+    matches!(expr.ty(), Some(Ty::Enum(_)))
+}
+
 /// A bare local/param name, or a struct field access's field name — the
 /// "name" `field_element_types`/`string_field_names` key by.
 fn expr_receiver_name(expr: &Expr) -> Option<String> {
@@ -1318,6 +1329,14 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
         }
         ExprKind::Name(name) => {
             let raw = name.to_string();
+            // `FerroIntrinsicNormalizer` already rewrites a bare `None` to
+            // `Value::Null` during normalization, and pattern rendering
+            // special-cases it too, but a bare `None` used directly as an
+            // expression (e.g. a tuple-constructor argument) can still reach
+            // here unrewritten — handle it defensively at the backend level.
+            if raw == "None" {
+                return Ok("null".to_string());
+            }
             let dotted = raw.replace("::", ".");
             // Uppercase enum variant references in qualified paths
             Ok(uppercase_last_segment(&dotted))
@@ -1396,16 +1415,25 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                     let is_string_find = sel.field.name.as_str() == "find"
                         && !matches!(inv.args.first().map(|a| a.kind()), Some(ExprKind::Closure(_)));
                     // `.clone()` maps to `.copy()` (Kotlin's data-class convention)
-                    // by default, but a `String` has no `.copy()` — already
-                    // immutable, the call should just drop (see `is_known_string_receiver`).
-                    let is_clone_on_string = sel.field.name.as_str() == "clone" && is_known_string_receiver(&sel.obj, e);
+                    // by default, but a `String`/`enum class` has no `.copy()` —
+                    // already immutable, the call should just drop (see
+                    // `is_known_string_receiver`/`is_known_enum_receiver`).
+                    let is_clone_dropped = sel.field.name.as_str() == "clone"
+                        && (is_known_string_receiver(&sel.obj, e) || is_known_enum_receiver(&sel.obj));
                     let method_name = if is_iterator_map {
                         "map".to_string()
                     } else if is_len_on_list {
-                        "size".to_string()
+                        // Rust's `.len()` always returns `usize`, which this
+                        // workspace's type registry always maps to Kotlin
+                        // `Long` (see `kotlin_type_from_ty`) — but Kotlin's
+                        // `List.size` is natively `Int`. Coerce here so every
+                        // `.len()` call is `Long`-typed like every other
+                        // `usize` value, matching the convention rather than
+                        // Kotlin's native collection API.
+                        "size.toLong()".to_string()
                     } else if is_string_find {
                         "indexOf".to_string()
-                    } else if is_clone_on_string {
+                    } else if is_clone_dropped {
                         "".to_string()
                     } else {
                         map_kt_method(sel.field.name.as_str())
@@ -1534,7 +1562,25 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
         }
 
         ExprKind::BinOp(bin) => {
-            Ok(format!("({} {} {})", render_expr(&bin.lhs, e)?, kotlin_bin_op(&bin.kind), render_expr(&bin.rhs, e)?))
+            let mut lhs = render_expr(&bin.lhs, e)?;
+            let mut rhs = render_expr(&bin.rhs, e)?;
+            // Kotlin's `==`/`!=` (unlike `<`/`>`, which have cross-type
+            // `compareTo` overloads) require matching numeric types — a
+            // `.len()`-derived `Long` (see `is_len_on_list`'s `.toLong()`)
+            // compared against a bare `Int` literal needs the literal
+            // suffixed to match.
+            if matches!(bin.kind, BinOpKind::Eq | BinOpKind::Ne) {
+                if lhs.ends_with(".toLong()") {
+                    if let Some(suffixed) = int_literal_as_long(&rhs) {
+                        rhs = suffixed;
+                    }
+                } else if rhs.ends_with(".toLong()") {
+                    if let Some(suffixed) = int_literal_as_long(&lhs) {
+                        lhs = suffixed;
+                    }
+                }
+            }
+            Ok(format!("({} {} {})", lhs, kotlin_bin_op(&bin.kind), rhs))
         }
 
         ExprKind::UnOp(un) => {
@@ -2335,11 +2381,37 @@ fn match_case_binding(pat: &Option<fp_core::ast::BPattern>) -> Option<String> {
 /// Render a u64 literal that may exceed `Long.MAX_VALUE`, reinterpreting the bit
 /// pattern via Kotlin's unsigned-to-signed conversion (matches Rust's `as i64` cast
 /// semantics used by hash/checksum constants).
+/// If `s` is a bare integer literal (optionally negative), returns it with
+/// a Kotlin `L` (`Long`) suffix — used to match a `.len()`-derived `Long`
+/// on the other side of an `==`/`!=` comparison. Only a plain literal
+/// qualifies; any other rendered expression is left alone.
+fn int_literal_as_long(s: &str) -> Option<String> {
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+        Some(format!("{s}L"))
+    } else {
+        None
+    }
+}
+
 fn render_int_literal_kt(v: u64) -> String {
     if v > i64::MAX as u64 {
         format!("{}UL.toLong()", v)
     } else {
         v.to_string()
+    }
+}
+
+/// Rust's default `f64`/decimal formatting drops the fractional part for
+/// whole-number floats (`0.0.to_string() == "0"`), which Kotlin then parses
+/// as an `Int` literal instead of a `Double` — cascading into type
+/// mismatches everywhere that value flows. Force a decimal point onto any
+/// formatted value that would otherwise read as an integer literal.
+fn format_kt_decimal_literal(s: String) -> String {
+    if s.contains('.') || s.contains('e') || s.contains('E') || s.contains("NaN") || s.contains("inf") {
+        s
+    } else {
+        format!("{}.0", s)
     }
 }
 
@@ -2356,8 +2428,8 @@ fn render_value(val: &Value) -> String {
                 s
             }
         }
-        Value::Decimal(v) => v.value.to_string(),
-        Value::BigDecimal(v) => v.value.to_string(),
+        Value::Decimal(v) => format_kt_decimal_literal(v.value.to_string()),
+        Value::BigDecimal(v) => format_kt_decimal_literal(v.value.to_string()),
         Value::Char(v) => format!("'{}'", escape_char_for_kt(v.value)),
         Value::String(v) => format!("\"{}\"", escape_str_for_kt(&v.value)),
         Value::Unit(_) | Value::Null(_) | Value::None(_) => "null".to_string(),

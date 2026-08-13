@@ -956,7 +956,7 @@ impl HirGenerator {
                     // so a deferred item has made zero state changes and
                     // is safe to fully re-run later, unmodified.
                     let defer = tolerant
-                        && single_segment_self_type_name(&impl_block.self_ty)
+                        && self_type_first_segment_name(&impl_block.self_ty)
                             .map(|name| {
                                 self.resolve_type_symbol(name).is_none()
                                     && !is_primitive_type_name(name)
@@ -967,9 +967,37 @@ impl HirGenerator {
                             .push((self.module_path.clone(), item.clone()));
                     } else {
                         self.allocate_def_id_for_item(item);
-                        let self_path = self
-                            .ast_expr_to_hir_path(&impl_block.self_ty, PathResolutionScope::Type)?;
-                        let mut method_path = self.canonical_type_path(&self_path)?.segments;
+                        // A self-type can be permanently unresolvable — not a
+                        // timing issue an import-order retry would fix, but a
+                        // genuine dead end (e.g. its target type lives in a
+                        // module that failed to parse in the first place, so
+                        // no amount of import resolution will ever find it).
+                        // Skip just this one impl rather than aborting HIR
+                        // generation for the whole package — the same
+                        // "tolerate what's broken, keep what isn't" policy
+                        // already applied at the file level (parse errors).
+                        let self_path = match self
+                            .ast_expr_to_hir_path(&impl_block.self_ty, PathResolutionScope::Type)
+                        {
+                            Ok(path) => path,
+                            Err(error) => {
+                                tracing::warn!(
+                                    "skipping impl with unresolvable self-type in {}: {error}",
+                                    self.module_path.to_key(),
+                                );
+                                continue;
+                            }
+                        };
+                        let mut method_path = match self.canonical_type_path(&self_path) {
+                            Ok(path) => path.segments,
+                            Err(error) => {
+                                tracing::warn!(
+                                    "skipping impl with unresolvable self-type in {}: {error}",
+                                    self.module_path.to_key(),
+                                );
+                                continue;
+                            }
+                        };
                         for impl_item in &impl_block.items {
                             let ast::ItemKind::DefFunction(function) = impl_item.kind() else {
                                 continue;
@@ -3217,22 +3245,32 @@ fn is_primitive_type_name(name: &str) -> bool {
     )
 }
 
-/// Returns the self-type's head name only when it's exactly one
-/// unqualified segment (`Vec`, or `Vec<u8>` via a single-segment
-/// `Name::ParameterPath`) — the only shape where a bare name could
-/// plausibly still be waiting on an import that hasn't been processed
-/// yet. Already-qualified paths (`crate::vec::Vec`), multi-segment
-/// paths, and non-name self-types (blanket `impl<T> Trait for T`) all
-/// return `None` — those are never deferred, they fall straight through
-/// to today's immediate resolution/failure.
-fn single_segment_self_type_name(self_ty: &ast::Expr) -> Option<&str> {
+/// Returns the self-type's head (first) segment name when it's a plain,
+/// unprefixed name-based path — a bare single segment (`Vec`, or
+/// `Vec<u8>` via a single-segment `Name::ParameterPath`), or the first
+/// segment of a bare multi-segment path (`ops::RangeFull`, where `ops`
+/// is a module brought into scope by a plain `use crate::{..., ops};`).
+/// Either shape could plausibly still be waiting on an import that
+/// hasn't been processed yet. Already-anchored paths (`crate::vec::Vec`,
+/// `self::Foo`, `super::Foo`) and non-name self-types (blanket
+/// `impl<T> Trait for T`) all return `None` — those are never deferred,
+/// they fall straight through to today's immediate resolution/failure.
+fn self_type_first_segment_name(self_ty: &ast::Expr) -> Option<&str> {
     let ast::ExprKind::Name(name) = self_ty.kind() else {
         return None;
     };
     match name {
         Name::Ident(ident) => Some(ident.name.as_str()),
-        Name::ParameterPath(param_path) if param_path.segments.len() == 1 => {
-            Some(param_path.segments[0].ident.name.as_str())
+        Name::Path(path) if path.prefix == fp_core::module::path::PathPrefix::Plain => {
+            path.segments.first().map(|seg| seg.name.as_str())
+        }
+        Name::ParameterPath(param_path)
+            if param_path.prefix == fp_core::module::path::PathPrefix::Plain =>
+        {
+            param_path
+                .segments
+                .first()
+                .map(|seg| seg.ident.name.as_str())
         }
         _ => None,
     }

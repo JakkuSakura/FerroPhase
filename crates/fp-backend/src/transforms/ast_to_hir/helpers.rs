@@ -536,6 +536,43 @@ impl HirGenerator {
                         res: Some(hir::Res::Builtin(kind)),
                     })
                 }
+                ast::Value::Type(ast::Ty::RawPtr(ptr)) => {
+                    let kind = hir::BuiltinSelfType::RawPtr {
+                        mutable: ptr.mutability.unwrap_or(false),
+                    };
+                    Ok(hir::Path {
+                        segments: vec![self.make_path_segment(kind.bucket_key(), None)],
+                        res: Some(hir::Res::Builtin(kind)),
+                    })
+                }
+                ast::Value::Type(ast::Ty::Nothing(_)) => {
+                    let kind = hir::BuiltinSelfType::Never;
+                    Ok(hir::Path {
+                        segments: vec![self.make_path_segment(kind.bucket_key(), None)],
+                        res: Some(hir::Res::Builtin(kind)),
+                    })
+                }
+                ast::Value::Type(ast::Ty::Unit(_)) => {
+                    let kind = hir::BuiltinSelfType::Unit;
+                    Ok(hir::Path {
+                        segments: vec![self.make_path_segment(kind.bucket_key(), None)],
+                        res: Some(hir::Res::Builtin(kind)),
+                    })
+                }
+                ast::Value::Type(ast::Ty::Tuple(_)) => {
+                    let kind = hir::BuiltinSelfType::Tuple;
+                    Ok(hir::Path {
+                        segments: vec![self.make_path_segment(kind.bucket_key(), None)],
+                        res: Some(hir::Res::Builtin(kind)),
+                    })
+                }
+                ast::Value::Type(ast::Ty::Function(_)) => {
+                    let kind = hir::BuiltinSelfType::Function;
+                    Ok(hir::Path {
+                        segments: vec![self.make_path_segment(kind.bucket_key(), None)],
+                        res: Some(hir::Res::Builtin(kind)),
+                    })
+                }
                 _ => {
                     self.add_error(
                         Diagnostic::error(format!(
