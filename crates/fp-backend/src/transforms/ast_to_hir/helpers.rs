@@ -424,22 +424,54 @@ impl HirGenerator {
         }
 
         if resolved.is_none() && path_prefix != PathPrefix::Plain {
-            let mut relative_segments = match path_prefix {
-                PathPrefix::Root | PathPrefix::Crate => Vec::new(),
-                PathPrefix::SelfMod => self.module_path.segments.clone(),
+            let crate_root_candidates: Vec<Vec<String>> = match path_prefix {
+                // `crate::`/an absolute path resolves relative to the
+                // current *crate's* own root — for an ordinary single-crate
+                // package that's just its own package name (module_path's
+                // first segment). The vendored real Rust `std` library is
+                // the one exception: it bundles three separate real crates
+                // (`core`, `alloc`, `std`) under one FerroPhase package, so
+                // a file belonging to one of those needs its sub-crate name
+                // kept too (module_path's first two segments — see
+                // `rs_relative_to_module_segments` in fp-rust's provider,
+                // which is the only place that ever emits a two-segment
+                // crate identity like `["std", "std"]`/`["std", "core"]`).
+                // Try the ordinary (one-segment) case first, then the
+                // vendored-multi-crate (two-segment) case.
+                PathPrefix::Root | PathPrefix::Crate => {
+                    let root = &self.module_path.segments;
+                    let mut candidates = Vec::new();
+                    if !root.is_empty() {
+                        candidates.push(root[..1].to_vec());
+                    }
+                    if root.len() >= 2 {
+                        candidates.push(root[..2].to_vec());
+                    }
+                    if candidates.is_empty() {
+                        candidates.push(Vec::new());
+                    }
+                    candidates
+                }
+                PathPrefix::SelfMod => vec![self.module_path.segments.clone()],
                 PathPrefix::Super(depth) => {
                     let keep = self
                         .module_path
                         .segments
                         .len()
                         .saturating_sub(depth as usize);
-                    self.module_path.segments[..keep].to_vec()
+                    vec![self.module_path.segments[..keep].to_vec()]
                 }
-                PathPrefix::Plain => Vec::new(),
+                PathPrefix::Plain => vec![Vec::new()],
             };
-            relative_segments.extend(segments.iter().map(|seg| seg.name.as_str().to_string()));
-            let relative = QualifiedPath::new(relative_segments);
-            resolved = self.lookup_global_res(&relative, scope);
+            for crate_root in crate_root_candidates {
+                let mut relative_segments = crate_root;
+                relative_segments.extend(segments.iter().map(|seg| seg.name.as_str().to_string()));
+                let relative = QualifiedPath::new(relative_segments);
+                resolved = self.lookup_global_res(&relative, scope);
+                if resolved.is_some() {
+                    break;
+                }
+            }
         }
 
         Ok(hir::Path {

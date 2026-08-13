@@ -48,6 +48,34 @@ fn package_from_items(items: Vec<ast::Item>) -> Result<fp_core::package::Compile
     Ok(package)
 }
 
+/// Like `package_from_items`, but tags every item with a nested
+/// `module_path` (e.g. `["std", "sys", "stdio"]`) instead of the package
+/// root — exercises `transform_package`'s per-`PackageItem`
+/// `with_module_scope` push/pop, which `package_from_items`'s always-empty
+/// path never does.
+fn package_from_module_items(
+    module_path: Vec<String>,
+    items: Vec<ast::Item>,
+) -> Result<fp_core::package::CompiledPackage> {
+    let package_id = PackageId::new("test");
+    let mut source = PackageSource::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
+    source.items = items
+        .into_iter()
+        .map(|item| fp_core::package::PackageItem {
+            path: QualifiedPath::new(module_path.clone()),
+            item,
+        })
+        .collect();
+    let provider = FixedPackageProvider::for_source(package_id.clone(), source);
+    let loaded = provider
+        .load_package_source(&package_id)
+        .map_err(|e| crate::error::optimization_error(e.to_string()))?;
+    let workspace = WorkspaceContext::new();
+    let package = workspace.begin_package(package_id, loaded, test_data_layout());
+    let package = package.borrow().clone();
+    Ok(package)
+}
+
 fn ident(name: &str) -> ast::Ident {
     ast::Ident::new(name)
 }
@@ -750,6 +778,62 @@ fn transform_generic_function_and_method() -> Result<()> {
         hir::PatKind::Binding { name, .. } => assert_eq!(name.as_str(), "self"),
         other => panic!("expected self binding, got {other:?}"),
     }
+
+    Ok(())
+}
+
+/// Same shape as `transform_generic_function_and_method`'s struct+impl
+/// case, but the items live in a *nested* module path (e.g.
+/// `["std", "sys", "stdio"]`, mirroring how `fp-rust`'s vendored real-std
+/// provider tags every item) instead of the package root. `transform_package`
+/// processes each `PackageItem` through its own independent
+/// `with_module_scope` call — this must not lose a struct's own-module
+/// registration by the time its `impl` (a separate top-level item) is
+/// processed.
+#[test]
+fn transform_package_resolves_impl_self_type_in_nested_module_path() -> Result<()> {
+    let container = make_struct("Container", vec![("value", int_ty())]);
+    let mut method = ast::ItemDefFunction::new_simple(
+        ident("get"),
+        ast::ExprBlock::new_expr(ast::Expr::from(ast::ExprKind::Select(ast::ExprSelect {
+            span: Span::null(),
+            obj: Box::new(ast::Expr::ident(ident("self"))),
+            field: ident("value"),
+            select: ast::ExprSelectType::Field,
+        }))),
+    );
+    method.sig.receiver = Some(ast::FunctionParamReceiver::Ref);
+    method.sig.ret_ty = Some(int_ty());
+    let impl_block = ast::ItemImpl::new_ident(
+        ident("Container"),
+        vec![ast::Item::from(ast::ItemKind::DefFunction(method))],
+    );
+
+    let items = vec![container, ast::Item::from(ast::ItemKind::Impl(impl_block))];
+
+    let module_path = vec!["std".to_string(), "sys".to_string(), "stdio".to_string()];
+    let package = package_from_module_items(module_path, items)?;
+    let mut generator = HirGenerator::new();
+    let program = generator.transform_package(&package)?;
+
+    let impl_item = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Impl(impl_block) => Some(impl_block),
+            _ => None,
+        })
+        .expect("impl block present — self-type `Container` must resolve even in a nested module");
+
+    let method = impl_item
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ImplItemKind::Method(func) => Some(func),
+            _ => None,
+        })
+        .expect("method present");
+    assert_eq!(method.sig.name.as_str(), "get");
 
     Ok(())
 }

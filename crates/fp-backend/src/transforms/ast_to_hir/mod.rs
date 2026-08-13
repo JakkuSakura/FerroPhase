@@ -362,6 +362,37 @@ impl HirGenerator {
                 candidates.push(relative);
             }
         }
+        // `use crate::X`/`use ::X` (an absolute import) reaches here with
+        // its "crate::"/root prefix already stripped by
+        // `collect_imports_from_path` — which, not knowing the current
+        // crate's own root depth, always strips to nothing. For an
+        // ordinary single-crate package the crate root is just the
+        // package name (module_path's first segment); the vendored real
+        // Rust `std` library is the one exception, bundling three real
+        // crates (`core`/`alloc`/`std`) under one FerroPhase package, so a
+        // file belonging to one of those needs its sub-crate name kept
+        // too (module_path's first two segments — see
+        // `rs_relative_to_module_segments` in fp-rust's provider). Try
+        // both possible crate roots as additional candidates; harmless
+        // for ordinary packages, where the two either coincide or the
+        // second candidate simply never matches anything.
+        let root = &self.module_path.segments;
+        if !root.is_empty() {
+            let mut with_root = root[..1].to_vec();
+            with_root.extend(target_path.segments.iter().cloned());
+            let with_root = fp_core::ast::path::QualifiedPath::new(with_root);
+            if !candidates.contains(&with_root) {
+                candidates.push(with_root);
+            }
+        }
+        if root.len() >= 2 {
+            let mut with_root = root[..2].to_vec();
+            with_root.extend(target_path.segments.iter().cloned());
+            let with_root = fp_core::ast::path::QualifiedPath::new(with_root);
+            if !candidates.contains(&with_root) {
+                candidates.push(with_root);
+            }
+        }
 
         for candidate in candidates {
             if self.module_defs.contains(&candidate) {
@@ -1340,6 +1371,17 @@ impl HirGenerator {
     ) -> Result<hir::Program> {
         self.reset_file_context("<package>");
         self.prepare_lowering_state();
+        // `module_defs` otherwise only ever gains an entry via an explicit
+        // `mod X { .. }` AST node (`record_module_def`, common for
+        // `.fp`-dialect source) or another package's own tree
+        // (`seed_workspace_definitions`, below) — never *this* package's
+        // own module tree when a provider represents it implicitly, one
+        // module per source file with no literal `Module` wrapper item at
+        // all (e.g. `fp-rust`'s real-std provider). Without this, a bare
+        // `use crate::sibling_module;`-style import can never resolve as
+        // a module alias for such a package, no matter how its target
+        // path is computed.
+        self.module_defs.extend(package.module_paths.iter().cloned());
 
         // Unlike `transform_file` (the single-file path), `transform_package`
         // never ran the `lower_closures_in_file` pre-pass that decomposes a
