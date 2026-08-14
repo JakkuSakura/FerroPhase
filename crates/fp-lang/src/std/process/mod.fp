@@ -131,7 +131,7 @@ impl Process {
             ::std::option::Option::None => ProcessResult {
                 stdout: "",
                 stderr: "",
-                status: decode_exit_status(::libc::system(&rendered_command) as i64),
+                status: decode_exit_status(::libc::system(::std::ffi::CString::new(&rendered_command).as_ptr()) as i64),
             },
         }
     }

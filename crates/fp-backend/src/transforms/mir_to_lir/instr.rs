@@ -33,7 +33,7 @@ pub struct LirGenerator {
     entry_allocas: Vec<lir::LirInstruction>,
     queued_instructions: Vec<lir::LirInstruction>,
     name_counters: HashMap<String, usize>,
-    struct_layouts: RefCell<HashMap<mir::DefId, Vec<Option<lir::LirType>>>>,
+    struct_layouts: RefCell<HashMap<(mir::DefId, Vec<mir::Ty>), Vec<Option<lir::LirType>>>>,
     mir_layouts: HashMap<mir::DefId, Vec<mir::Ty>>,
     full_layouts: HashMap<(mir::DefId, Vec<mir::Ty>), Vec<mir::Ty>>,
     adt_defs: HashMap<mir::DefId, mir::ty::AdtDef>,
@@ -445,7 +445,10 @@ impl LirGenerator {
                 {
                     return true;
                 }
-                if self.struct_layouts.borrow().contains_key(&adt.did)
+                if self
+                    .struct_layouts
+                    .borrow()
+                    .contains_key(&(adt.did, substs_types.clone()))
                     || self.lookup_mir_layout(&adt.did).is_some()
                     || self.full_layouts.contains_key(&(adt.did, substs_types))
                 {
@@ -3251,6 +3254,22 @@ impl LirGenerator {
     }
 
     /// Helper methods
+    /// Extracts just the type arguments from an ADT's generic-arg list —
+    /// used as (part of) the cache key for per-instantiation layout caches
+    /// (`struct_layouts`, `full_layouts`), since two instantiations of the
+    /// same generic struct/enum (e.g. `Option<i64>` vs.
+    /// `Option<CommandMockMatch>`) can have entirely different field
+    /// layouts and must never share a cache entry keyed by `DefId` alone.
+    fn adt_substs_types(substs: &[mir::ty::GenericArg]) -> Vec<mir::Ty> {
+        substs
+            .iter()
+            .filter_map(|arg| match arg {
+                mir::ty::GenericArg::Type(ty) => Some(ty.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn reset_for_new_function(&mut self) {
         self.next_label = 0;
         self.register_map.clear();
@@ -3413,14 +3432,34 @@ impl LirGenerator {
         for projection in &place.projection {
             match projection {
                 mir::PlaceElem::Field(index, field_ty) => {
-                    if let TyKind::Adt(adt, _) = &ty.kind {
-                        let field_lir_ty = self.lir_type_from_ty(field_ty);
-                        let mut layouts = self.struct_layouts.borrow_mut();
-                        let fields = layouts.entry(adt.did).or_default();
-                        if fields.len() <= *index {
-                            fields.resize(index + 1, None);
+                    // Enums are deliberately excluded here. Their payload
+                    // slot(s) already have a dedicated, correct layout
+                    // computed elsewhere (`full_layouts`/
+                    // `opaque_payload_sizes`/`lookup_adt_def`) — one that
+                    // accounts for *all* variants at once, using an opaque
+                    // byte-array union slot when variants disagree on the
+                    // payload's shape (e.g. `json::Value`, whose variants
+                    // carry a `bool`, a `Number`, a `&str`, a `Vec<Value>`,
+                    // etc.). A place projection only ever sees *one*
+                    // variant's concrete field type at a time (e.g.
+                    // `Value::Array(values)`'s pattern binding projects
+                    // `Vec<Value>` specifically) — caching that here, keyed
+                    // only by the enum's `DefId`, would clobber the
+                    // correct union-slot type with whichever variant's
+                    // field type happened to be observed last across the
+                    // whole program (nondeterministically, since functions
+                    // are processed in HashMap-derived order).
+                    if let TyKind::Adt(adt, substs) = &ty.kind {
+                        if !adt.flags.contains(mir::ty::AdtFlags::IS_ENUM) {
+                            let field_lir_ty = self.lir_type_from_ty(field_ty);
+                            let key = (adt.did, Self::adt_substs_types(substs));
+                            let mut layouts = self.struct_layouts.borrow_mut();
+                            let fields = layouts.entry(key).or_default();
+                            if fields.len() <= *index {
+                                fields.resize(index + 1, None);
+                            }
+                            fields[*index] = Some(field_lir_ty);
                         }
-                        fields[*index] = Some(field_lir_ty);
                     }
                     ty = field_ty.clone();
                 }
@@ -5487,6 +5526,40 @@ impl LirGenerator {
             {
                 return Ok(lir::LirConstant::null(target_ty.clone()));
             }
+            // A zero-sized-type value (e.g. `()`, the payload of a
+            // `Result<(), E>::Ok`) is represented, generically, as the
+            // empty-field placeholder constant minted by
+            // `get_or_create_register_for_place` — its exact shape doesn't
+            // matter since it holds no data. When it lands in a field slot
+            // that expects a real shape (e.g. an enum's opaque payload slot,
+            // sized to fit the *other* variants), any bit pattern is
+            // equally valid there — coerce to `undef` of the expected type
+            // instead of treating this as a genuine type mismatch.
+            if matches!(
+                &constant,
+                lir::LirConstant {
+                    ty: lir::LirType::Struct { fields, .. },
+                    kind: lir::LirConstantKind::Aggregate(lir::LirConstantAggregate::Struct(values)),
+                } if fields.is_empty() && values.is_empty()
+            ) {
+                return Ok(lir::LirConstant::undef(target_ty.clone()));
+            }
+            // A fieldless (C-like) enum's variant literal (e.g. `ErrorKind::
+            // Other`) is sometimes const-folded straight to its bare
+            // discriminant scalar, while the enum's own registered layout
+            // (used everywhere else it appears, e.g. as a struct field) is
+            // the canonical `Struct{fields:[tag_ty]}` shape every enum gets
+            // — even a payload-less one, for consistency with enums that do
+            // carry a payload. Both describe the same value; wrap the bare
+            // scalar in a single-field struct to match.
+            if let lir::LirType::Struct { fields, .. } = target_ty {
+                if fields.len() == 1 && fields[0] == constant.ty {
+                    return Ok(lir::LirConstant::aggregate(
+                        target_ty.clone(),
+                        lir::LirConstantAggregate::Struct(vec![constant]),
+                    ));
+                }
+            }
             return Err(fp_core::error::Error::from(format!(
                 "typed constant mismatch: {:?} versus {:?}",
                 constant.ty, target_ty
@@ -6225,25 +6298,36 @@ impl LirGenerator {
                 if let Some(elem_ty) = Self::slice_ref_element_ty(inner) {
                     let elem_lir = self.lir_type_from_ty(elem_ty);
                     self.slice_lir_type(&elem_lir)
-                } else if let TyKind::Adt(adt, _) = &inner.kind {
-                    // A reference to a genuinely empty (zero-field) struct
-                    // — e.g. `&std::ffi::CStr`, whose `.fp` definition is
-                    // `pub struct CStr {}` — is an opaque/extern-style
-                    // marker type, not a real, sized value to point at.
-                    // Lowering it the normal way gives `Ptr(Struct{fields:
-                    // []})`, a pointer to a zero-size struct, which then
-                    // can't hold the real (non-empty) C-string data a
-                    // `&CStr` value actually needs to reference. Treat it
-                    // as a bare byte pointer instead, matching how this
-                    // backend already represents other raw/opaque
+                } else if let TyKind::Adt(adt, substs) = &inner.kind {
+                    // A reference to a struct that's really just an opaque/
+                    // extern-style pointer wrapper — either genuinely empty
+                    // (zero fields), or a single-field newtype whose one
+                    // field is itself a pointer (e.g. `&std::ffi::CStr`,
+                    // `pub struct CStr { ptr: *const char }`) — is not a
+                    // real, independently-sized value to point *at*, unlike
+                    // Rust's own `&CStr` (an unsized type: a thin pointer
+                    // directly at the C string's bytes, not a pointer to a
+                    // struct that itself holds a pointer). Lowering it the
+                    // normal way gives `Ptr(Struct{fields:[Ptr(I8)]})` (or
+                    // `Ptr(Struct{fields:[]})` for the empty case), a
+                    // pointer to a wrapper — but the actual value flowing
+                    // through this reference (e.g. a `c"..."` literal's own
+                    // constant, materialized as a bare `Ptr(I8)`) is the
+                    // pointer itself, not a pointer to a boxed pointer.
+                    // Treat both shapes as a bare pointer, matching how
+                    // this backend already represents other raw/opaque
                     // pointers.
-                    let is_opaque_struct = self
+                    let is_opaque_wrapper = self
                         .struct_layouts
                         .borrow()
-                        .get(&adt.did)
-                        .map(|fields| fields.is_empty())
+                        .get(&(adt.did, Self::adt_substs_types(substs)))
+                        .map(|fields| {
+                            fields.is_empty()
+                                || (fields.len() == 1
+                                    && matches!(fields[0], Some(lir::LirType::Ptr(_))))
+                        })
                         .unwrap_or(false);
-                    if is_opaque_struct {
+                    if is_opaque_wrapper {
                         lir::LirType::Ptr(Box::new(lir::LirType::I8))
                     } else {
                         lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
@@ -6272,8 +6356,14 @@ impl LirGenerator {
                 let size = self.opaque_payload_sizes[adt.variants[0].ident.as_str()];
                 lir::LirType::Array(Box::new(lir::LirType::I8), size)
             }
-            TyKind::Adt(adt, _) if self.struct_layouts.borrow().contains_key(&adt.did) => {
-                let fields = self.struct_layouts.borrow().get(&adt.did).unwrap().clone();
+            TyKind::Adt(adt, substs)
+                if self
+                    .struct_layouts
+                    .borrow()
+                    .contains_key(&(adt.did, Self::adt_substs_types(substs))) =>
+            {
+                let key = (adt.did, Self::adt_substs_types(substs));
+                let fields = self.struct_layouts.borrow().get(&key).unwrap().clone();
                 lir::LirType::Struct {
                     fields: fields
                         .iter()
@@ -6290,44 +6380,21 @@ impl LirGenerator {
                     name: None,
                 }
             }
-            TyKind::Adt(adt, substs) if self.lookup_mir_layout(&adt.did).is_some() => {
-                if substs.iter().any(|arg| {
-                    matches!(
-                        arg,
-                        mir::ty::GenericArg::Type(ty)
-                            if matches!(ty.kind, TyKind::Infer(_))
-                    )
-                }) {
-                    panic!(
-                        "MIR-to-LIR ICE: unresolved ADT substitution for {}: {:?}",
-                        adt.did, ty
-                    );
-                }
-                let field_tys = self.lookup_mir_layout(&adt.did).unwrap();
-                let fields: Vec<Option<lir::LirType>> = field_tys
-                    .iter()
-                    .map(|ty| Some(self.lir_type_from_ty(ty)))
-                    .collect();
-                let struct_fields: Vec<lir::LirType> =
-                    fields.iter().map(|f| f.clone().unwrap()).collect();
-                self.struct_layouts.borrow_mut().insert(adt.did, fields);
-                lir::LirType::Struct {
-                    fields: struct_fields,
-                    packed: false,
-                    name: None,
-                }
-            }
             TyKind::Adt(adt, substs) => {
-                let key = {
-                    let substs_types: Vec<mir::Ty> = substs
-                        .iter()
-                        .filter_map(|a| match a {
-                            mir::ty::GenericArg::Type(t) => Some(t.clone()),
-                            _ => None,
-                        })
-                        .collect();
-                    (adt.did, substs_types)
-                };
+                let key = (adt.did, Self::adt_substs_types(substs));
+                // `full_layouts` is checked before the legacy `mir_layouts`/
+                // `lookup_mir_layout` channel below on purpose: it's keyed
+                // by `(DefId, substs)` (like `struct_layouts` above), so two
+                // different instantiations of the same generic struct (e.g.
+                // `Vec<u8>` vs. `Vec<Value>`) get distinct entries.
+                // `mir_layouts` is keyed by bare `DefId` — built by
+                // `all_adt_field_tys()` collapsing *every* instantiation of
+                // a generic struct into one entry (last-write-wins, in
+                // whatever order its source `HashMap` happens to iterate),
+                // so consulting it first would nondeterministically hand
+                // back a randomly-chosen *other* instantiation's field
+                // list. Keep it only as a fallback for defs `full_layouts`
+                // doesn't know about at all.
                 if let Some(field_tys) = self.full_layouts.get(&key) {
                     let fields: Vec<Option<lir::LirType>> = field_tys
                         .iter()
@@ -6335,7 +6402,34 @@ impl LirGenerator {
                         .collect();
                     let struct_fields: Vec<lir::LirType> =
                         fields.iter().map(|f| f.clone().unwrap()).collect();
-                    self.struct_layouts.borrow_mut().insert(adt.did, fields);
+                    self.struct_layouts.borrow_mut().insert(key, fields);
+                    return lir::LirType::Struct {
+                        fields: struct_fields,
+                        packed: false,
+                        name: None,
+                    };
+                }
+                if self.lookup_mir_layout(&adt.did).is_some() {
+                    if substs.iter().any(|arg| {
+                        matches!(
+                            arg,
+                            mir::ty::GenericArg::Type(ty)
+                                if matches!(ty.kind, TyKind::Infer(_))
+                        )
+                    }) {
+                        panic!(
+                            "MIR-to-LIR ICE: unresolved ADT substitution for {}: {:?}",
+                            adt.did, ty
+                        );
+                    }
+                    let field_tys = self.lookup_mir_layout(&adt.did).unwrap();
+                    let fields: Vec<Option<lir::LirType>> = field_tys
+                        .iter()
+                        .map(|ty| Some(self.lir_type_from_ty(ty)))
+                        .collect();
+                    let struct_fields: Vec<lir::LirType> =
+                        fields.iter().map(|f| f.clone().unwrap()).collect();
+                    self.struct_layouts.borrow_mut().insert(key, fields);
                     return lir::LirType::Struct {
                         fields: struct_fields,
                         packed: false,
@@ -6351,7 +6445,7 @@ impl LirGenerator {
                             .collect();
                         let struct_fields: Vec<lir::LirType> =
                             fields.iter().map(|f| f.clone().unwrap()).collect();
-                        self.struct_layouts.borrow_mut().insert(adt.did, fields);
+                        self.struct_layouts.borrow_mut().insert(key, fields);
                         return lir::LirType::Struct {
                             fields: struct_fields,
                             packed: false,

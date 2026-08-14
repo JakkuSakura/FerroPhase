@@ -36,7 +36,7 @@ impl String {
             self.capacity = new_capacity;
         }
         let dest = (self.ptr as i64 + self.len) as *mut u8;
-        ::libc::memcpy(dest, s, add_len as u64);
+        ::libc::memcpy(dest as *mut void, s.as_ptr() as *const void, add_len as u64);
         self.len = new_len;
     }
 
@@ -66,6 +66,13 @@ impl String {
 
 impl str {
     pub fn len(&self) -> usize { compile_error!("compiler intrinsic") }
+
+    /// Raw data pointer — only safe to pass to a C function that also
+    /// receives an explicit length (e.g. `write`/`memcpy`'s buffer
+    /// parameters). Never NUL-terminated; do not pass this to a C function
+    /// that scans for a NUL terminator (use a `c"..."` literal or a real
+    /// `CString`-style constructor for those instead).
+    pub fn as_ptr(&self) -> *const u8 { compile_error!("compiler intrinsic") }
 
     pub fn starts_with(&self, prefix: &str) -> bool {
         compile_error!("compiler intrinsic")

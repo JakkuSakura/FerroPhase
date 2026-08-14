@@ -3514,11 +3514,10 @@ impl MirLowering {
             hir::TypeExprKind::Ptr(inner) => {
                 let inner_ty = self.lower_type_expr_with_context(inner, method_context);
                 Ty {
-                    kind: TyKind::Ref(
-                        mir::ty::Region::ReErased,
-                        Box::new(inner_ty),
-                        Mutability::Mut,
-                    ),
+                    kind: TyKind::RawPtr(TypeAndMut {
+                        ty: Box::new(inner_ty),
+                        mutbl: Mutability::Not,
+                    }),
                 }
             }
             _ => self.lower_type_expr(ty_expr),
@@ -5392,11 +5391,10 @@ impl MirLowering {
             hir::TypeExprKind::Ptr(inner) => {
                 let inner_ty = self.lower_type_expr_with_substs(inner, substs);
                 Ty {
-                    kind: TyKind::Ref(
-                        mir::ty::Region::ReErased,
-                        Box::new(inner_ty),
-                        Mutability::Mut,
-                    ),
+                    kind: TyKind::RawPtr(TypeAndMut {
+                        ty: Box::new(inner_ty),
+                        mutbl: Mutability::Not,
+                    }),
                 }
             }
             hir::TypeExprKind::Path(path) => {
@@ -7557,6 +7555,59 @@ impl MirLowering {
         }
     }
 
+    /// Replaces bare generic-param references (`TyKind::Param`) inside an
+    /// already-lowered `Ty` with their concrete substitution, recursing
+    /// through the same structural positions `has_unresolved_ty` checks.
+    /// Used to repair a typeck-cached type recovered from a generic body's
+    /// *abstract* (unspecialized) type-check pass once a concrete
+    /// `type_substs` mapping is available for this call's monomorphization.
+    fn substitute_ty(&self, ty: &Ty, substs: &HashMap<String, Ty>) -> Ty {
+        match &ty.kind {
+            TyKind::Param(param) => substs.get(param.name.as_str()).cloned().unwrap_or_else(|| ty.clone()),
+            TyKind::Ref(region, inner, mutbl) => Ty {
+                kind: TyKind::Ref(
+                    region.clone(),
+                    Box::new(self.substitute_ty(inner, substs)),
+                    *mutbl,
+                ),
+            },
+            TyKind::RawPtr(type_and_mut) => Ty {
+                kind: TyKind::RawPtr(TypeAndMut {
+                    ty: Box::new(self.substitute_ty(&type_and_mut.ty, substs)),
+                    mutbl: type_and_mut.mutbl,
+                }),
+            },
+            TyKind::Slice(inner) => Ty {
+                kind: TyKind::Slice(Box::new(self.substitute_ty(inner, substs))),
+            },
+            TyKind::Array(inner, len) => Ty {
+                kind: TyKind::Array(Box::new(self.substitute_ty(inner, substs)), len.clone()),
+            },
+            TyKind::Tuple(elements) => Ty {
+                kind: TyKind::Tuple(
+                    elements
+                        .iter()
+                        .map(|elem| Box::new(self.substitute_ty(elem, substs)))
+                        .collect(),
+                ),
+            },
+            TyKind::Adt(adt, args) => Ty {
+                kind: TyKind::Adt(
+                    adt.clone(),
+                    args.iter()
+                        .map(|arg| match arg {
+                            mir::ty::GenericArg::Type(inner) => {
+                                mir::ty::GenericArg::Type(self.substitute_ty(inner, substs))
+                            }
+                            other => other.clone(),
+                        })
+                        .collect(),
+                ),
+            },
+            _ => ty.clone(),
+        }
+    }
+
     fn ensure_runtime_stub(&mut self, name: &str, sig: &mir::FunctionSig) {
         let sanitized = self.sanitize_function_sig(sig);
         self.runtime_functions.insert(name.to_string(), sanitized);
@@ -8630,7 +8681,19 @@ impl<'a> BodyBuilder<'a> {
             }
         }
         if let Some(ty) = self.lowering.typeck_type_exprs.get(&ty_expr.hir_id) {
-            if !matches!(ty.kind, TyKind::Error(_)) {
+            // The type checker type-checks a generic method body once,
+            // abstractly, before any monomorphization exists as a concept —
+            // its cached type for a bare generic-param reference inside
+            // that body (e.g. `*mut T` in `Vec<T>::index`) is genuinely
+            // `T`, unsubstituted. Trusting it here, while lowering *this*
+            // call's specialized body (`type_substs` populated, e.g.
+            // `T -> &str`), would leak that unresolved placeholder straight
+            // into typed MIR. Only use the cached type when it doesn't
+            // still contain something `type_substs` would otherwise
+            // resolve.
+            let trust_cache = !matches!(ty.kind, TyKind::Error(_))
+                && (self.type_substs.is_empty() || !self.lowering.has_unresolved_ty(ty));
+            if trust_cache {
                 return ty.clone();
             }
         }
@@ -10816,7 +10879,8 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn implicit_local_init_ty(&self, expr: &hir::Expr) -> Result<Ty> {
-        self.lowering
+        let ty = self
+            .lowering
             .typeck_exprs
             .get(&expr.hir_id)
             .cloned()
@@ -10825,7 +10889,17 @@ impl<'a> BodyBuilder<'a> {
                     "missing HIR type for local initializer {}",
                     expr.hir_id
                 ))
-            })
+            })?;
+        // Same concern as `lower_type_expr`'s typeck-cache check: the type
+        // checker's cached type for this initializer expression comes from
+        // type-checking the generic body once, abstractly — inside a
+        // monomorphized specialization (`type_substs` populated), a bare
+        // generic-param reference in that cached type (e.g. `*mut T`) is
+        // unresolved and must be substituted, not returned as-is.
+        if !self.type_substs.is_empty() && self.lowering.has_unresolved_ty(&ty) {
+            return Ok(self.lowering.substitute_ty(&ty, &self.type_substs));
+        }
+        Ok(ty)
     }
 
     fn lower_inner_item(&mut self, item: &hir::Item) -> Result<()> {
@@ -13202,7 +13276,20 @@ impl<'a> BodyBuilder<'a> {
             }
             if explicit_args.is_empty() {
                 if let Some(args) = self.lowering.typeck_generic_call_args.get(&expr.hir_id) {
-                    explicit_args = args.clone();
+                    // The type checker's own cached inference for this call
+                    // can itself be an unbound placeholder (e.g. a
+                    // generic-impl associated function called with no
+                    // receiver/args to unify against, like `Vec::<T>::new()`
+                    // — typeck has nothing to infer `T` from at that point
+                    // either, and caches the impl's own literal `T`).
+                    // Trusting that blindly would skip the destination-type
+                    // fallback inference below, which *can* resolve it (the
+                    // call's own `let x: Vec<str> = ...` annotation). Only
+                    // trust the cached args when none of them are still
+                    // unresolved.
+                    if !args.iter().any(|ty| self.lowering.has_unresolved_ty(ty)) {
+                        explicit_args = args.clone();
+                    }
                 }
             }
             if let Some(hir::Res::Def(def_id)) = &path.res {
@@ -14209,11 +14296,18 @@ impl<'a> BodyBuilder<'a> {
             Some((place, _ty)) => {
                 let result_ty = sig.output.clone();
                 let struct_def = associated_struct.or_else(|| self.struct_def_from_ty(&result_ty));
-                if (place.local as usize) < self.locals.len() {
+                // Only the call's *own* result type is `result_ty` — if
+                // `place` is a projection (e.g. `self.inner = f()`, a field
+                // of a larger local), `place.local` names the *base* local
+                // (`self`), not the destination value itself. Overwriting
+                // `locals[place.local].ty`/`local_structs` here would
+                // silently replace that base local's own declared type with
+                // the call's unrelated result type.
+                if place.projection.is_empty() && (place.local as usize) < self.locals.len() {
                     self.locals[place.local as usize].ty = result_ty.clone();
-                }
-                if let Some(def_id) = struct_def {
-                    self.local_structs.insert(place.local, def_id);
+                    if let Some(def_id) = struct_def {
+                        self.local_structs.insert(place.local, def_id);
+                    }
                 }
                 let info = PlaceInfo {
                     place: place.clone(),
@@ -14248,12 +14342,12 @@ impl<'a> BodyBuilder<'a> {
         if place_info.is_none() {
             if let Some((place, _)) = mir_destination {
                 let result_ty = sig.output.clone();
-                if (place.local as usize) < self.locals.len() {
+                if place.projection.is_empty() && (place.local as usize) < self.locals.len() {
                     self.locals[place.local as usize].ty = result_ty.clone();
-                }
-                let struct_def = associated_struct.or_else(|| self.struct_def_from_ty(&result_ty));
-                if let Some(def_id) = struct_def {
-                    self.local_structs.insert(place.local, def_id);
+                    let struct_def = associated_struct.or_else(|| self.struct_def_from_ty(&result_ty));
+                    if let Some(def_id) = struct_def {
+                        self.local_structs.insert(place.local, def_id);
+                    }
                 }
             }
         }
@@ -18953,6 +19047,80 @@ impl<'a> BodyBuilder<'a> {
                 if let Some(def_id) = self.lowering.typeck_method_resolutions.get(&expr.hir_id) {
                     if let Some(info) = self.lowering.method_lookup_by_def.get(def_id) {
                         resolved_info = Some((info.clone(), None));
+                    }
+                }
+
+                // `str::len`/`str::as_ptr` (`crates/fp-lang/src/std/string/
+                // mod.fp`'s `impl str { .. }`) are `compile_error!("compiler
+                // intrinsic")`-marked stubs — `str` has no `.fp`-visible
+                // fields to read a real body from, so `function_body_is_
+                // compiler_intrinsic_marker` drops their HIR body to `None`
+                // (`ast_to_hir/items.rs:294-296`). They're still registered
+                // into `method_lookup_by_def` like any other non-generic
+                // impl method, so without this check `resolved_info` above
+                // would already be `Some`, and the plain-call path below
+                // would emit a `Call` to that empty-bodied function (which
+                // has no lowered statements — `BodyBuilder::lower` skips
+                // lowering entirely when `function.body` is `None` — so its
+                // return "value" would be whatever's left in its
+                // uninitialized return-place local, not the real length or
+                // pointer). Intercept by name here — before `resolved_info`
+                // is consumed — and compute the real value directly from
+                // the receiver's own slice-shaped place, reusing the same
+                // `lower_slice_len_place`/`lower_slice_ptr_place` helpers
+                // the hand-written env/fs intrinsics already use.
+                let str_intrinsic_name = |name: &str| -> Option<bool> {
+                    if name == "len" || name.ends_with("::len") {
+                        Some(true)
+                    } else if name == "as_ptr" || name.ends_with("::as_ptr") {
+                        Some(false)
+                    } else {
+                        None
+                    }
+                };
+                if let Some(is_len) = str_intrinsic_name(method_name.as_str()) {
+                    if let Some(receiver_place) = self.lower_place(receiver)? {
+                        let mut base_ty = receiver_place.ty.clone();
+                        let mut base_place = receiver_place.place.clone();
+                        loop {
+                            match &base_ty.kind {
+                                TyKind::Ref(_, inner, _) => {
+                                    base_place.projection.push(mir::PlaceElem::Deref);
+                                    base_ty = inner.as_ref().clone();
+                                }
+                                TyKind::RawPtr(type_and_mut) => {
+                                    base_place.projection.push(mir::PlaceElem::Deref);
+                                    base_ty = type_and_mut.ty.as_ref().clone();
+                                }
+                                _ => break,
+                            }
+                        }
+                        if let TyKind::Slice(_) = &base_ty.kind {
+                            let (field_place, declared_ty) = if is_len {
+                                (
+                                    self.lower_slice_len_place(base_place),
+                                    Ty {
+                                        kind: TyKind::Uint(UintTy::Usize),
+                                    },
+                                )
+                            } else {
+                                (
+                                    self.lower_slice_ptr_place(base_place),
+                                    self.lowering.raw_string_ptr_ty(),
+                                )
+                            };
+                            if (place.local as usize) < self.locals.len() {
+                                self.locals[place.local as usize].ty = declared_ty;
+                            }
+                            self.push_statement(mir::Statement {
+                                source_info: expr.span,
+                                kind: mir::StatementKind::Assign(
+                                    place,
+                                    mir::Rvalue::Use(mir::Operand::copy(field_place)),
+                                ),
+                            });
+                            return Ok(());
+                        }
                     }
                 }
 
