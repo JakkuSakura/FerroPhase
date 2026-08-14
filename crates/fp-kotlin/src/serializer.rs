@@ -2060,6 +2060,13 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                     // `is_known_string_receiver`/`is_known_enum_receiver`).
                     let is_clone_dropped = sel.field.name.as_str() == "clone"
                         && (is_known_string_receiver(&sel.obj, e) || is_known_enum_receiver(&sel.obj, e));
+                    // `str::parse::<T>()` needs Kotlin's `.toLong()` — but a user's own
+                    // inherent/associated method that happens to be named `parse` (e.g. a
+                    // winnow-combinator-style `RefNode::parse`) is a different, unrelated
+                    // function that must stay `.parse(...)` unchanged. Only the real
+                    // `String`-receiver case gets the numeric-string mapping.
+                    let is_string_parse = sel.field.name.as_str() == "parse"
+                        && is_known_string_receiver(&sel.obj, e);
                     // `map_kt_method`'s fallthrough (no entry for this Rust
                     // name) returns the name unchanged — that's fine for a
                     // known bare-property mapping (`len` → `length`, no
@@ -2083,6 +2090,8 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                         "indexOf".to_string()
                     } else if is_clone_dropped {
                         "".to_string()
+                    } else if is_string_parse {
+                        "toLong()".to_string()
                     } else {
                         let mapped = map_kt_method(sel.field.name.as_str());
                         is_unmapped_passthrough = mapped == sel.field.name.as_str();
@@ -2823,7 +2832,6 @@ fn map_kt_method(name: &str) -> String {
         "to_lowercase" => "lowercase()".into(),
         "starts_with" => "startsWith".into(),
         "ends_with" => "endsWith".into(),
-        "parse" => "toLong()".into(),
         "rfind" => "lastIndexOf".into(),
         "clone" => "copy()".into(),
         "from" => "of".into(),
