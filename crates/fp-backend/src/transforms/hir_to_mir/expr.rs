@@ -3666,7 +3666,6 @@ impl MirLowering {
     /// failure here is reported, not fatal.
     fn register_const_block_comptime_entry(
         &mut self,
-        program: &hir::Program,
         expr_hir_id: hir::HirId,
         const_block: &hir::ExprConstBlock,
         span: Span,
@@ -3684,7 +3683,7 @@ impl MirLowering {
         };
         let key = self.const_key(name.as_str(), span);
         let def_id = self.next_synthetic_def_id();
-        match self.lower_executable_const(program, def_id, &konst, ty, key) {
+        match self.lower_executable_const(def_id, &konst, ty, key) {
             Ok(mir_item) => self.extra_items.push(mir_item),
             Err(error) => self.emit_warning(
                 span,
@@ -16044,7 +16043,6 @@ impl<'a> BodyBuilder<'a> {
                 // arbitrary code (method calls, etc.), not a hand-rolled
                 // subset-of-Rust evaluator.
                 self.lowering.register_const_block_comptime_entry(
-                    self.program,
                     expr.hir_id,
                     const_block,
                     expr.span,

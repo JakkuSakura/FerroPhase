@@ -582,7 +582,6 @@ impl CompilerDriver {
                         &fqp,
                         &current_package_id,
                         &full_layouts,
-                        &adt_defs,
                         &opaque_payload_sizes,
                     ) {
                         Ok(lir_id) => {
