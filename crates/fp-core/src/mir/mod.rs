@@ -77,6 +77,14 @@ pub struct ExecutableConst {
     pub body_id: BodyId,
     pub key: String,
     pub span: Span,
+    /// The originating `const { .. }` expression's `HirId`, when this
+    /// executable const was synthesized from one (see
+    /// `register_const_block_comptime_entry`) — `None` for an ordinary
+    /// top-level `const` item. Carried through to `lir::LirComptimeEntry`
+    /// so the driver can associate an interpreted comptime value back with
+    /// the exact `ComptimeRequest` that needs it, without re-deriving that
+    /// identity from a name string.
+    pub const_block_hir_id: Option<crate::hir::HirId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

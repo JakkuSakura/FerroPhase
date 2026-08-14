@@ -98,10 +98,24 @@ pub struct TypingContext {
     /// driver drains this queue and completes each request; the result is
     /// delivered to the awaiting checker rather than read from a cache.
     comptime_requests: RefCell<VecDeque<PendingComptimeRequest>>,
+
+    /// The one shared task pool every suspendable unit of compiler work
+    /// runs through, from HIR typing (one task per item, so a same-package
+    /// forward reference resolves by awaiting that item's own task instead
+    /// of depending on textual order) up through HIR->MIR/MIR->LIR
+    /// per-item lowering and comptime resolution. Living in `fp-core`
+    /// (`fp_core::executor`) is what lets `fp-typing` hold the same
+    /// executor instance the driver (`fp-compiler`) and `fp-backend` also
+    /// hold, without a circular crate dependency.
+    pub executor: fp_core::executor::ExecutorHandle,
 }
 
 impl TypingContext {
-    pub fn new(data_layout: LirDataLayout, env_ctx: std::rc::Rc<WorkspaceContext>) -> Self {
+    pub fn new(
+        data_layout: LirDataLayout,
+        env_ctx: std::rc::Rc<WorkspaceContext>,
+        executor: fp_core::executor::ExecutorHandle,
+    ) -> Self {
         Self {
             data_layout,
             resolved_consts: RefCell::new(HashMap::new()),
@@ -111,6 +125,7 @@ impl TypingContext {
             comptime_wakers: RefCell::new(HashMap::new()),
             ready_generics: RefCell::new(HashMap::new()),
             comptime_requests: RefCell::new(VecDeque::new()),
+            executor,
         }
     }
 
@@ -186,6 +201,7 @@ mod tests {
             std::rc::Rc::new(WorkspaceContext::new(std::sync::Arc::new(
                 fp_core::package::provider::EmptyProvider,
             ))),
+            fp_core::executor::CompilerExecutor::new().handle(),
         );
         let request = ComptimeRequest {
             program: fp_core::hir::Program::new(),

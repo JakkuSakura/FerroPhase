@@ -8,10 +8,9 @@ use fp_core::package::PackageId;
 use fp_core::span::Span;
 use fp_interpret::LirInterpreter;
 use fp_lang::FerroIntrinsicNormalizer;
-use fp_typing::{HirTypeChecker, TypingContext};
+use fp_typing::TypingContext;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::future::Future;
 use std::task::{Context, Poll, Waker};
 use std::rc::Rc;
 
@@ -69,8 +68,8 @@ impl CompilerDriver {
         tasks: ExecutorHandle,
         workspace: Rc<fp_core::workspace::WorkspaceContext>,
     ) -> Self {
-        let mut state = CompilerState::new(data_layout.clone(), tasks);
-        state.typing_ctx = Rc::new(TypingContext::new(data_layout, workspace));
+        let mut state = CompilerState::new(data_layout.clone(), tasks.clone());
+        state.typing_ctx = Rc::new(TypingContext::new(data_layout, workspace, tasks));
         Self {
             state,
             interpreter: LirInterpreter::new(),
@@ -150,6 +149,7 @@ impl CompilerDriver {
         self.state.typing_ctx = Rc::new(TypingContext::new(
             parent_context.data_layout.clone(),
             Rc::new(package_workspace),
+            parent_context.executor.clone(),
         ));
         Ok(())
     }
@@ -325,6 +325,7 @@ impl CompilerDriver {
         self.state.typing_ctx = Rc::new(TypingContext::new(
             parent_context.data_layout.clone(),
             Rc::new(package_workspace),
+            parent_context.executor.clone(),
         ));
 
         let result: Result<Rc<RefCell<fp_core::package::CompiledPackage>>, CompilerDriverError> =
@@ -388,7 +389,9 @@ impl CompilerDriver {
                 // not propagated, since the Kotlin backend never consumes the resolved
                 // value (only the block's type, already known independent of this).
                 if matches!(self.pipeline, PipelineMode::Native | PipelineMode::TypecheckedTranspile) {
-                    let mut units = self.compile_items_to_lir_units(&package).await?;
+                    let mut units = self
+                        .compile_items_to_lir_units(&package, &HashMap::new())
+                        .await?;
                     if !units.is_empty() {
                         Self::publish_lir_units(&package, package_id, &units)?;
 
@@ -454,6 +457,7 @@ impl CompilerDriver {
     async fn compile_items_to_lir_units(
         &mut self,
         package: &Rc<RefCell<fp_core::package::CompiledPackage>>,
+        resolved_block_values: &HashMap<hir::HirId, Value>,
     ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
         let hir_package_id = self
             .state
@@ -501,7 +505,7 @@ impl CompilerDriver {
             }
         }
         let (hir_program, typeck_results) = self
-            .type_check_program(hir_program)
+            .type_check_program(hir_program, resolved_block_values)
             .await
             .map_err(|error| {
                 CompilerDriverError::InternalCompilerError(format!(
@@ -712,15 +716,26 @@ impl CompilerDriver {
         }])
     }
 
+    /// Type-checks `program`, answering each `const { .. }` block's
+    /// `ComptimeRequest` from `resolved_block_values` (this package's
+    /// comptime fixpoint accumulator — see `compile_package`) when a real
+    /// value is already known for that block's `expression_id`, falling
+    /// back to the `Value::Undefined` placeholder otherwise. Either way
+    /// typing itself keeps moving: neither `ConstBlock` arm in
+    /// `hir_typeck.rs` needs the resolved *value* to determine its own
+    /// *type* (that comes from checking the body independently) — the
+    /// value only matters for embedding a real constant later and (for a
+    /// type-position block) making a comptime-produced type visible to
+    /// later code, both of which the fixpoint loop's later passes handle
+    /// once the real value is known.
     async fn type_check_program(
         &mut self,
         program: hir::Program,
+        resolved_block_values: &HashMap<hir::HirId, Value>,
     ) -> fp_core::Result<(hir::Program, fp_typing::TypeckResults)> {
-        let mut future = Box::pin(
-            HirTypeChecker::new(program)
-                .with_context(self.state.typing_ctx.clone())
-                .check(),
-        );
+        let context = self.state.typing_ctx.clone();
+        let (shared, mut future) =
+            fp_typing::spawn_package_typecheck(program, Some(context.clone()));
         loop {
             let poll = {
                 let waker = Waker::noop();
@@ -728,42 +743,61 @@ impl CompilerDriver {
                 future.as_mut().poll(&mut cx)
             };
             match poll {
-                Poll::Ready(result) => return result,
+                Poll::Ready(result) => {
+                    result?;
+                    return Ok(fp_typing::finish_package_typecheck(&shared));
+                }
                 Poll::Pending => {
+                    // Drive whichever per-item typecheck tasks are ready —
+                    // this is what lets one item's task (e.g. a same-package
+                    // `const` referencing another declared later in
+                    // `program.items`) await another item's task and make
+                    // real progress, instead of depending on textual order.
+                    let mut progressed = false;
+                    while context.executor.tick().is_some() {
+                        progressed = true;
+                    }
                     let requests = self.state.typing_ctx.take_comptime_requests();
-                    if requests.is_empty() {
+                    if !requests.is_empty() {
+                        progressed = true;
+                        for request in requests {
+                            let expression_id = request.request().expression_id;
+                            let value = resolved_block_values
+                                .get(&expression_id)
+                                .cloned()
+                                .unwrap_or(Value::Undefined(fp_core::ast::ValueUndefined));
+                            request.complete(Ok(value));
+                        }
+                    }
+                    if !progressed {
+                        if context.executor.has_parked_tasks() {
+                            return Err(fp_core::error::Error::from(
+                                "HIR type checking stalled: a genuine dependency cycle among \
+                                 same-package items (or comptime blocks) prevented further progress",
+                            ));
+                        }
                         return Err(fp_core::error::Error::from(
                             "HIR type checking suspended without a comptime request",
                         ));
-                    }
-                    // A `const { .. }` block's own TYPE (what typing
-                    // actually needs to keep going) is already known from
-                    // typing its body — neither `ConstBlock` arm in
-                    // `hir_typeck.rs` uses the resolved *value* for
-                    // anything but `results.const_block_values`, a side
-                    // channel MIR lowering already tolerates being absent
-                    // (falls back to lowering the block as ordinary
-                    // runtime code). Real, interpreter-backed evaluation
-                    // happens later, once this package's own MIR/LIR
-                    // exists (see `register_const_block_comptime_entry` +
-                    // `evaluate_comptime_lir`) — typecheck itself never
-                    // needs to evaluate anything, so every request is
-                    // completed immediately with an opaque placeholder
-                    // rather than a hand-rolled, inevitably incomplete
-                    // AST interpreter.
-                    for request in requests {
-                        request.complete(Ok(Value::Undefined(fp_core::ast::ValueUndefined)));
                     }
                 }
             }
         }
     }
 
+    /// Interprets every comptime entry in `lir_id`'s `LirProgram` for real
+    /// and returns each const block's resolved value keyed by its own
+    /// `HirId` (`LirComptimeEntry::const_block_hir_id`, threaded through
+    /// structurally from `register_const_block_comptime_entry` via
+    /// `mir::ExecutableConst`) — the bridge that lets the driver's comptime
+    /// fixpoint loop (`compile_package`) feed real values back into the
+    /// *next* `type_check_program` pass instead of the `Value::Undefined`
+    /// placeholder every request used to get.
     async fn evaluate_comptime_lir(
         &mut self,
         lir_id: &LirId,
         path: &FullyQualifiedPath,
-    ) -> Result<usize, CompilerDriverError> {
+    ) -> Result<HashMap<hir::HirId, Value>, CompilerDriverError> {
         let lir = self.state.lir(lir_id)?.clone();
         // Only `comptime_entries` is needed after `lir` itself is moved into
         // `all_units` below — clone just that (much smaller than the whole
@@ -785,7 +819,7 @@ impl CompilerDriver {
         if comptime_entries.is_empty() {
             self.state
                 .insert_const_value(value_id.clone(), Value::unit());
-            return Ok(0);
+            return Ok(HashMap::new());
         }
         // Query each package's own `lir_workspace` directly instead of
         // cloning every artifact from every dependency into one throwaway
@@ -823,6 +857,7 @@ impl CompilerDriver {
 
         let mut count = 0usize;
         let mut last = Value::unit();
+        let mut block_values: HashMap<hir::HirId, Value> = HashMap::new();
         self.interpreter = LirInterpreter::new();
         let resolved = self.collect_resolved_const_values();
         self.interpreter
@@ -874,6 +909,9 @@ impl CompilerDriver {
                 .insert_resolved_const_value(entry.key.clone(), constant);
             self.state
                 .insert_typing_const(entry.key.clone(), value.clone());
+            if let Some(hir_id) = entry.const_block_hir_id {
+                block_values.insert(hir_id, value.clone());
+            }
             let mut newly_resolved = HashMap::new();
             newly_resolved.insert(entry.key.clone(), value.clone());
             self.interpreter
@@ -884,9 +922,9 @@ impl CompilerDriver {
         }
 
         // Store the final value for const evaluation purposes
-
+        let _ = count;
         self.state.insert_const_value(value_id.clone(), last);
-        Ok(count)
+        Ok(block_values)
     }
 
     fn extract_struct_type(value: &Value) -> Option<TypeStruct> {

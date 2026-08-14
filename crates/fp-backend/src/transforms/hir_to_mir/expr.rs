@@ -3681,7 +3681,7 @@ impl MirLowering {
             Some(&ty),
             container_args.as_ref(),
         ) else {
-            return self.lower_executable_const(def_id, konst, ty, key);
+            return self.lower_executable_const(def_id, konst, ty, key, None);
         };
         let init = mir::Operand::Constant(init_constant.clone());
 
@@ -3715,6 +3715,7 @@ impl MirLowering {
         konst: &hir::Const,
         ty: Ty,
         key: String,
+        const_block_hir_id: Option<hir::HirId>,
     ) -> Result<mir::Item> {
         self.executable_consts
             .insert(def_id, (mir::Symbol::from(&konst.name), ty.clone()));
@@ -3768,6 +3769,7 @@ impl MirLowering {
                 body_id,
                 key,
                 span: konst.body.value.span,
+                const_block_hir_id,
             }),
         };
         self.next_mir_id += 1;
@@ -3803,7 +3805,7 @@ impl MirLowering {
         };
         let key = self.const_key(name.as_str(), span);
         let def_id = self.next_synthetic_def_id();
-        match self.lower_executable_const(def_id, &konst, ty, key) {
+        match self.lower_executable_const(def_id, &konst, ty, key, Some(expr_hir_id)) {
             Ok(mir_item) => self.extra_items.push(mir_item),
             Err(error) => self.emit_warning(
                 span,

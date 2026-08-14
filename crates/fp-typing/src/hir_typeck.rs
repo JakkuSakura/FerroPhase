@@ -1,36 +1,34 @@
 use fp_core::ast::{DecimalType, TypeInt, TypePrimitive};
 use fp_core::error::{Error, Result};
+use fp_core::executor::{ExecutorHandle, TaskHandle};
 use fp_core::hir;
 use fp_core::hir::ty::{self, AdtDef, AdtFlags, GenericArg, ReprFlags, ReprOptions, Ty, TyKind};
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::future::Future;
 use std::ops::{Deref, DerefMut};
+use std::pin::Pin;
 
 use crate::TypingContext;
 use crate::types::{GenericCallResolution, TypeckResults};
 use std::rc::Rc;
 
-/// Type checks resolved HIR and records semantic types outside the source tree.
-/// This is deliberately a side-table pass: HIR nodes remain source-shaped and
-/// MIR lowering can consume the results without an AST round trip.
-pub struct HirTypeChecker {
-    program: hir::Program,
-    results: TypeckResults,
-    locals: Vec<HashMap<hir::Symbol, Ty>>,
-    generic_scopes: Vec<HashMap<hir::DefId, Ty>>,
-    self_types: Vec<Ty>,
-    /// The current impl block's own associated-type bindings (`type
-    /// Target = Y;`), pushed/popped in lockstep with `self_types` — lets
-    /// `path_ty` resolve `Self::Target` for code lexically inside that
-    /// impl. Deliberately scoped to the impl's own bindings only (no
-    /// trait-default fallback, no cross-impl projection resolution for
-    /// code outside the impl) — see `impl_assoc_types`.
-    assoc_types: Vec<HashMap<hir::Symbol, Ty>>,
+/// State shared by every per-item type-checking task spawned for one
+/// package's HIR (see `typecheck_item`) — as opposed to `HirTypeChecker`'s
+/// own fields (`locals`, `generic_scopes`, ...), which are scoped to the
+/// single item currently being checked and must NOT be shared, since
+/// multiple items' checks can be concurrently in-flight (one suspended
+/// awaiting another's task) on the same `ExecutorHandle`.
+pub struct TypingShared {
+    program: Rc<hir::Program>,
+    /// Every item task writes its own contribution here as it finishes;
+    /// another item's task awaiting this one (see `expr_path_ty`'s
+    /// same-package `Const` lookup) reads back through the same cell —
+    /// this is what makes same-package forward references resolve
+    /// regardless of `program.items`' textual order.
+    results: RefCell<TypeckResults>,
     typing_context: Option<Rc<TypingContext>>,
-    expected_expr_types: Vec<Ty>,
-    /// Type-position `const { ... }` blocks encountered while checking
-    /// types (which is synchronous). Resolved via comptime once the main
-    /// item walk finishes; see `resolve_pending_type_const_blocks`.
-    pending_type_const_blocks: Vec<(hir::HirId, hir::Expr)>,
+    executor: ExecutorHandle,
     /// Lazily-built, memoized snapshot of every item `method_output` scans
     /// to find a method's owning `impl` — this program's own items plus
     /// every other loaded package's (`typing_context`'s `env_ctx::
@@ -40,8 +38,11 @@ pub struct HirTypeChecker {
     /// (whole HIR programs, for every other package) from scratch on every
     /// single call — for a large program (e.g. the vendored std library)
     /// this made every method call pay an O(workspace size) cost. Built
-    /// once, reused (as a cheap `Rc` clone) for the rest of the check.
-    impl_lookup_items: Option<Rc<Vec<hir::Item>>>,
+    /// once (shared across every item's task, since it's expensive,
+    /// read-only-once-built, and doesn't depend on which item is currently
+    /// being checked), reused as a cheap `Rc` clone for the rest of the
+    /// check.
+    impl_lookup_items: RefCell<Option<Rc<Vec<hir::Item>>>>,
     /// Lazily-built, memoized fast-reject index over `impl_lookup_items`:
     /// for every `impl` item whose self-type is a resolved nominal path
     /// (`TypeExprKind::Path` with `Res::Def(def_id)` — a struct/enum's own
@@ -57,7 +58,53 @@ pub struct HirTypeChecker {
     /// receiver only ever matches an impl whose self-type also resolves to
     /// `TyKind::Adt` with the same `did`), so this index lets that lookup
     /// skip straight to the real candidates.
-    impl_items_by_receiver_def: Option<Rc<HashMap<hir::DefId, Vec<usize>>>>,
+    impl_items_by_receiver_def: RefCell<Option<Rc<HashMap<hir::DefId, Vec<usize>>>>>,
+}
+
+impl TypingShared {
+    fn new(program: hir::Program, typing_context: Option<Rc<TypingContext>>) -> Rc<Self> {
+        let executor = typing_context
+            .as_ref()
+            .map(|context| context.executor.clone())
+            .unwrap_or_else(|| fp_core::executor::CompilerExecutor::new().handle());
+        Rc::new(Self {
+            program: Rc::new(program),
+            results: RefCell::new(TypeckResults::default()),
+            typing_context,
+            executor,
+            impl_lookup_items: RefCell::new(None),
+            impl_items_by_receiver_def: RefCell::new(None),
+        })
+    }
+}
+
+/// Type checks resolved HIR and records semantic types outside the side
+/// table (`TypingShared::results`, shared across every item's task). This
+/// is deliberately a side-table pass: HIR nodes remain source-shaped and
+/// MIR lowering can consume the results without an AST round trip.
+///
+/// One `HirTypeChecker` instance checks exactly one item — its fields below
+/// are the item-local recursion state (locals in scope, generic
+/// substitutions, the impl `Self` type, ...), fresh per item and never
+/// shared with another item's concurrently in-flight check. Cross-item
+/// state lives on `TypingShared` instead (`self.shared`).
+pub struct HirTypeChecker {
+    shared: Rc<TypingShared>,
+    locals: Vec<HashMap<hir::Symbol, Ty>>,
+    generic_scopes: Vec<HashMap<hir::DefId, Ty>>,
+    self_types: Vec<Ty>,
+    /// The current impl block's own associated-type bindings (`type
+    /// Target = Y;`), pushed/popped in lockstep with `self_types` — lets
+    /// `path_ty` resolve `Self::Target` for code lexically inside that
+    /// impl. Deliberately scoped to the impl's own bindings only (no
+    /// trait-default fallback, no cross-impl projection resolution for
+    /// code outside the impl) — see `impl_assoc_types`.
+    assoc_types: Vec<HashMap<hir::Symbol, Ty>>,
+    expected_expr_types: Vec<Ty>,
+    /// Type-position `const { ... }` blocks encountered while checking
+    /// types (which is synchronous). Resolved via comptime once this
+    /// item's own check finishes; see `resolve_pending_type_const_blocks`.
+    pending_type_const_blocks: Vec<(hir::HirId, hir::Expr)>,
 }
 
 struct GenericScope<'a> {
@@ -82,14 +129,14 @@ impl HirTypeChecker {
     /// Records a typing diagnostic instead of hard-aborting the whole
     /// package's typecheck over one error — mirrors `ast_to_hir`'s
     /// `error_placeholder_expr_kind` precedent (`fp-backend/src/
-    /// transforms/ast_to_hir/exprs.rs`). `self.typing_context` (already
+    /// transforms/ast_to_hir/exprs.rs`). `self.shared.typing_context` (already
     /// carried by every `HirTypeChecker`) is the real sink
     /// (`TypingContext.diagnostics`, previously never populated by
     /// anything); `typecheck_package` inspects it after the whole pass
     /// finishes to decide overall pass/fail, so this doesn't silently
     /// let a genuinely broken package look fully typed.
     fn record_error(&self, message: impl Into<String>) {
-        if let Some(context) = &self.typing_context {
+        if let Some(context) = &self.shared.typing_context {
             context
                 .diagnostics
                 .borrow_mut()
@@ -111,56 +158,137 @@ impl Drop for GenericScope<'_> {
     }
 }
 
+/// Given a `def_id` that might name an `impl`'s method/assoc-const rather
+/// than a top-level item, resolve it to the enclosing top-level item's own
+/// `def_id` — `program.def_map` only has entries for top-level items (see
+/// `expr_path_ty`'s pre-existing manual scan for the same reason), so an
+/// impl member's `def_id` needs this extra step before it can be used as a
+/// `spawn_item_task`/`typecheck_item` key. Returns `def_id` unchanged if
+/// it's already a top-level item (the common case, checked first so this
+/// stays O(1) except for actual impl members).
+fn resolve_top_level_def_id(program: &hir::Program, def_id: hir::DefId) -> hir::DefId {
+    if program.def_map.contains_key(&def_id) {
+        return def_id;
+    }
+    for item in &program.items {
+        if let hir::ItemKind::Impl(impl_item) = &item.kind {
+            if impl_item.items.iter().any(|member| member.def_id == def_id) {
+                return item.def_id;
+            }
+        }
+    }
+    def_id
+}
+
+/// Spawn one type-checking task per top-level item in `program`, sharing
+/// results/caches across them via `TypingShared` — this is what makes
+/// same-package forward references (a `const` or comptime block referring
+/// to another item later in `program.items`) resolve regardless of textual
+/// order: each item's task, on demand, awaits whatever other item it needs
+/// via `get_or_spawn`, rather than assuming the linear walk already reached
+/// it. Read the final result back out via `finish_package_typecheck` once
+/// the returned future resolves.
+pub fn spawn_package_typecheck(
+    program: hir::Program,
+    typing_context: Option<Rc<TypingContext>>,
+) -> (Rc<TypingShared>, crate::BoxFuture<'static, Result<()>>) {
+    let shared = TypingShared::new(program, typing_context);
+    let items = shared.program.items.clone();
+    let handles: Vec<_> = items
+        .iter()
+        .map(|item| spawn_item_task(&shared, item.def_id))
+        .collect();
+    let joined: crate::BoxFuture<'static, Result<()>> = Box::pin(async move {
+        for handle in handles {
+            handle.await;
+        }
+        Ok(())
+    });
+    (shared, joined)
+}
+
+/// Read the final `(hir::Program, TypeckResults)` out of `shared` — only
+/// meaningful once every task `spawn_package_typecheck` spawned has
+/// settled (i.e. its returned future resolved).
+pub fn finish_package_typecheck(shared: &Rc<TypingShared>) -> (hir::Program, TypeckResults) {
+    (
+        shared.program.as_ref().clone(),
+        shared.results.borrow().clone(),
+    )
+}
+
+/// Get-or-spawn the task that type-checks `def_id` (resolved to its
+/// enclosing top-level item first — see `resolve_top_level_def_id`),
+/// keyed so any number of dependents (another item's task, or the initial
+/// per-package spawn loop) share the same in-flight/completed attempt
+/// instead of re-checking it.
+fn spawn_item_task(shared: &Rc<TypingShared>, def_id: hir::DefId) -> TaskHandle<()> {
+    let def_id = resolve_top_level_def_id(&shared.program, def_id);
+    let key = format!("typecheck:{def_id:?}");
+    let shared = shared.clone();
+    shared
+        .executor
+        .clone()
+        .get_or_spawn(key, move || {
+            Box::pin(typecheck_item(shared, def_id)) as Pin<Box<dyn Future<Output = ()>>>
+        })
+}
+
+/// Ensure `def_id` (a same-package item referenced by whatever item is
+/// currently being checked) has been type-checked, on demand — awaiting
+/// this shares the same underlying task as every other caller asking for
+/// `def_id` (see `spawn_item_task`). A genuine cycle (this item
+/// transitively depending on the item that's awaiting it) surfaces as a
+/// stalled `ExecutorHandle` (`has_parked_tasks`), not as a hang or a wrong
+/// answer — the driver's polling loop is what turns that into a
+/// diagnostic; from this function's point of view it's just a suspend.
+pub(crate) async fn ensure_item_checked(shared: &Rc<TypingShared>, def_id: hir::DefId) {
+    spawn_item_task(shared, def_id).await
+}
+
+/// Type-check exactly one top-level item. Errors are recorded (via
+/// `record_error`, against this item specifically) rather than propagated
+/// — one item's failure never stops any other item's task from
+/// completing, which is what "a package almost never fails as a whole"
+/// means in practice.
+pub async fn typecheck_item(shared: Rc<TypingShared>, def_id: hir::DefId) {
+    let Some(item) = shared.program.def_map.get(&def_id).cloned() else {
+        return;
+    };
+    let mut checker = HirTypeChecker {
+        shared,
+        locals: vec![HashMap::new()],
+        generic_scopes: Vec::new(),
+        self_types: Vec::new(),
+        assoc_types: Vec::new(),
+        expected_expr_types: Vec::new(),
+        pending_type_const_blocks: Vec::new(),
+    };
+    if let Err(error) = checker.check_item(&item).await {
+        checker.record_error(format!("{error}"));
+        return;
+    }
+    if let Err(error) = checker.resolve_pending_type_const_blocks().await {
+        checker.record_error(format!("{error}"));
+    }
+}
+
 impl HirTypeChecker {
-    pub fn new(program: hir::Program) -> Self {
-        Self {
-            program,
-            results: TypeckResults::default(),
-            locals: vec![HashMap::new()],
-            generic_scopes: Vec::new(),
-            self_types: Vec::new(),
-            assoc_types: Vec::new(),
-            typing_context: None,
-            expected_expr_types: Vec::new(),
-            pending_type_const_blocks: Vec::new(),
-            impl_lookup_items: None,
-            impl_items_by_receiver_def: None,
-        }
-    }
-
-    pub fn with_context(mut self, context: Rc<TypingContext>) -> Self {
-        self.typing_context = Some(context);
-        self
-    }
-
-    pub fn check(self) -> crate::BoxFuture<'static, Result<(hir::Program, TypeckResults)>> {
-        Box::pin(async move { self.check_async().await })
-    }
-
-    async fn check_async(mut self) -> Result<(hir::Program, TypeckResults)> {
-        let items = self.program.items.clone();
-        for item in &items {
-            self.check_item(item).await?;
-        }
-        self.resolve_pending_type_const_blocks().await?;
-        Ok((self.program, self.results))
-    }
-
     /// Resolve `const { ... }` blocks encountered in type position
     /// (`check_type_expr` is synchronous, so it defers these rather than
-    /// awaiting inline). Structural, not name-based: anything queued here
-    /// got there solely by being a `TypeExprKind::ConstBlock` node.
+    /// awaiting inline) — scoped to the single item just checked, unlike
+    /// the old whole-program deferral this replaces.
     async fn resolve_pending_type_const_blocks(&mut self) -> Result<()> {
         let pending = std::mem::take(&mut self.pending_type_const_blocks);
         for (hir_id, body) in pending {
             let body_ty = self.check_expr(&body).await?;
-            let Some(context) = self.typing_context.clone() else {
+            let Some(context) = self.shared.typing_context.clone() else {
                 continue;
             };
             let value = context
                 .request_comptime(crate::ComptimeRequest {
-                    program: self.program.clone(),
-                    typeck_results: self.results.clone(),
+                    program: self.shared.program.as_ref().clone(),
+                    typeck_results: self.shared.results.borrow().clone(),
                     block: hir::Block {
                         hir_id,
                         stmts: Vec::new(),
@@ -174,12 +302,13 @@ impl HirTypeChecker {
                     },
                 })
                 .await?;
-            self.results.const_block_values.insert(hir_id, value);
+            let mut results = self.shared.results.borrow_mut();
+            results.const_block_values.insert(hir_id, value);
             // Replace the `Infer` placeholder `check_type_expr` recorded for
             // this node with the body's actual checked type, now that it's
             // known — matches expression-position const-blocks, whose own
             // type is likewise the checked type of their body.
-            self.results.record_type_expr_type(hir_id, body_ty);
+            results.record_type_expr_type(hir_id, body_ty);
         }
         Ok(())
     }
@@ -215,10 +344,10 @@ impl HirTypeChecker {
                     let body_result = self.check_body(&constant.body).await;
                     self.expected_expr_types.pop();
                     let body_ty = body_result?;
-                    self.results
+                    self.shared.results.borrow_mut()
                         .type_expr_types
                         .insert(constant.ty.hir_id, body_ty.clone());
-                    self.results.const_types.insert(item.def_id, body_ty);
+                    self.shared.results.borrow_mut().const_types.insert(item.def_id, body_ty);
                 }
                 hir::ItemKind::Impl(impl_item) => {
                     let mut scope = self.generic_scope(&impl_item.generics);
@@ -385,7 +514,7 @@ impl HirTypeChecker {
         Box::pin(async move {
             let ty = match &expr.kind {
                 hir::ExprKind::Literal(lit) => self.literal_ty(lit),
-                hir::ExprKind::Path(path) => self.expr_path_ty(path)?,
+                hir::ExprKind::Path(path) => self.expr_path_ty(path).await?,
                 hir::ExprKind::Binary(op, lhs, rhs) => {
                     let lhs_literal =
                         matches!(lhs.kind, hir::ExprKind::Literal(hir::Lit::Integer(_)));
@@ -552,7 +681,7 @@ impl HirTypeChecker {
                                 .generic_call_args(*def_id, &substitutions)?
                                 .or_else(|| self.callable_output_args(&callee_ty, &substitutions));
                             if let Some(args) = args {
-                                self.results.generic_call_args.insert(
+                                self.shared.results.borrow_mut().generic_call_args.insert(
                                     expr.hir_id,
                                     GenericCallResolution {
                                         def_id: *def_id,
@@ -609,11 +738,11 @@ impl HirTypeChecker {
                     // one catch point covers all of them.
                     match self.method_output(&receiver_ty, method, &arg_types) {
                         Ok((method_def_id, generic_args, output)) => {
-                            self.results
+                            self.shared.results.borrow_mut()
                                 .method_resolutions
                                 .insert(expr.hir_id, method_def_id);
                             if let Some(args) = generic_args {
-                                self.results.generic_method_args.insert(
+                                self.shared.results.borrow_mut().generic_method_args.insert(
                                     expr.hir_id,
                                     GenericCallResolution {
                                         def_id: method_def_id,
@@ -691,11 +820,11 @@ impl HirTypeChecker {
                                 &arg_types,
                             ) {
                                 Ok((method_def_id, generic_args, output)) => {
-                                    self.results
+                                    self.shared.results.borrow_mut()
                                         .method_resolutions
                                         .insert(expr.hir_id, method_def_id);
                                     if let Some(args) = generic_args {
-                                        self.results.generic_method_args.insert(
+                                        self.shared.results.borrow_mut().generic_method_args.insert(
                                             expr.hir_id,
                                             GenericCallResolution {
                                                 def_id: method_def_id,
@@ -798,11 +927,11 @@ impl HirTypeChecker {
                     let body_result = self.check_expr(&const_block.body).await;
                     self.expected_expr_types.pop();
                     let body_ty = body_result?;
-                    if let Some(context) = self.typing_context.clone() {
+                    if let Some(context) = self.shared.typing_context.clone() {
                         let value = context
                             .request_comptime(crate::ComptimeRequest {
-                                program: self.program.clone(),
-                                typeck_results: self.results.clone(),
+                                program: self.shared.program.as_ref().clone(),
+                                typeck_results: self.shared.results.borrow().clone(),
                                 block: hir::Block {
                                     hir_id: expr.hir_id,
                                     stmts: Vec::new(),
@@ -812,7 +941,7 @@ impl HirTypeChecker {
                                 expected_ty: (*const_block.ty).clone(),
                             })
                             .await?;
-                        self.results.const_block_values.insert(expr.hir_id, value);
+                        self.shared.results.borrow_mut().const_block_values.insert(expr.hir_id, value);
                     }
                     body_ty
                 }
@@ -1041,7 +1170,7 @@ impl HirTypeChecker {
                     }
                 }
             };
-            self.results.record_expr_type(expr.hir_id, ty.clone());
+            self.shared.results.borrow_mut().record_expr_type(expr.hir_id, ty.clone());
             Ok(ty)
         })
     }
@@ -1090,7 +1219,7 @@ impl HirTypeChecker {
                                 self.substitute_param_map(&init_ty, &substitutions)
                             };
                             self.require_same(&ty, &resolved_init)?;
-                            self.results.record_expr_type(init.hir_id, resolved_init);
+                            self.shared.results.borrow_mut().record_expr_type(init.hir_id, resolved_init);
                             ty
                         }
                         (Some(annotation), None) => self.check_type_expr(annotation)?,
@@ -1240,7 +1369,7 @@ impl HirTypeChecker {
                 self.error_ty("type expressions cannot be combined with a type operator")
             }
         };
-        self.results.record_type_expr_type(expr.hir_id, ty.clone());
+        self.shared.results.borrow_mut().record_type_expr_type(expr.hir_id, ty.clone());
         Ok(ty)
     }
 
@@ -1301,7 +1430,7 @@ impl HirTypeChecker {
         if let Some(generic) = self.generic_ty(def_id) {
             return Ok(generic);
         }
-        let Some(item) = self.program.def_map.get(&def_id).cloned() else {
+        let Some(item) = self.shared.program.def_map.get(&def_id).cloned() else {
             return Ok(self.error_ty(format!("type definition `{def_id}` was not found")));
         };
         let (flags, variants) = match &item.kind {
@@ -1487,10 +1616,10 @@ impl HirTypeChecker {
                 _ => None,
             })
         };
-        if let Some(def_id) = find_in(&self.program.items) {
+        if let Some(def_id) = find_in(&self.shared.program.items) {
             return Some(def_id);
         }
-        if let Some(context) = &self.typing_context {
+        if let Some(context) = &self.shared.typing_context {
             // Borrows each dependency package just long enough to scan its
             // HIR items in place, instead of `hir_definitions()`'s full
             // clone of every package's whole HIR `Program`.
@@ -1520,7 +1649,7 @@ impl HirTypeChecker {
         })
     }
 
-    fn expr_path_ty(&mut self, path: &hir::Path) -> Result<Ty> {
+    async fn expr_path_ty(&mut self, path: &hir::Path) -> Result<Ty> {
         if let Some(hir::Res::Local(local)) = path.res {
             if let Some(name) = path.segments.last().map(|segment| &segment.name) {
                 for scope in self.locals.iter().rev() {
@@ -1552,8 +1681,8 @@ impl HirTypeChecker {
                     .join("::")
             )));
         };
-        let Some(item) = self.program.def_map.get(&def_id).cloned() else {
-            let associated = self.program.items.iter().find_map(|item| {
+        let Some(item) = self.shared.program.def_map.get(&def_id).cloned() else {
+            let associated = self.shared.program.items.iter().find_map(|item| {
                 let hir::ItemKind::Impl(impl_item) = &item.kind else {
                     return None;
                 };
@@ -1583,7 +1712,7 @@ impl HirTypeChecker {
                 scope.self_types.pop();
                 return result;
             }
-            if let Some(context) = &self.typing_context {
+            if let Some(context) = &self.shared.typing_context {
                 // Borrows each dependency package just long enough to scan
                 // its HIR items in place, instead of `hir_definitions()`'s
                 // full clone of every package's whole HIR `Program`.
@@ -1601,7 +1730,7 @@ impl HirTypeChecker {
                     return result;
                 }
             }
-            let matched_enum_item = self.program.items.iter().find_map(|item| {
+            let matched_enum_item = self.shared.program.items.iter().find_map(|item| {
                 let hir::ItemKind::Enum(enum_def) = &item.kind else {
                     return None;
                 };
@@ -1658,12 +1787,36 @@ impl HirTypeChecker {
             {
                 self.check_type_expr(&constant.ty)
             }
-            hir::ItemKind::Const(_) => Ok(self
-                .results
-                .const_types
-                .get(&def_id)
-                .cloned()
-                .unwrap_or_else(|| self.error_ty("constant type was not recorded"))),
+            hir::ItemKind::Const(_) => {
+                // A same-package `const` may be declared later in
+                // `program.items` than the item currently being checked —
+                // `const_types` is written by that other const's own task
+                // (see `typecheck_item`), so ensure it's run (on demand,
+                // shared with any other awaiter via `get_or_spawn`) before
+                // reading it, rather than assuming textual order already
+                // reached it. A genuine cycle (`const A` needs `const B`
+                // needs `const A`) surfaces as a stalled executor, not a
+                // wrong answer — this `.await` just suspends like any
+                // other.
+                if self
+                    .shared
+                    .results
+                    .borrow()
+                    .const_types
+                    .get(&def_id)
+                    .is_none()
+                {
+                    ensure_item_checked(&self.shared, def_id).await;
+                }
+                Ok(self
+                    .shared
+                    .results
+                    .borrow()
+                    .const_types
+                    .get(&def_id)
+                    .cloned()
+                    .unwrap_or_else(|| self.error_ty("constant type was not recorded")))
+            }
             hir::ItemKind::Function(function) => self.function_signature(function),
             _ => Ok(self.error_ty("resolved path is not a value")),
         }
@@ -1793,7 +1946,7 @@ impl HirTypeChecker {
         def_id: hir::DefId,
         substitutions: &HashMap<ty::ParamTy, Ty>,
     ) -> Result<Option<Vec<Ty>>> {
-        let Some(item) = self.program.def_map.get(&def_id) else {
+        let Some(item) = self.shared.program.def_map.get(&def_id) else {
             return Ok(None);
         };
         let hir::ItemKind::Function(function) = &item.kind else {
@@ -2248,12 +2401,14 @@ impl HirTypeChecker {
         Err(Error::from(format!("method `{method}` was not found")))
     }
 
-    /// Lazily builds and memoizes `impl_lookup_items` (see its doc comment)
-    /// on first use, then returns a cheap `Rc` clone on every later call.
-    fn impl_lookup_items(&mut self) -> Rc<Vec<hir::Item>> {
-        if self.impl_lookup_items.is_none() {
-            let mut items = self.program.items.clone();
-            if let Some(context) = &self.typing_context {
+    /// Lazily builds and memoizes `TypingShared::impl_lookup_items` (see its
+    /// doc comment) on first use — shared across every item's task, since
+    /// it's expensive and doesn't depend on which item is being checked —
+    /// then returns a cheap `Rc` clone on every later call.
+    fn impl_lookup_items(&self) -> Rc<Vec<hir::Item>> {
+        if self.shared.impl_lookup_items.borrow().is_none() {
+            let mut items = self.shared.program.items.clone();
+            if let Some(context) = &self.shared.typing_context {
                 items.extend(
                     context
                         .env_ctx
@@ -2262,16 +2417,20 @@ impl HirTypeChecker {
                         .flat_map(|(_, program, _)| program.items),
                 );
             }
-            self.impl_lookup_items = Some(Rc::new(items));
+            *self.shared.impl_lookup_items.borrow_mut() = Some(Rc::new(items));
         }
-        self.impl_lookup_items.clone().expect("just populated above")
+        self.shared
+            .impl_lookup_items
+            .borrow()
+            .clone()
+            .expect("just populated above")
     }
 
-    /// Lazily builds and memoizes `impl_items_by_receiver_def` (see its
-    /// doc comment) on first use, then returns a cheap `Rc` clone on every
-    /// later call.
-    fn impl_items_by_receiver_def(&mut self) -> Rc<HashMap<hir::DefId, Vec<usize>>> {
-        if self.impl_items_by_receiver_def.is_none() {
+    /// Lazily builds and memoizes `TypingShared::impl_items_by_receiver_def`
+    /// (see its doc comment) on first use, then returns a cheap `Rc` clone
+    /// on every later call.
+    fn impl_items_by_receiver_def(&self) -> Rc<HashMap<hir::DefId, Vec<usize>>> {
+        if self.shared.impl_items_by_receiver_def.borrow().is_none() {
             let items = self.impl_lookup_items();
             let mut index: HashMap<hir::DefId, Vec<usize>> = HashMap::new();
             for (item_index, item) in items.iter().enumerate() {
@@ -2284,9 +2443,11 @@ impl HirTypeChecker {
                     }
                 }
             }
-            self.impl_items_by_receiver_def = Some(Rc::new(index));
+            *self.shared.impl_items_by_receiver_def.borrow_mut() = Some(Rc::new(index));
         }
-        self.impl_items_by_receiver_def
+        self.shared
+            .impl_items_by_receiver_def
+            .borrow()
             .clone()
             .expect("just populated above")
     }
@@ -2331,7 +2492,7 @@ impl HirTypeChecker {
     }
 
     fn bind_pattern(&mut self, pattern: &hir::Pat, ty: Ty) -> Result<()> {
-        self.results.record_pat_type(pattern.hir_id, ty.clone());
+        self.shared.results.borrow_mut().record_pat_type(pattern.hir_id, ty.clone());
         // Match ergonomics: an ADT-shaped pattern (`Value::Null`, `Point {
         // x, y }`, a tuple) matches against a `&Value`/`&(A, B)` scrutinee
         // the same way it matches a bare one — e.g. matching on `self`
@@ -2432,7 +2593,7 @@ impl HirTypeChecker {
                 receiver.kind
             )));
         };
-        let Some(item) = self.program.def_map.get(&adt.did).cloned() else {
+        let Some(item) = self.shared.program.def_map.get(&adt.did).cloned() else {
             return Ok(self.error_ty("struct definition was not found"));
         };
         let hir::ItemKind::Struct(def) = item.kind else {
@@ -2514,7 +2675,7 @@ impl HirTypeChecker {
             return Ok(None);
         };
         if matches!(
-            self.program.def_map.get(&adt.did).map(|item| &item.kind),
+            self.shared.program.def_map.get(&adt.did).map(|item| &item.kind),
             Some(hir::ItemKind::Struct(_))
         ) {
             Ok(Some(payload))
@@ -2545,10 +2706,10 @@ impl HirTypeChecker {
         // to `items` alone can never match a foreign enum's variant
         // `DefId` — exactly the same distinction `field_ty`'s struct
         // lookup (`program.def_map.get(&adt.did)`) already accounts for.
-        self.program
+        self.shared.program
             .items
             .iter()
-            .chain(self.program.def_map.values())
+            .chain(self.shared.program.def_map.values())
             .find_map(|item| {
                 let hir::ItemKind::Enum(def) = &item.kind else {
                     return None;
@@ -2913,6 +3074,29 @@ fn primitive_ty(primitive: TypePrimitive) -> Ty {
 mod tests {
     use super::*;
 
+    /// Test-only stand-in for the old `HirTypeChecker::new(program).check()`
+    /// single-future entry point — drives `spawn_package_typecheck`'s
+    /// per-item tasks to completion on a standalone executor (no driver,
+    /// no comptime requests expected in these tests).
+    fn typecheck_program_sync(program: hir::Program) -> Result<(hir::Program, TypeckResults)> {
+        let (shared, mut future) = spawn_package_typecheck(program, None);
+        let waker = std::task::Waker::noop();
+        let mut cx = std::task::Context::from_waker(waker);
+        loop {
+            match future.as_mut().poll(&mut cx) {
+                std::task::Poll::Ready(result) => {
+                    result?;
+                    return Ok(finish_package_typecheck(&shared));
+                }
+                std::task::Poll::Pending => {
+                    if shared.executor.tick().is_none() {
+                        panic!("typecheck_program_sync: executor stalled unexpectedly");
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn records_literal_type_by_hir_id() {
         let expr = hir::Expr {
@@ -2921,16 +3105,23 @@ mod tests {
             span: fp_core::span::Span::null(),
         };
         let mut program = hir::Program::new();
-        program.items.push(hir::Item {
+        let item = hir::Item {
             hir_id: 1,
             def_id: hir::DefId::local(1),
             visibility: hir::Visibility::Private,
             kind: hir::ItemKind::Expr(expr),
             span: fp_core::span::Span::null(),
-        });
+        };
+        program.items.push(item.clone());
+        // Real HIR lowering always populates `def_map` before typing begins
+        // (see `ast_to_hir::transform_package`'s last step) — per-item tasks
+        // look items up by `DefId` through it (needed so a cross-reference
+        // to an item spawned only by `def_id`, not handed the `Item`
+        // directly, can still find it), so a hand-built test program needs
+        // to mirror that.
+        program.def_map.insert(item.def_id, item);
 
-        let (_, results) =
-            crate::block_on(HirTypeChecker::new(program).check()).expect("HIR type check");
+        let (_, results) = typecheck_program_sync(program).expect("HIR type check");
         assert_eq!(results.expr_types.get(&7), Some(&Ty::int(ty::IntTy::I64)));
     }
 
@@ -2957,16 +3148,17 @@ mod tests {
             span: fp_core::span::Span::null(),
         };
         let mut program = hir::Program::new();
-        program.items.push(hir::Item {
+        let item = hir::Item {
             hir_id: 1,
             def_id: hir::DefId::local(1),
             visibility: hir::Visibility::Private,
             kind: hir::ItemKind::Expr(expr),
             span: fp_core::span::Span::null(),
-        });
+        };
+        program.items.push(item.clone());
+        program.def_map.insert(item.def_id, item);
 
-        let (_, results) =
-            crate::block_on(HirTypeChecker::new(program).check()).expect("HIR type check");
+        let (_, results) = typecheck_program_sync(program).expect("HIR type check");
         assert_eq!(results.pat_types.get(&8), Some(&Ty::int(ty::IntTy::I64)));
     }
 }

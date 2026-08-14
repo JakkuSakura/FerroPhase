@@ -344,6 +344,9 @@ pub struct LirComptimeEntry {
     /// When true, this entry represents a quote token stream whose items
     /// must be extracted from the typed AST and stored in splice_results.
     pub token_stream: bool,
+    /// See `mir::ExecutableConst::const_block_hir_id`'s doc comment —
+    /// carried through unchanged from MIR lowering.
+    pub const_block_hir_id: Option<crate::hir::HirId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
