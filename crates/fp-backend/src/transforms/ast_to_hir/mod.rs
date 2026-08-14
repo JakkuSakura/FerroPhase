@@ -3286,8 +3286,7 @@ impl HirGenerator {
                 let fields: Vec<ast::StructuralField> = if struct_ty.name != def_type.name {
                     // Look up source struct fields
                     let source_name = struct_ty.name.as_str();
-                    let source_def_id =
-                        self.lookup_symbol(source_name, &self.global_type_defs.clone());
+                    let source_def_id = self.lookup_symbol(source_name, &self.global_type_defs);
                     let source_fields: Vec<ast::StructuralField> = source_def_id
                         .and_then(|res| match res {
                             hir::Res::Def(def_id) => self.struct_field_defs.get(&def_id).cloned(),

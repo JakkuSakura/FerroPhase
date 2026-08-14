@@ -34,9 +34,7 @@ pub struct LirGenerator {
     queued_instructions: Vec<lir::LirInstruction>,
     name_counters: HashMap<String, usize>,
     struct_layouts: RefCell<HashMap<(mir::DefId, Vec<mir::Ty>), Vec<Option<lir::LirType>>>>,
-    mir_layouts: HashMap<mir::DefId, Vec<mir::Ty>>,
     full_layouts: HashMap<(mir::DefId, Vec<mir::Ty>), Vec<mir::Ty>>,
-    adt_defs: HashMap<mir::DefId, mir::ty::AdtDef>,
     /// Byte size for an opaque enum-payload-slot placeholder (see
     /// `MirLowering::opaque_ty_sizes`'s doc comment) — a slot whose
     /// per-variant types are heterogeneous has no real fields to lower
@@ -60,8 +58,8 @@ pub struct LirGenerator {
     /// Dependency packages, queried lazily by `lookup_adt_def`/
     /// `lookup_mir_layout` on a local-lookup miss — a cheap `Rc` snapshot,
     /// not a copy of their MIR data. Replaces eagerly flattening every
-    /// dependency's `mir_adt_defs`/`mir_struct_fields` into `adt_defs`/
-    /// `mir_layouts` up front (see `driver.rs`'s old `all_adt_defs`/
+    /// dependency's `mir_adt_defs`/`mir_struct_fields` into `adt_defs`/a
+    /// local layout map up front (see `driver.rs`'s old `all_adt_defs`/
     /// `all_layouts`).
     dependency_packages: Vec<std::rc::Rc<RefCell<fp_core::package::CompiledPackage>>>,
 }
@@ -125,9 +123,7 @@ impl LirGenerator {
             queued_instructions: Vec::new(),
             name_counters: HashMap::new(),
             struct_layouts: RefCell::new(HashMap::new()),
-            mir_layouts: HashMap::new(),
             full_layouts: HashMap::new(),
-            adt_defs: HashMap::new(),
             opaque_payload_sizes: HashMap::new(),
             function_symbol_map: HashMap::new(),
             function_def_map: HashMap::new(),
@@ -150,11 +146,6 @@ impl LirGenerator {
         self
     }
 
-    pub fn with_mir_layouts(mut self, layouts: HashMap<mir::DefId, Vec<mir::Ty>>) -> Self {
-        self.mir_layouts = layouts;
-        self
-    }
-
     pub fn with_full_layouts(
         mut self,
         layouts: HashMap<(mir::DefId, Vec<mir::Ty>), Vec<mir::Ty>>,
@@ -163,19 +154,16 @@ impl LirGenerator {
         self
     }
 
-    pub fn with_adt_defs(mut self, defs: HashMap<mir::DefId, mir::ty::AdtDef>) -> Self {
-        self.adt_defs = defs;
-        self
-    }
-
     pub fn with_opaque_payload_sizes(mut self, sizes: HashMap<String, u64>) -> Self {
         self.opaque_payload_sizes = sizes;
         self
     }
 
-    /// Dependency packages to fall back to, lazily, when `adt_defs`/
-    /// `mir_layouts` (this package's own maps) miss — see
-    /// `lookup_adt_def`/`lookup_mir_layout`.
+    /// Dependency packages to fall back to, lazily, for `lookup_adt_def`/
+    /// `lookup_mir_layout` — includes this package's own entry too (see
+    /// `driver.rs`'s callers, which extend it with this exact package's
+    /// freshly-computed ADT defs/struct fields before calling in here), so
+    /// there's no separate local map to check first.
     pub fn with_dependency_packages(
         mut self,
         packages: Vec<std::rc::Rc<RefCell<fp_core::package::CompiledPackage>>>,
@@ -185,9 +173,6 @@ impl LirGenerator {
     }
 
     fn lookup_adt_def(&self, def_id: &mir::DefId) -> Option<mir::ty::AdtDef> {
-        if let Some(def) = self.adt_defs.get(def_id) {
-            return Some(def.clone());
-        }
         for package in &self.dependency_packages {
             if let Some(def) = package.borrow().mir_adt_defs.get(def_id) {
                 return Some(def.clone());
@@ -197,9 +182,6 @@ impl LirGenerator {
     }
 
     fn lookup_mir_layout(&self, def_id: &mir::DefId) -> Option<Vec<mir::Ty>> {
-        if let Some(layout) = self.mir_layouts.get(def_id) {
-            return Some(layout.clone());
-        }
         for package in &self.dependency_packages {
             if let Some(layout) = package.borrow().mir_struct_fields.get(def_id) {
                 return Some(layout.clone());
@@ -6342,8 +6324,8 @@ impl LirGenerator {
             // An opaque enum-payload-slot placeholder (`MirLowering::
             // opaque_ty`, minted for a slot where variants disagree on the
             // payload type) has a synthetic `DefId` matching nothing in
-            // `struct_layouts`/`mir_layouts`/`full_layouts`/`adt_defs` — it
-            // was never a real struct/enum, just a byte count for
+            // `struct_layouts`/`full_layouts`/`adt_defs`/`lookup_mir_layout`
+            // — it was never a real struct/enum, just a byte count for
             // whichever variant's payload is actually stored there at
             // runtime. Recognized by its single synthetic variant's ident,
             // the same name `opaque_payload_sizes` is keyed by.
@@ -6382,12 +6364,12 @@ impl LirGenerator {
             }
             TyKind::Adt(adt, substs) => {
                 let key = (adt.did, Self::adt_substs_types(substs));
-                // `full_layouts` is checked before the legacy `mir_layouts`/
+                // `full_layouts` is checked before the legacy
                 // `lookup_mir_layout` channel below on purpose: it's keyed
                 // by `(DefId, substs)` (like `struct_layouts` above), so two
                 // different instantiations of the same generic struct (e.g.
                 // `Vec<u8>` vs. `Vec<Value>`) get distinct entries.
-                // `mir_layouts` is keyed by bare `DefId` — built by
+                // `lookup_mir_layout` is keyed by bare `DefId` — built by
                 // `all_adt_field_tys()` collapsing *every* instantiation of
                 // a generic struct into one entry (last-write-wins, in
                 // whatever order its source `HashMap` happens to iterate),

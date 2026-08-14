@@ -641,7 +641,6 @@ impl CompilerDriver {
             &fqp,
             &current_package_id,
             &full_layouts,
-            &adt_defs,
             &opaque_payload_sizes,
         )?;
 
@@ -694,7 +693,6 @@ impl CompilerDriver {
             &fqp,
             &package_id,
             &full_layouts,
-            &adt_defs,
             &opaque_payload_sizes,
         )?;
         Ok(vec![fp_core::lir::LirCompileUnit {
@@ -993,7 +991,6 @@ impl CompilerDriver {
         path: &FullyQualifiedPath,
         package_id: &PackageId,
         full_layouts: &HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>,
-        adt_defs: &HashMap<fp_core::hir::DefId, fp_core::mir::ty::AdtDef>,
         opaque_payload_sizes: &HashMap<String, u64>,
     ) -> Result<LirId, CompilerDriverError> {
         let mir = self.state.mir(mir_id)?.clone();
@@ -1003,29 +1000,36 @@ impl CompilerDriver {
         // to `LirGenerator` as a cheap `Rc` snapshot, queried lazily on a
         // miss by `lookup_adt_def`/`lookup_mir_layout`, instead of eagerly
         // flattening every package's struct-field layouts into one map
-        // here on every call.
+        // here on every call. Collected once (with package ids) and reused
+        // below for `predeclare_dependency_function_signatures` too, rather
+        // than taking a second separate `env_ctx.crates()` borrow/iteration
+        // for the same data a few lines later.
         let dependency_packages: Vec<_> = self
             .state
             .typing_ctx
             .env_ctx
             .crates()
-            .values()
-            .cloned()
+            .iter()
+            .map(|(id, package)| (id.clone(), package.clone()))
             .collect();
         let mut lowering = LirGenerator::new(self.state.typing_ctx.data_layout.clone())
             .with_package_id(package_id.clone())
             .with_module_path(path.path().to_key())
             .with_full_layouts(full_layouts.clone())
-            .with_adt_defs(adt_defs.clone())
             .with_opaque_payload_sizes(opaque_payload_sizes.clone())
-            .with_dependency_packages(dependency_packages);
+            .with_dependency_packages(
+                dependency_packages
+                    .iter()
+                    .map(|(_, package)| package.clone())
+                    .collect(),
+            );
         // Thread dependency packages' compiled function signatures into
         // this generator too, mirroring the `mir_struct_fields` merge
         // above — otherwise a cross-package call (e.g. `json::parse`)
         // fails during MIR-to-LIR with "missing MIR function definition",
         // since `function_def_map` was previously only ever populated from
         // this package's own MIR.
-        for (dep_id, dep_package) in self.state.typing_ctx.env_ctx.crates().iter() {
+        for (dep_id, dep_package) in &dependency_packages {
             if let Some(dep_mir) = dep_package.borrow().mir_program.as_ref() {
                 lowering.predeclare_dependency_function_signatures(dep_mir, dep_id.clone());
             }
