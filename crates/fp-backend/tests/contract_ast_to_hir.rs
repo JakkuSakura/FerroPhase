@@ -78,7 +78,7 @@ fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::Program> {
     let loaded = provider
         .load_package_source(&package_id)
         .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-    let workspace = WorkspaceContext::new();
+    let workspace = WorkspaceContext::new(std::sync::Arc::new(provider));
     let data_layout = LirDataLayout::new(
         64,
         8,

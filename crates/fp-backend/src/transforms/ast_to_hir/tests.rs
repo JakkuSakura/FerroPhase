@@ -42,7 +42,7 @@ fn package_from_items(items: Vec<ast::Item>) -> Result<fp_core::package::Compile
     let loaded = provider
         .load_package_source(&package_id)
         .map_err(|e| crate::error::optimization_error(e.to_string()))?;
-    let workspace = WorkspaceContext::new();
+    let workspace = WorkspaceContext::new(std::sync::Arc::new(provider));
     let package = workspace.begin_package(package_id, loaded, test_data_layout());
     let package = package.borrow().clone();
     Ok(package)
@@ -70,7 +70,7 @@ fn package_from_module_items(
     let loaded = provider
         .load_package_source(&package_id)
         .map_err(|e| crate::error::optimization_error(e.to_string()))?;
-    let workspace = WorkspaceContext::new();
+    let workspace = WorkspaceContext::new(std::sync::Arc::new(provider));
     let package = workspace.begin_package(package_id, loaded, test_data_layout());
     let package = package.borrow().clone();
     Ok(package)

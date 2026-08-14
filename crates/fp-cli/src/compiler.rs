@@ -73,7 +73,7 @@ pub fn check_path(
 
     let executor = CompilerExecutor::new();
     let identity = CompilerIdentity::for_file(package, path);
-    let mut driver = compile_source_file(ast, &identity, compiler_workspace(), lossy, &executor, PipelineMode::Native)?;
+    let mut driver = compile_source_file(ast, &identity, lossy, &executor, PipelineMode::Native)?;
     drain_driver(&mut driver, lossy)
 }
 
@@ -103,7 +103,6 @@ pub fn eval_script(script: ScriptBlock) -> Result<Value> {
     let mut driver = compile_source_file(
         ast,
         &identity,
-        compiler_workspace(),
         LossyCompileOptions::default(),
         &executor,
         PipelineMode::Native,
@@ -778,7 +777,7 @@ fn execute_ast(
 ) -> Result<Value> {
     let value_key = identity.path.to_key();
     let executor = CompilerExecutor::new();
-    let mut driver = compile_source_file(ast, &identity, compiler_workspace(), lossy, &executor, PipelineMode::Native)?;
+    let mut driver = compile_source_file(ast, &identity, lossy, &executor, PipelineMode::Native)?;
     drain_driver(&mut driver, lossy)?;
 
     match mode {
@@ -808,7 +807,7 @@ fn lower_file(
     let ast = parse_file(path, source_language, lossy)?;
     let identity = CompilerIdentity::for_file(package, path);
     let executor = CompilerExecutor::new();
-    let mut driver = compile_source_file(ast, &identity, compiler_workspace(), lossy, &executor, PipelineMode::Native)?;
+    let mut driver = compile_source_file(ast, &identity, lossy, &executor, PipelineMode::Native)?;
     drain_driver(&mut driver, lossy)?;
     let package_id =
         PackageId::new(identity.path.path().head().ok_or_else(|| {
@@ -822,10 +821,6 @@ fn lower_file(
     })
 }
 
-fn compiler_workspace() -> std::rc::Rc<fp_core::workspace::WorkspaceContext> {
-    compiler_workspace_for(languages::FERROPHASE)
-}
-
 /// `"std"`/`"libc"` resolve against different providers depending on the
 /// active source language: `fp_lang`'s hand-written `.fp` reimplementation
 /// for `.fp`-dialect projects, or real rustc source (`fp-rust`'s
@@ -833,17 +828,12 @@ fn compiler_workspace() -> std::rc::Rc<fp_core::workspace::WorkspaceContext> {
 /// Panics on an unrecognized language rather than silently defaulting —
 /// wiring up std resolution for a new source language is a deliberate step,
 /// not something to fall through to FerroPhase's `.fp` std by accident.
-fn compiler_workspace_for(language: &str) -> std::rc::Rc<fp_core::workspace::WorkspaceContext> {
-    let workspace = fp_core::workspace::WorkspaceContext::new();
-    let std_provider: Arc<dyn fp_core::package::provider::PackageProvider> = match language {
+fn std_provider_for(language: &str) -> Arc<dyn fp_core::package::provider::PackageProvider> {
+    match language {
         l if l == languages::FERROPHASE => Arc::new(fp_lang::provider::FerroPhaseProvider),
         l if l == languages::RUST => Arc::new(fp_rust::RustStdProvider),
-        other => panic!(
-            "compiler_workspace_for: no std/libc provider wired up for language {other:?}"
-        ),
-    };
-    workspace.register_provider(std_provider);
-    std::rc::Rc::new(workspace)
+        other => panic!("std_provider_for: no std/libc provider wired up for language {other:?}"),
+    }
 }
 
 /// Wraps an already-parsed single file as a one-member `PackageProvider`.
@@ -865,13 +855,10 @@ pub fn single_file_provider(
 fn compile_source_file(
     ast: File,
     identity: &CompilerIdentity,
-    workspace: std::rc::Rc<fp_core::workspace::WorkspaceContext>,
     lossy: LossyCompileOptions,
     executor: &CompilerExecutor,
     pipeline: PipelineMode,
 ) -> Result<CompilerDriver> {
-    let mut session = CompilerSession::new(data_layout(), executor, workspace);
-    session.driver().pipeline = pipeline;
     let package_id =
         PackageId::new(identity.path.path().head().ok_or_else(|| {
             CliError::Compilation("source file has no package identity".to_string())
@@ -881,7 +868,14 @@ fn compile_source_file(
         identity.path.path().clone(),
         ast.clone(),
     )?;
-    session.register_provider(input_provider);
+    let std_provider = std_provider_for(languages::FERROPHASE);
+    let provider = Arc::new(fp_core::package::provider::CompositeProvider::new(vec![
+        std_provider,
+        input_provider,
+    ]));
+    let workspace = std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new(provider));
+    let mut session = CompilerSession::new(data_layout(), executor, workspace);
+    session.driver().pipeline = pipeline;
     session.driver().state.set_lossy(lossy.enabled);
     executor
         .run(session.driver().compile_package(&package_id))
@@ -976,7 +970,6 @@ pub fn compile_file_to_lir_bundle(
     let mut driver = compile_source_file(
         parsed.ast,
         &identity,
-        compiler_workspace(),
         lossy,
         &executor,
         PipelineMode::Native,
@@ -1134,8 +1127,12 @@ pub fn typecheck_package(
     language: &str,
 ) -> Result<PackageSource> {
     let executor = CompilerExecutor::new();
-    let workspace = compiler_workspace_for(language);
-    workspace.register_provider(provider);
+    let std_provider = std_provider_for(language);
+    let combined = Arc::new(fp_core::package::provider::CompositeProvider::new(vec![
+        std_provider,
+        provider,
+    ]));
+    let workspace = std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new(combined));
     let mut session = CompilerSession::new(data_layout(), &executor, workspace);
     session.driver().pipeline = PipelineMode::TypecheckedTranspile;
     session.driver().state.set_lossy(lossy.enabled);

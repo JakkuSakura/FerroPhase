@@ -103,3 +103,87 @@ impl PackageProvider for FixedPackageProvider {
         Ok(self.source.clone())
     }
 }
+
+/// A `PackageProvider` with no packages at all — for the handful of generic
+/// constructors (`CompilerDriver::new`, `CompilerState::new`, standalone
+/// tests) that need to build a `WorkspaceContext` before any real provider
+/// is known; a real one is attached later via a fresh `WorkspaceContext`
+/// built with it once the caller knows what it's compiling.
+pub struct EmptyProvider;
+
+impl PackageProvider for EmptyProvider {
+    fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        Ok(Vec::new())
+    }
+
+    fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
+        Err(ProviderError::PackageNotFound(id.clone()))
+    }
+
+    fn refresh(&self) -> ProviderResult<()> {
+        Ok(())
+    }
+
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
+        Err(ProviderError::PackageNotFound(id.clone()))
+    }
+}
+
+/// Combines several already-chosen concrete `PackageProvider`s (e.g. a
+/// language's std/libc provider plus the real input-package provider) into
+/// one — `WorkspaceContext` holds exactly one required provider, so any
+/// caller that needs more than one source composes them here before
+/// constructing the workspace. Not a language-dispatch mechanism: every
+/// sub-provider is picked by the caller ahead of time, same as if only one
+/// provider were being registered.
+pub struct CompositeProvider {
+    providers: Vec<Arc<dyn PackageProvider>>,
+}
+
+impl CompositeProvider {
+    pub fn new(providers: Vec<Arc<dyn PackageProvider>>) -> Self {
+        Self { providers }
+    }
+
+    /// The sub-provider whose own `list_packages()` includes `id` — bounded
+    /// by `self.providers.len()` (2 in every real call site today), not by
+    /// workspace size, so a plain linear scan here is fine.
+    fn provider_for(&self, id: &PackageId) -> Option<&Arc<dyn PackageProvider>> {
+        self.providers.iter().find(|provider| {
+            provider
+                .list_packages()
+                .map(|packages| packages.iter().any(|candidate| candidate == id))
+                .unwrap_or(false)
+        })
+    }
+}
+
+impl PackageProvider for CompositeProvider {
+    fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        Ok(self
+            .providers
+            .iter()
+            .filter_map(|provider| provider.list_packages().ok())
+            .flatten()
+            .collect())
+    }
+
+    fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
+        self.provider_for(id)
+            .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))?
+            .load_package_metadata(id)
+    }
+
+    fn refresh(&self) -> ProviderResult<()> {
+        for provider in &self.providers {
+            provider.refresh()?;
+        }
+        Ok(())
+    }
+
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
+        self.provider_for(id)
+            .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))?
+            .load_package_source(id)
+    }
+}

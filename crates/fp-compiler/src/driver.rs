@@ -58,7 +58,9 @@ impl CompilerDriver {
         Self::with_workspace(
             data_layout,
             tasks,
-            Rc::new(fp_core::workspace::WorkspaceContext::new()),
+            Rc::new(fp_core::workspace::WorkspaceContext::new(std::sync::Arc::new(
+                fp_core::package::provider::EmptyProvider,
+            ))),
         )
     }
 

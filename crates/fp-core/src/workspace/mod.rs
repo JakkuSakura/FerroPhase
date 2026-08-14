@@ -201,10 +201,17 @@ use std::sync::Arc;
 /// Shared registry of provider-owned packages and compiler-owned package
 /// results for one compilation session. Dependencies are published here by
 /// the compiler driver before their dependents are typed.
-#[derive(Default)]
 pub struct WorkspaceContext {
     crates: RefCell<HashMap<PackageId, Rc<RefCell<CompiledPackage>>>>,
-    providers: RefCell<Vec<Arc<dyn PackageProvider>>>,
+    /// The single package provider for this workspace, required at
+    /// construction and never changed afterward. Callers that need to
+    /// combine several concrete providers (e.g. a language's std/libc
+    /// provider plus the real input-package provider) build a
+    /// `CompositeProvider` wrapping them before constructing the
+    /// workspace — `WorkspaceContext` itself never needs to search a list
+    /// of providers (previously O(providers × package-list) per lookup,
+    /// called once per package in the dependency graph).
+    providers: Arc<dyn PackageProvider>,
     current_package: Option<PackageId>,
     prelude: RefCell<Option<Rc<RefCell<CompiledPackage>>>>,
     next_package_id: Rc<Cell<u32>>,
@@ -228,8 +235,16 @@ pub struct WorkspaceContext {
 }
 
 impl WorkspaceContext {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(provider: Arc<dyn PackageProvider>) -> Self {
+        Self {
+            crates: RefCell::new(HashMap::new()),
+            providers: provider,
+            current_package: None,
+            prelude: RefCell::new(None),
+            next_package_id: Rc::new(Cell::new(0)),
+            hir_packages: RefCell::new(HashMap::new()),
+            sorted_packages_cache: RefCell::new(None),
+        }
     }
 
     fn sorted_packages(&self) -> Vec<Rc<RefCell<CompiledPackage>>> {
@@ -253,7 +268,7 @@ impl WorkspaceContext {
     pub fn for_package(&self, package_id: PackageId) -> Self {
         Self {
             crates: RefCell::new(HashMap::new()),
-            providers: RefCell::new(self.providers.borrow().clone()),
+            providers: self.providers.clone(),
             current_package: Some(package_id),
             prelude: RefCell::new(None),
             next_package_id: self.next_package_id.clone(),
@@ -264,11 +279,6 @@ impl WorkspaceContext {
 
     pub fn current_package(&self) -> Option<&PackageId> {
         self.current_package.as_ref()
-    }
-
-    /// Register a provider capable of supplying package metadata and source.
-    pub fn register_provider(&self, provider: Arc<dyn PackageProvider>) {
-        self.providers.borrow_mut().push(provider);
     }
 
     /// Publish a package source slot and return its compiler-owned result.
@@ -454,16 +464,12 @@ impl WorkspaceContext {
     }
 
     pub fn provider_for(&self, package_id: &PackageId) -> Option<Arc<dyn PackageProvider>> {
-        self.providers
-            .borrow()
-            .iter()
-            .find(|provider| {
-                provider
-                    .list_packages()
-                    .map(|packages| packages.iter().any(|id| id == package_id))
-                    .unwrap_or(false)
-            })
-            .cloned()
+        let owns_package = self
+            .providers
+            .list_packages()
+            .map(|packages| packages.iter().any(|id| id == package_id))
+            .unwrap_or(false);
+        owns_package.then(|| self.providers.clone())
     }
 
     /// Names of every registered package, whether or not it's been loaded
@@ -471,9 +477,9 @@ impl WorkspaceContext {
     /// paths resolve correctly even before `std` is actually loaded.
     pub fn registered_names(&self) -> Vec<String> {
         self.providers
-            .borrow()
-            .iter()
-            .filter_map(|provider| provider.list_packages().ok())
+            .list_packages()
+            .ok()
+            .into_iter()
             .flatten()
             .map(|id| id.as_str().to_owned())
             .collect()

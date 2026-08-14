@@ -48,7 +48,7 @@ fn package_from_file(
     let source = provider
         .load_package_source(&package_id)
         .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-    let workspace = fp_core::workspace::WorkspaceContext::new();
+    let workspace = fp_core::workspace::WorkspaceContext::new(std::sync::Arc::new(provider));
     let data_layout = fp_core::lir::LirDataLayout::new(
         64,
         8,
