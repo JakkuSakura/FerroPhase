@@ -2282,16 +2282,28 @@ impl HirTypeChecker {
         &self,
         variant_id: hir::DefId,
     ) -> Option<(hir::Item, hir::EnumVariant)> {
-        self.program.items.iter().find_map(|item| {
-            let hir::ItemKind::Enum(def) = &item.kind else {
-                return None;
-            };
-            def.variants
-                .iter()
-                .find(|variant| variant.def_id == variant_id)
-                .cloned()
-                .map(|variant| (item.clone(), variant))
-        })
+        // `program.items` only ever holds *this* package's own items — a
+        // dependency's enums (e.g. `std`'s `Option`/`Result`, or any other
+        // package's own enum) are copied only into `program.def_map` by
+        // `seed_workspace_definitions` (deliberately not duplicated into
+        // `items`, see its own doc comment), so a variant scan restricted
+        // to `items` alone can never match a foreign enum's variant
+        // `DefId` — exactly the same distinction `field_ty`'s struct
+        // lookup (`program.def_map.get(&adt.did)`) already accounts for.
+        self.program
+            .items
+            .iter()
+            .chain(self.program.def_map.values())
+            .find_map(|item| {
+                let hir::ItemKind::Enum(def) = &item.kind else {
+                    return None;
+                };
+                def.variants
+                    .iter()
+                    .find(|variant| variant.def_id == variant_id)
+                    .cloned()
+                    .map(|variant| (item.clone(), variant))
+            })
     }
 
     fn substitute_params(&self, ty: Ty, args: &[GenericArg]) -> Ty {
