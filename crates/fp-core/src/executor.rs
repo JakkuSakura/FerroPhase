@@ -39,16 +39,24 @@ pub(crate) fn block_on<F: Future>(fut: F) -> F::Output {
 /// A minimal, hand-rolled, single-threaded `Future` executor. No I/O, no
 /// timers, no thread pool — every future driven here is CPU-bound compiler
 /// work that either makes progress immediately or genuinely suspends on
-/// another in-flight task (a package finishing its on-demand load, a
-/// comptime value being resolved) waking it later. Tasks are keyed by a
-/// caller-chosen `String` (e.g. a compile unit's `FullyQualifiedPath::to_key()`,
-/// or a const/type-alias item's name) so a caller can spawn a fresh attempt
-/// under the same key without having to track a separately allocated id.
+/// another in-flight task (a package finishing its on-demand load, another
+/// item's typing/lowering, a comptime value being resolved) waking it later.
+/// Tasks are keyed by a caller-chosen `String`, namespaced by phase (e.g.
+/// `"typecheck:{def_id}"`, `"mir:{def_id}"`, `"lir:{def_id}"`,
+/// `"comptime:{hir_id}"`) so independent phases and callers never collide,
+/// and a caller can share (`get_or_spawn`) or replace (`spawn`) an
+/// in-flight attempt without tracking a separately allocated id.
+///
+/// This is shared, uniformly, by `fp-typing` (per-item type-checking),
+/// `fp-backend` (per-item HIR->MIR and MIR->LIR lowering), and
+/// `fp-compiler` (per-request comptime resolution) — living in `fp-core` so
+/// all three can hold the same executor instance without a circular crate
+/// dependency.
 ///
 /// Safety note: the `Waker`s this hands out wrap an `Rc`, not an `Arc` — they
 /// must never be sent to another thread or otherwise woken from outside the
 /// thread that owns this `CompilerExecutor`.
-pub(crate) struct TaskHandle<T> {
+pub struct TaskHandle<T> {
     state: Rc<RefCell<TaskState<T>>>,
 }
 
@@ -118,7 +126,7 @@ impl CompilerExecutor {
         self.inner.run(future)
     }
 
-    pub(crate) fn spawn<T: 'static>(
+    pub fn spawn<T: 'static>(
         &self,
         key: impl Into<String>,
         future: impl Future<Output = T> + 'static,
@@ -131,7 +139,7 @@ impl CompilerExecutor {
     /// still running or already resolved), returns a `TaskHandle` sharing
     /// its state instead of spawning (and thereby dropping) a duplicate.
     /// `make_future` is only called on a genuine first request.
-    pub(crate) fn get_or_spawn<T: 'static + Clone>(
+    pub fn get_or_spawn<T: 'static + Clone>(
         &self,
         key: impl Into<String>,
         make_future: impl FnOnce() -> Pin<Box<dyn Future<Output = T>>>,
@@ -139,25 +147,25 @@ impl CompilerExecutor {
         self.inner.get_or_spawn(key, make_future)
     }
 
-    pub(crate) fn contains(&self, key: &str) -> bool {
+    pub fn contains(&self, key: &str) -> bool {
         self.inner.contains(key)
     }
 
-    pub(crate) fn tick(&self) -> Option<String> {
+    pub fn tick(&self) -> Option<String> {
         self.inner.tick()
     }
 
-    pub(crate) fn is_idle(&self) -> bool {
+    pub fn is_idle(&self) -> bool {
         self.inner.is_idle()
     }
 
-    pub(crate) fn has_parked_tasks(&self) -> bool {
+    pub fn has_parked_tasks(&self) -> bool {
         self.inner.has_parked_tasks()
     }
 }
 
 impl ExecutorHandle {
-    pub(crate) fn spawn<T: 'static>(
+    pub fn spawn<T: 'static>(
         &self,
         key: impl Into<String>,
         future: impl Future<Output = T> + 'static,
@@ -166,7 +174,7 @@ impl ExecutorHandle {
     }
 
     /// See `CompilerExecutor::get_or_spawn`.
-    pub(crate) fn get_or_spawn<T: 'static + Clone>(
+    pub fn get_or_spawn<T: 'static + Clone>(
         &self,
         key: impl Into<String>,
         make_future: impl FnOnce() -> Pin<Box<dyn Future<Output = T>>>,
@@ -174,23 +182,23 @@ impl ExecutorHandle {
         self.inner.get_or_spawn(key, make_future)
     }
 
-    pub(crate) fn contains(&self, key: &str) -> bool {
+    pub fn contains(&self, key: &str) -> bool {
         self.inner.contains(key)
     }
 
-    pub(crate) fn tick(&self) -> Option<String> {
+    pub fn tick(&self) -> Option<String> {
         self.inner.tick()
     }
 
-    pub(crate) fn is_idle(&self) -> bool {
+    pub fn is_idle(&self) -> bool {
         self.inner.is_idle()
     }
 
-    pub(crate) fn has_parked_tasks(&self) -> bool {
+    pub fn has_parked_tasks(&self) -> bool {
         self.inner.has_parked_tasks()
     }
 
-    pub(crate) fn run<F: Future>(&self, future: F) -> F::Output {
+    pub fn run<F: Future>(&self, future: F) -> F::Output {
         self.inner.run(future)
     }
 }

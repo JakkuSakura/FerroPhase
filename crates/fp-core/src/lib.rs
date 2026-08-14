@@ -10,6 +10,7 @@ pub mod container;
 pub mod context;
 pub mod diagnostics;
 pub mod error;
+pub mod executor;
 pub mod frontend;
 pub mod hir;
 pub mod intrinsics;

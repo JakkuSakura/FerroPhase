@@ -2,12 +2,12 @@ use std::collections::BTreeMap;
 
 use fp_core::{
     ast::Value,
+    executor::ExecutorHandle,
     hir, lir, mir,
 };
 use fp_typing::{TypeckResults, TypingContext};
 
 use crate::error::CompilerDriverError;
-use crate::executor::ExecutorHandle;
 use crate::{BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
 
 pub struct CompilerState {
