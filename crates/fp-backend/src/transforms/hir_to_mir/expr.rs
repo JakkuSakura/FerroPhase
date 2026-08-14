@@ -442,6 +442,12 @@ pub struct MirLowering {
     struct_layouts_in_progress: HashSet<StructLayoutKey>,
     structural_defs: HashMap<StructuralLayoutKey, hir::DefId>,
     enum_defs: HashMap<hir::DefId, EnumDefinition>,
+    /// Reverse index from an enum's exact name to its `DefId` — lets
+    /// `lower_let_expr`'s unresolved-type-annotation fallback (a bare
+    /// enum name with no `Res::Def` yet, e.g. before full path resolution)
+    /// look it up in O(1) instead of scanning every registered enum
+    /// definition. Built alongside `enum_defs`'s two insertion sites.
+    enum_defs_by_name: HashMap<String, hir::DefId>,
     enum_layouts: HashMap<EnumLayoutKey, EnumLayout>,
     /// Exact reverse index from a flattened-tuple enum representation back
     /// to the `EnumLayoutKey` that produced it — mirrors
@@ -461,6 +467,19 @@ pub struct MirLowering {
     generic_function_defs: HashMap<hir::DefId, hir::Function>,
     runtime_functions: HashMap<String, mir::FunctionSig>,
     struct_methods: HashMap<String, HashMap<String, MethodLoweringInfo>>,
+    /// For each bare method name, `Some(ty)` if every method registered
+    /// under that name (across every struct) so far agrees on the same
+    /// declared output type, or `None` once any two disagree — maintained
+    /// incrementally as each method is registered
+    /// (`register_method_lowering_info`, the single insertion point for
+    /// `struct_methods`) instead of being recomputed by scanning every
+    /// struct's whole method table on every `MethodCall` whose receiver
+    /// type isn't otherwise known. Registration fully completes (via the
+    /// signature-only pre-pass) before any body is lowered, so this is
+    /// already in its final state by the time any `MethodCall` reads it —
+    /// equivalent to a lazy per-call scan over the complete map, just
+    /// computed once instead of on every such call.
+    method_name_output_consensus: HashMap<String, Option<Ty>>,
     method_lookup_by_def: HashMap<hir::DefId, MethodLoweringInfo>,
     method_lookup: HashMap<String, MethodLoweringInfo>,
     method_defs: HashMap<String, MethodDefinition>,
@@ -573,6 +592,7 @@ impl MirLowering {
             struct_layouts_in_progress: HashSet::new(),
             structural_defs: HashMap::new(),
             enum_defs: HashMap::new(),
+            enum_defs_by_name: HashMap::new(),
             enum_layouts: HashMap::new(),
             enum_layouts_by_ty: HashMap::new(),
             enum_layouts_in_progress: HashSet::new(),
@@ -585,6 +605,7 @@ impl MirLowering {
             generic_function_defs: HashMap::new(),
             runtime_functions: Self::default_runtime_signatures(),
             struct_methods: HashMap::new(),
+            method_name_output_consensus: HashMap::new(),
             method_lookup_by_def: HashMap::new(),
             method_lookup: HashMap::new(),
             method_defs: HashMap::new(),
@@ -4474,6 +4495,9 @@ impl MirLowering {
                 .or_insert(variant.def_id);
         }
 
+        self.enum_defs_by_name
+            .entry(name.clone())
+            .or_insert(def_id);
         self.enum_defs.insert(
             def_id,
             EnumDefinition {
@@ -4949,6 +4973,9 @@ impl MirLowering {
                 .or_insert(variant.def_id);
         }
 
+        self.enum_defs_by_name
+            .entry(enum_qualified_name.clone())
+            .or_insert(def_id);
         self.enum_defs.insert(
             def_id,
             EnumDefinition {
@@ -5925,6 +5952,14 @@ impl MirLowering {
             .insert(format!("{}::{}", struct_name, method_name), info.clone());
         self.method_lookup
             .insert(format!("{}::{}", struct_name, impl_item_name), info.clone());
+        self.method_name_output_consensus
+            .entry(method_name.clone())
+            .and_modify(|existing| {
+                if existing.as_ref() != Some(&info.sig.output) {
+                    *existing = None;
+                }
+            })
+            .or_insert_with(|| Some(info.sig.output.clone()));
         self.struct_methods
             .entry(struct_name.to_string())
             .or_default()
@@ -9667,11 +9702,7 @@ impl<'a> BodyBuilder<'a> {
             } else {
                 if let Some(seg) = path.segments.last() {
                     let name = seg.name.as_str();
-                    self.lowering
-                        .enum_defs
-                        .values()
-                        .find(|enm| enm.name == name)
-                        .map(|enm| enm.def_id)
+                    self.lowering.enum_defs_by_name.get(name).copied()
                 } else {
                     None
                 }
@@ -20281,21 +20312,15 @@ impl<'a> BodyBuilder<'a> {
                 }
 
                 let mut result_ty = expected_ty.clone();
-                let mut inferred_output: Option<Ty> = None;
-                for methods in self.lowering.struct_methods.values() {
-                    if let Some(info) = methods.get(method_name.as_str()) {
-                        if let Some(existing) = inferred_output.as_ref() {
-                            if existing != &info.sig.output {
-                                inferred_output = None;
-                                break;
-                            }
-                        } else {
-                            inferred_output = Some(info.sig.output.clone());
-                        }
-                    }
-                }
-                if let Some(output) = inferred_output {
-                    result_ty = output;
+                // `method_name_output_consensus` is maintained incrementally
+                // at registration time (see its doc comment) instead of
+                // rescanning every struct's whole method table here.
+                if let Some(Some(output)) = self
+                    .lowering
+                    .method_name_output_consensus
+                    .get(method_name.as_str())
+                {
+                    result_ty = output.clone();
                 }
                 let type_name = self
                     .lowering
