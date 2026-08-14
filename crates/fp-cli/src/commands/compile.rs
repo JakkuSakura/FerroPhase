@@ -865,9 +865,10 @@ async fn compile_emit_target(
                 crate::languages::materializer::materializer_for_language(
                     &crate::languages::backend::output_extension_for(target),
                 ),
-                crate::languages::normalizer::normalizer_for_language(&language).ok_or_else(
-                    || CliError::Compilation(format!("no normalizer for source language: {language}")),
-                )?,
+                crate::languages::normalizer::normalizer_for_language(&language, !args.skip_typing)
+                    .ok_or_else(|| {
+                        CliError::Compilation(format!("no normalizer for source language: {language}"))
+                    })?,
             ));
         let source = if args.skip_typing {
             wrapped
@@ -1087,7 +1088,7 @@ async fn compile_project(
     let ext = crate::languages::backend::output_extension_for(target);
     let mut file_count = 0;
 
-    let normalizer = crate::languages::normalizer::normalizer_for_language(lang)
+    let normalizer = crate::languages::normalizer::normalizer_for_language(lang, !args.skip_typing)
         .ok_or_else(|| CliError::Compilation(format!("no normalizer for source language: {lang}")))?;
     let materializer = crate::languages::materializer::materializer_for_language(
         &crate::languages::backend::output_extension_for(target)

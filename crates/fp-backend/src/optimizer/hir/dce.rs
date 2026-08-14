@@ -675,6 +675,7 @@ mod tests {
             next_hir_id: 100,
             def_paths: HashMap::new(),
             placeholder_defs: HashSet::new(),
+            op_defs: HashMap::new(),
         }
     }
 

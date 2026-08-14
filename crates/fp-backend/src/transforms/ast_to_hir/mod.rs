@@ -103,6 +103,14 @@ pub struct HirGenerator {
     /// is a structural stand-in (currently: trait declarations, which HIR
     /// has no first-class representation for) rather than a real lowering.
     placeholder_defs: HashSet<hir::DefId>,
+    /// Mirrored into the final `hir::Program::op_defs` (see its doc
+    /// comment) the same way `def_paths` is — a definition's portable op,
+    /// keyed by that definition's own real `DefId`, populated here from its
+    /// own `#[op(func = "...")]`/`#[op(method = "...")]` source attribute
+    /// at the point its `DefId` is assigned (free functions in
+    /// `transform_item_to_hir`, impl methods in `items.rs`'s
+    /// `transform_impl`).
+    op_defs: HashMap<hir::DefId, fp_core::intrinsics::OpKind>,
     resolving_type_aliases: HashSet<String>,
     resolved_names: ResolvedNameTable,
     target_env: TargetEnv,
@@ -523,6 +531,7 @@ impl HirGenerator {
             program_def_map: HashMap::new(),
             unimplemented_type_def_ids: HashSet::new(),
             placeholder_defs: HashSet::new(),
+            op_defs: HashMap::new(),
             resolving_type_aliases: HashSet::new(),
             resolved_names: ResolvedNameTable::new(),
             target_env: TargetEnv::host(),
@@ -919,7 +928,7 @@ impl HirGenerator {
         self.prelude_type_defs = type_aliases.into_iter().collect();
         self.prelude_value_defs = value_aliases.into_iter().collect();
     }
-
+    #[deprecated = "there should be only one, shared program. not to copy things around"]
     fn seed_workspace_definitions(&mut self, program: &mut hir::Program) {
         let Some(ref workspace) = self.workspace else {
             return;
@@ -937,6 +946,7 @@ impl HirGenerator {
             }
             program.def_map.extend(hir_program.def_map);
             program.def_paths.extend(hir_program.def_paths);
+            program.op_defs.extend(hir_program.op_defs);
             // Cross-package exported value/type symbols (`_exports`) are
             // *not* eagerly copied into `global_value_defs`/
             // `global_type_defs` here — `resolve_type_symbol`/
@@ -1567,6 +1577,7 @@ impl HirGenerator {
         program.def_map = self.program_def_map.clone();
         program.def_paths = self.def_paths.clone();
         program.placeholder_defs = self.placeholder_defs.clone();
+        program.op_defs = self.op_defs.clone();
         Ok(program)
     }
 
@@ -1652,6 +1663,7 @@ impl HirGenerator {
         program.items.push(item);
         program.def_paths = self.def_paths.clone();
         program.placeholder_defs = self.placeholder_defs.clone();
+        program.op_defs = self.op_defs.clone();
         Ok(program)
     }
 
@@ -1701,6 +1713,7 @@ impl HirGenerator {
         program.def_map = self.program_def_map.clone();
         program.def_paths = self.def_paths.clone();
         program.placeholder_defs = self.placeholder_defs.clone();
+        program.op_defs = self.op_defs.clone();
 
         Ok(program)
     }
@@ -2127,6 +2140,11 @@ impl HirGenerator {
             }
             ItemKind::DefFunction(func_def) => {
                 self.register_value_def(&func_def.name.name, def_id, &func_def.visibility);
+                if let Some(tag) = fp_core::intrinsics::extract_op_attr(&func_def.attrs, "func") {
+                    if let Some(op) = fp_core::intrinsics::OpKind::from_op_tag(&tag) {
+                        self.op_defs.insert(def_id, op);
+                    }
+                }
                 let lower_body = !attrs_has_name(&func_def.attrs, "unimplemented");
                 let mut function = self.transform_function_with_body(func_def, None, lower_body)?;
                 // Many `std` functions have a fake body whose sole purpose is

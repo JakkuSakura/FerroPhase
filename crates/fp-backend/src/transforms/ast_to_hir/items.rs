@@ -295,6 +295,11 @@ impl HirGenerator {
                             method.body = None;
                         }
                         let method_def_id = self.def_id_for_item(item);
+                        if let Some(tag) = fp_core::intrinsics::extract_op_attr(&func.attrs, "method") {
+                            if let Some(op) = fp_core::intrinsics::OpKind::from_op_tag(&tag) {
+                                self.op_defs.insert(method_def_id, op);
+                            }
+                        }
                         method_names.insert(method.sig.name.as_str().to_string());
                         items.push(hir::ImplItem {
                             def_id: method_def_id,

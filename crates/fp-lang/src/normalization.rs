@@ -109,41 +109,20 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 ExprKind::IntrinsicCall(call),
             )));
         };
-        match self.mode {
-            IntrinsicNormalizationMode::Compile => {
-                let (args, kwargs) = if matches!(op, OpKind::Print | OpKind::Println) {
-                    let (template, skip) = build_print_template_from_args(&call.args)?;
-                    let mut args = Vec::with_capacity(1 + call.args.len().saturating_sub(skip));
-                    args.push(Expr::new(ExprKind::FormatString(template)));
-                    args.extend(call.args[skip..].iter().cloned());
-                    (args, call.kwargs)
-                } else {
-                    (call.args, call.kwargs)
-                };
-                let replacement = match compile_mode_std_path(op) {
-                    Some(path) => ExprKind::Invoke(ExprInvoke {
-                        span: call.span,
-                        target: ExprInvokeTarget::Function(Name::path(Path::plain(path))),
-                        args,
-                        kwargs,
-                    }),
-                    None => ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                        CallKind::Intrinsic(call.kind.intrinsic_kind().expect("operation mapping")),
-                        args,
-                        kwargs,
-                    )),
-                };
-                Ok(NormalizeOutcome::Normalized(Expr::from_parts(
-                    id,
-                    ty_slot,
-                    span,
-                    replacement,
-                )))
-            }
-            IntrinsicNormalizationMode::Transpile => Ok(NormalizeOutcome::Ignored(
-                Expr::from_parts(id, ty_slot, span, ExprKind::IntrinsicCall(call)),
-            )),
-        }
+        // The op-defining declaration's own source path is never
+        // reconstructed here (that was the design flaw in the retired
+        // `compile_mode_std_path`): the resolved call target is discarded
+        // upstream on purpose, and only `op` survives, to be consumed later
+        // by a backend-specific materializer (e.g. `kotlin_materializer.rs`).
+        // Every mode therefore just keeps the `IntrinsicCall(CallKind::Op)`
+        // node unchanged.
+        let _ = op;
+        Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+            id,
+            ty_slot,
+            span,
+            ExprKind::IntrinsicCall(call),
+        )))
     }
 
     fn normalize_macro(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
@@ -559,6 +538,22 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             )));
         };
 
+        // Under `TypedTranspile`, plain-call/method-call portable-op
+        // detection is owned entirely by the post-typecheck
+        // `PortableOpResolver`/`HirToAstLifter` (real resolved receiver
+        // types available there). Reclassifying here too — before HIR
+        // lowering even runs, by name alone — would just mutate the AST
+        // out from under that safer pass, reintroducing the exact
+        // same-name-collision risk it exists to close. Skip entirely.
+        if self.mode == IntrinsicNormalizationMode::TypedTranspile {
+            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                id,
+                ty_slot,
+                span,
+                ExprKind::Invoke(invoke),
+            )));
+        }
+
         // In transpile mode, let resolve_lang_intrinsic handle portable ops
         // directly (Some, None, Vec::new, etc.) instead of routing through
         // intrinsic_call_from_invoke → normalize_call which returns Ignored.
@@ -649,30 +644,16 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
         };
 
         match self.mode {
-            IntrinsicNormalizationMode::Compile => match intrinsic_kind {
-                CallKind::Op(op) => match compile_mode_std_path(op) {
-                    Some(path) => Ok(NormalizeOutcome::Normalized(Expr::from_parts(
-                        id,
-                        ty_slot,
-                        span,
-                        ExprKind::Invoke(ExprInvoke {
-                            span: invoke.span,
-                            target: ExprInvokeTarget::Function(Name::path(Path::plain(path))),
-                            args: invoke.args,
-                            kwargs: invoke.kwargs,
-                        }),
-                    ))),
-                    // Some ops (e.g. `Some`/`None`/`Vec::new`) are recognized
-                    // above purely by bare identifier text, before any name
-                    // resolution has run, and have no dedicated Compile-mode
-                    // intrinsic. Rather than force a mapping that doesn't
-                    // exist, leave the expression untouched — it falls
-                    // through to ordinary name resolution, which correctly
-                    // finds whatever the identifier actually resolves to in
-                    // scope (the prelude `Option`, or a user's own locally
-                    // shadowing `enum Option`), instead of assuming the
-                    // builtin regardless of shadowing.
-                    None => match CallKind::Op(op).intrinsic_kind() {
+            // Unreachable in practice — `TypedTranspile` returns early above,
+            // before `intrinsic_call_from_invoke` is even consulted — but
+            // `Compile`'s behavior is the safe default if that ever changes.
+            //
+            // No path reconstruction (the retired `compile_mode_std_path`'s
+            // design flaw): the resolved call target is discarded on
+            // purpose here, and only the `OpKind` survives, for a
+            // backend-specific materializer to consume later.
+            IntrinsicNormalizationMode::Compile | IntrinsicNormalizationMode::TypedTranspile => match intrinsic_kind {
+                CallKind::Op(op) => match CallKind::Op(op).intrinsic_kind() {
                         Some(kind) => Ok(NormalizeOutcome::Normalized(Expr::from_parts(
                             id,
                             ty_slot,
@@ -689,7 +670,6 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                             span,
                             ExprKind::Invoke(invoke),
                         ))),
-                    },
                 },
                 CallKind::Intrinsic(kind) => Ok(NormalizeOutcome::Normalized(Expr::from_parts(
                     id,
@@ -829,55 +809,6 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
     }
 }
 
-fn compile_mode_std_path(kind: OpKind) -> Option<Vec<Ident>> {
-    let path = match kind {
-        // Printing and formatting are compiler intrinsics; the embedded std
-        // surface only exposes their lower-level IO building blocks.
-        OpKind::Format | OpKind::Print | OpKind::Println => return None,
-        OpKind::TimeNow => &["std", "time", "now"][..],
-        OpKind::Sleep => &["std", "time", "sleep"][..],
-        OpKind::Spawn => &["std", "task", "spawn"][..],
-        OpKind::Join => &["std", "task", "join"][..],
-        OpKind::Select => &["std", "task", "select"][..],
-        OpKind::FsReadDir => &["std", "fs", "read_dir"][..],
-        OpKind::FsWalkDir => &["std", "fs", "walk_dir"][..],
-        OpKind::FsReadToString => &["std", "fs", "read_to_string"][..],
-        OpKind::FsWriteString => &["std", "fs", "write_string"][..],
-        OpKind::FsAppendString => &["std", "fs", "append_string"][..],
-        OpKind::FsExists => &["std", "fs", "exists"][..],
-        OpKind::FsIsDir => &["std", "fs", "is_dir"][..],
-        OpKind::FsIsFile => &["std", "fs", "is_file"][..],
-        OpKind::FsCreateDirAll => &["std", "fs", "create_dir_all"][..],
-        OpKind::FsRemoveFile => &["std", "fs", "remove_file"][..],
-        OpKind::FsRemoveDirAll => &["std", "fs", "remove_dir_all"][..],
-        OpKind::FsGlob => &["std", "fs", "glob"][..],
-        OpKind::EnvCurrentDir => &["std", "env", "current_dir"][..],
-        OpKind::EnvTempDir => &["std", "env", "temp_dir"][..],
-        OpKind::EnvHomeDir => &["std", "env", "home_dir"][..],
-        OpKind::EnvVar => &["std", "env", "var"][..],
-        OpKind::EnvVarExists => &["std", "env", "exists"][..],
-        OpKind::IoReadStdinToString => &["std", "io", "read_stdin_to_string"][..],
-        OpKind::IoWriteStdout => &["std", "io", "write_stdout"][..],
-        OpKind::IoWriteStderr => &["std", "io", "write_stderr"][..],
-        OpKind::YamlToJson => &["std", "yaml", "to_json"][..],
-        OpKind::JsonParse => &["std", "json", "parse"][..],
-        OpKind::Input => &["std", "io", "input"][..],
-        OpKind::ShellExec => &["std", "shell", "exec"][..],
-        OpKind::ShellFileCopy => &["std", "shell", "file_copy"][..],
-        OpKind::ShellFileTemplate => &["std", "shell", "file_template"][..],
-        OpKind::ShellFileRsync => &["std", "shell", "file_rsync"][..],
-        // Portable data ops — no std path, handled in normalize_invoke
-        OpKind::OptionSome | OpKind::OptionNone | OpKind::OptionUnwrap
-        | OpKind::VecNew | OpKind::Clone => return None,
-        // Method-like portable ops — no std path
-        OpKind::AsRef | OpKind::MapOr | OpKind::Iter | OpKind::Collect
-        | OpKind::Find | OpKind::UnwrapOr | OpKind::ToOwned | OpKind::AsStr
-        | OpKind::ToString | OpKind::AndThen => return None,
-        // Import ops — handled at item level, not expression level
-        OpKind::Import(_) => return None,
-    };
-    Some(path.iter().map(|segment| Ident::new(*segment)).collect())
-}
 
 /// Apply the intrinsic normalizer to all expressions in AST items.
 /// Used in transpile mode to normalize Rust-specific patterns before serialization.
@@ -1701,11 +1632,16 @@ mod tests {
     fn compile_mode_preserves_intrinsics_but_restores_ops() {
         let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile);
 
+        // No path reconstruction: the op stays a bare `IntrinsicCall(Op(_))`
+        // node for a backend-specific materializer to consume later.
         let op = normalizer
             .normalize_call(op_call(OpKind::FsReadToString))
             .expect("normalize op call")
             .into_inner();
-        assert!(matches!(op.kind(), ExprKind::Invoke(_)));
+        assert!(matches!(
+            op.kind(),
+            ExprKind::IntrinsicCall(call) if matches!(call.kind, CallKind::Op(OpKind::FsReadToString))
+        ));
 
         let intrinsic = normalizer
             .normalize_call(intrinsic_call(
@@ -1718,6 +1654,9 @@ mod tests {
 
     #[test]
     fn compile_mode_shapes_direct_print_calls() {
+        // No path/shape reconstruction in Compile mode anymore — a pre-formed
+        // `IntrinsicCall(Op(_))` node is kept exactly as-is, for a
+        // backend-specific materializer to consume later.
         let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile);
         let call = Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
             CallKind::Op(OpKind::Print),
@@ -1730,16 +1669,9 @@ mod tests {
             .expect("normalize print call")
             .into_inner();
         let ExprKind::IntrinsicCall(call) = normalized.kind() else {
-            panic!("expected compiler print intrinsic");
+            panic!("expected intrinsic call to be preserved");
         };
-        assert!(matches!(
-            call.kind,
-            CallKind::Intrinsic(IntrinsicKind::Print)
-        ));
-        assert!(matches!(
-            call.args.first().map(Expr::kind),
-            Some(ExprKind::FormatString(_))
-        ));
+        assert!(matches!(call.kind, CallKind::Op(OpKind::Print)));
         assert_eq!(call.args.len(), 1);
     }
 
@@ -1775,28 +1707,30 @@ mod tests {
 
     #[test]
     fn compile_mode_restores_representative_std_paths() {
+        // The op-defining declaration's own source path is never
+        // reconstructed by the normalizer (that was the retired
+        // `compile_mode_std_path`'s design flaw) — every representative op
+        // stays a bare `IntrinsicCall(Op(_))` node, for a backend-specific
+        // materializer to consume later.
         let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile);
         let cases = [
-            (OpKind::FsWriteString, "std::fs::write_string"),
-            (OpKind::EnvVar, "std::env::var"),
-            (OpKind::IoWriteStdout, "std::io::write_stdout"),
-            (OpKind::TimeNow, "std::time::now"),
-            (OpKind::YamlToJson, "std::yaml::to_json"),
-            (OpKind::JsonParse, "std::json::parse"),
+            OpKind::FsWriteString,
+            OpKind::EnvVar,
+            OpKind::IoWriteStdout,
+            OpKind::TimeNow,
+            OpKind::YamlToJson,
+            OpKind::JsonParse,
         ];
 
-        for (kind, expected_path) in cases {
+        for kind in cases {
             let normalized = normalizer
                 .normalize_call(op_call(kind))
                 .expect("normalize lang call")
                 .into_inner();
-            let ExprKind::Invoke(invoke) = normalized.kind() else {
-                panic!("expected ordinary invoke for {kind:?}");
+            let ExprKind::IntrinsicCall(call) = normalized.kind() else {
+                panic!("expected intrinsic call to be preserved for {kind:?}");
             };
-            let ExprInvokeTarget::Function(name) = &invoke.target else {
-                panic!("expected function target for {kind:?}");
-            };
-            assert_eq!(name.to_string(), expected_path);
+            assert_eq!(call.kind, CallKind::Op(kind));
         }
     }
 
@@ -1805,7 +1739,7 @@ mod tests {
         let frontend = crate::FerroFrontend::new();
         let result = frontend
             .parse(
-                "#[intrinsic = \"test_intrinsic\"] fn public_api() {}\n#[op(func = \"test_op\")] fn compiler_op() {}",
+                "#[intrinsic = \"test_intrinsic\"] fn public_api() {}\n#[op(func = \"format\")] fn compiler_op() {}",
                 None,
             )
             .expect("parse marked declarations");
@@ -1820,12 +1754,11 @@ mod tests {
         );
         assert_eq!(
             registry
-                .get_op_path("test_op")
+                .get_op_path(fp_core::intrinsics::OpKind::Format)
                 .expect("op declaration")
                 .to_string(),
             "compiler_op"
         );
-        assert!(registry.get_path("test_op").is_none());
-        assert!(registry.get_op_path("test_intrinsic").is_none());
+        assert!(registry.get_path("format").is_none());
     }
 }

@@ -7,14 +7,22 @@ use crate::intrinsics::{CallKind, OpKind, lang_intrinsic_call_kind, lang_intrins
 #[derive(Clone, Default)]
 pub struct LangItemRegistry {
     items: HashMap<String, Path>,
-    ops: HashMap<String, Path>,
+    /// Free-function portable ops, keyed by `OpKind` directly (not by the
+    /// raw `#[op(func = "...")]` tag string) — the tag string is converted
+    /// to its `OpKind` exactly once, at scan time
+    /// (`collect_lang_items_from_items`), via `OpKind::from_op_tag`. This is
+    /// the std source's own declared path for that op: no separate
+    /// hardcoded `OpKind -> path` table needed anywhere downstream (see
+    /// `PortableOpResolver::resolve_call_op`, and the retired
+    /// `compile_mode_std_path`), and no reverse `OpKind -> tag` mapping
+    /// needed either — both lookup directions are a single `HashMap` op
+    /// on this one field.
+    ops: HashMap<OpKind, Path>,
     /// Method-position portable ops, keyed by `"{opclass}.{opmethod}"` (e.g.
     /// `"Option.as_ref"`) — populated by scanning `impl` blocks tagged
     /// `#[op(class = "...")]` for methods tagged `#[op(method = "...")]`.
-    /// Kept separate from `ops` (free-function `#[op(func = "...")]` tags,
-    /// matched by call path) because method-call resolution needs the
-    /// receiver's resolved *type name*, not a static path, to form the
-    /// lookup key.
+    /// Kept separate from `ops` (matched by the receiver's resolved type
+    /// name, not a static call path).
     method_ops: HashMap<String, OpKind>,
 }
 
@@ -23,8 +31,14 @@ impl LangItemRegistry {
         self.items.insert(name.into(), path);
     }
 
-    pub fn insert_op(&mut self, name: impl Into<String>, path: Path) {
-        self.ops.insert(name.into(), path);
+    /// `tag` is the raw `#[op(func = "...")]` attribute value — converted to
+    /// its `OpKind` here, once, via `OpKind::from_op_tag`. Silently a no-op
+    /// if the tag doesn't name a known op (e.g. a typo, or a tag reserved
+    /// for future use) rather than storing an unusable string key.
+    pub fn insert_op(&mut self, tag: &str, path: Path) {
+        if let Some(kind) = OpKind::from_op_tag(tag) {
+            self.ops.insert(kind, path);
+        }
     }
 
     pub fn insert_method_op(&mut self, opclass: &str, opmethod: &str, kind: OpKind) {
@@ -35,8 +49,8 @@ impl LangItemRegistry {
         for (name, path) in other.items {
             self.items.insert(name, path);
         }
-        for (name, path) in other.ops {
-            self.ops.insert(name, path);
+        for (kind, path) in other.ops {
+            self.ops.insert(kind, path);
         }
         for (key, kind) in other.method_ops {
             self.method_ops.insert(key, kind);
@@ -47,8 +61,23 @@ impl LangItemRegistry {
         self.items.get(name)
     }
 
-    pub fn get_op_path(&self, name: &str) -> Option<&Path> {
-        self.ops.get(name)
+    /// The std source's own declared path for a free-function portable op
+    /// (e.g. `OpKind::FsReadDir` -> `std::fs::read_dir`'s real path) — direct
+    /// lookup, no reverse name mapping.
+    pub fn get_op_path(&self, kind: OpKind) -> Option<&Path> {
+        self.ops.get(&kind)
+    }
+
+    /// Finds which (if any) registered free-function op's declared path
+    /// matches `segments` exactly — the call-site direction (used by
+    /// `PortableOpResolver::resolve_call_op`).
+    pub fn find_op_by_call_segments(&self, segments: &[&str]) -> Option<OpKind> {
+        self.ops
+            .iter()
+            .find(|(_, path)| {
+                path.segments.iter().map(|seg| seg.name.as_str()).collect::<Vec<_>>() == segments
+            })
+            .map(|(kind, _)| *kind)
     }
 
     /// Looks up a method-position portable op by the receiver's real type
@@ -87,10 +116,15 @@ pub fn lookup_intrinsic(name: &Name) -> Option<CallKind> {
 }
 
 pub fn lookup_op_intrinsic(name: &Name) -> Option<CallKind> {
-    let name = lookup_op_name(name)?;
-    lang_intrinsic_for_lang_item(&name)
-        .and_then(lang_intrinsic_call_kind)
-        .and_then(|kind| kind.op_kind().map(CallKind::from))
+    let registry = try_get_threadlocal_lang_items()?;
+    let name_segments: Vec<&str> = match name {
+        Name::Ident(ident) => vec![ident.name.as_str()],
+        Name::Path(path) => path.segments.iter().map(|seg| seg.name.as_str()).collect(),
+        _ => return None,
+    };
+    registry
+        .find_op_by_call_segments(&name_segments)
+        .map(CallKind::Op)
 }
 
 pub fn lookup_intrinsic_name(name: &Name) -> Option<String> {
@@ -110,74 +144,6 @@ pub fn lookup_intrinsic_name(name: &Name) -> Option<String> {
     None
 }
 
-pub fn lookup_op_name(name: &Name) -> Option<String> {
-    let registry = try_get_threadlocal_lang_items()?;
-    let name_segments: Vec<&str> = match name {
-        Name::Ident(ident) => vec![ident.name.as_str()],
-        Name::Path(path) => path.segments.iter().map(|seg| seg.name.as_str()).collect(),
-        _ => return None,
-    };
-
-    for (op, path) in registry.ops {
-        let path_segments: Vec<&str> = path.segments.iter().map(|seg| seg.name.as_str()).collect();
-        if path_segments == name_segments {
-            return Some(op);
-        }
-    }
-    None
-}
-
-/// Concrete `PortableOpResolver` (`fp-core/src/intrinsics/mod.rs`) backed by
-/// the thread-local `LangItemRegistry` — the single source of truth for
-/// portable ops is the frontend's own `#[op(...)]`-tagged stdlib source
-/// (`collect_lang_items`/`collect_lang_items_from_items` above), not a
-/// hardcoded table living in the HIR-to-AST lowering/lifting code.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct LangItemPortableOpResolver;
-
-impl crate::intrinsics::PortableOpResolver for LangItemPortableOpResolver {
-    fn resolve_call_op(&self, path_segments: &[&str]) -> Option<crate::intrinsics::OpKind> {
-        let registry = try_get_threadlocal_lang_items()?;
-        for (op, path) in &registry.ops {
-            let registered: Vec<&str> = path.segments.iter().map(|seg| seg.name.as_str()).collect();
-            if registered == path_segments {
-                return crate::intrinsics::OpKind::from_op_tag(op);
-            }
-        }
-        None
-    }
-
-    fn resolve_method_op(
-        &self,
-        method: &str,
-        receiver_ty: Option<&crate::hir::ty::Ty>,
-        def_paths: &HashMap<crate::hir::DefId, crate::hir::DefPath>,
-    ) -> Option<crate::intrinsics::OpKind> {
-        let registry = try_get_threadlocal_lang_items()?;
-        let class_name = resolved_ty_class_name(receiver_ty?, def_paths)?;
-        registry.get_method_op(&class_name, method)
-    }
-}
-
-/// The nominal type name a resolved `hir::ty::Ty` is known by (its `Adt`'s
-/// own def-path segment) — recurses through references so `&Foo`/`&&Foo`
-/// resolve the same as `Foo`. `None` for anything without a nominal name
-/// (primitives, trait objects, type variables, ...) — a receiver whose
-/// type can't be named this way simply never matches any tagged `opclass`.
-fn resolved_ty_class_name(
-    ty: &crate::hir::ty::Ty,
-    def_paths: &HashMap<crate::hir::DefId, crate::hir::DefPath>,
-) -> Option<String> {
-    use crate::hir::ty::TyKind;
-    match &ty.kind {
-        TyKind::Adt(adt, _) => def_paths
-            .get(&adt.did)
-            .and_then(|path| path.segments.last())
-            .map(|seg| seg.as_str().to_string()),
-        TyKind::Ref(_, inner, _) => resolved_ty_class_name(inner, def_paths),
-        _ => None,
-    }
-}
 
 pub fn extract_intrinsic_item(attrs: &[Attribute]) -> Option<String> {
     extract_intrinsic_attribute(attrs)
@@ -204,7 +170,7 @@ fn collect_lang_items_from_items(
                 if let Some(op_name) = extract_opfunc_attribute(&function.attrs) {
                     let mut segments = module_path.clone();
                     segments.push(function.name.clone());
-                    registry.insert_op(op_name, Path::plain(segments));
+                    registry.insert_op(&op_name, Path::plain(segments));
                 }
             }
             ItemKind::Impl(impl_block) => {

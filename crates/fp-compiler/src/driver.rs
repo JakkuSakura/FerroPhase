@@ -554,8 +554,7 @@ impl CompilerDriver {
             // counterpart, `use` items with no HIR counterpart, or an
             // individual item that fails to lift without poisoning the
             // rest of the package).
-            let lifter = fp_backend::transforms::HirToAstLifter::new(hir, typeck)
-                .with_op_resolver(&fp_core::lang::LangItemPortableOpResolver);
+            let lifter = fp_backend::transforms::HirToAstLifter::new(hir, typeck);
             let lifted_items_by_path = lifter.lift_items_by_path();
             let referenced_paths_by_path = lifter.referenced_paths_by_path();
             if let Some(pkg) = self

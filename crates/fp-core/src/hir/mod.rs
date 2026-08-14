@@ -1,5 +1,5 @@
 use crate::ast::{TypeBinaryOpKind, TypePrimitive};
-use crate::intrinsics::IntrinsicKind;
+use crate::intrinsics::{IntrinsicKind, OpKind};
 use crate::query::{QueryIrDocument, QueryOrigin};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -78,6 +78,19 @@ pub struct Program {
     /// original source item (e.g. fp-kotlin modeling a trait as a real
     /// Kotlin interface) see it unmodified instead of overwritten.
     pub placeholder_defs: HashSet<DefId>,
+    /// A definition's portable op, when its source declaration was tagged
+    /// `#[op(func = "...")]` (free function) or `#[op(method = "...")]`
+    /// (inside a `class`-tagged `impl` block) — populated once, by
+    /// `ast_to_hir` reading the item's own attrs at the point it assigns
+    /// that item's real `DefId`. Consulted post-typecheck by
+    /// `PortableOpResolver`/`HirToAstLifter`, keyed by the *resolved*
+    /// identity of a call's callee (`hir::Res::Def`) or a method call's
+    /// resolution (`TypeckResults::method_resolutions`) — never by
+    /// re-deriving and string/path-comparing a call site's own syntax,
+    /// which is both redundant (the compiler already resolved this) and
+    /// where the earlier, retired `compile_mode_std_path`/path-based
+    /// registry design went wrong.
+    pub op_defs: HashMap<DefId, OpKind>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -664,6 +677,7 @@ impl Program {
             next_hir_id: 0,
             def_paths: HashMap::new(),
             placeholder_defs: HashSet::new(),
+            op_defs: HashMap::new(),
         }
     }
 

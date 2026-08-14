@@ -51,12 +51,6 @@ pub struct HirToAstLifter<'a> {
     /// Consulted by `lift_path` so later references to a renamed binding
     /// (resolved via `hir::Res::Local`) use the new name too.
     renamed_locals: RefCell<HashMap<hir::HirId, String>>,
-    /// Language-specific portable-op vocabulary (Rust's `Some`/`Vec::new`/
-    /// `.as_ref()`/...), consulted post-typecheck when lifting an ordinary
-    /// `Call`/`MethodCall` — see `PortableOpResolver`'s doc comment. The
-    /// lifter itself stays language-agnostic; `None` just means "never
-    /// reclassify a plain call," same behavior as before this existed.
-    op_resolver: Option<&'a dyn fp_core::intrinsics::PortableOpResolver>,
 }
 
 impl<'a> HirToAstLifter<'a> {
@@ -66,13 +60,7 @@ impl<'a> HirToAstLifter<'a> {
             typeck,
             scope_names: RefCell::new(Vec::new()),
             renamed_locals: RefCell::new(HashMap::new()),
-            op_resolver: None,
         }
-    }
-
-    pub fn with_op_resolver(mut self, resolver: &'a dyn fp_core::intrinsics::PortableOpResolver) -> Self {
-        self.op_resolver = Some(resolver);
-        self
     }
 
     /// Declares `name` (for the binding identified by `hir_id`) in the
@@ -413,7 +401,7 @@ impl<'a> HirToAstLifter<'a> {
                 }
             }
             hir::ExprKind::MethodCall(receiver, name, args) => {
-                match self.try_lift_method_call_as_intrinsic(receiver, name, args)? {
+                match self.try_lift_method_call_as_intrinsic(expr.hir_id, receiver, args)? {
                     Some(intrinsic) => intrinsic,
                     None => Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
                         span: expr.span,
@@ -827,23 +815,23 @@ impl<'a> HirToAstLifter<'a> {
     }
 
     /// Reclassifies a plain function-style `Call` as an `ast::
-    /// ExprIntrinsicCall` when the injected `PortableOpResolver` recognizes
-    /// its callee path — delegated entirely to the resolver, since the
-    /// lifter itself has no opinion on path delimiters or which names are
-    /// portable ops (that vocabulary is language-specific).
+    /// ExprIntrinsicCall` when the callee's own resolved `DefId` was tagged
+    /// `#[op(func = "...")]` in its source declaration (`program.op_defs`,
+    /// populated once during `ast_to_hir` lowering). No path/name matching:
+    /// the callee is already resolved to a specific declaration by the
+    /// compiler, so its identity alone decides this — never its syntax.
     fn try_lift_call_as_intrinsic(
         &self,
         callee: &hir::Expr,
         args: &[hir::CallArg],
     ) -> Result<Option<Expr>> {
-        let Some(resolver) = self.op_resolver else {
-            return Ok(None);
-        };
         let hir::ExprKind::Path(path) = &callee.kind else {
             return Ok(None);
         };
-        let segments: Vec<&str> = path.segments.iter().map(|seg| seg.name.as_str()).collect();
-        let Some(op) = resolver.resolve_call_op(&segments) else {
+        let Some(hir::Res::Def(def_id)) = &path.res else {
+            return Ok(None);
+        };
+        let Some(op) = self.program.op_defs.get(def_id).copied() else {
             return Ok(None);
         };
         match op {
@@ -864,23 +852,26 @@ impl<'a> HirToAstLifter<'a> {
     }
 
     /// Reclassifies a method-call-syntax `MethodCall` as an `ast::
-    /// ExprIntrinsicCall` when the injected `PortableOpResolver` recognizes
-    /// the method name **and** confirms (given the receiver's real resolved
-    /// type, which this lifter looks up but does not itself interpret) that
-    /// it applies — never by name alone, so a same-named user method is
-    /// never misclassified.
+    /// ExprIntrinsicCall` when the call's own resolved method `DefId`
+    /// (`TypeckResults::method_resolutions`, keyed by the call expression's
+    /// own `HirId`) was tagged `#[op(method = "...")]` in its source
+    /// declaration (`program.op_defs`). No receiver-type/class-name string
+    /// composition needed: the typechecker already resolved this method
+    /// call to one specific, globally-unique `DefId`, so a same-named user
+    /// method (a different `DefId`) is never misclassified.
     fn try_lift_method_call_as_intrinsic(
         &self,
+        call_hir_id: hir::HirId,
         receiver: &hir::Expr,
-        method: &hir::Symbol,
         args: &[hir::CallArg],
     ) -> Result<Option<Expr>> {
-        let Some(resolver) = self.op_resolver else {
+        let Some(def_id) = self
+            .typeck
+            .and_then(|t| t.method_resolutions.get(&call_hir_id))
+        else {
             return Ok(None);
         };
-        let receiver_ty = self.typeck.and_then(|t| t.expr_types.get(&receiver.hir_id));
-        let Some(op) = resolver.resolve_method_op(method.as_str(), receiver_ty, &self.program.def_paths)
-        else {
+        let Some(op) = self.program.op_defs.get(def_id).copied() else {
             return Ok(None);
         };
         match op {

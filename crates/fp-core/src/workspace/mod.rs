@@ -338,6 +338,7 @@ impl WorkspaceContext {
     }
 
     /// Return immutable HIR definitions published by imported packages.
+    #[deprecated = "Copying things around is a severe code smell"]
     pub fn hir_definitions(
         &self,
     ) -> Vec<(
