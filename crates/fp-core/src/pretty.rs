@@ -1,5 +1,7 @@
 use std::fmt::{self, Formatter};
 
+use crate::writer::{IndentStyle, StyledFileWriter, WriterConfig};
+
 /// Configuration for pretty-printing intermediate representations.
 #[derive(Debug, Clone)]
 pub struct PrettyOptions {
@@ -22,38 +24,52 @@ impl Default for PrettyOptions {
 }
 
 /// Formatting context shared across pretty printers.
+///
+/// Backed by a [`StyledFileWriter`] for indentation/line bookkeeping: output
+/// is buffered as `fmt_pretty` walks the tree and flushed to the real
+/// `Formatter` once, by [`PrettyDisplay::fmt`], rather than written
+/// line-by-line as each node renders.
 pub struct PrettyCtx<'a> {
     pub options: &'a PrettyOptions,
-    indent: usize,
+    writer: StyledFileWriter,
 }
 
 impl<'a> PrettyCtx<'a> {
     pub fn new(options: &'a PrettyOptions) -> Self {
-        Self { options, indent: 0 }
+        let config = WriterConfig {
+            indent_style: IndentStyle::Spaces(options.indent_size.max(1)),
+            ..WriterConfig::default()
+        };
+        Self {
+            options,
+            writer: StyledFileWriter::new(config),
+        }
     }
 
-    pub fn write_indent(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        for _ in 0..self.indent {
-            write!(f, " ")?;
-        }
+    /// Write one line at the current indent depth.
+    pub fn write_line(&mut self, line: impl AsRef<str>) -> fmt::Result {
+        self.writer.write_line(line);
         Ok(())
     }
 
-    pub fn writeln(&self, f: &mut Formatter<'_>, line: impl AsRef<str>) -> fmt::Result {
-        self.write_indent(f)?;
-        writeln!(f, "{}", line.as_ref())
+    /// Same as [`Self::write_line`], kept for pretty-printers written
+    /// against the older Formatter-threading API. `f` is unused now that
+    /// output is buffered — it's `f`'s caller, [`PrettyDisplay::fmt`], that
+    /// flushes the buffer once the whole tree has been walked.
+    pub fn writeln(&mut self, _f: &mut Formatter<'_>, line: impl AsRef<str>) -> fmt::Result {
+        self.write_line(line)
     }
 
     pub fn current_indent(&self) -> usize {
-        self.indent
+        self.writer.indent_depth() * self.options.indent_size
     }
 
     pub fn increase_indent(&mut self) {
-        self.indent += self.options.indent_size;
+        self.writer.increase_indent();
     }
 
     pub fn decrease_indent(&mut self) {
-        self.indent = self.indent.saturating_sub(self.options.indent_size);
+        self.writer.decrease_indent();
     }
 
     pub fn with_indent<F>(&mut self, mut f_closure: F) -> fmt::Result
@@ -64,6 +80,12 @@ impl<'a> PrettyCtx<'a> {
         let result = f_closure(self);
         self.decrease_indent();
         result
+    }
+
+    /// Flush the buffered output. Called once, by [`PrettyDisplay::fmt`],
+    /// after the whole tree has been walked.
+    fn finish(&self) -> String {
+        self.writer.finish()
     }
 }
 
@@ -90,7 +112,8 @@ where
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut ctx = PrettyCtx::new(&self.options);
-        self.value.fmt_pretty(f, &mut ctx)
+        self.value.fmt_pretty(f, &mut ctx)?;
+        f.write_str(&ctx.finish())
     }
 }
 

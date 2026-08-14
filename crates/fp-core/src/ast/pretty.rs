@@ -19,16 +19,14 @@ impl PrettyPrintable for ast::Expr {
         let suffix = ty_suffix(self.ty.as_ref(), ctx);
 
         match &self.kind {
-            ast::ExprKind::Id(id) => ctx.writeln(f, format!("id({}){}", id, suffix)),
-            ast::ExprKind::Name(name) => ctx.writeln(f, format!("name {}{}", name, suffix)),
-            ast::ExprKind::Value(value) => ctx.writeln(
-                f,
-                format!("value {}{}", summarize_value(value.as_ref()), suffix),
+            ast::ExprKind::Id(id) => ctx.write_line(format!("id({}){}", id, suffix)),
+            ast::ExprKind::Name(name) => ctx.write_line(format!("name {}{}", name, suffix)),
+            ast::ExprKind::Value(value) => ctx.write_line(format!("value {}{}", summarize_value(value.as_ref()), suffix),
             ),
             ast::ExprKind::Block(block) => {
                 let count = block.stmts.len();
                 let plural = if count == 1 { "" } else { "s" };
-                ctx.writeln(f, format!("block ({} stmt{}){}", count, plural, suffix))?;
+                ctx.write_line(format!("block ({} stmt{}){}", count, plural, suffix))?;
                 ctx.with_indent(|ctx| {
                     for stmt in &block.stmts {
                         fmt_block_stmt(stmt, f, ctx)?;
@@ -37,14 +35,14 @@ impl PrettyPrintable for ast::Expr {
                 })
             }
             ast::ExprKind::Match(m) => {
-                ctx.writeln(f, format!("match{}", suffix))?;
+                ctx.write_line(format!("match{}", suffix))?;
                 ctx.with_indent(|ctx| {
                     for (idx, case) in m.cases.iter().enumerate() {
-                        ctx.writeln(f, format!("case #{}", idx))?;
+                        ctx.write_line(format!("case #{}", idx))?;
                         ctx.with_indent(|ctx| {
-                            ctx.writeln(f, "cond:")?;
+                            ctx.write_line("cond:")?;
                             ctx.with_indent(|ctx| case.cond.fmt_pretty(f, ctx))?;
-                            ctx.writeln(f, "body:")?;
+                            ctx.write_line("body:")?;
                             ctx.with_indent(|ctx| case.body.fmt_pretty(f, ctx))
                         })?;
                     }
@@ -52,14 +50,14 @@ impl PrettyPrintable for ast::Expr {
                 })
             }
             ast::ExprKind::If(expr_if) => {
-                ctx.writeln(f, format!("if{}", suffix))?;
+                ctx.write_line(format!("if{}", suffix))?;
                 ctx.with_indent(|ctx| {
-                    ctx.writeln(f, "cond:")?;
+                    ctx.write_line("cond:")?;
                     ctx.with_indent(|ctx| expr_if.cond.fmt_pretty(f, ctx))?;
-                    ctx.writeln(f, "then:")?;
+                    ctx.write_line("then:")?;
                     ctx.with_indent(|ctx| expr_if.then.fmt_pretty(f, ctx))?;
                     if let Some(elze) = &expr_if.elze {
-                        ctx.writeln(f, "else:")?;
+                        ctx.write_line("else:")?;
                         ctx.with_indent(|ctx| elze.fmt_pretty(f, ctx))?;
                     }
                     Ok(())
@@ -71,36 +69,34 @@ impl PrettyPrintable for ast::Expr {
                     .as_ref()
                     .map(|ident| format!(" {}", ident))
                     .unwrap_or_default();
-                ctx.writeln(f, format!("loop{}{}", label, suffix))?;
+                ctx.write_line(format!("loop{}{}", label, suffix))?;
                 ctx.with_indent(|ctx| expr_loop.body.fmt_pretty(f, ctx))
             }
             ast::ExprKind::While(expr_while) => {
-                ctx.writeln(f, format!("while{}", suffix))?;
+                ctx.write_line(format!("while{}", suffix))?;
                 ctx.with_indent(|ctx| {
-                    ctx.writeln(f, "cond:")?;
+                    ctx.write_line("cond:")?;
                     ctx.with_indent(|ctx| expr_while.cond.fmt_pretty(f, ctx))?;
-                    ctx.writeln(f, "body:")?;
+                    ctx.write_line("body:")?;
                     ctx.with_indent(|ctx| expr_while.body.fmt_pretty(f, ctx))
                 })
             }
             ast::ExprKind::With(expr_with) => {
-                ctx.writeln(f, format!("with{}", suffix))?;
+                ctx.write_line(format!("with{}", suffix))?;
                 ctx.with_indent(|ctx| {
-                    ctx.writeln(f, "context:")?;
+                    ctx.write_line("context:")?;
                     ctx.with_indent(|ctx| expr_with.context.fmt_pretty(f, ctx))?;
-                    ctx.writeln(f, "body:")?;
+                    ctx.write_line("body:")?;
                     ctx.with_indent(|ctx| expr_with.body.fmt_pretty(f, ctx))
                 })
             }
             ast::ExprKind::Invoke(invoke) => {
-                ctx.writeln(f, format!("invoke{}", suffix))?;
+                ctx.write_line(format!("invoke{}", suffix))?;
                 ctx.with_indent(|ctx| {
-                    ctx.writeln(
-                        f,
-                        format!("target: {}", render_invoke_target(&invoke.target)),
+                    ctx.write_line(format!("target: {}", render_invoke_target(&invoke.target)),
                     )?;
                     if !invoke.args.is_empty() {
-                        ctx.writeln(f, "args:")?;
+                        ctx.write_line("args:")?;
                         ctx.with_indent(|ctx| {
                             for arg in &invoke.args {
                                 arg.fmt_pretty(f, ctx)?;
@@ -109,10 +105,10 @@ impl PrettyPrintable for ast::Expr {
                         })?;
                     }
                     if !invoke.kwargs.is_empty() {
-                        ctx.writeln(f, "kwargs:")?;
+                        ctx.write_line("kwargs:")?;
                         ctx.with_indent(|ctx| {
                             for arg in &invoke.kwargs {
-                                ctx.writeln(f, format!("{}", arg))?;
+                                ctx.write_line(format!("{}", arg))?;
                             }
                             Ok(())
                         })?;
@@ -121,72 +117,68 @@ impl PrettyPrintable for ast::Expr {
                 })
             }
             ast::ExprKind::IntrinsicContainer(collection) => {
-                ctx.writeln(f, format!("intrinsic_container{}", suffix))?;
+                ctx.write_line(format!("intrinsic_container{}", suffix))?;
                 let expanded = collection.clone().into_const_expr();
                 ctx.with_indent(|ctx| expanded.fmt_pretty(f, ctx))
             }
             ast::ExprKind::BinOp(binop) => {
-                ctx.writeln(f, format!("binop {}{}", binop.kind, suffix))?;
+                ctx.write_line(format!("binop {}{}", binop.kind, suffix))?;
                 ctx.with_indent(|ctx| {
-                    ctx.writeln(f, "lhs:")?;
+                    ctx.write_line("lhs:")?;
                     ctx.with_indent(|ctx| binop.lhs.fmt_pretty(f, ctx))?;
-                    ctx.writeln(f, "rhs:")?;
+                    ctx.write_line("rhs:")?;
                     ctx.with_indent(|ctx| binop.rhs.fmt_pretty(f, ctx))
                 })
             }
             ast::ExprKind::For(for_expr) => {
-                ctx.writeln(f, format!("for{}", suffix))?;
+                ctx.write_line(format!("for{}", suffix))?;
                 ctx.with_indent(|ctx| {
-                    ctx.writeln(f, "iter:")?;
+                    ctx.write_line("iter:")?;
                     ctx.with_indent(|ctx| for_expr.iter.fmt_pretty(f, ctx))?;
-                    ctx.writeln(f, "body:")?;
+                    ctx.write_line("body:")?;
                     ctx.with_indent(|ctx| for_expr.body.fmt_pretty(f, ctx))
                 })
             }
             ast::ExprKind::Async(async_expr) => {
-                ctx.writeln(f, format!("async{}", suffix))?;
+                ctx.write_line(format!("async{}", suffix))?;
                 ctx.with_indent(|ctx| async_expr.expr.fmt_pretty(f, ctx))
             }
             ast::ExprKind::UnOp(unop) => {
-                ctx.writeln(f, format!("unop {}{}", unop.op, suffix))?;
+                ctx.write_line(format!("unop {}{}", unop.op, suffix))?;
                 ctx.with_indent(|ctx| {
-                    ctx.writeln(f, "value:")?;
+                    ctx.write_line("value:")?;
                     ctx.with_indent(|ctx| unop.val.fmt_pretty(f, ctx))
                 })
             }
             ast::ExprKind::Assign(assign) => {
-                ctx.writeln(f, format!("assign{}", suffix))?;
+                ctx.write_line(format!("assign{}", suffix))?;
                 ctx.with_indent(|ctx| {
-                    ctx.writeln(f, "target:")?;
+                    ctx.write_line("target:")?;
                     ctx.with_indent(|ctx| assign.target.fmt_pretty(f, ctx))?;
-                    ctx.writeln(f, "value:")?;
+                    ctx.write_line("value:")?;
                     ctx.with_indent(|ctx| assign.value.fmt_pretty(f, ctx))
                 })
             }
             ast::ExprKind::Select(select) => {
                 let selector = render_select_kind(&select.select);
-                ctx.writeln(
-                    f,
-                    format!("select .{} [{}]{}", select.field, selector, suffix),
+                ctx.write_line(format!("select .{} [{}]{}", select.field, selector, suffix),
                 )?;
                 ctx.with_indent(|ctx| {
-                    ctx.writeln(f, "object:")?;
+                    ctx.write_line("object:")?;
                     ctx.with_indent(|ctx| select.obj.fmt_pretty(f, ctx))
                 })
             }
             ast::ExprKind::Index(idx) => {
-                ctx.writeln(f, format!("index{}", suffix))?;
+                ctx.write_line(format!("index{}", suffix))?;
                 ctx.with_indent(|ctx| {
-                    ctx.writeln(f, "value:")?;
+                    ctx.write_line("value:")?;
                     ctx.with_indent(|ctx| idx.obj.fmt_pretty(f, ctx))?;
-                    ctx.writeln(f, "index:")?;
+                    ctx.write_line("index:")?;
                     ctx.with_indent(|ctx| idx.index.fmt_pretty(f, ctx))
                 })
             }
             ast::ExprKind::Struct(expr_struct) => {
-                ctx.writeln(
-                    f,
-                    format!(
+                ctx.write_line(format!(
                         "struct {}{}",
                         render_expr_inline(expr_struct.name.as_ref()),
                         suffix
@@ -195,14 +187,14 @@ impl PrettyPrintable for ast::Expr {
                 ctx.with_indent(|ctx| {
                     fmt_expr_fields(&expr_struct.fields, f, ctx)?;
                     if let Some(update) = &expr_struct.update {
-                        ctx.writeln(f, "..")?;
+                        ctx.write_line("..")?;
                         ctx.with_indent(|ctx| update.fmt_pretty(f, ctx))?;
                     }
                     Ok(())
                 })
             }
             ast::ExprKind::Structural(expr_structural) => {
-                ctx.writeln(f, format!("structural{}", suffix))?;
+                ctx.write_line(format!("structural{}", suffix))?;
                 ctx.with_indent(|ctx| fmt_expr_fields(&expr_structural.fields, f, ctx))
             }
             ast::ExprKind::Reference(reference) => {
@@ -211,17 +203,15 @@ impl PrettyPrintable for ast::Expr {
                     Some(false) => "const",
                     None => "unspecified",
                 };
-                ctx.writeln(f, format!("reference (mutable: {}){}", mutability, suffix))?;
+                ctx.write_line(format!("reference (mutable: {}){}", mutability, suffix))?;
                 ctx.with_indent(|ctx| reference.referee.fmt_pretty(f, ctx))
             }
             ast::ExprKind::Dereference(deref) => {
-                ctx.writeln(f, format!("deref{}", suffix))?;
+                ctx.write_line(format!("deref{}", suffix))?;
                 ctx.with_indent(|ctx| deref.referee.fmt_pretty(f, ctx))
             }
             ast::ExprKind::Tuple(tuple) => {
-                ctx.writeln(
-                    f,
-                    format!("tuple ({} values){}", tuple.values.len(), suffix),
+                ctx.write_line(format!("tuple ({} values){}", tuple.values.len(), suffix),
                 )?;
                 ctx.with_indent(|ctx| {
                     for value in &tuple.values {
@@ -231,34 +221,32 @@ impl PrettyPrintable for ast::Expr {
                 })
             }
             ast::ExprKind::Try(expr_try) => {
-                ctx.writeln(f, format!("try{}", suffix))?;
+                ctx.write_line(format!("try{}", suffix))?;
                 ctx.with_indent(|ctx| {
-                    ctx.writeln(f, "body:")?;
+                    ctx.write_line("body:")?;
                     ctx.with_indent(|ctx| expr_try.expr.fmt_pretty(f, ctx))?;
                     for catch in &expr_try.catches {
                         match catch.pat.as_ref() {
                             Some(pat) => {
-                                ctx.writeln(f, format!("catch {}", render_pattern(pat)))?;
+                                ctx.write_line(format!("catch {}", render_pattern(pat)))?;
                             }
-                            None => ctx.writeln(f, "catch")?,
+                            None => ctx.write_line("catch")?,
                         }
                         ctx.with_indent(|ctx| catch.body.fmt_pretty(f, ctx))?;
                     }
                     if let Some(elze) = &expr_try.elze {
-                        ctx.writeln(f, "else:")?;
+                        ctx.write_line("else:")?;
                         ctx.with_indent(|ctx| elze.fmt_pretty(f, ctx))?;
                     }
                     if let Some(finally) = &expr_try.finally {
-                        ctx.writeln(f, "finally:")?;
+                        ctx.write_line("finally:")?;
                         ctx.with_indent(|ctx| finally.fmt_pretty(f, ctx))?;
                     }
                     Ok(())
                 })
             }
             ast::ExprKind::Let(expr_let) => {
-                ctx.writeln(
-                    f,
-                    format!("let {}{}", render_pattern(expr_let.pat.as_ref()), suffix),
+                ctx.write_line(format!("let {}{}", render_pattern(expr_let.pat.as_ref()), suffix),
                 )?;
                 ctx.with_indent(|ctx| expr_let.expr.fmt_pretty(f, ctx))
             }
@@ -278,16 +266,12 @@ impl PrettyPrintable for ast::Expr {
                     .as_ref()
                     .map(|ty| format!(" -> {}", render_ty_brief(ty)))
                     .unwrap_or_default();
-                ctx.writeln(
-                    f,
-                    format!("closure {}({}){}{}", movability, params, ret_ty, suffix),
+                ctx.write_line(format!("closure {}({}){}{}", movability, params, ret_ty, suffix),
                 )?;
                 ctx.with_indent(|ctx| closure.body.fmt_pretty(f, ctx))
             }
             ast::ExprKind::Array(array) => {
-                ctx.writeln(
-                    f,
-                    format!("array ({} values){}", array.values.len(), suffix),
+                ctx.write_line(format!("array ({} values){}", array.values.len(), suffix),
                 )?;
                 ctx.with_indent(|ctx| {
                     for value in &array.values {
@@ -297,27 +281,25 @@ impl PrettyPrintable for ast::Expr {
                 })
             }
             ast::ExprKind::ArrayRepeat(array) => {
-                ctx.writeln(f, format!("array_repeat{}", suffix))?;
+                ctx.write_line(format!("array_repeat{}", suffix))?;
                 ctx.with_indent(|ctx| {
-                    ctx.writeln(f, "elem:")?;
+                    ctx.write_line("elem:")?;
                     ctx.with_indent(|ctx| array.elem.fmt_pretty(f, ctx))?;
-                    ctx.writeln(f, "len:")?;
+                    ctx.write_line("len:")?;
                     ctx.with_indent(|ctx| array.len.fmt_pretty(f, ctx))
                 })
             }
             ast::ExprKind::Await(await_expr) => {
-                ctx.writeln(f, format!("await{}", suffix))?;
+                ctx.write_line(format!("await{}", suffix))?;
                 ctx.with_indent(|ctx| await_expr.base.fmt_pretty(f, ctx))
             }
             ast::ExprKind::Cast(cast) => {
-                ctx.writeln(
-                    f,
-                    format!("cast{} -> {}", suffix, render_ty_brief(&cast.ty)),
+                ctx.write_line(format!("cast{} -> {}", suffix, render_ty_brief(&cast.ty)),
                 )?;
                 ctx.with_indent(|ctx| cast.expr.fmt_pretty(f, ctx))
             }
             ast::ExprKind::Return(ret) => {
-                ctx.writeln(f, format!("return{}", suffix))?;
+                ctx.write_line(format!("return{}", suffix))?;
                 if let Some(value) = &ret.value {
                     ctx.with_indent(|ctx| value.fmt_pretty(f, ctx))
                 } else {
@@ -325,28 +307,26 @@ impl PrettyPrintable for ast::Expr {
                 }
             }
             ast::ExprKind::Break(brk) => {
-                ctx.writeln(f, format!("break{}", suffix))?;
+                ctx.write_line(format!("break{}", suffix))?;
                 if let Some(value) = &brk.value {
                     ctx.with_indent(|ctx| value.fmt_pretty(f, ctx))
                 } else {
                     Ok(())
                 }
             }
-            ast::ExprKind::Continue(_) => ctx.writeln(f, format!("continue{}", suffix)),
+            ast::ExprKind::Continue(_) => ctx.write_line(format!("continue{}", suffix)),
             ast::ExprKind::ConstBlock(block) => {
-                ctx.writeln(f, format!("const_block{}", suffix))?;
+                ctx.write_line(format!("const_block{}", suffix))?;
                 ctx.with_indent(|ctx| block.expr.fmt_pretty(f, ctx))
             }
             ast::ExprKind::IntrinsicCall(call) => {
-                ctx.writeln(
-                    f,
-                    format!("intrinsic {}{}", render_intrinsic_kind(call.kind), suffix),
+                ctx.write_line(format!("intrinsic {}{}", render_intrinsic_kind(call.kind), suffix),
                 )?;
                 ctx.with_indent(|ctx| {
                     if call.args.is_empty() {
-                        ctx.writeln(f, "args: []")?;
+                        ctx.write_line("args: []")?;
                     } else {
-                        ctx.writeln(f, "args:")?;
+                        ctx.write_line("args:")?;
                         ctx.with_indent(|ctx| {
                             for arg in &call.args {
                                 arg.fmt_pretty(f, ctx)?;
@@ -356,12 +336,12 @@ impl PrettyPrintable for ast::Expr {
                     }
 
                     if call.kwargs.is_empty() {
-                        ctx.writeln(f, "kwargs: []")
+                        ctx.write_line("kwargs: []")
                     } else {
-                        ctx.writeln(f, "kwargs:")?;
+                        ctx.write_line("kwargs:")?;
                         ctx.with_indent(|ctx| {
                             for arg in &call.kwargs {
-                                ctx.writeln(f, format!("{} =", arg.name))?;
+                                ctx.write_line(format!("{} =", arg.name))?;
                                 ctx.with_indent(|ctx| arg.value.fmt_pretty(f, ctx))?;
                             }
                             Ok(())
@@ -371,23 +351,23 @@ impl PrettyPrintable for ast::Expr {
             }
             ast::ExprKind::Quote(q) => {
                 let kind = q.kind.map(|k| format!(" {:?}", k)).unwrap_or_default();
-                ctx.writeln(f, format!("quote{}{}", kind, suffix))?;
+                ctx.write_line(format!("quote{}{}", kind, suffix))?;
                 ctx.with_indent(|ctx| ast::Expr::block(q.block.clone()).fmt_pretty(f, ctx))
             }
             ast::ExprKind::Splice(s) => {
-                ctx.writeln(f, format!("splice{}", suffix))?;
+                ctx.write_line(format!("splice{}", suffix))?;
                 ctx.with_indent(|ctx| s.token.fmt_pretty(f, ctx))
             }
             ast::ExprKind::SplicePending(p) => {
-                ctx.writeln(f, format!("splice_pending({}){}", p.request_id, suffix))?;
+                ctx.write_line(format!("splice_pending({}){}", p.request_id, suffix))?;
                 ctx.with_indent(|ctx| p.token.fmt_pretty(f, ctx))
             }
             ast::ExprKind::Closured(closured) => {
-                ctx.writeln(f, format!("closured{}", suffix))?;
+                ctx.write_line(format!("closured{}", suffix))?;
                 ctx.with_indent(|ctx| closured.expr.fmt_pretty(f, ctx))
             }
             ast::ExprKind::Paren(paren) => {
-                ctx.writeln(f, format!("paren{}", suffix))?;
+                ctx.write_line(format!("paren{}", suffix))?;
                 ctx.with_indent(|ctx| paren.expr.fmt_pretty(f, ctx))
             }
             ast::ExprKind::Range(range) => {
@@ -395,45 +375,41 @@ impl PrettyPrintable for ast::Expr {
                     ast::ExprRangeLimit::Inclusive => "inclusive",
                     ast::ExprRangeLimit::Exclusive => "exclusive",
                 };
-                ctx.writeln(f, format!("range [{}]{}", limit, suffix))?;
+                ctx.write_line(format!("range [{}]{}", limit, suffix))?;
                 ctx.with_indent(|ctx| {
                     if let Some(start) = &range.start {
-                        ctx.writeln(f, "start:")?;
+                        ctx.write_line("start:")?;
                         ctx.with_indent(|ctx| start.fmt_pretty(f, ctx))?;
                     }
                     if let Some(end) = &range.end {
-                        ctx.writeln(f, "end:")?;
+                        ctx.write_line("end:")?;
                         ctx.with_indent(|ctx| end.fmt_pretty(f, ctx))?;
                     }
                     if let Some(step) = &range.step {
-                        ctx.writeln(f, "step:")?;
+                        ctx.write_line("step:")?;
                         ctx.with_indent(|ctx| step.fmt_pretty(f, ctx))?;
                     }
                     Ok(())
                 })
             }
-            ast::ExprKind::FormatString(fmt_string) => ctx.writeln(
-                f,
-                format!(
+            ast::ExprKind::FormatString(fmt_string) => ctx.write_line(format!(
                     "format_string {}{}",
                     render_format_template(fmt_string),
                     suffix
                 ),
             ),
             ast::ExprKind::Splat(splat) => {
-                ctx.writeln(f, format!("splat{}", suffix))?;
+                ctx.write_line(format!("splat{}", suffix))?;
                 ctx.with_indent(|ctx| splat.iter.fmt_pretty(f, ctx))
             }
             ast::ExprKind::SplatDict(splat_dict) => {
-                ctx.writeln(f, format!("splat_dict{}", suffix))?;
+                ctx.write_line(format!("splat_dict{}", suffix))?;
                 ctx.with_indent(|ctx| splat_dict.dict.fmt_pretty(f, ctx))
             }
             ast::ExprKind::Macro(mac) => {
-                ctx.writeln(f, format!("macro {}{}", mac.invocation.path, suffix))?;
+                ctx.write_line(format!("macro {}{}", mac.invocation.path, suffix))?;
                 ctx.with_indent(|ctx| {
-                    ctx.writeln(
-                        f,
-                        format!(
+                    ctx.write_line(format!(
                             "delimiter: {:?}, tokens: {}",
                             mac.invocation.delimiter, mac.invocation.tokens
                         ),
@@ -441,10 +417,10 @@ impl PrettyPrintable for ast::Expr {
                 })
             }
             ast::ExprKind::Item(item) => {
-                ctx.writeln(f, format!("item_expr{}", suffix))?;
+                ctx.write_line(format!("item_expr{}", suffix))?;
                 ctx.with_indent(|ctx| item.fmt_pretty(f, ctx))
             }
-            ast::ExprKind::Any(_) => ctx.writeln(f, format!("expr.any{}", suffix)),
+            ast::ExprKind::Any(_) => ctx.write_line(format!("expr.any{}", suffix)),
         }
     }
 }
@@ -462,34 +438,30 @@ impl PrettyPrintable for ast::Item {
                 );
                 header.push_str(&suffix);
                 if module.is_external {
-                    ctx.writeln(f, format!("{};", header))
+                    ctx.write_line(format!("{};", header))
                 } else {
-                    ctx.writeln(f, format!("{} {{", header))?;
+                    ctx.write_line(format!("{} {{", header))?;
                     ctx.with_indent(|ctx| {
                         for item in &module.items {
                             item.fmt_pretty(f, ctx)?;
                         }
                         Ok(())
                     })?;
-                    ctx.writeln(f, "}")
+                    ctx.write_line("}")
                 }
             }
             ast::ItemKind::Macro(mac) => {
-                ctx.writeln(
-                    f,
-                    format!(
+                ctx.write_line(format!(
                         "macro item {} (delim: {:?})",
                         mac.invocation.path, mac.invocation.delimiter
                     ),
                 )?;
                 ctx.with_indent(|ctx| {
-                    ctx.writeln(f, format!("tokens: {}{}", mac.invocation.tokens, suffix))
+                    ctx.write_line(format!("tokens: {}{}", mac.invocation.tokens, suffix))
                 })
             }
             ast::ItemKind::DefStruct(def) => {
-                ctx.writeln(
-                    f,
-                    format!(
+                ctx.write_line(format!(
                         "{}struct {}{} {{",
                         visibility_prefix(&def.visibility),
                         def.name,
@@ -498,19 +470,15 @@ impl PrettyPrintable for ast::Item {
                 )?;
                 ctx.with_indent(|ctx| {
                     for field in &def.value.fields {
-                        ctx.writeln(
-                            f,
-                            format!("{}: {}", field.name, render_ty_brief(&field.value)),
+                        ctx.write_line(format!("{}: {}", field.name, render_ty_brief(&field.value)),
                         )?;
                     }
                     Ok(())
                 })?;
-                ctx.writeln(f, "}")
+                ctx.write_line("}")
             }
             ast::ItemKind::DefStructural(def) => {
-                ctx.writeln(
-                    f,
-                    format!(
+                ctx.write_line(format!(
                         "{}structural {}{}",
                         visibility_prefix(&def.visibility),
                         def.name,
@@ -519,18 +487,14 @@ impl PrettyPrintable for ast::Item {
                 )?;
                 ctx.with_indent(|ctx| {
                     for field in &def.value.fields {
-                        ctx.writeln(
-                            f,
-                            format!("{}: {}", field.name, render_ty_brief(&field.value)),
+                        ctx.write_line(format!("{}: {}", field.name, render_ty_brief(&field.value)),
                         )?;
                     }
                     Ok(())
                 })
             }
             ast::ItemKind::DefEnum(def) => {
-                ctx.writeln(
-                    f,
-                    format!(
+                ctx.write_line(format!(
                         "{}enum {}{} {{",
                         visibility_prefix(&def.visibility),
                         def.name,
@@ -547,15 +511,13 @@ impl PrettyPrintable for ast::Item {
                             line.push_str(" = ");
                             line.push_str(&render_expr_inline(expr));
                         }
-                        ctx.writeln(f, line)?;
+                        ctx.write_line(line)?;
                     }
                     Ok(())
                 })?;
-                ctx.writeln(f, "}")
+                ctx.write_line("}")
             }
-            ast::ItemKind::DefType(def) => ctx.writeln(
-                f,
-                format!(
+            ast::ItemKind::DefType(def) => ctx.write_line(format!(
                     "{}type {}{} = {}{}",
                     visibility_prefix(&def.visibility),
                     def.name,
@@ -564,9 +526,7 @@ impl PrettyPrintable for ast::Item {
                     suffix
                 ),
             ),
-            ast::ItemKind::OpaqueType(def) => ctx.writeln(
-                f,
-                format!(
+            ast::ItemKind::OpaqueType(def) => ctx.write_line(format!(
                     "{}opaque type {}{}",
                     visibility_prefix(&def.visibility),
                     def.name,
@@ -593,7 +553,7 @@ impl PrettyPrintable for ast::Item {
                     line.push_str(&ty);
                 }
                 line.push_str(&suffix);
-                ctx.writeln(f, line)?;
+                ctx.write_line(line)?;
                 ctx.with_indent(|ctx| def.value.fmt_pretty(f, ctx))
             }
             ast::ItemKind::DefStatic(def) => {
@@ -608,7 +568,7 @@ impl PrettyPrintable for ast::Item {
                     ty_display,
                     suffix
                 );
-                ctx.writeln(f, line)?;
+                ctx.write_line(line)?;
                 ctx.with_indent(|ctx| def.value.fmt_pretty(f, ctx))
             }
             ast::ItemKind::DefFunction(def) => {
@@ -626,7 +586,7 @@ impl PrettyPrintable for ast::Item {
                     header.push_str(&render_type_function(ty));
                 }
                 header.push_str(&suffix);
-                ctx.writeln(f, header)?;
+                ctx.write_line(header)?;
                 ctx.with_indent(|ctx| fmt_function_body(&def.body, f, ctx))
             }
             ast::ItemKind::DefTrait(def) => {
@@ -642,14 +602,14 @@ impl PrettyPrintable for ast::Item {
                     header.push_str(&bounds);
                 }
                 header.push_str(&suffix);
-                ctx.writeln(f, format!("{} {{", header))?;
+                ctx.write_line(format!("{} {{", header))?;
                 ctx.with_indent(|ctx| {
                     for item in &def.items {
                         item.fmt_pretty(f, ctx)?;
                     }
                     Ok(())
                 })?;
-                ctx.writeln(f, "}")
+                ctx.write_line("}")
             }
             ast::ItemKind::DeclType(decl) => {
                 let bounds = render_type_bounds(&decl.bounds);
@@ -663,7 +623,7 @@ impl PrettyPrintable for ast::Item {
                     line.push_str(&render_ty_brief(ty));
                 }
                 line.push_str(&suffix);
-                ctx.writeln(f, line)
+                ctx.write_line(line)
             }
             ast::ItemKind::DeclConst(decl) => {
                 let mut line =
@@ -674,7 +634,7 @@ impl PrettyPrintable for ast::Item {
                     line.push(')');
                 }
                 line.push_str(&suffix);
-                ctx.writeln(f, line)
+                ctx.write_line(line)
             }
             ast::ItemKind::DeclStatic(decl) => {
                 let mut line = format!(
@@ -688,7 +648,7 @@ impl PrettyPrintable for ast::Item {
                     line.push(')');
                 }
                 line.push_str(&suffix);
-                ctx.writeln(f, line)
+                ctx.write_line(line)
             }
             ast::ItemKind::DeclFunction(decl) => {
                 let mut line = format!("declare {}", render_function_signature(&decl.sig));
@@ -697,11 +657,9 @@ impl PrettyPrintable for ast::Item {
                     line.push_str(&render_ty_brief(annotation));
                 }
                 line.push_str(&suffix);
-                ctx.writeln(f, line)
+                ctx.write_line(line)
             }
-            ast::ItemKind::Import(import) => ctx.writeln(
-                f,
-                format!(
+            ast::ItemKind::Import(import) => ctx.write_line(format!(
                     "{}import {}{}",
                     visibility_prefix(&import.visibility),
                     import.tree,
@@ -726,43 +684,43 @@ impl PrettyPrintable for ast::Item {
                 }
                 header.push_str(&render_expr_inline(&item_impl.self_ty));
                 header.push_str(&suffix);
-                ctx.writeln(f, format!("{} {{", header))?;
+                ctx.write_line(format!("{} {{", header))?;
                 ctx.with_indent(|ctx| {
                     for item in &item_impl.items {
                         item.fmt_pretty(f, ctx)?;
                     }
                     Ok(())
                 })?;
-                ctx.writeln(f, "}")
+                ctx.write_line("}")
             }
             ast::ItemKind::Expr(expr) => {
-                ctx.writeln(f, format!("expr_item{}", suffix))?;
+                ctx.write_line(format!("expr_item{}", suffix))?;
                 ctx.with_indent(|ctx| expr.fmt_pretty(f, ctx))
             }
             ast::ItemKind::ConstBlock(block) => {
-                ctx.writeln(f, format!("const_block_item{}", suffix))?;
+                ctx.write_line(format!("const_block_item{}", suffix))?;
                 ctx.with_indent(|ctx| block.expr.fmt_pretty(f, ctx))
             }
-            ast::ItemKind::Any(_) => ctx.writeln(f, format!("item.any{}", suffix)),
+            ast::ItemKind::Any(_) => ctx.write_line(format!("item.any{}", suffix)),
         }
     }
 }
 
 impl PrettyPrintable for ast::File {
     fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
-        ctx.writeln(f, "ast::File {")?;
+        ctx.write_line("ast::File {")?;
         ctx.with_indent(|ctx| {
             if !self.attrs.is_empty() {
-                ctx.writeln(f, "attrs:")?;
+                ctx.write_line("attrs:")?;
                 ctx.with_indent(|ctx| {
                     for attr in &self.attrs {
-                        ctx.writeln(f, format!("{:?}", attr))?;
+                        ctx.write_line(format!("{:?}", attr))?;
                     }
                     Ok(())
                 })?;
             }
             if !self.items.is_empty() {
-                ctx.writeln(f, "items:")?;
+                ctx.write_line("items:")?;
                 ctx.with_indent(|ctx| {
                     for item in &self.items {
                         item.fmt_pretty(f, ctx)?;
@@ -772,7 +730,7 @@ impl PrettyPrintable for ast::File {
             }
             Ok(())
         })?;
-        ctx.writeln(f, "}")
+        ctx.write_line("}")
     }
 }
 
@@ -972,16 +930,16 @@ impl PrettyPrintable for query::QueryDocument {
         match &self.kind {
             query::QueryKind::Sql(sql) => {
                 let header = format!("query.sql[{}]{}", sql.dialect, name_suffix);
-                ctx.writeln(f, header)?;
+                ctx.write_line(header)?;
                 ctx.with_indent(|ctx| {
                     if let Some(raw) = &sql.raw {
-                        ctx.writeln(f, raw.trim())?;
+                        ctx.write_line(raw.trim())?;
                     } else if !sql.statements.is_empty() {
                         for (idx, stmt) in sql.statements.iter().enumerate() {
-                            ctx.writeln(f, format!("{}: {}", idx, stmt))?;
+                            ctx.write_line(format!("{}: {}", idx, stmt))?;
                         }
                     } else {
-                        ctx.writeln(f, "<empty>")?;
+                        ctx.write_line("<empty>")?;
                     }
                     Ok(())
                 })
@@ -993,18 +951,18 @@ impl PrettyPrintable for query::QueryDocument {
                     .map(|target| format!(" -> {}", target))
                     .unwrap_or_default();
                 let header = format!("query.prql{}{}", target_suffix, name_suffix);
-                ctx.writeln(f, header)?;
+                ctx.write_line(header)?;
                 ctx.with_indent(|ctx| {
                     if prql.pipeline.trim().is_empty() {
-                        ctx.writeln(f, "<empty>")?;
+                        ctx.write_line("<empty>")?;
                     } else {
-                        ctx.writeln(f, prql.pipeline.trim())?;
+                        ctx.write_line(prql.pipeline.trim())?;
                     }
                     Ok(())
                 })
             }
             query::QueryKind::Any(any) => {
-                ctx.writeln(f, format!("query.any{} {:?}", name_suffix, any))
+                ctx.write_line(format!("query.any{} {:?}", name_suffix, any))
             }
         }
     }
@@ -1013,7 +971,7 @@ impl PrettyPrintable for query::QueryDocument {
 impl PrettyPrintable for SchemaDocument {
     fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
         let title = self.title.as_deref().unwrap_or("<schema>");
-        ctx.writeln(f, format!("schema {title}"))?;
+        ctx.write_line(format!("schema {title}"))?;
         ctx.with_indent(|ctx| self.root.fmt_pretty(f, ctx))
     }
 }
@@ -1021,40 +979,40 @@ impl PrettyPrintable for SchemaDocument {
 impl PrettyPrintable for SchemaNode {
     fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
         if let Some(description) = &self.description {
-            ctx.writeln(f, format!("description: {description}"))?;
+            ctx.write_line(format!("description: {description}"))?;
         }
         match &self.kind {
-            SchemaKind::Any => ctx.writeln(f, "type: any"),
-            SchemaKind::Null => ctx.writeln(f, "type: null"),
-            SchemaKind::Boolean => ctx.writeln(f, "type: boolean"),
-            SchemaKind::Number => ctx.writeln(f, "type: number"),
-            SchemaKind::Integer => ctx.writeln(f, "type: integer"),
-            SchemaKind::String => ctx.writeln(f, "type: string"),
-            SchemaKind::Reference(reference) => ctx.writeln(f, format!("ref: {}", reference.path)),
+            SchemaKind::Any => ctx.write_line("type: any"),
+            SchemaKind::Null => ctx.write_line("type: null"),
+            SchemaKind::Boolean => ctx.write_line("type: boolean"),
+            SchemaKind::Number => ctx.write_line("type: number"),
+            SchemaKind::Integer => ctx.write_line("type: integer"),
+            SchemaKind::String => ctx.write_line("type: string"),
+            SchemaKind::Reference(reference) => ctx.write_line(format!("ref: {}", reference.path)),
             SchemaKind::Array(array) => {
-                ctx.writeln(f, "type: array")?;
+                ctx.write_line("type: array")?;
                 ctx.with_indent(|ctx| {
-                    ctx.writeln(f, "items:")?;
+                    ctx.write_line("items:")?;
                     ctx.with_indent(|ctx| array.items.fmt_pretty(f, ctx))
                 })
             }
             SchemaKind::Object(object) => {
-                ctx.writeln(f, "type: object")?;
+                ctx.write_line("type: object")?;
                 if !object.properties.is_empty() {
-                    ctx.writeln(f, "properties:")?;
+                    ctx.write_line("properties:")?;
                     ctx.with_indent(|ctx| {
                         for (name, schema) in &object.properties {
-                            ctx.writeln(f, format!("{name}:"))?;
+                            ctx.write_line(format!("{name}:"))?;
                             ctx.with_indent(|ctx| schema.fmt_pretty(f, ctx))?;
                         }
                         Ok(())
                     })?;
                 }
                 if !object.required.is_empty() {
-                    ctx.writeln(f, format!("required: {:?}", object.required))?;
+                    ctx.write_line(format!("required: {:?}", object.required))?;
                 }
                 if !object.additional_properties {
-                    ctx.writeln(f, "additional_properties: false")?;
+                    ctx.write_line("additional_properties: false")?;
                 }
                 Ok(())
             }
@@ -1394,21 +1352,21 @@ fn fmt_block_stmt(
     match stmt {
         ast::BlockStmt::Item(item) => item.fmt_pretty(f, ctx),
         ast::BlockStmt::Let(stmt_let) => {
-            ctx.writeln(f, format!("let {}", render_pattern(&stmt_let.pat)))?;
+            ctx.write_line(format!("let {}", render_pattern(&stmt_let.pat)))?;
             ctx.with_indent(|ctx| {
                 if let Some(init) = &stmt_let.init {
-                    ctx.writeln(f, "init:")?;
+                    ctx.write_line("init:")?;
                     ctx.with_indent(|ctx| init.fmt_pretty(f, ctx))?;
                 }
                 if let Some(diverge) = &stmt_let.diverge {
-                    ctx.writeln(f, "diverge:")?;
+                    ctx.write_line("diverge:")?;
                     ctx.with_indent(|ctx| diverge.fmt_pretty(f, ctx))?;
                 }
                 Ok(())
             })
         }
         ast::BlockStmt::Defer(stmt_defer) => {
-            ctx.writeln(f, "defer")?;
+            ctx.write_line("defer")?;
             ctx.with_indent(|ctx| stmt_defer.expr.fmt_pretty(f, ctx))
         }
         ast::BlockStmt::Expr(expr_stmt) => {
@@ -1417,11 +1375,11 @@ fn fmt_block_stmt(
                 Some(false) => "(value)",
                 None => "",
             };
-            ctx.writeln(f, format!("expr_stmt {}", semicolon))?;
+            ctx.write_line(format!("expr_stmt {}", semicolon))?;
             ctx.with_indent(|ctx| expr_stmt.expr.fmt_pretty(f, ctx))
         }
-        ast::BlockStmt::Noop => ctx.writeln(f, "noop"),
-        ast::BlockStmt::Any(_) => ctx.writeln(f, "stmt.any"),
+        ast::BlockStmt::Noop => ctx.write_line("noop"),
+        ast::BlockStmt::Any(_) => ctx.write_line("stmt.any"),
     }
 }
 
@@ -1610,10 +1568,10 @@ fn fmt_expr_fields(
 ) -> fmt::Result {
     for field in fields {
         if let Some(value) = &field.value {
-            ctx.writeln(f, format!("{}:", field.name))?;
+            ctx.write_line(format!("{}:", field.name))?;
             ctx.with_indent(|ctx| value.fmt_pretty(f, ctx))?;
         } else {
-            ctx.writeln(f, format!("{} (shorthand)", field.name))?;
+            ctx.write_line(format!("{} (shorthand)", field.name))?;
         }
     }
     Ok(())

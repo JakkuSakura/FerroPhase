@@ -53,7 +53,7 @@ impl PrettyPrintable for LirProgram {
                     for (idx, func) in self.functions.iter().enumerate() {
                         write_function(func, f, ctx)?;
                         if idx + 1 < self.functions.len() {
-                            writeln!(f)?;
+                            ctx.writeln(f, "")?;
                         }
                     }
                     Ok(())

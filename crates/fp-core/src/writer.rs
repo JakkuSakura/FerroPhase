@@ -365,6 +365,19 @@ impl StyledFileWriter {
         result
     }
 
+    /// Swap out the raw buffered output built so far for `replacement`,
+    /// returning whatever was previously buffered. Indent depth and config
+    /// are untouched. Useful for redirecting a nested render into a scratch
+    /// buffer — e.g. rendering a statement as a standalone string for
+    /// embedding inline elsewhere — without losing this writer's place
+    /// (indent depth) in the overall output. Pair two calls to swap out and
+    /// back in: `let saved = w.swap_buffer(String::new()); /* render into w
+    /// */ let scratch = w.swap_buffer(saved);`.
+    pub fn swap_buffer(&mut self, replacement: String) -> String {
+        debug_assert!(self.pending.is_empty(), "swap_buffer() called with an unterminated line pending");
+        std::mem::replace(&mut self.out, replacement)
+    }
+
     /// Apply the configured formatter (if any) and return the final text.
     /// Formatter failures are swallowed (the unformatted buffer is returned
     /// instead) since formatting is a nicety, not a correctness requirement.
@@ -616,5 +629,18 @@ mod tests {
         w.decrease_indent();
         w.write_line("}");
         assert_eq!(w.finish(), "outer {\n    inner\n}\n");
+    }
+
+    #[test]
+    fn swap_buffer_redirects_a_scratch_render_without_losing_indent() {
+        let mut w = StyledFileWriter::new(WriterConfig::default());
+        w.write_line("outer");
+        w.increase_indent();
+        let saved = w.swap_buffer(String::new());
+        w.write_line("scratch");
+        let scratch = w.swap_buffer(saved);
+        w.write_line("resumed");
+        assert_eq!(scratch, "    scratch\n");
+        assert_eq!(w.finish(), "outer\n    resumed\n");
     }
 }

@@ -29,7 +29,7 @@ impl PrettyPrintable for Program {
                     for (idx, item) in self.items.iter().enumerate() {
                         write_item(item, f, ctx)?;
                         if idx + 1 < self.items.len() {
-                            writeln!(f)?;
+                            ctx.writeln(f, "")?;
                         }
                     }
                     Ok(())
