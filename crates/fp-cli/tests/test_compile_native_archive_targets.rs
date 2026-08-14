@@ -14,6 +14,8 @@ fn base_args(
     target_triple: &str,
 ) -> CompileArgs {
     CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input],
         backend: BackendKind::Binary,
         target: None,
@@ -26,7 +28,6 @@ fn base_args(
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output),
-        graph: None,
         opt_level: 0,
         debug: false,
         release: false,

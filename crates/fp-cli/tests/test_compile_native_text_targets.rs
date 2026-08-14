@@ -12,6 +12,8 @@ fn base_args(
     native_target: Option<&str>,
 ) -> CompileArgs {
     CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input],
         backend: BackendKind::Binary,
         target: None,
@@ -24,7 +26,6 @@ fn base_args(
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output),
-        graph: None,
         opt_level: 0,
         debug: false,
         release: false,
@@ -191,6 +192,8 @@ async fn compile_native_asm_reemits_same_isa_text() {
     .unwrap();
 
     let args = CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -203,7 +206,6 @@ async fn compile_native_asm_reemits_same_isa_text() {
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output_file.clone()),
-        graph: None,
         opt_level: 0,
         debug: false,
         release: false,
@@ -240,6 +242,8 @@ async fn compile_native_asm_transpiles_triplet_architecture() {
     .unwrap();
 
     let args = CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -252,7 +256,6 @@ async fn compile_native_asm_transpiles_triplet_architecture() {
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output_file.clone()),
-        graph: None,
         opt_level: 0,
         debug: false,
         release: false,
@@ -291,6 +294,8 @@ async fn compile_native_asm_transpiles_memory_load() {
     .unwrap();
 
     let args = CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -303,7 +308,6 @@ async fn compile_native_asm_transpiles_memory_load() {
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output_file.clone()),
-        graph: None,
         opt_level: 0,
         debug: false,
         release: false,
@@ -340,6 +344,8 @@ async fn compile_native_asm_transpiles_memory_store() {
     .unwrap();
 
     let args = CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -352,7 +358,6 @@ async fn compile_native_asm_transpiles_memory_store() {
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output_file.clone()),
-        graph: None,
         opt_level: 0,
         debug: false,
         release: false,
@@ -390,6 +395,8 @@ async fn compile_native_asm_transpiles_indirect_register_call() {
     .unwrap();
 
     let args = CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -402,7 +409,6 @@ async fn compile_native_asm_transpiles_indirect_register_call() {
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output_file.clone()),
-        graph: None,
         opt_level: 0,
         debug: false,
         release: false,
@@ -438,6 +444,8 @@ async fn compile_native_asm_transpiles_compare_branch() {
     .unwrap();
 
     let args = CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -450,7 +458,6 @@ async fn compile_native_asm_transpiles_compare_branch() {
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output_file.clone()),
-        graph: None,
         opt_level: 0,
         debug: false,
         release: false,
@@ -487,6 +494,8 @@ async fn compile_native_asm_reemits_same_isa_physical_operands() {
     .unwrap();
 
     let args = CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -499,7 +508,6 @@ async fn compile_native_asm_reemits_same_isa_physical_operands() {
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output_file.clone()),
-        graph: None,
         opt_level: 0,
         debug: false,
         release: false,
@@ -536,6 +544,8 @@ async fn compile_native_asm_translates_x86_physical_registers_to_aarch64() {
     .unwrap();
 
     let args = CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -548,7 +558,6 @@ async fn compile_native_asm_translates_x86_physical_registers_to_aarch64() {
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output_file.clone()),
-        graph: None,
         opt_level: 0,
         debug: false,
         release: false,
@@ -586,6 +595,8 @@ async fn compile_native_asm_translates_aarch64_physical_registers_to_x86() {
     .unwrap();
 
     let args = CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -598,7 +609,6 @@ async fn compile_native_asm_translates_aarch64_physical_registers_to_x86() {
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output_file.clone()),
-        graph: None,
         opt_level: 0,
         debug: false,
         release: false,
@@ -636,6 +646,8 @@ async fn compile_native_asm_translates_indexed_x86_address_to_aarch64() {
     .unwrap();
 
     let args = CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -648,7 +660,6 @@ async fn compile_native_asm_translates_indexed_x86_address_to_aarch64() {
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output_file.clone()),
-        graph: None,
         opt_level: 0,
         debug: false,
         release: false,
@@ -685,6 +696,8 @@ async fn compile_native_asm_translates_indexed_aarch64_address_to_x86() {
     .unwrap();
 
     let args = CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -697,7 +710,6 @@ async fn compile_native_asm_translates_indexed_aarch64_address_to_x86() {
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output_file.clone()),
-        graph: None,
         opt_level: 0,
         debug: false,
         release: false,

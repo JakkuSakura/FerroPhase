@@ -39,6 +39,8 @@ fn inspect_macho_fat_lists_architectures() {
 
 fn base_compile_args(input: PathBuf, output: PathBuf) -> CompileArgs {
     CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input],
         backend: BackendKind::Bytecode,
         target: None,
@@ -51,7 +53,6 @@ fn base_compile_args(input: PathBuf, output: PathBuf) -> CompileArgs {
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output),
-        graph: None,
         opt_level: 0,
         debug: false,
         release: false,

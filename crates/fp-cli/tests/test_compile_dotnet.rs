@@ -42,6 +42,8 @@ fn main() -> i64 {
     .unwrap();
 
     let args = CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Dotnet,
         target: None,
@@ -54,7 +56,6 @@ fn main() -> i64 {
         linker: "clang".to_string(),
         target_linker: None,
         output: None,
-        graph: None,
         opt_level: 2,
         debug: false,
         release: false,
@@ -96,6 +97,8 @@ fn main() -> i64 {
     .unwrap();
 
     let args = CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Dotnet,
         target: None,
@@ -108,7 +111,6 @@ fn main() -> i64 {
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output_file.clone()),
-        graph: None,
         opt_level: 3,
         debug: true,
         release: true,

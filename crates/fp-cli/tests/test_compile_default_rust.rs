@@ -21,6 +21,8 @@ fn main() {
     fs::write(&input_file, test_code).unwrap();
 
     let args = CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Rust,
         target: None,
@@ -33,7 +35,6 @@ fn main() {
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output_file.clone()),
-        graph: None,
         opt_level: 0,
         debug: false,
         release: false,

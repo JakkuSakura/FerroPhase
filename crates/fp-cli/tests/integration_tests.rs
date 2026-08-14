@@ -103,6 +103,8 @@ async fn compile_example_async(example_name: &str) {
     let output_path = temp_dir.path().join(example_name.replace(".fp", ".out"));
 
     let args = CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![source_path.clone()],
         backend: BackendKind::Bytecode,
         target: None,
@@ -115,7 +117,6 @@ async fn compile_example_async(example_name: &str) {
         linker: "native".to_string(),
         target_linker: None,
         output: Some(output_path.clone()),
-        graph: None,
         opt_level: 0,
         debug: true,
         release: false,

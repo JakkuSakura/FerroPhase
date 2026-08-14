@@ -8,6 +8,8 @@ use fp_cli::compile_options::BackendKind;
 
 fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileArgs {
     CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input],
         backend: BackendKind::JvmBytecode,
         target: None,
@@ -20,7 +22,6 @@ fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileAr
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output),
-        graph: None,
         opt_level: 0,
         debug: false,
         release: false,

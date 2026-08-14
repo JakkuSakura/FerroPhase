@@ -78,34 +78,10 @@ fn hir_contains_query_expr(expr: &hir::Expr) -> bool {
                     .is_some_and(|expr| hir_contains_query_expr(expr))
         }
         hir::ExprKind::Block(block) | hir::ExprKind::Loop(block) => {
-            block.stmts.iter().any(|stmt| match &stmt.kind {
-                hir::StmtKind::Local(local) => {
-                    local.init.as_ref().is_some_and(hir_contains_query_expr)
-                }
-                hir::StmtKind::Item(_) => false,
-                hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
-                    hir_contains_query_expr(expr)
-                }
-            }) || block
-                .expr
-                .as_ref()
-                .is_some_and(|expr| hir_contains_query_expr(expr))
+            hir_block_contains_query_expr(block)
         }
         hir::ExprKind::While(cond, block) => {
-            hir_contains_query_expr(cond)
-                || block.stmts.iter().any(|stmt| match &stmt.kind {
-                    hir::StmtKind::Local(local) => {
-                        local.init.as_ref().is_some_and(hir_contains_query_expr)
-                    }
-                    hir::StmtKind::Item(_) => false,
-                    hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
-                        hir_contains_query_expr(expr)
-                    }
-                })
-                || block
-                    .expr
-                    .as_ref()
-                    .is_some_and(|expr| hir_contains_query_expr(expr))
+            hir_contains_query_expr(cond) || hir_block_contains_query_expr(block)
         }
         hir::ExprKind::With(context, body) => {
             hir_contains_query_expr(context) || hir_contains_query_expr(body)
@@ -121,6 +97,9 @@ fn hir_contains_query_expr(expr: &hir::Expr) -> bool {
         hir::ExprKind::ArrayRepeat { elem, len } => {
             hir_contains_query_expr(elem) || hir_contains_query_expr(len)
         }
+        hir::ExprKind::Tuple(elements) => elements.iter().any(hir_contains_query_expr),
+        hir::ExprKind::ConstBlock(const_block) => hir_contains_query_expr(&const_block.body),
+        hir::ExprKind::Closure(closure) => hir_contains_query_expr(&closure.body),
         hir::ExprKind::Literal(_)
         | hir::ExprKind::Path(_)
         | hir::ExprKind::FormatString(_)
@@ -128,6 +107,17 @@ fn hir_contains_query_expr(expr: &hir::Expr) -> bool {
         | hir::ExprKind::Return(None)
         | hir::ExprKind::Break(None) => false,
     }
+}
+
+fn hir_block_contains_query_expr(block: &hir::Block) -> bool {
+    block.stmts.iter().any(|stmt| match &stmt.kind {
+        hir::StmtKind::Local(local) => local.init.as_ref().is_some_and(hir_contains_query_expr),
+        hir::StmtKind::Item(_) => false,
+        hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => hir_contains_query_expr(expr),
+    }) || block
+        .expr
+        .as_ref()
+        .is_some_and(|expr| hir_contains_query_expr(expr))
 }
 
 fn hir_program_contains_query_expr(program: &hir::Program) -> bool {
@@ -139,7 +129,7 @@ fn hir_item_contains_query_expr(item: &hir::Item) -> bool {
         hir::ItemKind::Function(function) => function
             .body
             .as_ref()
-            .is_some_and(|body| hir_contains_query_expr(&body.value)),
+            .is_some_and(hir_block_contains_query_expr),
         hir::ItemKind::Expr(expr) => hir_contains_query_expr(expr),
         hir::ItemKind::Impl(impl_block) => impl_block.items.iter().any(|impl_item| {
             matches!(
@@ -148,7 +138,7 @@ fn hir_item_contains_query_expr(item: &hir::Item) -> bool {
                     if function
                         .body
                         .as_ref()
-                        .is_some_and(|body| hir_contains_query_expr(&body.value))
+                        .is_some_and(hir_block_contains_query_expr)
             )
         }),
         _ => false,
@@ -173,6 +163,7 @@ fn assert_query_bundle(name: &'static str, expected_language: &'static str) {
             let path = examples_root().join(name);
             let bundle = compiler::compile_file_to_lir_bundle(
                 path.as_path(),
+                "test",
                 None,
                 compiler::LossyCompileOptions::default(),
             )
@@ -196,6 +187,7 @@ fn assert_host_query_bundle(name: &'static str) {
             let path = examples_root().join(name);
             let bundle = compiler::compile_file_to_lir_bundle(
                 path.as_path(),
+                "test",
                 None,
                 compiler::LossyCompileOptions::default(),
             )

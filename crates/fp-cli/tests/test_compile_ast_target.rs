@@ -9,6 +9,8 @@ use fp_cli::compile_options::BackendKind;
 
 fn base_compile_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileArgs {
     CompileArgs {
+        package: None,
+        skip_typing: false,
         input: vec![input],
         backend: BackendKind::Binary,
         target: None,
@@ -21,7 +23,6 @@ fn base_compile_args(input: std::path::PathBuf, output: std::path::PathBuf) -> C
         linker: "clang".to_string(),
         target_linker: None,
         output: Some(output),
-        graph: None,
         opt_level: 0,
         debug: false,
         release: false,
