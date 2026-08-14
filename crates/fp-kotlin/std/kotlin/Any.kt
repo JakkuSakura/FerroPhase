@@ -9,6 +9,7 @@ package kotlin
 /**
  * The root of the Kotlin class hierarchy. Every Kotlin class has [Any] as a superclass.
  */
+@Op(class = "Any")
 public expect open class Any() {
     /**
      * Indicates whether some other object is "equal to" this one.
@@ -36,5 +37,6 @@ public expect open class Any() {
     /**
      * Returns a string representation of the object.
      */
+    @Op(method = "to_string")
     public open fun toString(): String
 }

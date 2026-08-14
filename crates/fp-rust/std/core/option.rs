@@ -610,6 +610,7 @@ pub enum Option<T> {
 // Type implementation
 /////////////////////////////////////////////////////////////////////////////
 
+#[op(class = "Option")]
 impl<T> Option<T> {
     /////////////////////////////////////////////////////////////////////////
     // Querying the contained values
@@ -739,6 +740,7 @@ impl<T> Option<T> {
     #[inline]
     #[rustc_const_stable(feature = "const_option_basics", since = "1.48.0")]
     #[stable(feature = "rust1", since = "1.0.0")]
+    #[op(method = "as_ref")]
     pub const fn as_ref(&self) -> Option<&T> {
         match *self {
             Some(ref x) => Some(x),
@@ -1033,6 +1035,7 @@ impl<T> Option<T> {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_allow_const_fn_unstable(const_precise_live_drops)]
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
+    #[op(method = "unwrap_or")]
     pub const fn unwrap_or(self, default: T) -> T
     where
         T: [const] Destruct,
@@ -1219,6 +1222,7 @@ impl<T> Option<T> {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[must_use = "if you don't need the returned value, use `if let` instead"]
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
+    #[op(method = "map_or")]
     pub const fn map_or<U, F>(self, default: U, f: F) -> U
     where
         F: [const] FnOnce(T) -> U + [const] Destruct,
@@ -1431,6 +1435,7 @@ impl<T> Option<T> {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
+    #[op(method = "iter")]
     pub fn iter(&self) -> Iter<'_, T> {
         Iter { inner: Item { opt: self.as_ref() } }
     }
@@ -1534,6 +1539,7 @@ impl<T> Option<T> {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_confusables("flat_map", "flatmap")]
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
+    #[op(method = "and_then")]
     pub const fn and_then<U, F>(self, f: F) -> Option<U>
     where
         F: [const] FnOnce(T) -> Option<U> + [const] Destruct,
@@ -2266,6 +2272,7 @@ const fn expect_failed(msg: &str) -> ! {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_const_unstable(feature = "const_clone", issue = "142757")]
+#[op(class = "Option")]
 const impl<T> Clone for Option<T>
 where
     // FIXME(const_hack): the T: [const] Destruct should be inferred from the Self: [const] Destruct in clone_from.
@@ -2273,6 +2280,7 @@ where
     T: [const] Clone + [const] Destruct,
 {
     #[inline]
+    #[op(method = "clone")]
     fn clone(&self) -> Self {
         match self {
             Some(x) => Some(x.clone()),

@@ -15,7 +15,7 @@ use fp_core::ast::{
 use fp_core::error::Result;
 use fp_core::hir;
 use fp_core::hir::DefId;
-use fp_core::intrinsics::CallKind;
+use fp_core::intrinsics::{CallKind, OpKind};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 use fp_typing::TypeckResults;
@@ -51,6 +51,12 @@ pub struct HirToAstLifter<'a> {
     /// Consulted by `lift_path` so later references to a renamed binding
     /// (resolved via `hir::Res::Local`) use the new name too.
     renamed_locals: RefCell<HashMap<hir::HirId, String>>,
+    /// Language-specific portable-op vocabulary (Rust's `Some`/`Vec::new`/
+    /// `.as_ref()`/...), consulted post-typecheck when lifting an ordinary
+    /// `Call`/`MethodCall` — see `PortableOpResolver`'s doc comment. The
+    /// lifter itself stays language-agnostic; `None` just means "never
+    /// reclassify a plain call," same behavior as before this existed.
+    op_resolver: Option<&'a dyn fp_core::intrinsics::PortableOpResolver>,
 }
 
 impl<'a> HirToAstLifter<'a> {
@@ -60,7 +66,13 @@ impl<'a> HirToAstLifter<'a> {
             typeck,
             scope_names: RefCell::new(Vec::new()),
             renamed_locals: RefCell::new(HashMap::new()),
+            op_resolver: None,
         }
+    }
+
+    pub fn with_op_resolver(mut self, resolver: &'a dyn fp_core::intrinsics::PortableOpResolver) -> Self {
+        self.op_resolver = Some(resolver);
+        self
     }
 
     /// Declares `name` (for the binding identified by `hir_id`) in the
@@ -389,24 +401,32 @@ impl<'a> HirToAstLifter<'a> {
                 referee: Box::new(self.lift_expr(&reference.expr)?),
                 mutable: Some(matches!(reference.mutable, hir::ty::Mutability::Mut)),
             })),
-            hir::ExprKind::Call(callee, args) => Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
-                span: expr.span,
-                target: ast::ExprInvokeTarget::expr(self.lift_expr(callee)?),
-                args: self.lift_positional_args(args)?,
-                kwargs: self.lift_keyword_args(args)?,
-            })),
-            hir::ExprKind::MethodCall(receiver, name, args) => {
-                Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
-                    span: expr.span,
-                    target: ast::ExprInvokeTarget::Method(ExprSelect {
+            hir::ExprKind::Call(callee, args) => {
+                match self.try_lift_call_as_intrinsic(callee, args)? {
+                    Some(intrinsic) => intrinsic,
+                    None => Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
                         span: expr.span,
-                        obj: Box::new(self.lift_expr(receiver)?),
-                        field: Ident::new(name.as_str()),
-                        select: ExprSelectType::Method,
-                    }),
-                    args: self.lift_positional_args(args)?,
-                    kwargs: self.lift_keyword_args(args)?,
-                }))
+                        target: ast::ExprInvokeTarget::expr(self.lift_expr(callee)?),
+                        args: self.lift_positional_args(args)?,
+                        kwargs: self.lift_keyword_args(args)?,
+                    })),
+                }
+            }
+            hir::ExprKind::MethodCall(receiver, name, args) => {
+                match self.try_lift_method_call_as_intrinsic(receiver, name, args)? {
+                    Some(intrinsic) => intrinsic,
+                    None => Expr::new(ast::ExprKind::Invoke(ast::ExprInvoke {
+                        span: expr.span,
+                        target: ast::ExprInvokeTarget::Method(ExprSelect {
+                            span: expr.span,
+                            obj: Box::new(self.lift_expr(receiver)?),
+                            field: Ident::new(name.as_str()),
+                            select: ExprSelectType::Method,
+                        }),
+                        args: self.lift_positional_args(args)?,
+                        kwargs: self.lift_keyword_args(args)?,
+                    })),
+                }
             }
             hir::ExprKind::FieldAccess(base, field) => Expr::new(ast::ExprKind::Select(ExprSelect {
                 span: expr.span,
@@ -804,6 +824,83 @@ impl<'a> HirToAstLifter<'a> {
 
     fn lift_positional_args(&self, args: &[hir::CallArg]) -> Result<Vec<Expr>> {
         args.iter().map(|arg| self.lift_expr(&arg.value)).collect()
+    }
+
+    /// Reclassifies a plain function-style `Call` as an `ast::
+    /// ExprIntrinsicCall` when the injected `PortableOpResolver` recognizes
+    /// its callee path — delegated entirely to the resolver, since the
+    /// lifter itself has no opinion on path delimiters or which names are
+    /// portable ops (that vocabulary is language-specific).
+    fn try_lift_call_as_intrinsic(
+        &self,
+        callee: &hir::Expr,
+        args: &[hir::CallArg],
+    ) -> Result<Option<Expr>> {
+        let Some(resolver) = self.op_resolver else {
+            return Ok(None);
+        };
+        let hir::ExprKind::Path(path) = &callee.kind else {
+            return Ok(None);
+        };
+        let segments: Vec<&str> = path.segments.iter().map(|seg| seg.name.as_str()).collect();
+        let Some(op) = resolver.resolve_call_op(&segments) else {
+            return Ok(None);
+        };
+        match op {
+            OpKind::OptionSome | OpKind::OptionUnwrap | OpKind::Clone => {
+                Ok(Some(match args.first() {
+                    Some(arg) => self.lift_expr(&arg.value)?,
+                    None => Expr::new(ast::ExprKind::Value(Box::new(Value::Null(Default::default())))),
+                }))
+            }
+            OpKind::OptionNone => Ok(Some(Expr::new(ast::ExprKind::Value(Box::new(Value::Null(
+                Default::default(),
+            )))))),
+            OpKind::VecNew => Ok(Some(Expr::new(ast::ExprKind::IntrinsicContainer(
+                ast::ExprIntrinsicContainer::VecElements { elements: vec![] },
+            )))),
+            _ => Ok(None),
+        }
+    }
+
+    /// Reclassifies a method-call-syntax `MethodCall` as an `ast::
+    /// ExprIntrinsicCall` when the injected `PortableOpResolver` recognizes
+    /// the method name **and** confirms (given the receiver's real resolved
+    /// type, which this lifter looks up but does not itself interpret) that
+    /// it applies — never by name alone, so a same-named user method is
+    /// never misclassified.
+    fn try_lift_method_call_as_intrinsic(
+        &self,
+        receiver: &hir::Expr,
+        method: &hir::Symbol,
+        args: &[hir::CallArg],
+    ) -> Result<Option<Expr>> {
+        let Some(resolver) = self.op_resolver else {
+            return Ok(None);
+        };
+        let receiver_ty = self.typeck.and_then(|t| t.expr_types.get(&receiver.hir_id));
+        let Some(op) = resolver.resolve_method_op(method.as_str(), receiver_ty, &self.program.def_paths)
+        else {
+            return Ok(None);
+        };
+        match op {
+            OpKind::AsRef | OpKind::Iter | OpKind::ToOwned | OpKind::AsStr => {
+                Ok(Some(self.lift_expr(receiver)?))
+            }
+            OpKind::Clone => Ok(Some(self.lift_expr(receiver)?)),
+            OpKind::MapOr | OpKind::Collect | OpKind::Find | OpKind::UnwrapOr | OpKind::ToString
+            | OpKind::AndThen => {
+                let mut call_args = Vec::with_capacity(1 + args.len());
+                call_args.push(self.lift_expr(receiver)?);
+                call_args.extend(self.lift_positional_args(args)?);
+                Ok(Some(Expr::new(ast::ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                    CallKind::Op(op),
+                    call_args,
+                    self.lift_keyword_args(args)?,
+                )))))
+            }
+            _ => Ok(None),
+        }
     }
 
     fn lift_keyword_args(&self, args: &[hir::CallArg]) -> Result<Vec<ExprKwArg>> {

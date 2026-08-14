@@ -73,6 +73,13 @@ impl HirGenerator {
             return self.transform_expr_to_hir_inner(ast_expr);
         };
 
+        // `Invoke` (plain function/method calls) is deliberately NOT
+        // normalized here anymore — portable-op detection for ordinary
+        // calls needs the receiver's real resolved type to disambiguate
+        // safely from a same-named user function/method (see
+        // `HirToAstLifter`'s post-typecheck reclassification, which now
+        // owns this). Genuine macro/intrinsic-container/struct shapes are
+        // unambiguous by construction and keep resolving immediately.
         let needs_normalization = matches!(
             ast_expr.kind(),
             ast::ExprKind::Macro(_)
@@ -80,7 +87,6 @@ impl HirGenerator {
                 | ast::ExprKind::IntrinsicContainer(_)
                 | ast::ExprKind::Struct(_)
                 | ast::ExprKind::Structural(_)
-                | ast::ExprKind::Invoke(_)
         );
         if !needs_normalization {
             return self.transform_expr_to_hir_inner(ast_expr);

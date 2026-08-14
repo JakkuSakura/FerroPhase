@@ -232,6 +232,21 @@ pub(crate) fn decode_bytes_literal(raw: &str) -> Option<Vec<u8>> {
         Some(out)
     }
 
+    if let Some(rest) = raw.strip_prefix("br") {
+        // Raw byte string (`br"..."`/`br#"..."#`/`br##"..."##`/...) — no
+        // escape processing at all, same as `decode_string_literal`'s `br`
+        // handling, just returning bytes instead of a `String`.
+        let hash_count = rest.chars().take_while(|c| *c == '#').count();
+        let after_hashes = &rest[hash_count..];
+        let after_quote = after_hashes.strip_prefix('"')?;
+        let closing = format!("\"{}", "#".repeat(hash_count));
+        let end_idx = after_quote.rfind(&closing)?;
+        if end_idx + closing.len() != after_quote.len() {
+            return None;
+        }
+        return Some(after_quote[..end_idx].as_bytes().to_vec());
+    }
+
     let rest = raw.strip_prefix('b').or_else(|| raw.strip_prefix('c'))?;
     if rest.starts_with('\'') && rest.ends_with('\'') && rest.len() >= 2 {
         return unescape_bytes(&rest[1..rest.len() - 1]);

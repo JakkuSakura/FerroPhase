@@ -17,7 +17,15 @@ mod tests {
     use super::*;
     use fp_core::diagnostics::diagnostic_manager;
 
+    // `diagnostic_manager()` is a process-wide singleton — since
+    // `cargo test` runs a crate's tests concurrently on multiple threads by
+    // default, two tests snapshotting/checking it at the same time would
+    // otherwise see each other's diagnostics. Serialize just the tests that
+    // touch it.
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn parse_and_count_warnings(src: &str) -> (Vec<KtDecl>, usize) {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mgr = diagnostic_manager();
         let start = mgr.snapshot();
         let decls = parse_declarations(src).unwrap();
@@ -150,12 +158,28 @@ mod tests {
         assert_eq!(decls[0].name, "Color");
     }
 
+    #[test]
+    fn captures_op_class_and_op_method_annotations() {
+        let src = r#"
+            @Op(class = "Option")
+            public class OptionBox<T> {
+                @Op(method = "unwrap_or")
+                public fun unwrapOr(default: T): T = default
+            }
+        "#;
+        let (decls, warnings) = parse_and_count_warnings(src);
+        assert_eq!(warnings, 0);
+        assert_eq!(decls[0].op_class.as_deref(), Some("Option"));
+        assert_eq!(decls[0].members[0].op_method.as_deref(), Some("unwrap_or"));
+    }
+
     /// Not a pass/fail gate — walks the vendored Kotlin stdlib
     /// (`crates/fp-kotlin/std`, see `docs/KotlinStd.md`) and reports how
     /// many files parse with zero warnings vs. partial/zero declarations
     /// recovered. Run with `-- --nocapture` to see the summary.
     #[test]
     fn measures_vendored_stdlib_parse_coverage() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let std_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("std/kotlin");
         if !std_root.exists() {
             eprintln!("skipping: {std_root:?} not present");

@@ -11,6 +11,7 @@ pub fn none<T>() -> Option<T> {
     Option::None
 }
 
+#[op(class = "Option")]
 impl<T> Option<T> {
     pub fn is_some(&self) -> bool {
         match self {
@@ -37,6 +38,7 @@ impl<T> Option<T> {
         }
     }
 
+    #[op(method = "unwrap_or")]
     pub fn unwrap_or(self, default: T) -> T {
         match self {
             Option::Some(value) => value,
@@ -51,6 +53,7 @@ impl<T> Option<T> {
         }
     }
 
+    #[op(method = "map_or")]
     pub fn map_or<U>(self, default: U, f: fn(T) -> U) -> U {
         match self {
             Option::Some(value) => f(value),

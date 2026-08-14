@@ -48,6 +48,40 @@ impl<T> NormalizeOutcome<T> {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoopIntrinsicNormalizer;
 
+/// Strategy interface for post-typecheck portable-operation reclassification
+/// during HIR-to-AST lifting. Kept separate from `IntrinsicNormalizer`
+/// (which runs pre-typecheck, for macro-shaped forms that are unambiguous
+/// by construction — Rust's `!` syntax marks a distinct namespace, no
+/// collision risk with a user function/method of the same name): a *plain*
+/// call/method name always risks colliding with a user's own
+/// function/method of the same name, so this can only run once real
+/// resolved types are available (i.e. after type-checking), and the lifter
+/// implementing this stays language-agnostic — it never inspects path
+/// delimiters or type names itself; that vocabulary belongs entirely to
+/// whichever frontend crate implements this trait.
+pub trait PortableOpResolver {
+    /// A plain function-style call's path segments (e.g. `["Vec", "new"]`
+    /// for `Vec::new()`, `["Some"]` for `Some(x)`) — unambiguous at this
+    /// position (a qualified path to a specific name carries no
+    /// user-collision risk the way a bare method name does), so no
+    /// receiver type is needed. Segments are handed over exactly as parsed
+    /// (no delimiter joining) — the implementor decides how to interpret
+    /// them.
+    fn resolve_call_op(&self, path_segments: &[&str]) -> Option<OpKind>;
+
+    /// A method-call's name and its receiver's real resolved type (`None`
+    /// only when no type-checking results are available at all).
+    /// Implementors must check the receiver type themselves before
+    /// returning a match — never by name alone — so a same-named user
+    /// method is never misclassified.
+    fn resolve_method_op(
+        &self,
+        method: &str,
+        receiver_ty: Option<&crate::hir::ty::Ty>,
+        def_paths: &std::collections::HashMap<crate::hir::DefId, crate::hir::DefPath>,
+    ) -> Option<OpKind>;
+}
+
 /// Strategy interface for language-specific intrinsic normalisation.
 pub trait IntrinsicNormalizer {
     /// Normalize one expression root before a downstream lowering pass handles

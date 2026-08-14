@@ -55,6 +55,17 @@ pub struct KtDecl {
     pub supertypes: Vec<KtType>,
     pub is_mutable: bool,
     pub members: Vec<KtDecl>,
+    /// `@Op(class = "Foo")` on a `class`/`interface`/`object` — the
+    /// portable-op lookup key prefix for its tagged members (see
+    /// `op_method`). Mirrors the Rust frontend's `#[op(class = "Foo")]` on
+    /// an `impl` block (`fp-core/src/lang/mod.rs`) — same framework,
+    /// Kotlin's own attribute call syntax (`@Name(args)`, not
+    /// `#[name(args)]`).
+    pub op_class: Option<String>,
+    /// `@Op(method = "bar")` on a `fun` — mirrors `#[op(method = "bar")]`.
+    pub op_method: Option<String>,
+    /// `@Op(func = "bar")` on a top-level `fun` — mirrors `#[op(func = "bar")]`.
+    pub op_func: Option<String>,
 }
 
 impl KtDecl {
@@ -69,6 +80,9 @@ impl KtDecl {
             supertypes: Vec::new(),
             is_mutable: false,
             members: Vec::new(),
+            op_class: None,
+            op_method: None,
+            op_func: None,
         }
     }
 }
@@ -222,11 +236,27 @@ fn is_decl_start_keyword(kw: &str) -> bool {
         || matches!(kw, "enum" | "companion" | "value")
 }
 
-/// Skips annotations/modifiers, returning whether an `enum class` modifier
-/// was seen (needed by `parse_class_like` to know whether to parse a leading
-/// enum-constant list before the class's ordinary members).
-fn skip_annotations_and_modifiers(cur: &mut Cursor) -> bool {
-    let mut is_enum = false;
+/// Captured state from `skip_annotations_and_modifiers`.
+#[derive(Default)]
+struct Modifiers {
+    is_enum: bool,
+    /// `@Op(class = "Foo")` — mirrors the Rust frontend's
+    /// `#[op(class = "Foo")]` on an `impl` block (`fp-core/src/lang/
+    /// mod.rs`); same portable-op framework, Kotlin's own `@Name(args)`
+    /// annotation call syntax instead of `#[name(args)]`.
+    op_class: Option<String>,
+    /// `@Op(method = "bar")` — mirrors `#[op(method = "bar")]`.
+    op_method: Option<String>,
+    /// `@Op(func = "bar")` — mirrors `#[op(func = "bar")]`.
+    op_func: Option<String>,
+}
+
+/// Skips annotations/modifiers, capturing `enum class` and the single
+/// `@Op(class = "...", method = "...", func = "...")` portable-op marker
+/// along the way (needed by `parse_class_like`/`parse_fun_decl` — see
+/// `Modifiers`).
+fn skip_annotations_and_modifiers(cur: &mut Cursor) -> Modifiers {
+    let mut mods = Modifiers::default();
     loop {
         if cur.peek() == Some("@") {
             cur.bump();
@@ -236,12 +266,25 @@ fn skip_annotations_and_modifiers(cur: &mut Cursor) -> bool {
                 cur.bump();
             }
             // Qualified annotation name.
+            let name = cur.peek().map(|s| s.to_string());
             let _ = cur.expect_ident();
             while cur.eat(".") {
                 let _ = cur.expect_ident();
             }
             if cur.peek() == Some("(") {
+                let start = cur.pos;
+                let args = if name.as_deref() == Some("Op") {
+                    parse_op_annotation_args(cur)
+                } else {
+                    None
+                };
+                cur.pos = start;
                 skip_balanced(cur, "(", ")");
+                if let Some((class, method, func)) = args {
+                    mods.op_class = mods.op_class.or(class);
+                    mods.op_method = mods.op_method.or(method);
+                    mods.op_func = mods.op_func.or(func);
+                }
             }
             continue;
         }
@@ -251,7 +294,7 @@ fn skip_annotations_and_modifiers(cur: &mut Cursor) -> bool {
             }
             Some("enum") if cur.peek_at(1) == Some("class") => {
                 cur.bump();
-                is_enum = true;
+                mods.is_enum = true;
             }
             Some("companion") if cur.peek_at(1) == Some("object") => {
                 cur.bump();
@@ -265,7 +308,58 @@ fn skip_annotations_and_modifiers(cur: &mut Cursor) -> bool {
             _ => break,
         }
     }
-    is_enum
+    mods
+}
+
+/// Parses `@Op(class = "Foo", method = "bar", func = "baz")`'s parenthesized
+/// argument list (cursor positioned at the opening `(`) into its three
+/// possible named values — mirrors the Rust frontend's `#[op(class = "Foo",
+/// method = "bar", func = "baz")]` (`fp-core/src/lang/mod.rs`).
+fn parse_op_annotation_args(cur: &mut Cursor) -> Option<(Option<String>, Option<String>, Option<String>)> {
+    if !cur.eat("(") {
+        return None;
+    }
+    let (mut class, mut method, mut func) = (None, None, None);
+    if cur.peek() != Some(")") {
+        loop {
+            let key = cur.peek().map(|s| s.to_string())?;
+            if !matches!(cur.peek_kind(), Some(TokenKind::Ident)) {
+                return None;
+            }
+            cur.bump();
+            if !cur.eat("=") {
+                return None;
+            }
+            let value = if matches!(cur.peek_kind(), Some(TokenKind::StringLiteral)) {
+                let v = cur.peek().and_then(string_literal_content);
+                cur.bump();
+                v
+            } else {
+                None
+            };
+            match key.as_str() {
+                "class" => class = value,
+                "method" => method = value,
+                "func" => func = value,
+                _ => {}
+            }
+            if cur.eat(",") {
+                continue;
+            }
+            break;
+        }
+    }
+    let _ = cur.eat(")");
+    Some((class, method, func))
+}
+
+/// Strips a lexed string-literal token's surrounding quotes (single- or
+/// triple-quoted) — good enough for a bare op-tag name, which never
+/// contains escapes in practice.
+fn string_literal_content(text: &str) -> Option<String> {
+    let inner = text.strip_prefix("\"\"\"").and_then(|s| s.strip_suffix("\"\"\""))
+        .or_else(|| text.strip_prefix('"').and_then(|s| s.strip_suffix('"')));
+    inner.map(|s| s.to_string())
 }
 
 fn skip_balanced(cur: &mut Cursor, open: &str, close: &str) {
@@ -292,14 +386,23 @@ fn skip_balanced(cur: &mut Cursor, open: &str, close: &str) {
 }
 
 fn parse_one_declaration(cur: &mut Cursor) -> Result<Option<KtDecl>, String> {
-    let is_enum = skip_annotations_and_modifiers(cur);
+    let mods = skip_annotations_and_modifiers(cur);
+    let decl = match cur.peek() {
+        Some("fun") => Some(parse_fun_decl(cur)?),
+        Some("class") => Some(parse_class_like(cur, KtDeclKind::Class, mods.is_enum)?),
+        Some("interface") => Some(parse_class_like(cur, KtDeclKind::Interface, false)?),
+        Some("object") => Some(parse_class_like(cur, KtDeclKind::Object, false)?),
+        Some("val") | Some("var") => Some(parse_property_decl(cur)?),
+        Some("typealias") => Some(parse_typealias_decl(cur)?),
+        _ => None,
+    };
+    if let Some(mut decl) = decl {
+        decl.op_class = mods.op_class;
+        decl.op_method = mods.op_method;
+        decl.op_func = mods.op_func;
+        return Ok(Some(decl));
+    }
     match cur.peek() {
-        Some("fun") => Ok(Some(parse_fun_decl(cur)?)),
-        Some("class") => Ok(Some(parse_class_like(cur, KtDeclKind::Class, is_enum)?)),
-        Some("interface") => Ok(Some(parse_class_like(cur, KtDeclKind::Interface, false)?)),
-        Some("object") => Ok(Some(parse_class_like(cur, KtDeclKind::Object, false)?)),
-        Some("val") | Some("var") => Ok(Some(parse_property_decl(cur)?)),
-        Some("typealias") => Ok(Some(parse_typealias_decl(cur)?)),
         Some("{") => {
             // Anonymous init block or similar — skip its body wholesale.
             skip_balanced(cur, "{", "}");

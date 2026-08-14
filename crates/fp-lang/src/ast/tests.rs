@@ -1,7 +1,7 @@
 use super::*;
 use fp_core::ast::{
     AttrMeta, AttrStyle, BlockStmt, ExprKind, ItemKind, MacroDelimiter, Name, PatternKind,
-    QuoteItemKind, Value,
+    QuoteItemKind, Value, ValueBytes, ValueChar,
 };
 use fp_core::ast::{QuoteFragmentKind, Ty};
 use fp_core::ast::path::PathPrefix;
@@ -137,14 +137,17 @@ fn parse_type_args_accept_trailing_comma_before_close_angle() {
 }
 
 #[test]
-fn parse_byte_string_literal_as_string_value() {
+fn parse_byte_string_literal_as_bytes_value() {
+    // `b"..."` is a byte string (`&[u8; N]` in real Rust), not a `String` —
+    // it can contain non-UTF-8 bytes, so it must not be conflated with a
+    // string literal.
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let expr = parser.parse_expr_ast("b\"hello\"").unwrap();
     match expr.kind() {
         ExprKind::Value(value) => match value.as_ref() {
-            Value::String(str_val) => assert_eq!(str_val.value, "hello"),
-            other => panic!("expected string value, got {:?}", other),
+            Value::Bytes(bytes_val) => assert_eq!(&bytes_val.value[..], b"hello"),
+            other => panic!("expected bytes value, got {:?}", other),
         },
         other => panic!("expected value expr, got {:?}", other),
     }
@@ -616,13 +619,14 @@ fn parse_expr_ast_handles_block_use_item() {
 
 #[test]
 fn parse_expr_ast_handles_char_literal() {
+    // `'\n'` is a `char` literal, not a single-character `String`.
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let expr = parser.parse_expr_ast("'\\n'").unwrap();
     match expr.kind() {
         ExprKind::Value(value) => match value.as_ref() {
-            Value::String(text) => assert_eq!(text.value, "\n"),
-            other => panic!("expected string literal value, got {:?}", other),
+            Value::Char(char_val) => assert_eq!(char_val.value, '\n'),
+            other => panic!("expected char literal value, got {:?}", other),
         },
         other => panic!("expected literal expr, got {:?}", other),
     }
@@ -3076,3 +3080,4 @@ fn direct_parser_handles_cast_and_await() {
     };
     assert!(matches!(bin.kind, BinOpKind::Add));
 }
+

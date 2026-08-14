@@ -64,6 +64,34 @@ pub enum OpKind {
     Import(KnownPackage),
 }
 
+impl OpKind {
+    /// Resolves an explicit `#[op(method = "...")]` source-attribute value to the
+    /// `OpKind` it names — the tag value IS the canonical name, not a
+    /// guess from the declaration's own identifier (a method can be tagged
+    /// with a different op name than its own, though in practice they
+    /// usually match). Used by `LangItemRegistry`'s impl-method scan
+    /// (`fp-core/src/lang/mod.rs`) so a frontend's stdlib source is the
+    /// single source of truth for which declarations are portable ops,
+    /// instead of a hardcoded name table living in the lowering/lifting
+    /// code that consumes them.
+    pub fn from_op_tag(tag: &str) -> Option<Self> {
+        match tag {
+            "as_ref" => Some(Self::AsRef),
+            "map_or" => Some(Self::MapOr),
+            "iter" => Some(Self::Iter),
+            "collect" => Some(Self::Collect),
+            "find" => Some(Self::Find),
+            "unwrap_or" => Some(Self::UnwrapOr),
+            "to_owned" => Some(Self::ToOwned),
+            "as_str" => Some(Self::AsStr),
+            "to_string" => Some(Self::ToString),
+            "and_then" => Some(Self::AndThen),
+            "clone" => Some(Self::Clone),
+            _ => None,
+        }
+    }
+}
+
 /// Known type descriptors that serializers map to target-ecosystem equivalents.
 /// Each variant represents a semantic type category that has a well-known
 /// portable representation.

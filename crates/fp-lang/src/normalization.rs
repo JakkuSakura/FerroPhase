@@ -1805,7 +1805,7 @@ mod tests {
         let frontend = crate::FerroFrontend::new();
         let result = frontend
             .parse(
-                "#[intrinsic = \"test_intrinsic\"] fn public_api() {}\n#[op = \"test_op\"] fn compiler_op() {}",
+                "#[intrinsic = \"test_intrinsic\"] fn public_api() {}\n#[op(func = \"test_op\")] fn compiler_op() {}",
                 None,
             )
             .expect("parse marked declarations");

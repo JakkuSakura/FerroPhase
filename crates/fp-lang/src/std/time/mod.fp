@@ -1,4 +1,4 @@
-#[op = "time_now"]
+#[op(func = "time_now")]
 fn now() -> f64 {
     ::std::intrinsics::time::now()
 }

@@ -247,37 +247,37 @@ fn io_error_other(message: &str) -> IoError {
     }
 }
 
-#[op = "fs_read_dir"]
+#[op(func = "fs_read_dir")]
 pub fn read_dir(path: &::std::path::Path) -> ::std::alloc::Vec<&str> { ::std::intrinsics::fs::read_dir(path) }
 
-#[op = "fs_walk_dir"]
+#[op(func = "fs_walk_dir")]
 pub fn walk_dir(path: &::std::path::Path) -> ::std::alloc::Vec<&str> { ::std::intrinsics::fs::walk_dir(path) }
 
-#[op = "fs_read_to_string"]
+#[op(func = "fs_read_to_string")]
 pub fn read_to_string(path: &::std::path::Path) -> str { ::std::intrinsics::fs::read_to_string(path) }
 
-#[op = "fs_write_string"]
+#[op(func = "fs_write_string")]
 pub fn write_string(path: &::std::path::Path, content: &str) { ::std::intrinsics::fs::write_string(path, content) }
 
-#[op = "fs_append_string"]
+#[op(func = "fs_append_string")]
 pub fn append_string(path: &::std::path::Path, content: &str) { ::std::intrinsics::fs::append_string(path, content) }
 
 pub fn exists(path: &::std::path::Path) -> bool { ::libc::access(::std::ffi::CString::new(path.as_str()).as_ptr(), 0) == 0 }
 
-#[op = "fs_is_dir"]
+#[op(func = "fs_is_dir")]
 pub fn is_dir(path: &::std::path::Path) -> bool { ::std::intrinsics::fs::is_dir(path) }
 
-#[op = "fs_is_file"]
+#[op(func = "fs_is_file")]
 pub fn is_file(path: &::std::path::Path) -> bool { ::std::intrinsics::fs::is_file(path) }
 
-#[op = "fs_create_dir_all"]
+#[op(func = "fs_create_dir_all")]
 pub fn create_dir_all(path: &::std::path::Path) { ::std::intrinsics::fs::create_dir_all(path) }
 
-#[op = "fs_remove_file"]
+#[op(func = "fs_remove_file")]
 pub fn remove_file(path: &::std::path::Path) { ::std::intrinsics::fs::remove_file(path) }
 
-#[op = "fs_remove_dir_all"]
+#[op(func = "fs_remove_dir_all")]
 pub fn remove_dir_all(path: &::std::path::Path) { ::std::intrinsics::fs::remove_dir_all(path) }
 
-#[op = "fs_glob"]
+#[op(func = "fs_glob")]
 pub fn glob(pattern: &str) -> ::std::alloc::Vec<&str> { ::std::intrinsics::fs::glob(pattern) }

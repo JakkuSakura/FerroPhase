@@ -1071,6 +1071,29 @@ fn expect_lowering_error<T: std::fmt::Debug>(result: Result<T>, expected: &str) 
     );
 }
 
+/// Some unsupported constructs are rejected non-fatally: lowering still
+/// succeeds (producing a placeholder node, `HirGenerator::
+/// error_placeholder_expr_kind`) so one unsupported construct doesn't
+/// poison the whole surrounding item, but a real error diagnostic is
+/// recorded via `fp_core::diagnostics::diagnostic_manager()` — this
+/// checks for that recorded diagnostic instead of a hard `Err`.
+fn expect_lowering_diagnostic<T: std::fmt::Debug>(
+    call: impl FnOnce() -> Result<T>,
+    expected: &str,
+) {
+    use fp_core::diagnostics::{DiagnosticLevel, diagnostic_manager};
+    let mgr = diagnostic_manager();
+    let start = mgr.snapshot();
+    let result = call();
+    result.expect("lowering should recover with a placeholder, not fail outright");
+    let diagnostics = mgr.diagnostics_since(start);
+    assert!(
+        diagnostics.iter().any(|d| d.level == DiagnosticLevel::Error
+            && d.message.to_string().contains(expected)),
+        "expected an error diagnostic containing `{expected}`, got {diagnostics:?}"
+    );
+}
+
 #[test]
 fn transform_expr_rejects_dynamic_import() {
     let mut generator = HirGenerator::new();
@@ -1081,8 +1104,8 @@ fn transform_expr_rejects_dynamic_import() {
         kwargs: Vec::new(),
     }));
 
-    expect_lowering_error(
-        generator.transform_expr_to_hir(&expr),
+    expect_lowering_diagnostic(
+        || generator.transform_expr_to_hir(&expr),
         "dynamic import is only supported in interpret mode",
     );
 }
@@ -1131,8 +1154,8 @@ fn transform_expr_rejects_for_loop_non_binding_pattern() {
         body: Box::new(body),
     }));
 
-    expect_lowering_error(
-        generator.transform_expr_to_hir(&expr),
+    expect_lowering_diagnostic(
+        || generator.transform_expr_to_hir(&expr),
         "`for` loop pattern must be a simple binding",
     );
 }
@@ -1144,8 +1167,8 @@ fn transform_block_rejects_unsupported_statement_kind() {
         "unsupported statement payload".to_string(),
     )]));
 
-    expect_lowering_error(
-        generator.transform_expr_to_hir(&expr),
+    expect_lowering_diagnostic(
+        || generator.transform_expr_to_hir(&expr),
         "unimplemented block statement type for HIR transformation",
     );
 }

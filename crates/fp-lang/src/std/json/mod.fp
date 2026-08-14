@@ -185,7 +185,7 @@ impl Value {
     }
 }
 
-#[op = "json_parse"]
+#[op(func = "json_parse")]
 pub fn parse(input: &str) -> Value { ::std::intrinsics::json::parse(input) }
 
 pub fn is_null(value: Value) -> bool {
