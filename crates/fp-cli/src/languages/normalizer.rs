@@ -7,7 +7,7 @@ use fp_core::intrinsics::{IntrinsicNormalizationMode, IntrinsicNormalizer};
 /// `typed_transpile` should be `true` exactly when the caller knows the
 /// downstream pipeline is `PipelineMode::TypecheckedTranspile` — plain-call/
 /// method-call portable-op detection then belongs entirely to the
-/// post-typecheck `PortableOpResolver`/`HirToAstLifter` (real resolved
+/// post-typecheck `HirToAstLifter` (real resolved
 /// types available there), so this package-load-time pass must not also
 /// reclassify the same calls by name alone first (that would just mutate
 /// the AST out from under the safer, type-gated pass). `false` preserves

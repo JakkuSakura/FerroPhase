@@ -7,6 +7,7 @@ pub mod config;
 pub mod container;
 pub mod emit;
 pub mod ffi;
+pub mod intrinsic_materializer;
 pub mod jit;
 pub mod libc;
 pub mod link;
@@ -18,6 +19,7 @@ use fp_core::error::Result;
 use fp_core::lir::LirProgram;
 use std::path::{Path, PathBuf};
 
+pub use crate::intrinsic_materializer::NativeIntrinsicMaterializer;
 pub use crate::jit::{
     HostScalar, JitEngine, JitModule, validate_host_program, validate_native_program,
 };

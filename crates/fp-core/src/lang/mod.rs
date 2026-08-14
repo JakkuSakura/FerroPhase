@@ -108,6 +108,19 @@ pub fn collect_lang_items(file: &File) -> LangItemRegistry {
     registry
 }
 
+/// Scans one already-loaded package item (as returned by a `PackageProvider`,
+/// with no enclosing `File`) for `#[intrinsic = "..."]`/`#[op(...)]` markers,
+/// same as `collect_lang_items` but for a single item rather than a whole
+/// file — lets a package-source-level pass (e.g. a native materializer's
+/// provider wrapper) accumulate one registry across every item a package
+/// yields, one at a time, before merging with `LangItemRegistry::extend`.
+pub fn collect_lang_items_from_item(item: &Item) -> LangItemRegistry {
+    let mut registry = LangItemRegistry::default();
+    let mut module_path = Vec::new();
+    collect_lang_items_from_items(std::slice::from_ref(item), &mut module_path, &mut registry);
+    registry
+}
+
 pub fn lookup_intrinsic(name: &Name) -> Option<CallKind> {
     let name = lookup_intrinsic_name(name)?;
     lang_intrinsic_for_lang_item(&name)

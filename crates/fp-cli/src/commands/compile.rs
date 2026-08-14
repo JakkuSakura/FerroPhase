@@ -860,7 +860,7 @@ async fn compile_emit_target(
     } else {
         let (provider, package_id, tag) = provider_and_package_for_input(input, &language)?;
         let wrapped: std::sync::Arc<dyn fp_core::package::provider::PackageProvider> =
-            std::sync::Arc::new(compiler::MaterializingPackageProvider::new(
+            std::sync::Arc::new(TranspileMaterializingPackageProvider::new(
                 provider,
                 crate::languages::materializer::materializer_for_language(
                     &crate::languages::backend::output_extension_for(target),
@@ -994,61 +994,14 @@ fn provider_and_package_for_input(
     fp_core::ast::path::QualifiedPath,
 )> {
     let input_abs = input.canonicalize().unwrap_or_else(|_| input.to_path_buf());
-
-    if let Some(root) = fp_lang::project::find_manifest(&input_abs) {
-        let provider = crate::languages::discovery::provider_for_language(language, &root)
-            .ok_or_else(|| {
-                CliError::Compilation(format!("no package provider for source language: {language}"))
-            })?;
-        let packages = provider
-            .list_packages()
-            .map_err(|e| CliError::Compilation(e.to_string()))?;
-        let mut found = None;
-        for package_id in &packages {
-            let metadata = provider
-                .load_package_metadata(package_id)
-                .map_err(|e| CliError::Compilation(e.to_string()))?;
-            let package_root = metadata.root.to_path_buf();
-            let package_root_abs = package_root
-                .canonicalize()
-                .unwrap_or_else(|_| package_root.clone());
-            if input_abs.starts_with(&package_root_abs) {
-                found = Some((package_id.clone(), package_root_abs));
-                break;
-            }
-        }
-        let (package_id, package_root_abs) = found.ok_or_else(|| {
+    let (provider, package_id, package_root_abs) = compiler::find_manifest_package(input, language)?
+        .ok_or_else(|| {
             CliError::Compilation(format!(
-                "no package in {} contains {}",
-                root.display(),
+                "no manifest (Cargo.toml/Magnet.toml) found above {}; `fp compile --target` requires a real package",
                 input.display()
             ))
         })?;
-        let tag = estimate_module_path(language, &package_root_abs, &input_abs)?;
-        return Ok((provider, package_id, tag));
-    }
-
-    // No manifest found: a genuinely standalone file, no larger package to
-    // discover — wrap it as its own single-member package.
-    let (source, serializer) =
-        compiler::parse_language_target_file_with_serializer(input, Some(language))?;
-    fp_core::ast::register_threadlocal_serializer(serializer);
-    let package_id = PackageId::new(
-        input
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unnamed"),
-    );
-    // `FerroModuleSourceResolver::resolve_package_source` (reached via
-    // `single_file_provider` → `InputPackageProvider::new`) requires the
-    // module path's head segment to equal the package id
-    // (`package_name_from_path`), and tags every one of the root file's own
-    // top-level items with that *same, full* module path (`flatten_items`)
-    // — not an empty one. One segment (the package id itself) is both the
-    // minimum that satisfies the head-segment check and exactly what the
-    // resulting items get tagged with, so it doubles as the filter tag.
-    let tag = fp_core::ast::path::QualifiedPath::new(vec![package_id.as_str().to_string()]);
-    let provider = compiler::single_file_provider(package_id.clone(), tag.clone(), source)?;
+    let tag = estimate_module_path(language, &package_root_abs, &input_abs)?;
     Ok((provider, package_id, tag))
 }
 
@@ -1100,7 +1053,7 @@ async fn compile_project(
     // below, so the driver can still do genuine resolution for any package
     // id it asks about (e.g. `std`), not just the one being typechecked.
     let materializing_provider: std::sync::Arc<dyn fp_core::package::provider::PackageProvider> =
-        std::sync::Arc::new(compiler::MaterializingPackageProvider::new(
+        std::sync::Arc::new(TranspileMaterializingPackageProvider::new(
             provider.clone(),
             materializer,
             normalizer,
@@ -2210,6 +2163,95 @@ fn determine_output_path(
         };
 
         Ok(input.with_extension(extension))
+    }
+}
+
+/// Wraps a real, already-discovered `PackageProvider` (e.g. `RustPackageProvider`,
+/// covering an entire workspace) and applies the target-language materialize
+/// + source-normalize transforms to every item `load_package_source` returns.
+///
+/// Exists so whole-package typechecking (`typecheck_package`) can register a
+/// provider that does genuine resolution for *any* package id — including
+/// `std`/dependencies the driver asks about internally — instead of a
+/// one-off shim that only knows how to answer for a single pre-baked
+/// `PackageSource` snapshot. `list_packages`/`load_package_metadata`/`refresh`
+/// delegate straight through; only `load_package_source` adds work.
+///
+/// Used only by the `Transpile`/`TypecheckedTranspile` paths in this module
+/// — `PipelineMode::Native` needs none of this (portable ops already
+/// resolve to real std functions there; see `fp_native::NativeIntrinsicMaterializer`'s
+/// doc comment), so it stays on the plain, unwrapped provider in
+/// `compiler::compile_source_file`.
+struct TranspileMaterializingPackageProvider {
+    inner: std::sync::Arc<dyn fp_core::package::provider::PackageProvider>,
+    materializer: Option<std::sync::Arc<dyn fp_core::intrinsics::IntrinsicMaterializer>>,
+    normalizer: std::sync::Arc<dyn fp_core::intrinsics::IntrinsicNormalizer>,
+}
+
+impl TranspileMaterializingPackageProvider {
+    fn new(
+        inner: std::sync::Arc<dyn fp_core::package::provider::PackageProvider>,
+        materializer: Option<std::sync::Arc<dyn fp_core::intrinsics::IntrinsicMaterializer>>,
+        normalizer: std::sync::Arc<dyn fp_core::intrinsics::IntrinsicNormalizer>,
+    ) -> Self {
+        Self {
+            inner,
+            materializer,
+            normalizer,
+        }
+    }
+}
+
+impl fp_core::package::provider::PackageProvider for TranspileMaterializingPackageProvider {
+    fn list_packages(
+        &self,
+    ) -> fp_core::package::provider::ProviderResult<Vec<fp_core::package::PackageId>> {
+        self.inner.list_packages()
+    }
+
+    fn load_package_metadata(
+        &self,
+        id: &fp_core::package::PackageId,
+    ) -> fp_core::package::provider::ProviderResult<std::sync::Arc<fp_core::package::PackageDescriptor>>
+    {
+        self.inner.load_package_metadata(id)
+    }
+
+    fn refresh(&self) -> fp_core::package::provider::ProviderResult<()> {
+        self.inner.refresh()
+    }
+
+    fn load_package_source(
+        &self,
+        id: &fp_core::package::PackageId,
+    ) -> fp_core::package::provider::ProviderResult<PackageSource> {
+        let mut source = self.inner.load_package_source(id)?;
+
+        if let Some(ref mat) = self.materializer {
+            for pkg_item in &mut source.items {
+                let file = File {
+                    path: PathBuf::new(),
+                    attrs: vec![],
+                    collected_items: vec![],
+                    items: vec![pkg_item.item.clone()],
+                };
+                let file = crate::materialize::materialize_file(file, mat.as_ref())
+                    .map_err(|e| fp_core::package::provider::ProviderError::other(e.to_string()))?;
+                if let Some(item) = file.items.into_iter().next() {
+                    pkg_item.item = item;
+                }
+            }
+        }
+
+        for pkg_item in &mut source.items {
+            fp_lang::normalization::normalize_items(
+                std::slice::from_mut(&mut pkg_item.item),
+                self.normalizer.as_ref(),
+            )
+            .map_err(|e| fp_core::package::provider::ProviderError::other(e.to_string()))?;
+        }
+
+        Ok(source)
     }
 }
 

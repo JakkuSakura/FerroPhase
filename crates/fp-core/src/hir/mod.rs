@@ -82,8 +82,8 @@ pub struct Program {
     /// `#[op(func = "...")]` (free function) or `#[op(method = "...")]`
     /// (inside a `class`-tagged `impl` block) — populated once, by
     /// `ast_to_hir` reading the item's own attrs at the point it assigns
-    /// that item's real `DefId`. Consulted post-typecheck by
-    /// `PortableOpResolver`/`HirToAstLifter`, keyed by the *resolved*
+    /// that item's real `DefId`. Consulted post-typecheck directly by
+    /// `HirToAstLifter`, keyed by the *resolved*
     /// identity of a call's callee (`hir::Res::Def`) or a method call's
     /// resolution (`TypeckResults::method_resolutions`) — never by
     /// re-deriving and string/path-comparing a call site's own syntax,

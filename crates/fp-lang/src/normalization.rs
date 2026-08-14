@@ -540,11 +540,12 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
 
         // Under `TypedTranspile`, plain-call/method-call portable-op
         // detection is owned entirely by the post-typecheck
-        // `PortableOpResolver`/`HirToAstLifter` (real resolved receiver
-        // types available there). Reclassifying here too — before HIR
-        // lowering even runs, by name alone — would just mutate the AST
-        // out from under that safer pass, reintroducing the exact
-        // same-name-collision risk it exists to close. Skip entirely.
+        // `HirToAstLifter`, consulting `hir::Program.op_defs` directly
+        // (real resolved callee/method `DefId`s available there).
+        // Reclassifying here too — before HIR lowering even runs, by name
+        // alone — would just mutate the AST out from under that safer
+        // pass, reintroducing the exact same-name-collision risk it
+        // exists to close. Skip entirely.
         if self.mode == IntrinsicNormalizationMode::TypedTranspile {
             return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
                 id,

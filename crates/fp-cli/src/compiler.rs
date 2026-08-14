@@ -852,6 +852,54 @@ pub fn single_file_provider(
         .map_err(|e| CliError::Compilation(e.to_string()))
 }
 
+/// Package/provider discovery shared by every single-file compiler entry
+/// point — `compile_source_file` below, and `commands::compile`'s
+/// `provider_and_package_for_input`. A single file is a package with one
+/// member — this only kicks in when `input` actually lives inside a
+/// discoverable multi-file package (a `Cargo.toml`/`Magnet.toml` manifest
+/// somewhere above it), so sibling modules/imports resolve correctly
+/// instead of `input` being (incorrectly) treated as an isolated
+/// standalone file. Returns `None` when no manifest is found at all —
+/// callers fall back to wrapping `input` as its own single-member package.
+pub fn find_manifest_package(
+    input: &Path,
+    language: &str,
+) -> Result<Option<(Arc<dyn PackageProvider>, PackageId, PathBuf)>> {
+    let input_abs = input.canonicalize().unwrap_or_else(|_| input.to_path_buf());
+    let Some(root) = fp_lang::project::find_manifest(&input_abs) else {
+        return Ok(None);
+    };
+    let provider = crate::languages::discovery::provider_for_language(language, &root)
+        .ok_or_else(|| {
+            CliError::Compilation(format!("no package provider for source language: {language}"))
+        })?;
+    let packages = provider
+        .list_packages()
+        .map_err(|e| CliError::Compilation(e.to_string()))?;
+    let mut found = None;
+    for package_id in &packages {
+        let metadata = provider
+            .load_package_metadata(package_id)
+            .map_err(|e| CliError::Compilation(e.to_string()))?;
+        let package_root = metadata.root.to_path_buf();
+        let package_root_abs = package_root
+            .canonicalize()
+            .unwrap_or_else(|_| package_root.clone());
+        if input_abs.starts_with(&package_root_abs) {
+            found = Some((package_id.clone(), package_root_abs));
+            break;
+        }
+    }
+    let (package_id, package_root_abs) = found.ok_or_else(|| {
+        CliError::Compilation(format!(
+            "no package in {} contains {}",
+            root.display(),
+            input.display()
+        ))
+    })?;
+    Ok(Some((provider, package_id, package_root_abs)))
+}
+
 fn compile_source_file(
     ast: File,
     identity: &CompilerIdentity,
@@ -859,15 +907,51 @@ fn compile_source_file(
     executor: &CompilerExecutor,
     pipeline: PipelineMode,
 ) -> Result<CompilerDriver> {
-    let package_id =
-        PackageId::new(identity.path.path().head().ok_or_else(|| {
-            CliError::Compilation("source file has no package identity".to_string())
-        })?);
-    let input_provider = single_file_provider(
-        package_id.clone(),
-        identity.path.path().clone(),
-        ast.clone(),
-    )?;
+    // `ast` is only ever used as a *fallback* value now: when `ast.path` is a
+    // real, on-disk file that belongs to a discoverable multi-file package
+    // (a `Cargo.toml`/`Magnet.toml` manifest above it), that package's own
+    // provider supplies (and parses) the source itself — `ast` is discarded
+    // unread, so a caller's own eager pre-parse (e.g. `check_path`'s
+    // syntax-only check) is never redundant work done twice for nothing, and
+    // sibling modules/imports resolve through the real package instead of
+    // this one file being treated as an isolated island. Only a genuinely
+    // standalone input (no manifest found, or a non-file-backed synthetic
+    // script like `eval_script`'s `"<eval>"`) falls back to wrapping `ast`
+    // as its own single-member package.
+    // TODO: language detection — only FerroPhase discovery is wired up here.
+    let discovered = if ast.path.exists() {
+        find_manifest_package(&ast.path, languages::FERROPHASE)?
+    } else {
+        None
+    };
+
+    let (input_provider, package_id, module_path) = match discovered {
+        Some((provider, package_id, package_root_abs)) => {
+            let input_abs = ast.path.canonicalize().unwrap_or_else(|_| ast.path.clone());
+            let rel = input_abs
+                .strip_prefix(package_root_abs.join("src"))
+                .map_err(|_| {
+                    CliError::Compilation(format!(
+                        "{} is not inside its package's src/ directory",
+                        ast.path.display()
+                    ))
+                })?;
+            let module_path =
+                fp_lang::magnet_provider::module_path_from_relative(&rel.display().to_string());
+            (provider, package_id, module_path)
+        }
+        None => {
+            let package_id =
+                PackageId::new(identity.path.path().head().ok_or_else(|| {
+                    CliError::Compilation("source file has no package identity".to_string())
+                })?);
+            let module_path = identity.path.path().clone();
+            let input_provider =
+                single_file_provider(package_id.clone(), module_path.clone(), ast)?;
+            (input_provider, package_id, module_path)
+        }
+    };
+
     let std_provider = std_provider_for(languages::FERROPHASE);
     let provider = Arc::new(fp_core::package::provider::CompositeProvider::new(vec![
         std_provider,
@@ -889,7 +973,7 @@ fn compile_source_file(
         executor
             .run(session.driver().compile_package_module_native(
                 &package_id,
-                identity.path.path(),
+                &module_path,
                 "main",
             ))
             .map_err(|err| CliError::Compilation(err.to_string()))?;
@@ -998,80 +1082,6 @@ pub fn parse_file_with_mode(
     lossy: LossyCompileOptions,
 ) -> Result<File> {
     parse_file_with_context(path, source_language, parse_mode, lossy).map(|parsed| parsed.ast)
-}
-
-/// Wraps a real, already-discovered `PackageProvider` (e.g. `RustPackageProvider`,
-/// covering an entire workspace) and applies the target-language materialize
-/// + source-normalize transforms to every item `load_package_source` returns.
-///
-/// Exists so whole-package typechecking (`typecheck_package` below) can
-/// register a provider that does genuine resolution for *any* package id —
-/// including `std`/dependencies the driver asks about internally — instead
-/// of a one-off shim that only knows how to answer for a single pre-baked
-/// `PackageSource` snapshot. `list_packages`/`load_package_metadata`/`refresh`
-/// delegate straight through; only `load_package_source` adds work.
-pub struct MaterializingPackageProvider {
-    inner: Arc<dyn PackageProvider>,
-    materializer: Option<Arc<dyn IntrinsicMaterializer>>,
-    normalizer: Arc<dyn IntrinsicNormalizer>,
-}
-
-impl MaterializingPackageProvider {
-    pub fn new(
-        inner: Arc<dyn PackageProvider>,
-        materializer: Option<Arc<dyn IntrinsicMaterializer>>,
-        normalizer: Arc<dyn IntrinsicNormalizer>,
-    ) -> Self {
-        Self {
-            inner,
-            materializer,
-            normalizer,
-        }
-    }
-}
-
-impl PackageProvider for MaterializingPackageProvider {
-    fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
-        self.inner.list_packages()
-    }
-
-    fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
-        self.inner.load_package_metadata(id)
-    }
-
-    fn refresh(&self) -> ProviderResult<()> {
-        self.inner.refresh()
-    }
-
-    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
-        let mut source = self.inner.load_package_source(id)?;
-
-        if let Some(ref mat) = self.materializer {
-            for pkg_item in &mut source.items {
-                let file = File {
-                    path: PathBuf::new(),
-                    attrs: vec![],
-                    collected_items: vec![],
-                    items: vec![pkg_item.item.clone()],
-                };
-                let file = crate::materialize::materialize_file(file, mat.as_ref())
-                    .map_err(|e| ProviderError::other(e.to_string()))?;
-                if let Some(item) = file.items.into_iter().next() {
-                    pkg_item.item = item;
-                }
-            }
-        }
-
-        for pkg_item in &mut source.items {
-            fp_lang::normalization::normalize_items(
-                std::slice::from_mut(&mut pkg_item.item),
-                self.normalizer.as_ref(),
-            )
-            .map_err(|e| ProviderError::other(e.to_string()))?;
-        }
-
-        Ok(source)
-    }
 }
 
 /// The name an `ast::Item` is registered under during AST→HIR lowering
