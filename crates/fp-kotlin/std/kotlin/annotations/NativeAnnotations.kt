@@ -1,0 +1,162 @@
+/*
+ * Copyright 2010-2025 JetBrains s.r.o. and Kotlin Programming Language contributors.
+ * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
+ */
+
+package kotlin.native
+
+import kotlin.experimental.ExperimentalNativeApi
+import kotlin.experimental.ExperimentalObjCEnum
+import kotlin.experimental.ExperimentalObjCName
+import kotlin.experimental.ExperimentalObjCRefinement
+
+/**
+ * Makes top level function available from C/C++ code with the given name.
+ *
+ * [externName] controls the name of top level function, [shortName] controls the short name.
+ * If [externName] is empty, no top level declaration is being created.
+ */
+@ExperimentalNativeApi
+@SinceKotlin("1.5")
+@Target(AnnotationTarget.FUNCTION)
+@Retention(AnnotationRetention.BINARY)
+@OptionalExpectation
+public expect annotation class CName(val externName: String = "", val shortName: String = "")
+
+/**
+ * Freezing API has been deprecated since Kotlin 1.7.20,
+ * and support for the legacy memory manager was completely removed from the compiler in 1.9.20.
+ *
+ * See the [documentation](https://kotlinlang.org/docs/native-migration-guide.html) for details.
+ */
+@SinceKotlin("1.7")
+@RequiresOptIn(
+    message = "Freezing API is deprecated since 1.7.20. See https://kotlinlang.org/docs/native-migration-guide.html for details",
+    level = RequiresOptIn.Level.WARNING
+)
+@Target(
+    AnnotationTarget.CLASS,
+    AnnotationTarget.ANNOTATION_CLASS,
+    AnnotationTarget.PROPERTY,
+    AnnotationTarget.FIELD,
+    AnnotationTarget.LOCAL_VARIABLE,
+    AnnotationTarget.VALUE_PARAMETER,
+    AnnotationTarget.CONSTRUCTOR,
+    AnnotationTarget.FUNCTION,
+    AnnotationTarget.PROPERTY_GETTER,
+    AnnotationTarget.PROPERTY_SETTER,
+    AnnotationTarget.TYPEALIAS,
+)
+@Retention(AnnotationRetention.BINARY)
+@MustBeDocumented
+@OptionalExpectation
+@Deprecated("Opting in for the freezing API is no longer supported.")
+@DeprecatedSinceKotlin(warningSince = "2.1")
+public expect annotation class FreezingIsDeprecated
+
+/**
+ * Instructs the Kotlin compiler to use a custom Objective-C and/or Swift name for this class, property, parameter or function.
+ * @param exact specifies if the name of a class should be interpreted as the exact name.
+ * E.g. the compiler won't add a top level prefix or the outer class names to exact names.
+ */
+@Target(
+    AnnotationTarget.CLASS,
+    AnnotationTarget.PROPERTY,
+    AnnotationTarget.VALUE_PARAMETER,
+    AnnotationTarget.FUNCTION
+)
+@Retention(AnnotationRetention.BINARY)
+@MustBeDocumented
+@OptionalExpectation
+@ExperimentalObjCName
+@SinceKotlin("1.8")
+public expect annotation class ObjCName(val name: String = "", val swiftName: String = "", val exact: Boolean = false)
+
+/**
+ * Instructs the Kotlin compiler to generate a NS_CLOSED_ENUM typedef for the annotated enum class. The name of the generated type will
+ * be the name of the enum type with "NSEnum" appended. This name can be overridden with the "name" parameter, which is treated
+ * as an exact name. Additionally, a separate name for Swift can be specified using the swiftName parameter.
+ * For Objective-C, the enum literals will always be prefixed with the type name, always capitalizing the first character of the entry
+ * name, regardless whether they are implied or set explicitly via ObjCName or EntryName, as they live in a global namespace.
+ * For Swift, no such disambiguation prefixes will be added. The NSEnum values are accessible via the "nsEnum" property.
+ */
+@Target(AnnotationTarget.CLASS)
+@Retention(AnnotationRetention.BINARY)
+@MustBeDocumented
+@OptionalExpectation
+@ExperimentalObjCEnum
+@SinceKotlin("2.3")
+public expect annotation class ObjCEnum(val name: String = "", val swiftName: String = "") {
+    /**
+     * This annotation affects the names of the generated NS_CLOSED_ENUM enumerators. It overrides the implied enum entry name and an enum
+     * entry name set via @ObjCName. A separate name for Swift can be specified via the swiftName parameter. An EntryName annotation will
+     * always override the Swift name implied or set by other means, even if swiftName is not set explicitly. This annotation does
+     * not override the prefix implied or set by ObjCEnum.
+     */
+    @Target(AnnotationTarget.PROPERTY)
+    @Retention(AnnotationRetention.BINARY)
+    public annotation class EntryName(val name: String, val swiftName: String = "")
+}
+
+/**
+ * Meta-annotation that instructs the Kotlin compiler to remove the annotated class, function or property from the public Objective-C API.
+ *
+ * Annotation processors that refine the public Objective-C API can annotate their annotations with this meta-annotation
+ * to have the original declarations automatically removed from the public API.
+ *
+ * Note: only annotations with [AnnotationTarget.CLASS], [AnnotationTarget.FUNCTION] and/or [AnnotationTarget.PROPERTY] are supported.
+ */
+@Target(AnnotationTarget.ANNOTATION_CLASS)
+@Retention(AnnotationRetention.BINARY)
+@MustBeDocumented
+@OptionalExpectation
+@ExperimentalObjCRefinement
+@SinceKotlin("1.8")
+public expect annotation class HidesFromObjC()
+
+/**
+ * Instructs the Kotlin compiler to remove this class, function or property from the public Objective-C API.
+ */
+@HidesFromObjC
+@Target(AnnotationTarget.PROPERTY, AnnotationTarget.FUNCTION, AnnotationTarget.CLASS)
+@Retention(AnnotationRetention.BINARY)
+@MustBeDocumented
+@OptionalExpectation
+@ExperimentalObjCRefinement
+@SinceKotlin("1.8")
+public expect annotation class HiddenFromObjC()
+
+/**
+ * Meta-annotation that instructs the Kotlin compiler to mark the annotated function or property as
+ * `swift_private` in the generated Objective-C API.
+ *
+ * Annotation processors that refine the public API in Swift can annotate their annotations with this meta-annotation
+ * to automatically hide the annotated declarations from Swift.
+ *
+ * See Apple's documentation of the [`NS_REFINED_FOR_SWIFT`](https://developer.apple.com/documentation/swift/objective-c_and_c_code_customization/improving_objective-c_api_declarations_for_swift)
+ * macro for more information on refining Objective-C declarations in Swift.
+ *
+ * Note: only annotations with [AnnotationTarget.FUNCTION] and/or [AnnotationTarget.PROPERTY] are supported.
+ */
+@Target(AnnotationTarget.ANNOTATION_CLASS)
+@Retention(AnnotationRetention.BINARY)
+@MustBeDocumented
+@OptionalExpectation
+@ExperimentalObjCRefinement
+@SinceKotlin("1.8")
+public expect annotation class RefinesInSwift()
+
+/**
+ * Instructs the Kotlin compiler to mark this function or property as `swift_private` in the generated Objective-C API.
+ *
+ * See Apple's documentation of the [`NS_REFINED_FOR_SWIFT`](https://developer.apple.com/documentation/swift/objective-c_and_c_code_customization/improving_objective-c_api_declarations_for_swift)
+ * macro for more information on refining Objective-C declarations in Swift.
+ */
+@RefinesInSwift
+@Target(AnnotationTarget.PROPERTY, AnnotationTarget.FUNCTION)
+@Retention(AnnotationRetention.BINARY)
+@MustBeDocumented
+@OptionalExpectation
+@ExperimentalObjCRefinement
+@SinceKotlin("1.8")
+public expect annotation class ShouldRefineInSwift()

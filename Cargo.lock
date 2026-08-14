@@ -1495,7 +1495,9 @@ dependencies = [
  "eyre",
  "fp-core",
  "itertools 0.13.0",
+ "thiserror 2.0.19",
  "tracing",
+ "winnow 0.6.26",
 ]
 
 [[package]]

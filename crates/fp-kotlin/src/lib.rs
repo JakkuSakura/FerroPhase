@@ -4,6 +4,7 @@
 //! Handles data classes, enum classes, functions, imports, and full expression trees.
 
 pub mod kotlin_materializer;
+pub mod kt_parser;
 pub mod package;
 pub mod serializer;
 
