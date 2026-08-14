@@ -113,6 +113,20 @@ impl ExprIntrinsicContainer {
         }
     }
 
+    /// Takes ownership of this container's data via `std::mem::replace`
+    /// (leaving a cheap empty placeholder behind) and consumes it exactly
+    /// like `into_const_expr` — for callers that only have a `&mut
+    /// ExprIntrinsicContainer` (typically matched out of a parent `Expr`
+    /// that's about to be overwritten with the result anyway) and would
+    /// otherwise have to `.clone()` the whole container just to call the
+    /// by-value method, only to immediately discard the original.
+    pub fn take_into_const_expr(&mut self) -> Expr {
+        let owned = std::mem::replace(self, ExprIntrinsicContainer::VecElements {
+            elements: Vec::new(),
+        });
+        owned.into_const_expr()
+    }
+
     pub fn from_invoke(invoke: &ExprInvoke) -> Option<Self> {
         let segments = name_segments(match &invoke.target {
             ExprInvokeTarget::Function(name) => name,

@@ -3778,9 +3778,10 @@ fn lower_closures_in_expr(expr: &mut ast::Expr) -> Result<(Vec<ast::Item>, Vec<D
 const DUMMY_CAPTURE_NAME: &str = "__fp_no_capture";
 
 fn expand_intrinsic_collection(expr: &mut ast::Expr) -> bool {
-    if let ast::ExprKind::IntrinsicContainer(collection) = expr.kind() {
-        let mut new_expr = collection.clone().into_const_expr();
-        new_expr.id = expr.id();
+    let id = expr.id();
+    if let ast::ExprKind::IntrinsicContainer(collection) = expr.kind_mut() {
+        let mut new_expr = collection.take_into_const_expr();
+        new_expr.id = id;
         *expr = new_expr;
         true
     } else {
@@ -5255,7 +5256,7 @@ impl CaptureReplacer {
                 self.visit(p.token.as_mut());
             }
             ast::ExprKind::IntrinsicContainer(container) => {
-                let mut new_expr = container.clone().into_const_expr();
+                let mut new_expr = container.take_into_const_expr();
                 self.visit(&mut new_expr);
                 new_expr.id = expr.id();
                 *expr = new_expr;
