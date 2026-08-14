@@ -2039,6 +2039,14 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                     // `is_known_string_receiver`/`is_known_enum_receiver`).
                     let is_clone_dropped = sel.field.name.as_str() == "clone"
                         && (is_known_string_receiver(&sel.obj, e) || is_known_enum_receiver(&sel.obj, e));
+                    // `map_kt_method`'s fallthrough (no entry for this Rust
+                    // name) returns the name unchanged — that's fine for a
+                    // known bare-property mapping (`len` → `length`, no
+                    // parens needed), but a genuine unmapped method (any
+                    // user-defined trait/inherent method, e.g. a custom
+                    // `RepoBackend::workdir()`) still needs real Kotlin call
+                    // parens even with zero args, unlike an actual property.
+                    let mut is_unmapped_passthrough = false;
                     let method_name = if is_iterator_map {
                         "map".to_string()
                     } else if is_len_on_list {
@@ -2055,7 +2063,9 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                     } else if is_clone_dropped {
                         "".to_string()
                     } else {
-                        map_kt_method(sel.field.name.as_str())
+                        let mapped = map_kt_method(sel.field.name.as_str());
+                        is_unmapped_passthrough = mapped == sel.field.name.as_str();
+                        mapped
                     };
                     // `is_ascii_alphabetic`/etc. map to Kotlin `Char` methods (`isLetter()`),
                     // but their receiver here is a `Byte` (indexed out of `.as_bytes()`) —
@@ -2095,7 +2105,11 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                     } else if method_name == "!!" {
                         Ok(format!("{}!!", obj))
                     } else if args.is_empty() {
-                        Ok(format!("{}.{}", obj, method_name))
+                        if is_unmapped_passthrough {
+                            Ok(format!("{}.{}()", obj, method_name))
+                        } else {
+                            Ok(format!("{}.{}", obj, method_name))
+                        }
                     } else if method_name.ends_with("()") {
                         let base = &method_name[..method_name.len() - 2];
                         Ok(format!("{}.{}({})", obj, base, args.join(", ")))
@@ -3375,9 +3389,11 @@ fn map_name_to_kt(name: &str) -> String {
         return map_name_to_kt(inner);
     }
     if let Some(inner) = strip_generic_wrapper(&dot_name, "Result").and_then(|s| {
-        // Result<T, E> → just T
-        let comma = s.find(',')?;
-        Some(&s[..comma])
+        // Result<T, E> → just T. Only the first *top-level* comma marks the
+        // T/E boundary — T can itself contain commas (`Result<Vec<(A, B)>, E>`),
+        // which a naive `s.find(',')` would wrongly split on instead.
+        let parts = split_top_level(s, ',');
+        (parts.len() > 1).then_some(parts[0])
     }) {
         return map_name_to_kt(inner);
     }
