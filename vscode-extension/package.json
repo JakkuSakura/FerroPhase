@@ -1,0 +1,65 @@
+{
+  "name": "ferrophase",
+  "displayName": "FerroPhase",
+  "description": "Syntax highlighting and language client support for FerroPhase (.fp) files",
+  "version": "0.1.0",
+  "publisher": "ferrophase",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:ferrophase"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "ferrophase",
+        "aliases": [
+          "FerroPhase",
+          "fp"
+        ],
+        "extensions": [
+          ".fp"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ferrophase",
+        "scopeName": "source.ferrophase",
+        "path": "./syntaxes/ferrophase.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "FerroPhase",
+      "properties": {
+        "ferrophase.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the fp-lsp binary. Leave empty to search PATH and common build output directories."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npm run compile && npx @vscode/vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^3.0.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

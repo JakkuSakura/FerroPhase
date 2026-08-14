@@ -1,0 +1,24 @@
+<idea-plugin>
+  <id>com.ferrophase.intellij</id>
+  <name>FerroPhase</name>
+  <vendor>FerroPhase</vendor>
+
+  <depends>com.intellij.modules.platform</depends>
+
+  <extensions defaultExtensionNs="com.intellij">
+    <fileType
+        name="FerroPhase"
+        implementationClass="com.ferrophase.intellij.lang.FerroPhaseFileType"
+        fieldName="INSTANCE"
+        language="FerroPhase"
+        extensions="fp"/>
+
+    <lang.parserDefinition
+        language="FerroPhase"
+        implementationClass="com.ferrophase.intellij.lang.FerroPhaseParserDefinition"/>
+
+    <lang.syntaxHighlighterFactory
+        language="FerroPhase"
+        implementationClass="com.ferrophase.intellij.lang.FerroPhaseSyntaxHighlighterFactory"/>
+  </extensions>
+</idea-plugin>
