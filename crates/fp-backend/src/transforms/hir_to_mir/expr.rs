@@ -454,6 +454,14 @@ pub struct MirLowering {
     method_lookup: HashMap<String, MethodLoweringInfo>,
     method_defs: HashMap<String, MethodDefinition>,
     method_defs_by_def: HashMap<hir::DefId, MethodDefinition>,
+    /// Reverse index from `(self_def, method_name)` to the method's key in
+    /// `method_defs_by_def` — lets `real_indexable_struct_def_id`/
+    /// `call_real_method_into_place` find a struct's `index`/`index_set`
+    /// method in O(1) instead of each doing its own
+    /// `method_defs_by_def.values().find(...)` linear scan over every
+    /// method in the whole program (the two used to scan twice combined,
+    /// once per `x[i]` in the program).
+    method_defs_by_self_and_name: HashMap<(hir::DefId, String), hir::DefId>,
     method_specializations: HashMap<(hir::DefId, mir::ty::SubstsRef), MethodLoweringInfo>,
     function_specializations: HashMap<(hir::DefId, mir::ty::SubstsRef), FunctionSpecializationInfo>,
     extra_items: Vec<mir::Item>,
@@ -553,6 +561,7 @@ impl MirLowering {
             method_lookup: HashMap::new(),
             method_defs: HashMap::new(),
             method_defs_by_def: HashMap::new(),
+            method_defs_by_self_and_name: HashMap::new(),
             method_specializations: HashMap::new(),
             function_specializations: HashMap::new(),
             extra_items: Vec::new(),
@@ -5751,6 +5760,11 @@ impl MirLowering {
             method_name: qualified_name.clone(),
             assoc_types: assoc_types_from_impl_items(&impl_block.items),
         };
+        if let Some(self_def) = def.self_def {
+            self.method_defs_by_self_and_name
+                .entry((self_def, def.function.sig.name.as_str().to_string()))
+                .or_insert(impl_item.def_id);
+        }
         self.method_defs_by_def
             .entry(impl_item.def_id)
             .or_insert_with(|| def.clone());
@@ -20570,9 +20584,10 @@ impl<'a> BodyBuilder<'a> {
         let TyKind::Adt(adt, _) = &ty.kind else {
             return None;
         };
-        let has_index_method = self.lowering.method_defs_by_def.values().any(|def| {
-            def.self_def == Some(adt.did) && def.function.sig.name.as_str() == "index"
-        });
+        let has_index_method = self
+            .lowering
+            .method_defs_by_self_and_name
+            .contains_key(&(adt.did, "index".to_string()));
         has_index_method.then_some(adt.did)
     }
 
@@ -20604,11 +20619,9 @@ impl<'a> BodyBuilder<'a> {
     ) -> Result<Ty> {
         let def = self
             .lowering
-            .method_defs_by_def
-            .values()
-            .find(|def| {
-                def.self_def == Some(struct_def_id) && def.function.sig.name.as_str() == method_name
-            })
+            .method_defs_by_self_and_name
+            .get(&(struct_def_id, method_name.to_string()))
+            .and_then(|def_id| self.lowering.method_defs_by_def.get(def_id))
             .cloned()
             .ok_or_else(|| {
                 crate::error::optimization_error(format!(
