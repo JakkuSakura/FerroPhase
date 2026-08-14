@@ -127,6 +127,58 @@ pub fn lookup_op_name(name: &Name) -> Option<String> {
     None
 }
 
+/// Concrete `PortableOpResolver` (`fp-core/src/intrinsics/mod.rs`) backed by
+/// the thread-local `LangItemRegistry` — the single source of truth for
+/// portable ops is the frontend's own `#[op(...)]`-tagged stdlib source
+/// (`collect_lang_items`/`collect_lang_items_from_items` above), not a
+/// hardcoded table living in the HIR-to-AST lowering/lifting code.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LangItemPortableOpResolver;
+
+impl crate::intrinsics::PortableOpResolver for LangItemPortableOpResolver {
+    fn resolve_call_op(&self, path_segments: &[&str]) -> Option<crate::intrinsics::OpKind> {
+        let registry = try_get_threadlocal_lang_items()?;
+        for (op, path) in &registry.ops {
+            let registered: Vec<&str> = path.segments.iter().map(|seg| seg.name.as_str()).collect();
+            if registered == path_segments {
+                return crate::intrinsics::OpKind::from_op_tag(op);
+            }
+        }
+        None
+    }
+
+    fn resolve_method_op(
+        &self,
+        method: &str,
+        receiver_ty: Option<&crate::hir::ty::Ty>,
+        def_paths: &HashMap<crate::hir::DefId, crate::hir::DefPath>,
+    ) -> Option<crate::intrinsics::OpKind> {
+        let registry = try_get_threadlocal_lang_items()?;
+        let class_name = resolved_ty_class_name(receiver_ty?, def_paths)?;
+        registry.get_method_op(&class_name, method)
+    }
+}
+
+/// The nominal type name a resolved `hir::ty::Ty` is known by (its `Adt`'s
+/// own def-path segment) — recurses through references so `&Foo`/`&&Foo`
+/// resolve the same as `Foo`. `None` for anything without a nominal name
+/// (primitives, trait objects, type variables, ...) — a receiver whose
+/// type can't be named this way simply never matches any tagged `opclass`.
+fn resolved_ty_class_name(
+    ty: &crate::hir::ty::Ty,
+    def_paths: &HashMap<crate::hir::DefId, crate::hir::DefPath>,
+) -> Option<String> {
+    use crate::hir::ty::TyKind;
+    match &ty.kind {
+        TyKind::Adt(adt, _) => def_paths
+            .get(&adt.did)
+            .and_then(|path| path.segments.last())
+            .map(|seg| seg.as_str().to_string()),
+        TyKind::Ref(_, inner, _) => resolved_ty_class_name(inner, def_paths),
+        _ => None,
+    }
+}
+
 pub fn extract_intrinsic_item(attrs: &[Attribute]) -> Option<String> {
     extract_intrinsic_attribute(attrs)
 }

@@ -76,6 +76,7 @@ impl OpKind {
     /// code that consumes them.
     pub fn from_op_tag(tag: &str) -> Option<Self> {
         match tag {
+            // Method-position ops (`#[op(method = "...")]` / `@Op(method = "...")`).
             "as_ref" => Some(Self::AsRef),
             "map_or" => Some(Self::MapOr),
             "iter" => Some(Self::Iter),
@@ -87,6 +88,50 @@ impl OpKind {
             "to_string" => Some(Self::ToString),
             "and_then" => Some(Self::AndThen),
             "clone" => Some(Self::Clone),
+            "unwrap" => Some(Self::OptionUnwrap),
+            // Free-function ops (`#[op(func = "...")]`) — named after the
+            // `lang_item` convention already used for `#[intrinsic = "..."]`
+            // (`fp-core/src/intrinsics/lang_intrinsic.rs`), since that's what
+            // the vendored/hand-written std already tags these with.
+            "vec_new" => Some(Self::VecNew),
+            "option_some" => Some(Self::OptionSome),
+            "option_none" => Some(Self::OptionNone),
+            "option_unwrap" => Some(Self::OptionUnwrap),
+            "format" => Some(Self::Format),
+            "print" => Some(Self::Print),
+            "println" => Some(Self::Println),
+            "input" => Some(Self::Input),
+            "time_now" => Some(Self::TimeNow),
+            "sleep" => Some(Self::Sleep),
+            "spawn" => Some(Self::Spawn),
+            "join" => Some(Self::Join),
+            "select" => Some(Self::Select),
+            "fs_read_dir" => Some(Self::FsReadDir),
+            "fs_walk_dir" => Some(Self::FsWalkDir),
+            "fs_read_to_string" => Some(Self::FsReadToString),
+            "fs_write_string" => Some(Self::FsWriteString),
+            "fs_append_string" => Some(Self::FsAppendString),
+            "fs_exists" => Some(Self::FsExists),
+            "fs_is_dir" => Some(Self::FsIsDir),
+            "fs_is_file" => Some(Self::FsIsFile),
+            "fs_create_dir_all" => Some(Self::FsCreateDirAll),
+            "fs_remove_file" => Some(Self::FsRemoveFile),
+            "fs_remove_dir_all" => Some(Self::FsRemoveDirAll),
+            "fs_glob" => Some(Self::FsGlob),
+            "env_current_dir" => Some(Self::EnvCurrentDir),
+            "env_temp_dir" => Some(Self::EnvTempDir),
+            "env_home_dir" => Some(Self::EnvHomeDir),
+            "env_var" => Some(Self::EnvVar),
+            "env_var_exists" => Some(Self::EnvVarExists),
+            "io_read_stdin_to_string" => Some(Self::IoReadStdinToString),
+            "io_write_stdout" => Some(Self::IoWriteStdout),
+            "io_write_stderr" => Some(Self::IoWriteStderr),
+            "yaml_to_json" => Some(Self::YamlToJson),
+            "json_parse" => Some(Self::JsonParse),
+            "shell_exec" => Some(Self::ShellExec),
+            "shell_file_copy" => Some(Self::ShellFileCopy),
+            "shell_file_template" => Some(Self::ShellFileTemplate),
+            "shell_file_rsync" => Some(Self::ShellFileRsync),
             _ => None,
         }
     }

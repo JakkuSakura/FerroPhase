@@ -1874,10 +1874,26 @@ fn is_known_list_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
 /// immutable, no `.copy()` method) rather than map to Kotlin's data-class
 /// `.copy()` convention.
 fn is_known_string_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
-    if matches!(expr.ty(), Some(Ty::Primitive(TypePrimitive::String))) {
+    if is_string_like_ty(expr.ty()) {
         return true;
     }
     expr_receiver_name(expr).is_some_and(|n| e.string_field_names.contains(&n))
+}
+
+/// `String`/`&str` both count as "known string" — `str` has no dedicated
+/// `Ty::Primitive` variant (real rustc has no distinct HIR `TyKind::Str`
+/// either; it round-trips through `hir_ty_to_ast`'s `Adt`/`Ref` handling as
+/// a plain named/reference type), so a resolved `&str` shows up here as
+/// `Ty::Reference(.. Ty::Expr("str"))` or a bare `Ty::Expr("str")`, not
+/// `Ty::Primitive(String)`. Recurses through references so `&str`/`&&str`
+/// etc. all match.
+fn is_string_like_ty(ty: Option<&Ty>) -> bool {
+    match ty {
+        Some(Ty::Primitive(TypePrimitive::String)) => true,
+        Some(Ty::Reference(reference)) => is_string_like_ty(Some(reference.ty.as_ref())),
+        Some(Ty::Expr(expr)) => matches!(expr_to_name(expr).as_str(), "str" | "String"),
+        _ => false,
+    }
 }
 
 /// True if `expr`'s real inferred type is a Kotlin `enum class` — checks
