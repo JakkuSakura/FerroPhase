@@ -2,6 +2,7 @@ mod vm;
 
 use std::collections::HashMap;
 use std::ffi::CString;
+use std::rc::Rc;
 
 use fp_core::ast::{
     Ty, TypeStruct, TypeType, TypeUnknown, Value, ValueList, ValueMapEntry, ValueTuple,
@@ -45,10 +46,14 @@ pub struct LirInterpreter {
     last_predecessor: Option<BasicBlockId>,
     /// All LIR functions keyed by name, for cross-module call resolution.
     /// Populated from a flat program for legacy runtime entrypoints.
-    program_functions: HashMap<String, LirFunction>,
-    package_functions: HashMap<(PackageId, String), LirFunction>,
-    workspace_functions: HashMap<(fp_core::package::PackageId, String), LirFunction>,
-    definition_functions: HashMap<fp_core::hir::DefId, LirFunction>,
+    /// `Rc`-wrapped so every call site's `.get(..).cloned()` (once per
+    /// function call the interpreter makes) is a cheap pointer clone
+    /// instead of deep-cloning the whole function body (every basic
+    /// block/instruction) on every call.
+    program_functions: HashMap<String, Rc<LirFunction>>,
+    package_functions: HashMap<(PackageId, String), Rc<LirFunction>>,
+    workspace_functions: HashMap<(fp_core::package::PackageId, String), Rc<LirFunction>>,
+    definition_functions: HashMap<fp_core::hir::DefId, Rc<LirFunction>>,
 }
 
 impl LirInterpreter {
@@ -183,6 +188,10 @@ impl LirInterpreter {
     fn populate_functions_from_workspace(&mut self, workspace: &LirWorkspace) {
         for artifact in workspace.artifacts() {
             if let LirArtifactKind::Function(function) = &artifact.kind {
+                // One real deep clone here (unavoidable — `function` is
+                // borrowed from `artifact`), then only cheap `Rc` clones
+                // into each lookup map below.
+                let function = Rc::new(function.clone());
                 if let Some(def_id) = function.def_id {
                     self.definition_functions.insert(def_id, function.clone());
                 }
@@ -201,7 +210,7 @@ impl LirInterpreter {
                     function.clone(),
                 );
                 self.program_functions
-                    .insert(function.name.as_str().to_string(), function.clone());
+                    .insert(function.name.as_str().to_string(), function);
             }
         }
     }
@@ -214,7 +223,7 @@ impl LirInterpreter {
     fn populate_functions_from_program(&mut self, program: &LirProgram) {
         for func in &program.functions {
             self.program_functions
-                .insert(func.name.as_str().to_string(), func.clone());
+                .insert(func.name.as_str().to_string(), Rc::new(func.clone()));
         }
     }
 
@@ -222,7 +231,7 @@ impl LirInterpreter {
         for function in &program.functions {
             self.package_functions.insert(
                 (package_id.clone(), function.name.as_str().to_string()),
-                function.clone(),
+                Rc::new(function.clone()),
             );
         }
     }
@@ -1823,7 +1832,7 @@ impl LirInterpreter {
         name: &str,
         args: &[LirValue],
         package_id: Option<PackageId>,
-        definition: Option<LirFunction>,
+        definition: Option<Rc<LirFunction>>,
         result_ty: Option<&LirType>,
     ) -> LirResult<()> {
         let typed_args: Vec<TypedValue> = args
