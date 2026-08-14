@@ -677,13 +677,20 @@ fn emit_file(file: &File, e: &mut KotlinEmitter) -> Result<()> {
     // object member — Kotlin has no way to attach a companion object to a
     // class from *outside* its declaration, unlike an extension function
     // (used for instance methods instead, emitted after every other item).
+    // `impl Trait for Type` instance methods are collected separately from
+    // plain inherent-impl instance methods: they become real `override`
+    // members nested in the type's own declaration (with `: Trait` added to
+    // its header) rather than extension functions, since Kotlin only
+    // recognizes actual member overrides as satisfying an interface — see
+    // `emit_trait_impl_block`.
     let mut static_methods: HashMap<String, Vec<ItemDefFunction>> = HashMap::new();
     let mut instance_methods: Vec<(ItemDefFunction, String)> = Vec::new();
+    let mut trait_impls: HashMap<String, Vec<(String, ItemDefFunction)>> = HashMap::new();
     for item in &non_imports {
-        collect_impl_methods(item, &mut static_methods, &mut instance_methods);
+        collect_impl_methods(item, &mut static_methods, &mut instance_methods, &mut trait_impls);
     }
 
-    for item in non_imports { emit_item(item, e, &static_methods)?; }
+    for item in non_imports { emit_item(item, e, &static_methods, &trait_impls)?; }
 
     for (f, self_name) in &instance_methods {
         emit_impl_function(f, self_name, e)?;
@@ -691,10 +698,27 @@ fn emit_file(file: &File, e: &mut KotlinEmitter) -> Result<()> {
     Ok(())
 }
 
+/// True for a Rust standard-library trait with its own dedicated Kotlin
+/// convention — `Display`/`Debug` → `toString()`, `Clone` → data-class
+/// `.copy()`, `PartialEq`/`Eq` → `equals()`, etc. — rather than a generic
+/// "this type implements that interface" relationship. Matched by last
+/// path segment (`std::fmt::Display` and a bare `Display` both match).
+fn is_known_std_trait(trait_name: &str) -> bool {
+    let last = trait_name.rsplit("::").next().unwrap_or(trait_name);
+    matches!(
+        last,
+        "Display" | "Debug" | "Clone" | "Copy" | "Default" | "PartialEq" | "Eq"
+            | "PartialOrd" | "Ord" | "Hash" | "From" | "Into" | "TryFrom" | "TryInto"
+            | "Send" | "Sync" | "Drop" | "Iterator" | "IntoIterator" | "AsRef" | "AsMut"
+            | "Deref" | "DerefMut" | "Serialize" | "Deserialize"
+    )
+}
+
 fn collect_impl_methods(
     item: &Item,
     static_methods: &mut HashMap<String, Vec<ItemDefFunction>>,
     instance_methods: &mut Vec<(ItemDefFunction, String)>,
+    trait_impls: &mut HashMap<String, Vec<(String, ItemDefFunction)>>,
 ) {
     match item.kind() {
         ItemKind::Impl(impl_block) => {
@@ -702,10 +726,24 @@ fn collect_impl_methods(
             // Strip any generic argument suffix (`Foo<T>` → `Foo`) so this
             // matches the bare name `emit_struct`/`emit_enum` are keyed by.
             let self_name = self_name.split('<').next().unwrap_or(&self_name).to_string();
+            // Well-known standard traits (`Display`, `Clone`, `PartialEq`,
+            // ...) have their own dedicated Kotlin conventions (`toString()`,
+            // data-class `.copy()`, `equals()`, ...), not a generic
+            // "implements this interface" relationship — only a genuine
+            // custom (locally-defined) trait becomes a Kotlin `interface`
+            // its implementors declare. Anything else keeps the prior,
+            // already-working behavior (an ordinary instance method,
+            // emitted as an extension function).
+            let trait_name = impl_block.trait_ty.as_ref()
+                .map(name_to_string)
+                .filter(|name| !is_known_std_trait(name));
             for item in &impl_block.items {
                 if let ItemKind::DefFunction(f) = item.kind() {
                     if f.sig.receiver.is_none() {
                         static_methods.entry(self_name.clone()).or_default().push(f.clone());
+                    } else if let Some(trait_name) = &trait_name {
+                        trait_impls.entry(self_name.clone()).or_default()
+                            .push((trait_name.clone(), f.clone()));
                     } else {
                         instance_methods.push((f.clone(), self_name.clone()));
                     }
@@ -713,7 +751,9 @@ fn collect_impl_methods(
             }
         }
         ItemKind::Module(m) => {
-            for child in &m.items { collect_impl_methods(child, static_methods, instance_methods); }
+            for child in &m.items {
+                collect_impl_methods(child, static_methods, instance_methods, trait_impls);
+            }
         }
         _ => {}
     }
@@ -725,19 +765,22 @@ fn emit_item(
     item: &Item,
     e: &mut KotlinEmitter,
     static_methods: &HashMap<String, Vec<ItemDefFunction>>,
+    trait_impls: &HashMap<String, Vec<(String, ItemDefFunction)>>,
 ) -> Result<()> {
     match item.kind() {
         ItemKind::DefStruct(s) => {
             let methods = static_methods.get(s.name.name.as_str()).map(Vec::as_slice).unwrap_or(&[]);
-            emit_struct(s, methods, e)
+            let traits = trait_impls.get(s.name.name.as_str()).map(Vec::as_slice).unwrap_or(&[]);
+            emit_struct(s, methods, traits, e)
         }
         ItemKind::DefEnum(en) => {
             let methods = static_methods.get(en.name.name.as_str()).map(Vec::as_slice).unwrap_or(&[]);
-            emit_enum(en, methods, e)
+            let traits = trait_impls.get(en.name.name.as_str()).map(Vec::as_slice).unwrap_or(&[]);
+            emit_enum(en, methods, traits, e)
         }
         ItemKind::DefFunction(f) => emit_function(f, e),
         ItemKind::Module(m) => {
-            for child in &m.items { emit_item(child, e, static_methods)?; }
+            for child in &m.items { emit_item(child, e, static_methods, trait_impls)?; }
             Ok(())
         }
         ItemKind::Import(imp) => emit_import(imp, e, &mut HashSet::new()),
@@ -747,7 +790,8 @@ fn emit_item(
             e.push_line(&format!("val {} = {}", name, val));
             Ok(())
         }
-        ItemKind::DefTrait(_) | ItemKind::Macro(_) | ItemKind::DefStructural(_) => Ok(()),
+        ItemKind::DefTrait(t) => emit_trait(t, e),
+        ItemKind::Macro(_) | ItemKind::DefStructural(_) => Ok(()),
         // Handled up front by `collect_impl_methods` (see `emit_file`).
         ItemKind::Impl(_) => Ok(()),
         ItemKind::Expr(expr) => {
@@ -760,9 +804,81 @@ fn emit_item(
     }
 }
 
+// ── Trait ────────────────────────────────────────────────────────────────────
+
+/// A Rust trait becomes a Kotlin `interface` — its method *signatures*
+/// become abstract interface methods; a default-bodied method (rare in
+/// this codebase, but real Kotlin interfaces support it) keeps its body.
+/// Implementing types get `: TraitName` added to their own declaration and
+/// their trait-impl methods emitted as real overrides — see
+/// `emit_trait_impl_block`.
+fn emit_trait(t: &fp_core::ast::ItemDefTrait, e: &mut KotlinEmitter) -> Result<()> {
+    let name = t.name.name.as_str();
+    e.push_line(&format!("interface {} {{", name));
+    e.indent += 1;
+    for item in &t.items {
+        match item.kind() {
+            ItemKind::DeclFunction(f) => {
+                let params = f.sig.params.iter()
+                    .map(|p| format!("{}: {}", p.name.name, kotlin_type_from_ty(&p.ty, e)))
+                    .collect::<Vec<_>>().join(", ");
+                let ret = f.sig.ret_ty.as_ref()
+                    .map(|ty| format!(": {}", kotlin_type_from_ty(ty, e)))
+                    .unwrap_or_else(|| ": Unit".to_string());
+                e.push_line(&format!("fun {}({}){}", f.name.name.as_str(), params, ret));
+            }
+            ItemKind::DefFunction(f) => {
+                // A default method body — emit like any other instance
+                // method, just nested as an interface member instead of a
+                // free-standing extension function.
+                emit_companion_function(f, name, e)?;
+            }
+            _ => {}
+        }
+    }
+    e.indent -= 1;
+    e.push_line("}\n");
+    Ok(())
+}
+
+/// Emits every `(trait_name, method)` in `traits` as a real `override fun`
+/// member (grouped so each trait's methods stay together), and returns the
+/// distinct trait names implemented — for the caller to add as `: Trait1,
+/// Trait2` on the type's own declaration. Must be called from inside the
+/// type's already-open body braces, same as `emit_companion_block`.
+fn emit_trait_impl_block(
+    self_name: &str,
+    traits: &[(String, ItemDefFunction)],
+    e: &mut KotlinEmitter,
+) -> Result<()> {
+    for (_, f) in traits {
+        emit_override_function(f, self_name, e)?;
+    }
+    Ok(())
+}
+
+/// The distinct trait names in `traits`, in first-seen order — for the
+/// `: Trait1, Trait2` suffix on a type's own declaration. Must be computed
+/// (and the header line written) *before* `emit_trait_impl_block` opens the
+/// class body and starts writing member overrides into it.
+fn implemented_trait_names(traits: &[(String, ItemDefFunction)]) -> Vec<String> {
+    let mut seen = Vec::new();
+    for (trait_name, _) in traits {
+        if !seen.contains(trait_name) {
+            seen.push(trait_name.clone());
+        }
+    }
+    seen
+}
+
 // ── Struct ───────────────────────────────────────────────────────────────────
 
-fn emit_struct(s: &ItemDefStruct, static_methods: &[ItemDefFunction], e: &mut KotlinEmitter) -> Result<()> {
+fn emit_struct(
+    s: &ItemDefStruct,
+    static_methods: &[ItemDefFunction],
+    traits: &[(String, ItemDefFunction)],
+    e: &mut KotlinEmitter,
+) -> Result<()> {
     let name = s.name.name.as_str();
     let fields = &s.value.fields;
     e.push_line(&format!("data class {}(", name));
@@ -778,27 +894,52 @@ fn emit_struct(s: &ItemDefStruct, static_methods: &[ItemDefFunction], e: &mut Ko
         let mutability = if e.mutated_fields.contains(&field.name.name) { "var" } else { "val" };
         e.push_line(&format!("    {} {}: {}{}", mutability, field.name.name, kt, comma));
     }
-    if static_methods.is_empty() {
+    if static_methods.is_empty() && traits.is_empty() {
         e.push_line(")\n");
-    } else {
-        e.push_line(") {");
-        e.indent += 1;
-        emit_companion_block(name, static_methods, e)?;
-        e.indent -= 1;
-        e.push_line("}\n");
+        return Ok(());
     }
+    let implemented = implemented_trait_names(traits);
+    let header_suffix = if implemented.is_empty() {
+        String::new()
+    } else {
+        format!(" : {}", implemented.join(", "))
+    };
+    e.push_line(&format!("){} {{", header_suffix));
+    e.indent += 1;
+    emit_trait_impl_block(name, traits, e)?;
+    if !static_methods.is_empty() {
+        emit_companion_block(name, static_methods, e)?;
+    }
+    e.indent -= 1;
+    e.push_line("}\n");
     Ok(())
 }
 
 // ── Enum ─────────────────────────────────────────────────────────────────────
 
-fn emit_enum(en: &ItemDefEnum, static_methods: &[ItemDefFunction], e: &mut KotlinEmitter) -> Result<()> {
+fn emit_enum(
+    en: &ItemDefEnum,
+    static_methods: &[ItemDefFunction],
+    traits: &[(String, ItemDefFunction)],
+    e: &mut KotlinEmitter,
+) -> Result<()> {
     let name = en.name.name.as_str();
     let variants = &en.value.variants;
     let has_data = variants.iter().any(|v| !matches!(v.value, Ty::Unit(_)));
+    let mut implemented_traits = Vec::new();
+    for (trait_name, _) in traits {
+        if !implemented_traits.contains(trait_name) {
+            implemented_traits.push(trait_name.clone());
+        }
+    }
+    let header_suffix = if implemented_traits.is_empty() {
+        String::new()
+    } else {
+        format!(" : {}", implemented_traits.join(", "))
+    };
 
     if has_data {
-        e.push_line(&format!("sealed class {} {{", name));
+        e.push_line(&format!("sealed class {}{} {{", name, header_suffix));
         for (i, variant) in variants.iter().enumerate() {
             let vname = variant.name.name.to_uppercase();
             match &variant.value {
@@ -830,27 +971,33 @@ fn emit_enum(en: &ItemDefEnum, static_methods: &[ItemDefFunction], e: &mut Kotli
             }
             if i < variants.len() - 1 { e.push_line(""); }
         }
-        if static_methods.is_empty() {
+        if static_methods.is_empty() && traits.is_empty() {
             e.push_line("}\n");
         } else {
             e.indent += 1;
-            emit_companion_block(name, static_methods, e)?;
+            emit_trait_impl_block(name, traits, e)?;
+            if !static_methods.is_empty() {
+                emit_companion_block(name, static_methods, e)?;
+            }
             e.indent -= 1;
             e.push_line("}\n");
         }
         Ok(())
     } else {
-        e.push_line(&format!("enum class {} {{", name));
+        e.push_line(&format!("enum class {}{} {{", name, header_suffix));
         for (i, variant) in variants.iter().enumerate() {
-            let comma = if i < variants.len() - 1 || !static_methods.is_empty() { "," } else { "" };
+            let comma = if i < variants.len() - 1 || !static_methods.is_empty() || !traits.is_empty() { "," } else { "" };
             e.push_line(&format!("    {}{}", variant.name.name.to_uppercase(), comma));
         }
-        if static_methods.is_empty() {
+        if static_methods.is_empty() && traits.is_empty() {
             e.push_line("}\n");
         } else {
             e.push_line("    ;");
             e.indent += 1;
-            emit_companion_block(name, static_methods, e)?;
+            emit_trait_impl_block(name, traits, e)?;
+            if !static_methods.is_empty() {
+                emit_companion_block(name, static_methods, e)?;
+            }
             e.indent -= 1;
             e.push_line("}\n");
         }
@@ -934,6 +1081,49 @@ fn emit_impl_function(f: &ItemDefFunction, self_name: &str, e: &mut KotlinEmitte
         .unwrap_or_else(|| ": Unit".to_string());
 
     e.push_line(&format!("fun {}.{}({}){} {{", self_name, name, params, ret));
+    e.indent += 1;
+    match untranspilable_reason(f) {
+        Some(reason) => emit_stub_body(&format!("{self_name}::{name}"), reason, e),
+        None => {
+            let len = f.body.stmts.len();
+            for (i, stmt) in f.body.stmts.iter().enumerate() {
+                let is_tail = i == len - 1 && f.sig.ret_ty.is_some();
+                emit_stmt(stmt, e, is_tail)?;
+            }
+        }
+    }
+    e.indent -= 1;
+    e.push_line("}\n");
+    Ok(())
+}
+
+/// Like `emit_impl_function`, but nested as a real class member
+/// (`override fun name(...)`) instead of an extension function — needed
+/// for a trait's methods specifically, since Kotlin only recognizes an
+/// actual member override as satisfying an interface (an extension
+/// function never does, regardless of its name/signature match).
+fn emit_override_function(f: &ItemDefFunction, self_name: &str, e: &mut KotlinEmitter) -> Result<()> {
+    let name = f.name.name.as_str();
+    if is_fmt_trait_method(f) {
+        let reason = "Display/Debug fmt not transpilable (std::fmt::Formatter not modeled)";
+        report_untranspilable(&format!("{self_name}::{name}"), reason);
+        e.push_line(&format!(
+            "override fun {}(): String = throw NotImplementedError(\"{}\")",
+            name, reason
+        ));
+        e.push_line("");
+        return Ok(());
+    }
+    e.current_fn_params = f.sig.params.iter().map(|p| p.name.name.clone()).collect();
+    e.current_self_name = Some(self_name.to_string());
+    let params = f.sig.params.iter()
+        .map(|p| format!("{}: {}", p.name.name, kotlin_type_from_ty(&p.ty, e)))
+        .collect::<Vec<_>>().join(", ");
+    let ret = f.sig.ret_ty.as_ref()
+        .map(|ty| format!(": {}", kotlin_type_from_ty(ty, e).replace("Self", self_name)))
+        .unwrap_or_else(|| ": Unit".to_string());
+
+    e.push_line(&format!("override fun {}({}){} {{", name, params, ret));
     e.indent += 1;
     match untranspilable_reason(f) {
         Some(reason) => emit_stub_body(&format!("{self_name}::{name}"), reason, e),
@@ -1476,7 +1666,7 @@ fn emit_stmt(stmt: &BlockStmt, e: &mut KotlinEmitter, is_tail: bool) -> Result<(
         // pre-pass of its own — local static methods stay unresolved to a
         // companion object here (an edge case not exercised by any current
         // caller; local `impl` blocks inside a function body are rare).
-        BlockStmt::Item(item) => return emit_item(item, e, &HashMap::new()),
+        BlockStmt::Item(item) => return emit_item(item, e, &HashMap::new(), &HashMap::new()),
         BlockStmt::Noop => {}
         _ => {}
     }
@@ -3032,6 +3222,16 @@ fn kotlin_type_from_ty(ty: &Ty, _e: &KotlinEmitter) -> String {
         Ty::Slice(sl) => format!("List<{}>", kotlin_type_from_ty(&sl.elem, _e)),
         Ty::Any(_) | Ty::Unknown(_) => "Any".into(),
         Ty::Nothing(_) => "Nothing".into(),
+        // `dyn Trait` (typically seen inside `Arc<dyn Trait>`/`Box<dyn Trait>`
+        // field types) — a single trait bound with no concrete type behind
+        // it. The trait becomes a Kotlin `interface` of the same name (see
+        // `emit_trait`), so the bound's own name is already the right type.
+        Ty::TypeBounds(tb) => tb.bounds.first()
+            .map(|b| map_name_to_kt(&expr_to_name(b)))
+            .unwrap_or_else(|| "Any".into()),
+        Ty::ImplTraits(it) => it.bounds.bounds.first()
+            .map(|b| map_name_to_kt(&expr_to_name(b)))
+            .unwrap_or_else(|| "Any".into()),
         _ => "Any".into(),
     }
 }
@@ -3092,7 +3292,53 @@ fn strip_generic_wrapper<'a>(dot_name: &'a str, wrapper: &str) -> Option<&'a str
     dot_name[idx + pat.len()..].strip_suffix('>')
 }
 
+/// Splits `s` on `sep`, ignoring any `sep` nested inside `<...>`/`(...)` —
+/// e.g. `split_top_level("String, Vec<Int>", ',')` → `["String", " Vec<Int>"]`,
+/// not a bogus 3-way split on the inner comma.
+fn split_top_level(s: &str, sep: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' | '(' => depth += 1,
+            '>' | ')' => depth -= 1,
+            c if c == sep && depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    parts.push(&s[start..]);
+    parts
+}
+
 fn map_name_to_kt(name: &str) -> String {
+    // `dyn Trait` — a trait object's type-position name still carries the
+    // `dyn` keyword this far (there's no dedicated `Ty` shape for it; it's
+    // parsed as a plain type-expression string). A Rust trait is emitted as
+    // a Kotlin `interface` of the same name (see `emit_trait`), so `dyn`
+    // just needs dropping — the trait name alone is already the right
+    // Kotlin type.
+    if let Some(inner) = name.strip_prefix("dyn ") {
+        return map_name_to_kt(inner);
+    }
+    // A bare tuple type spelled out as text (`(String, bool)`) — reachable
+    // for a trait method's declared return/param type, which (unlike a
+    // struct field or a `let`'s inferred type) goes through this
+    // string-based path rather than the structured `Ty::Tuple` one. Only
+    // top-level commas count as separators — a nested generic's own comma
+    // (`(String, Vec<Int>)`) must not split there.
+    if let Some(inner) = name.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+        let parts = split_top_level(inner, ',');
+        let mapped: Vec<String> = parts.iter().map(|p| map_name_to_kt(p.trim())).collect();
+        return match mapped.len() {
+            2 => format!("Pair<{}, {}>", mapped[0], mapped[1]),
+            3 => format!("Triple<{}, {}, {}>", mapped[0], mapped[1], mapped[2]),
+            _ => "Any".into(),
+        };
+    }
     // Normalize :: separators to dots for path resolution
     let dot_name = name.replace("::", ".");
     let last_seg = dot_name.rsplit('.').next().unwrap_or(&dot_name);
