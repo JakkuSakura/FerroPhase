@@ -62,6 +62,16 @@ struct KotlinEmitter {
     /// for a field whose defining struct lives in a different package than
     /// the file reading it (so `expr.ty()` alone isn't reliably populated).
     enum_field_names: HashSet<String>,
+    /// Names of the currently-emitted function's own parameters — Kotlin
+    /// parameters are always an implicit `val` (unlike Rust, which allows
+    /// `mut`/`&mut` parameters), so `.take()` on one of these (see its
+    /// render_expr special case) can't emit its usual reset-to-`null`
+    /// side effect; the parameter's Kotlin copy dies at function return
+    /// regardless, so dropping the reset is safe as long as nothing later
+    /// in the same function body reads the parameter again expecting to
+    /// see the reset value — true for every case in this codebase today.
+    /// Reset per function (see `emit_function`/`emit_impl_function`).
+    current_fn_params: HashSet<String>,
     /// Variables bound from `.split(...)` — Kotlin's version returns a `List`, not
     /// a stateful iterator, so a later `.next()?` on one of these needs indexed
     /// access instead of the usual (erasing) method-call rendering.
@@ -103,6 +113,7 @@ impl KotlinEmitter {
             field_element_types: HashMap::new(),
             string_field_names: HashSet::new(),
             enum_field_names: HashSet::new(),
+            current_fn_params: HashSet::new(),
             declared_names: Vec::new(),
             referenced_paths: HashSet::new(),
         }
@@ -373,34 +384,75 @@ fn collect_string_fields_in_item(item: &Item, e: &KotlinEmitter, out: &mut HashS
 /// Workspace-wide struct field names whose declared type is an `enum class`
 /// — same shape and rationale as `collect_string_field_names`, backing the
 /// `.clone()`-vs-`.copy()` disambiguation (see `enum_field_names`'s doc
-/// comment). Checks the field's `Ty` directly (`Ty::Enum(_)`) rather than
-/// a rendered-name comparison, since an enum and a struct with the same
-/// name would render identically as a bare Kotlin type name.
+/// comment). A field referencing a type declared in a *different* package
+/// (e.g. `FileChange.status: FileStatus`, declared in a sibling crate)
+/// never actually shows up as `Ty::Enum(_)` here — the frontend can't tell
+/// a cross-package struct reference from an enum reference by shape alone
+/// before typecheck runs, so both come through as the same generic named-
+/// type-reference shape (`Ty::Expr`). Resolve those by name instead: first
+/// collect every enum's own name from any `ItemKind::DefEnum` anywhere in
+/// the workspace, then check each field's referenced name against that set.
 pub fn collect_enum_field_names<'a>(items: impl Iterator<Item = &'a PackageItem>) -> HashSet<String> {
+    let items: Vec<&PackageItem> = items.collect();
+    let mut enum_type_names = HashSet::new();
+    for pkg_item in &items {
+        collect_enum_type_names_in_item(&pkg_item.item, &mut enum_type_names);
+    }
     let mut out = HashSet::new();
-    for pkg_item in items {
-        collect_enum_fields_in_item(&pkg_item.item, &mut out);
+    for pkg_item in &items {
+        collect_enum_fields_in_item(&pkg_item.item, &enum_type_names, &mut out);
     }
     out
 }
 
-fn collect_enum_fields_in_item(item: &Item, out: &mut HashSet<String>) {
+fn collect_enum_type_names_in_item(item: &Item, out: &mut HashSet<String>) {
+    match item.kind() {
+        ItemKind::DefEnum(e) => {
+            out.insert(e.name.name.clone());
+        }
+        ItemKind::Impl(impl_block) => {
+            for item in &impl_block.items {
+                collect_enum_type_names_in_item(item, out);
+            }
+        }
+        ItemKind::Module(m) => {
+            for item in &m.items {
+                collect_enum_type_names_in_item(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn field_type_is_enum(ty: &Ty, enum_type_names: &HashSet<String>) -> bool {
+    match ty {
+        Ty::Enum(_) => true,
+        Ty::Expr(expr) => {
+            let name = expr_to_name(expr);
+            let bare = name.rsplit('.').next().unwrap_or(&name);
+            enum_type_names.contains(bare)
+        }
+        _ => false,
+    }
+}
+
+fn collect_enum_fields_in_item(item: &Item, enum_type_names: &HashSet<String>, out: &mut HashSet<String>) {
     match item.kind() {
         ItemKind::DefStruct(s) => {
             for field in &s.value.fields {
-                if matches!(field.value, Ty::Enum(_)) {
+                if field_type_is_enum(&field.value, enum_type_names) {
                     out.insert(field.name.name.clone());
                 }
             }
         }
         ItemKind::Impl(impl_block) => {
             for item in &impl_block.items {
-                collect_enum_fields_in_item(item, out);
+                collect_enum_fields_in_item(item, enum_type_names, out);
             }
         }
         ItemKind::Module(m) => {
             for item in &m.items {
-                collect_enum_fields_in_item(item, out);
+                collect_enum_fields_in_item(item, enum_type_names, out);
             }
         }
         _ => {}
@@ -753,6 +805,7 @@ fn emit_impl_static_stub(f: &ItemDefFunction, self_name: &str, e: &mut KotlinEmi
 
 fn emit_impl_function(f: &ItemDefFunction, self_name: &str, e: &mut KotlinEmitter) -> Result<()> {
     let name = f.name.name.as_str();
+    e.current_fn_params = f.sig.params.iter().map(|p| p.name.name.clone()).collect();
     // Skip the first param (self) — Kotlin extension functions have implicit receiver
     let params = f.sig.params.iter()
         .map(|p| format!("{}: {}", p.name.name, kotlin_type_from_ty(&p.ty, e)))
@@ -781,6 +834,7 @@ fn emit_impl_function(f: &ItemDefFunction, self_name: &str, e: &mut KotlinEmitte
 
 fn emit_function(f: &ItemDefFunction, e: &mut KotlinEmitter) -> Result<()> {
     let name = f.name.name.as_str();
+    e.current_fn_params = f.sig.params.iter().map(|p| p.name.name.clone()).collect();
     let params = f.sig.params.iter()
         .map(|p| {
             let kt = kotlin_type_from_ty(&p.ty, e);
@@ -1494,9 +1548,15 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                     }
                     // `Option::take()` — replaces a `var` with `None`/`null`, returning
                     // the old value. Kotlin has no equivalent method; model it directly.
+                    // A function *parameter* receiver can't be reassigned at all in
+                    // Kotlin (always an implicit `val`, unlike a `let`-bound local) —
+                    // drop the reset for those (see `current_fn_params`'s doc comment).
                     if sel.field.name.as_str() == "take" && inv.args.is_empty() {
-                        if let ExprKind::Name(_) = sel.obj.kind() {
+                        if let ExprKind::Name(name) = sel.obj.kind() {
                             let obj = render_expr(&sel.obj, e)?;
+                            if e.current_fn_params.contains(&name_to_string(name)) {
+                                return Ok(obj);
+                            }
                             return Ok(format!("run {{ val __t = {0}; {0} = null; __t }}", obj));
                         }
                     }

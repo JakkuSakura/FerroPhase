@@ -1294,8 +1294,22 @@ fn expr_assigns_local(expr: &hir::Expr, target: hir::HirId) -> bool {
             expr_assigns_local(callee, target)
                 || args.iter().any(|arg| expr_assigns_local(&arg.value, target))
         }
-        hir::ExprKind::MethodCall(recv, _, args) => {
-            expr_assigns_local(recv, target)
+        hir::ExprKind::MethodCall(recv, method, args) => {
+            // `Option::take()` has no real HIR-level assignment node — its
+            // "reset the receiver to `None`" half is only synthesized as
+            // text by the Kotlin serializer's own `.take()` special case
+            // (`run { val __t = recv; recv = null; __t }`). A parameter
+            // receiver needs the same shadow-rename treatment an explicit
+            // `Assign` does, or that synthesized reassignment targets an
+            // unassignable Kotlin `val` parameter.
+            let resets_target = method.as_str() == "take"
+                && args.is_empty()
+                && matches!(
+                    &recv.kind,
+                    hir::ExprKind::Path(path) if matches!(path.res, Some(hir::Res::Local(id)) if id == target)
+                );
+            resets_target
+                || expr_assigns_local(recv, target)
                 || args.iter().any(|arg| expr_assigns_local(&arg.value, target))
         }
         hir::ExprKind::FieldAccess(inner, _) => expr_assigns_local(inner, target),
