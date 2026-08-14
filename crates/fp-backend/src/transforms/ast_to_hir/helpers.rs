@@ -265,12 +265,20 @@ impl HirGenerator {
                     if let Some(hir::Res::Def(type_def_id)) =
                         self.resolve_type_symbol(first.name.as_str())
                     {
+                        // `global_type_defs_by_def_id` narrows straight to
+                        // the (usually one-element) set of qualified paths
+                        // that could possibly resolve to `type_def_id`,
+                        // instead of scanning every entry in
+                        // `global_type_defs` (potentially thousands once
+                        // vendored std is loaded) with a `format!`
+                        // allocation per candidate.
+                        let suffix = format!("::{}", first.name);
                         let mut type_paths: Vec<_> = self
-                            .global_type_defs
-                            .iter()
-                            .filter(|(_, entry)| entry.res == hir::Res::Def(type_def_id))
-                            .map(|(path, _)| path)
-                            .filter(|path| path.ends_with(&format!("::{}", first.name)))
+                            .global_type_defs_by_def_id
+                            .get(&type_def_id)
+                            .into_iter()
+                            .flatten()
+                            .filter(|path| path.ends_with(&suffix))
                             .cloned()
                             .collect();
                         type_paths.sort();

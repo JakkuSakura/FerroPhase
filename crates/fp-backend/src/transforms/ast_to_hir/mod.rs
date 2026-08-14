@@ -68,6 +68,17 @@ pub struct HirGenerator {
     module_visibility: Vec<bool>,
     global_value_defs: HashMap<String, SymbolEntry>,
     global_type_defs: HashMap<String, SymbolEntry>,
+    /// Reverse index from a `DefId` to every qualified-path key in
+    /// `global_type_defs` whose `SymbolEntry::res` resolves to it (a type
+    /// can have more than one, e.g. via re-exports) — built incrementally
+    /// in `record_type_symbol`, `global_type_defs`'s only insertion site.
+    /// Lets `name_to_hir_path_with_scope`'s cross-module associated-call
+    /// resolution (`Vec::new()`, `String::from(...)`, any std/libc
+    /// associated-function call) go straight to the handful of paths that
+    /// could possibly match a given type, instead of linear-scanning every
+    /// entry in `global_type_defs` (potentially thousands once vendored
+    /// std is loaded) with a `format!` allocation per candidate.
+    global_type_defs_by_def_id: HashMap<hir::DefId, Vec<String>>,
     /// `DefId -> qualified path` table mirrored into the final
     /// `hir::Program::def_paths` (see its doc comment). Populated
     /// centrally by `record_def_path`, called from every symbol
@@ -496,6 +507,7 @@ impl HirGenerator {
             module_visibility: vec![true],
             global_value_defs: HashMap::new(),
             global_type_defs: HashMap::new(),
+            global_type_defs_by_def_id: HashMap::new(),
             def_paths: HashMap::new(),
             prelude_value_defs: HashMap::new(),
             prelude_type_defs: HashMap::new(),
@@ -700,6 +712,12 @@ impl HirGenerator {
         self.record_def_path(&res, &path);
         let qualified = path.to_key();
         let export = self.symbol_export_marker(visibility);
+        if let hir::Res::Def(def_id) = &res {
+            self.global_type_defs_by_def_id
+                .entry(*def_id)
+                .or_default()
+                .push(qualified.clone());
+        }
         self.global_type_defs.insert(
             qualified,
             SymbolEntry {
@@ -785,11 +803,17 @@ impl HirGenerator {
                 .map(|segment| segment.name.as_str().to_owned())
                 .collect::<Vec<_>>(),
         );
+        // `global_type_defs_by_def_id` narrows straight to the qualified
+        // paths that could possibly resolve to `self_def_id`, instead of
+        // scanning every entry in `global_type_defs` on every impl block
+        // in the package.
         let mut paths: Vec<_> = self
-            .global_type_defs
-            .iter()
-            .filter(|(_, entry)| entry.res == hir::Res::Def(self_def_id))
-            .filter_map(|(_, entry)| entry.path.clone())
+            .global_type_defs_by_def_id
+            .get(&self_def_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|key| self.global_type_defs.get(key))
+            .filter_map(|entry| entry.path.clone())
             .collect();
         paths.sort_by_key(|path| path.to_key());
         if paths.iter().any(|path| path == &relative) {
