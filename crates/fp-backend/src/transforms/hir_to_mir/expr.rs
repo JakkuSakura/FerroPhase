@@ -18045,7 +18045,10 @@ impl<'a> BodyBuilder<'a> {
                     let value_value = self.const_value_to_ast_value(value)?;
                     items.push((key_value, value_value));
                 }
-                Some(Value::Map(ValueMap::from_pairs(items)))
+                // `entries` is already a valid runtime map's contents (from
+                // `mir::ConstValue::Map`), so keys are already guaranteed
+                // unique — skip `from_pairs`'s per-key duplicate scan.
+                Some(Value::Map(ValueMap::from_unique_pairs(items)))
             }
         }
     }

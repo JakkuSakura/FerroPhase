@@ -294,6 +294,24 @@ impl ValueMap {
         map
     }
 
+    /// Like `from_pairs`, but for a source that already guarantees unique
+    /// keys (e.g. converting an already-valid runtime map's entries back
+    /// into a `ValueMap`) — skips `insert`'s per-key linear scan, which
+    /// would otherwise make building an n-entry map from such a source
+    /// O(n²) for no reason (`insert`'s duplicate-key check can never
+    /// actually find a duplicate here). Passing a source with duplicate
+    /// keys produces a `ValueMap` with duplicate entries instead of the
+    /// last-write-wins semantics `insert`/`from_pairs` guarantee — only
+    /// use this where uniqueness is already known to hold.
+    pub fn from_unique_pairs(pairs: impl IntoIterator<Item = (Value, Value)>) -> Self {
+        Self {
+            entries: pairs
+                .into_iter()
+                .map(|(key, value)| ValueMapEntry::new(key, value))
+                .collect(),
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
