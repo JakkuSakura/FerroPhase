@@ -46,7 +46,8 @@ pub fn build(options: &BuildOptions) -> Result<()> {
             .and_then(|ext| ext.to_str())
             .map(|ext| matches!(ext, "fp" | "rs"))
             .unwrap_or(false);
-    let package = resolve_package(&start_dir, &manifest, options.package.as_deref())?;
+    let (package, packages_from_resolve) =
+        resolve_package(&start_dir, &manifest, options.package.as_deref())?;
 
     let build_config = load_manifest_build_config(&root)?;
     validate_feature_list(
@@ -108,7 +109,10 @@ pub fn build(options: &BuildOptions) -> Result<()> {
         .map(|_| ());
     }
 
-    let workspace_packages = manifest.list_packages()?;
+    let workspace_packages = match packages_from_resolve {
+        Some(packages) => packages,
+        None => manifest.list_packages()?,
+    };
     let target_packages = if let Some(name) = options.package.as_deref() {
         vec![
             workspace_packages
@@ -756,27 +760,39 @@ struct BuildScheduler {
     error: Option<eyre::Report>,
 }
 
+/// Resolves the package to build, along with the full workspace package
+/// list if resolving it happened to require computing one anyway (`Some`
+/// only when `package_name` was given, or when no package could be found
+/// near `start_dir`) — lets `build()` reuse that list instead of paying
+/// for another `manifest.list_packages()` (glob + per-member disk read +
+/// TOML parse) right after, while still never computing the list at all
+/// in the common single-entry case where `find_nearest_package` succeeds.
 fn resolve_package(
     start_dir: &Path,
     manifest: &ManifestModel,
     package_name: Option<&str>,
-) -> Result<PackageModel> {
+) -> Result<(PackageModel, Option<Vec<PackageModel>>)> {
     if let Some(name) = package_name {
         let packages = manifest.list_packages()?;
-        return packages
-            .into_iter()
+        let package = packages
+            .iter()
             .find(|pkg| pkg.name == name)
-            .ok_or_else(|| eyre::eyre!("Package '{}' not found", name));
+            .cloned()
+            .ok_or_else(|| eyre::eyre!("Package '{}' not found", name))?;
+        return Ok((package, Some(packages)));
     }
 
     if let Some(package) = find_nearest_package(start_dir)? {
-        return Ok(package);
+        return Ok((package, None));
     }
 
     let packages = manifest.list_packages()?;
     match packages.len() {
         0 => bail!("No packages found under {}", start_dir.display()),
-        1 => Ok(packages.into_iter().next().unwrap()),
+        1 => {
+            let package = packages[0].clone();
+            Ok((package, Some(packages)))
+        }
         _ => {
             let names: Vec<String> = packages.into_iter().map(|p| p.name).collect();
             bail!(
