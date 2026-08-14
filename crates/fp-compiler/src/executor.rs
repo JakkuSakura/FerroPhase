@@ -57,12 +57,17 @@ struct TaskState<T> {
     wakers: Vec<Waker>,
 }
 
-impl<T> Future for TaskHandle<T> {
+/// Polling *clones* the result rather than consuming it (unlike a plain
+/// oneshot channel) so several independent `TaskHandle`s created from the
+/// same underlying task (see `get_or_spawn`) can each observe completion —
+/// required for two dependents that both need the same not-yet-resolved
+/// value to share one in-flight task instead of duplicating the work.
+impl<T: Clone> Future for TaskHandle<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut state = self.state.borrow_mut();
-        if let Some(result) = state.result.take() {
+        if let Some(result) = state.result.clone() {
             Poll::Ready(result)
         } else {
             state.wakers.push(cx.waker().clone());
@@ -83,6 +88,13 @@ pub struct ExecutorHandle {
 struct ExecutorState {
     tasks: RefCell<HashMap<String, Pin<Box<dyn Future<Output = ()>>>>>,
     ready: Rc<RefCell<VecDeque<String>>>,
+    /// Side table from key to a spawned task's own `TaskState`, type-erased
+    /// via `Rc<dyn Any>` (downcast back to `Rc<RefCell<TaskState<T>>>` at
+    /// lookup) — lets `get_or_spawn` hand a *second* caller for the same
+    /// key a `TaskHandle` backed by the exact same state as the first,
+    /// instead of `spawn`'s always-fresh behavior (which would silently
+    /// drop the first attempt, per its own doc comment).
+    task_states: RefCell<HashMap<String, Rc<dyn std::any::Any>>>,
 }
 
 impl CompilerExecutor {
@@ -91,6 +103,7 @@ impl CompilerExecutor {
             inner: Rc::new(ExecutorState {
                 tasks: RefCell::new(HashMap::new()),
                 ready: Rc::new(RefCell::new(VecDeque::new())),
+                task_states: RefCell::new(HashMap::new()),
             }),
         }
     }
@@ -111,6 +124,19 @@ impl CompilerExecutor {
         future: impl Future<Output = T> + 'static,
     ) -> TaskHandle<T> {
         self.inner.spawn(key, future)
+    }
+
+    /// Like `spawn`, but for callers that may not be the first to need
+    /// `key`'s result — if a task is already tracked under `key` (whether
+    /// still running or already resolved), returns a `TaskHandle` sharing
+    /// its state instead of spawning (and thereby dropping) a duplicate.
+    /// `make_future` is only called on a genuine first request.
+    pub(crate) fn get_or_spawn<T: 'static + Clone>(
+        &self,
+        key: impl Into<String>,
+        make_future: impl FnOnce() -> Pin<Box<dyn Future<Output = T>>>,
+    ) -> TaskHandle<T> {
+        self.inner.get_or_spawn(key, make_future)
     }
 
     pub(crate) fn contains(&self, key: &str) -> bool {
@@ -137,6 +163,15 @@ impl ExecutorHandle {
         future: impl Future<Output = T> + 'static,
     ) -> TaskHandle<T> {
         self.inner.spawn(key, future)
+    }
+
+    /// See `CompilerExecutor::get_or_spawn`.
+    pub(crate) fn get_or_spawn<T: 'static + Clone>(
+        &self,
+        key: impl Into<String>,
+        make_future: impl FnOnce() -> Pin<Box<dyn Future<Output = T>>>,
+    ) -> TaskHandle<T> {
+        self.inner.get_or_spawn(key, make_future)
     }
 
     pub(crate) fn contains(&self, key: &str) -> bool {
@@ -197,8 +232,31 @@ impl ExecutorState {
             }
         };
         self.tasks.borrow_mut().insert(key.clone(), Box::pin(task));
+        self.task_states.borrow_mut().insert(key.clone(), state.clone());
         self.ready.borrow_mut().push_back(key);
         TaskHandle { state }
+    }
+
+    /// See `CompilerExecutor::get_or_spawn`'s doc comment. Looks `key` up in
+    /// `task_states` first (covers both a task still running and one
+    /// already resolved, since `spawn` registers there too and a resolved
+    /// task's `TaskState` is left in place rather than removed); only calls
+    /// `make_future`/`spawn` on a genuine miss.
+    pub(crate) fn get_or_spawn<T: 'static + Clone>(
+        &self,
+        key: impl Into<String>,
+        make_future: impl FnOnce() -> Pin<Box<dyn Future<Output = T>>>,
+    ) -> TaskHandle<T> {
+        let key = key.into();
+        if let Some(erased) = self.task_states.borrow().get(&key) {
+            if let Ok(state) = erased.clone().downcast::<RefCell<TaskState<T>>>() {
+                return TaskHandle { state };
+            }
+            // A different `T` was previously spawned under this key — a
+            // caller bug (keys should be namespaced per use site), but
+            // fall through to a fresh spawn rather than panicking.
+        }
+        self.spawn(key, make_future())
     }
 
     pub(crate) fn contains(&self, key: &str) -> bool {
@@ -464,5 +522,86 @@ mod tests {
                 Poll::Pending
             }
         }
+    }
+
+    #[test]
+    fn get_or_spawn_shares_one_in_flight_task_across_two_callers() {
+        let exec = CompilerExecutor::new();
+        let flag = Rc::new(Cell::new(false));
+        let wakers = Rc::new(RefCell::new(Vec::new()));
+        let spawn_count = Rc::new(Cell::new(0u32));
+
+        let make = {
+            let flag = flag.clone();
+            let wakers = wakers.clone();
+            let spawn_count = spawn_count.clone();
+            move || {
+                spawn_count.set(spawn_count.get() + 1);
+                Box::pin(FlagGate {
+                    ready: flag.clone(),
+                    wakers: wakers.clone(),
+                }) as Pin<Box<dyn Future<Output = &'static str>>>
+            }
+        };
+        let first = exec.get_or_spawn("shared", make.clone());
+        // A second dependent asking for the same key before the first
+        // resolves must NOT spawn a second attempt.
+        let second = exec.get_or_spawn("shared", make);
+        assert_eq!(spawn_count.get(), 1, "make_future must run only once");
+
+        assert!(exec.tick().is_none(), "should not resolve while gated");
+        assert!(exec.has_parked_tasks());
+
+        flag.set(true);
+        for waker in wakers.borrow_mut().drain(..) {
+            waker.wake();
+        }
+        exec.tick().expect("should resolve once woken");
+
+        assert_eq!(block_on(first), "done");
+        assert_eq!(block_on(second), "done");
+        assert_eq!(spawn_count.get(), 1, "still only one real spawn");
+    }
+
+    /// A future that awaits another key's `TaskHandle` via `get_or_spawn`,
+    /// spawning it lazily as a `FlagGate` the first time it's asked for —
+    /// used to build two tasks that mutually depend on each other.
+    async fn wait_for(exec: Rc<CompilerExecutor>, key: &'static str) -> &'static str {
+        let handle = exec.get_or_spawn(key, || {
+            Box::pin(std::future::pending::<&'static str>())
+                as Pin<Box<dyn Future<Output = &'static str>>>
+        });
+        handle.await
+    }
+
+    #[test]
+    fn mutual_dependency_between_two_tasks_stalls_rather_than_resolving() {
+        // Task "a" awaits key "b"; task "b" awaits key "a". Neither key is
+        // ever spawned with real work (both `get_or_spawn` calls below
+        // register the *other* task's own eventual state, not a fresh
+        // pending future), so once both are parked there is no way for
+        // either to make progress — this is what a genuine compile-time
+        // dependency cycle looks like from the executor's point of view.
+        // Driver-level code (the real fixpoint loop) is what turns this
+        // signal into a clean diagnostic instead of hanging forever.
+        let exec = Rc::new(CompilerExecutor::new());
+        let a = exec.spawn("a", wait_for(exec.clone(), "b"));
+        let b = exec.spawn("b", wait_for(exec.clone(), "a"));
+
+        // Drain whatever can run; nothing should ever resolve.
+        while exec.tick().is_some() {}
+
+        assert!(
+            exec.has_parked_tasks(),
+            "both tasks should be permanently parked on each other"
+        );
+        assert!(!exec.is_idle());
+        // Confirm this isn't just "hasn't run yet" — ticking repeatedly
+        // never makes progress.
+        for _ in 0..8 {
+            assert!(exec.tick().is_none());
+        }
+        assert!(exec.has_parked_tasks());
+        drop((a, b));
     }
 }
