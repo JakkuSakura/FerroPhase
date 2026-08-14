@@ -13359,7 +13359,10 @@ impl<'a> BodyBuilder<'a> {
         let mut callee_abi = None;
         let mut callee_is_extern = false;
         if let hir::ExprKind::Path(path) = &callee.kind {
-            callee_abi = self.callee_abi_from_path(path);
+            if let Some((abi, is_extern)) = self.callee_abi_from_path(path) {
+                callee_abi = Some(abi);
+                callee_is_extern = is_extern;
+            }
         }
         if callee_abi.is_none() {
             if let Some(name) = callee_name.as_ref() {
@@ -13367,18 +13370,6 @@ impl<'a> BodyBuilder<'a> {
                     if let hir::ItemKind::Function(func) = &item.kind {
                         if func.sig.name.as_str() == name {
                             callee_abi = Some(func.sig.abi.clone());
-                            callee_is_extern = func.is_extern;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        if !callee_is_extern {
-            if let Some(name) = callee_name.as_ref() {
-                for item in self.lowering.hir_def_map.values() {
-                    if let hir::ItemKind::Function(func) = &item.kind {
-                        if func.sig.name.as_str() == name {
                             callee_is_extern = func.is_extern;
                             break;
                         }
@@ -14386,11 +14377,19 @@ impl<'a> BodyBuilder<'a> {
         Some(names)
     }
 
-    fn callee_abi_from_path(&self, path: &hir::Path) -> Option<hir::Abi> {
+    /// Returns the callee's `(abi, is_extern)` together, both read off the
+    /// same `hir::ItemKind::Function` — so a caller that resolves via the
+    /// fast `Res::Def` path (the common case: an ordinary already-resolved
+    /// function reference) gets both pieces of information from one O(1)
+    /// lookup, instead of needing a *second* full linear scan over every
+    /// item in the program just to learn `is_extern` (see `lower_call`,
+    /// which used to always pay that second scan regardless of whether
+    /// this fast path already succeeded).
+    fn callee_abi_from_path(&self, path: &hir::Path) -> Option<(hir::Abi, bool)> {
         if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
             if let Some(item) = self.lowering.hir_def_map.get(def_id) {
                 if let hir::ItemKind::Function(func) = &item.kind {
-                    return Some(func.sig.abi.clone());
+                    return Some((func.sig.abi.clone(), func.is_extern));
                 }
             }
         }
@@ -14408,13 +14407,13 @@ impl<'a> BodyBuilder<'a> {
         for item in self.lowering.hir_def_map.values() {
             if let hir::ItemKind::Function(func) = &item.kind {
                 if func.sig.name.as_str() == qualified {
-                    return Some(func.sig.abi.clone());
+                    return Some((func.sig.abi.clone(), func.is_extern));
                 }
             }
         }
         let tail = resolved_path.segments.last().map(|seg| seg.name.as_str());
         if let Some(tail) = tail {
-            let mut candidate: Option<hir::Abi> = None;
+            let mut candidate: Option<(hir::Abi, bool)> = None;
             for item in self.lowering.hir_def_map.values() {
                 if let hir::ItemKind::Function(func) = &item.kind {
                     let name = func.sig.name.as_str();
@@ -14423,7 +14422,7 @@ impl<'a> BodyBuilder<'a> {
                         if candidate.is_some() {
                             return None;
                         }
-                        candidate = Some(func.sig.abi.clone());
+                        candidate = Some((func.sig.abi.clone(), func.is_extern));
                     }
                 }
             }
