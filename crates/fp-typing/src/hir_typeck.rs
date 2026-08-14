@@ -1512,17 +1512,25 @@ impl HirTypeChecker {
                     }
                 }
             }
-            for enum_item in self.program.items.clone() {
-                let hir::ItemKind::Enum(enum_def) = &enum_item.kind else {
-                    continue;
+            let matched_enum_item = self.program.items.iter().find_map(|item| {
+                let hir::ItemKind::Enum(enum_def) = &item.kind else {
+                    return None;
                 };
-                let Some(variant) = enum_def
+                enum_def
+                    .variants
+                    .iter()
+                    .any(|variant| variant.def_id == def_id)
+                    .then(|| item.clone())
+            });
+            if let Some(enum_item) = matched_enum_item {
+                let hir::ItemKind::Enum(enum_def) = &enum_item.kind else {
+                    unreachable!("matched_enum_item only holds ItemKind::Enum items")
+                };
+                let variant = enum_def
                     .variants
                     .iter()
                     .find(|variant| variant.def_id == def_id)
-                else {
-                    continue;
-                };
+                    .expect("matched_enum_item's enum_def contains this variant");
                 let enum_ty = self.enum_item_ty(&enum_item, path)?;
                 if let Some(payload) = &variant.payload {
                     let mut scope = self.generic_scope(&enum_def.generics);
