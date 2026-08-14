@@ -5216,30 +5216,38 @@ impl MirLowering {
         args: &[Ty],
         span: Span,
     ) -> Option<Vec<Ty>> {
-        let enum_def = self.enum_defs.get(&variant.enum_def)?.clone();
+        // Only `generics` (a short `Vec<String>`) and the one matched
+        // variant's own `payload` are actually needed below — clone just
+        // those instead of the whole `EnumDefinition` (every variant of
+        // the enum, needed or not).
+        let enum_def = self.enum_defs.get(&variant.enum_def)?;
         if enum_def.generics.len() != args.len() {
+            let name = enum_def.name.clone();
+            let generics_len = enum_def.generics.len();
             self.emit_error(
                 span,
                 format!(
                     "enum `{}` expects {} generic arguments, got {}",
-                    enum_def.name,
-                    enum_def.generics.len(),
+                    name,
+                    generics_len,
                     args.len()
                 ),
             );
             return None;
         }
-
-        let mut substs = HashMap::new();
-        for (name, ty) in enum_def.generics.iter().zip(args.iter().cloned()) {
-            substs.insert(name.clone(), ty);
-        }
-        let variant_def = enum_def
+        let generics = enum_def.generics.clone();
+        let payload = enum_def
             .variants
             .iter()
             .find(|def| def.def_id == variant.def_id)?
+            .payload
             .clone();
-        Some(self.enum_payload_types(&variant_def.payload, &substs))
+
+        let mut substs = HashMap::new();
+        for (name, ty) in generics.iter().zip(args.iter().cloned()) {
+            substs.insert(name.clone(), ty);
+        }
+        Some(self.enum_payload_types(&payload, &substs))
     }
 
     fn enum_layout_for_instance(
@@ -14797,12 +14805,6 @@ impl<'a> BodyBuilder<'a> {
     ) -> Result<(mir::Operand, mir::FunctionSig, Option<String>)> {
         let mut resolved_path = path.clone();
         self.resolve_self_path(&mut resolved_path);
-        let path_name = resolved_path
-            .segments
-            .iter()
-            .map(|seg| seg.name.as_str())
-            .collect::<Vec<_>>()
-            .join("::");
 
         // Handle local variables (e.g., function parameters) as indirect calls
         if let Some(hir::Res::Local(hir_id)) = &resolved_path.res {
@@ -14910,7 +14912,16 @@ impl<'a> BodyBuilder<'a> {
             }
         }
 
-        let name = path_name.clone();
+        // Built lazily here, not at function entry — every fast path above
+        // (local-variable indirect call, resolved `Def`, and the
+        // struct-method `>= 2` segments case) returns before ever needing
+        // this joined name.
+        let name = resolved_path
+            .segments
+            .iter()
+            .map(|seg| seg.name.as_str())
+            .collect::<Vec<_>>()
+            .join("::");
 
         if let Some(sig) = self.lowering.runtime_functions.get(&name).cloned() {
             let ty = self.lowering.c_function_pointer_ty(&sig);
