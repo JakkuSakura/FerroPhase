@@ -281,6 +281,22 @@ pub struct CompiledPackage {
     /// HIR definitions published by this package.
     pub hir_program: Option<crate::hir::Program>,
 
+    /// Struct `DefId`s in `hir_program`, keyed by name — built once by
+    /// `set_hir_program` alongside `hir_program` itself, so cross-package
+    /// HIR struct lookups (`WorkspaceContext::find_hir_struct_def_id`) are
+    /// an O(1) hash lookup per package instead of a linear scan over every
+    /// item every time.
+    pub hir_struct_defs_by_name: HashMap<String, crate::hir::DefId>,
+
+    /// For every method `ImplItem` in `hir_program`, its own `DefId` mapped
+    /// to the index (in `hir_program.items`) of the enclosing `impl` item —
+    /// built once by `set_hir_program` alongside `hir_program` itself, so
+    /// cross-package HIR method lookups
+    /// (`WorkspaceContext::find_hir_impl_method`) are an O(1) hash lookup
+    /// per package instead of a linear scan over every impl block and its
+    /// members every time.
+    pub hir_impl_method_item_index: HashMap<crate::hir::DefId, usize>,
+
     /// Typed HIR lifted back to AST, keyed by each item's own qualified
     /// name (`HirToAstLifter::lift_items_by_path`) rather than by list
     /// position — lets a source item be spliced with its typed
@@ -345,6 +361,8 @@ impl CompiledPackage {
             lir_units: Vec::new(),
             lir_workspace: LirWorkspace::new(data_layout),
             hir_program: None,
+            hir_struct_defs_by_name: HashMap::new(),
+            hir_impl_method_item_index: HashMap::new(),
             lifted_items_by_path: None,
             referenced_paths_by_path: None,
             mir_program: None,
@@ -354,6 +372,33 @@ impl CompiledPackage {
             mir_struct_fields: HashMap::new(),
             mir_adt_defs: HashMap::new(),
         }
+    }
+
+    /// Publishes this package's HIR program, building
+    /// `hir_struct_defs_by_name`/`hir_impl_method_item_index` alongside it
+    /// in the same single pass over `program.items` — the one time this
+    /// data is walked, rather than once per cross-package lookup.
+    pub fn set_hir_program(&mut self, program: crate::hir::Program) {
+        self.hir_struct_defs_by_name.clear();
+        self.hir_impl_method_item_index.clear();
+        for (index, item) in program.items.iter().enumerate() {
+            match &item.kind {
+                crate::hir::ItemKind::Struct(def) => {
+                    self.hir_struct_defs_by_name
+                        .insert(def.name.as_str().to_string(), item.def_id);
+                }
+                crate::hir::ItemKind::Impl(impl_item) => {
+                    for impl_member in &impl_item.items {
+                        if matches!(impl_member.kind, crate::hir::ImplItemKind::Method(_)) {
+                            self.hir_impl_method_item_index
+                                .insert(impl_member.def_id, index);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.hir_program = Some(program);
     }
 }
 

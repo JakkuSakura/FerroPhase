@@ -527,7 +527,9 @@ impl CompilerDriver {
             .env_ctx
             .compiled_package(&current_package_id)
         {
-            package.borrow_mut().hir_program = Some(self.state.hir(&hir_id)?.clone());
+            package
+                .borrow_mut()
+                .set_hir_program(self.state.hir(&hir_id)?.clone());
         }
 
         // TypecheckedTranspile: lift typed HIR back to AST — this is what

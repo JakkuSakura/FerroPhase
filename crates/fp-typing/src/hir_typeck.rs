@@ -1474,11 +1474,10 @@ impl HirTypeChecker {
             return Some(def_id);
         }
         if let Some(context) = &self.typing_context {
-            for (_, external, _) in context.env_ctx.hir_definitions() {
-                if let Some(def_id) = find_in(&external.items) {
-                    return Some(def_id);
-                }
-            }
+            // Borrows each dependency package just long enough to scan its
+            // HIR items in place, instead of `hir_definitions()`'s full
+            // clone of every package's whole HIR `Program`.
+            return context.env_ctx.find_hir_struct_def_id(name);
         }
         None
     }
@@ -1568,37 +1567,21 @@ impl HirTypeChecker {
                 return result;
             }
             if let Some(context) = &self.typing_context {
-                for (_, external, _) in context.env_ctx.hir_definitions() {
-                    let associated = external.items.iter().find_map(|item| {
-                        let hir::ItemKind::Impl(impl_item) = &item.kind else {
-                            return None;
-                        };
-                        impl_item.items.iter().find_map(|impl_member| {
-                            if impl_member.def_id != def_id {
-                                return None;
-                            }
-                            let hir::ImplItemKind::Method(function) = &impl_member.kind else {
-                                return None;
-                            };
-                            Some((
-                                impl_item.generics.clone(),
-                                impl_item.self_ty.clone(),
-                                impl_item.items.clone(),
-                                function.clone(),
-                            ))
-                        })
-                    });
-                    if let Some((generics, self_ty, impl_items, function)) = associated {
-                        let mut scope = self.generic_scope(&generics);
-                        let self_ty = scope.check_type_expr(&self_ty)?;
-                        scope.self_types.push(self_ty);
-                        let assoc_types = scope.impl_assoc_types(&impl_items)?;
-                        scope.assoc_types.push(assoc_types);
-                        let result = scope.function_signature(&function);
-                        scope.assoc_types.pop();
-                        scope.self_types.pop();
-                        return result;
-                    }
+                // Borrows each dependency package just long enough to scan
+                // its HIR items in place, instead of `hir_definitions()`'s
+                // full clone of every package's whole HIR `Program`.
+                if let Some((generics, self_ty, impl_items, function)) =
+                    context.env_ctx.find_hir_impl_method(def_id)
+                {
+                    let mut scope = self.generic_scope(&generics);
+                    let self_ty = scope.check_type_expr(&self_ty)?;
+                    scope.self_types.push(self_ty);
+                    let assoc_types = scope.impl_assoc_types(&impl_items)?;
+                    scope.assoc_types.push(assoc_types);
+                    let result = scope.function_signature(&function);
+                    scope.assoc_types.pop();
+                    scope.self_types.pop();
+                    return result;
                 }
             }
             let matched_enum_item = self.program.items.iter().find_map(|item| {

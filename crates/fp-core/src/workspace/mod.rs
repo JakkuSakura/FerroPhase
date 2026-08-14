@@ -208,6 +208,14 @@ pub struct WorkspaceContext {
     current_package: Option<PackageId>,
     prelude: RefCell<Option<Rc<RefCell<CompiledPackage>>>>,
     next_package_id: Rc<Cell<u32>>,
+    /// Reverse index from a package's *HIR* id (the `package_id` embedded
+    /// in every `hir::DefId` minted while lowering it) back to its
+    /// `CompiledPackage` — lets a HIR-level, `DefId`-keyed lookup
+    /// (`find_hir_impl_method`) go straight to the one package that could
+    /// possibly own that `DefId` (an inherent impl's items are always
+    /// minted in the same package as the impl itself) instead of searching
+    /// every loaded package.
+    hir_packages: RefCell<HashMap<HirPackageId, Rc<RefCell<CompiledPackage>>>>,
 }
 
 impl WorkspaceContext {
@@ -235,6 +243,7 @@ impl WorkspaceContext {
             current_package: Some(package_id),
             prelude: RefCell::new(None),
             next_package_id: self.next_package_id.clone(),
+            hir_packages: RefCell::new(HashMap::new()),
         }
     }
 
@@ -270,10 +279,17 @@ impl WorkspaceContext {
         self.crates
             .borrow_mut()
             .insert(source_package_id, krate.clone());
+        self.hir_packages
+            .borrow_mut()
+            .insert(hir_package_id, krate.clone());
         krate
     }
 
     pub fn import_package(&self, package_id: PackageId, package: Rc<RefCell<CompiledPackage>>) {
+        let hir_package_id = package.borrow().package_id;
+        self.hir_packages
+            .borrow_mut()
+            .insert(hir_package_id, package.clone());
         self.crates.borrow_mut().insert(package_id, package);
     }
 
@@ -315,6 +331,71 @@ impl WorkspaceContext {
                 })
             })
             .collect()
+    }
+
+    /// Cross-package counterpart to `find_struct`, but against each
+    /// package's *HIR* program rather than the AST-level `struct_defs`
+    /// registry — used where the caller specifically needs a `hir::DefId`
+    /// (the HIR type-checking pass). O(1) per package via
+    /// `hir_struct_defs_by_name`, built once when the package's HIR is
+    /// published (`CompiledPackage::set_hir_program`), unlike
+    /// `hir_definitions()`, which clones every package's whole HIR
+    /// `Program` on every call.
+    pub fn find_hir_struct_def_id(&self, name: &str) -> Option<crate::hir::DefId> {
+        for package in self.sorted_packages() {
+            if let Some(def_id) = package.borrow().hir_struct_defs_by_name.get(name) {
+                return Some(*def_id);
+            }
+        }
+        None
+    }
+
+    /// Cross-package counterpart to `hir_typeck::expr_path_ty`'s local
+    /// associated-method fallback — finds the `impl` block and method whose
+    /// `ImplItem::def_id` matches `def_id`. An inherent impl's items are
+    /// always minted in the same package as the impl itself (the orphan
+    /// rule's HIR-level consequence), so `def_id.package_id` already names
+    /// the *only* package that could hold it — go straight to it via
+    /// `hir_packages` instead of searching every loaded package. Within
+    /// that one package, `hir_impl_method_item_index` (built once when its
+    /// HIR is published, alongside `hir_struct_defs_by_name` above) gives
+    /// the enclosing impl item's index directly; only that impl's own
+    /// method list is then scanned to clone the specific
+    /// generics/self-type/items/function the caller needs — instead of
+    /// `hir_definitions()`'s full clone of every dependency package's
+    /// whole HIR `Program`.
+    pub fn find_hir_impl_method(
+        &self,
+        def_id: crate::hir::DefId,
+    ) -> Option<(
+        crate::hir::Generics,
+        crate::hir::TypeExpr,
+        Vec<crate::hir::ImplItem>,
+        crate::hir::Function,
+    )> {
+        let package = self.hir_packages.borrow().get(&def_id.package_id)?.clone();
+        let package = package.borrow();
+        let &item_index = package.hir_impl_method_item_index.get(&def_id)?;
+        let program = package.hir_program.as_ref()?;
+        let item = program.items.get(item_index)?;
+        let crate::hir::ItemKind::Impl(impl_item) = &item.kind else {
+            return None;
+        };
+        let function = impl_item.items.iter().find_map(|impl_member| {
+            if impl_member.def_id != def_id {
+                return None;
+            }
+            match &impl_member.kind {
+                crate::hir::ImplItemKind::Method(function) => Some(function.clone()),
+                _ => None,
+            }
+        })?;
+        Some((
+            impl_item.generics.clone(),
+            impl_item.self_ty.clone(),
+            impl_item.items.clone(),
+            function,
+        ))
     }
 
     /// Cross-package counterpart to `find_struct`/`find_enum`, for a
