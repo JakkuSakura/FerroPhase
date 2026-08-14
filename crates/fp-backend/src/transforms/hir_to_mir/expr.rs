@@ -426,6 +426,17 @@ pub struct MirLowering {
     diagnostics: Vec<Diagnostic>,
     has_errors: bool,
     struct_defs: HashMap<hir::DefId, StructDefinition>,
+    /// Reverse index from a struct's name's tail segment (the part after
+    /// its final `::`, or the whole name if unqualified) to every
+    /// registered `DefId` sharing that tail — lets `struct_def_from_ty`'s
+    /// name-based fallback narrow straight to the (usually one-element)
+    /// candidate set sharing a receiver's short name, instead of scanning
+    /// every struct definition in the program with a `format!` allocation
+    /// per iteration. Provably safe as a pre-filter: `struct_def_from_ty`'s
+    /// own match condition (`def.name == name || def.name.ends_with("::"
+    /// + name)`) can only hold when `def.name`'s tail segment equals
+    /// `name`'s tail segment, so this never excludes a true match.
+    struct_defs_by_tail_name: HashMap<String, Vec<hir::DefId>>,
     struct_layouts: HashMap<StructLayoutKey, StructLayout>,
     struct_layouts_by_ty: HashMap<Ty, StructLayoutKey>,
     struct_layouts_in_progress: HashSet<StructLayoutKey>,
@@ -556,6 +567,7 @@ impl MirLowering {
             diagnostics: Vec::new(),
             has_errors: false,
             struct_defs: HashMap::new(),
+            struct_defs_by_tail_name: HashMap::new(),
             struct_layouts: HashMap::new(),
             struct_layouts_by_ty: HashMap::new(),
             struct_layouts_in_progress: HashSet::new(),
@@ -4068,10 +4080,15 @@ impl MirLowering {
                 }
             }
 
+            let name = format!("__structural_{}", def_id);
+            self.struct_defs_by_tail_name
+                .entry(Self::name_tail(&name).to_string())
+                .or_default()
+                .push(def_id);
             self.struct_defs.insert(
                 def_id,
                 StructDefinition {
-                    name: format!("__structural_{}", def_id),
+                    name,
                     generics: Vec::new(),
                     fields: fields.clone(),
                     field_index,
@@ -4799,6 +4816,14 @@ impl MirLowering {
             .unwrap_or_else(|| bare_name.to_string())
     }
 
+    /// The part of a (possibly `::`-qualified) definition name after its
+    /// final `::`, or the whole name if unqualified — see
+    /// `struct_defs_by_tail_name`'s doc comment for why this is a safe
+    /// pre-filter key for `struct_def_from_ty`'s suffix-match fallback.
+    fn name_tail(name: &str) -> &str {
+        name.rsplit("::").next().unwrap_or(name)
+    }
+
     fn register_struct(
         &mut self,
         def_paths: &HashMap<hir::DefId, hir::DefPath>,
@@ -4828,10 +4853,15 @@ impl MirLowering {
             .map(|param| param.name.as_str().to_string())
             .collect::<Vec<_>>();
 
+        let name = Self::def_path_str(def_paths, def_id, strukt.name.as_str());
+        self.struct_defs_by_tail_name
+            .entry(Self::name_tail(&name).to_string())
+            .or_default()
+            .push(def_id);
         self.struct_defs.insert(
             def_id,
             StructDefinition {
-                name: Self::def_path_str(def_paths, def_id, strukt.name.as_str()),
+                name,
                 generics,
                 fields,
                 field_index,
@@ -7777,10 +7807,22 @@ impl MirLowering {
                 };
                 self.enum_layouts.get(&key)
             }
-            _ => self
-                .enum_layouts
-                .values()
-                .find(|layout| Self::enum_layout_ty_matches(&layout.enum_ty, ty)),
+            // A tuple-shaped `ty` (a generic enum's already-flattened
+            // `(discriminant, ...payload)` layout shape) can't be
+            // destructured into an `EnumLayoutKey` directly the way the
+            // `Adt` arm above does, but `enum_layouts_by_ty` already
+            // indexes every layout by this exact flattened shape (see
+            // `enum_layout_for_ty_exact`'s doc comment) — try that O(1)
+            // lookup before falling back to the linear
+            // `enum_layouts.values()` scan, which is only actually needed
+            // for a `ty` containing `Infer` wildcard positions (the one
+            // case `enum_layout_ty_matches` can match that an exact
+            // `HashMap` key lookup can't).
+            _ => self.enum_layout_for_ty_exact(ty).or_else(|| {
+                self.enum_layouts
+                    .values()
+                    .find(|layout| Self::enum_layout_ty_matches(&layout.enum_ty, ty))
+            }),
         }
     }
 
@@ -8943,11 +8985,22 @@ impl<'a> BodyBuilder<'a> {
                 .map(|key| key.def_id)
                 .or_else(|| {
                     let name = self.lowering.display_type_name(ty)?;
-                    let matches: Vec<hir::DefId> = self
+                    // `struct_defs_by_tail_name` narrows straight to the
+                    // (usually one-element) candidate set sharing `name`'s
+                    // tail segment — provably safe, since the match
+                    // condition below can only hold when `def.name`'s tail
+                    // segment equals `name`'s tail segment (see that
+                    // field's doc comment) — instead of scanning every
+                    // struct definition in the program with a `format!`
+                    // allocation per iteration.
+                    let candidates = self
                         .lowering
-                        .struct_defs
+                        .struct_defs_by_tail_name
+                        .get(MirLowering::name_tail(&name))?;
+                    let matches: Vec<hir::DefId> = candidates
                         .iter()
-                        .filter_map(|(def_id, def)| {
+                        .filter_map(|def_id| {
+                            let def = self.lowering.struct_defs.get(def_id)?;
                             if def.name == name || def.name.ends_with(&format!("::{}", name)) {
                                 Some(*def_id)
                             } else {
