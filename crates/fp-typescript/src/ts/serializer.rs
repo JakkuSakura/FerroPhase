@@ -13,6 +13,7 @@ use fp_core::ast::{
 use fp_core::error::Result;
 use fp_core::intrinsics::CallKind;
 use fp_core::ops::UnOpKind;
+use fp_core::writer::{IndentStyle, StyledFileWriter, WriterConfig};
 use itertools::Itertools;
 
 pub struct TypeScriptSerializer {
@@ -119,9 +120,8 @@ enum ScriptFlavor {
 
 struct ScriptEmitter {
     flavor: ScriptFlavor,
-    code: String,
+    writer: StyledFileWriter,
     type_defs: Vec<String>,
-    indent: usize,
     structs: HashMap<String, TypeStruct>,
     seen_structs: HashSet<String>,
     saw_main: bool,
@@ -131,17 +131,47 @@ struct ScriptEmitter {
 
 impl ScriptEmitter {
     fn new(flavor: ScriptFlavor) -> Self {
+        let writer_config = WriterConfig {
+            indent_style: IndentStyle::Spaces(2),
+            ..WriterConfig::default()
+        };
         Self {
             flavor,
-            code: String::new(),
+            writer: StyledFileWriter::new(writer_config),
             type_defs: Vec::new(),
-            indent: 0,
             structs: HashMap::new(),
             seen_structs: HashSet::new(),
             saw_main: false,
             invoked_main: false,
             synthetic_main: false,
         }
+    }
+
+    /// Write `header` followed by ` {`, run `body` at one deeper indent
+    /// level, then close with `}`. Unlike [`StyledFileWriter::block`], the
+    /// closure gets the whole emitter (not just the writer) since most
+    /// bodies need to read/mutate other emitter state (`structs`, `flavor`,
+    /// recursive `emit_*`/`render_*` calls).
+    fn block<F>(&mut self, header: &str, body: F) -> Result<()>
+    where
+        F: FnOnce(&mut Self) -> Result<()>,
+    {
+        self.block_closed(&format!("{header} {{"), "}", body)
+    }
+
+    /// Like [`Self::block`], but with the exact opening/closing lines given
+    /// verbatim — needed for shapes that aren't `header { ... }`, e.g. a
+    /// `return { ... };` object literal or `const X = Object.freeze({ ... });`.
+    fn block_closed<F>(&mut self, open_line: &str, close_line: &str, body: F) -> Result<()>
+    where
+        F: FnOnce(&mut Self) -> Result<()>,
+    {
+        self.writer.write_line(open_line);
+        self.writer.increase_indent();
+        let result = body(self);
+        self.writer.decrease_indent();
+        self.writer.write_line(close_line);
+        result
     }
 
     fn visit_file(&mut self, file: &File) -> Result<()> {
@@ -158,27 +188,27 @@ impl ScriptEmitter {
 
     fn emit_item(&mut self, item: &Item) -> Result<()> {
         if let Some(struct_item) = item.as_struct() {
-            self.ensure_blank_line();
+            self.writer.ensure_blank_line();
             self.emit_struct(&struct_item.value)?;
             return Ok(());
         }
 
         if let Some(enum_item) = item.as_enum() {
-            self.ensure_blank_line();
+            self.writer.ensure_blank_line();
             self.emit_enum(&enum_item.value)?;
             return Ok(());
         }
 
         if let Some(const_item) = item.as_const() {
-            self.ensure_blank_line();
+            self.writer.ensure_blank_line();
             self.emit_const(const_item)?;
             return Ok(());
         }
 
         if let Some(function_item) = item.as_function() {
-            self.ensure_blank_line();
+            self.writer.ensure_blank_line();
             if let Err(err) = self.emit_function(function_item) {
-                self.push_line(&format!(
+                self.writer.write_line(format!(
                     "// skipped unsupported function {}: {}",
                     function_item.name, err
                 ));
@@ -196,12 +226,13 @@ impl ScriptEmitter {
         if let Some(expr) = item.as_expr() {
             if let ExprKind::Block(block) = expr.kind() {
                 if let Err(err) = self.emit_script_block(block) {
-                    self.push_line(&format!("// skipped unsupported script block: {}", err));
+                    self.writer
+                        .write_line(format!("// skipped unsupported script block: {}", err));
                 }
             } else if let Ok(rendered) = self.render_expr(expr) {
-                self.push_line(&format!("{};", rendered));
+                self.writer.write_line(format!("{};", rendered));
             } else {
-                self.push_line("// skipped unsupported top-level expression");
+                self.writer.write_line("// skipped unsupported top-level expression");
             }
         }
 
@@ -218,11 +249,8 @@ impl ScriptEmitter {
 
         if let ScriptFlavor::TypeScript { emit_type_defs } = &self.flavor {
             let interface_text = self.build_interface_text(struct_def);
-            self.code.push_str(&interface_text);
-            if !self.code.ends_with('\n') {
-                self.code.push('\n');
-            }
-            self.code.push('\n');
+            self.writer.write_verbatim(&interface_text);
+            self.writer.newline();
 
             if *emit_type_defs {
                 self.type_defs.push(interface_text.trim_end().to_string());
@@ -230,9 +258,9 @@ impl ScriptEmitter {
         }
 
         self.emit_struct_factory(struct_def)?;
-        self.code.push('\n');
+        self.writer.newline();
         self.emit_struct_size_const(struct_def)?;
-        self.code.push('\n');
+        self.writer.newline();
         Ok(())
     }
 
@@ -254,34 +282,31 @@ impl ScriptEmitter {
             ScriptFlavor::JavaScript => String::new(),
         };
 
-        self.start_block(&format!(
+        let header = format!(
             "function create{}({}){}",
             struct_def.name.name, params, return_annotation
-        ));
-        self.push_line("return {");
-        self.indent += 1;
-        for (index, field) in struct_def.fields.iter().enumerate() {
-            let suffix = if index + 1 == struct_def.fields.len() {
-                ""
-            } else {
-                ","
-            };
-            self.push_line(&format!(
-                "{}: {}{}",
-                field.name.name, field.name.name, suffix
-            ));
-        }
-        self.indent -= 1;
-        self.push_line("};");
-        self.end_block();
-        Ok(())
+        );
+        self.block(&header, |slf| {
+            slf.block_closed("return {", "};", |slf| {
+                for (index, field) in struct_def.fields.iter().enumerate() {
+                    let suffix = if index + 1 == struct_def.fields.len() {
+                        ""
+                    } else {
+                        ","
+                    };
+                    slf.writer
+                        .write_line(format!("{}: {}{}", field.name.name, field.name.name, suffix));
+                }
+                Ok(())
+            })
+        })
     }
 
     fn emit_struct_size_const(&mut self, struct_def: &TypeStruct) -> Result<()> {
         let const_name = format!("{}_SIZE", to_upper_snake(struct_def.name.name.as_str()));
         match self.flavor.clone() {
             ScriptFlavor::TypeScript { emit_type_defs } => {
-                self.push_line(&format!(
+                self.writer.write_line(format!(
                     "const {}: number = {};",
                     const_name,
                     struct_def.fields.len()
@@ -292,7 +317,7 @@ impl ScriptEmitter {
                 }
             }
             ScriptFlavor::JavaScript => {
-                self.push_line(&format!(
+                self.writer.write_line(format!(
                     "const {} = {};",
                     const_name,
                     struct_def.fields.len()
@@ -305,13 +330,12 @@ impl ScriptEmitter {
     fn emit_enum(&mut self, enum_def: &TypeEnum) -> Result<()> {
         match self.flavor.clone() {
             ScriptFlavor::TypeScript { emit_type_defs } => {
-                self.push_line(&format!("enum {} {{", enum_def.name.name));
-                self.indent += 1;
-                for variant in &enum_def.variants {
-                    self.push_line(&format!("{},", variant.name.name));
-                }
-                self.indent -= 1;
-                self.push_line("}");
+                self.block(&format!("enum {}", enum_def.name.name), |slf| {
+                    for variant in &enum_def.variants {
+                        slf.writer.write_line(format!("{},", variant.name.name));
+                    }
+                    Ok(())
+                })?;
                 if emit_type_defs {
                     let mut block = String::new();
                     let _ = writeln!(block, "enum {} {{", enum_def.name.name);
@@ -323,16 +347,19 @@ impl ScriptEmitter {
                 }
             }
             ScriptFlavor::JavaScript => {
-                self.push_line(&format!("const {} = Object.freeze({{", enum_def.name.name));
-                self.indent += 1;
-                for variant in &enum_def.variants {
-                    self.push_line(&format!(
-                        "{}: \"{}\",",
-                        variant.name.name, variant.name.name
-                    ));
-                }
-                self.indent -= 1;
-                self.push_line("});");
+                self.block_closed(
+                    &format!("const {} = Object.freeze({{", enum_def.name.name),
+                    "});",
+                    |slf| {
+                        for variant in &enum_def.variants {
+                            slf.writer.write_line(format!(
+                                "{}: \"{}\",",
+                                variant.name.name, variant.name.name
+                            ));
+                        }
+                        Ok(())
+                    },
+                )?;
             }
         }
         Ok(())
@@ -348,14 +375,15 @@ impl ScriptEmitter {
                     .as_ref()
                     .map(|ty| self.ts_type_from_ty(ty))
                     .unwrap_or_else(|| "any".into());
-                self.push_line(&format!("const {}: {} = {};", name, ty, value_expr));
+                self.writer
+                    .write_line(format!("const {}: {} = {};", name, ty, value_expr));
                 if emit_type_defs {
                     self.type_defs
                         .push(format!("declare const {}: {};", name, ty));
                 }
             }
             ScriptFlavor::JavaScript => {
-                self.push_line(&format!("const {} = {};", name, value_expr));
+                self.writer.write_line(format!("const {} = {};", name, value_expr));
             }
         }
         Ok(())
@@ -380,10 +408,7 @@ impl ScriptEmitter {
             ScriptFlavor::JavaScript => format!("function {}({})", func.name.name, params),
         };
 
-        self.start_block(&header);
-        self.emit_block(&func.body, true)?;
-        self.end_block();
-        Ok(())
+        self.block(&header, |slf| slf.emit_block(&func.body, true))
     }
 
     fn emit_block(&mut self, block: &ExprBlock, return_tail: bool) -> Result<()> {
@@ -401,32 +426,28 @@ impl ScriptEmitter {
             }
         }
 
-        let mut wrote_main_block = false;
+        let has_non_item_stmts = block.stmts.iter().any(|stmt| !matches!(stmt, BlockStmt::Item(_)));
+        if !has_non_item_stmts {
+            return Ok(());
+        }
+
+        if !self.saw_main {
+            self.saw_main = true;
+            self.synthetic_main = true;
+        }
         let header = match self.flavor.clone() {
             ScriptFlavor::TypeScript { .. } => "function main(): void".to_string(),
             ScriptFlavor::JavaScript => "function main()".to_string(),
         };
-
-        for stmt in &block.stmts {
-            if matches!(stmt, BlockStmt::Item(_)) {
-                continue;
-            }
-            if !wrote_main_block {
-                if !self.saw_main {
-                    self.saw_main = true;
-                    self.synthetic_main = true;
+        self.block(&header, |slf| {
+            for stmt in &block.stmts {
+                if matches!(stmt, BlockStmt::Item(_)) {
+                    continue;
                 }
-                self.start_block(&header);
-                wrote_main_block = true;
+                slf.emit_stmt(stmt, false)?;
             }
-            self.emit_stmt(stmt, false)?;
-        }
-
-        if wrote_main_block {
-            self.end_block();
-        }
-
-        Ok(())
+            Ok(())
+        })
     }
 
     fn block_tail_value_expr(block: &ExprBlock) -> Option<&Expr> {
@@ -492,18 +513,17 @@ impl ScriptEmitter {
 
     fn emit_if_stmt(&mut self, if_expr: &fp_core::ast::ExprIf, return_value: bool) -> Result<()> {
         let cond = self.render_expr(if_expr.cond.as_ref())?;
-        self.start_block(&format!("if ({cond})"));
-        self.emit_branch_body(if_expr.then.as_ref(), return_value)?;
-        self.end_block();
+        self.block(&format!("if ({cond})"), |slf| {
+            slf.emit_branch_body(if_expr.then.as_ref(), return_value)
+        })?;
 
         if let Some(elze) = if_expr.elze.as_deref() {
-            self.start_block("else");
-            self.emit_branch_body(elze, return_value)?;
-            self.end_block();
+            self.block("else", |slf| slf.emit_branch_body(elze, return_value))?;
         } else if return_value {
-            self.start_block("else");
-            self.push_line("return undefined;");
-            self.end_block();
+            self.block("else", |slf| {
+                slf.writer.write_line("return undefined;");
+                Ok(())
+            })?;
         }
 
         Ok(())
@@ -511,18 +531,16 @@ impl ScriptEmitter {
 
     fn emit_while_stmt(&mut self, while_expr: &fp_core::ast::ExprWhile) -> Result<()> {
         let cond = self.render_expr(while_expr.cond.as_ref())?;
-        self.start_block(&format!("while ({cond})"));
-        self.emit_branch_body(while_expr.body.as_ref(), false)?;
-        self.end_block();
-        Ok(())
+        self.block(&format!("while ({cond})"), |slf| {
+            slf.emit_branch_body(while_expr.body.as_ref(), false)
+        })
     }
 
     fn emit_loop_stmt(&mut self, loop_expr: &fp_core::ast::ExprLoop) -> Result<()> {
         let _ = loop_expr.label.as_ref();
-        self.start_block("while (true)");
-        self.emit_branch_body(loop_expr.body.as_ref(), false)?;
-        self.end_block();
-        Ok(())
+        self.block("while (true)", |slf| {
+            slf.emit_branch_body(loop_expr.body.as_ref(), false)
+        })
     }
 
     fn emit_for_stmt(&mut self, for_expr: &fp_core::ast::ExprFor) -> Result<()> {
@@ -554,19 +572,13 @@ impl ScriptEmitter {
                     Some(step) => format!("{pat} += {step}"),
                     None => format!("{pat}++"),
                 };
-                self.start_block(&format!(
-                    "for (let {pat} = {start}; {pat} {cmp} {end}; {update})"
-                ));
-                self.emit_branch_body(for_expr.body.as_ref(), false)?;
-                self.end_block();
-                Ok(())
+                let header = format!("for (let {pat} = {start}; {pat} {cmp} {end}; {update})");
+                self.block(&header, |slf| slf.emit_branch_body(for_expr.body.as_ref(), false))
             }
             _ => {
                 let iter = self.render_expr(for_expr.iter.as_ref())?;
-                self.start_block(&format!("for (const {pat} of {iter})"));
-                self.emit_branch_body(for_expr.body.as_ref(), false)?;
-                self.end_block();
-                Ok(())
+                let header = format!("for (const {pat} of {iter})");
+                self.block(&header, |slf| slf.emit_branch_body(for_expr.body.as_ref(), false))
             }
         }
     }
@@ -577,9 +589,9 @@ impl ScriptEmitter {
             _ => {
                 let rendered = self.render_expr(expr)?;
                 if return_value {
-                    self.push_line(&format!("return {rendered};"));
+                    self.writer.write_line(format!("return {rendered};"));
                 } else {
-                    self.push_line(&format!("{rendered};"));
+                    self.writer.write_line(format!("{rendered};"));
                 }
                 Ok(())
             }
@@ -592,9 +604,9 @@ impl ScriptEmitter {
                 let name = self.render_pattern(&stmt_let.pat);
                 if let Some(init) = &stmt_let.init {
                     let value = self.render_expr(init)?;
-                    self.push_line(&format!("let {} = {};", name, value));
+                    self.writer.write_line(format!("let {} = {};", name, value));
                 } else {
-                    self.push_line(&format!("let {};", name));
+                    self.writer.write_line(format!("let {};", name));
                 }
             }
             BlockStmt::Expr(expr_stmt) => {
@@ -618,14 +630,14 @@ impl ScriptEmitter {
                 if let ExprKind::Return(ret) = expr.kind() {
                     if let Some(value) = &ret.value {
                         let rendered = self.render_expr(value)?;
-                        self.push_line(&format!("return {};", rendered));
+                        self.writer.write_line(format!("return {};", rendered));
                     } else {
-                        self.push_line("return;");
+                        self.writer.write_line("return;");
                     }
                 } else if let ExprKind::Break(_) = expr.kind() {
-                    self.push_line("break;");
+                    self.writer.write_line("break;");
                 } else if let ExprKind::Continue(_) = expr.kind() {
-                    self.push_line("continue;");
+                    self.writer.write_line("continue;");
                 } else if let ExprKind::IntrinsicCall(call) = expr.kind() {
                     self.emit_intrinsic_statement(call)?;
                 } else if let ExprKind::Block(block_expr) = expr.kind() {
@@ -633,9 +645,9 @@ impl ScriptEmitter {
                 } else {
                     let rendered = self.render_expr(expr)?;
                     if return_value {
-                        self.push_line(&format!("return {};", rendered));
+                        self.writer.write_line(format!("return {};", rendered));
                     } else {
-                        self.push_line(&format!("{};", rendered));
+                        self.writer.write_line(format!("{};", rendered));
                     }
                 }
             }
@@ -669,12 +681,12 @@ impl ScriptEmitter {
                             .collect::<Result<Vec<_>>>()?
                     };
                 let joined = rendered_args.join(", ");
-                self.push_line(&format!("console.log({});", joined));
+                self.writer.write_line(format!("console.log({});", joined));
                 Ok(())
             }
             _ => {
                 let rendered = self.render_intrinsic_expr(call)?;
-                self.push_line(&format!("{};", rendered));
+                self.writer.write_line(format!("{};", rendered));
                 Ok(())
             }
         }
@@ -1031,18 +1043,6 @@ impl ScriptEmitter {
         }
     }
 
-    fn ensure_blank_line(&mut self) {
-        if self.code.is_empty() {
-            return;
-        }
-        if !self.code.ends_with('\n') {
-            self.code.push('\n');
-        }
-        if !self.code.ends_with("\n\n") {
-            self.code.push('\n');
-        }
-    }
-
     fn render_method_name(&self, ident: &Ident, arg_len: usize) -> String {
         match ident.name.as_str() {
             "to_string" if arg_len == 0 => "toString".into(),
@@ -1050,38 +1050,14 @@ impl ScriptEmitter {
         }
     }
 
-    fn push_line(&mut self, line: &str) {
-        if line.is_empty() {
-            self.code.push('\n');
-            return;
-        }
-        for _ in 0..self.indent {
-            self.code.push_str("  ");
-        }
-        self.code.push_str(line);
-        self.code.push('\n');
-    }
-
-    fn start_block(&mut self, header: &str) {
-        self.push_line(&format!("{} {{", header));
-        self.indent += 1;
-    }
-
-    fn end_block(&mut self) {
-        self.indent = self.indent.saturating_sub(1);
-        self.push_line("}");
-    }
-
     fn finish(mut self) -> (String, Option<String>) {
         if self.saw_main && !self.invoked_main {
-            self.ensure_blank_line();
-            self.push_line("main();");
+            self.writer.ensure_blank_line();
+            self.writer.write_line("main();");
             self.invoked_main = true;
         }
 
-        if !self.code.ends_with('\n') {
-            self.code.push('\n');
-        }
+        let code = self.writer.finish();
 
         let type_defs = match &self.flavor {
             ScriptFlavor::TypeScript {
@@ -1094,7 +1070,7 @@ impl ScriptEmitter {
             _ => None,
         };
 
-        (self.code, type_defs)
+        (code, type_defs)
     }
 
     fn build_interface_text(&self, struct_def: &TypeStruct) -> String {
