@@ -216,6 +216,15 @@ pub struct WorkspaceContext {
     /// minted in the same package as the impl itself) instead of searching
     /// every loaded package.
     hir_packages: RefCell<HashMap<HirPackageId, Rc<RefCell<CompiledPackage>>>>,
+    /// Memoized, name-sorted snapshot of `crates`'s values — the package
+    /// set only ever changes via `begin_package`/`import_package` (both
+    /// invalidate this), so `sorted_packages` doesn't need to rebuild a
+    /// `String` per package and re-sort on every one of its many callers
+    /// (`find_export`, `find_struct`/`find_enum`/`find_function_sig`,
+    /// `method_sigs`, `module_paths`, `hir_definitions`, ...) — this runs
+    /// once per unqualified identifier/path reference across every
+    /// compiled file.
+    sorted_packages_cache: RefCell<Option<Vec<Rc<RefCell<CompiledPackage>>>>>,
 }
 
 impl WorkspaceContext {
@@ -224,6 +233,9 @@ impl WorkspaceContext {
     }
 
     fn sorted_packages(&self) -> Vec<Rc<RefCell<CompiledPackage>>> {
+        if let Some(cached) = self.sorted_packages_cache.borrow().as_ref() {
+            return cached.clone();
+        }
         let mut packages: Vec<_> = self
             .crates
             .borrow()
@@ -231,7 +243,9 @@ impl WorkspaceContext {
             .map(|(package_id, package)| (package_id.to_string(), package.clone()))
             .collect();
         packages.sort_by(|(left, _), (right, _)| left.cmp(right));
-        packages.into_iter().map(|(_, package)| package).collect()
+        let packages: Vec<_> = packages.into_iter().map(|(_, package)| package).collect();
+        *self.sorted_packages_cache.borrow_mut() = Some(packages.clone());
+        packages
     }
 
     /// Create an isolated package workspace. Provider registrations are
@@ -244,6 +258,7 @@ impl WorkspaceContext {
             prelude: RefCell::new(None),
             next_package_id: self.next_package_id.clone(),
             hir_packages: RefCell::new(HashMap::new()),
+            sorted_packages_cache: RefCell::new(None),
         }
     }
 
@@ -282,6 +297,7 @@ impl WorkspaceContext {
         self.hir_packages
             .borrow_mut()
             .insert(hir_package_id, krate.clone());
+        *self.sorted_packages_cache.borrow_mut() = None;
         krate
     }
 
@@ -291,6 +307,7 @@ impl WorkspaceContext {
             .borrow_mut()
             .insert(hir_package_id, package.clone());
         self.crates.borrow_mut().insert(package_id, package);
+        *self.sorted_packages_cache.borrow_mut() = None;
     }
 
     /// Install `std`'s published package as the unqualified prelude lookup
