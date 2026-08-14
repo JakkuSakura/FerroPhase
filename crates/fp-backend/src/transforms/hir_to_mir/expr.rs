@@ -7833,6 +7833,18 @@ impl Default for MirLowering {
     }
 }
 
+/// One undone mutation to `local_map`/`fallback_locals`, recorded by
+/// `bind_match_binding` while `BodyBuilder::match_binding_undo_log` is
+/// active. Carries the key's *previous* value (`None` if the key was
+/// absent) so restoring can distinguish "put the old mapping back" from
+/// "the key didn't exist before this arm" — a plain `.remove(key)` would
+/// wrongly erase an outer-scope binding of the same name that the arm's
+/// pattern shadowed.
+enum MatchBindingUndo {
+    LocalMap(hir::HirId, Option<mir::LocalId>),
+    Fallback(String, Option<mir::LocalId>),
+}
+
 struct BodyBuilder<'a> {
     lowering: &'a mut MirLowering,
     function: &'a hir::Function,
@@ -7840,6 +7852,14 @@ struct BodyBuilder<'a> {
     locals: Vec<mir::LocalDecl>,
     local_map: HashMap<hir::HirId, mir::LocalId>,
     fallback_locals: HashMap<String, mir::LocalId>,
+    /// When `Some`, `bind_match_binding` records the pre-insert value (if
+    /// any) of every `local_map`/`fallback_locals` key it touches here,
+    /// instead of `lower_match_expr` cloning both whole maps before every
+    /// arm and restoring the clones afterward — turns an O(arms ×
+    /// bindings-so-far) clone-and-restore into an O(bindings-in-this-arm)
+    /// undo log. Only ever active for the duration of a single
+    /// `bind_match_pattern` call.
+    match_binding_undo_log: Option<Vec<MatchBindingUndo>>,
     local_structs: HashMap<mir::LocalId, hir::DefId>,
     container_locals: HashMap<mir::LocalId, mir::ContainerKind>,
     const_items: HashMap<hir::DefId, hir::Const>,
@@ -8690,6 +8710,7 @@ impl<'a> BodyBuilder<'a> {
             locals,
             local_map: HashMap::new(),
             fallback_locals: HashMap::new(),
+            match_binding_undo_log: None,
             local_structs: HashMap::new(),
             container_locals: HashMap::new(),
             const_items: HashMap::new(),
@@ -10063,9 +10084,9 @@ impl<'a> BodyBuilder<'a> {
             }
 
             self.current_block = body_block;
-            let saved_locals = self.local_map.clone();
-            let saved_fallback = self.fallback_locals.clone();
+            self.match_binding_undo_log = Some(Vec::new());
             self.bind_match_pattern(&arm.pat, &scrutinee_place, &scrutinee_info.ty, span);
+            let undo_log = self.match_binding_undo_log.take().unwrap_or_default();
 
             if let Some(guard) = &arm.guard {
                 let guard_operand = self.lower_condition_operand(guard)?;
@@ -10093,8 +10114,22 @@ impl<'a> BodyBuilder<'a> {
                     target: continue_block,
                 },
             });
-            self.local_map = saved_locals;
-            self.fallback_locals = saved_fallback;
+            for entry in undo_log.into_iter().rev() {
+                match entry {
+                    MatchBindingUndo::LocalMap(hir_id, Some(prev)) => {
+                        self.local_map.insert(hir_id, prev);
+                    }
+                    MatchBindingUndo::LocalMap(hir_id, None) => {
+                        self.local_map.remove(&hir_id);
+                    }
+                    MatchBindingUndo::Fallback(name, Some(prev)) => {
+                        self.fallback_locals.insert(name, prev);
+                    }
+                    MatchBindingUndo::Fallback(name, None) => {
+                        self.fallback_locals.remove(&name);
+                    }
+                }
+            }
 
             next_block = next_arm_block;
         }
@@ -10862,6 +10897,16 @@ impl<'a> BodyBuilder<'a> {
                 mir::Rvalue::Use(mir::Operand::Copy(scrutinee_place.clone())),
             ),
         });
+        if let Some(log) = self.match_binding_undo_log.as_mut() {
+            log.push(MatchBindingUndo::LocalMap(
+                pat.hir_id,
+                self.local_map.get(&pat.hir_id).copied(),
+            ));
+            log.push(MatchBindingUndo::Fallback(
+                name.as_str().to_string(),
+                self.fallback_locals.get(name.as_str()).copied(),
+            ));
+        }
         self.local_map.insert(pat.hir_id, local_id);
         self.fallback_locals
             .insert(name.as_str().to_string(), local_id);
