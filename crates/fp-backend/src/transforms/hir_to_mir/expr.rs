@@ -4915,11 +4915,6 @@ impl MirLowering {
         args: &[Ty],
         span: Span,
     ) -> Option<StructLayout> {
-        let Some(struct_def) = self.struct_defs.get(&def_id).cloned() else {
-            self.emit_error(span, "struct definition not registered");
-            return None;
-        };
-
         let key = StructLayoutKey {
             def_id,
             args: args.to_vec(),
@@ -4928,6 +4923,12 @@ impl MirLowering {
         if let Some(layout) = self.struct_layouts.get(&key) {
             return Some(layout.clone());
         }
+
+        let Some(struct_def) = self.struct_defs.get(&def_id).cloned() else {
+            self.emit_error(span, "struct definition not registered");
+            return None;
+        };
+
         if self.struct_layouts_in_progress.contains(&key) {
             self.emit_error(
                 span,
@@ -5103,11 +5104,6 @@ impl MirLowering {
         args: &[Ty],
         span: Span,
     ) -> Option<EnumLayout> {
-        let Some(enum_def) = self.enum_defs.get(&def_id).cloned() else {
-            self.emit_error(span, "enum definition not registered");
-            return None;
-        };
-
         let key = EnumLayoutKey {
             def_id,
             args: args.to_vec(),
@@ -5116,6 +5112,12 @@ impl MirLowering {
         if let Some(layout) = self.enum_layouts.get(&key) {
             return Some(layout.clone());
         }
+
+        let Some(enum_def) = self.enum_defs.get(&def_id).cloned() else {
+            self.emit_error(span, "enum definition not registered");
+            return None;
+        };
+
         if self.enum_layouts_in_progress.contains(&key) {
             self.emit_error(
                 span,
