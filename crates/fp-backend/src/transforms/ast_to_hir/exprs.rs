@@ -288,7 +288,61 @@ impl HirGenerator {
                 let kind = self.transform_for_to_hir(for_expr)?;
                 return Ok(hir::Expr { hir_id, kind, span });
             }
-            ExprKind::Closure(_closure) => {
+            ExprKind::Closure(closure) => {
+                // `keep_closures_first_class` (set by the driver for
+                // `PipelineMode::TypecheckedTranspile`) means the closure
+                // hasn't already been defunctionalized by `ClosureLowering`
+                // — lower it as a real, first-class HIR node so
+                // `HirTypeChecker` can resolve its signature via ordinary
+                // expected-type propagation from its call site (see
+                // `hir_typeck.rs`'s `Closure` arm). Every other pipeline
+                // (Native, needing MIR) still runs the pre-pass, so a
+                // closure never reaches here in the first place for those.
+                if self.lowering_config.keep_closures_first_class {
+                    self.push_value_scope();
+                    let params = closure
+                        .params
+                        .iter()
+                        .map(|pat| -> Result<hir::Param> {
+                            let hir_pat = self.transform_pattern(pat)?;
+                            self.register_pattern_bindings(&hir_pat);
+                            Ok(hir::Param {
+                                hir_id: self.next_id(),
+                                pat: hir_pat,
+                                // No source-level annotation for a bare
+                                // closure pattern — `HirTypeChecker`'s
+                                // `Closure` arm resolves the real type from
+                                // the call site's expected-type hint,
+                                // falling back to this placeholder only
+                                // when none is available.
+                                ty: hir::TypeExpr {
+                                    hir_id: self.next_id(),
+                                    kind: hir::TypeExprKind::Infer,
+                                    span,
+                                },
+                                is_context: false,
+                                default: None,
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>();
+                    let params = match params {
+                        Ok(params) => params,
+                        Err(error) => {
+                            self.pop_value_scope();
+                            return Err(error);
+                        }
+                    };
+                    let body = self.transform_expr_to_hir(closure.body.as_ref());
+                    self.pop_value_scope();
+                    return Ok(hir::Expr {
+                        hir_id,
+                        kind: hir::ExprKind::Closure(hir::ExprClosure {
+                            params,
+                            body: Box::new(body?),
+                        }),
+                        span,
+                    });
+                }
                 self.add_error(
                     Diagnostic::error("closure lowering not implemented".to_string())
                         .with_source_context(DIAGNOSTIC_CONTEXT)

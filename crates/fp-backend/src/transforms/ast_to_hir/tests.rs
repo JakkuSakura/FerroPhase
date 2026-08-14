@@ -987,6 +987,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
             }
             hir::ExprKind::FormatString(_) => {}
             hir::ExprKind::ConstBlock(const_block) => collect_paths(&const_block.body, out),
+            hir::ExprKind::Closure(closure) => collect_paths(&closure.body, out),
             hir::ExprKind::Literal(_) | hir::ExprKind::Continue => {}
         }
     }

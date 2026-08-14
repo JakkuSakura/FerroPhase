@@ -476,7 +476,14 @@ impl CompilerDriver {
             )
             .with_package_id(hir_package_id)
             .with_def_id_start(self.next_hir_def_id)
-            .with_lowering_config(HirLoweringConfig)
+            .with_lowering_config(HirLoweringConfig {
+                // Only `TypecheckedTranspile` ever lifts HIR back to AST
+                // for a backend serializer — every other mode (Native)
+                // still lowers to MIR, which has no closure representation
+                // of its own, so those keep the pre-typecheck
+                // defunctionalization pass.
+                keep_closures_first_class: self.pipeline == PipelineMode::TypecheckedTranspile,
+            })
             .with_workspace(self.state.typing_ctx.env_ctx.clone());
         let hir_program = generator.transform_package(&package_source)?;
         self.next_hir_def_id = self.next_hir_def_id.max(generator.next_def_id_value());

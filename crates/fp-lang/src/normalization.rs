@@ -405,7 +405,26 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "format" {
-                let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
+                // Same rationale as `matches!` above: an argument that
+                // isn't valid expression syntax on its own (e.g. a
+                // qualified-path call like `<T as Trait>::method(..)`,
+                // which this parser doesn't support as a *macro-argument*
+                // re-parse even though it's a legitimate expression) is
+                // left un-expanded rather than hard-failing the whole
+                // enclosing item — and by extension, previously, the
+                // *entire package's* typecheck (this macro's args are
+                // reparsed from raw tokens independently of normal
+                // top-down parsing, so one unsupported argument shape
+                // anywhere in a large vendored file — even inside a test
+                // module — used to poison everything).
+                let Ok(args) = parse_expr_macro_tokens(&macro_expr.invocation.token_trees) else {
+                    return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                        id,
+                        ty_slot,
+                        span,
+                        ExprKind::Macro(macro_expr),
+                    )));
+                };
                 if args.is_empty() {
                     return Err(fp_core::error::Error::from(
                         "format! requires at least one argument",

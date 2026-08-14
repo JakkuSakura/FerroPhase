@@ -27,7 +27,26 @@ use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
 const DIAGNOSTIC_CONTEXT: &str = "ast_to_hir";
 
 #[derive(Clone, Debug, Default)]
-pub struct HirLoweringConfig;
+pub struct HirLoweringConfig {
+    /// When `false` (the default, matching every existing caller), a
+    /// closure literal is defunctionalized (decomposed into an ordinary
+    /// struct + function pair) by `ClosureLowering` *before* HIR
+    /// generation even runs — needed by pipelines that lower to MIR
+    /// (`PipelineMode::Native`), since MIR has no closure representation
+    /// of its own yet.
+    ///
+    /// When `true`, that pre-pass is skipped entirely and a closure
+    /// literal instead survives HIR generation as a real, first-class
+    /// `hir::ExprKind::Closure` node — mirroring rustc's own ordering
+    /// (a closure stays a rich, typed expression throughout type
+    /// checking, with its signature resolved via ordinary expected-type
+    /// propagation from its call site, and is only "compiled away" as a
+    /// later lowering concern). Used by `PipelineMode::TypecheckedTranspile`
+    /// (the Kotlin/etc. backends), which never lowers to MIR and whose
+    /// backends want a genuine closure literal to render as an idiomatic
+    /// target-language lambda.
+    pub keep_closures_first_class: bool,
+}
 
 fn query_origin(document: &QueryDocument) -> QueryOrigin {
     document.origin.clone()
@@ -1451,8 +1470,15 @@ impl HirGenerator {
         // -compiled package's struct field types too, so
         // `closure_param_ty_for_invoke`'s structural lookup isn't blind to
         // them (see `ClosureLowering::collect_struct_field_types`).
-        let dependency_struct_field_types = self.workspace_struct_field_types();
-        lower_closures_in_items(&mut lowered_items, &dependency_struct_field_types)?;
+        // `keep_closures_first_class` pipelines (Kotlin/etc.) lower a
+        // closure literal directly into a real `hir::ExprKind::Closure`
+        // node instead (see `transform_expr_to_hir_inner`'s `Closure` arm)
+        // — running this pre-pass too would defunctionalize it first,
+        // defeating that entirely.
+        if !self.lowering_config.keep_closures_first_class {
+            let dependency_struct_field_types = self.workspace_struct_field_types();
+            lower_closures_in_items(&mut lowered_items, &dependency_struct_field_types)?;
+        }
         let generated_count = lowered_items.len() - original_len;
         let root_path = fp_core::ast::path::QualifiedPath::new(Vec::new());
         let package_items: Vec<fp_core::package::PackageItem> = lowered_items

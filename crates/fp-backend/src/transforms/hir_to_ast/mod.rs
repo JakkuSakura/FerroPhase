@@ -628,6 +628,26 @@ impl<'a> HirToAstLifter<'a> {
                     expr: Box::new(self.lift_expr(&const_block.body)?),
                 }))
             }
+            hir::ExprKind::Closure(closure) => {
+                // No per-parameter type slot to lift here — `ast::
+                // ExprClosure` (like real Rust closure syntax) carries bare
+                // patterns; the closure's own resolved `Ty::Function` type
+                // (params + return) is attached below via the same
+                // `ty_slot`/`hir_ty_to_ast` machinery every other arm gets,
+                // which is what backends needing per-parameter types (e.g.
+                // fp-kotlin's lambda renderer) actually read.
+                Expr::new(ast::ExprKind::Closure(ExprClosure {
+                    span: expr.span,
+                    params: closure
+                        .params
+                        .iter()
+                        .map(|param| self.lift_pat(&param.pat))
+                        .collect::<Result<Vec<_>>>()?,
+                    ret_ty: None,
+                    movability: None,
+                    body: Box::new(self.lift_expr(&closure.body)?),
+                }))
+            }
         };
         // Attach the typer's resolved type for this HIR node, if we have
         // typeck results and it resolved to something representable as an
@@ -1373,6 +1393,7 @@ fn expr_assigns_local(expr: &hir::Expr, target: hir::HirId) -> bool {
             expr_assigns_local(elem, target) || expr_assigns_local(len, target)
         }
         hir::ExprKind::ConstBlock(cb) => expr_assigns_local(&cb.body, target),
+        hir::ExprKind::Closure(closure) => expr_assigns_local(&closure.body, target),
     }
 }
 

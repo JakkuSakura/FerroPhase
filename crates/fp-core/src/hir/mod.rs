@@ -259,11 +259,33 @@ pub enum ExprKind {
     /// value via `TypingContext::request_comptime` whenever it encounters
     /// this variant, independent of any name.
     ConstBlock(ExprConstBlock),
+    /// A closure literal, kept as a first-class node (params + body, no
+    /// struct/function synthesis) — mirrors rustc's own ordering: a
+    /// closure stays a real, richly-typed expression throughout type
+    /// checking, with its parameter/return types resolved via ordinary
+    /// expected-type propagation from its call site (see
+    /// `HirTypeChecker`'s `Closure` arm and `expected_expr_types`), and
+    /// only gets "compiled away" into a captures-struct-plus-call-function
+    /// shape later, as a lowering concern (`HirLoweringConfig::
+    /// defunctionalize_closures` controls whether a closure ever reaches
+    /// this variant at all, or is defunctionalized earlier by
+    /// `ClosureLowering` for pipelines — e.g. Native — that need MIR).
+    Closure(ExprClosure),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExprConstBlock {
     pub ty: Box<TypeExpr>,
+    pub body: Box<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExprClosure {
+    /// Each parameter's declared type is `TypeExprKind::Infer` unless the
+    /// source explicitly annotated it — real closures are overwhelmingly
+    /// unannotated (`|s| ..`), relying entirely on expected-type inference
+    /// from the call site, same as rustc.
+    pub params: Vec<Param>,
     pub body: Box<Expr>,
 }
 
@@ -913,6 +935,13 @@ impl ExprKind {
             ExprKind::ConstBlock(const_block) => {
                 Span::union([const_block.ty.span(), const_block.body.span()])
             }
+            ExprKind::Closure(closure) => Span::union(
+                closure
+                    .params
+                    .iter()
+                    .map(Param::span)
+                    .chain([closure.body.span()]),
+            ),
         }
     }
 }

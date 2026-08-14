@@ -549,9 +549,40 @@ impl HirTypeChecker {
                 }
                 hir::ExprKind::MethodCall(receiver, method, args) => {
                     let receiver_ty = self.check_expr(receiver).await?;
+                    // A per-parameter expected-type hint (mirroring `Call`'s
+                    // existing one, above) needs the callee's *declared*
+                    // signature before any argument is checked — `Self`'s
+                    // position substitutes cleanly from `receiver_ty` alone,
+                    // independent of the other arguments, so this doesn't
+                    // need to wait for them the way the final, full
+                    // `instantiate_call` inside `method_output` below does.
+                    // Load-bearing for a closure argument to a generic
+                    // method (`Option::map_or`'s `f: fn(T) -> U`): without a
+                    // real `T` hint here, the closure's own parameter is
+                    // unusable when its body gets checked.
+                    let declared_inputs = match self.method_declared_signature(&receiver_ty, method)
+                    {
+                        Ok(Some(Ty {
+                            kind: TyKind::FnPtr(sig),
+                        })) => Some(sig.binder.value.inputs),
+                        _ => None,
+                    };
                     let mut arg_types = vec![receiver_ty.clone()];
-                    for arg in args {
-                        arg_types.push(self.check_expr(&arg.value).await?);
+                    for (index, arg) in args.iter().enumerate() {
+                        // `inputs[0]` is `Self`; `args[index]` lines up with
+                        // `inputs[index + 1]`.
+                        let param_hint = declared_inputs
+                            .as_ref()
+                            .and_then(|inputs| inputs.get(index + 1))
+                            .map(|ty| (**ty).clone());
+                        if let Some(hint) = &param_hint {
+                            self.expected_expr_types.push(hint.clone());
+                        }
+                        let actual = self.check_expr(&arg.value).await;
+                        if param_hint.is_some() {
+                            self.expected_expr_types.pop();
+                        }
+                        arg_types.push(actual?);
                     }
                     // Method resolution has no natural "error" `DefId` to
                     // substitute (unlike `Ty::error()`), so the whole
@@ -920,6 +951,64 @@ impl HirTypeChecker {
                             kind: TyKind::Slice(inner),
                         },
                         _ => self.error_ty("slicing requires an array or slice"),
+                    }
+                }
+                hir::ExprKind::Closure(closure) => {
+                    // The load-bearing case: an unannotated closure
+                    // (`|s| ..`, the overwhelming majority) has no useful
+                    // type of its own — its parameters are resolved from
+                    // whatever `Fn`-shaped hint the call site pushed onto
+                    // `expected_expr_types` (see `MethodCall`'s
+                    // `method_declared_signature`-derived hint, and
+                    // `Call`'s existing per-parameter hint above), mirroring
+                    // rustc's own closure-signature deduction. An explicit
+                    // parameter annotation still wins over the hint when
+                    // present. With no hint and no annotation, the
+                    // parameter gets an honest `Infer` placeholder rather
+                    // than silently resolving to something unusable later.
+                    let hint = self.expected_expr_types.last().cloned();
+                    let hint_sig = match &hint {
+                        Some(Ty {
+                            kind: TyKind::FnPtr(sig),
+                        }) => Some(sig.binder.value.clone()),
+                        _ => None,
+                    };
+                    self.locals.push(HashMap::new());
+                    let mut param_types = Vec::with_capacity(closure.params.len());
+                    for (index, param) in closure.params.iter().enumerate() {
+                        let declared = if matches!(param.ty.kind, hir::TypeExprKind::Infer) {
+                            None
+                        } else {
+                            Some(self.check_type_expr(&param.ty)?)
+                        };
+                        let param_ty = declared
+                            .or_else(|| {
+                                hint_sig
+                                    .as_ref()
+                                    .and_then(|sig| sig.inputs.get(index))
+                                    .map(|ty| (**ty).clone())
+                            })
+                            .unwrap_or_else(|| Ty {
+                                kind: TyKind::Infer(ty::InferTy::FreshTy(param.hir_id)),
+                            });
+                        self.bind_pattern(&param.pat, param_ty.clone())?;
+                        param_types.push(param_ty);
+                    }
+                    let body_ty = self.check_expr(&closure.body).await?;
+                    self.locals.pop();
+                    Ty {
+                        kind: TyKind::FnPtr(ty::PolyFnSig {
+                            binder: ty::Binder {
+                                value: ty::FnSig {
+                                    inputs: param_types.into_iter().map(Box::new).collect(),
+                                    output: Box::new(body_ty),
+                                    c_variadic: false,
+                                    unsafety: ty::Unsafety::Normal,
+                                    abi: ty::Abi::Rust,
+                                },
+                                bound_vars: Vec::new(),
+                            },
+                        }),
                     }
                 }
                 hir::ExprKind::Query(_) => self.error_ty("query typing is not implemented"),
@@ -1939,6 +2028,119 @@ impl HirTypeChecker {
                 ),
             },
             _ => ty.clone(),
+        }
+    }
+
+    /// Finds the impl method `method_output` would eventually resolve for
+    /// `receiver_ty`, returning just its *declared* signature (`Self`
+    /// substituted from the already-known receiver type; the method's own
+    /// generics, e.g. `map_or`'s `U`, left as unresolved `Param`s) —
+    /// without needing any argument types. `Self`'s position always
+    /// substitutes cleanly from `receiver_ty` alone, entirely independent
+    /// of the call's other arguments, so this doesn't need to wait for
+    /// them the way `instantiate_call`'s full unification does.
+    ///
+    /// This exists so `MethodCall` can seed a real expected-type hint for
+    /// each argument *before* checking it (mirroring `Call`'s existing
+    /// per-parameter hint) — the load-bearing case being a closure
+    /// argument to a generic method like `Option::map_or(self, default: U,
+    /// f: fn(T) -> U) -> U`: without this, `T` is unknown when the closure
+    /// literal is checked, so its parameter silently gets an unusable
+    /// placeholder type. Mirrors the matching loop in `method_output`
+    /// (kept in sync deliberately, not factored into one shared loop,
+    /// since the two stop at different points and diverging their control
+    /// flow — `Result` vs best-effort `None` — reads more clearly split).
+    fn method_declared_signature(
+        &mut self,
+        receiver_ty: &Ty,
+        method: &hir::Symbol,
+    ) -> Result<Option<Ty>> {
+        let receiver_ty = match &receiver_ty.kind {
+            TyKind::Ref(_, inner, _) => inner.as_ref(),
+            _ => receiver_ty,
+        };
+        let receiver_def = match &receiver_ty.kind {
+            TyKind::Adt(receiver, _) => Some(receiver.did),
+            _ => None,
+        };
+        let impl_items = self.impl_lookup_items();
+        for item in impl_items.iter() {
+            let hir::ItemKind::Impl(impl_item) = &item.kind else {
+                continue;
+            };
+            let mut scope = self.generic_scope(&impl_item.generics);
+            let checked_self_ty = scope.check_type_expr(&impl_item.self_ty)?;
+            let self_ty = match &checked_self_ty.kind {
+                TyKind::Ref(_, inner, _) => inner.as_ref(),
+                _ => &checked_self_ty,
+            };
+            let matches_receiver = match (receiver_def, &receiver_ty.kind, &self_ty.kind) {
+                (Some(receiver_def), TyKind::Adt(_, receiver_args), TyKind::Adt(impl_receiver, impl_args)) => {
+                    impl_receiver.did == receiver_def
+                        && scope.generic_args_compatible(impl_args, receiver_args)
+                }
+                (None, TyKind::Adt(_, _), _) => false,
+                (None, _, _) => self_ty == receiver_ty,
+                (Some(_), _, _) => false,
+            };
+            if !matches_receiver {
+                continue;
+            }
+            for impl_item in &impl_item.items {
+                let hir::ImplItemKind::Method(function) = &impl_item.kind else {
+                    continue;
+                };
+                if impl_item.name == *method {
+                    let signature = scope.function_signature(function)?;
+                    let TyKind::FnPtr(sig) = &signature.kind else {
+                        return Ok(None);
+                    };
+                    let Some(self_input) = sig.binder.value.inputs.first() else {
+                        return Ok(None);
+                    };
+                    // `Self`'s position, substituted from the *actual*
+                    // receiver — everything else in the signature stays
+                    // in terms of the method's own generics for now.
+                    let mut substitutions = HashMap::new();
+                    if scope.unify_call_types(self_input, receiver_ty, &mut substitutions).is_err() {
+                        return Ok(None);
+                    }
+                    let substituted = scope.substitute_param_map_fn_sig(&sig.binder.value, &substitutions);
+                    return Ok(Some(Ty {
+                        kind: TyKind::FnPtr(ty::PolyFnSig {
+                            binder: ty::Binder {
+                                value: substituted,
+                                bound_vars: sig.binder.bound_vars.clone(),
+                            },
+                        }),
+                    }));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Substitutes a partial `ParamTy -> Ty` map through every input/output
+    /// position of a function signature — the same substitution
+    /// `substitute_param_map` already does for a single `Ty`, applied
+    /// across a whole `FnSig` (used by `method_declared_signature`, which
+    /// only has `Self`'s own substitution available yet, not a full
+    /// `instantiate_call` result).
+    fn substitute_param_map_fn_sig(
+        &self,
+        sig: &ty::FnSig,
+        substitutions: &HashMap<ty::ParamTy, Ty>,
+    ) -> ty::FnSig {
+        ty::FnSig {
+            inputs: sig
+                .inputs
+                .iter()
+                .map(|input| Box::new(self.substitute_param_map(input, substitutions)))
+                .collect(),
+            output: Box::new(self.substitute_param_map(&sig.output, substitutions)),
+            c_variadic: sig.c_variadic,
+            unsafety: sig.unsafety,
+            abi: sig.abi.clone(),
         }
     }
 

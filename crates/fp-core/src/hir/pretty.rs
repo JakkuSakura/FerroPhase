@@ -686,6 +686,15 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
         ExprKind::ConstBlock(const_block) => {
             format!("const {{ {} }}", format_expr_inline(&const_block.body, ctx))
         }
+        ExprKind::Closure(closure) => {
+            let params = closure
+                .params
+                .iter()
+                .map(|param| format!("{:?}", param.pat.kind))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("|{}| {}", params, format_expr_inline(&closure.body, ctx))
+        }
         ExprKind::Loop(_) | ExprKind::If(_, _, _) | ExprKind::Block(_) | ExprKind::While(_, _) => {
             "<control-flow>".into()
         }
