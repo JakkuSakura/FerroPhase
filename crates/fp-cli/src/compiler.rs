@@ -110,6 +110,7 @@ pub fn eval_script(script: ScriptBlock) -> Result<Value> {
     drain_driver(&mut driver, LossyCompileOptions::default())?;
     if let Some((_, value)) = driver
         .state
+        .borrow()
         .typing_ctx
         .resolved_consts
         .borrow()
@@ -120,6 +121,7 @@ pub fn eval_script(script: ScriptBlock) -> Result<Value> {
     }
     driver
         .state
+        .borrow()
         .const_value(&ConstValueId::new(format!(
             "const_value:{}",
             identity.path.to_key()
@@ -783,6 +785,7 @@ fn execute_ast(
     match mode {
         fp_core::context::ExecutionMode::CompileTime => driver
             .state
+            .borrow()
             .const_value(&ConstValueId::new(format!("const_value:{value_key}")))
             .map(|value| value.clone())
             .map_err(|err| CliError::Compilation(err.to_string())),
@@ -960,7 +963,7 @@ fn compile_source_file(
     let workspace = std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new(provider));
     let mut session = CompilerSession::new(data_layout(), executor, workspace);
     session.driver().pipeline = pipeline;
-    session.driver().state.set_lossy(lossy.enabled);
+    session.driver().state.borrow_mut().set_lossy(lossy.enabled);
     executor
         .run(session.driver().compile_package(&package_id))
         .map_err(|err| CliError::Compilation(err.to_string()))?;
@@ -982,7 +985,7 @@ fn compile_source_file(
 }
 
 fn drain_driver(driver: &mut CompilerDriver, lossy: LossyCompileOptions) -> Result<()> {
-    emit_typing_diagnostics(&driver.state.typing_ctx.diagnostics.borrow(), lossy)
+    emit_typing_diagnostics(&driver.state.borrow().typing_ctx.diagnostics.borrow(), lossy)
 }
 
 pub fn parse_expr_with_mode(source: &str, parse_mode: FrontendParseMode) -> Result<File> {
@@ -1145,7 +1148,7 @@ pub fn typecheck_package(
     let workspace = std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new(combined));
     let mut session = CompilerSession::new(data_layout(), &executor, workspace);
     session.driver().pipeline = PipelineMode::TypecheckedTranspile;
-    session.driver().state.set_lossy(lossy.enabled);
+    session.driver().state.borrow_mut().set_lossy(lossy.enabled);
     let package = executor
         .run(session.driver().compile_package(package_id))
         .map_err(|err| CliError::Compilation(err.to_string()))?;
@@ -1406,7 +1409,8 @@ impl LoweredProgram {
         // mirroring the same merge `evaluate_comptime_lir` already does for
         // comptime execution.
         let mut combined = fp_core::lir::LirWorkspace::new(package.lir_workspace.data_layout.clone());
-        for (dependency_id, dep_package) in self.driver.state.typing_ctx.env_ctx.crates().iter() {
+        let state = self.driver.state.borrow();
+        for (dependency_id, dep_package) in state.typing_ctx.env_ctx.crates().iter() {
             if *dependency_id == self.package_id {
                 continue;
             }
@@ -1439,6 +1443,7 @@ impl LoweredProgram {
     ) -> Result<std::rc::Rc<std::cell::RefCell<fp_core::package::CompiledPackage>>> {
         self.driver
             .state
+            .borrow()
             .typing_ctx
             .env_ctx
             .compiled_package(&self.package_id)

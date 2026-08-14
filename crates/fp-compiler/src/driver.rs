@@ -20,7 +20,18 @@ use crate::{
 };
 
 pub struct CompilerDriver {
-    pub state: CompilerState,
+    /// `Rc<RefCell<_>>`, not owned: a spawned comptime-resolution task (see
+    /// `TypingContext`'s injected `resolve_comptime` callback,
+    /// `type_check_program`) needs to reach the same HIR/MIR/LIR/typing
+    /// state independently of whatever `&mut self`-holding future is
+    /// already driving `compile_package`/`compile_native` at the time —
+    /// that future's `&mut self` borrow lasts for its entire lifetime (how
+    /// `async fn` desugars), so a `'static` task closure cannot also borrow
+    /// `self` directly. Sharing just `state` this way (not `interpreter`,
+    /// `building_packages`, etc. — those aren't needed by anything spawned
+    /// as a task) keeps the rest of `CompilerDriver` an ordinary `&mut
+    /// self`-based type.
+    pub state: Rc<RefCell<CompilerState>>,
     interpreter: LirInterpreter,
     building_packages: HashSet<PackageId>,
     compiled_packages: HashMap<PackageId, Rc<RefCell<fp_core::package::CompiledPackage>>>,
@@ -41,8 +52,14 @@ pub enum PipelineMode {
 
 impl CompilerDriver {
     fn module_state_key(&self, path: &QualifiedPath) -> String {
-        let package_id = self
-            .state
+        Self::module_state_key_for(&self.state, path)
+    }
+
+    /// Same as `module_state_key`, but against a bare `Rc<RefCell<CompilerState>>` —
+    /// for the spawned comptime-resolution task, which doesn't hold a `CompilerDriver`.
+    fn module_state_key_for(state: &Rc<RefCell<CompilerState>>, path: &QualifiedPath) -> String {
+        let package_id = state
+            .borrow()
             .typing_ctx
             .env_ctx
             .current_package()
@@ -71,7 +88,7 @@ impl CompilerDriver {
         let mut state = CompilerState::new(data_layout.clone(), tasks.clone());
         state.typing_ctx = Rc::new(TypingContext::new(data_layout, workspace, tasks));
         Self {
-            state,
+            state: Rc::new(RefCell::new(state)),
             interpreter: LirInterpreter::new(),
             building_packages: HashSet::new(),
             compiled_packages: HashMap::new(),
@@ -82,7 +99,7 @@ impl CompilerDriver {
 
     pub fn with_state(state: CompilerState) -> Self {
         Self {
-            state,
+            state: Rc::new(RefCell::new(state)),
             interpreter: LirInterpreter::new(),
             building_packages: HashSet::new(),
             compiled_packages: HashMap::new(),
@@ -115,7 +132,7 @@ impl CompilerDriver {
         &mut self,
         package_id: &PackageId,
     ) -> Result<Rc<RefCell<fp_core::package::CompiledPackage>>, CompilerDriverError> {
-        let executor = self.state.tasks.clone();
+        let executor = self.state.borrow().tasks.clone();
         executor.run(self.compile_native(package_id))
     }
 
@@ -123,7 +140,7 @@ impl CompilerDriver {
         &mut self,
         package_id: &PackageId,
     ) -> Result<fp_bytecode::BytecodeProgram, CompilerDriverError> {
-        let executor = self.state.tasks.clone();
+        let executor = self.state.borrow().tasks.clone();
         executor.run(self.compile_bytecode(package_id))
     }
 
@@ -131,7 +148,7 @@ impl CompilerDriver {
     /// package itself and its imported dependencies remain shared through
     /// `Rc`; only the lookup context becomes package-local.
     pub fn focus_package(&mut self, package_id: PackageId) -> Result<(), CompilerDriverError> {
-        let parent_context = self.state.typing_ctx.clone();
+        let parent_context = self.state.borrow().typing_ctx.clone();
         let package_workspace = parent_context.env_ctx.for_package(package_id.clone());
         for (dependency_id, package) in parent_context.env_ctx.crates().iter() {
             if dependency_id != &package_id {
@@ -146,7 +163,7 @@ impl CompilerDriver {
             .compiled_package(&package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
         package_workspace.import_package(package_id, package);
-        self.state.typing_ctx = Rc::new(TypingContext::new(
+        self.state.borrow_mut().typing_ctx = Rc::new(TypingContext::new(
             parent_context.data_layout.clone(),
             Rc::new(package_workspace),
             parent_context.executor.clone(),
@@ -158,16 +175,16 @@ impl CompilerDriver {
         &mut self,
         lir_id: &LirId,
     ) -> Result<fp_core::ast::Value, CompilerDriverError> {
-        let lir = self.state.lir(lir_id)?.clone();
+        let lir = self.state.borrow().lir(lir_id)?.clone();
         self.interpreter = LirInterpreter::new();
         let resolved = self.collect_resolved_const_values();
         self.interpreter
             .inject_globals(&resolved)
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
-        let entrypoint = self.state.runtime_entrypoint(lir_id)?;
+        let entrypoint = self.state.borrow().runtime_entrypoint(lir_id)?;
         let value = self.interpreter.run_entrypoint(&lir, entrypoint)?;
         let value_id = RuntimeValueId::new(format!("runtime_value:{}", lir_id.as_str()));
-        self.state.insert_runtime_value(value_id, value.clone());
+        self.state.borrow_mut().insert_runtime_value(value_id, value.clone());
         Ok(value)
     }
 
@@ -189,7 +206,7 @@ impl CompilerDriver {
         function_name: &str,
     ) -> Result<hir::DefId, CompilerDriverError> {
         let package = self
-            .state
+            .state.borrow()
             .typing_ctx
             .env_ctx
             .compiled_package(package_id)
@@ -251,7 +268,7 @@ impl CompilerDriver {
         function_name: &str,
     ) -> Result<LirId, CompilerDriverError> {
         let package = self
-            .state
+            .state.borrow()
             .typing_ctx
             .env_ctx
             .compiled_package(package_id)
@@ -260,9 +277,9 @@ impl CompilerDriver {
         let lir_id = Self::package_module_lir_id(package_id, module_path);
         let mut lir = package.borrow().lir_workspace.to_program();
         Self::rename_lir_function(&mut lir, function, function_name);
-        self.state.insert_lir(lir_id.clone(), lir);
-        self.state.lir(&lir_id)?;
-        self.state
+        self.state.borrow_mut().insert_lir(lir_id.clone(), lir);
+        self.state.borrow().lir(&lir_id)?;
+        self.state.borrow_mut()
             .insert_runtime_entrypoint(lir_id.clone(), function);
         Ok(lir_id)
     }
@@ -287,7 +304,7 @@ impl CompilerDriver {
         &mut self,
         package_id: &PackageId,
     ) -> Result<Rc<RefCell<fp_core::package::CompiledPackage>>, CompilerDriverError> {
-        let parent_context = self.state.typing_ctx.clone();
+        let parent_context = self.state.borrow().typing_ctx.clone();
         if let Some(package) = self.compiled_packages.get(package_id).cloned() {
             parent_context
                 .env_ctx
@@ -322,7 +339,7 @@ impl CompilerDriver {
                 package_workspace.install_prelude(std_package);
             }
         }
-        self.state.typing_ctx = Rc::new(TypingContext::new(
+        self.state.borrow_mut().typing_ctx = Rc::new(TypingContext::new(
             parent_context.data_layout.clone(),
             Rc::new(package_workspace),
             parent_context.executor.clone(),
@@ -331,7 +348,7 @@ impl CompilerDriver {
         let result: Result<Rc<RefCell<fp_core::package::CompiledPackage>>, CompilerDriverError> =
             async {
                 let provider = self
-                    .state
+                    .state.borrow()
                     .typing_ctx
                     .env_ctx
                     .provider_for(package_id)
@@ -360,7 +377,7 @@ impl CompilerDriver {
                         })?;
                     let dependency_package = Box::pin(self.compile_package(&dependency_id)).await?;
                     if dependency_id.as_str() == "std" {
-                        self.state
+                        self.state.borrow()
                             .typing_ctx
                             .env_ctx
                             .install_prelude(dependency_package);
@@ -376,10 +393,10 @@ impl CompilerDriver {
                         source.package_id
                     )));
                 }
-                let package = self.state.typing_ctx.env_ctx.begin_package(
+                let package = self.state.borrow().typing_ctx.env_ctx.begin_package(
                     package_id.clone(),
                     source,
-                    self.state.typing_ctx.data_layout.clone(),
+                    self.state.borrow().typing_ctx.data_layout.clone(),
                 );
                 // `TypecheckedTranspile` needs HIR generation + typing too (it lifts the
                 // typed HIR back to AST inside `compile_items_to_lir_units`) — it now also
@@ -390,7 +407,7 @@ impl CompilerDriver {
                 // value (only the block's type, already known independent of this).
                 if matches!(self.pipeline, PipelineMode::Native | PipelineMode::TypecheckedTranspile) {
                     let mut units = self
-                        .compile_items_to_lir_units(&package, &HashMap::new())
+                        .compile_items_to_lir_units(&package)
                         .await?;
                     if !units.is_empty() {
                         Self::publish_lir_units(&package, package_id, &units)?;
@@ -399,10 +416,13 @@ impl CompilerDriver {
                         if !lir.comptime_entries.is_empty() {
                             let module_path = QualifiedPath::new(Vec::new());
                             let lir_id = Self::package_module_lir_id(package_id, &module_path);
-                            self.state.insert_lir(lir_id.clone(), lir);
+                            self.state.borrow_mut().insert_lir(lir_id.clone(), lir);
                             let fqp = FullyQualifiedPath::new(module_path);
                             if self.pipeline == PipelineMode::Native {
-                                self.evaluate_comptime_lir(&lir_id, &fqp).await?;
+                                let block_values = self.evaluate_comptime_lir(&lir_id, &fqp).await?;
+                                if !block_values.is_empty() {
+                                    self.apply_resolved_comptime_block_values(&block_values)?;
+                                }
                                 units = self.relower_cached_lir_units(&package).await?;
                                 Self::publish_lir_units(&package, package_id, &units)?;
                             } else if let Err(error) =
@@ -422,7 +442,7 @@ impl CompilerDriver {
             .await;
 
         self.building_packages.remove(package_id);
-        self.state.typing_ctx = parent_context.clone();
+        self.state.borrow_mut().typing_ctx = parent_context.clone();
         let package = result?;
         self.compiled_packages
             .insert(package_id.clone(), package.clone());
@@ -457,15 +477,14 @@ impl CompilerDriver {
     async fn compile_items_to_lir_units(
         &mut self,
         package: &Rc<RefCell<fp_core::package::CompiledPackage>>,
-        resolved_block_values: &HashMap<hir::HirId, Value>,
     ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
         let hir_package_id = self
-            .state
+            .state.borrow()
             .typing_ctx
             .env_ctx
             .current_package()
             .and_then(|package_id| {
-                self.state
+                self.state.borrow()
                     .typing_ctx
                     .env_ctx
                     .compiled_package(package_id)
@@ -490,13 +509,13 @@ impl CompilerDriver {
                 // defunctionalization pass.
                 keep_closures_first_class: self.pipeline == PipelineMode::TypecheckedTranspile,
             })
-            .with_workspace(self.state.typing_ctx.env_ctx.clone());
+            .with_workspace(self.state.borrow().typing_ctx.env_ctx.clone());
         let hir_program = generator.transform_package(&package_source)?;
         self.next_hir_def_id = self.next_hir_def_id.max(generator.next_def_id_value());
         let package_exports = generator.exported_symbols();
         let type_alias_exports = generator.exported_type_aliases();
-        if let Some(package_id) = self.state.typing_ctx.env_ctx.current_package().cloned() {
-            if let Some(package) = self.state.typing_ctx.env_ctx.compiled_package(&package_id) {
+        if let Some(package_id) = self.state.borrow().typing_ctx.env_ctx.current_package().cloned() {
+            if let Some(package) = self.state.borrow().typing_ctx.env_ctx.compiled_package(&package_id) {
                 package.borrow_mut().hir_exports.extend(package_exports);
                 package
                     .borrow_mut()
@@ -505,7 +524,7 @@ impl CompilerDriver {
             }
         }
         let (hir_program, typeck_results) = self
-            .type_check_program(hir_program, resolved_block_values)
+            .type_check_program(hir_program)
             .await
             .map_err(|error| {
                 CompilerDriverError::InternalCompilerError(format!(
@@ -513,7 +532,7 @@ impl CompilerDriver {
                 ))
             })?;
         let current_package_id = self
-            .state
+            .state.borrow()
             .typing_ctx
             .env_ctx
             .current_package()
@@ -525,40 +544,50 @@ impl CompilerDriver {
             })?;
         let package_path = QualifiedPath::new(Vec::new());
         let hir_id = HirId::new(format!("hir:{}", self.module_state_key(&package_path)));
-        self.state.insert_hir(hir_id.clone(), hir_program);
-        self.state.insert_hir_typeck(hir_id.clone(), typeck_results);
+        self.state.borrow_mut().insert_hir(hir_id.clone(), hir_program);
+        self.state.borrow_mut().insert_hir_typeck(hir_id.clone(), typeck_results);
         if let Some(package) = self
-            .state
+            .state.borrow()
             .typing_ctx
             .env_ctx
             .compiled_package(&current_package_id)
         {
             package
                 .borrow_mut()
-                .set_hir_program(self.state.hir(&hir_id)?.clone());
+                .set_hir_program(self.state.borrow().hir(&hir_id)?.clone());
         }
 
         // TypecheckedTranspile: lift typed HIR back to AST — this is what
         // the Kotlin backend actually reads, and doesn't depend on
         // anything below succeeding.
         if self.pipeline == PipelineMode::TypecheckedTranspile {
-            let hir = self.state.hir(&hir_id)?;
-            // `typeck_results` was moved into `self.state` above (`insert_hir_typeck`) —
-            // fetch it back by the same `hir_id` to attach real resolved types
-            // onto the lifted AST's `Expr.ty()` slots.
-            let typeck = self.state.hir_typeck(&hir_id).ok();
-            // Keyed by qualified name instead of list position, so
-            // `typecheck_package` (fp-cli) can splice typed content back
-            // onto the original source items by identity even when the two
-            // lists don't match 1:1 (synthetic items with no source
-            // counterpart, `use` items with no HIR counterpart, or an
-            // individual item that fails to lift without poisoning the
-            // rest of the package).
-            let lifter = fp_backend::transforms::HirToAstLifter::new(hir, typeck);
-            let lifted_items_by_path = lifter.lift_items_by_path();
-            let referenced_paths_by_path = lifter.referenced_paths_by_path();
+            // Scoped narrowly (dropped before the `lower_to_mir`/`lower_to_lir`
+            // calls below, which need their own `self.state` borrows) —
+            // `lift_items_by_path`/`referenced_paths_by_path` return owned
+            // data, so nothing here needs to outlive this block.
+            let (lifted_items_by_path, referenced_paths_by_path) = {
+                let state = self.state.borrow();
+                let hir = state.hir(&hir_id)?;
+                // `typeck_results` was moved into `self.state` above
+                // (`insert_hir_typeck`) — fetch it back by the same `hir_id`
+                // to attach real resolved types onto the lifted AST's
+                // `Expr.ty()` slots.
+                let typeck = state.hir_typeck(&hir_id).ok();
+                // Keyed by qualified name instead of list position, so
+                // `typecheck_package` (fp-cli) can splice typed content back
+                // onto the original source items by identity even when the two
+                // lists don't match 1:1 (synthetic items with no source
+                // counterpart, `use` items with no HIR counterpart, or an
+                // individual item that fails to lift without poisoning the
+                // rest of the package).
+                let lifter = fp_backend::transforms::HirToAstLifter::new(hir, typeck);
+                (
+                    lifter.lift_items_by_path(),
+                    lifter.referenced_paths_by_path(),
+                )
+            };
             if let Some(pkg) = self
-                .state
+                .state.borrow()
                 .typing_ctx
                 .env_ctx
                 .compiled_package(&current_package_id)
@@ -580,12 +609,12 @@ impl CompilerDriver {
             return match self.lower_to_mir(&hir_id, &fqp).await {
                 Ok((mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes)) => {
                     if let Some(package) = self
-                        .state
+                        .state.borrow()
                         .typing_ctx
                         .env_ctx
                         .compiled_package(&current_package_id)
                     {
-                        package.borrow_mut().mir_program = Some(self.state.mir(&mir_id)?.clone());
+                        package.borrow_mut().mir_program = Some(self.state.borrow().mir(&mir_id)?.clone());
                         package
                             .borrow_mut()
                             .mir_struct_fields
@@ -600,7 +629,7 @@ impl CompilerDriver {
                         &opaque_payload_sizes,
                     ) {
                         Ok(lir_id) => {
-                            let lir = self.state.lir(&lir_id)?.clone();
+                            let lir = self.state.borrow().lir(&lir_id)?.clone();
                             Ok(vec![fp_core::lir::LirCompileUnit {
                                 package_id: hir_package_id,
                                 module_path: package_path,
@@ -634,12 +663,12 @@ impl CompilerDriver {
         let (mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes) =
             self.lower_to_mir(&hir_id, &fqp).await?;
         if let Some(package) = self
-            .state
+            .state.borrow()
             .typing_ctx
             .env_ctx
             .compiled_package(&current_package_id)
         {
-            package.borrow_mut().mir_program = Some(self.state.mir(&mir_id)?.clone());
+            package.borrow_mut().mir_program = Some(self.state.borrow().mir(&mir_id)?.clone());
             package
                 .borrow_mut()
                 .mir_struct_fields
@@ -658,7 +687,7 @@ impl CompilerDriver {
             &opaque_payload_sizes,
         )?;
 
-        let lir = self.state.lir(&lir_id)?.clone();
+        let lir = self.state.borrow().lir(&lir_id)?.clone();
         Ok(vec![fp_core::lir::LirCompileUnit {
             package_id: hir_package_id,
             module_path: package_path,
@@ -666,12 +695,38 @@ impl CompilerDriver {
         }])
     }
 
+    /// Writes `evaluate_comptime_lir`'s real, interpreter-computed values
+    /// back into this package's stored `TypeckResults::const_block_values`
+    /// (keyed by each block's own `HirId`, via `const_block_hir_id`),
+    /// before `relower_cached_lir_units` re-lowers HIR->MIR a second time.
+    /// That second lowering pass already has a fast path
+    /// (`typeck_const_block_values.get(&expr.hir_id)`,
+    /// `hir_to_mir/expr.rs`'s `ConstBlock` arm) that embeds a real constant
+    /// when a value is present there and otherwise falls back to lowering
+    /// the block as ordinary runtime code — this is what turns that
+    /// fallback into a real compile-time constant, without needing typing
+    /// itself to ever suspend on the value (neither `ConstBlock` arm in
+    /// `hir_typeck.rs` needs it to determine its own type).
+    fn apply_resolved_comptime_block_values(
+        &mut self,
+        block_values: &HashMap<hir::HirId, Value>,
+    ) -> Result<(), CompilerDriverError> {
+        let module_path = QualifiedPath::new(Vec::new());
+        let hir_id = HirId::new(format!("hir:{}", self.module_state_key(&module_path)));
+        let mut typeck_results = self.state.borrow().hir_typeck(&hir_id)?.clone();
+        typeck_results
+            .const_block_values
+            .extend(block_values.iter().map(|(id, value)| (*id, value.clone())));
+        self.state.borrow_mut().insert_hir_typeck(hir_id, typeck_results);
+        Ok(())
+    }
+
     async fn relower_cached_lir_units(
         &mut self,
         package: &Rc<RefCell<fp_core::package::CompiledPackage>>,
     ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
         let package_id = self
-            .state
+            .state.borrow()
             .typing_ctx
             .env_ctx
             .current_package()
@@ -682,7 +737,7 @@ impl CompilerDriver {
                 )
             })?;
         let hir_package_id = self
-            .state
+            .state.borrow()
             .typing_ctx
             .env_ctx
             .compiled_package(&package_id)
@@ -695,7 +750,7 @@ impl CompilerDriver {
             self.lower_to_mir(&hir_id, &fqp).await?;
         {
             let mut package = package.borrow_mut();
-            package.mir_program = Some(self.state.mir(&mir_id)?.clone());
+            package.mir_program = Some(self.state.borrow().mir(&mir_id)?.clone());
             package.mir_struct_fields.extend(struct_layouts);
             package.mir_adt_defs.extend(adt_defs.clone());
         }
@@ -712,30 +767,47 @@ impl CompilerDriver {
         Ok(vec![fp_core::lir::LirCompileUnit {
             package_id: hir_package_id,
             module_path,
-            program: self.state.lir(&lir_id)?.clone(),
+            program: self.state.borrow().lir(&lir_id)?.clone(),
         }])
     }
 
-    /// Type-checks `program`, answering each `const { .. }` block's
-    /// `ComptimeRequest` from `resolved_block_values` (this package's
-    /// comptime fixpoint accumulator — see `compile_package`) when a real
-    /// value is already known for that block's `expression_id`, falling
-    /// back to the `Value::Undefined` placeholder otherwise. Either way
-    /// typing itself keeps moving: neither `ConstBlock` arm in
-    /// `hir_typeck.rs` needs the resolved *value* to determine its own
-    /// *type* (that comes from checking the body independently) — the
-    /// value only matters for embedding a real constant later and (for a
-    /// type-position block) making a comptime-produced type visible to
-    /// later code, both of which the fixpoint loop's later passes handle
-    /// once the real value is known.
+    /// Type-checks `program`. Each `const { .. }` block's `ComptimeRequest`
+    /// (`hir_typeck.rs`'s two `ConstBlock` arms, both genuinely `.await` it —
+    /// suspending there is what lets the executor make progress on other,
+    /// independent items in the meantime, exactly like any other suspend
+    /// point) is answered with a *real* value computed by the interpreter,
+    /// never a placeholder:
+    ///
+    /// 1. If a value for that block's `expression_id` is already cached
+    ///    (`resolved_block_values`, populated by a previous round of step 2
+    ///    below), answer immediately from the cache.
+    /// 2. Otherwise, once ticking the shared executor makes no more
+    ///    progress and requests are still waiting, attempt real evaluation
+    ///    right now via `resolve_comptime_values_now`, using whatever HIR
+    ///    typing has recorded so far — this is safe even mid-pass, since
+    ///    both `ConstBlock` arms record their block's own body type
+    ///    (`check_expr`/`typeck_exprs`) *before* ever awaiting the value, so
+    ///    a request being pending never means its own recorded types are
+    ///    incomplete. Cache whatever new values come back and loop; the
+    ///    answer-from-cache step above completes the matching requests next
+    ///    time around, which resumes their tasks and unblocks further
+    ///    typing (possibly exposing further comptime requests, handled the
+    ///    same way).
+    /// 3. If that attempt yields nothing new and the executor is
+    ///    genuinely stalled (`has_parked_tasks`), this is a real dependency
+    ///    cycle (or an unrecoverable evaluation error) — every request
+    ///    still waiting is completed with a real `Err`, not a placeholder,
+    ///    which fails only the specific item(s) involved (per-item
+    ///    isolation — see `typecheck_item`), not the whole package.
     async fn type_check_program(
         &mut self,
         program: hir::Program,
-        resolved_block_values: &HashMap<hir::HirId, Value>,
     ) -> fp_core::Result<(hir::Program, fp_typing::TypeckResults)> {
-        let context = self.state.typing_ctx.clone();
+        let context = self.state.borrow().typing_ctx.clone();
         let (shared, mut future) =
             fp_typing::spawn_package_typecheck(program, Some(context.clone()));
+        let mut resolved_block_values: HashMap<hir::HirId, Value> = HashMap::new();
+        let mut pending_requests: Vec<fp_typing::PendingComptimeRequest> = Vec::new();
         loop {
             let poll = {
                 let waker = Waker::noop();
@@ -757,55 +829,150 @@ impl CompilerDriver {
                     while context.executor.tick().is_some() {
                         progressed = true;
                     }
-                    let requests = self.state.typing_ctx.take_comptime_requests();
-                    if !requests.is_empty() {
-                        progressed = true;
-                        for request in requests {
+                    pending_requests.extend(self.state.borrow().typing_ctx.take_comptime_requests());
+                    if !pending_requests.is_empty() {
+                        let mut still_pending = Vec::new();
+                        for request in pending_requests.drain(..) {
                             let expression_id = request.request().expression_id;
-                            let value = resolved_block_values
-                                .get(&expression_id)
-                                .cloned()
-                                .unwrap_or(Value::Undefined(fp_core::ast::ValueUndefined));
-                            request.complete(Ok(value));
+                            if let Some(value) = resolved_block_values.get(&expression_id) {
+                                request.complete(Ok(value.clone()));
+                                progressed = true;
+                            } else {
+                                still_pending.push(request);
+                            }
                         }
+                        pending_requests = still_pending;
                     }
-                    if !progressed {
+                    if progressed {
+                        continue;
+                    }
+                    if pending_requests.is_empty() {
                         if context.executor.has_parked_tasks() {
                             return Err(fp_core::error::Error::from(
                                 "HIR type checking stalled: a genuine dependency cycle among \
-                                 same-package items (or comptime blocks) prevented further progress",
+                                 same-package items prevented further progress",
                             ));
                         }
                         return Err(fp_core::error::Error::from(
                             "HIR type checking suspended without a comptime request",
                         ));
                     }
+                    // Nothing else can progress except by answering the
+                    // requests still waiting — try to compute their values
+                    // for real, using everything typed so far.
+                    let (program_snapshot, typeck_snapshot) =
+                        fp_typing::finish_package_typecheck(&shared);
+                    let new_values = self
+                        .resolve_comptime_values_now(&program_snapshot, &typeck_snapshot)
+                        .await
+                        .unwrap_or_default();
+                    if new_values.is_empty() {
+                        // A genuine stall: evaluation couldn't produce
+                        // anything new and nothing else can run either.
+                        // Fail every still-pending request with a real
+                        // error (naming the stuck expressions) instead of
+                        // hanging or silently defaulting — this only fails
+                        // the specific item(s) awaiting these requests, not
+                        // the rest of the package (see `typecheck_item`).
+                        for request in pending_requests.drain(..) {
+                            let expression_id = request.request().expression_id;
+                            request.complete(Err(fp_core::error::Error::from(format!(
+                                "comptime evaluation for expression {expression_id} did not \
+                                 converge — this usually means a dependency cycle among \
+                                 `const {{ .. }}` blocks or the same-package items they call"
+                            ))));
+                        }
+                    } else {
+                        resolved_block_values.extend(new_values);
+                    }
                 }
             }
         }
+    }
+
+    /// Attempts real, interpreter-backed evaluation of every currently
+    /// registerable comptime entry in `program`, using `typeck_results` as
+    /// it stands right now (possibly mid-typing-pass — see
+    /// `type_check_program`'s doc comment for why that's sound). Lowers
+    /// into a scratch HIR/MIR/LIR slot (not the package's real one, which
+    /// isn't populated until the whole pass finishes) and reuses
+    /// `lower_to_mir`/`lower_to_lir`/`evaluate_comptime_lir` unchanged.
+    /// Returns whatever values could be computed; a lowering failure here
+    /// just means "not everything needed is typed yet" (e.g. this round's
+    /// snapshot still has an unchecked item in the middle of some other
+    /// pending request's dependency chain) — reported as an empty map, not
+    /// propagated, since the caller retries on the next round once more
+    /// typing has happened.
+    async fn resolve_comptime_values_now(
+        &mut self,
+        program: &hir::Program,
+        typeck_results: &fp_typing::TypeckResults,
+    ) -> Result<HashMap<hir::HirId, Value>, CompilerDriverError> {
+        let package_id = self
+            .state.borrow()
+            .typing_ctx
+            .env_ctx
+            .current_package()
+            .cloned()
+            .ok_or_else(|| {
+                CompilerDriverError::UnresolvablePackage(
+                    "comptime evaluation requires a focused package workspace".to_string(),
+                )
+            })?;
+        let module_path = QualifiedPath::new(vec!["__comptime_probe__".to_string()]);
+        let hir_id = HirId::new(format!("hir:{}", self.module_state_key(&module_path)));
+        let fqp = FullyQualifiedPath::new(module_path);
+        self.state.borrow_mut().insert_hir(hir_id.clone(), program.clone());
+        self.state.borrow_mut()
+            .insert_hir_typeck(hir_id.clone(), typeck_results.clone());
+        let (mir_id, _, full_layouts, _, opaque_payload_sizes) =
+            self.lower_to_mir(&hir_id, &fqp).await?;
+        let lir_id = self.lower_to_lir(
+            &mir_id,
+            &fqp,
+            &package_id,
+            &full_layouts,
+            &opaque_payload_sizes,
+        )?;
+        self.evaluate_comptime_lir(&lir_id, &fqp).await
     }
 
     /// Interprets every comptime entry in `lir_id`'s `LirProgram` for real
     /// and returns each const block's resolved value keyed by its own
     /// `HirId` (`LirComptimeEntry::const_block_hir_id`, threaded through
     /// structurally from `register_const_block_comptime_entry` via
-    /// `mir::ExecutableConst`) — the bridge that lets the driver's comptime
-    /// fixpoint loop (`compile_package`) feed real values back into the
-    /// *next* `type_check_program` pass instead of the `Value::Undefined`
-    /// placeholder every request used to get.
+    /// `mir::ExecutableConst`). Two callers: `resolve_comptime_values_now`
+    /// (mid-typing-pass, on a scratch HIR/MIR/LIR slot, to answer pending
+    /// `ComptimeRequest`s for real — see `type_check_program`) and
+    /// `compile_package`'s post-typing pass (to embed real constants via
+    /// `apply_resolved_comptime_block_values` + `relower_cached_lir_units`,
+    /// for whichever entries the mid-pass attempts hadn't already resolved).
     async fn evaluate_comptime_lir(
         &mut self,
         lir_id: &LirId,
         path: &FullyQualifiedPath,
     ) -> Result<HashMap<hir::HirId, Value>, CompilerDriverError> {
-        let lir = self.state.lir(lir_id)?.clone();
+        Self::evaluate_comptime_lir_with(&self.state, lir_id, path)
+    }
+
+    /// Same as `evaluate_comptime_lir`, but against a bare
+    /// `Rc<RefCell<CompilerState>>` and its own fresh, local
+    /// `LirInterpreter` (not `CompilerDriver.interpreter` — every call site
+    /// already resets that field unconditionally before use, so it never
+    /// carried state across calls anyway) — see `lower_to_mir_with`.
+    fn evaluate_comptime_lir_with(
+        state: &Rc<RefCell<CompilerState>>,
+        lir_id: &LirId,
+        path: &FullyQualifiedPath,
+    ) -> Result<HashMap<hir::HirId, Value>, CompilerDriverError> {
+        let lir = state.borrow().lir(lir_id)?.clone();
         // Only `comptime_entries` is needed after `lir` itself is moved into
         // `all_units` below — clone just that (much smaller than the whole
         // program) rather than cloning the entire `LirProgram` a second time.
         let comptime_entries = lir.comptime_entries.clone();
 
-        let package_id = self
-            .state
+        let package_id = state
+            .borrow()
             .typing_ctx
             .env_ctx
             .current_package()
@@ -817,7 +984,8 @@ impl CompilerDriver {
             })?;
         let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
         if comptime_entries.is_empty() {
-            self.state
+            state
+                .borrow_mut()
                 .insert_const_value(value_id.clone(), Value::unit());
             return Ok(HashMap::new());
         }
@@ -825,8 +993,8 @@ impl CompilerDriver {
         // cloning every artifact from every dependency into one throwaway
         // combined workspace first — `run_function_named_in_workspace`
         // now accepts a chain and checks each in turn.
-        let dependency_packages: Vec<_> = self
-            .state
+        let dependency_packages: Vec<_> = state
+            .borrow()
             .typing_ctx
             .env_ctx
             .crates()
@@ -858,13 +1026,13 @@ impl CompilerDriver {
         let mut count = 0usize;
         let mut last = Value::unit();
         let mut block_values: HashMap<hir::HirId, Value> = HashMap::new();
-        self.interpreter = LirInterpreter::new();
-        let resolved = self.collect_resolved_const_values();
-        self.interpreter
+        let mut interpreter = LirInterpreter::new();
+        let resolved = Self::resolved_const_values_snapshot(&state.borrow().typing_ctx);
+        interpreter
             .inject_globals(&resolved)
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         for entry in &comptime_entries {
-            let result = self.interpreter.run_function_named_in_workspace(
+            let result = interpreter.run_function_named_in_workspace(
                 &workspaces,
                 &package_id,
                 &entry.function,
@@ -881,8 +1049,7 @@ impl CompilerDriver {
                         entry.function
                     ))
                 })?;
-            value = self
-                .interpreter
+            value = interpreter
                 .read_typed_const_value(value, &entry_lir_ty)
                 .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
             // Store struct types from ALL entries, not just the last one.
@@ -890,31 +1057,32 @@ impl CompilerDriver {
             let entry_struct = Self::extract_struct_type(&value);
             if let Some(ref struct_ty) = entry_struct {
                 let name = struct_ty.name.as_str().to_string();
-                self.state
+                state
+                    .borrow()
                     .typing_ctx
                     .resolved_types
                     .borrow_mut()
                     .insert(name.clone(), struct_ty.clone());
-                self.state.typing_ctx.wake_comptime(&name);
+                state.borrow().typing_ctx.wake_comptime(&name);
             }
-            let constant = self
-                .value_to_mir_constant(&value, &entry.ty)
-                .ok_or_else(|| {
-                    CompilerDriverError::UnsupportedWork(format!(
-                        "unsupported comptime result for {}",
-                        entry.key
-                    ))
-                })?;
-            self.state
+            let constant = Self::value_to_mir_constant(&value, &entry.ty).ok_or_else(|| {
+                CompilerDriverError::UnsupportedWork(format!(
+                    "unsupported comptime result for {}",
+                    entry.key
+                ))
+            })?;
+            state
+                .borrow_mut()
                 .insert_resolved_const_value(entry.key.clone(), constant);
-            self.state
+            state
+                .borrow_mut()
                 .insert_typing_const(entry.key.clone(), value.clone());
             if let Some(hir_id) = entry.const_block_hir_id {
                 block_values.insert(hir_id, value.clone());
             }
             let mut newly_resolved = HashMap::new();
             newly_resolved.insert(entry.key.clone(), value.clone());
-            self.interpreter
+            interpreter
                 .inject_globals(&newly_resolved)
                 .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
             last = value;
@@ -923,7 +1091,7 @@ impl CompilerDriver {
 
         // Store the final value for const evaluation purposes
         let _ = count;
-        self.state.insert_const_value(value_id.clone(), last);
+        state.borrow_mut().insert_const_value(value_id.clone(), last);
         Ok(block_values)
     }
 
@@ -954,11 +1122,33 @@ impl CompilerDriver {
         ),
         CompilerDriverError,
     > {
+        Self::lower_to_mir_with(&self.state, hir_id, path).await
+    }
+
+    /// Same as `lower_to_mir`, but against a bare `Rc<RefCell<CompilerState>>` —
+    /// this is what lets the comptime-resolution task (spawned 'static,
+    /// independent of whatever `&mut CompilerDriver` chain is also in
+    /// progress — see `CompilerDriver::state`'s doc comment) reuse the
+    /// exact same lowering logic instead of duplicating it.
+    async fn lower_to_mir_with(
+        state: &Rc<RefCell<CompilerState>>,
+        hir_id: &HirId,
+        path: &FullyQualifiedPath,
+    ) -> Result<
+        (
+            MirId,
+            HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>>,
+            HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>,
+            HashMap<fp_core::hir::DefId, fp_core::mir::ty::AdtDef>,
+            HashMap<String, u64>,
+        ),
+        CompilerDriverError,
+    > {
         // HIR has already passed type checking at this boundary. Lowering is
         // therefore strict: a failure is an internal compiler error, never a
         // recoverable source diagnostic.
-        let mut hir = self.state.hir(hir_id)?.clone();
-        let typeck_results = self.state.hir_typeck(hir_id)?.clone();
+        let mut hir = state.borrow().hir(hir_id)?.clone();
+        let typeck_results = state.borrow().hir_typeck(hir_id)?.clone();
         let mut lowering = MirLowering::new()
             .with_typeck_results(&typeck_results)
             .map_err(|error| {
@@ -967,7 +1157,7 @@ impl CompilerDriver {
                     path.to_key()
                 ))
             })?;
-        for (key, value) in self.state.resolved_const_values() {
+        for (key, value) in state.borrow().resolved_const_values() {
             lowering.seed_resolved_const(key.to_string(), value.clone());
         }
         let result = lowering.transform_async(hir).await;
@@ -1028,8 +1218,8 @@ impl CompilerDriver {
             full_layouts.insert((key.def_id, key.args.clone()), fields);
         }
         let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
-        let mir_id = MirId::new(format!("mir:{}", self.module_state_key(path.path())));
-        self.state.insert_mir(mir_id.clone(), mir);
+        let mir_id = MirId::new(format!("mir:{}", Self::module_state_key_for(state, path.path())));
+        state.borrow_mut().insert_mir(mir_id.clone(), mir);
         Ok((mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes))
     }
 
@@ -1041,7 +1231,27 @@ impl CompilerDriver {
         full_layouts: &HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>,
         opaque_payload_sizes: &HashMap<String, u64>,
     ) -> Result<LirId, CompilerDriverError> {
-        let mir = self.state.mir(mir_id)?.clone();
+        Self::lower_to_lir_with(
+            &self.state,
+            mir_id,
+            path,
+            package_id,
+            full_layouts,
+            opaque_payload_sizes,
+        )
+    }
+
+    /// Same as `lower_to_lir`, but against a bare `Rc<RefCell<CompilerState>>` —
+    /// see `lower_to_mir_with`.
+    fn lower_to_lir_with(
+        state: &Rc<RefCell<CompilerState>>,
+        mir_id: &MirId,
+        path: &FullyQualifiedPath,
+        package_id: &PackageId,
+        full_layouts: &HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>,
+        opaque_payload_sizes: &HashMap<String, u64>,
+    ) -> Result<LirId, CompilerDriverError> {
+        let mir = state.borrow().mir(mir_id)?.clone();
         // Dependency packages (this package's own entry is included too,
         // and by this point already carries this call's freshly-extended
         // `mir_struct_fields`/`mir_adt_defs` — see the callers) are handed
@@ -1052,15 +1262,15 @@ impl CompilerDriver {
         // below for `predeclare_dependency_function_signatures` too, rather
         // than taking a second separate `env_ctx.crates()` borrow/iteration
         // for the same data a few lines later.
-        let dependency_packages: Vec<_> = self
-            .state
+        let dependency_packages: Vec<_> = state
+            .borrow()
             .typing_ctx
             .env_ctx
             .crates()
             .iter()
             .map(|(id, package)| (id.clone(), package.clone()))
             .collect();
-        let mut lowering = LirGenerator::new(self.state.typing_ctx.data_layout.clone())
+        let mut lowering = LirGenerator::new(state.borrow().typing_ctx.data_layout.clone())
             .with_package_id(package_id.clone())
             .with_module_path(path.path().to_key())
             .with_full_layouts(full_layouts.clone())
@@ -1089,7 +1299,7 @@ impl CompilerDriver {
             ))
         })?;
         let lir_id = Self::package_module_lir_id(package_id, path.path());
-        self.state.insert_lir(lir_id.clone(), lir);
+        state.borrow_mut().insert_lir(lir_id.clone(), lir);
         Ok(lir_id)
     }
 
@@ -1098,7 +1308,7 @@ impl CompilerDriver {
     }
 
     fn collect_resolved_const_values(&self) -> HashMap<String, Value> {
-        Self::resolved_const_values_snapshot(&self.state.typing_ctx)
+        Self::resolved_const_values_snapshot(&self.state.borrow().typing_ctx)
     }
 
     /// Same as `collect_resolved_const_values`, but against a bare
@@ -1107,7 +1317,7 @@ impl CompilerDriver {
         typing_ctx.resolved_consts.borrow().clone()
     }
 
-    fn value_to_mir_constant(&self, value: &Value, ty: &mir::Ty) -> Option<mir::Constant> {
+    fn value_to_mir_constant(value: &Value, ty: &mir::Ty) -> Option<mir::Constant> {
         let literal = match value {
             Value::Bool(value) => mir::ConstantKind::Bool(value.value),
             Value::Int(value) => mir::ConstantKind::Int(value.value),
@@ -1121,7 +1331,7 @@ impl CompilerDriver {
                 mir::ConstantKind::Str(s)
             }
             Value::Null(_) => mir::ConstantKind::Null,
-            _ => mir::ConstantKind::Val(self.value_to_const_value(value, ty)?),
+            _ => mir::ConstantKind::Val(Self::value_to_const_value(value, ty)?),
         };
         Some(mir::Constant {
             span: Span::null(),
@@ -1131,7 +1341,7 @@ impl CompilerDriver {
         })
     }
 
-    fn value_to_const_value(&self, value: &Value, ty: &mir::Ty) -> Option<mir::ConstValue> {
+    fn value_to_const_value(value: &Value, ty: &mir::Ty) -> Option<mir::ConstValue> {
         match value {
             Value::Unit(_) => Some(mir::ConstValue::Unit),
             Value::Bool(value) => Some(mir::ConstValue::Bool(value.value)),
@@ -1178,7 +1388,7 @@ impl CompilerDriver {
                     .values
                     .iter()
                     .zip(fields.iter())
-                    .map(|(value, field_ty)| self.value_to_const_value(value, field_ty))
+                    .map(|(value, field_ty)| Self::value_to_const_value(value, field_ty))
                     .collect::<Option<Vec<_>>>()?;
                 Some(mir::ConstValue::Tuple(values))
             }
@@ -1187,7 +1397,7 @@ impl CompilerDriver {
                     let values = list
                         .values
                         .iter()
-                        .map(|value| self.value_to_const_value(value, elem_ty))
+                        .map(|value| Self::value_to_const_value(value, elem_ty))
                         .collect::<Option<Vec<_>>>()?;
                     Some(mir::ConstValue::Array(values))
                 }
@@ -1195,7 +1405,7 @@ impl CompilerDriver {
                     let values = list
                         .values
                         .iter()
-                        .map(|value| self.value_to_const_value(value, elem_ty))
+                        .map(|value| Self::value_to_const_value(value, elem_ty))
                         .collect::<Option<Vec<_>>>()?;
                     Some(mir::ConstValue::List {
                         elements: values,
@@ -1214,7 +1424,7 @@ impl CompilerDriver {
                         .fields
                         .iter()
                         .zip(fields.iter())
-                        .map(|(field, field_ty)| self.value_to_const_value(&field.value, field_ty))
+                        .map(|(field, field_ty)| Self::value_to_const_value(&field.value, field_ty))
                         .collect::<Option<Vec<_>>>()?;
                     Some(mir::ConstValue::Struct(values))
                 }
@@ -1227,7 +1437,7 @@ impl CompilerDriver {
                         .structural
                         .fields
                         .iter()
-                        .map(|field| self.value_to_untyped_const_value(&field.value))
+                        .map(|field| Self::value_to_untyped_const_value(&field.value))
                         .collect::<Option<Vec<_>>>()?;
                     Some(mir::ConstValue::Struct(values))
                 }
@@ -1242,7 +1452,7 @@ impl CompilerDriver {
                         .fields
                         .iter()
                         .zip(fields.iter())
-                        .map(|(field, field_ty)| self.value_to_const_value(&field.value, field_ty))
+                        .map(|(field, field_ty)| Self::value_to_const_value(&field.value, field_ty))
                         .collect::<Option<Vec<_>>>()?;
                     Some(mir::ConstValue::Struct(values))
                 }
@@ -1254,7 +1464,7 @@ impl CompilerDriver {
                     let values = structural
                         .fields
                         .iter()
-                        .map(|field| self.value_to_untyped_const_value(&field.value))
+                        .map(|field| Self::value_to_untyped_const_value(&field.value))
                         .collect::<Option<Vec<_>>>()?;
                     Some(mir::ConstValue::Struct(values))
                 }
@@ -1264,7 +1474,7 @@ impl CompilerDriver {
         }
     }
 
-    fn value_to_untyped_const_value(&self, value: &Value) -> Option<mir::ConstValue> {
+    fn value_to_untyped_const_value(value: &Value) -> Option<mir::ConstValue> {
         match value {
             Value::Unit(_) => Some(mir::ConstValue::Unit),
             Value::Bool(value) => Some(mir::ConstValue::Bool(value.value)),
@@ -1283,13 +1493,13 @@ impl CompilerDriver {
                 tuple
                     .values
                     .iter()
-                    .map(|value| self.value_to_untyped_const_value(value))
+                    .map(|value| Self::value_to_untyped_const_value(value))
                     .collect::<Option<Vec<_>>>()?,
             )),
             Value::List(list) => Some(mir::ConstValue::Array(
                 list.values
                     .iter()
-                    .map(|value| self.value_to_untyped_const_value(value))
+                    .map(|value| Self::value_to_untyped_const_value(value))
                     .collect::<Option<Vec<_>>>()?,
             )),
             Value::Struct(value_struct) => Some(mir::ConstValue::Struct(
@@ -1297,14 +1507,14 @@ impl CompilerDriver {
                     .structural
                     .fields
                     .iter()
-                    .map(|field| self.value_to_untyped_const_value(&field.value))
+                    .map(|field| Self::value_to_untyped_const_value(&field.value))
                     .collect::<Option<Vec<_>>>()?,
             )),
             Value::Structural(structural) => Some(mir::ConstValue::Struct(
                 structural
                     .fields
                     .iter()
-                    .map(|field| self.value_to_untyped_const_value(&field.value))
+                    .map(|field| Self::value_to_untyped_const_value(&field.value))
                     .collect::<Option<Vec<_>>>()?,
             )),
             _ => None,
