@@ -3097,6 +3097,103 @@ mod tests {
         }
     }
 
+    /// The core same-package ordering fix: `const A` (checked first, per
+    /// `program.items`' textual order) references `const B`, declared
+    /// *later* in the same list. Before `expr_path_ty`'s `Const` arm
+    /// awaited `B`'s own task on demand, this silently fell back to
+    /// "constant type was not recorded" instead of resolving `B`'s real
+    /// type.
+    #[test]
+    fn forward_referenced_const_resolves_regardless_of_item_order() {
+        let b_def_id = hir::DefId::local(2);
+        let a_def_id = hir::DefId::local(1);
+
+        let b_item = hir::Item {
+            hir_id: 10,
+            def_id: b_def_id,
+            visibility: hir::Visibility::Private,
+            kind: hir::ItemKind::Const(hir::Const {
+                name: "B".into(),
+                ty: hir::TypeExpr {
+                    hir_id: 11,
+                    kind: hir::TypeExprKind::Primitive(TypePrimitive::Int(TypeInt::I64)),
+                    span: fp_core::span::Span::null(),
+                },
+                body: hir::Body {
+                    hir_id: 12,
+                    params: Vec::new(),
+                    value: hir::Expr {
+                        hir_id: 13,
+                        kind: hir::ExprKind::Literal(hir::Lit::Integer(41)),
+                        span: fp_core::span::Span::null(),
+                    },
+                },
+            }),
+            span: fp_core::span::Span::null(),
+        };
+
+        let a_item = hir::Item {
+            hir_id: 20,
+            def_id: a_def_id,
+            visibility: hir::Visibility::Private,
+            kind: hir::ItemKind::Const(hir::Const {
+                name: "A".into(),
+                ty: hir::TypeExpr {
+                    hir_id: 21,
+                    kind: hir::TypeExprKind::Primitive(TypePrimitive::Int(TypeInt::I64)),
+                    span: fp_core::span::Span::null(),
+                },
+                body: hir::Body {
+                    hir_id: 22,
+                    params: Vec::new(),
+                    value: hir::Expr {
+                        hir_id: 23,
+                        kind: hir::ExprKind::Binary(
+                            hir::BinOp::Add,
+                            Box::new(hir::Expr {
+                                hir_id: 24,
+                                kind: hir::ExprKind::Path(hir::Path {
+                                    segments: vec![hir::PathSegment {
+                                        name: "B".into(),
+                                        args: None,
+                                    }],
+                                    res: Some(hir::Res::Def(b_def_id)),
+                                }),
+                                span: fp_core::span::Span::null(),
+                            }),
+                            Box::new(hir::Expr {
+                                hir_id: 25,
+                                kind: hir::ExprKind::Literal(hir::Lit::Integer(1)),
+                                span: fp_core::span::Span::null(),
+                            }),
+                        ),
+                        span: fp_core::span::Span::null(),
+                    },
+                },
+            }),
+            span: fp_core::span::Span::null(),
+        };
+
+        let mut program = hir::Program::new();
+        // Textual order: A first, B second -- A's own task must await B's
+        // on demand rather than assuming it's already been checked.
+        program.items.push(a_item.clone());
+        program.items.push(b_item.clone());
+        program.def_map.insert(a_def_id, a_item);
+        program.def_map.insert(b_def_id, b_item);
+
+        let (_, results) = typecheck_program_sync(program).expect("HIR type check");
+        assert_eq!(
+            results.const_types.get(&a_def_id),
+            Some(&Ty::int(ty::IntTy::I64)),
+            "forward-referenced const B's type must resolve, not fall back to error_ty"
+        );
+        assert_eq!(
+            results.const_types.get(&b_def_id),
+            Some(&Ty::int(ty::IntTy::I64))
+        );
+    }
+
     #[test]
     fn records_literal_type_by_hir_id() {
         let expr = hir::Expr {
