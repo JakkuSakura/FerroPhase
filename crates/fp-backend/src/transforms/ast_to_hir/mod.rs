@@ -1382,17 +1382,20 @@ impl HirGenerator {
     /// currently holds — used to seed `ClosureLowering`'s structural
     /// closure-argument-type derivation with definitions that live outside
     /// the package currently being lowered (see its call site in
-    /// `transform_package`). **Known gap**: `for_package`'s per-package
-    /// `WorkspaceContext` only ever gets `std`/`libc` and itself
-    /// `import_package`d into `crates()` (see `compile_package`, which
-    /// never imports a package's *own* declared dependencies there) — an
-    /// ordinary sibling dependency (e.g. skln-git's use of skln-core's
-    /// `FileTreeEntry`) is invisible here even though it's fully compiled
-    /// by this point. The right source for that is `workspace.
-    /// hir_definitions()` (already used by `seed_workspace_definitions`),
-    /// which needs a `hir::TypeExpr -> ast::Ty` conversion to plug into
-    /// this AST-level pass — not yet wired up, so cross-package receiver
-    /// types still fall back to `Any` in `closure_param_ty_for_invoke`.
+    /// `transform_package`).
+    ///
+    /// This relies on a package's *ordinary* declared dependencies (e.g.
+    /// skln-git's dependency on skln-core) actually being present in
+    /// `crates()` — which in turn relies on `RustPackageProvider::
+    /// load_package_metadata` (fp-rust/src/provider.rs) reporting them at
+    /// all. It previously always returned empty `PackageMetadata`, so
+    /// `CompilerDriver::compile_package`'s dependency loop had nothing to
+    /// recurse into for a real project's own path dependencies (only
+    /// `std`/`libc` were ever wired up) — the analogue of rustc never
+    /// being told about an `--extern` crate. Fixed by
+    /// `workspace_path_dependencies` parsing each package's own
+    /// `Cargo.toml` `[dependencies]` table and resolving `path = ".."`
+    /// entries against the discovered workspace members.
     fn workspace_struct_field_types(&self) -> HashMap<String, Vec<(String, ast::Ty)>> {
         let mut result = HashMap::new();
         let Some(workspace) = &self.workspace else {
@@ -3907,18 +3910,30 @@ impl ClosureLowering {
     /// literal closure (see `fp-kotlin`'s `map_or`/`map_err` special
     /// cases) — `None` if the receiver's type isn't structurally
     /// resolvable, or the method isn't one of these.
-    fn closure_param_ty_for_invoke(&self, invoke: &ast::ExprInvoke) -> Option<ast::Ty> {
+    /// Returns `(param_ty, ret_ty)` for the closure argument of a
+    /// `map_or`/`map`/`map_err`/`and_then` call — the closure's own return
+    /// type also needs to be a real type, not `Unknown`: leaving it
+    /// `Unknown` reproduces the exact same "silently resolves to a null
+    /// placeholder" failure mode this whole derivation exists to avoid,
+    /// just one step later (at the synthetic `__closureN_call` function's
+    /// own return position instead of its parameter). The full body
+    /// wouldn't need type inference to get this right in general, but
+    /// `map_or`'s `default` argument is frequently a literal with an
+    /// obvious static type, which covers the common case cheaply.
+    fn closure_param_ty_for_invoke(&self, invoke: &ast::ExprInvoke) -> (Option<ast::Ty>, Option<ast::Ty>) {
         let ast::ExprInvokeTarget::Method(sel) = &invoke.target else {
-            return None;
+            return (None, None);
         };
         let arg_index = match sel.field.name.as_str() {
             "map_or" | "map" | "and_then" => 0,
             "map_err" => 1,
-            _ => return None,
+            _ => return (None, None),
         };
         let (receiver_ty, by_ref) = self.receiver_ty_for_closure_arg(&sel.obj);
-        let inner = Self::generic_type_arg_at(&receiver_ty?, arg_index)?;
-        Some(if by_ref {
+        let Some(inner) = receiver_ty.and_then(|ty| Self::generic_type_arg_at(&ty, arg_index)) else {
+            return (None, None);
+        };
+        let param_ty = if by_ref {
             ast::Ty::Reference(
                 ast::TypeReference {
                     ty: Box::new(inner),
@@ -3929,6 +3944,30 @@ impl ClosureLowering {
             )
         } else {
             inner
+        };
+        let ret_ty = if sel.field.name.as_str() == "map_or" {
+            invoke.args.first().and_then(Self::literal_expr_ty)
+        } else {
+            None
+        };
+        (Some(param_ty), ret_ty)
+    }
+
+    /// The static type of an integer/float/bool/string literal expression
+    /// — used only as a best-effort return-type hint (see
+    /// `closure_param_ty_for_invoke`), not a general literal-type table.
+    fn literal_expr_ty(expr: &ast::Expr) -> Option<ast::Ty> {
+        let ast::ExprKind::Value(value) = expr.kind() else {
+            return None;
+        };
+        Some(match value.as_ref() {
+            ast::Value::Int(_) => ast::Ty::Primitive(ast::TypePrimitive::Int(ast::TypeInt::I64)),
+            ast::Value::Decimal(_) => {
+                ast::Ty::Primitive(ast::TypePrimitive::Decimal(ast::DecimalType::F64))
+            }
+            ast::Value::Bool(_) => ast::Ty::Primitive(ast::TypePrimitive::Bool),
+            ast::Value::String(_) => ast::Ty::Primitive(ast::TypePrimitive::String),
+            _ => return None,
         })
     }
 
@@ -4054,7 +4093,11 @@ impl ClosureLowering {
     /// and return types gracefully (falling back to `Any`/`Unknown`), so
     /// synthesizing a same-arity placeholder `Ty::Function` here is
     /// sufficient to let it decompose the closure like any other.
-    fn ensure_closure_has_function_ty(expr: &mut ast::Expr, param_ty: Option<&ast::Ty>) {
+    fn ensure_closure_has_function_ty(
+        expr: &mut ast::Expr,
+        param_ty: Option<&ast::Ty>,
+        ret_ty: Option<&ast::Ty>,
+    ) {
         let ast::ExprKind::Closure(closure) = expr.kind() else {
             return;
         };
@@ -4075,10 +4118,15 @@ impl ClosureLowering {
             (Some(ty), 1) => vec![ty.clone()],
             _ => vec![ast::Ty::Any(ast::TypeAny); closure.params.len()],
         };
+        // Same reasoning applies to the closure's own return type — left
+        // `Unknown`, it reproduces the identical "silently becomes a null
+        // placeholder" failure one step later, now at the synthetic
+        // `__closureN_call` function's return position.
+        let ret_ty = ret_ty.cloned().unwrap_or(ast::Ty::Unknown(ast::TypeUnknown));
         expr.set_ty(ast::Ty::Function(ast::TypeFunction {
             params,
             generics_params: Vec::new(),
-            ret_ty: Some(Box::new(ast::Ty::Unknown(ast::TypeUnknown))),
+            ret_ty: Some(Box::new(ret_ty)),
         }));
     }
 
@@ -4382,13 +4430,17 @@ impl ClosureLowering {
                 // `closure_param_ty_for_invoke` covers; computed once per
                 // invoke (not per arg, since it depends on the whole call,
                 // not any individual argument).
-                let closure_param_ty = self.closure_param_ty_for_invoke(invoke);
+                let (closure_param_ty, closure_ret_ty) = self.closure_param_ty_for_invoke(invoke);
                 for arg in &mut invoke.args {
                     // Scoped to exactly this position (not applied to
                     // every closure `rewrite_in_expr` visits) since
                     // closures still nested inside an unexpanded macro's
                     // argument tokens must not be touched here.
-                    Self::ensure_closure_has_function_ty(arg, closure_param_ty.as_ref());
+                    Self::ensure_closure_has_function_ty(
+                        arg,
+                        closure_param_ty.as_ref(),
+                        closure_ret_ty.as_ref(),
+                    );
                     self.rewrite_in_expr(arg)?;
                 }
                 match &mut invoke.target {

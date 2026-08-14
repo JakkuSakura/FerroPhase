@@ -1582,6 +1582,7 @@ version = "0.1.0"
 dependencies = [
  "fp-core",
  "fp-lang",
+ "toml 0.8.23",
 ]
 
 [[package]]

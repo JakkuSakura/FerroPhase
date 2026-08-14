@@ -7,3 +7,4 @@ build = "build.rs"
 [dependencies]
 fp-core = { path = "../fp-core" }
 fp-lang = { path = "../fp-lang" }
+toml = "0.8"

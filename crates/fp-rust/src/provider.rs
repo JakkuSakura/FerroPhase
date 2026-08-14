@@ -73,13 +73,17 @@ impl PackageProvider for RustPackageProvider {
             let path = rs_relative_to_module_path(&rel);
             module_ids.push(ModuleId::new(&path.to_key()));
         }
+        let mut metadata = PackageMetadata::default();
+        metadata
+            .dependencies
+            .extend(workspace_path_dependencies(&dir, &self.members));
         Ok(Arc::new(PackageDescriptor {
             id: id.clone(),
             name: id.as_str().to_string(),
             version: None,
             manifest_path: VirtualPath::from_path(&dir.join("Cargo.toml")),
             root: VirtualPath::from_path(&dir),
-            metadata: Default::default(),
+            metadata,
             modules: module_ids,
         }))
     }
@@ -133,6 +137,66 @@ impl PackageProvider for RustPackageProvider {
 
         Ok(package_source_from_items(id, &items))
     }
+}
+
+/// Reads `dir/Cargo.toml`'s `[dependencies]` table and resolves every
+/// `path = "..."` entry to the sibling workspace member it points at —
+/// FerroPhase's analogue of rustc's `--extern` crate-metadata wiring: a
+/// package can only see another package's real, typed definitions (struct
+/// fields, etc.) once it's a recorded dependency here, which is what lets
+/// `CompilerDriver::compile_package`'s existing dependency loop recurse
+/// into it and register it in the depending package's own workspace
+/// (`WorkspaceContext::crates()`/`hir_definitions()`). Non-path
+/// dependencies (crates.io/registry deps) are skipped — there's no
+/// provider for arbitrary external crates, so recording an unresolvable
+/// `DependencyDescriptor` would just make `compile_package`'s dependency
+/// loop error out.
+fn workspace_path_dependencies(
+    package_dir: &Path,
+    members: &[(String, PathBuf)],
+) -> Vec<DependencyDescriptor> {
+    let manifest_path = package_dir.join("Cargo.toml");
+    let Ok(content) = std::fs::read_to_string(&manifest_path) else {
+        return Vec::new();
+    };
+    let Ok(manifest) = content.parse::<toml::Value>() else {
+        return Vec::new();
+    };
+    let Some(dependencies) = manifest.get("dependencies").and_then(|v| v.as_table()) else {
+        return Vec::new();
+    };
+
+    let canonical_members: Vec<(String, PathBuf)> = members
+        .iter()
+        .map(|(name, path)| {
+            (
+                name.clone(),
+                std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()),
+            )
+        })
+        .collect();
+
+    dependencies
+        .iter()
+        .filter_map(|(dep_name, spec)| {
+            let relative_path = spec.get("path")?.as_str()?;
+            let absolute_path = package_dir.join(relative_path);
+            let canonical_path =
+                std::fs::canonicalize(&absolute_path).unwrap_or(absolute_path);
+            let (member_name, _) = canonical_members
+                .iter()
+                .find(|(_, member_path)| *member_path == canonical_path)?;
+            Some(DependencyDescriptor {
+                package: dep_name.clone(),
+                resolved_package_id: Some(PackageId::new(member_name)),
+                constraint: None,
+                kind: DependencyKind::Normal,
+                features: Vec::new(),
+                optional: false,
+                target: Default::default(),
+            })
+        })
+        .collect()
 }
 
 /// Computes the flat, file-derived `PackageItem` path tag for a source file
