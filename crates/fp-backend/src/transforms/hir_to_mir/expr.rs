@@ -464,6 +464,22 @@ pub struct MirLowering {
     method_defs_by_self_and_name: HashMap<(hir::DefId, String), hir::DefId>,
     method_specializations: HashMap<(hir::DefId, mir::ty::SubstsRef), MethodLoweringInfo>,
     function_specializations: HashMap<(hir::DefId, mir::ty::SubstsRef), FunctionSpecializationInfo>,
+    /// Pre-substitution memo, keyed directly on a call site's own raw
+    /// arguments rather than the `substs` derived from them — lets repeat
+    /// calls to the same generic function/method with the same concrete
+    /// argument types skip the whole substitution-inference walk
+    /// (`build_substs_from_args` and its `infer_generic_from_type_expr`
+    /// fallback chain) instead of only benefiting from the cache *after*
+    /// paying for that walk. Safe because struct/enum registration
+    /// finishes in a pre-pass (`finalize_adt_definitions`) before any
+    /// function body is lowered, so the walk's inputs-to-output mapping is
+    /// pure for the remainder of the lowering pass. `Span` is deliberately
+    /// excluded — two distinct call sites with identical types must share
+    /// a cache entry.
+    function_specialization_call_cache:
+        HashMap<(hir::DefId, Vec<Ty>, Vec<Ty>, Option<Ty>), FunctionSpecializationInfo>,
+    method_specialization_call_cache:
+        HashMap<(hir::DefId, Vec<Ty>, Vec<Ty>, Option<Ty>), MethodLoweringInfo>,
     extra_items: Vec<mir::Item>,
     extra_bodies: Vec<(mir::BodyId, mir::Body)>,
     opaque_types: HashMap<String, Ty>,
@@ -564,6 +580,8 @@ impl MirLowering {
             method_defs_by_self_and_name: HashMap::new(),
             method_specializations: HashMap::new(),
             function_specializations: HashMap::new(),
+            function_specialization_call_cache: HashMap::new(),
+            method_specialization_call_cache: HashMap::new(),
             extra_items: Vec::new(),
             extra_bodies: Vec::new(),
             opaque_types: HashMap::new(),
@@ -1280,6 +1298,37 @@ impl MirLowering {
         expected_return: Option<&Ty>,
         span: Span,
     ) -> Result<FunctionSpecializationInfo> {
+        let pre_key = (
+            def_id,
+            explicit_args.to_vec(),
+            arg_types.to_vec(),
+            expected_return.cloned(),
+        );
+        if let Some(info) = self.function_specialization_call_cache.get(&pre_key) {
+            return Ok(info.clone());
+        }
+        let info = self.ensure_function_specialization_uncached(
+            def_id,
+            function,
+            explicit_args,
+            arg_types,
+            expected_return,
+            span,
+        )?;
+        self.function_specialization_call_cache
+            .insert(pre_key, info.clone());
+        Ok(info)
+    }
+
+    fn ensure_function_specialization_uncached(
+        &mut self,
+        def_id: hir::DefId,
+        function: &hir::Function,
+        explicit_args: &[Ty],
+        arg_types: &[Ty],
+        expected_return: Option<&Ty>,
+        span: Span,
+    ) -> Result<FunctionSpecializationInfo> {
         let generics = function
             .sig
             .generics
@@ -1557,6 +1606,35 @@ impl MirLowering {
     }
 
     fn ensure_method_specialization(
+        &mut self,
+        def: &MethodDefinition,
+        explicit_args: &[Ty],
+        arg_types: &[Ty],
+        expected_return: Option<&Ty>,
+        span: Span,
+    ) -> Result<MethodLoweringInfo> {
+        let pre_key = (
+            def.def_id,
+            explicit_args.to_vec(),
+            arg_types.to_vec(),
+            expected_return.cloned(),
+        );
+        if let Some(info) = self.method_specialization_call_cache.get(&pre_key) {
+            return Ok(info.clone());
+        }
+        let info = self.ensure_method_specialization_uncached(
+            def,
+            explicit_args,
+            arg_types,
+            expected_return,
+            span,
+        )?;
+        self.method_specialization_call_cache
+            .insert(pre_key, info.clone());
+        Ok(info)
+    }
+
+    fn ensure_method_specialization_uncached(
         &mut self,
         def: &MethodDefinition,
         explicit_args: &[Ty],
