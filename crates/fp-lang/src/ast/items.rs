@@ -182,17 +182,17 @@ fn parse_const_item(
     visibility: Visibility,
     attrs: Vec<Attribute>,
 ) -> ModalResult<Item> {
-    expect_keyword(input, Keyword::Const)?;
-    let mutable = expect_keyword(input, Keyword::Mut).is_ok();
+    skip_keyword(input, Keyword::Const)?;
+    let mutable = skip_keyword(input, Keyword::Mut).is_ok();
     let name = ident_like(input)?;
-    let ty = if expect_symbol(input, ":").is_ok() {
+    let ty = if skip_symbol(input, ":").is_ok() {
         Some(parse_type_expr(input)?)
     } else {
         None
     };
-    expect_symbol(input, "=")?;
+    skip_symbol(input, "=")?;
     let value = parse_expr_winnow(input, file)?;
-    expect_symbol(input, ";")?;
+    skip_symbol(input, ";")?;
     Ok(Item::from(ItemKind::DefConst(ItemDefConst {
         attrs,
         mutable: mutable.then_some(true),
@@ -210,14 +210,14 @@ fn parse_static_item(
     visibility: Visibility,
     attrs: Vec<Attribute>,
 ) -> ModalResult<Item> {
-    expect_keyword(input, Keyword::Static)?;
-    let _mutable = expect_keyword(input, Keyword::Mut).is_ok();
+    skip_keyword(input, Keyword::Static)?;
+    let _mutable = skip_keyword(input, Keyword::Mut).is_ok();
     let name = ident_like(input)?;
-    expect_symbol(input, ":")?;
+    skip_symbol(input, ":")?;
     let ty = parse_type_expr(input)?;
-    expect_symbol(input, "=")?;
+    skip_symbol(input, "=")?;
     let value = parse_expr_winnow(input, file)?;
-    expect_symbol(input, ";")?;
+    skip_symbol(input, ";")?;
     Ok(Item::from(ItemKind::DefStatic(ItemDefStatic {
         attrs,
         ty_annotation: None,
@@ -233,15 +233,15 @@ fn parse_type_alias_item(
     visibility: Visibility,
     attrs: Vec<Attribute>,
 ) -> ModalResult<Item> {
-    expect_keyword(input, Keyword::Type)?;
+    skip_keyword(input, Keyword::Type)?;
     let name = ident_like(input)?;
     let generics_params = parse_optional_generic_params(input)?;
-    if expect_keyword(input, Keyword::Where).is_ok() {
+    if skip_keyword(input, Keyword::Where).is_ok() {
         skip_where_clause(input)?;
     }
-    expect_symbol(input, "=")?;
+    skip_symbol(input, "=")?;
     let value = parse_type_expr(input)?;
-    expect_symbol(input, ";")?;
+    skip_symbol(input, ";")?;
     Ok(Item::from(ItemKind::DefType(ItemDefType {
         attrs,
         visibility,
@@ -256,14 +256,14 @@ fn parse_struct_item(
     visibility: Visibility,
     attrs: Vec<Attribute>,
 ) -> ModalResult<Item> {
-    expect_keyword(input, Keyword::Struct)?;
+    skip_keyword(input, Keyword::Struct)?;
     let name = ident_like(input)?;
     let generics_params = parse_optional_generic_params(input)?;
-    if expect_keyword(input, Keyword::Where).is_ok() {
+    if skip_keyword(input, Keyword::Where).is_ok() {
         skip_where_clause(input)?;
     }
     let mut fields = Vec::new();
-    if expect_symbol(input, ";").is_ok() {
+    if skip_symbol(input, ";").is_ok() {
         return Ok(Item::from(ItemKind::DefStruct(ItemDefStruct {
             attrs,
             visibility,
@@ -276,7 +276,7 @@ fn parse_struct_item(
             },
         })));
     }
-    if expect_symbol(input, "(").is_ok() {
+    if skip_symbol(input, "(").is_ok() {
         let mut index = 0usize;
         while peek_symbol(input) != Some(")") {
             skip_outer_attrs_for_field(input)?;
@@ -284,12 +284,12 @@ fn parse_struct_item(
             let value = parse_type_expr(input)?;
             fields.push(StructuralField::new(Ident::new(index.to_string()), value));
             index += 1;
-            if expect_symbol(input, ",").is_err() {
+            if skip_symbol(input, ",").is_err() {
                 break;
             }
         }
-        expect_symbol(input, ")")?;
-        expect_symbol(input, ";")?;
+        skip_symbol(input, ")")?;
+        skip_symbol(input, ";")?;
         return Ok(Item::from(ItemKind::DefStruct(ItemDefStruct {
             attrs,
             visibility,
@@ -302,13 +302,13 @@ fn parse_struct_item(
             },
         })));
     }
-    expect_symbol(input, "{")?;
+    skip_symbol(input, "{")?;
     while peek_symbol(input) != Some("}") {
         skip_outer_attrs_for_field(input)?;
         let _field_visibility = parse_visibility(input)?;
         let field_name = ident_like(input)?;
-        let is_optional = expect_symbol(input, "?").is_ok();
-        expect_symbol(input, ":")?;
+        let is_optional = skip_symbol(input, "?").is_ok();
+        skip_symbol(input, ":")?;
         let mut value = parse_type_expr(input)?;
         if is_optional {
             value = Ty::TypeBinaryOp(
@@ -321,11 +321,11 @@ fn parse_struct_item(
             );
         }
         fields.push(StructuralField::new(field_name, value));
-        if expect_symbol(input, ",").is_err() {
+        if skip_symbol(input, ",").is_err() {
             break;
         }
     }
-    expect_symbol(input, "}")?;
+    skip_symbol(input, "}")?;
     Ok(Item::from(ItemKind::DefStruct(ItemDefStruct {
         attrs,
         visibility,
@@ -344,7 +344,7 @@ fn parse_const_struct_item(
     visibility: Visibility,
     mut attrs: Vec<Attribute>,
 ) -> ModalResult<Item> {
-    expect_keyword(input, Keyword::Const)?;
+    skip_keyword(input, Keyword::Const)?;
     attrs.push(const_struct_attr());
     parse_struct_item(input, visibility, attrs)
 }
@@ -370,24 +370,24 @@ fn parse_fn_item_core(
     attrs: Vec<Attribute>,
     quoted: bool,
 ) -> ModalResult<Item> {
-    let _is_unsafe = expect_keyword(input, Keyword::Unsafe).is_ok();
-    let is_async = expect_keyword(input, Keyword::Async).is_ok();
-    let is_const = expect_keyword(input, Keyword::Const).is_ok();
+    let _is_unsafe = skip_keyword(input, Keyword::Unsafe).is_ok();
+    let is_async = skip_keyword(input, Keyword::Async).is_ok();
+    let is_const = skip_keyword(input, Keyword::Const).is_ok();
     if quoted {
-        expect_keyword(input, Keyword::Quote)?;
+        skip_keyword(input, Keyword::Quote)?;
     }
-    expect_keyword(input, Keyword::Fn)?;
+    skip_keyword(input, Keyword::Fn)?;
     let name = ident_like(input)?;
     let generics_params = parse_optional_generic_params(input)?;
-    expect_symbol(input, "(")?;
+    skip_symbol(input, "(")?;
     let (receiver, params) = parse_fn_params_with_receiver(input)?;
-    expect_symbol(input, ")")?;
-    let ret_ty = if expect_symbol(input, "->").is_ok() {
+    skip_symbol(input, ")")?;
+    let ret_ty = if skip_symbol(input, "->").is_ok() {
         Some(parse_type_expr(input)?)
     } else {
         None
     };
-    if expect_keyword(input, Keyword::Where).is_ok() {
+    if skip_keyword(input, Keyword::Where).is_ok() {
         skip_where_clause(input)?;
     }
     // `quote fn f(..) -> item { <items> }` is sugar for
@@ -446,20 +446,20 @@ fn parse_trait_item(
     visibility: Visibility,
     attrs: Vec<Attribute>,
 ) -> ModalResult<Item> {
-    expect_keyword(input, Keyword::Trait)?;
+    skip_keyword(input, Keyword::Trait)?;
     let name = ident_like(input)?;
     let generics_params = parse_optional_generic_params(input)?;
-    let bounds = if expect_symbol(input, ":").is_ok() {
+    let bounds = if skip_symbol(input, ":").is_ok() {
         parse_type_bounds(input)?
     } else {
         TypeBounds::any()
     };
-    expect_symbol(input, "{")?;
+    skip_symbol(input, "{")?;
     let mut items = Vec::new();
     while peek_symbol(input) != Some("}") {
         items.push(parse_trait_member(input, file)?);
     }
-    expect_symbol(input, "}")?;
+    skip_symbol(input, "}")?;
     Ok(Item::from(ItemKind::DefTrait(ItemDefTrait {
         attrs,
         name,
@@ -473,20 +473,20 @@ fn parse_trait_item(
 
 fn parse_trait_member(input: &mut &[Token], file: FileId) -> ModalResult<Item> {
     let attrs = parse_outer_attrs(input, file)?;
-    if expect_keyword(input, Keyword::Const).is_ok() {
+    if skip_keyword(input, Keyword::Const).is_ok() {
         let name = ident_like(input)?;
-        expect_symbol(input, ":")?;
+        skip_symbol(input, ":")?;
         let ty = parse_type_expr(input)?;
-        expect_symbol(input, ";")?;
+        skip_symbol(input, ";")?;
         return Ok(Item::from(ItemKind::DeclConst(ItemDeclConst {
             ty_annotation: None,
             name,
             ty,
         })));
     }
-    if expect_keyword(input, Keyword::Type).is_ok() {
+    if skip_keyword(input, Keyword::Type).is_ok() {
         let name = ident_like(input)?;
-        expect_symbol(input, ";")?;
+        skip_symbol(input, ";")?;
         return Ok(Item::from(ItemKind::DeclType(ItemDeclType {
             ty_annotation: None,
             name,
@@ -509,24 +509,24 @@ fn parse_trait_fn_member(
     visibility: Visibility,
     attrs: Vec<Attribute>,
 ) -> ModalResult<Item> {
-    let is_async = expect_keyword(input, Keyword::Async).is_ok();
-    let quoted = expect_keyword(input, Keyword::Quote).is_ok();
+    let is_async = skip_keyword(input, Keyword::Async).is_ok();
+    let quoted = skip_keyword(input, Keyword::Quote).is_ok();
     if quoted {
-        expect_keyword(input, Keyword::Fn)?;
+        skip_keyword(input, Keyword::Fn)?;
     } else {
-        expect_keyword(input, Keyword::Fn)?;
+        skip_keyword(input, Keyword::Fn)?;
     }
     let name = ident_like(input)?;
     let generics_params = parse_optional_generic_params(input)?;
-    expect_symbol(input, "(")?;
+    skip_symbol(input, "(")?;
     let (receiver, params) = parse_fn_params_with_receiver(input)?;
-    expect_symbol(input, ")")?;
-    let ret_ty = if expect_symbol(input, "->").is_ok() {
+    skip_symbol(input, ")")?;
+    let ret_ty = if skip_symbol(input, "->").is_ok() {
         Some(parse_type_expr(input)?)
     } else {
         None
     };
-    if expect_keyword(input, Keyword::Where).is_ok() {
+    if skip_keyword(input, Keyword::Where).is_ok() {
         skip_where_clause(input)?;
     }
     let mut sig = FunctionSignature {
@@ -548,7 +548,7 @@ fn parse_trait_fn_member(
             inner: None,
         }));
     }
-    if expect_symbol(input, ";").is_ok() {
+    if skip_symbol(input, ";").is_ok() {
         return Ok(Item::from(ItemKind::DeclFunction(ItemDeclFunction {
             attrs,
             ty_annotation: None,
@@ -575,20 +575,20 @@ fn peek_keyword(input: &[Token], keyword: Keyword) -> bool {
 }
 
 fn parse_impl_item(input: &mut &[Token], file: FileId, attrs: Vec<Attribute>) -> ModalResult<Item> {
-    let _is_unsafe = expect_keyword(input, Keyword::Unsafe).is_ok();
-    expect_keyword(input, Keyword::Impl)?;
+    let _is_unsafe = skip_keyword(input, Keyword::Unsafe).is_ok();
+    skip_keyword(input, Keyword::Impl)?;
     let generics_params = parse_optional_generic_params(input)?;
     let first_ty = parse_type_expr(input)?;
-    let (trait_ty, self_ty) = if expect_keyword(input, Keyword::For).is_ok() {
+    let (trait_ty, self_ty) = if skip_keyword(input, Keyword::For).is_ok() {
         let self_ty = parse_type_expr(input)?;
         (type_to_name(&first_ty), type_to_expr(&self_ty))
     } else {
         (None, type_to_expr(&first_ty))
     };
-    if expect_keyword(input, Keyword::Where).is_ok() {
+    if skip_keyword(input, Keyword::Where).is_ok() {
         skip_where_clause(input)?;
     }
-    expect_symbol(input, "{")?;
+    skip_symbol(input, "{")?;
     let mut items = Vec::new();
     while peek_symbol(input) != Some("}") {
         let member_attrs = parse_outer_attrs(input, file)?;
@@ -610,7 +610,7 @@ fn parse_impl_item(input: &mut &[Token], file: FileId, attrs: Vec<Attribute>) ->
         };
         items.push(member);
     }
-    expect_symbol(input, "}")?;
+    skip_symbol(input, "}")?;
     Ok(Item::from(ItemKind::Impl(ItemImpl {
         attrs,
         is_negative: false,
@@ -650,7 +650,7 @@ fn parse_fn_params_with_receiver(
         if params.is_empty() && receiver.is_none() {
             if let Some(parsed) = parse_receiver(input)? {
                 receiver = Some(parsed);
-                if expect_symbol(input, ",").is_err() {
+                if skip_symbol(input, ",").is_err() {
                     break;
                 }
                 if peek_symbol(input) == Some(")") {
@@ -659,20 +659,20 @@ fn parse_fn_params_with_receiver(
                 continue;
             }
         }
-        if expect_symbol(input, "/").is_ok() {
+        if skip_symbol(input, "/").is_ok() {
             for param in &mut params {
                 if !param.as_tuple && !param.as_dict {
                     param.positional_only = true;
                 }
             }
         } else if peek_two_stars(*input) {
-            expect_symbol(input, "*")?;
-            expect_symbol(input, "*")?;
+            skip_symbol(input, "*")?;
+            skip_symbol(input, "*")?;
             let mut param = parse_fn_param_core(input)?;
             param.as_dict = true;
             param.keyword_only = true;
             params.push(param);
-        } else if expect_symbol(input, "*").is_ok() {
+        } else if skip_symbol(input, "*").is_ok() {
             let mut probe = *input;
             if peek_symbol(probe) == Some(",") || peek_symbol(probe) == Some(")") {
                 saw_keyword_only_boundary = true;
@@ -694,7 +694,7 @@ fn parse_fn_params_with_receiver(
             params.push(param);
         }
 
-        if expect_symbol(input, ",").is_err() {
+        if skip_symbol(input, ",").is_err() {
             break;
         }
         if peek_symbol(input) == Some(")") {
@@ -710,20 +710,20 @@ fn parse_fn_param_after_star(input: &mut &[Token]) -> ModalResult<FunctionParam>
 
 fn parse_receiver(input: &mut &[Token]) -> ModalResult<Option<FunctionParamReceiver>> {
     let mut probe = *input;
-    let by_ref = expect_symbol(&mut probe, "&").is_ok();
+    let by_ref = skip_symbol(&mut probe, "&").is_ok();
     if by_ref {
         let _lifetime = match peek_ident_like(probe) {
             Some(ident) if ident.starts_with('\'') => Some(ident_like(&mut probe)?),
             _ => None,
         };
     }
-    let mutable = expect_keyword(&mut probe, Keyword::Mut).is_ok();
+    let mutable = skip_keyword(&mut probe, Keyword::Mut).is_ok();
     let ident = peek_ident_like(probe);
     if ident != Some("self") {
         return Ok(None);
     }
     let _ = ident_like(&mut probe)?;
-    if expect_symbol(&mut probe, ":").is_ok() {
+    if skip_symbol(&mut probe, ":").is_ok() {
         let _ = parse_type_expr(&mut probe)?;
         *input = probe;
         return Ok(Some(match (by_ref, mutable) {
@@ -744,19 +744,19 @@ fn parse_receiver(input: &mut &[Token]) -> ModalResult<Option<FunctionParamRecei
 }
 
 fn parse_fn_param_core(input: &mut &[Token]) -> ModalResult<FunctionParam> {
-    let is_const = expect_keyword(input, Keyword::Const).is_ok();
+    let is_const = skip_keyword(input, Keyword::Const).is_ok();
     let is_context = starts_context_param_marker(*input);
     if is_context {
         let _ = ident_like(input)?;
     }
-    let _is_mut = expect_keyword(input, Keyword::Mut).is_ok();
+    let _is_mut = skip_keyword(input, Keyword::Mut).is_ok();
     let name = parse_fn_param_name(input)?;
-    expect_symbol(input, ":")?;
+    skip_symbol(input, ":")?;
     let ty = parse_type_expr(input)?;
     let mut param = FunctionParam::new(name, ty);
     param.is_const = is_const;
     param.is_context = is_context;
-    if expect_symbol(input, "=").is_ok() {
+    if skip_symbol(input, "=").is_ok() {
         let expr = parse_expr_winnow_no_struct(input, 0)?;
         let ExprKind::Value(value) = expr.kind() else {
             return Err(ErrMode::Cut(ContextError::new()));
@@ -786,9 +786,9 @@ fn parse_fn_param_name(input: &mut &[Token]) -> ModalResult<Ident> {
     let mut probe = *input;
     let simple_name = ident_like(&mut probe)?;
     let mut destructured = probe;
-    if expect_symbol(&mut destructured, "(").is_ok() {
+    if skip_symbol(&mut destructured, "(").is_ok() {
         let inner_name = ident_like(&mut destructured)?;
-        expect_symbol(&mut destructured, ")")?;
+        skip_symbol(&mut destructured, ")")?;
         *input = destructured;
         return Ok(inner_name);
     }
@@ -799,10 +799,10 @@ fn parse_fn_param_name(input: &mut &[Token]) -> ModalResult<Ident> {
 fn skip_outer_attrs_for_field(input: &mut &[Token]) -> ModalResult<()> {
     loop {
         let mut probe = *input;
-        if expect_symbol(&mut probe, "#").is_err() {
+        if skip_symbol(&mut probe, "#").is_err() {
             return Ok(());
         }
-        expect_symbol(&mut probe, "[")?;
+        skip_symbol(&mut probe, "[")?;
         let mut depth = 1usize;
         while let Some((token, rest)) = probe.split_first() {
             probe = rest;
@@ -863,9 +863,9 @@ fn parse_use_item(
     visibility: Visibility,
     attrs: Vec<Attribute>,
 ) -> ModalResult<Item> {
-    expect_keyword(input, Keyword::Use)?;
+    skip_keyword(input, Keyword::Use)?;
     let tree = parse_use_tree(input)?;
-    expect_symbol(input, ";")?;
+    skip_symbol(input, ";")?;
     Ok(Item::from(ItemKind::Import(fp_core::ast::ItemImport {
         attrs,
         visibility,
@@ -879,10 +879,10 @@ fn parse_extern_crate_item(
     visibility: Visibility,
     attrs: Vec<Attribute>,
 ) -> ModalResult<Item> {
-    expect_keyword(input, Keyword::Extern)?;
-    expect_keyword(input, Keyword::Crate)?;
+    skip_keyword(input, Keyword::Extern)?;
+    skip_keyword(input, Keyword::Crate)?;
     let crate_name = ident_like(input)?;
-    let tree = if expect_keyword(input, Keyword::As).is_ok() {
+    let tree = if skip_keyword(input, Keyword::As).is_ok() {
         let rename = ident_like(input)?;
         fp_core::ast::ItemImportTree::Rename(fp_core::ast::ItemImportRename {
             from: crate_name,
@@ -893,7 +893,7 @@ fn parse_extern_crate_item(
         path.push(fp_core::ast::ItemImportTree::Ident(crate_name));
         fp_core::ast::ItemImportTree::Path(path)
     };
-    expect_symbol(input, ";")?;
+    skip_symbol(input, ";")?;
     Ok(Item::from(ItemKind::Import(fp_core::ast::ItemImport {
         attrs,
         visibility,
@@ -909,8 +909,8 @@ fn parse_extern_item(
     attrs: Vec<Attribute>,
 ) -> ModalResult<Item> {
     let mut probe = *input;
-    expect_keyword(&mut probe, Keyword::Extern)?;
-    if expect_keyword(&mut probe, Keyword::Crate).is_ok() {
+    skip_keyword(&mut probe, Keyword::Extern)?;
+    if skip_keyword(&mut probe, Keyword::Crate).is_ok() {
         return parse_extern_crate_item(input, visibility, attrs);
     }
     let abi = parse_extern_abi(input)?;
@@ -929,7 +929,7 @@ fn parse_extern_item(
 }
 
 fn parse_extern_abi(input: &mut &[Token]) -> ModalResult<fp_core::ast::Abi> {
-    expect_keyword(input, Keyword::Extern)?;
+    skip_keyword(input, Keyword::Extern)?;
     let abi = token_kind(input, TokenKind::StringLiteral)?;
     let cleaned =
         decode_string_literal(&abi.lexeme).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
@@ -943,13 +943,13 @@ fn parse_extern_fn_item(
     attrs: Vec<Attribute>,
     abi: fp_core::ast::Abi,
 ) -> ModalResult<Item> {
-    expect_keyword(input, Keyword::Fn)?;
+    skip_keyword(input, Keyword::Fn)?;
     let name = ident_like(input)?;
     let generics_params = parse_optional_generic_params(input)?;
-    expect_symbol(input, "(")?;
+    skip_symbol(input, "(")?;
     let params = parse_fn_params(input)?;
-    expect_symbol(input, ")")?;
-    let ret_ty = if expect_symbol(input, "->").is_ok() {
+    skip_symbol(input, ")")?;
+    let ret_ty = if skip_symbol(input, "->").is_ok() {
         Some(parse_type_expr(input)?)
     } else {
         None
@@ -964,7 +964,7 @@ fn parse_extern_fn_item(
         quote_kind: None,
         ret_ty,
     };
-    if expect_symbol(input, ";").is_ok() {
+    if skip_symbol(input, ";").is_ok() {
         return Ok(Item::from(ItemKind::DeclFunction(ItemDeclFunction {
             attrs,
             ty_annotation: None,
@@ -988,7 +988,7 @@ fn parse_extern_fn_item(
 
 fn parse_extern_block_items(input: &mut &[Token], file: FileId) -> ModalResult<Vec<Item>> {
     let abi = parse_extern_abi(input)?;
-    expect_symbol(input, "{")?;
+    skip_symbol(input, "{")?;
     let mut items = Vec::new();
     while peek_symbol(input) != Some("}") {
         let attrs = parse_outer_attrs(input, file)?;
@@ -1005,12 +1005,12 @@ fn parse_extern_block_items(input: &mut &[Token], file: FileId) -> ModalResult<V
         }
         return Err(ErrMode::Cut(ContextError::new()));
     }
-    expect_symbol(input, "}")?;
+    skip_symbol(input, "}")?;
     Ok(items)
 }
 
 fn parse_unsafe_extern_block_items(input: &mut &[Token], file: FileId) -> ModalResult<Vec<Item>> {
-    expect_keyword(input, Keyword::Unsafe)?;
+    skip_keyword(input, Keyword::Unsafe)?;
     parse_extern_block_items(input, file)
 }
 
@@ -1029,13 +1029,13 @@ fn parse_abi_fn_item(
     attrs: Vec<Attribute>,
     abi: fp_core::ast::Abi,
 ) -> ModalResult<Item> {
-    expect_keyword(input, Keyword::Fn)?;
+    skip_keyword(input, Keyword::Fn)?;
     let name = ident_like(input)?;
     let generics_params = parse_optional_generic_params(input)?;
-    expect_symbol(input, "(")?;
+    skip_symbol(input, "(")?;
     let params = parse_fn_params(input)?;
-    expect_symbol(input, ")")?;
-    let ret_ty = if expect_symbol(input, "->").is_ok() {
+    skip_symbol(input, ")")?;
+    let ret_ty = if skip_symbol(input, "->").is_ok() {
         Some(parse_type_expr(input)?)
     } else {
         None
@@ -1050,7 +1050,7 @@ fn parse_abi_fn_item(
         quote_kind: None,
         ret_ty,
     };
-    if expect_symbol(input, ";").is_ok() {
+    if skip_symbol(input, ";").is_ok() {
         return Ok(Item::from(ItemKind::DeclFunction(ItemDeclFunction {
             attrs,
             ty_annotation: None,
@@ -1077,22 +1077,22 @@ fn parse_enum_item(
     visibility: Visibility,
     attrs: Vec<Attribute>,
 ) -> ModalResult<Item> {
-    expect_keyword(input, Keyword::Enum)?;
+    skip_keyword(input, Keyword::Enum)?;
     let name = ident_like(input)?;
     let generics_params = parse_optional_generic_params(input)?;
-    expect_symbol(input, "{")?;
+    skip_symbol(input, "{")?;
     let mut variants = Vec::new();
     while peek_symbol(input) != Some("}") {
         skip_outer_attrs_for_field(input)?;
         let variant_name = ident_like(input)?;
-        let value = if expect_symbol(input, "{").is_ok() {
+        let value = if skip_symbol(input, "{").is_ok() {
             let mut fields = Vec::new();
             while peek_symbol(input) != Some("}") {
                 skip_outer_attrs_for_field(input)?;
                 let _field_visibility = parse_visibility(input)?;
                 let field_name = ident_like(input)?;
-                let is_optional = expect_symbol(input, "?").is_ok();
-                expect_symbol(input, ":")?;
+                let is_optional = skip_symbol(input, "?").is_ok();
+                skip_symbol(input, ":")?;
                 let mut value = parse_type_expr(input)?;
                 if is_optional {
                     value = Ty::TypeBinaryOp(
@@ -1105,22 +1105,22 @@ fn parse_enum_item(
                     );
                 }
                 fields.push(StructuralField::new(field_name, value));
-                if expect_symbol(input, ",").is_err() {
+                if skip_symbol(input, ",").is_err() {
                     break;
                 }
                 if peek_symbol(input) == Some("}") {
                     break;
                 }
             }
-            expect_symbol(input, "}")?;
+            skip_symbol(input, "}")?;
             Ty::Structural(fp_core::ast::TypeStructural { fields }.into())
-        } else if expect_symbol(input, "(").is_ok() {
+        } else if skip_symbol(input, "(").is_ok() {
             let mut tys = Vec::new();
             if peek_symbol(input) != Some(")") {
                 loop {
                     skip_outer_attrs_for_field(input)?;
                     tys.push(parse_type_expr(input)?);
-                    if expect_symbol(input, ",").is_err() {
+                    if skip_symbol(input, ",").is_err() {
                         break;
                     }
                     if peek_symbol(input) == Some(")") {
@@ -1128,7 +1128,7 @@ fn parse_enum_item(
                     }
                 }
             }
-            expect_symbol(input, ")")?;
+            skip_symbol(input, ")")?;
             if tys.len() == 1 {
                 tys.pop().expect("single enum variant type")
             } else {
@@ -1137,7 +1137,7 @@ fn parse_enum_item(
         } else {
             Ty::unit()
         };
-        let discriminant = if expect_symbol(input, "=").is_ok() {
+        let discriminant = if skip_symbol(input, "=").is_ok() {
             Some(Box::new(parse_expr_winnow_no_struct(input, 0)?))
         } else {
             None
@@ -1147,11 +1147,11 @@ fn parse_enum_item(
             value,
             discriminant,
         });
-        if expect_symbol(input, ",").is_err() {
+        if skip_symbol(input, ",").is_err() {
             break;
         }
     }
-    expect_symbol(input, "}")?;
+    skip_symbol(input, "}")?;
     Ok(Item::from(ItemKind::DefEnum(ItemDefEnum {
         attrs,
         visibility,
@@ -1171,9 +1171,9 @@ fn parse_mod_item(
     visibility: Visibility,
     mut attrs: Vec<Attribute>,
 ) -> ModalResult<Item> {
-    expect_keyword(input, Keyword::Mod)?;
+    skip_keyword(input, Keyword::Mod)?;
     let name = ident_like(input)?;
-    if expect_symbol(input, ";").is_ok() {
+    if skip_symbol(input, ";").is_ok() {
         return Ok(Item::from(ItemKind::Module(Module {
             attrs,
             name,
@@ -1183,13 +1183,13 @@ fn parse_mod_item(
             is_external: true,
         })));
     }
-    expect_symbol(input, "{")?;
+    skip_symbol(input, "{")?;
     attrs.extend(parse_inner_attrs(input, file)?);
     let mut items = Vec::new();
     while peek_symbol(input) != Some("}") {
         items.push(parse_item_winnow(input, file)?);
     }
-    expect_symbol(input, "}")?;
+    skip_symbol(input, "}")?;
     Ok(Item::from(ItemKind::Module(Module {
         attrs,
         name,
@@ -1205,10 +1205,10 @@ fn parse_opaque_type_item(
     visibility: Visibility,
     attrs: Vec<Attribute>,
 ) -> ModalResult<Item> {
-    expect_keyword(input, Keyword::Opaque)?;
-    expect_keyword(input, Keyword::Type)?;
+    skip_keyword(input, Keyword::Opaque)?;
+    skip_keyword(input, Keyword::Type)?;
     let name = ident_like(input)?;
-    expect_symbol(input, ";")?;
+    skip_symbol(input, ";")?;
     Ok(Item::from(ItemKind::OpaqueType(ItemOpaqueType {
         attrs,
         visibility,
@@ -1218,7 +1218,7 @@ fn parse_opaque_type_item(
 
 fn parse_item_macro(input: &mut &[Token], _attrs: Vec<Attribute>) -> ModalResult<Item> {
     let path = parse_macro_path(input)?;
-    expect_symbol(input, "!")?;
+    skip_symbol(input, "!")?;
     let declared_name = if path.segments.last().map(Ident::as_str) == Some("macro_rules") {
         Some(ident_like(input)?)
     } else {
@@ -1236,26 +1236,26 @@ fn parse_item_macro(input: &mut &[Token], _attrs: Vec<Attribute>) -> ModalResult
 
 fn parse_visibility(input: &mut &[Token]) -> ModalResult<Visibility> {
     let mut probe = *input;
-    if expect_keyword(&mut probe, Keyword::Pub).is_err() {
+    if skip_keyword(&mut probe, Keyword::Pub).is_err() {
         return Ok(Visibility::Public);
     }
-    if expect_symbol(&mut probe, "(").is_err() {
+    if skip_symbol(&mut probe, "(").is_err() {
         *input = probe;
         return Ok(Visibility::Public);
     }
-    let visibility = if expect_keyword(&mut probe, Keyword::Crate).is_ok() {
+    let visibility = if skip_keyword(&mut probe, Keyword::Crate).is_ok() {
         Visibility::Crate
     } else if peek_ident_like(probe) == Some("self") {
         let _ = ident_like(&mut probe)?;
         Visibility::Restricted(single_segment_path(fp_core::ast::ItemImportTree::SelfMod))
-    } else if expect_keyword(&mut probe, Keyword::Super).is_ok() {
+    } else if skip_keyword(&mut probe, Keyword::Super).is_ok() {
         Visibility::Restricted(single_segment_path(fp_core::ast::ItemImportTree::SuperMod))
-    } else if expect_keyword(&mut probe, Keyword::In).is_ok() {
+    } else if skip_keyword(&mut probe, Keyword::In).is_ok() {
         Visibility::Restricted(parse_use_path(&mut probe)?)
     } else {
         return Err(ErrMode::Cut(ContextError::new()));
     };
-    expect_symbol(&mut probe, ")")?;
+    skip_symbol(&mut probe, ")")?;
     *input = probe;
     Ok(visibility)
 }
@@ -1279,26 +1279,26 @@ fn parse_attrs(input: &mut &[Token], file: FileId, inner: bool) -> ModalResult<V
     loop {
         let mut probe = *input;
         if inner {
-            if expect_symbol(&mut probe, "#![").is_err() {
+            if skip_symbol(&mut probe, "#![").is_err() {
                 let mut split_probe = *input;
-                if expect_symbol(&mut split_probe, "#").is_err() {
+                if skip_symbol(&mut split_probe, "#").is_err() {
                     break;
                 }
-                if expect_symbol(&mut split_probe, "!").is_err()
-                    || expect_symbol(&mut split_probe, "[").is_err()
+                if skip_symbol(&mut split_probe, "!").is_err()
+                    || skip_symbol(&mut split_probe, "[").is_err()
                 {
                     break;
                 }
                 probe = split_probe;
             }
-        } else if expect_symbol(&mut probe, "#[").is_err() {
-            if expect_symbol(&mut probe, "#").is_err() {
+        } else if skip_symbol(&mut probe, "#[").is_err() {
+            if skip_symbol(&mut probe, "#").is_err() {
                 break;
             }
-            expect_symbol(&mut probe, "[")?;
+            skip_symbol(&mut probe, "[")?;
         }
         let meta = parse_attr_meta_direct(&mut probe, file)?;
-        expect_symbol(&mut probe, "]")?;
+        skip_symbol(&mut probe, "]")?;
         *input = probe;
         attrs.push(Attribute {
             style: if inner {
@@ -1321,14 +1321,14 @@ fn const_struct_attr() -> Attribute {
 
 pub(crate) fn parse_attr_meta_direct(input: &mut &[Token], file: FileId) -> ModalResult<AttrMeta> {
     let name = parse_module_path(input)?;
-    if expect_symbol(input, "=").is_ok() {
+    if skip_symbol(input, "=").is_ok() {
         let value = parse_expr_winnow_no_struct(input, file)?;
         return Ok(AttrMeta::NameValue(AttrMetaNameValue {
             name,
             value: Box::new(value),
         }));
     }
-    if expect_symbol(input, "(").is_ok() {
+    if skip_symbol(input, "(").is_ok() {
         let mut items = Vec::new();
         while peek_symbol(input) != Some(")") {
             let mut item_probe = *input;
@@ -1344,11 +1344,11 @@ pub(crate) fn parse_attr_meta_direct(input: &mut &[Token], file: FileId) -> Moda
                     value: Box::new(value),
                 }));
             }
-            if expect_symbol(input, ",").is_err() {
+            if skip_symbol(input, ",").is_err() {
                 break;
             }
         }
-        expect_symbol(input, ")")?;
+        skip_symbol(input, ")")?;
         return Ok(AttrMeta::List(AttrMetaList { name, items }));
     }
     Ok(AttrMeta::Path(name))

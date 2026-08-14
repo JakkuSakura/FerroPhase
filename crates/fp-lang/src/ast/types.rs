@@ -5,8 +5,8 @@ use fp_core::ast::TypeType;
 use fp_core::ast::TypeWildcard;
 
 pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
-    let _is_unsafe = expect_keyword(input, Keyword::Unsafe).is_ok();
-    let abi = if expect_keyword(input, Keyword::Extern).is_ok() {
+    let _is_unsafe = skip_keyword(input, Keyword::Unsafe).is_ok();
+    let abi = if skip_keyword(input, Keyword::Extern).is_ok() {
         let abi = token_kind(input, TokenKind::StringLiteral)?;
         let _ =
             decode_string_literal(&abi.lexeme).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
@@ -14,17 +14,17 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     } else {
         false
     };
-    if expect_keyword(input, Keyword::Impl).is_ok() {
+    if skip_keyword(input, Keyword::Impl).is_ok() {
         let bounds = parse_type_bounds(input)?;
         return Ok(Ty::ImplTraits(fp_core::ast::ImplTraits { bounds }));
     }
-    if expect_keyword(input, Keyword::Struct).is_ok() {
+    if skip_keyword(input, Keyword::Struct).is_ok() {
         return parse_structural_type_body(input);
     }
     if peek_symbol(input) == Some("{") {
         return parse_structural_type_body(input);
     }
-    if expect_symbol(input, "!").is_ok() {
+    if skip_symbol(input, "!").is_ok() {
         let mut probe = *input;
         if let Ok(name) = parse_name(&mut probe) {
             *input = probe;
@@ -39,17 +39,17 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         }
         return Ok(Ty::Nothing(TypeNothing));
     }
-    if expect_symbol(input, "(").is_ok() {
-        if expect_symbol(input, ")").is_ok() {
+    if skip_symbol(input, "(").is_ok() {
+        if skip_symbol(input, ")").is_ok() {
             return Ok(Ty::unit());
         }
         let first = parse_type_expr(input)?;
-        if expect_symbol(input, ",").is_ok() {
+        if skip_symbol(input, ",").is_ok() {
             let mut types = vec![first];
             if peek_symbol(input) != Some(")") {
                 loop {
                     types.push(parse_type_expr(input)?);
-                    if expect_symbol(input, ",").is_err() {
+                    if skip_symbol(input, ",").is_err() {
                         break;
                     }
                     if peek_symbol(input) == Some(")") {
@@ -57,24 +57,24 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                     }
                 }
             }
-            expect_symbol(input, ")")?;
+            skip_symbol(input, ")")?;
             return Ok(Ty::Tuple(fp_core::ast::TypeTuple { types }.into()));
         }
-        expect_symbol(input, ")")?;
+        skip_symbol(input, ")")?;
         return Ok(first);
     }
-    if abi || expect_keyword(input, Keyword::Fn).is_ok() {
+    if abi || skip_keyword(input, Keyword::Fn).is_ok() {
         if !abi {
             // already consumed `fn` in the branch condition above
         } else {
-            expect_keyword(input, Keyword::Fn)?;
+            skip_keyword(input, Keyword::Fn)?;
         }
-        expect_symbol(input, "(")?;
+        skip_symbol(input, "(")?;
         let mut params = Vec::new();
         if peek_symbol(input) != Some(")") {
             loop {
                 params.push(parse_type_expr(input)?);
-                if expect_symbol(input, ",").is_err() {
+                if skip_symbol(input, ",").is_err() {
                     break;
                 }
                 if peek_symbol(input) == Some(")") {
@@ -82,8 +82,8 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                 }
             }
         }
-        expect_symbol(input, ")")?;
-        let ret_ty = if expect_symbol(input, "->").is_ok() {
+        skip_symbol(input, ")")?;
+        let ret_ty = if skip_symbol(input, "->").is_ok() {
             Some(Box::new(parse_type_expr(input)?))
         } else {
             None
@@ -97,16 +97,16 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             .into(),
         ));
     }
-    if expect_keyword(input, Keyword::Impl).is_ok() {
+    if skip_keyword(input, Keyword::Impl).is_ok() {
         let bounds = parse_dyn_type_bounds(input)?;
         return Ok(Ty::ImplTraits(ImplTraits { bounds }));
     }
-    if expect_symbol(input, "&&").is_ok() {
+    if skip_symbol(input, "&&").is_ok() {
         let lifetime = match peek_ident_like(*input) {
             Some(ident) if ident.starts_with('\'') => Some(ident_like(input)?),
             _ => None,
         };
-        let mutability = expect_keyword(input, Keyword::Mut).is_ok();
+        let mutability = skip_keyword(input, Keyword::Mut).is_ok();
         let inner = parse_type_expr(input)?;
         let inner = Ty::Reference(
             TypeReference {
@@ -125,12 +125,12 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             .into(),
         ));
     }
-    if expect_symbol(input, "&").is_ok() {
+    if skip_symbol(input, "&").is_ok() {
         let lifetime = match peek_ident_like(*input) {
             Some(ident) if ident.starts_with('\'') => Some(ident_like(input)?),
             _ => None,
         };
-        let mutability = expect_keyword(input, Keyword::Mut).is_ok();
+        let mutability = skip_keyword(input, Keyword::Mut).is_ok();
         let inner = parse_type_expr(input)?;
         return Ok(Ty::Reference(
             TypeReference {
@@ -141,10 +141,10 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             .into(),
         ));
     }
-    if expect_symbol(input, "*").is_ok() {
-        let mutability = if expect_keyword(input, Keyword::Mut).is_ok() {
+    if skip_symbol(input, "*").is_ok() {
+        let mutability = if skip_keyword(input, Keyword::Mut).is_ok() {
             Some(true)
-        } else if expect_keyword(input, Keyword::Const).is_ok() {
+        } else if skip_keyword(input, Keyword::Const).is_ok() {
             Some(false)
         } else {
             return Err(ErrMode::Cut(ContextError::new()));
@@ -152,11 +152,11 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         let inner = parse_type_expr(input)?;
         return Ok(Ty::raw_ptr(inner, mutability));
     }
-    if expect_symbol(input, "[").is_ok() {
+    if skip_symbol(input, "[").is_ok() {
         let inner = parse_type_expr(input)?;
-        if expect_symbol(input, ";").is_ok() {
+        if skip_symbol(input, ";").is_ok() {
             let len = parse_expr_winnow_no_struct(input, 0)?;
-            expect_symbol(input, "]")?;
+            skip_symbol(input, "]")?;
             return Ok(Ty::Array(
                 fp_core::ast::TypeArray {
                     elem: Box::new(inner),
@@ -165,7 +165,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                 .into(),
             ));
         }
-        expect_symbol(input, "]")?;
+        skip_symbol(input, "]")?;
         return Ok(Ty::Slice(TypeSlice {
             elem: Box::new(inner),
         }));
@@ -187,12 +187,12 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         return Ok(Ty::Expr(Box::new(expr)));
     }
     let name = parse_name(input)?;
-    if expect_symbol(input, "(").is_ok() {
+    if skip_symbol(input, "(").is_ok() {
         let mut params = Vec::new();
         if peek_symbol(input) != Some(")") {
             loop {
                 params.push(parse_type_expr(input)?);
-                if expect_symbol(input, ",").is_err() {
+                if skip_symbol(input, ",").is_err() {
                     break;
                 }
                 if peek_symbol(input) == Some(")") {
@@ -200,8 +200,8 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                 }
             }
         }
-        expect_symbol(input, ")")?;
-        let ret_ty = if expect_symbol(input, "->").is_ok() {
+        skip_symbol(input, ")")?;
+        let ret_ty = if skip_symbol(input, "->").is_ok() {
             Some(Box::new(parse_type_expr(input)?))
         } else {
             None
@@ -377,7 +377,7 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
             }
         }
         let mut ty = Ty::path(path.clone());
-        if expect_symbol(input, "?").is_ok() {
+        if skip_symbol(input, "?").is_ok() {
             ty = Ty::TypeBinaryOp(
                 TypeBinaryOp {
                     kind: TypeBinaryOpKind::Union,
@@ -411,7 +411,7 @@ fn parse_dyn_type_bounds(input: &mut &[Token]) -> ModalResult<TypeBounds> {
     let mut bounds = Vec::new();
     loop {
         bounds.push(parse_trait_bound_expr(input)?);
-        if expect_symbol(input, "+").is_err() {
+        if skip_symbol(input, "+").is_err() {
             break;
         }
     }
@@ -420,11 +420,11 @@ fn parse_dyn_type_bounds(input: &mut &[Token]) -> ModalResult<TypeBounds> {
 
 fn parse_trait_bound_expr(input: &mut &[Token]) -> ModalResult<Expr> {
     let name = parse_name(input)?;
-    if expect_symbol(input, "(").is_ok() {
+    if skip_symbol(input, "(").is_ok() {
         if peek_symbol(input) != Some(")") {
             loop {
                 let _ = parse_type_expr(input)?;
-                if expect_symbol(input, ",").is_err() {
+                if skip_symbol(input, ",").is_err() {
                     break;
                 }
                 if peek_symbol(input) == Some(")") {
@@ -432,8 +432,8 @@ fn parse_trait_bound_expr(input: &mut &[Token]) -> ModalResult<Expr> {
                 }
             }
         }
-        expect_symbol(input, ")")?;
-        if expect_symbol(input, "->").is_ok() {
+        skip_symbol(input, ")")?;
+        if skip_symbol(input, "->").is_ok() {
             let _ = parse_type_expr(input)?;
         }
     }
@@ -457,7 +457,7 @@ fn parse_type_binary(input: &mut &[Token], min_prec: u8) -> ModalResult<Ty> {
             break;
         }
         let op = op.to_string();
-        expect_symbol(input, &op)?;
+        skip_symbol(input, &op)?;
         let rhs = parse_type_binary(input, prec + 1)?;
         lhs = Ty::TypeBinaryOp(
             TypeBinaryOp {
@@ -472,12 +472,12 @@ fn parse_type_binary(input: &mut &[Token], min_prec: u8) -> ModalResult<Ty> {
 }
 
 fn parse_structural_type_body(input: &mut &[Token]) -> ModalResult<Ty> {
-    expect_symbol(input, "{")?;
+    skip_symbol(input, "{")?;
     let mut fields = Vec::new();
     while peek_symbol(input) != Some("}") {
         let field_name = ident_like(input)?;
-        let is_optional = expect_symbol(input, "?").is_ok();
-        expect_symbol(input, ":")?;
+        let is_optional = skip_symbol(input, "?").is_ok();
+        skip_symbol(input, ":")?;
         let mut value = parse_type_expr(input)?;
         if is_optional {
             value = Ty::TypeBinaryOp(
@@ -490,14 +490,14 @@ fn parse_structural_type_body(input: &mut &[Token]) -> ModalResult<Ty> {
             );
         }
         fields.push(StructuralField::new(field_name, value));
-        if expect_symbol(input, ",").is_err() {
+        if skip_symbol(input, ",").is_err() {
             break;
         }
         if peek_symbol(input) == Some("}") {
             break;
         }
     }
-    expect_symbol(input, "}")?;
+    skip_symbol(input, "}")?;
     Ok(Ty::Structural(
         fp_core::ast::TypeStructural { fields }.into(),
     ))
@@ -515,7 +515,7 @@ fn type_binary_op(symbol: &str) -> Option<(u8, TypeBinaryOpKind)> {
 
 pub(crate) fn parse_optional_type_args(input: &mut &[Token]) -> ModalResult<Vec<Ty>> {
     let mut probe = *input;
-    if expect_symbol(&mut probe, "<").is_err() {
+    if skip_symbol(&mut probe, "<").is_err() {
         return Ok(Vec::new());
     }
     let mut args = Vec::new();
@@ -526,7 +526,7 @@ pub(crate) fn parse_optional_type_args(input: &mut &[Token]) -> ModalResult<Vec<
             };
             args.push(arg);
             let mut comma_probe = probe;
-            if expect_symbol(&mut comma_probe, ",").is_err() {
+            if skip_symbol(&mut comma_probe, ",").is_err() {
                 break;
             }
             if peek_symbol(comma_probe) == Some(">") {
@@ -536,7 +536,7 @@ pub(crate) fn parse_optional_type_args(input: &mut &[Token]) -> ModalResult<Vec<
             probe = comma_probe;
         }
     }
-    if expect_symbol(&mut probe, ">").is_err() {
+    if skip_symbol(&mut probe, ">").is_err() {
         return Ok(Vec::new());
     }
     *input = probe;
@@ -547,7 +547,7 @@ fn parse_type_arg(input: &mut &[Token]) -> ModalResult<Ty> {
     let mut probe = *input;
     if let Ok(ident) = ident_like(&mut probe) {
         let mut assign_probe = probe;
-        if expect_symbol(&mut assign_probe, "=").is_ok() {
+        if skip_symbol(&mut assign_probe, "=").is_ok() {
             let value = parse_type_expr(&mut assign_probe)?;
             *input = assign_probe;
             return Ok(Ty::Expr(Box::new(
@@ -569,7 +569,7 @@ pub(crate) fn parse_type_bounds(input: &mut &[Token]) -> ModalResult<TypeBounds>
         skip_const_trait_modifier(input);
         let ty = parse_type_expr(input)?;
         bounds.push(type_to_expr(&ty));
-        if expect_symbol(input, "+").is_err() {
+        if skip_symbol(input, "+").is_err() {
             break;
         }
     }
@@ -581,9 +581,9 @@ pub(crate) fn parse_type_bounds(input: &mut &[Token]) -> ModalResult<TypeBounds>
 // modifier is accepted and dropped, leaving the plain trait bound.
 fn skip_const_trait_modifier(input: &mut &[Token]) {
     let mut probe = *input;
-    if expect_symbol(&mut probe, "[").is_ok()
-        && expect_keyword(&mut probe, Keyword::Const).is_ok()
-        && expect_symbol(&mut probe, "]").is_ok()
+    if skip_symbol(&mut probe, "[").is_ok()
+        && skip_keyword(&mut probe, Keyword::Const).is_ok()
+        && skip_symbol(&mut probe, "]").is_ok()
     {
         *input = probe;
     }
@@ -598,7 +598,7 @@ fn type_to_expr(ty: &Ty) -> Expr {
 
 pub(crate) fn parse_use_tree(input: &mut &[Token]) -> ModalResult<fp_core::ast::ItemImportTree> {
     let mut path = parse_use_path(input)?;
-    if expect_keyword(input, Keyword::As).is_ok() {
+    if skip_keyword(input, Keyword::As).is_ok() {
         let rename = ident_like(input)?;
         let from = match path.segments.pop() {
             Some(fp_core::ast::ItemImportTree::Ident(from)) => from,
@@ -613,11 +613,11 @@ pub(crate) fn parse_use_tree(input: &mut &[Token]) -> ModalResult<fp_core::ast::
 
 pub(crate) fn parse_use_path(input: &mut &[Token]) -> ModalResult<fp_core::ast::ItemImportPath> {
     let mut path = fp_core::ast::ItemImportPath::new();
-    if expect_symbol(input, "::").is_ok() {
+    if skip_symbol(input, "::").is_ok() {
         path.push(fp_core::ast::ItemImportTree::Root);
     }
     loop {
-        if expect_symbol(input, "*").is_ok() {
+        if skip_symbol(input, "*").is_ok() {
             path.push(fp_core::ast::ItemImportTree::Glob);
             break;
         }
@@ -625,18 +625,18 @@ pub(crate) fn parse_use_path(input: &mut &[Token]) -> ModalResult<fp_core::ast::
             path.push(fp_core::ast::ItemImportTree::Group(parse_use_group(input)?));
             break;
         }
-        let segment = if expect_keyword(input, Keyword::Crate).is_ok() {
+        let segment = if skip_keyword(input, Keyword::Crate).is_ok() {
             fp_core::ast::ItemImportTree::Crate
         } else if peek_ident_like(*input) == Some("self") {
             let _ = ident_like(input)?;
             fp_core::ast::ItemImportTree::SelfMod
-        } else if expect_keyword(input, Keyword::Super).is_ok() {
+        } else if skip_keyword(input, Keyword::Super).is_ok() {
             fp_core::ast::ItemImportTree::SuperMod
         } else {
             fp_core::ast::ItemImportTree::Ident(ident_like(input)?)
         };
         path.push(segment);
-        if expect_symbol(input, "::").is_err() {
+        if skip_symbol(input, "::").is_err() {
             break;
         }
     }
@@ -644,15 +644,15 @@ pub(crate) fn parse_use_path(input: &mut &[Token]) -> ModalResult<fp_core::ast::
 }
 
 fn parse_use_group(input: &mut &[Token]) -> ModalResult<fp_core::ast::ItemImportGroup> {
-    expect_symbol(input, "{")?;
+    skip_symbol(input, "{")?;
     let mut group = fp_core::ast::ItemImportGroup::new();
     while peek_symbol(input) != Some("}") {
         group.push(parse_use_tree(input)?);
-        if expect_symbol(input, ",").is_err() {
+        if skip_symbol(input, ",").is_err() {
             break;
         }
     }
-    expect_symbol(input, "}")?;
+    skip_symbol(input, "}")?;
     Ok(group)
 }
 
@@ -660,15 +660,15 @@ pub(crate) fn parse_optional_generic_params(
     input: &mut &[Token],
 ) -> ModalResult<Vec<fp_core::ast::GenericParam>> {
     let mut probe = *input;
-    if expect_symbol(&mut probe, "<").is_err() {
+    if skip_symbol(&mut probe, "<").is_err() {
         return Ok(Vec::new());
     }
     let mut params = Vec::new();
     if peek_symbol(probe) != Some(">") {
         loop {
-            let is_const = expect_keyword(&mut probe, Keyword::Const).is_ok();
+            let is_const = skip_keyword(&mut probe, Keyword::Const).is_ok();
             let name = ident_like(&mut probe)?;
-            let bounds = if expect_symbol(&mut probe, ":").is_ok() && !is_const {
+            let bounds = if skip_symbol(&mut probe, ":").is_ok() && !is_const {
                 parse_type_bounds(&mut probe)?
             } else if is_const {
                 let _ = parse_type_expr(&mut probe)?;
@@ -676,7 +676,7 @@ pub(crate) fn parse_optional_generic_params(
             } else {
                 fp_core::ast::TypeBounds::any()
             };
-            if expect_symbol(&mut probe, "=").is_ok() {
+            if skip_symbol(&mut probe, "=").is_ok() {
                 if is_const {
                     let _ = parse_expr_winnow_no_struct(&mut probe, 0)?;
                 } else {
@@ -684,12 +684,12 @@ pub(crate) fn parse_optional_generic_params(
                 }
             }
             params.push(fp_core::ast::GenericParam { name, bounds });
-            if expect_symbol(&mut probe, ",").is_err() {
+            if skip_symbol(&mut probe, ",").is_err() {
                 break;
             }
         }
     }
-    expect_symbol(&mut probe, ">")?;
+    skip_symbol(&mut probe, ">")?;
     *input = probe;
     Ok(params)
 }

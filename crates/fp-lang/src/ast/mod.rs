@@ -395,7 +395,7 @@ fn parse_name(input: &mut &[Token]) -> ModalResult<Name> {
     let mut segments = vec![ParameterPathSegment::new(first, first_args)];
     loop {
         let mut probe = *input;
-        if expect_symbol(&mut probe, "::").is_err() {
+        if skip_symbol(&mut probe, "::").is_err() {
             break;
         }
         let Ok(next) = ident_like(&mut probe) else {
@@ -423,7 +423,7 @@ pub(crate) fn parse_module_path(input: &mut &[Token]) -> ModalResult<Path> {
     let mut segments = vec![ident_like(input)?];
     loop {
         let mut probe = *input;
-        if expect_symbol(&mut probe, "::").is_err() {
+        if skip_symbol(&mut probe, "::").is_err() {
             break;
         }
         let Ok(next) = ident_like(&mut probe) else {
@@ -463,6 +463,36 @@ fn expect_symbol(input: &mut &[Token], expected: &str) -> ModalResult<Token> {
         {
             *input = rest;
             Ok(token.clone())
+        }
+        _ => Err(ErrMode::Backtrack(ContextError::new())),
+    }
+}
+
+/// Non-cloning counterpart to `expect_keyword`, for the large majority of
+/// call sites that only consume the token as a bare statement or check
+/// `.is_ok()`/`.is_err()` and never need the matched `Token` (whose
+/// `lexeme: String` field `expect_keyword` would otherwise heap-clone for
+/// nothing, once per token consumed across every file compiled, including
+/// embedded std/libc).
+fn skip_keyword(input: &mut &[Token], expected: Keyword) -> ModalResult<()> {
+    match input.split_first() {
+        Some((token, rest)) if token.kind == TokenKind::Keyword(expected) => {
+            *input = rest;
+            Ok(())
+        }
+        _ => Err(ErrMode::Backtrack(ContextError::new())),
+    }
+}
+
+/// Non-cloning counterpart to `expect_symbol` — see `skip_keyword`'s doc
+/// comment.
+fn skip_symbol(input: &mut &[Token], expected: &str) -> ModalResult<()> {
+    match input.split_first() {
+        Some((token, rest))
+            if token.kind == TokenKind::Symbol && token.lexeme.as_str() == expected =>
+        {
+            *input = rest;
+            Ok(())
         }
         _ => Err(ErrMode::Backtrack(ContextError::new())),
     }
@@ -532,7 +562,7 @@ fn consume_binary_op(input: &mut &[Token], op: &str) -> ModalResult<()> {
         *input = &input[2..];
         return Ok(());
     }
-    expect_symbol(input, op)?;
+    skip_symbol(input, op)?;
     Ok(())
 }
 
