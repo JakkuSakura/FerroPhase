@@ -284,6 +284,7 @@ struct MethodDefinition {
     self_ty: hir::TypeExpr,
     self_def: Option<hir::DefId>,
     method_name: String,
+    assoc_types: HashMap<String, hir::TypeExpr>,
 }
 
 #[derive(Clone, Debug)]
@@ -297,18 +298,18 @@ struct FunctionSpecializationInfo {
 
 #[derive(Clone, Debug)]
 pub struct EnumLayout {
-    def_id: hir::DefId,
-    args: Vec<Ty>,
-    tag_ty: Ty,
-    payload_tys: Vec<Ty>,
-    enum_ty: Ty,
-    variant_payloads: HashMap<hir::DefId, Vec<Ty>>,
+    pub def_id: hir::DefId,
+    pub args: Vec<Ty>,
+    pub tag_ty: Ty,
+    pub payload_tys: Vec<Ty>,
+    pub enum_ty: Ty,
+    pub variant_payloads: HashMap<hir::DefId, Vec<Ty>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct EnumLayoutKey {
-    def_id: hir::DefId,
-    args: Vec<Ty>,
+pub struct EnumLayoutKey {
+    pub def_id: hir::DefId,
+    pub args: Vec<Ty>,
 }
 
 #[derive(Clone, Debug)]
@@ -340,6 +341,24 @@ struct MethodContext {
     def_id: Option<hir::DefId>,
     path: Vec<hir::PathSegment>,
     mir_self_ty: Ty,
+    /// This impl's own `type Name = ...;` bindings (e.g. `impl<T> Index<usize>
+    /// for Vec<T> { type Output = T; ... }` → `{"Output": T's TypeExpr}`),
+    /// so a method signature's `Self::Output` resolves to the *bound*
+    /// type (here, the impl's own `T`) rather than collapsing to `Self`
+    /// itself — see `lower_type_expr_with_context`/`_and_substs`.
+    assoc_types: HashMap<String, hir::TypeExpr>,
+}
+
+fn assoc_types_from_impl_items(items: &[hir::ImplItem]) -> HashMap<String, hir::TypeExpr> {
+    items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            hir::ImplItemKind::AssocType(assoc) => {
+                Some((assoc.name.as_str().to_string(), assoc.ty.clone()))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug)]
@@ -440,6 +459,14 @@ pub struct MirLowering {
     extra_items: Vec<mir::Item>,
     extra_bodies: Vec<(mir::BodyId, mir::Body)>,
     opaque_types: HashMap<String, Ty>,
+    /// Byte size for an opaque type minted for a *mismatched enum payload
+    /// slot* (`enum_layout_for_instance`'s per-slot merge loop) — the
+    /// largest size among the concrete per-variant types that share that
+    /// slot, since the slot's real runtime storage must fit whichever
+    /// variant is actually active (a tagged union, not a merged/uniform
+    /// field). Not populated for other opaque types (e.g. plain
+    /// `impl Trait` existentials), which have no such "size" concept.
+    opaque_ty_sizes: HashMap<String, u64>,
     synthetic_runtime_functions: HashSet<String>,
     next_synthetic_hir_def_id: hir::DefId,
     typeck_type_exprs: HashMap<hir::HirId, Ty>,
@@ -531,6 +558,7 @@ impl MirLowering {
             extra_items: Vec::new(),
             extra_bodies: Vec::new(),
             opaque_types: HashMap::new(),
+            opaque_ty_sizes: HashMap::new(),
             synthetic_runtime_functions: HashSet::new(),
             next_synthetic_hir_def_id: hir::DefId::local(1),
             typeck_type_exprs: HashMap::new(),
@@ -794,21 +822,32 @@ impl MirLowering {
         &self.struct_layouts
     }
 
+    pub fn enum_layout_map(&self) -> &HashMap<EnumLayoutKey, EnumLayout> {
+        &self.enum_layouts
+    }
+
+    /// Byte size for every opaque type minted for a mismatched/union enum
+    /// payload slot (see `opaque_ty_sizes`'s own doc comment) — exported so
+    /// `mir_to_lir` can size that slot's runtime storage (a raw byte
+    /// buffer big enough for whichever variant is actually active)
+    /// without needing to resolve the opaque placeholder's (nonexistent)
+    /// field structure.
+    pub fn opaque_payload_sizes(&self) -> &HashMap<String, u64> {
+        &self.opaque_ty_sizes
+    }
+
     pub fn take_adt_defs(&mut self) -> HashMap<hir::DefId, mir::ty::AdtDef> {
         std::mem::take(&mut self.adt_defs)
     }
 
+    /// Struct field types only — enums are exported separately via
+    /// `enum_layout_map` (keyed by `(DefId, args)`, since two different
+    /// instantiations of a generic enum need different field lists, unlike
+    /// this bare-`DefId`-keyed map).
     pub fn all_adt_field_tys(&self) -> HashMap<hir::DefId, Vec<Ty>> {
         let mut map = HashMap::new();
         for (key, layout) in &self.struct_layouts {
             map.insert(key.def_id, layout.field_tys.clone());
-        }
-        for (key, layout) in &self.enum_layouts {
-            let mut fields: Vec<Ty> = Vec::new();
-            for payload_tys in layout.variant_payloads.values() {
-                fields.extend(payload_tys.iter().cloned());
-            }
-            map.insert(key.def_id, fields);
         }
         map
     }
@@ -1669,6 +1708,7 @@ impl MirLowering {
                 def_id: def.self_def,
                 path: path.segments.clone(),
                 mir_self_ty,
+                assoc_types: def.assoc_types.clone(),
             })
         } else {
             None
@@ -1777,6 +1817,7 @@ impl MirLowering {
                 def_id: def.self_def,
                 path: path.segments.clone(),
                 mir_self_ty,
+                assoc_types: def.assoc_types.clone(),
             })
         } else {
             None
@@ -3403,7 +3444,24 @@ impl MirLowering {
         if let Some(ctx) = method_context {
             if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
                 if path.segments.first().map(|seg| seg.name.as_str()) == Some("Self") {
-                    return ctx.mir_self_ty.clone();
+                    // `Self::AssocName` (e.g. `Index::index`'s `-> Self::
+                    // Output`) is a *projection* through this impl's own
+                    // `type AssocName = ...;` binding, not `Self` itself —
+                    // resolve it via that binding (substituted with this
+                    // specialization's own `substs`, e.g. `T` -> `BenchCase`)
+                    // before falling back to treating a bare `Self` as the
+                    // whole receiver type.
+                    if path.segments.len() > 1 {
+                        if let Some(assoc_name) = path.segments.get(1) {
+                            if let Some(assoc_ty) =
+                                ctx.assoc_types.get(assoc_name.name.as_str())
+                            {
+                                return self.lower_type_expr_with_substs(assoc_ty, substs);
+                            }
+                        }
+                    } else {
+                        return ctx.mir_self_ty.clone();
+                    }
                 }
             }
         }
@@ -3421,6 +3479,19 @@ impl MirLowering {
         if let Some(ctx) = method_context {
             if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
                 if path.segments.first().map(|seg| seg.name.as_str()) == Some("Self") {
+                    if path.segments.len() > 1 {
+                        if let Some(assoc_name) = path.segments.get(1) {
+                            if let Some(assoc_ty) =
+                                ctx.assoc_types.get(assoc_name.name.as_str()).cloned()
+                            {
+                                return self.lower_type_expr_with_context(
+                                    &assoc_ty,
+                                    method_context,
+                                );
+                            }
+                        }
+                        return self.error_ty();
+                    }
                     return ctx.mir_self_ty.clone();
                 }
             }
@@ -4194,9 +4265,10 @@ impl MirLowering {
 
         self.register_synthetic_enum(def_id, enum_name, variants, span);
 
-        self.enum_layout_for_instance(def_id, &[], span)
-            .map(|layout| layout.enum_ty)
-            .unwrap_or_else(|| self.error_ty())
+        match self.enum_layout_for_instance(def_id, &[], span) {
+            Some(layout) => self.nominal_enum_ty(&layout),
+            None => self.error_ty(),
+        }
     }
 
     fn union_variant_name(&self, ty_expr: &hir::TypeExpr, fallback: &str) -> String {
@@ -4397,7 +4469,7 @@ impl MirLowering {
                     .map(|args| self.lower_generic_args(Some(args), span))
                     .unwrap_or_default();
                 if let Some(layout) = self.enum_layout_for_instance(def_id, &args, span) {
-                    return layout.enum_ty.clone();
+                    return self.nominal_enum_ty(&layout);
                 }
                 return self.error_ty();
             }
@@ -4479,7 +4551,7 @@ impl MirLowering {
                         .map(|args| self.lower_generic_args(Some(args), span))
                         .unwrap_or_default();
                     if let Some(layout) = self.enum_layout_for_instance(*def_id, &args, span) {
-                        return layout.enum_ty.clone();
+                        return self.nominal_enum_ty(&layout);
                     }
                     return self.error_ty();
                 }
@@ -4802,6 +4874,20 @@ impl MirLowering {
                 }
                 hir::ItemKind::Enum(enm) if enm.generics.params.is_empty() => {
                     let _ = self.enum_layout_for_instance(item.def_id, &[], item.span);
+                    // Register a real, nominal `AdtDef` for this enum too
+                    // (structs already get one above) — this is what lets
+                    // `take_adt_defs()` export enums to mir_to_lir at all.
+                    // Reuses `adt_shell_ty`'s construction (real variant
+                    // idents/discriminants, empty per-variant `fields` —
+                    // payload types are supplied separately via the
+                    // exported `EnumLayout` data, not via `VariantDef
+                    // ::fields`, to avoid computing that shape twice).
+                    if let Some(Ty {
+                        kind: TyKind::Adt(adt, _),
+                    }) = self.adt_shell_ty(item.def_id, &[])
+                    {
+                        self.adt_defs.insert(item.def_id, adt);
+                    }
                 }
                 _ => {}
             }
@@ -5057,9 +5143,17 @@ impl MirLowering {
             kind: TyKind::Int(IntTy::Isize),
         };
         let mut payload_layout: Vec<Ty> = Vec::new();
+        // Parallel to `payload_layout` — the largest size seen so far for
+        // each slot, across every variant that uses it. Needed once a slot
+        // opaques out (heterogeneous per-variant types): the opaque
+        // placeholder has no fields of its own to size, but real runtime
+        // storage for that slot must still fit whichever variant is
+        // actually active, so its size is `max` over all contributors, not
+        // any single one of them (see `opaque_ty_sizes`).
+        let mut payload_slot_sizes: Vec<u64> = Vec::new();
         let mut variant_payloads = HashMap::new();
         let mut has_payload = false;
-        let mut is_union_enum = enum_def.name.starts_with("__union_");
+        let is_union_enum = enum_def.name.starts_with("__union_");
 
         for variant in &enum_def.variants {
             let payload_tys = if is_union_enum {
@@ -5093,23 +5187,55 @@ impl MirLowering {
                 has_payload = true;
             }
             for (idx, ty) in payload_tys.iter().enumerate() {
+                let ty_size = self.size_of_ty(ty, span).unwrap_or(0);
                 let slot_ty = if let Some(existing) = payload_layout.get_mut(idx) {
                     if existing != ty {
+                        // Opaque out *this* mismatched shared slot only —
+                        // this must not also flip `is_union_enum` (that
+                        // flag exists to identify genuine synthetic
+                        // `__union_`-prefixed enums, which flatten a
+                        // struct payload's own fields into the shared
+                        // slots; it's name-derived and set once above).
+                        // Any real multi-variant enum with heterogeneous
+                        // per-variant payload types (e.g. `Value` with
+                        // `Bool(bool)`/`Number(Number)`/`Array(Vec<Value>)`
+                        // /etc.) hits a slot-0 mismatch on its very second
+                        // variant — previously that mid-loop mutation made
+                        // every subsequent variant wrongly take the
+                        // struct-field-flattening branch below (turning
+                        // `Object(Vec<Field>)`'s one `Vec<Field>` payload
+                        // into three separate payload slots for `Vec`'s
+                        // own `ptr`/`len`/`capacity` fields).
                         let opaque_name = format!("{}::payload{}", enum_def.name, idx);
                         *existing = self.opaque_ty(&opaque_name);
-                        is_union_enum = true;
+                    }
+                    if let Some(slot_size) = payload_slot_sizes.get_mut(idx) {
+                        *slot_size = (*slot_size).max(ty_size);
                     }
                     None
+                } else if is_union_enum {
+                    // Unrelated to the mismatch case above: a synthetic
+                    // `__union_` slot is *always* opaque from its first
+                    // use (pre-existing behavior) since its real type
+                    // varies per variant by construction, not by accident.
+                    let opaque_name = format!("{}::payload{}", enum_def.name, idx);
+                    Some(self.opaque_ty(&opaque_name))
                 } else {
-                    if is_union_enum {
-                        let opaque_name = format!("{}::payload{}", enum_def.name, idx);
-                        Some(self.opaque_ty(&opaque_name))
-                    } else {
-                        Some(ty.clone())
-                    }
+                    Some(ty.clone())
                 };
                 if let Some(slot_ty) = slot_ty {
                     payload_layout.push(slot_ty);
+                    payload_slot_sizes.push(ty_size);
+                }
+                // Whatever the reason a slot ended up opaque (mismatch
+                // above, or always-opaque union slot), its real storage
+                // must fit whichever variant is actually active, so record
+                // the size unconditionally from the *current* type's shape
+                // rather than re-deriving "why" it's opaque here.
+                if self.is_opaque_ty(&payload_layout[idx]) {
+                    let opaque_name = format!("{}::payload{}", enum_def.name, idx);
+                    let size = payload_slot_sizes[idx];
+                    self.opaque_ty_sizes.insert(opaque_name, size);
                 }
             }
             variant_payloads.insert(variant.def_id, payload_tys);
@@ -5309,7 +5435,7 @@ impl MirLowering {
                         if let Some(layout) =
                             self.enum_layout_for_instance(*def_id, &args, ty_expr.span)
                         {
-                            return layout.enum_ty.clone();
+                            return self.nominal_enum_ty(&layout);
                         }
                         return self.error_ty();
                     }
@@ -5530,7 +5656,10 @@ impl MirLowering {
     /// pre-pass never registers something the main pass would skip.
     fn register_impl_signatures(&mut self, impl_block: &hir::Impl) {
         let struct_name = self.struct_name_from_type(&impl_block.self_ty);
-        let method_context = self.make_method_context(&impl_block.self_ty);
+        let method_context = self.make_method_context(
+            &impl_block.self_ty,
+            &assoc_types_from_impl_items(&impl_block.items),
+        );
         let impl_is_generic = !impl_block.generics.params.is_empty();
 
         for impl_item in &impl_block.items {
@@ -5606,6 +5735,7 @@ impl MirLowering {
             self_ty: impl_block.self_ty.clone(),
             self_def: method_context.and_then(|ctx| ctx.def_id),
             method_name: qualified_name.clone(),
+            assoc_types: assoc_types_from_impl_items(&impl_block.items),
         };
         self.method_defs_by_def
             .entry(impl_item.def_id)
@@ -5687,7 +5817,10 @@ impl MirLowering {
 
         let struct_name = self.struct_name_from_type(&impl_block.self_ty);
 
-        let method_context = self.make_method_context(&impl_block.self_ty);
+        let method_context = self.make_method_context(
+            &impl_block.self_ty,
+            &assoc_types_from_impl_items(&impl_block.items),
+        );
         let impl_is_generic = !impl_block.generics.params.is_empty();
 
         for impl_item in &impl_block.items {
@@ -5810,7 +5943,11 @@ impl MirLowering {
         Ok((mir_item, body_id, mir_body, sig))
     }
 
-    fn make_method_context(&mut self, self_ty: &hir::TypeExpr) -> Option<MethodContext> {
+    fn make_method_context(
+        &mut self,
+        self_ty: &hir::TypeExpr,
+        assoc_types: &HashMap<String, hir::TypeExpr>,
+    ) -> Option<MethodContext> {
         if let hir::TypeExprKind::Path(path) = &self_ty.kind {
             let def_id = match &path.res {
                 Some(hir::Res::Def(def_id)) => Some(*def_id),
@@ -5821,6 +5958,7 @@ impl MirLowering {
                 def_id,
                 path: path.segments.clone(),
                 mir_self_ty,
+                assoc_types: assoc_types.clone(),
             })
         } else {
             None
@@ -7139,15 +7277,17 @@ impl MirLowering {
                 .enumerate()
                 .map(|(idx, variant)| VariantDef {
                     def_id: variant.def_id,
-                    ctor_def_id: None,
+                    // Match `fp-typing::hir_typeck`'s own nominal-enum
+                    // construction (`check_type_expr`/`path_ty`) exactly —
+                    // `ctor_def_id`/`ctor_kind` here, not just `did`/
+                    // `variants[].ident` — so a function signature's
+                    // typeck-derived `Ty` and this on-demand shell compare
+                    // structurally equal for the same enum instantiation.
+                    ctor_def_id: Some(variant.def_id),
                     ident: Symbol::new(&variant.name),
                     discr: VariantDiscr::Relative(idx as u32),
                     fields: Vec::new(),
-                    ctor_kind: if variant.payload.is_some() {
-                        CtorKind::Fn
-                    } else {
-                        CtorKind::Const
-                    },
+                    ctor_kind: CtorKind::Fn,
                     is_recovered: false,
                 })
                 .collect();
@@ -7189,6 +7329,121 @@ impl MirLowering {
             });
         }
         None
+    }
+
+    /// `MirLowering`-level byte-size computation, used while computing an
+    /// enum's own layout (`enum_layout_for_instance`, which runs before any
+    /// `BodyBuilder`/`type_substs` context exists — `BodyBuilder::
+    /// compute_ty_size` isn't reachable here). Mirrors that function's
+    /// logic minus the generic-`Param`-via-`type_substs` fallback (payload
+    /// types reaching this point are already substituted).
+    fn size_of_ty(&mut self, ty: &Ty, span: Span) -> Option<u64> {
+        match &ty.kind {
+            TyKind::Bool => Some(1),
+            TyKind::Char => Some(4),
+            TyKind::Int(int_ty) => Some(match int_ty {
+                IntTy::I8 => 1,
+                IntTy::I16 => 2,
+                IntTy::I32 => 4,
+                IntTy::I64 => 8,
+                IntTy::I128 => 16,
+                IntTy::Isize => 8,
+            }),
+            TyKind::Uint(uint_ty) => Some(match uint_ty {
+                UintTy::U8 => 1,
+                UintTy::U16 => 2,
+                UintTy::U32 => 4,
+                UintTy::U64 => 8,
+                UintTy::U128 => 16,
+                UintTy::Usize => 8,
+            }),
+            TyKind::Float(float_ty) => Some(match float_ty {
+                FloatTy::F32 => 4,
+                FloatTy::F64 => 8,
+            }),
+            TyKind::Tuple(elements) => {
+                let mut total = 0u64;
+                for elem in elements {
+                    total = total.saturating_add(self.size_of_ty(elem, span)?);
+                }
+                Some(total)
+            }
+            TyKind::Array(elem_ty, len) => {
+                let len = match len {
+                    ConstKind::Value(ConstValue::Scalar(Scalar::Int(int))) => int.data as u64,
+                    _ => return None,
+                };
+                Some(self.size_of_ty(elem_ty, span)?.saturating_mul(len))
+            }
+            TyKind::Ref(_, _, _) | TyKind::RawPtr(_) | TyKind::FnPtr(_) | TyKind::FnDef(_, _) => {
+                Some(8)
+            }
+            TyKind::Never => Some(0),
+            TyKind::Slice(_) => Some(16),
+            TyKind::Adt(adt, substs) => {
+                if let Some(size) = self
+                    .display_type_name(ty)
+                    .and_then(|name| self.opaque_ty_sizes.get(&name).copied())
+                {
+                    return Some(size);
+                }
+                let args: Vec<Ty> = substs
+                    .iter()
+                    .filter_map(|arg| match arg {
+                        mir::ty::GenericArg::Type(inner) => Some(inner.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                if self.struct_defs.contains_key(&adt.did) {
+                    let layout = self
+                        .struct_layout_for_ty(ty)
+                        .or_else(|| self.struct_layout_for_instance(adt.did, &args, span))?;
+                    let mut total = 0u64;
+                    for field in &layout.field_tys {
+                        total = total.saturating_add(self.size_of_ty(field, span)?);
+                    }
+                    return Some(total);
+                }
+                if self.enum_defs.contains_key(&adt.did) {
+                    let layout = self.enum_layout_for_instance(adt.did, &args, span)?;
+                    let mut total = self.size_of_ty(&layout.tag_ty, span)?;
+                    for payload in &layout.payload_tys {
+                        total = total.saturating_add(self.size_of_ty(payload, span)?);
+                    }
+                    return Some(total);
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// The nominal `Ty` a constructed/typed enum value should carry —
+    /// `adt_shell_ty` for `layout`'s own `(def_id, args)`, falling back to
+    /// the flattened `layout.enum_ty` only if the enum somehow isn't
+    /// registered (shouldn't happen for any layout that was itself
+    /// successfully computed, since that requires the same registration).
+    fn nominal_enum_ty(&mut self, layout: &EnumLayout) -> Ty {
+        self.adt_shell_ty(layout.def_id, &layout.args)
+            .unwrap_or_else(|| layout.enum_ty.clone())
+    }
+
+    /// If `ty` is a registered struct's flattened `Tuple` representation
+    /// (looked up via `struct_layouts_by_ty`), returns its nominal
+    /// `TyKind::Adt` form instead — otherwise returns `ty` unchanged.
+    /// Structs stay flattened everywhere by default in this refactor (only
+    /// enums were made nominal), but a few call sites need to recognize a
+    /// struct as indexable/method-dispatchable (`real_indexable_struct_def
+    /// _id`, which only matches `TyKind::Adt`) from a `Ty` that only has
+    /// the flattened shape available — e.g. a match-bound enum payload
+    /// local (`bind_match_pattern`), whose declared type comes from
+    /// `EnumLayout::variant_payloads` rather than a type annotation that
+    /// would otherwise resolve nominally via `struct_def_from_ty`.
+    fn nominalize_struct_ty(&mut self, ty: Ty) -> Ty {
+        let Some(key) = self.struct_layouts_by_ty.get(&ty).cloned() else {
+            return ty;
+        };
+        self.adt_shell_ty(key.def_id, &key.args).unwrap_or(ty)
     }
 
     /// Resolves a type used as a *generic argument* (e.g. `Field` in
@@ -9213,7 +9468,7 @@ impl<'a> BodyBuilder<'a> {
                                 .enum_layout_for_instance(*def_id, &args, init_span)
                         };
                         if let Some(layout) = layout {
-                            storage_ty = Some(layout.enum_ty);
+                            storage_ty = Some(self.lowering.nominal_enum_ty(&layout));
                         }
                     }
                 }
@@ -10312,7 +10567,16 @@ impl<'a> BodyBuilder<'a> {
                             field_place
                                 .projection
                                 .push(mir::PlaceElem::Field(idx + 1, field_ty.clone()));
-                            self.bind_match_pattern(part, &field_place, &field_ty, span);
+                            // The projection above keeps the flattened
+                            // struct shape (matching actual tuple-based
+                            // storage), but the *bound local*'s declared
+                            // type should be nominal when this payload is a
+                            // registered struct — otherwise callers like
+                            // `real_indexable_struct_def_id` can't
+                            // recognize e.g. a `Vec<Field>` match-bound
+                            // payload as indexable.
+                            let bound_ty = self.lowering.nominalize_struct_ty(field_ty);
+                            self.bind_match_pattern(part, &field_place, &bound_ty, span);
                         }
                         return;
                     }
@@ -10334,7 +10598,8 @@ impl<'a> BodyBuilder<'a> {
                             field_place
                                 .projection
                                 .push(mir::PlaceElem::Field(idx + 1, field_ty.clone()));
-                            self.bind_match_pattern(&field.pat, &field_place, &field_ty, span);
+                            let bound_ty = self.lowering.nominalize_struct_ty(field_ty);
+                            self.bind_match_pattern(&field.pat, &field_place, &bound_ty, span);
                         }
                         return;
                     }
@@ -10501,7 +10766,7 @@ impl<'a> BodyBuilder<'a> {
                                 .enum_layout_for_instance(*def_id, &args, init_span)
                         };
                         if let Some(layout) = layout {
-                            declared_ty = Some(layout.enum_ty);
+                            declared_ty = Some(self.lowering.nominal_enum_ty(&layout));
                         }
                     }
                 }
@@ -10817,7 +11082,7 @@ impl<'a> BodyBuilder<'a> {
                             place_info.place,
                             expr.span,
                         )?;
-                        self.locals[local_id as usize].ty = layout.enum_ty.clone();
+                        self.locals[local_id as usize].ty = self.lowering.nominal_enum_ty(&layout);
                         return Ok(());
                     }
                 }
@@ -10836,7 +11101,7 @@ impl<'a> BodyBuilder<'a> {
                         place_info.place,
                         expr.span,
                     )?;
-                    self.locals[local_id as usize].ty = layout.enum_ty.clone();
+                    self.locals[local_id as usize].ty = self.lowering.nominal_enum_ty(&layout);
                     return Ok(());
                 }
             }
@@ -10872,7 +11137,7 @@ impl<'a> BodyBuilder<'a> {
                         payload_place,
                         expr.span,
                     )?;
-                    self.locals[local_id as usize].ty = layout.enum_ty.clone();
+                    self.locals[local_id as usize].ty = self.lowering.nominal_enum_ty(&layout);
                     return Ok(());
                 }
             }
@@ -11572,12 +11837,13 @@ impl<'a> BodyBuilder<'a> {
         args: &[hir::CallArg],
         span: Span,
     ) -> Result<OperandInfo> {
-        let local_id = self.allocate_temp(layout.enum_ty.clone(), span);
+        let nominal_ty = self.lowering.nominal_enum_ty(layout);
+        let local_id = self.allocate_temp(nominal_ty.clone(), span);
         let place = mir::Place::from_local(local_id);
         self.assign_enum_variant(place.clone(), variant, layout, expected_ty, args, span)?;
         Ok(OperandInfo {
             operand: mir::Operand::copy(place),
-            ty: layout.enum_ty.clone(),
+            ty: nominal_ty,
         })
     }
 
@@ -11607,7 +11873,7 @@ impl<'a> BodyBuilder<'a> {
                 .enum_layout_for_variant(&variant, Some(expected_ty), span)
                 .or_else(|| self.lowering.enum_layout_for_def(variant.enum_def, span))
             {
-                if layout.enum_ty == *expected_ty {
+                if self.enum_def_from_ty(expected_ty) == Some(layout.def_id) {
                     self.assign_enum_variant_from_struct_fields(
                         mir::Place::from_local(local_id),
                         &variant,
@@ -11616,7 +11882,7 @@ impl<'a> BodyBuilder<'a> {
                         fields,
                         span,
                     )?;
-                    self.locals[local_id as usize].ty = layout.enum_ty.clone();
+                    self.locals[local_id as usize].ty = self.lowering.nominal_enum_ty(&layout);
                     return Ok(());
                 }
             }
@@ -11662,7 +11928,7 @@ impl<'a> BodyBuilder<'a> {
                         fields,
                         span,
                     )?;
-                    self.locals[local_id as usize].ty = layout.enum_ty.clone();
+                    self.locals[local_id as usize].ty = self.lowering.nominal_enum_ty(&layout);
                     return Ok(());
                 }
                 self.lowering.emit_error(
@@ -11706,7 +11972,7 @@ impl<'a> BodyBuilder<'a> {
                     span,
                 )?;
 
-                self.locals[local_id as usize].ty = layout.enum_ty.clone();
+                self.locals[local_id as usize].ty = self.lowering.nominal_enum_ty(&layout);
                 return Ok(());
             }
             self.lowering.emit_error(
@@ -11915,15 +12181,23 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let (Some(expected_ty), Some(struct_info)) =
-            (annotated_ty, self.lowering.struct_defs.get(&def_id))
+            (annotated_ty, self.lowering.struct_defs.get(&def_id).cloned())
         {
-            let enum_layout = self.lowering.enum_layouts.iter().find_map(|(key, layout)| {
-                if layout.enum_ty == *expected_ty {
-                    Some((key.def_id, layout.clone()))
-                } else {
-                    None
+            let enum_layout = match &expected_ty.kind {
+                TyKind::Adt(adt, substs) if self.lowering.enum_defs.contains_key(&adt.did) => {
+                    let args: Vec<Ty> = substs
+                        .iter()
+                        .filter_map(|arg| match arg {
+                            mir::ty::GenericArg::Type(ty) => Some(ty.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    self.lowering
+                        .enum_layout_for_instance(adt.did, &args, span)
+                        .map(|layout| (adt.did, layout))
                 }
-            });
+                _ => None,
+            };
             if let Some((enum_def_id, layout)) = enum_layout {
                 if let Some(enum_def) = self.lowering.enum_defs.get(&enum_def_id) {
                     if let Some(variant_def) = enum_def
@@ -11966,7 +12240,7 @@ impl<'a> BodyBuilder<'a> {
                                 mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, operands),
                             ),
                         });
-                        self.locals[local_id as usize].ty = layout.enum_ty.clone();
+                        self.locals[local_id as usize].ty = self.lowering.nominal_enum_ty(&layout);
                         return Ok(());
                     }
                 }
@@ -12862,11 +13136,12 @@ impl<'a> BodyBuilder<'a> {
                 }
 
                 if let Some(layout) = layout {
+                    let nominal_ty = self.lowering.nominal_enum_ty(&layout);
                     let place = destination
                         .as_ref()
                         .map(|(place, _)| place.clone())
                         .unwrap_or_else(|| {
-                            let local_id = self.allocate_temp(layout.enum_ty.clone(), expr.span);
+                            let local_id = self.allocate_temp(nominal_ty.clone(), expr.span);
                             mir::Place::from_local(local_id)
                         });
                     let expected_ty = destination.as_ref().map(|(_, ty)| ty);
@@ -12879,12 +13154,12 @@ impl<'a> BodyBuilder<'a> {
                         expr.span,
                     )?;
                     if (place.local as usize) < self.locals.len() {
-                        self.locals[place.local as usize].ty = layout.enum_ty.clone();
+                        self.locals[place.local as usize].ty = nominal_ty.clone();
                     }
                     if destination.is_some() {
                         return Ok(Some(PlaceInfo {
                             place,
-                            ty: layout.enum_ty.clone(),
+                            ty: nominal_ty,
                             struct_def: None,
                         }));
                     }
@@ -12960,7 +13235,7 @@ impl<'a> BodyBuilder<'a> {
             });
             (operand, sig, Some(name))
         } else if let Some(def) = generic_method_def.as_ref() {
-            let method_ctx = self.lowering.make_method_context(&def.self_ty);
+            let method_ctx = self.lowering.make_method_context(&def.self_ty, &def.assoc_types);
             let sig = self
                 .lowering
                 .lower_function_sig(&def.function.sig, method_ctx.as_ref());
@@ -13910,7 +14185,8 @@ impl<'a> BodyBuilder<'a> {
             if let Some((variant, layout)) =
                 self.enum_variant_for_payload(expected_ty, &local_ty, struct_def)
             {
-                let local_id = self.allocate_temp(layout.enum_ty.clone(), expr.span);
+                let nominal_ty = self.lowering.nominal_enum_ty(&layout);
+                let local_id = self.allocate_temp(nominal_ty.clone(), expr.span);
                 let enum_place = mir::Place::from_local(local_id);
                 self.assign_enum_variant_from_place(
                     enum_place.clone(),
@@ -13922,7 +14198,7 @@ impl<'a> BodyBuilder<'a> {
                 )?;
                 *operand = mir::Operand::Move(enum_place);
                 if let Some(arg_type) = arg_types.get_mut(idx) {
-                    *arg_type = layout.enum_ty.clone();
+                    *arg_type = nominal_ty;
                 }
             }
         }
@@ -14401,7 +14677,8 @@ impl<'a> BodyBuilder<'a> {
                 if let Some((variant, layout)) =
                     self.enum_variant_for_payload(expected_ty, &place.ty, place.struct_def)
                 {
-                    let local_id = self.allocate_temp(layout.enum_ty.clone(), expr.span);
+                    let nominal_ty = self.lowering.nominal_enum_ty(&layout);
+                    let local_id = self.allocate_temp(nominal_ty.clone(), expr.span);
                     let enum_place = mir::Place::from_local(local_id);
                     self.assign_enum_variant_from_place(
                         enum_place.clone(),
@@ -14413,7 +14690,7 @@ impl<'a> BodyBuilder<'a> {
                     )?;
                     return Ok(OperandInfo {
                         operand: mir::Operand::copy(enum_place),
-                        ty: layout.enum_ty.clone(),
+                        ty: nominal_ty,
                     });
                 }
             }
@@ -16611,8 +16888,26 @@ impl<'a> BodyBuilder<'a> {
                     // lower the argument as a normal operand and call
                     // `fp_panic` with it directly.
                     let string_ty = self.lowering.raw_string_ptr_ty();
-                    let message_operand =
+                    let mut message_operand =
                         self.lower_operand(&call.callargs[0].value, Some(&string_ty))?;
+                    // `expected` above is only a hint — if the argument's
+                    // real type is still a `&str`/slice (a fat pointer:
+                    // data ptr + length), not yet the bare byte pointer
+                    // `fp_panic`'s C-ABI signature requires, extract just
+                    // its data-pointer field (mirrors how other C-ABI call
+                    // sites in this file convert a slice argument via
+                    // `lower_slice_ptr_place`).
+                    if message_operand.ty != string_ty {
+                        if let mir::Operand::Copy(place) | mir::Operand::Move(place) =
+                            &message_operand.operand
+                        {
+                            let ptr_place = self.lower_slice_ptr_place(place.clone());
+                            message_operand = OperandInfo {
+                                operand: mir::Operand::Copy(ptr_place),
+                                ty: string_ty.clone(),
+                            };
+                        }
+                    }
                     let sig = mir::FunctionSig {
                         inputs: vec![string_ty.clone()],
                         output: MirLowering::unit_ty(),
@@ -17591,6 +17886,25 @@ impl<'a> BodyBuilder<'a> {
             | TyKind::Infer(_)
             | TyKind::Type => {
                 if let TyKind::Adt(adt, substs) = &ty.kind {
+                    // A payload slot opaqued out by `enum_layout_for_
+                    // instance` (heterogeneous per-variant types sharing a
+                    // slot) has no fields to size structurally — its size
+                    // was already computed there as the max over every
+                    // contributing variant's own type at that slot.
+                    if let Some(size) = self
+                        .lowering
+                        .display_type_name(ty)
+                        .and_then(|name| self.lowering.opaque_ty_sizes.get(&name).copied())
+                    {
+                        return Some(size);
+                    }
+                    let args: Vec<Ty> = substs
+                        .iter()
+                        .filter_map(|arg| match arg {
+                            mir::ty::GenericArg::Type(inner) => Some(inner.clone()),
+                            _ => None,
+                        })
+                        .collect();
                     // `struct_layout_for_ty` is a cache-only reverse lookup
                     // (`&self`, can't trigger computation) — if nothing has
                     // needed this struct's layout yet (e.g. `sizeof!(T)` is
@@ -17600,26 +17914,40 @@ impl<'a> BodyBuilder<'a> {
                     // computes and caches the layout on demand from the
                     // struct's own `DefId` + concrete generic args, exactly
                     // as a struct-literal use of this same type would.
-                    let layout = self.lowering.struct_layout_for_ty(ty).or_else(|| {
-                        let args: Vec<Ty> = substs
-                            .iter()
-                            .filter_map(|arg| match arg {
-                                mir::ty::GenericArg::Type(inner) => Some(inner.clone()),
-                                _ => None,
-                            })
-                            .collect();
-                        self.lowering.struct_layout_for_instance(adt.did, &args, span)
-                    });
-                    if let Some(layout) = layout {
-                        let mut total = 0u64;
-                        for field in &layout.field_tys {
-                            let size = match self.compute_ty_size(span, field) {
-                                Some(value) => value,
-                                None => return None,
-                            };
-                            total = total.saturating_add(size);
+                    if self.lowering.struct_defs.contains_key(&adt.did) {
+                        let layout = self
+                            .lowering
+                            .struct_layout_for_ty(ty)
+                            .or_else(|| self.lowering.struct_layout_for_instance(adt.did, &args, span));
+                        if let Some(layout) = layout {
+                            let mut total = 0u64;
+                            for field in &layout.field_tys {
+                                let size = match self.compute_ty_size(span, field) {
+                                    Some(value) => value,
+                                    None => return None,
+                                };
+                                total = total.saturating_add(size);
+                            }
+                            return Some(total);
                         }
-                        return Some(total);
+                    }
+                    // Enums are nominal (`TyKind::Adt`) now too, but their
+                    // actual byte layout is still the flattened
+                    // `tag + payload...` shape computed by
+                    // `enum_layout_for_instance` — mirror that shape's own
+                    // size (tag plus every payload slot) rather than trying
+                    // `struct_layout_for_instance` against an enum `DefId`.
+                    if self.lowering.enum_defs.contains_key(&adt.did) {
+                        if let Some(layout) =
+                            self.lowering.enum_layout_for_instance(adt.did, &args, span)
+                        {
+                            let mut total = self.compute_ty_size(span, &layout.tag_ty)?;
+                            for payload in &layout.payload_tys {
+                                let size = self.compute_ty_size(span, payload)?;
+                                total = total.saturating_add(size);
+                            }
+                            return Some(total);
+                        }
                     }
                 }
                 // `sizeof!(T)` called on a function/method's own generic type
@@ -19075,7 +19403,7 @@ impl<'a> BodyBuilder<'a> {
                                 .and_then(|def_id| self.lowering.method_defs_by_def.get(def_id))
                                 .cloned();
                             if let Some(def) = method_def {
-                                let method_ctx = self.lowering.make_method_context(&def.self_ty);
+                                let method_ctx = self.lowering.make_method_context(&def.self_ty, &def.assoc_types);
                                 let tentative_sig = self
                                     .lowering
                                     .lower_function_sig(&def.function.sig, method_ctx.as_ref());
@@ -19174,7 +19502,7 @@ impl<'a> BodyBuilder<'a> {
                                 .and_then(|def_id| self.lowering.method_defs_by_def.get(def_id))
                                 .cloned();
                             if let Some(def) = method_def {
-                                let method_ctx = self.lowering.make_method_context(&def.self_ty);
+                                let method_ctx = self.lowering.make_method_context(&def.self_ty, &def.assoc_types);
                                 let tentative_sig = self
                                     .lowering
                                     .lower_function_sig(&def.function.sig, method_ctx.as_ref());
@@ -20109,7 +20437,7 @@ impl<'a> BodyBuilder<'a> {
                     method_name, struct_def_id
                 ))
             })?;
-        let method_ctx = self.lowering.make_method_context(&def.self_ty);
+        let method_ctx = self.lowering.make_method_context(&def.self_ty, &def.assoc_types);
         let tentative_sig = self
             .lowering
             .lower_function_sig(&def.function.sig, method_ctx.as_ref());

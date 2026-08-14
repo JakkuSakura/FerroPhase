@@ -543,7 +543,7 @@ impl CompilerDriver {
         }
 
         let fqp = FullyQualifiedPath::new(package_path.clone());
-        let (mir_id, struct_layouts, full_layouts, adt_defs) =
+        let (mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes) =
             self.lower_to_mir(&hir_id, &fqp).await?;
         if let Some(package) = self
             .state
@@ -568,6 +568,7 @@ impl CompilerDriver {
             &current_package_id,
             &full_layouts,
             &adt_defs,
+            &opaque_payload_sizes,
         )?;
 
         let lir = self.state.lir(&lir_id)?.clone();
@@ -603,7 +604,7 @@ impl CompilerDriver {
         let module_path = QualifiedPath::new(Vec::new());
         let hir_id = HirId::new(format!("hir:{}", self.module_state_key(&module_path)));
         let fqp = FullyQualifiedPath::new(module_path.clone());
-        let (mir_id, struct_layouts, full_layouts, adt_defs) =
+        let (mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes) =
             self.lower_to_mir(&hir_id, &fqp).await?;
         {
             let mut package = package.borrow_mut();
@@ -620,6 +621,7 @@ impl CompilerDriver {
             &package_id,
             &full_layouts,
             &adt_defs,
+            &opaque_payload_sizes,
         )?;
         Ok(vec![fp_core::lir::LirCompileUnit {
             package_id: hir_package_id,
@@ -949,6 +951,7 @@ impl CompilerDriver {
             HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>>,
             HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>,
             HashMap<fp_core::hir::DefId, fp_core::mir::ty::AdtDef>,
+            HashMap<String, u64>,
         ),
         CompilerDriverError,
     > {
@@ -1005,7 +1008,7 @@ impl CompilerDriver {
             lowering.take_adt_defs();
         let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
             lowering.all_adt_field_tys().into_iter().collect();
-        let full_layouts: HashMap<
+        let mut full_layouts: HashMap<
             (fp_core::mir::DefId, Vec<fp_core::mir::Ty>),
             Vec<fp_core::mir::Ty>,
         > = lowering
@@ -1013,9 +1016,22 @@ impl CompilerDriver {
                 .iter()
                 .map(|(key, layout)| ((key.def_id, key.args.clone()), layout.field_tys.clone()))
                 .collect();
+        // Enums share the same `(DefId, args)`-keyed channel as structs —
+        // `mir_to_lir`'s `lir_type_from_ty` reconstructs an enum's runtime
+        // shape as `{tag, ...payload slots}`, exactly mirroring
+        // `EnumLayout::tag_ty`/`payload_tys` here (a mismatched/union slot
+        // is an opaque placeholder at this point; sized separately via
+        // `opaque_payload_sizes` below, since it has no fields of its own).
+        for (key, layout) in lowering.enum_layout_map() {
+            let mut fields = Vec::with_capacity(1 + layout.payload_tys.len());
+            fields.push(layout.tag_ty.clone());
+            fields.extend(layout.payload_tys.iter().cloned());
+            full_layouts.insert((key.def_id, key.args.clone()), fields);
+        }
+        let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
         let mir_id = MirId::new(format!("mir:{}", self.module_state_key(path.path())));
         self.state.insert_mir(mir_id.clone(), mir);
-        Ok((mir_id, struct_layouts, full_layouts, adt_defs))
+        Ok((mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes))
     }
 
     fn lower_to_lir(
@@ -1025,6 +1041,7 @@ impl CompilerDriver {
         package_id: &PackageId,
         full_layouts: &HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>,
         adt_defs: &HashMap<fp_core::hir::DefId, fp_core::mir::ty::AdtDef>,
+        opaque_payload_sizes: &HashMap<String, u64>,
     ) -> Result<LirId, CompilerDriverError> {
         let mir = self.state.mir(mir_id)?.clone();
         // Dependency packages (this package's own entry is included too,
@@ -1047,6 +1064,7 @@ impl CompilerDriver {
             .with_module_path(path.path().to_key())
             .with_full_layouts(full_layouts.clone())
             .with_adt_defs(adt_defs.clone())
+            .with_opaque_payload_sizes(opaque_payload_sizes.clone())
             .with_dependency_packages(dependency_packages);
         // Thread dependency packages' compiled function signatures into
         // this generator too, mirroring the `mir_struct_fields` merge

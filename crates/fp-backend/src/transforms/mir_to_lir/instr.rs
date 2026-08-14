@@ -37,6 +37,14 @@ pub struct LirGenerator {
     mir_layouts: HashMap<mir::DefId, Vec<mir::Ty>>,
     full_layouts: HashMap<(mir::DefId, Vec<mir::Ty>), Vec<mir::Ty>>,
     adt_defs: HashMap<mir::DefId, mir::ty::AdtDef>,
+    /// Byte size for an opaque enum-payload-slot placeholder (see
+    /// `MirLowering::opaque_ty_sizes`'s doc comment) — a slot whose
+    /// per-variant types are heterogeneous has no real fields to lower
+    /// structurally, only a byte count for its runtime storage (sized to
+    /// fit whichever variant is actually active). Keyed by the
+    /// placeholder's name (its single synthetic variant's ident), the same
+    /// string `enum_layout_for_instance` used to mint it.
+    opaque_payload_sizes: HashMap<String, u64>,
     function_symbol_map: HashMap<String, String>,
     function_def_map: HashMap<(mir::DefId, mir::ty::SubstsRef), String>,
     function_signatures: HashMap<String, lir::LirFunctionSignature>,
@@ -120,6 +128,7 @@ impl LirGenerator {
             mir_layouts: HashMap::new(),
             full_layouts: HashMap::new(),
             adt_defs: HashMap::new(),
+            opaque_payload_sizes: HashMap::new(),
             function_symbol_map: HashMap::new(),
             function_def_map: HashMap::new(),
             function_signatures: HashMap::new(),
@@ -156,6 +165,11 @@ impl LirGenerator {
 
     pub fn with_adt_defs(mut self, defs: HashMap<mir::DefId, mir::ty::AdtDef>) -> Self {
         self.adt_defs = defs;
+        self
+    }
+
+    pub fn with_opaque_payload_sizes(mut self, sizes: HashMap<String, u64>) -> Self {
+        self.opaque_payload_sizes = sizes;
         self
     }
 
@@ -387,6 +401,69 @@ impl LirGenerator {
         self.predeclare_function_signatures_impl(program, Some(package_id));
     }
 
+    /// Whether `ty` still contains an unresolved generic type parameter
+    /// (`TyKind::Param`) — true for a generic function's own template
+    /// signature (e.g. `impl<T> Vec<T> { fn push(&mut self, value: T) }`'s
+    /// literal `sig.inputs`/`sig.output`, still `Param("T")` since no
+    /// concrete `T` applies to the un-specialized item itself). Such a
+    /// signature can never be given a concrete LIR type — only its
+    /// monomorphized specializations (separate MIR items with `T`
+    /// substituted throughout) can be.
+    ///
+    /// For an ADT reference whose own generic args are already fully
+    /// resolved (e.g. `Vec<BenchCase>`), this isn't enough on its own:
+    /// `lir_type_from_ty` still needs to resolve *that ADT's own field
+    /// list* — via `full_layouts` for this exact `(def_id, args)` if
+    /// present, or else falls back to the un-substituted generic template
+    /// via `lookup_adt_def`. If `full_layouts` is missing this
+    /// instantiation and the template's own fields still carry a bare
+    /// `Param` (as they always do for a generic struct's own declaration),
+    /// predeclaring a function that merely *references* this ADT would
+    /// still crash deep inside `lir_type_from_ty`'s recursive field
+    /// expansion — so check that path too, recursively.
+    fn contains_unresolved_param(&self, ty: &Ty) -> bool {
+        match &ty.kind {
+            TyKind::Param(_) => true,
+            TyKind::Ref(_, inner, _) | TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
+                self.contains_unresolved_param(inner)
+            }
+            TyKind::Slice(inner) | TyKind::Array(inner, _) => {
+                self.contains_unresolved_param(inner)
+            }
+            TyKind::Tuple(elements) => elements.iter().any(|e| self.contains_unresolved_param(e)),
+            TyKind::Adt(adt, substs) => {
+                let substs_types: Vec<mir::Ty> = substs
+                    .iter()
+                    .filter_map(|arg| match arg {
+                        mir::ty::GenericArg::Type(inner) => Some(inner.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                if substs_types
+                    .iter()
+                    .any(|inner| self.contains_unresolved_param(inner))
+                {
+                    return true;
+                }
+                if self.struct_layouts.borrow().contains_key(&adt.did)
+                    || self.lookup_mir_layout(&adt.did).is_some()
+                    || self.full_layouts.contains_key(&(adt.did, substs_types))
+                {
+                    return false;
+                }
+                self.lookup_adt_def(&adt.did)
+                    .and_then(|def| def.variants.first().cloned())
+                    .is_some_and(|variant| {
+                        variant
+                            .fields
+                            .iter()
+                            .any(|field| self.contains_unresolved_param(&field.ty))
+                    })
+            }
+            _ => false,
+        }
+    }
+
     fn predeclare_function_signatures_impl(
         &mut self,
         program: &mir::Program,
@@ -394,6 +471,15 @@ impl LirGenerator {
     ) {
         for item in &program.items {
             if let mir::ItemKind::Function(func) = &item.kind {
+                if func
+                    .sig
+                    .inputs
+                    .iter()
+                    .chain(std::iter::once(&func.sig.output))
+                    .any(|ty| self.contains_unresolved_param(ty))
+                {
+                    continue;
+                }
                 let name = self.mangle_function_name(func);
                 if let Some(def_id) = func.def_id {
                     self.function_def_map
@@ -6168,6 +6254,23 @@ impl LirGenerator {
             }
             TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
                 lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
+            }
+            // An opaque enum-payload-slot placeholder (`MirLowering::
+            // opaque_ty`, minted for a slot where variants disagree on the
+            // payload type) has a synthetic `DefId` matching nothing in
+            // `struct_layouts`/`mir_layouts`/`full_layouts`/`adt_defs` — it
+            // was never a real struct/enum, just a byte count for
+            // whichever variant's payload is actually stored there at
+            // runtime. Recognized by its single synthetic variant's ident,
+            // the same name `opaque_payload_sizes` is keyed by.
+            TyKind::Adt(adt, _)
+                if adt
+                    .variants
+                    .first()
+                    .is_some_and(|variant| self.opaque_payload_sizes.contains_key(variant.ident.as_str())) =>
+            {
+                let size = self.opaque_payload_sizes[adt.variants[0].ident.as_str()];
+                lir::LirType::Array(Box::new(lir::LirType::I8), size)
             }
             TyKind::Adt(adt, _) if self.struct_layouts.borrow().contains_key(&adt.did) => {
                 let fields = self.struct_layouts.borrow().get(&adt.did).unwrap().clone();
