@@ -42,6 +42,22 @@ pub struct HirTypeChecker {
     /// this made every method call pay an O(workspace size) cost. Built
     /// once, reused (as a cheap `Rc` clone) for the rest of the check.
     impl_lookup_items: Option<Rc<Vec<hir::Item>>>,
+    /// Lazily-built, memoized fast-reject index over `impl_lookup_items`:
+    /// for every `impl` item whose self-type is a resolved nominal path
+    /// (`TypeExprKind::Path` with `Res::Def(def_id)` — a struct/enum's own
+    /// real `DefId`, already resolved during HIR lowering, before this
+    /// pass ever runs), maps `def_id` to that impl's index in
+    /// `impl_lookup_items`. `method_output` used to fully type-check every
+    /// impl's self-type (`check_type_expr`, plus a `generic_args_compatible`
+    /// call) before even checking whether it could possibly match the
+    /// receiver — once per method-call/index expression, over every impl
+    /// in the whole workspace. For an ADT receiver (the overwhelming common
+    /// case), only impls bucketed under that exact `DefId` can ever match
+    /// (see `method_output`'s own `matches_receiver` match arms: an ADT
+    /// receiver only ever matches an impl whose self-type also resolves to
+    /// `TyKind::Adt` with the same `did`), so this index lets that lookup
+    /// skip straight to the real candidates.
+    impl_items_by_receiver_def: Option<Rc<HashMap<hir::DefId, Vec<usize>>>>,
 }
 
 struct GenericScope<'a> {
@@ -108,6 +124,7 @@ impl HirTypeChecker {
             expected_expr_types: Vec::new(),
             pending_type_const_blocks: Vec::new(),
             impl_lookup_items: None,
+            impl_items_by_receiver_def: None,
         }
     }
 
@@ -2047,7 +2064,20 @@ impl HirTypeChecker {
             _ => None,
         };
         let impl_items = self.impl_lookup_items();
-        for item in impl_items.iter() {
+        // See `method_output`'s matching copy of this fast-reject index
+        // lookup for why this is safe: an ADT receiver can only ever match
+        // an impl whose self-type also resolves to `TyKind::Adt` with the
+        // same `did`.
+        let candidate_indices: Vec<usize> = match receiver_def {
+            Some(def_id) => self
+                .impl_items_by_receiver_def()
+                .get(&def_id)
+                .cloned()
+                .unwrap_or_default(),
+            None => (0..impl_items.len()).collect(),
+        };
+        for &item_index in &candidate_indices {
+            let item = &impl_items[item_index];
             let hir::ItemKind::Impl(impl_item) = &item.kind else {
                 continue;
             };
@@ -2142,7 +2172,23 @@ impl HirTypeChecker {
             _ => None,
         };
         let impl_items = self.impl_lookup_items();
-        for item in impl_items.iter() {
+        // An ADT receiver can only ever match an impl whose self-type also
+        // resolves to `TyKind::Adt` with the same `did` (see the
+        // `matches_receiver` match below) — go straight to that bucket via
+        // the fast-reject index instead of fully type-checking every
+        // impl's self-type in the workspace. A non-ADT receiver (rare:
+        // extension impls on primitives/tuples/etc.) falls back to
+        // checking every impl, exactly as before.
+        let candidate_indices: Vec<usize> = match receiver_def {
+            Some(def_id) => self
+                .impl_items_by_receiver_def()
+                .get(&def_id)
+                .cloned()
+                .unwrap_or_default(),
+            None => (0..impl_items.len()).collect(),
+        };
+        for &item_index in &candidate_indices {
+            let item = &impl_items[item_index];
             let hir::ItemKind::Impl(impl_item) = &item.kind else {
                 continue;
             };
@@ -2219,6 +2265,30 @@ impl HirTypeChecker {
             self.impl_lookup_items = Some(Rc::new(items));
         }
         self.impl_lookup_items.clone().expect("just populated above")
+    }
+
+    /// Lazily builds and memoizes `impl_items_by_receiver_def` (see its
+    /// doc comment) on first use, then returns a cheap `Rc` clone on every
+    /// later call.
+    fn impl_items_by_receiver_def(&mut self) -> Rc<HashMap<hir::DefId, Vec<usize>>> {
+        if self.impl_items_by_receiver_def.is_none() {
+            let items = self.impl_lookup_items();
+            let mut index: HashMap<hir::DefId, Vec<usize>> = HashMap::new();
+            for (item_index, item) in items.iter().enumerate() {
+                let hir::ItemKind::Impl(impl_item) = &item.kind else {
+                    continue;
+                };
+                if let hir::TypeExprKind::Path(path) = &impl_item.self_ty.kind {
+                    if let Some(hir::Res::Def(def_id)) = path.res {
+                        index.entry(def_id).or_default().push(item_index);
+                    }
+                }
+            }
+            self.impl_items_by_receiver_def = Some(Rc::new(index));
+        }
+        self.impl_items_by_receiver_def
+            .clone()
+            .expect("just populated above")
     }
 
     fn method_generic_args(
