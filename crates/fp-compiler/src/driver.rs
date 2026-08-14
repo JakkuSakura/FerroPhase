@@ -379,11 +379,15 @@ impl CompilerDriver {
                     self.state.typing_ctx.data_layout.clone(),
                 );
                 // `TypecheckedTranspile` needs HIR generation + typing too (it lifts the
-                // typed HIR back to AST inside `compile_items_to_lir_units`, returning no
-                // LIR units) — only comptime evaluation below is genuinely Native-only.
+                // typed HIR back to AST inside `compile_items_to_lir_units`) — it now also
+                // attempts MIR/LIR lowering there, best-effort, purely so any comptime
+                // entries (e.g. `const { .. }` blocks) can be validated below through the
+                // real interpreter; unlike Native, a comptime failure here is reported,
+                // not propagated, since the Kotlin backend never consumes the resolved
+                // value (only the block's type, already known independent of this).
                 if matches!(self.pipeline, PipelineMode::Native | PipelineMode::TypecheckedTranspile) {
                     let mut units = self.compile_items_to_lir_units(&package).await?;
-                    if self.pipeline == PipelineMode::Native {
+                    if !units.is_empty() {
                         Self::publish_lir_units(&package, package_id, &units)?;
 
                         let lir = package.borrow().lir_workspace.to_program();
@@ -391,13 +395,19 @@ impl CompilerDriver {
                             let module_path = QualifiedPath::new(Vec::new());
                             let lir_id = Self::package_module_lir_id(package_id, &module_path);
                             self.state.insert_lir(lir_id.clone(), lir);
-                            self.evaluate_comptime_lir(
-                                &lir_id,
-                                &FullyQualifiedPath::new(module_path),
-                            )
-                            .await?;
-                            units = self.relower_cached_lir_units(&package).await?;
-                            Self::publish_lir_units(&package, package_id, &units)?;
+                            let fqp = FullyQualifiedPath::new(module_path);
+                            if self.pipeline == PipelineMode::Native {
+                                self.evaluate_comptime_lir(&lir_id, &fqp).await?;
+                                units = self.relower_cached_lir_units(&package).await?;
+                                Self::publish_lir_units(&package, package_id, &units)?;
+                            } else if let Err(error) =
+                                self.evaluate_comptime_lir(&lir_id, &fqp).await
+                            {
+                                fp_core::diagnostics::report_warning_with_context(
+                                    "const-eval".to_string(),
+                                    format!("comptime validation failed: {error}"),
+                                );
+                            }
                         }
                     }
                     let _ = units;
@@ -513,7 +523,9 @@ impl CompilerDriver {
             package.borrow_mut().hir_program = Some(self.state.hir(&hir_id)?.clone());
         }
 
-        // TypecheckedTranspile: lift typed HIR back to AST, skip MIR/LIR
+        // TypecheckedTranspile: lift typed HIR back to AST — this is what
+        // the Kotlin backend actually reads, and doesn't depend on
+        // anything below succeeding.
         if self.pipeline == PipelineMode::TypecheckedTranspile {
             let hir = self.state.hir(&hir_id)?;
             // `typeck_results` was moved into `self.state` above (`insert_hir_typeck`) —
@@ -539,7 +551,69 @@ impl CompilerDriver {
                 pkg.borrow_mut().lifted_items_by_path = Some(lifted_items_by_path);
                 pkg.borrow_mut().referenced_paths_by_path = Some(referenced_paths_by_path);
             }
-            return Ok(Vec::new()); // No LIR units needed
+            // Best-effort HIR->MIR->LIR lowering, purely so any
+            // `const { .. }` blocks (see `register_const_block_comptime_entry`)
+            // get validated later through the real interpreter
+            // (`evaluate_comptime_lir`) instead of a hand-rolled one. MIR
+            // lowering was built for the Native pipeline and may not yet
+            // cover every construct real vendored std/workspace code
+            // exercises — a failure here is reported and this package
+            // simply produces no LIR units (comptime validation is
+            // skipped for it), matching this pipeline's prior behavior;
+            // the lifted AST above is already complete regardless.
+            let fqp = FullyQualifiedPath::new(package_path.clone());
+            return match self.lower_to_mir(&hir_id, &fqp).await {
+                Ok((mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes)) => {
+                    if let Some(package) = self
+                        .state
+                        .typing_ctx
+                        .env_ctx
+                        .compiled_package(&current_package_id)
+                    {
+                        package.borrow_mut().mir_program = Some(self.state.mir(&mir_id)?.clone());
+                        package
+                            .borrow_mut()
+                            .mir_struct_fields
+                            .extend(struct_layouts.clone());
+                        package.borrow_mut().mir_adt_defs.extend(adt_defs.clone());
+                    }
+                    match self.lower_to_lir(
+                        &mir_id,
+                        &fqp,
+                        &current_package_id,
+                        &full_layouts,
+                        &adt_defs,
+                        &opaque_payload_sizes,
+                    ) {
+                        Ok(lir_id) => {
+                            let lir = self.state.lir(&lir_id)?.clone();
+                            Ok(vec![fp_core::lir::LirCompileUnit {
+                                package_id: hir_package_id,
+                                module_path: package_path,
+                                program: lir,
+                            }])
+                        }
+                        Err(error) => {
+                            fp_core::diagnostics::report_warning_with_context(
+                                "const-eval".to_string(),
+                                format!(
+                                    "MIR->LIR lowering failed, skipping comptime validation for this package: {error}"
+                                ),
+                            );
+                            Ok(Vec::new())
+                        }
+                    }
+                }
+                Err(error) => {
+                    fp_core::diagnostics::report_warning_with_context(
+                        "const-eval".to_string(),
+                        format!(
+                            "HIR->MIR lowering failed, skipping comptime validation for this package: {error}"
+                        ),
+                    );
+                    Ok(Vec::new())
+                }
+            };
         }
 
         let fqp = FullyQualifiedPath::new(package_path.clone());
@@ -654,147 +728,26 @@ impl CompilerDriver {
                             "HIR type checking suspended without a comptime request",
                         ));
                     }
+                    // A `const { .. }` block's own TYPE (what typing
+                    // actually needs to keep going) is already known from
+                    // typing its body — neither `ConstBlock` arm in
+                    // `hir_typeck.rs` uses the resolved *value* for
+                    // anything but `results.const_block_values`, a side
+                    // channel MIR lowering already tolerates being absent
+                    // (falls back to lowering the block as ordinary
+                    // runtime code). Real, interpreter-backed evaluation
+                    // happens later, once this package's own MIR/LIR
+                    // exists (see `register_const_block_comptime_entry` +
+                    // `evaluate_comptime_lir`) — typecheck itself never
+                    // needs to evaluate anything, so every request is
+                    // completed immediately with an opaque placeholder
+                    // rather than a hand-rolled, inevitably incomplete
+                    // AST interpreter.
                     for request in requests {
-                        let result = self.evaluate_hir_const_request(request.request());
-                        request.complete(result);
+                        request.complete(Ok(Value::Undefined(fp_core::ast::ValueUndefined)));
                     }
                 }
             }
-        }
-    }
-
-    fn evaluate_hir_const_request(
-        &self,
-        request: &fp_typing::ComptimeRequest,
-    ) -> fp_core::Result<Value> {
-        let expr = request
-            .block
-            .expr
-            .as_deref()
-            .ok_or_else(|| fp_core::error::Error::from("const block has no value"))?;
-        Self::evaluate_hir_const_expr(&request.program, expr)
-    }
-
-    fn evaluate_hir_const_expr(
-        program: &hir::Program,
-        expr: &hir::Expr,
-    ) -> fp_core::Result<Value> {
-        match &expr.kind {
-            hir::ExprKind::Literal(literal) => Ok(match literal {
-                hir::Lit::Bool(value) => Value::bool(*value),
-                hir::Lit::Integer(value) => Value::int(*value),
-                hir::Lit::Float(value) => Value::decimal(*value),
-                hir::Lit::Str(value) => Value::string(value.clone()),
-                hir::Lit::Char(value) => Value::string(value.to_string()),
-                hir::Lit::Null => Value::null(),
-                hir::Lit::Bytes(bytes) | hir::Lit::CStr(bytes) => {
-                    Value::Bytes(fp_core::ast::ValueBytes::from(bytes.as_slice()))
-                }
-            }),
-            hir::ExprKind::Path(path) => {
-                let name = path
-                    .segments
-                    .last()
-                    .map(|segment| segment.name.as_str())
-                    .ok_or_else(|| fp_core::error::Error::from("empty const path"))?;
-                // Prefer the already-resolved `DefId` (unambiguous, and
-                // correct across modules) over a name scan. Only fall back
-                // to scanning by name when resolution didn't attach one,
-                // and even then require an exact bare-name match or a
-                // `::`-bounded suffix — `Const.name` is always bare (see
-                // `hir::Program::def_paths`), so an unqualified substring
-                // match like the old `ends_with(name)` could wrongly hit
-                // an unrelated const whose name merely ends with `name`.
-                let item = match path.res {
-                    Some(hir::Res::Def(def_id)) => program.def_map.get(&def_id),
-                    _ => program.def_map.values().find(|item| match &item.kind {
-                        hir::ItemKind::Const(constant) => {
-                            let const_name = constant.name.as_str();
-                            const_name == name || const_name.ends_with(&format!("::{name}"))
-                        }
-                        _ => false,
-                    }),
-                };
-                let Some(item) = item else {
-                    return Err(fp_core::error::Error::from(format!(
-                        "const path `{name}` is not available during comptime evaluation"
-                    )));
-                };
-                let hir::ItemKind::Const(constant) = &item.kind else {
-                    unreachable!();
-                };
-                Self::evaluate_hir_const_expr(program, &constant.body.value)
-            }
-            hir::ExprKind::Binary(op, lhs, rhs) => {
-                let lhs = Self::evaluate_hir_const_expr(program, lhs)?;
-                let rhs = Self::evaluate_hir_const_expr(program, rhs)?;
-                Self::evaluate_hir_binary(op, lhs, rhs)
-            }
-            hir::ExprKind::If(condition, then_expr, else_expr) => {
-                let condition = Self::evaluate_hir_const_expr(program, condition)?;
-                let Value::Bool(condition) = condition else {
-                    return Err(fp_core::error::Error::from(
-                        "const-if condition must evaluate to bool",
-                    ));
-                };
-                if condition.value {
-                    Self::evaluate_hir_const_expr(program, then_expr)
-                } else if let Some(else_expr) = else_expr {
-                    Self::evaluate_hir_const_expr(program, else_expr)
-                } else {
-                    Ok(Value::unit())
-                }
-            }
-            hir::ExprKind::Block(block) => block
-                .expr
-                .as_deref()
-                .map(|expr| Self::evaluate_hir_const_expr(program, expr))
-                .unwrap_or_else(|| Ok(Value::unit())),
-            _ => Err(fp_core::error::Error::from(
-                "const expression is not supported by the type-check-time evaluator",
-            )),
-        }
-    }
-
-    fn evaluate_hir_binary(
-        op: &hir::BinOp,
-        lhs: Value,
-        rhs: Value,
-    ) -> fp_core::Result<Value> {
-        let lhs_int = || match lhs.clone() {
-            Value::Int(value) => Ok(value.value),
-            Value::UInt(value) => i64::try_from(value.value)
-                .map_err(|_| fp_core::error::Error::from("integer overflow during comptime")),
-            _ => Err(fp_core::error::Error::from("integer operands required")),
-        };
-        let rhs_int = || match rhs.clone() {
-            Value::Int(value) => Ok(value.value),
-            Value::UInt(value) => i64::try_from(value.value)
-                .map_err(|_| fp_core::error::Error::from("integer overflow during comptime")),
-            _ => Err(fp_core::error::Error::from("integer operands required")),
-        };
-        match op {
-            hir::BinOp::Add => Ok(Value::int(lhs_int()? + rhs_int()?)),
-            hir::BinOp::Sub => Ok(Value::int(lhs_int()? - rhs_int()?)),
-            hir::BinOp::Mul => Ok(Value::int(lhs_int()? * rhs_int()?)),
-            hir::BinOp::Div => Ok(Value::int(lhs_int()? / rhs_int()?)),
-            hir::BinOp::Rem => Ok(Value::int(lhs_int()? % rhs_int()?)),
-            hir::BinOp::Eq => Ok(Value::bool(lhs == rhs)),
-            hir::BinOp::Ne => Ok(Value::bool(lhs != rhs)),
-            hir::BinOp::Gt | hir::BinOp::Ge | hir::BinOp::Lt | hir::BinOp::Le => {
-                let lhs = lhs_int()?;
-                let rhs = rhs_int()?;
-                Ok(Value::bool(match op {
-                    hir::BinOp::Gt => lhs > rhs,
-                    hir::BinOp::Ge => lhs >= rhs,
-                    hir::BinOp::Lt => lhs < rhs,
-                    hir::BinOp::Le => lhs <= rhs,
-                    _ => unreachable!(),
-                }))
-            }
-            _ => Err(fp_core::error::Error::from(
-                "binary operator is not supported during comptime",
-            )),
         }
     }
 

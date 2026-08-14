@@ -50,4 +50,25 @@ impl<T> Option<T> {
             Option::None => Option::None,
         }
     }
+
+    pub fn map_or<U>(self, default: U, f: fn(T) -> U) -> U {
+        match self {
+            Option::Some(value) => f(value),
+            Option::None => default,
+        }
+    }
+
+    pub fn unwrap_or_else(self, f: fn() -> T) -> T {
+        match self {
+            Option::Some(value) => value,
+            Option::None => f(),
+        }
+    }
+
+    pub fn ok_or<E>(self, err: E) -> Result<T, E> {
+        match self {
+            Option::Some(value) => Result::Ok(value),
+            Option::None => Result::Err(err),
+        }
+    }
 }

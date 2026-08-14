@@ -566,6 +566,7 @@ fn parse_type_arg(input: &mut &[Token]) -> ModalResult<Ty> {
 pub(crate) fn parse_type_bounds(input: &mut &[Token]) -> ModalResult<TypeBounds> {
     let mut bounds = Vec::new();
     loop {
+        skip_const_trait_modifier(input);
         let ty = parse_type_expr(input)?;
         bounds.push(type_to_expr(&ty));
         if expect_symbol(input, "+").is_err() {
@@ -573,6 +574,19 @@ pub(crate) fn parse_type_bounds(input: &mut &[Token]) -> ModalResult<TypeBounds>
         }
     }
     Ok(TypeBounds { bounds })
+}
+
+// Nightly `[const] Trait` bound modifier (e.g. `impl [const] FnOnce(T) -> U`,
+// `T: [const] Destruct`) — FerroPhase doesn't model const-trait-ness, so the
+// modifier is accepted and dropped, leaving the plain trait bound.
+fn skip_const_trait_modifier(input: &mut &[Token]) {
+    let mut probe = *input;
+    if expect_symbol(&mut probe, "[").is_ok()
+        && expect_keyword(&mut probe, Keyword::Const).is_ok()
+        && expect_symbol(&mut probe, "]").is_ok()
+    {
+        *input = probe;
+    }
 }
 
 fn type_to_expr(ty: &Ty) -> Expr {

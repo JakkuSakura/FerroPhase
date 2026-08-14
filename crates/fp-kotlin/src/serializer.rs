@@ -703,8 +703,11 @@ fn emit_file(file: &File, e: &mut KotlinEmitter) -> Result<()> {
 /// `.copy()`, `PartialEq`/`Eq` → `equals()`, etc. — rather than a generic
 /// "this type implements that interface" relationship. Matched by last
 /// path segment (`std::fmt::Display` and a bare `Display` both match).
+/// `trait_name` comes from `name_to_string`, which renders a qualified
+/// `Name::Path` with `.` separators, not `::` — split on both, since a
+/// `Name::ParameterPath` (or a manually-built `Name`) could still use `::`.
 fn is_known_std_trait(trait_name: &str) -> bool {
-    let last = trait_name.rsplit("::").next().unwrap_or(trait_name);
+    let last = trait_name.rsplit(['.', ':']).next().unwrap_or(trait_name);
     matches!(
         last,
         "Display" | "Debug" | "Clone" | "Copy" | "Default" | "PartialEq" | "Eq"
@@ -1987,6 +1990,24 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                             let body = render_expr(&cl.body, e)?;
                             return Ok(format!("{}?.let {{ {} -> {} }} ?: {}", obj, param, body, default));
                         }
+                    }
+                    // `.map_err(SomeError::Variant)` / `.map_err(some_fn)` — Rust
+                    // lets a tuple-variant constructor (or any named function) be
+                    // passed as a bare value where a closure is expected, since
+                    // it's itself a first-class `Fn(T) -> U` item. Kotlin's
+                    // equivalent (a variant's own constructor, referenced through
+                    // a dotted qualifier) isn't usable as a bare value the same
+                    // way — `CoreError.IO` isn't a value, only `CoreError.IO(x)`
+                    // is — so wrap it in an explicit one-arg lambda instead.
+                    // `map_err` itself has no dedicated Result-mapping support
+                    // here; this only needs to compile, matching every other
+                    // Result-shaped call in this file.
+                    if sel.field.name.as_str() == "map_err" && inv.args.len() == 1
+                        && !matches!(inv.args[0].kind(), ExprKind::Closure(_))
+                    {
+                        let obj = render_expr(&sel.obj, e)?;
+                        let ctor = render_expr(&inv.args[0], e)?;
+                        return Ok(format!("{}.map_err {{ __e -> {}(__e) }}", obj, ctor));
                     }
                     // `Option::take()` — replaces a `var` with `None`/`null`, returning
                     // the old value. Kotlin has no equivalent method; model it directly.

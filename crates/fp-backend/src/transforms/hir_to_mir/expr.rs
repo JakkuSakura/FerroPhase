@@ -3676,6 +3676,45 @@ impl MirLowering {
         Ok(mir_item)
     }
 
+    /// Registers an expression-position `const { .. }` block as an extra
+    /// `ExecutableConst` MIR item (mirroring `lower_executable_const`, but
+    /// for an ad hoc block rather than a named top-level `const` item),
+    /// pushed onto `extra_items` so it becomes a real `lir.comptime_entries`
+    /// entry once this package's own MIR/LIR is built. This is a
+    /// best-effort side channel purely for real (interpreter-backed)
+    /// comptime validation — the block's own operand lowering already
+    /// falls back to ordinary runtime code when no comptime value is
+    /// available (see `const_block_value_to_mir_constant`'s callers), so a
+    /// failure here is reported, not fatal.
+    fn register_const_block_comptime_entry(
+        &mut self,
+        program: &hir::Program,
+        expr_hir_id: hir::HirId,
+        const_block: &hir::ExprConstBlock,
+        span: Span,
+    ) {
+        let ty = self.lower_type_expr(&const_block.ty);
+        let name = hir::Symbol::new(format!("__const_block_{expr_hir_id}"));
+        let konst = hir::Const {
+            name: name.clone(),
+            ty: (*const_block.ty).clone(),
+            body: hir::Body {
+                hir_id: expr_hir_id,
+                params: Vec::new(),
+                value: (*const_block.body).clone(),
+            },
+        };
+        let key = self.const_key(name.as_str(), span);
+        let def_id = self.next_synthetic_def_id();
+        match self.lower_executable_const(program, def_id, &konst, ty, key) {
+            Ok(mir_item) => self.extra_items.push(mir_item),
+            Err(error) => self.emit_warning(
+                span,
+                format!("const block not lowerable for comptime validation: {error}"),
+            ),
+        }
+    }
+
     fn lower_type_expr(&mut self, ty_expr: &hir::TypeExpr) -> Ty {
         if let hir::TypeExprKind::Ref(inner) = &ty_expr.kind {
             if self.is_string_slice_ref(inner) {
@@ -16031,6 +16070,18 @@ impl<'a> BodyBuilder<'a> {
                 })
             }
             hir::ExprKind::ConstBlock(const_block) => {
+                // Real evaluation of this block (if any) happens later,
+                // once this package's own MIR/LIR exists — register it as
+                // a comptime entry now so `evaluate_comptime_lir` can run
+                // it for real through the actual interpreter, resolving
+                // arbitrary code (method calls, etc.), not a hand-rolled
+                // subset-of-Rust evaluator.
+                self.lowering.register_const_block_comptime_entry(
+                    self.program,
+                    expr.hir_id,
+                    const_block,
+                    expr.span,
+                );
                 // The value was resolved eagerly during type checking (see
                 // `HirTypeChecker::check_expr`'s `ConstBlock` arm) and handed
                 // here keyed by this expression's own `hir_id` — no
