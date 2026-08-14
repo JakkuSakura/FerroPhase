@@ -32,7 +32,7 @@ pub struct HirLoweringConfig;
 fn query_origin(document: &QueryDocument) -> QueryOrigin {
     document.origin.clone()
 }
-
+// TOOD: split into multiple files?
 /// Generator for transforming AST to HIR (High-level IR)
 ///
 /// NOTE: This is transitioning from stateful to share-nothing architecture.
@@ -68,6 +68,11 @@ pub struct HirGenerator {
     module_defs: HashSet<fp_core::ast::path::QualifiedPath>,
     program_def_map: HashMap<hir::DefId, hir::Item>,
     unimplemented_type_def_ids: HashSet<hir::DefId>,
+    /// Mirrored into the final `hir::Program::placeholder_defs` (see its
+    /// doc comment) the same way `def_paths` is — `DefId`s whose HIR item
+    /// is a structural stand-in (currently: trait declarations, which HIR
+    /// has no first-class representation for) rather than a real lowering.
+    placeholder_defs: HashSet<hir::DefId>,
     resolving_type_aliases: HashSet<String>,
     resolved_names: ResolvedNameTable,
     target_env: TargetEnv,
@@ -486,6 +491,7 @@ impl HirGenerator {
             module_defs: HashSet::new(),
             program_def_map: HashMap::new(),
             unimplemented_type_def_ids: HashSet::new(),
+            placeholder_defs: HashSet::new(),
             resolving_type_aliases: HashSet::new(),
             resolved_names: ResolvedNameTable::new(),
             target_env: TargetEnv::host(),
@@ -1371,6 +1377,43 @@ impl HirGenerator {
         self.transform_module(module_path, items)
     }
 
+    /// Struct field types (name -> [(field name, field type)]) from
+    /// whatever packages `self.workspace`'s package-scoped `crates()` map
+    /// currently holds — used to seed `ClosureLowering`'s structural
+    /// closure-argument-type derivation with definitions that live outside
+    /// the package currently being lowered (see its call site in
+    /// `transform_package`). **Known gap**: `for_package`'s per-package
+    /// `WorkspaceContext` only ever gets `std`/`libc` and itself
+    /// `import_package`d into `crates()` (see `compile_package`, which
+    /// never imports a package's *own* declared dependencies there) — an
+    /// ordinary sibling dependency (e.g. skln-git's use of skln-core's
+    /// `FileTreeEntry`) is invisible here even though it's fully compiled
+    /// by this point. The right source for that is `workspace.
+    /// hir_definitions()` (already used by `seed_workspace_definitions`),
+    /// which needs a `hir::TypeExpr -> ast::Ty` conversion to plug into
+    /// this AST-level pass — not yet wired up, so cross-package receiver
+    /// types still fall back to `Any` in `closure_param_ty_for_invoke`.
+    fn workspace_struct_field_types(&self) -> HashMap<String, Vec<(String, ast::Ty)>> {
+        let mut result = HashMap::new();
+        let Some(workspace) = &self.workspace else {
+            return result;
+        };
+        for package in workspace.crates().values() {
+            for package_item in &package.borrow().items {
+                if let ItemKind::DefStruct(def) = package_item.item.kind() {
+                    let fields = def
+                        .value
+                        .fields
+                        .iter()
+                        .map(|field| (field.name.as_str().to_string(), field.value.clone()))
+                        .collect();
+                    result.insert(def.name.as_str().to_string(), fields);
+                }
+            }
+        }
+        result
+    }
+
     pub fn transform_package(
         &mut self,
         package: &fp_core::package::CompiledPackage,
@@ -1399,7 +1442,14 @@ impl HirGenerator {
         let mut lowered_items: Vec<ast::Item> =
             package.items.iter().map(|pi| pi.item.clone()).collect();
         let original_len = lowered_items.len();
-        lower_closures_in_items(&mut lowered_items)?;
+        // A closure argument's receiver (e.g. `node.stats` in
+        // `node.stats.as_ref().map_or(..)`) is frequently a struct defined
+        // in a *dependency* package, not this one — collect every already
+        // -compiled package's struct field types too, so
+        // `closure_param_ty_for_invoke`'s structural lookup isn't blind to
+        // them (see `ClosureLowering::collect_struct_field_types`).
+        let dependency_struct_field_types = self.workspace_struct_field_types();
+        lower_closures_in_items(&mut lowered_items, &dependency_struct_field_types)?;
         let generated_count = lowered_items.len() - original_len;
         let root_path = fp_core::ast::path::QualifiedPath::new(Vec::new());
         let package_items: Vec<fp_core::package::PackageItem> = lowered_items
@@ -1463,6 +1513,7 @@ impl HirGenerator {
         }
         program.def_map = self.program_def_map.clone();
         program.def_paths = self.def_paths.clone();
+        program.placeholder_defs = self.placeholder_defs.clone();
         Ok(program)
     }
 
@@ -1547,6 +1598,7 @@ impl HirGenerator {
         self.program_def_map.insert(item.def_id, item.clone());
         program.items.push(item);
         program.def_paths = self.def_paths.clone();
+        program.placeholder_defs = self.placeholder_defs.clone();
         Ok(program)
     }
 
@@ -1595,6 +1647,7 @@ impl HirGenerator {
         // program items.
         program.def_map = self.program_def_map.clone();
         program.def_paths = self.def_paths.clone();
+        program.placeholder_defs = self.placeholder_defs.clone();
 
         Ok(program)
     }
@@ -2082,6 +2135,17 @@ impl HirGenerator {
                     params: Vec::new(),
                     value: unit_expr,
                 };
+                // HIR has no first-class trait item — this placeholder only
+                // exists so the item has *some* HIR shape to type-check.
+                // Backends that model traits as real interfaces (e.g.
+                // fp-kotlin) work off the original, pristine `ast::Item`
+                // instead — recording `def_id` in `placeholder_defs` (mirrored
+                // into `hir::Program::placeholder_defs`) lets
+                // `HirToAstLifter::lift_items_by_path` skip lifting this
+                // stand-in, so typed-splice (`typecheck_package`) falls back
+                // to the real trait declaration instead of overwriting it
+                // with this bogus `const NAME = false`.
+                self.placeholder_defs.insert(def_id);
                 let konst = hir::Const {
                     name: hir::Symbol::new(def_trait.name.name.clone()),
                     ty: self.create_simple_type("bool"),
@@ -3659,8 +3723,13 @@ impl Default for HirGenerator {
 /// unnoticed for `transform_package`'s callers (whole-package/typed
 /// compiles) since typed content never exercised this path for a real
 /// multi-file package before.
-fn lower_closures_in_items(items: &mut Vec<ast::Item>) -> Result<Vec<Diagnostic>> {
+fn lower_closures_in_items(
+    items: &mut Vec<ast::Item>,
+    dependency_struct_field_types: &HashMap<String, Vec<(String, ast::Ty)>>,
+) -> Result<Vec<Diagnostic>> {
     let mut pass = ClosureLowering::new();
+    pass.struct_field_types = dependency_struct_field_types.clone();
+    pass.collect_struct_field_types(items);
     pass.find_and_transform_functions(items)?;
     pass.rewrite_usage(items)?;
 
@@ -3712,8 +3781,20 @@ struct ClosureLowering {
     variable_infos: HashMap<String, ClosureInfo>,
     generated_items: Vec<ast::Item>,
     diagnostics: Vec<Diagnostic>,
+    /// Struct name -> (field name, declared field type), collected once up
+    /// front over the whole package — used only to derive a closure
+    /// argument's real parameter type at its call site (see
+    /// `closure_param_ty_for_invoke`), never mutated afterward.
+    struct_field_types: HashMap<String, Vec<(String, ast::Ty)>>,
+    /// The enclosing top-level function's own parameter name -> declared
+    /// type, while rewriting its body (see `rewrite_usage`) — the other
+    /// half of the same closure-argument-type derivation. Does not cover
+    /// `impl` method receivers/params or `let`-bound locals; a receiver
+    /// expression built from those simply doesn't resolve here, same as
+    /// any other unhandled shape.
+    current_param_types: HashMap<String, ast::Ty>,
 }
-
+// TODO: move to new file
 impl ClosureLowering {
     fn new() -> Self {
         Self {
@@ -3723,7 +3804,133 @@ impl ClosureLowering {
             variable_infos: HashMap::new(),
             generated_items: Vec::new(),
             diagnostics: Vec::new(),
+            struct_field_types: HashMap::new(),
+            current_param_types: HashMap::new(),
         }
+    }
+
+    /// One-time pre-pass collecting every struct's declared field types,
+    /// so `closure_param_ty_for_invoke` can resolve a field-access chain
+    /// (`node.stats`) back to its real type without a full type checker.
+    fn collect_struct_field_types(&mut self, items: &[ast::Item]) {
+        for item in items {
+            match item.kind() {
+                ast::ItemKind::Module(module) => self.collect_struct_field_types(&module.items),
+                ast::ItemKind::DefStruct(def) => {
+                    let fields = def
+                        .value
+                        .fields
+                        .iter()
+                        .map(|field| (field.name.as_str().to_string(), field.value.clone()))
+                        .collect();
+                    self.struct_field_types
+                        .insert(def.name.as_str().to_string(), fields);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Best-effort, deliberately narrow structural type lookup for a
+    /// receiver expression — not a general type checker, just enough to
+    /// resolve the two shapes real call sites need: a tracked function
+    /// parameter's own declared type, and field access through a known
+    /// struct definition. Returns `None` for anything else.
+    fn infer_static_expr_ty(&self, expr: &ast::Expr) -> Option<ast::Ty> {
+        match expr.kind() {
+            ast::ExprKind::Name(name) => self
+                .current_param_types
+                .get(name.as_ident()?.as_str())
+                .cloned(),
+            ast::ExprKind::Select(select) => {
+                let base_ty = self.infer_static_expr_ty(&select.obj)?;
+                let struct_name = Self::struct_name_of(&base_ty)?;
+                self.struct_field_types
+                    .get(&struct_name)?
+                    .iter()
+                    .find(|(name, _)| name == select.field.as_str())
+                    .map(|(_, ty)| ty.clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// The struct name a type ultimately names, stripping reference
+    /// wrappers and unwrapping the `Ty::Expr(Name(..))` shape a bare
+    /// (non-generic) struct reference parses as.
+    fn struct_name_of(ty: &ast::Ty) -> Option<String> {
+        match ty {
+            ast::Ty::Reference(r) => Self::struct_name_of(&r.ty),
+            ast::Ty::Struct(s) => Some(s.name.as_str().to_string()),
+            ast::Ty::Expr(expr) => match expr.kind() {
+                ast::ExprKind::Name(name) => name.as_ident().map(|i| i.as_str().to_string()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The `index`-th generic type argument of a parameterized type
+    /// reference (`Option<T>`'s `T` is index 0, `Result<T, E>`'s `E` is
+    /// index 1) — generic types parse as `Ty::Expr` wrapping a
+    /// `Name::ParameterPath` whose segment carries the type args
+    /// directly (see `fp-lang/src/ast/types.rs`'s `parse_simple_type`).
+    fn generic_type_arg_at(ty: &ast::Ty, index: usize) -> Option<ast::Ty> {
+        let ast::Ty::Expr(expr) = ty else {
+            return None;
+        };
+        let ast::ExprKind::Name(ast::Name::ParameterPath(path)) = expr.kind() else {
+            return None;
+        };
+        path.segments.last()?.args.get(index).cloned()
+    }
+
+    /// Resolves a call receiver's static type, peeling through at most one
+    /// trailing `.as_ref()`/`.as_mut()` — common right before a
+    /// closure-taking method (`opt.as_ref().map_or(..)`) — and reporting
+    /// whether the generic argument later extracted from it should be
+    /// reference-wrapped to match (`.as_ref()` turns `Option<T>` access
+    /// into effectively `Option<&T>` for the closure's purposes).
+    fn receiver_ty_for_closure_arg(&self, expr: &ast::Expr) -> (Option<ast::Ty>, bool) {
+        if let ast::ExprKind::Invoke(invoke) = expr.kind() {
+            if let ast::ExprInvokeTarget::Method(sel) = &invoke.target {
+                if invoke.args.is_empty() && matches!(sel.field.name.as_str(), "as_ref" | "as_mut")
+                {
+                    return (self.infer_static_expr_ty(&sel.obj), true);
+                }
+            }
+        }
+        (self.infer_static_expr_ty(expr), false)
+    }
+
+    /// Derives the real parameter type for a closure passed to one of the
+    /// handful of `Option`/`Result` methods whose Kotlin codegen needs a
+    /// literal closure (see `fp-kotlin`'s `map_or`/`map_err` special
+    /// cases) — `None` if the receiver's type isn't structurally
+    /// resolvable, or the method isn't one of these.
+    fn closure_param_ty_for_invoke(&self, invoke: &ast::ExprInvoke) -> Option<ast::Ty> {
+        let ast::ExprInvokeTarget::Method(sel) = &invoke.target else {
+            return None;
+        };
+        let arg_index = match sel.field.name.as_str() {
+            "map_or" | "map" | "and_then" => 0,
+            "map_err" => 1,
+            _ => return None,
+        };
+        let (receiver_ty, by_ref) = self.receiver_ty_for_closure_arg(&sel.obj);
+        let inner = Self::generic_type_arg_at(&receiver_ty?, arg_index)?;
+        Some(if by_ref {
+            ast::Ty::Reference(
+                ast::TypeReference {
+                    ty: Box::new(inner),
+                    mutability: None,
+                    lifetime: None,
+                }
+                .into(),
+            )
+        } else {
+            inner
+        })
     }
 
     fn add_error(&mut self, diag: Diagnostic) {
@@ -3826,6 +4033,54 @@ impl ClosureLowering {
         }
 
         Ok(None)
+    }
+
+    /// `transform_closure_expr` only decomposes a closure literal that
+    /// already carries a `Ty::Function` type — true for a function's own
+    /// tail expression (its declared return-type annotation is copied
+    /// onto the tail by an earlier pass), but never true for a closure
+    /// passed as a call *argument*: this pre-pass runs before typecheck,
+    /// so the callee's parameter type isn't resolved yet, and previously
+    /// nothing else ever gave the closure a type here either. Left
+    /// unaddressed, such a closure falls through every other lowering
+    /// path all the way to `transform_expr_to_hir_inner`'s
+    /// `ExprKind::Closure` arm, which has no implementation and silently
+    /// discards it (an empty HIR block, plus an error diagnostic nothing
+    /// currently surfaces).
+    ///
+    /// The real parameter/return types aren't needed to decompose the
+    /// closure correctly — only its *arity* is, and that's already known
+    /// from the closure literal itself, with no inference required.
+    /// `transform_closure_expr` already tolerates missing per-parameter
+    /// and return types gracefully (falling back to `Any`/`Unknown`), so
+    /// synthesizing a same-arity placeholder `Ty::Function` here is
+    /// sufficient to let it decompose the closure like any other.
+    fn ensure_closure_has_function_ty(expr: &mut ast::Expr, param_ty: Option<&ast::Ty>) {
+        let ast::ExprKind::Closure(closure) = expr.kind() else {
+            return;
+        };
+        if matches!(expr.ty(), Some(ast::Ty::Function(_))) {
+            return;
+        }
+        // Prefer the real, structurally-derived parameter type
+        // (`closure_param_ty_for_invoke`) when the closure takes exactly
+        // one parameter (true for every method this derivation currently
+        // covers) — falling back to an `Any`-typed, arity-only
+        // placeholder otherwise. `Any` is only safe for a closure body
+        // that does nothing type-dependent with its parameter (e.g. it's
+        // ignored, or just returned) — a body doing real field/method
+        // access on an `Any`-typed parameter would silently resolve to an
+        // error placeholder instead of erroring loudly, so callers should
+        // supply a real type whenever one is derivable.
+        let params = match (param_ty, closure.params.len()) {
+            (Some(ty), 1) => vec![ty.clone()],
+            _ => vec![ast::Ty::Any(ast::TypeAny); closure.params.len()],
+        };
+        expr.set_ty(ast::Ty::Function(ast::TypeFunction {
+            params,
+            generics_params: Vec::new(),
+            ret_ty: Some(Box::new(ast::Ty::Unknown(ast::TypeUnknown))),
+        }));
     }
 
     fn transform_closure_expr(&mut self, expr: &mut ast::Expr) -> Result<Option<ClosureInfo>> {
@@ -4014,7 +4269,16 @@ impl ClosureLowering {
             match item.kind_mut() {
                 ast::ItemKind::Module(module) => self.rewrite_usage(&mut module.items)?,
                 ast::ItemKind::DefFunction(func) => {
+                    let previous = std::mem::replace(
+                        &mut self.current_param_types,
+                        func.sig
+                            .params
+                            .iter()
+                            .map(|param| (param.name.as_str().to_string(), param.ty.clone()))
+                            .collect(),
+                    );
                     self.rewrite_in_block(&mut func.body)?;
+                    self.current_param_types = previous;
                 }
                 ast::ItemKind::DefConst(def) => self.rewrite_in_expr(def.value.as_mut())?,
                 ast::ItemKind::DefStatic(def) => self.rewrite_in_expr(def.value.as_mut())?,
@@ -4024,7 +4288,7 @@ impl ClosureLowering {
         }
         Ok(())
     }
-
+    // FIXME: rewrite things is sus, you should be finishing this during a pas
     fn rewrite_in_expr(&mut self, expr: &mut ast::Expr) -> Result<()> {
         if expand_intrinsic_collection(expr) {
             return self.rewrite_in_expr(expr);
@@ -4107,7 +4371,25 @@ impl ClosureLowering {
                 self.rewrite_in_expr(p.token.as_mut())?;
             }
             ast::ExprKind::Invoke(invoke) => {
+                // A closure literal passed as a call argument (as opposed
+                // to a function's own tail expression, whose declared
+                // return-type annotation an earlier pass already copies
+                // onto it) never carries a `Ty::Function` type at this
+                // pre-typecheck stage — give it one so
+                // `transform_closure_expr` (called from `rewrite_in_expr`
+                // below) can still decompose it instead of silently
+                // discarding it later. Prefer the real, structurally
+                // derived parameter type when this call is one
+                // `closure_param_ty_for_invoke` covers; computed once per
+                // invoke (not per arg, since it depends on the whole call,
+                // not any individual argument).
+                let closure_param_ty = self.closure_param_ty_for_invoke(invoke);
                 for arg in &mut invoke.args {
+                    // Scoped to exactly this position (not applied to
+                    // every closure `rewrite_in_expr` visits) since
+                    // closures still nested inside an unexpanded macro's
+                    // argument tokens must not be touched here.
+                    Self::ensure_closure_has_function_ty(arg, closure_param_ty.as_ref());
                     self.rewrite_in_expr(arg)?;
                 }
                 match &mut invoke.target {

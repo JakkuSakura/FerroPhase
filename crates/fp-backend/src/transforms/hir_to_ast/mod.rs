@@ -127,6 +127,14 @@ impl<'a> HirToAstLifter<'a> {
             let Some(path) = self.program.def_paths.get(&item.def_id) else {
                 continue;
             };
+            // A synthetic placeholder `ast_to_hir` fabricated because HIR
+            // has no first-class representation for this item's original
+            // construct (currently: trait declarations) — skip it so
+            // typed-splice (`typecheck_package`) falls back to the real
+            // source item instead of overwriting it with this stand-in.
+            if self.program.placeholder_defs.contains(&item.def_id) {
+                continue;
+            }
             let Ok(ast_item) = self.lift_item(item) else {
                 continue;
             };

@@ -1,7 +1,7 @@
 use crate::ast::{TypeBinaryOpKind, TypePrimitive};
 use crate::intrinsics::IntrinsicKind;
 use crate::query::{QueryIrDocument, QueryOrigin};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 pub mod ident;
@@ -68,6 +68,16 @@ pub struct Program {
     /// meaningful module qualification (e.g. impl methods, addressed by
     /// (type, method) pair instead, or synthetic items).
     pub def_paths: HashMap<DefId, DefPath>,
+    /// `DefId`s of items whose HIR form is a structural stand-in, not a
+    /// real lowering of the original source construct — currently, trait
+    /// declarations (HIR has no first-class trait item; `ast_to_hir`
+    /// fabricates a placeholder `Const` just so the definition has some
+    /// HIR shape to type-check as a value/type reference). Consumers that
+    /// reconstruct AST from HIR (`HirToAstLifter`) must skip these rather
+    /// than lift the placeholder itself, so backends that work from the
+    /// original source item (e.g. fp-kotlin modeling a trait as a real
+    /// Kotlin interface) see it unmodified instead of overwritten.
+    pub placeholder_defs: HashSet<DefId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -631,6 +641,7 @@ impl Program {
             def_map: HashMap::new(),
             next_hir_id: 0,
             def_paths: HashMap::new(),
+            placeholder_defs: HashSet::new(),
         }
     }
 
