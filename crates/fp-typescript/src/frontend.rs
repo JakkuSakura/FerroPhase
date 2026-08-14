@@ -4,11 +4,11 @@ use std::sync::{Arc, RwLock};
 
 use fp_core::ast::{
     DecimalType, EnumTypeVariant, Expr, ExprBlock, ExprInvoke, ExprInvokeTarget, ExprKind, File,
-    FunctionParam, FunctionSignature, Ident, Item, ItemDeclConst, ItemDefConst, ItemDefEnum,
-    ItemDefFunction, ItemDefStruct, ItemDefType, ItemImport, ItemImportGroup, ItemImportPath,
-    ItemImportRename, ItemImportStyle, ItemImportTree, ItemKind, Module as AstModule, Name,
-    ReprOptions, StructuralField, Ty, TypeEnum, TypeInt, TypePrimitive, TypeStruct, TypeStructural,
-    TypeTuple, TypeVec, Value, Visibility,
+    FunctionParam, FunctionSignature, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDefConst,
+    ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemDefType, ItemImport, ItemImportGroup,
+    ItemImportPath, ItemImportRename, ItemImportStyle, ItemImportTree, ItemKind,
+    Module as AstModule, Name, ReprOptions, StructuralField, Ty, TypeEnum, TypeInt, TypePrimitive,
+    TypeStruct, TypeStructural, TypeTuple, TypeVec, Value, Visibility,
 };
 use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 use fp_core::error::{Error as CoreError, Result as CoreResult};
@@ -958,18 +958,11 @@ fn lower_constructor(constructor: &Constructor) -> Item {
         })
         .collect();
 
-    let mut function = build_function_item(
-        "new",
-        &params,
-        None,
-        constructor.body.as_ref(),
-        Visibility::Public,
-    );
-    function
-        .sig
-        .ret_ty
+    let name = Ident::new("new");
+    let mut sig = build_function_signature(name.clone(), &params, None);
+    sig.ret_ty
         .get_or_insert_with(|| Ty::ident(Ident::new("Self")));
-    Item::from(function)
+    build_function_item(name, sig, constructor.body.as_ref(), Visibility::Public)
 }
 
 fn lower_class_method(method: &swc_ecma_ast::ClassMethod) -> Option<Item> {
@@ -980,22 +973,26 @@ fn lower_class_method(method: &swc_ecma_ast::ClassMethod) -> Option<Item> {
         MethodKind::Setter => format!("set_{}", base_name),
     };
 
-    let mut function = build_function_item(
-        &method_name,
+    let name = Ident::new(sanitize_ident(&method_name));
+    let mut sig = build_function_signature(
+        name.clone(),
         &method.function.params,
         method.function.return_type.as_deref(),
-        method.function.body.as_ref(),
-        Visibility::Public,
     );
 
-    if matches!(method.kind, MethodKind::Getter) && function.sig.ret_ty.is_none() {
-        function.sig.ret_ty = Some(Ty::any());
+    if matches!(method.kind, MethodKind::Getter) && sig.ret_ty.is_none() {
+        sig.ret_ty = Some(Ty::any());
     }
     if matches!(method.kind, MethodKind::Setter) {
-        function.sig.ret_ty = Some(Ty::unit());
+        sig.ret_ty = Some(Ty::unit());
     }
 
-    Some(Item::from(function))
+    let body = if method.is_abstract {
+        None
+    } else {
+        method.function.body.as_ref()
+    };
+    Some(build_function_item(name, sig, body, Visibility::Public))
 }
 
 fn lower_fn_decl(
@@ -1007,14 +1004,18 @@ fn lower_fn_decl(
     if name.is_empty() {
         return None;
     }
-    let function = build_function_item(
-        &name,
+    let name = Ident::new(name);
+    let sig = build_function_signature(
+        name.clone(),
         &fn_decl.function.params,
         fn_decl.function.return_type.as_deref(),
-        fn_decl.function.body.as_ref(),
-        visibility,
     );
-    Some(Item::from(function))
+    let body = if fn_decl.declare {
+        None
+    } else {
+        fn_decl.function.body.as_ref()
+    };
+    Some(build_function_item(name, sig, body, visibility))
 }
 
 fn lower_function_params(params: &[Param]) -> Vec<FunctionParam> {
@@ -1114,40 +1115,48 @@ fn param_info_from_pat_inner(pat: &Pat, fallback: &str) -> ParamInfo {
     }
 }
 
-fn lower_function_body(_body: &swc_ecma_ast::BlockStmt) -> Expr {
-    Expr::block(ExprBlock::new())
+fn lower_function_body(_body: &swc_ecma_ast::BlockStmt) -> ExprBlock {
+    ExprBlock::new()
 }
 
-fn build_function_item(
-    name: &str,
+fn build_function_signature(
+    name: Ident,
     params: &[Param],
     return_type: Option<&TsTypeAnn>,
-    body: Option<&BlockStmt>,
-    visibility: Visibility,
-) -> ItemDefFunction {
-    let name_ident = Ident::new(sanitize_ident(name));
+) -> FunctionSignature {
     let mut sig = FunctionSignature::unit();
-    sig.name = Some(name_ident.clone());
+    sig.name = Some(name);
     sig.params = lower_function_params(params);
     if let Some(ret_ann) = return_type {
         sig.ret_ty = Some(lower_ts_type(ret_ann.type_ann.as_ref()));
     }
+    sig
+}
 
-    let body_expr = body.map(lower_function_body).unwrap_or_else(Expr::unit);
-
-    ItemDefFunction {
-        ty_annotation: None,
-        attrs: Vec::new(),
-        name: name_ident,
-        collected_items: Vec::new(),
-        ty: None,
-        sig,
-        body: match body_expr.kind {
-            fp_core::ast::ExprKind::Block(block) => block,
-            _ => unreachable!("lower_function_body must return a block expression"),
-        },
-        is_async: false,
-        visibility,
+fn build_function_item(
+    name: Ident,
+    sig: FunctionSignature,
+    body: Option<&BlockStmt>,
+    visibility: Visibility,
+) -> Item {
+    match body {
+        Some(body) => Item::from(ItemDefFunction {
+            ty_annotation: None,
+            attrs: Vec::new(),
+            name,
+            collected_items: Vec::new(),
+            ty: None,
+            sig,
+            body: lower_function_body(body),
+            is_async: false,
+            visibility,
+        }),
+        None => Item::from(ItemDeclFunction {
+            attrs: Vec::new(),
+            ty_annotation: None,
+            name,
+            sig,
+        }),
     }
 }
 
@@ -1844,5 +1853,93 @@ mod tests {
         assert!(method_names.contains(&"fetchMarkets".to_string()));
         assert!(method_names.contains(&"get_status".to_string()));
         assert!(method_names.contains(&"set_status".to_string()));
+    }
+
+    #[test]
+    fn lowers_bodyless_typescript_functions_to_declarations() {
+        let frontend = TypeScriptFrontend::new(TsParseMode::Strict);
+        let source = r#"
+            abstract class RefNode {
+                abstract get kind(): "working_tree" | "branch";
+                abstract run(input: Input): Output;
+                get concrete(): string { return "ok"; }
+            }
+            declare function load(input: Input): Output;
+            function implemented(input: Input): Output { return input; }
+        "#;
+
+        let file = frontend
+            .parse(source, None)
+            .expect("bodyless function lowering failed")
+            .ast;
+        let class = file
+            .items
+            .iter()
+            .find_map(|item| item.as_module())
+            .expect("expected class module");
+
+        let abstract_getter = class
+            .items
+            .iter()
+            .find(|item| {
+                item.get_ident()
+                    .is_some_and(|ident| ident.as_str() == "get_kind")
+            })
+            .expect("expected abstract getter");
+        assert!(matches!(
+            abstract_getter.kind(),
+            ItemKind::DeclFunction(decl)
+                if decl.sig.params.is_empty() && decl.sig.ret_ty.is_some()
+        ));
+
+        let abstract_method = class
+            .items
+            .iter()
+            .find(|item| {
+                item.get_ident()
+                    .is_some_and(|ident| ident.as_str() == "run")
+            })
+            .expect("expected abstract method");
+        assert!(matches!(
+            abstract_method.kind(),
+            ItemKind::DeclFunction(decl)
+                if decl.sig.params.len() == 1 && decl.sig.ret_ty.is_some()
+        ));
+
+        let concrete_method = class
+            .items
+            .iter()
+            .find(|item| {
+                item.get_ident()
+                    .is_some_and(|ident| ident.as_str() == "get_concrete")
+            })
+            .expect("expected concrete method");
+        assert!(matches!(concrete_method.kind(), ItemKind::DefFunction(_)));
+
+        let declared_function = file
+            .items
+            .iter()
+            .find(|item| {
+                item.get_ident()
+                    .is_some_and(|ident| ident.as_str() == "load")
+            })
+            .expect("expected declared function");
+        assert!(matches!(
+            declared_function.kind(),
+            ItemKind::DeclFunction(_)
+        ));
+
+        let implemented_function = file
+            .items
+            .iter()
+            .find(|item| {
+                item.get_ident()
+                    .is_some_and(|ident| ident.as_str() == "implemented")
+            })
+            .expect("expected implemented function");
+        assert!(matches!(
+            implemented_function.kind(),
+            ItemKind::DefFunction(_)
+        ));
     }
 }
