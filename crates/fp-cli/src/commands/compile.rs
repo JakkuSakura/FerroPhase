@@ -1208,6 +1208,11 @@ async fn compile_project(
 
     // Phase 2: serialize + write every package now that the workspace-wide
     // mutability set (and any other cross-package info) is complete.
+    // Snapshotted so codegen-time diagnostics (e.g. a Kotlin function that
+    // couldn't be transpiled — see `fp_kotlin`'s `report_untranspilable`)
+    // get surfaced below instead of silently accumulating in the global
+    // `DiagnosticManager` with nothing ever reading them back.
+    let diagnostics_snapshot = fp_core::diagnostics::diagnostic_manager().snapshot();
     for (package_id, source) in &prepared {
         let name = package_id.as_str();
 
@@ -1256,6 +1261,14 @@ async fn compile_project(
              allprojects {\n    repositories { mavenCentral() }\n}\n"
         ).map_err(CliError::Io)?;
     }
+
+    let codegen_diagnostics =
+        fp_core::diagnostics::diagnostic_manager().diagnostics_since(diagnostics_snapshot);
+    fp_core::diagnostics::DiagnosticManager::emit(
+        &codegen_diagnostics,
+        Some(input.display().to_string().as_str()),
+        &fp_core::diagnostics::DiagnosticDisplayOptions::default(),
+    );
 
     info!(
         "Transpiled {} files from {} package(s) to {}",

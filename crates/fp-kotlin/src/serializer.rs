@@ -14,6 +14,7 @@ use fp_core::ast::{
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::intrinsics::calls::{CallKind, KnownClass, KnownPackage, OpKind};
 use fp_core::package::{PackageItem, PackageSource};
+use fp_core::diagnostics::report_warning_with_context;
 use eyre::{bail, Result};
 
 // ── Emitter context ──────────────────────────────────────────────────────────
@@ -22,7 +23,6 @@ struct KotlinEmitter {
     code: String,
     indent: usize,
     var_counter: usize,
-    stub_names: HashSet<String>,
     /// Names of sibling modules generated into the same (default) Kotlin package —
     /// imports targeting these are skipped since they're already visible.
     local_modules: HashSet<String>,
@@ -72,6 +72,14 @@ struct KotlinEmitter {
     /// see the reset value — true for every case in this codebase today.
     /// Reset per function (see `emit_function`/`emit_impl_function`).
     current_fn_params: HashSet<String>,
+    /// The real class/enum name `Self` refers to inside the body of the
+    /// impl method currently being emitted (`None` outside any impl method,
+    /// e.g. while emitting a plain top-level function) — Rust's `Self {
+    /// field: value }` constructor shorthand and `Self::other_fn()` calls
+    /// both need the real name substituted in, since Kotlin has no `Self`
+    /// expression-position equivalent. Set by `emit_companion_function`/
+    /// `emit_impl_function`, cleared by `emit_function`.
+    current_self_name: Option<String>,
     /// Variables bound from `.split(...)` — Kotlin's version returns a `List`, not
     /// a stateful iterator, so a later `.next()?` on one of these needs indexed
     /// access instead of the usual (erasing) method-call rendering.
@@ -102,7 +110,6 @@ impl KotlinEmitter {
             code: String::new(),
             indent: 0,
             var_counter: 0,
-            stub_names: HashSet::new(),
             local_modules: HashSet::new(),
             workspace_packages: HashSet::new(),
             mutated_fields: HashSet::new(),
@@ -114,6 +121,7 @@ impl KotlinEmitter {
             string_field_names: HashSet::new(),
             enum_field_names: HashSet::new(),
             current_fn_params: HashSet::new(),
+            current_self_name: None,
             declared_names: Vec::new(),
             referenced_paths: HashSet::new(),
         }
@@ -662,19 +670,74 @@ fn emit_file(file: &File, e: &mut KotlinEmitter) -> Result<()> {
     for imp in &imports { emit_import(imp, e, &mut emitted_imports)?; }
     emit_referenced_path_imports(e, &mut emitted_imports);
     if !emitted_imports.is_empty() { e.push_line(""); }
-    for item in non_imports { emit_item(item, e)?; }
+
+    // `impl` blocks are collected up front, keyed by the struct/enum name
+    // they attach to, so a static method can be nested into that type's own
+    // `data class`/`sealed class`/`enum class` declaration as a companion
+    // object member — Kotlin has no way to attach a companion object to a
+    // class from *outside* its declaration, unlike an extension function
+    // (used for instance methods instead, emitted after every other item).
+    let mut static_methods: HashMap<String, Vec<ItemDefFunction>> = HashMap::new();
+    let mut instance_methods: Vec<(ItemDefFunction, String)> = Vec::new();
+    for item in &non_imports {
+        collect_impl_methods(item, &mut static_methods, &mut instance_methods);
+    }
+
+    for item in non_imports { emit_item(item, e, &static_methods)?; }
+
+    for (f, self_name) in &instance_methods {
+        emit_impl_function(f, self_name, e)?;
+    }
     Ok(())
+}
+
+fn collect_impl_methods(
+    item: &Item,
+    static_methods: &mut HashMap<String, Vec<ItemDefFunction>>,
+    instance_methods: &mut Vec<(ItemDefFunction, String)>,
+) {
+    match item.kind() {
+        ItemKind::Impl(impl_block) => {
+            let self_name = expr_to_name(&impl_block.self_ty);
+            // Strip any generic argument suffix (`Foo<T>` → `Foo`) so this
+            // matches the bare name `emit_struct`/`emit_enum` are keyed by.
+            let self_name = self_name.split('<').next().unwrap_or(&self_name).to_string();
+            for item in &impl_block.items {
+                if let ItemKind::DefFunction(f) = item.kind() {
+                    if f.sig.receiver.is_none() {
+                        static_methods.entry(self_name.clone()).or_default().push(f.clone());
+                    } else {
+                        instance_methods.push((f.clone(), self_name.clone()));
+                    }
+                }
+            }
+        }
+        ItemKind::Module(m) => {
+            for child in &m.items { collect_impl_methods(child, static_methods, instance_methods); }
+        }
+        _ => {}
+    }
 }
 
 // ── Items ────────────────────────────────────────────────────────────────────
 
-fn emit_item(item: &Item, e: &mut KotlinEmitter) -> Result<()> {
+fn emit_item(
+    item: &Item,
+    e: &mut KotlinEmitter,
+    static_methods: &HashMap<String, Vec<ItemDefFunction>>,
+) -> Result<()> {
     match item.kind() {
-        ItemKind::DefStruct(s) => emit_struct(s, e),
-        ItemKind::DefEnum(en) => emit_enum(en, e),
+        ItemKind::DefStruct(s) => {
+            let methods = static_methods.get(s.name.name.as_str()).map(Vec::as_slice).unwrap_or(&[]);
+            emit_struct(s, methods, e)
+        }
+        ItemKind::DefEnum(en) => {
+            let methods = static_methods.get(en.name.name.as_str()).map(Vec::as_slice).unwrap_or(&[]);
+            emit_enum(en, methods, e)
+        }
         ItemKind::DefFunction(f) => emit_function(f, e),
         ItemKind::Module(m) => {
-            for child in &m.items { emit_item(child, e)?; }
+            for child in &m.items { emit_item(child, e, static_methods)?; }
             Ok(())
         }
         ItemKind::Import(imp) => emit_import(imp, e, &mut HashSet::new()),
@@ -685,19 +748,8 @@ fn emit_item(item: &Item, e: &mut KotlinEmitter) -> Result<()> {
             Ok(())
         }
         ItemKind::DefTrait(_) | ItemKind::Macro(_) | ItemKind::DefStructural(_) => Ok(()),
-        ItemKind::Impl(impl_block) => {
-            let self_name = expr_to_name(&impl_block.self_ty);
-            for item in &impl_block.items {
-                if let ItemKind::DefFunction(f) = item.kind() {
-                    if f.sig.receiver.is_none() {
-                        // Static method → top-level stub
-                        emit_impl_static_stub(f, &self_name, e)?;
-                    }
-                    // Instance methods with receiver → skip for now
-                }
-            }
-            Ok(())
-        }
+        // Handled up front by `collect_impl_methods` (see `emit_file`).
+        ItemKind::Impl(_) => Ok(()),
         ItemKind::Expr(expr) => {
             if let ExprKind::Block(block) = expr.kind() {
                 for stmt in &block.stmts { emit_stmt(stmt, e, false)?; }
@@ -710,7 +762,7 @@ fn emit_item(item: &Item, e: &mut KotlinEmitter) -> Result<()> {
 
 // ── Struct ───────────────────────────────────────────────────────────────────
 
-fn emit_struct(s: &ItemDefStruct, e: &mut KotlinEmitter) -> Result<()> {
+fn emit_struct(s: &ItemDefStruct, static_methods: &[ItemDefFunction], e: &mut KotlinEmitter) -> Result<()> {
     let name = s.name.name.as_str();
     let fields = &s.value.fields;
     e.push_line(&format!("data class {}(", name));
@@ -726,13 +778,21 @@ fn emit_struct(s: &ItemDefStruct, e: &mut KotlinEmitter) -> Result<()> {
         let mutability = if e.mutated_fields.contains(&field.name.name) { "var" } else { "val" };
         e.push_line(&format!("    {} {}: {}{}", mutability, field.name.name, kt, comma));
     }
-    e.push_line(")\n");
+    if static_methods.is_empty() {
+        e.push_line(")\n");
+    } else {
+        e.push_line(") {");
+        e.indent += 1;
+        emit_companion_block(name, static_methods, e)?;
+        e.indent -= 1;
+        e.push_line("}\n");
+    }
     Ok(())
 }
 
 // ── Enum ─────────────────────────────────────────────────────────────────────
 
-fn emit_enum(en: &ItemDefEnum, e: &mut KotlinEmitter) -> Result<()> {
+fn emit_enum(en: &ItemDefEnum, static_methods: &[ItemDefFunction], e: &mut KotlinEmitter) -> Result<()> {
     let name = en.name.name.as_str();
     let variants = &en.value.variants;
     let has_data = variants.iter().any(|v| !matches!(v.value, Ty::Unit(_)));
@@ -770,42 +830,101 @@ fn emit_enum(en: &ItemDefEnum, e: &mut KotlinEmitter) -> Result<()> {
             }
             if i < variants.len() - 1 { e.push_line(""); }
         }
-        e.push_line("}\n");
+        if static_methods.is_empty() {
+            e.push_line("}\n");
+        } else {
+            e.indent += 1;
+            emit_companion_block(name, static_methods, e)?;
+            e.indent -= 1;
+            e.push_line("}\n");
+        }
+        Ok(())
     } else {
         e.push_line(&format!("enum class {} {{", name));
         for (i, variant) in variants.iter().enumerate() {
-            let comma = if i < variants.len() - 1 { "," } else { "" };
+            let comma = if i < variants.len() - 1 || !static_methods.is_empty() { "," } else { "" };
             e.push_line(&format!("    {}{}", variant.name.name.to_uppercase(), comma));
         }
-        e.push_line("}\n");
+        if static_methods.is_empty() {
+            e.push_line("}\n");
+        } else {
+            e.push_line("    ;");
+            e.indent += 1;
+            emit_companion_block(name, static_methods, e)?;
+            e.indent -= 1;
+            e.push_line("}\n");
+        }
+        Ok(())
     }
+}
+
+/// Emits `companion object { ... }` with `static_methods` inside, at the
+/// current indent level — the caller must already have opened the enclosing
+/// class body's braces (and is responsible for closing them afterward). See
+/// `emit_file`'s doc comment on why this has to be nested here rather than
+/// emitted from the separate `impl` item.
+fn emit_companion_block(
+    self_name: &str,
+    static_methods: &[ItemDefFunction],
+    e: &mut KotlinEmitter,
+) -> Result<()> {
+    e.push_line("companion object {");
+    e.indent += 1;
+    for f in static_methods {
+        emit_companion_function(f, self_name, e)?;
+    }
+    e.indent -= 1;
+    e.push_line("}");
     Ok(())
 }
 
 // ── Function ─────────────────────────────────────────────────────────────────
 
-fn emit_impl_static_stub(f: &ItemDefFunction, self_name: &str, e: &mut KotlinEmitter) -> Result<()> {
+fn emit_companion_function(f: &ItemDefFunction, self_name: &str, e: &mut KotlinEmitter) -> Result<()> {
     let name = f.name.name.as_str();
-    if !e.stub_names.insert(name.to_string()) {
-        return Ok(()); // already emitted
-    }
+    e.current_fn_params = f.sig.params.iter().map(|p| p.name.name.clone()).collect();
+    e.current_self_name = Some(self_name.to_string());
     let params = f.sig.params.iter()
-        .map(|p| format!("{}: {}", p.name.name, kotlin_type_from_ty(&p.ty, e)))
+        .map(|p| format!("{}: {}", p.name.name, kotlin_type_from_ty(&p.ty, e).replace("Self", self_name)))
         .collect::<Vec<_>>().join(", ");
     let ret = f.sig.ret_ty.as_ref()
-        .map(|ty| kotlin_type_from_ty(ty, e).replace("Self", self_name))
-        .map(|ty| format!(": {}", ty))
+        .map(|ty| format!(": {}", kotlin_type_from_ty(ty, e).replace("Self", self_name)))
         .unwrap_or_else(|| ": Unit".to_string());
 
-    e.push_line(&format!("fun {}({}){} = throw NotImplementedError(\"impl stub for {}::{}\")",
-        name, params, ret, self_name, name));
-    e.push_line("");
+    e.push_line(&format!("fun {}({}){} {{", name, params, ret));
+    e.indent += 1;
+    match untranspilable_reason(f) {
+        Some(reason) => emit_stub_body(&format!("{self_name}::{name}"), reason, e),
+        None => {
+            let len = f.body.stmts.len();
+            for (i, stmt) in f.body.stmts.iter().enumerate() {
+                let is_tail = i == len - 1 && f.sig.ret_ty.is_some();
+                emit_stmt(stmt, e, is_tail)?;
+            }
+        }
+    }
+    e.indent -= 1;
+    e.push_line("}\n");
     Ok(())
 }
 
 fn emit_impl_function(f: &ItemDefFunction, self_name: &str, e: &mut KotlinEmitter) -> Result<()> {
     let name = f.name.name.as_str();
+    if is_fmt_trait_method(f) {
+        // `std::fmt::Formatter`/`std::fmt::Result` (this method's real
+        // param/return types) have no Kotlin mapping — avoid rendering
+        // them into the signature at all, not just stubbing the body.
+        let reason = "Display/Debug fmt not transpilable (std::fmt::Formatter not modeled)";
+        report_untranspilable(&format!("{self_name}::{name}"), reason);
+        e.push_line(&format!(
+            "fun {}.{}(): String = throw NotImplementedError(\"{}\")",
+            self_name, name, reason
+        ));
+        e.push_line("");
+        return Ok(());
+    }
     e.current_fn_params = f.sig.params.iter().map(|p| p.name.name.clone()).collect();
+    e.current_self_name = Some(self_name.to_string());
     // Skip the first param (self) — Kotlin extension functions have implicit receiver
     let params = f.sig.params.iter()
         .map(|p| format!("{}: {}", p.name.name, kotlin_type_from_ty(&p.ty, e)))
@@ -816,15 +935,14 @@ fn emit_impl_function(f: &ItemDefFunction, self_name: &str, e: &mut KotlinEmitte
 
     e.push_line(&format!("fun {}.{}({}){} {{", self_name, name, params, ret));
     e.indent += 1;
-    if is_winnow_parser(&f.body.stmts) {
-        e.push_line("throw NotImplementedError(\"parser function not transpilable\")");
-    } else if is_async_tokio_fn(&f.body.stmts) {
-        e.push_line("throw NotImplementedError(\"async function not transpilable\")");
-    } else {
-        let len = f.body.stmts.len();
-        for (i, stmt) in f.body.stmts.iter().enumerate() {
-            let is_tail = i == len - 1 && f.sig.ret_ty.is_some();
-            emit_stmt(stmt, e, is_tail)?;
+    match untranspilable_reason(f) {
+        Some(reason) => emit_stub_body(&format!("{self_name}::{name}"), reason, e),
+        None => {
+            let len = f.body.stmts.len();
+            for (i, stmt) in f.body.stmts.iter().enumerate() {
+                let is_tail = i == len - 1 && f.sig.ret_ty.is_some();
+                emit_stmt(stmt, e, is_tail)?;
+            }
         }
     }
     e.indent -= 1;
@@ -835,6 +953,7 @@ fn emit_impl_function(f: &ItemDefFunction, self_name: &str, e: &mut KotlinEmitte
 fn emit_function(f: &ItemDefFunction, e: &mut KotlinEmitter) -> Result<()> {
     let name = f.name.name.as_str();
     e.current_fn_params = f.sig.params.iter().map(|p| p.name.name.clone()).collect();
+    e.current_self_name = None;
     let params = f.sig.params.iter()
         .map(|p| {
             let kt = kotlin_type_from_ty(&p.ty, e);
@@ -853,20 +972,130 @@ fn emit_function(f: &ItemDefFunction, e: &mut KotlinEmitter) -> Result<()> {
 
     e.push_line(&format!("fun {}({}){} {{", name, params, ret));
     e.indent += 1;
-    if is_winnow_parser(&f.body.stmts) {
-        e.push_line("throw NotImplementedError(\"parser function not transpilable\")");
-    } else if is_async_tokio_fn(&f.body.stmts) {
-        e.push_line("throw NotImplementedError(\"async function not transpilable\")");
-    } else {
-        let len = f.body.stmts.len();
-        for (i, stmt) in f.body.stmts.iter().enumerate() {
-            let is_tail = i == len - 1 && f.sig.ret_ty.is_some();
-            emit_stmt(stmt, e, is_tail)?;
+    match untranspilable_reason(f) {
+        Some(reason) => emit_stub_body(name, reason, e),
+        None => {
+            let len = f.body.stmts.len();
+            for (i, stmt) in f.body.stmts.iter().enumerate() {
+                let is_tail = i == len - 1 && f.sig.ret_ty.is_some();
+                emit_stmt(stmt, e, is_tail)?;
+            }
         }
     }
     e.indent -= 1;
     e.push_line("}\n");
     Ok(())
+}
+
+/// The single reason a function's real body isn't attempted (checked before
+/// `emit_function`/`emit_impl_function`/`emit_companion_function` try to
+/// render it) — `None` means go ahead and emit the real body. Kept as one
+/// shared check (see `emit_stub_body`) rather than each caller repeating
+/// its own `if is_x { stub } else if is_y { stub } else { ... }` chain.
+fn untranspilable_reason(f: &ItemDefFunction) -> Option<&'static str> {
+    if is_winnow_parser(&f.body.stmts) {
+        Some("parser function not transpilable (winnow combinator)")
+    } else if is_async_tokio_fn(&f.body.stmts) {
+        Some("async function not transpilable")
+    } else if constructs_result(&f.body.stmts) {
+        Some("Result-constructing function not transpilable (Ok/Err not modeled)")
+    } else {
+        None
+    }
+}
+
+/// Records that `context` (a qualified function name, e.g. `Foo::bar`)
+/// couldn't be transpiled and why — via `fp_core::diagnostics`, so this is
+/// visible in `fp compile`'s own output (like the "skipping impl with
+/// unresolvable self-type" warnings emitted during HIR generation) instead
+/// of only surfacing much later as a Gradle compile error nobody connects
+/// back to this specific, already-known cause.
+fn report_untranspilable(context: &str, reason: &str) {
+    report_warning_with_context(context.to_string(), format!("Kotlin codegen: {reason}"));
+}
+
+/// Emits `throw NotImplementedError(reason)` as a function's body and
+/// reports it (see `report_untranspilable`) — the one place both of those
+/// happen, so every stub call site does both instead of some only doing
+/// the first.
+fn emit_stub_body(context: &str, reason: &str, e: &mut KotlinEmitter) {
+    report_untranspilable(context, reason);
+    e.push_line(&format!("throw NotImplementedError(\"{}\")", reason));
+}
+
+/// `Display`/`Debug`'s `fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result`
+/// — `std::fmt::Formatter`/the `write!` macro have no Kotlin equivalent
+/// modeled here. Detected by name + receiver rather than by inspecting the
+/// parameter type, since `Formatter`'s real type renders as unresolvable
+/// fragments anyway (the thing this check exists to avoid emitting).
+fn is_fmt_trait_method(f: &ItemDefFunction) -> bool {
+    f.name.name.as_str() == "fmt" && f.sig.receiver.is_some()
+}
+
+/// `Ok(x)`/`Err(e)` — Rust's `Result` constructors have no Kotlin mapping
+/// modeled here (this backend doesn't emit a `Result` type at all), so a
+/// function that explicitly builds one would otherwise emit calls to an
+/// undefined `Ok`/`Err`. Best-effort like `is_winnow_parser`/
+/// `is_async_tokio_fn` — a missed case fails open (real emission is
+/// attempted, and any resulting compile error is the next thing to fix),
+/// not a silently wrong result.
+fn constructs_result(stmts: &[BlockStmt]) -> bool {
+    stmts.iter().any(stmt_constructs_result)
+}
+
+fn stmt_constructs_result(stmt: &BlockStmt) -> bool {
+    match stmt {
+        BlockStmt::Expr(se) => expr_constructs_result(&se.expr),
+        BlockStmt::Let(l) => l.init.as_ref().is_some_and(expr_constructs_result),
+        BlockStmt::Item(item) => item_constructs_result(item),
+        _ => false,
+    }
+}
+
+fn item_constructs_result(item: &Item) -> bool {
+    match item.kind() {
+        ItemKind::DefFunction(f) => constructs_result(&f.body.stmts),
+        _ => false,
+    }
+}
+
+fn expr_constructs_result(expr: &Expr) -> bool {
+    match expr.kind() {
+        ExprKind::Invoke(inv) => {
+            if let ExprInvokeTarget::Function(name) = &inv.target {
+                let s = name.to_string();
+                let last = s.rsplit("::").next().unwrap_or(&s);
+                if last == "Ok" || last == "Err" {
+                    return true;
+                }
+            }
+            if let ExprInvokeTarget::Method(sel) = &inv.target {
+                if expr_constructs_result(&sel.obj) {
+                    return true;
+                }
+            }
+            inv.args.iter().any(expr_constructs_result)
+        }
+        ExprKind::Select(sel) => expr_constructs_result(&sel.obj),
+        ExprKind::Closure(cl) => expr_constructs_result(&cl.body),
+        ExprKind::Block(block) => block.stmts.iter().any(stmt_constructs_result),
+        ExprKind::BinOp(bin) => expr_constructs_result(&bin.lhs) || expr_constructs_result(&bin.rhs),
+        ExprKind::UnOp(un) => expr_constructs_result(&un.val),
+        ExprKind::If(if_expr) => {
+            expr_constructs_result(&if_expr.cond)
+                || expr_constructs_result(&if_expr.then)
+                || if_expr.elze.as_ref().map_or(false, |e| expr_constructs_result(e))
+        }
+        ExprKind::Match(mt) => {
+            mt.scrutinee.as_ref().map_or(false, |s| expr_constructs_result(s))
+                || mt.cases.iter().any(|c| expr_constructs_result(&c.body))
+        }
+        ExprKind::Return(r) => r.value.as_ref().is_some_and(|v| expr_constructs_result(v)),
+        ExprKind::While(wh) => expr_constructs_result(&wh.cond) || expr_constructs_result(&wh.body),
+        ExprKind::For(fr) => expr_constructs_result(&fr.iter) || expr_constructs_result(&fr.body),
+        ExprKind::Loop(lp) => expr_constructs_result(&lp.body),
+        _ => false,
+    }
 }
 
 /// Detect async functions that use tokio/await/futures patterns.
@@ -1243,7 +1472,11 @@ fn emit_stmt(stmt: &BlockStmt, e: &mut KotlinEmitter, is_tail: bool) -> Result<(
             }
         }
         BlockStmt::Expr(se) => emit_stmt_expr(&se.expr, e, is_tail)?,
-        BlockStmt::Item(item) => return emit_item(item, e),
+        // A block-local item (nested `fn`/`struct`/...) has no file-level
+        // pre-pass of its own — local static methods stay unresolved to a
+        // companion object here (an edge case not exercised by any current
+        // caller; local `impl` blocks inside a function body are rare).
+        BlockStmt::Item(item) => return emit_item(item, e, &HashMap::new()),
         BlockStmt::Noop => {}
         _ => {}
     }
@@ -1508,6 +1741,25 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
             if raw == "None" {
                 return Ok("null".to_string());
             }
+            // A bare `self` used as a call receiver (`self.other_method()`,
+            // rendered here since `render_expr` sees just the receiver
+            // expression, not the surrounding `Select`) — Kotlin has no
+            // implicit local named `self`; `this` is the equivalent and,
+            // unlike the field-access case (`ExprKind::Select` below, which
+            // drops it entirely), stays valid written out explicitly even
+            // inside an extension function body.
+            if raw == "self" {
+                return Ok("this".to_string());
+            }
+            // `Self { field: value }` (constructor shorthand) / `Self::other()`
+            // — Kotlin has no `Self` expression-position equivalent, so swap
+            // in the real class/enum name (see `current_self_name`'s doc
+            // comment).
+            let raw = if let Some(self_name) = &e.current_self_name {
+                substitute_self_prefix(&raw, self_name)
+            } else {
+                raw
+            };
             let dotted = raw.replace("::", ".");
             // Uppercase enum variant references in qualified paths
             Ok(uppercase_last_segment(&dotted))
@@ -1663,6 +1915,14 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                 }
                 _ => {
                     let name = invoke_name(&inv.target);
+                    // `Self::other_fn(...)` — Kotlin has no `Self` expression-
+                    // position equivalent; swap in the real class/enum name
+                    // (see `current_self_name`'s doc comment).
+                    let name = if let Some(self_name) = &e.current_self_name {
+                        substitute_self_prefix(&name, self_name)
+                    } else {
+                        name
+                    };
                     // `std::env::current_dir()` — a zero-arg free function whose Kotlin
                     // equivalent needs one arg (`System.getProperty("user.dir")`), which
                     // the generic `map_kt_path` + "always append (args)" pipeline below
@@ -2200,9 +2460,30 @@ fn render_expr_single(body: &BExpr, e: &mut KotlinEmitter) -> Result<String> {
     render_expr(body, e)
 }
 
+/// `Self` (constructor shorthand, `Self::other_fn`) or a leading `Self::`
+/// path segment, swapped for the real class/enum name — see
+/// `current_self_name`'s doc comment.
+fn substitute_self_prefix(raw: &str, self_name: &str) -> String {
+    if raw == "Self" {
+        self_name.to_string()
+    } else if let Some(rest) = raw.strip_prefix("Self::") {
+        format!("{self_name}::{rest}")
+    } else {
+        raw.to_string()
+    }
+}
+
 fn render_invoke_target(target: &ExprInvokeTarget, e: &mut KotlinEmitter) -> Result<String> {
     match target {
-        ExprInvokeTarget::Function(name) => Ok(name.to_string().replace("::", ".")),
+        ExprInvokeTarget::Function(name) => {
+            let raw = name.to_string();
+            let raw = if let Some(self_name) = &e.current_self_name {
+                substitute_self_prefix(&raw, self_name)
+            } else {
+                raw
+            };
+            Ok(raw.replace("::", "."))
+        }
         ExprInvokeTarget::Method(sel) => Ok(format!("{}.{}", render_expr(&sel.obj, e)?, sel.field.name)),
         ExprInvokeTarget::Expr(bexpr) => render_expr(bexpr, e),
         _ => Ok("call".to_string()),
