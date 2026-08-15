@@ -38,6 +38,15 @@ pub enum OpKind {
     OptionSome,
     OptionNone,
     OptionUnwrap,
+    /// Portable: `Ok(x)` → `x` (Kotlin has no `Result<T, E>` with an
+    /// arbitrary error type; the function's own return type is unwrapped
+    /// the same way, `Result<T, E>` → `T` — see `kotlin_type_from_ty`).
+    ResultOk,
+    /// Portable: `Err(e)` → `error(e)` — Kotlin's `error(message: Any):
+    /// Nothing` throws `IllegalStateException` and is usable as an
+    /// expression of any type (`Nothing` is Kotlin's bottom type), the
+    /// same role `Err` plays as a `Result`-typed expression in Rust.
+    ResultErr,
     VecNew,
     Clone,
     /// Portable: x.as_ref() → drop (Kotlin nullable)
@@ -97,6 +106,8 @@ impl OpKind {
             "option_some" => Some(Self::OptionSome),
             "option_none" => Some(Self::OptionNone),
             "option_unwrap" => Some(Self::OptionUnwrap),
+            "result_ok" => Some(Self::ResultOk),
+            "result_err" => Some(Self::ResultErr),
             "format" => Some(Self::Format),
             "print" => Some(Self::Print),
             "println" => Some(Self::Println),
@@ -159,6 +170,8 @@ impl OpKind {
             ("Option", "iter") => Some(Self::Iter),
             ("Option", "and_then") => Some(Self::AndThen),
             ("Option", "clone") => Some(Self::Clone),
+            ("Result", "ok") => Some(Self::ResultOk),
+            ("Result", "err") => Some(Self::ResultErr),
             _ => None,
         }
     }
@@ -410,6 +423,8 @@ impl CallKind {
             Self::Op(OpKind::OptionSome) => None,
             Self::Op(OpKind::OptionNone) => None,
             Self::Op(OpKind::OptionUnwrap) => None,
+            Self::Op(OpKind::ResultOk) => None,
+            Self::Op(OpKind::ResultErr) => None,
             Self::Op(OpKind::VecNew) => None,
             Self::Op(OpKind::Clone) => None,
             Self::Op(OpKind::AsRef) => None,
@@ -590,6 +605,8 @@ impl CallKind {
             Self::Op(OpKind::OptionSome) => "option_some",
             Self::Op(OpKind::OptionNone) => "option_none",
             Self::Op(OpKind::OptionUnwrap) => "option_unwrap",
+            Self::Op(OpKind::ResultOk) => "result_ok",
+            Self::Op(OpKind::ResultErr) => "result_err",
             Self::Op(OpKind::VecNew) => "vec_new",
             Self::Op(OpKind::Clone) => "clone",
             Self::Op(OpKind::AsRef) => "as_ref",

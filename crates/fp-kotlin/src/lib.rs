@@ -11,6 +11,6 @@ pub mod serializer;
 pub use kotlin_materializer::KotlinMaterializer;
 pub use package::KotlinPackageProvider;
 pub use serializer::{
-    KotlinSerializer, collect_enum_field_names, collect_list_field_names,
+    KotlinSerializer, collect_enum_field_names, collect_enum_variant_names, collect_list_field_names,
     collect_mutated_field_names, collect_string_field_names,
 };

@@ -1097,6 +1097,8 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
         CallKind::Op(OpKind::OptionSome)
         | CallKind::Op(OpKind::OptionNone)
         | CallKind::Op(OpKind::OptionUnwrap)
+        | CallKind::Op(OpKind::ResultOk)
+        | CallKind::Op(OpKind::ResultErr)
         | CallKind::Op(OpKind::VecNew)
         | CallKind::Op(OpKind::Clone) => {
             Some(ExprIntrinsicCall::new(kind, invoke.args.clone(), invoke.kwargs.clone()))

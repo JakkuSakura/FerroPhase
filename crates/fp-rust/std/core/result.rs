@@ -554,14 +554,17 @@ use crate::{convert, fmt, hint};
 #[must_use = "this `Result` may be an `Err` variant, which should be handled"]
 #[rustc_diagnostic_item = "Result"]
 #[stable(feature = "rust1", since = "1.0.0")]
+#[op(class = "Result")]
 pub enum Result<T, E> {
     /// Contains the success value
     #[lang = "Ok"]
     #[stable(feature = "rust1", since = "1.0.0")]
+    #[op(variant = "ok")]
     Ok(#[stable(feature = "rust1", since = "1.0.0")] T),
 
     /// Contains the error value
     #[lang = "Err"]
+    #[op(variant = "err")]
     #[stable(feature = "rust1", since = "1.0.0")]
     Err(#[stable(feature = "rust1", since = "1.0.0")] E),
 }

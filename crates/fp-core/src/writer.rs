@@ -33,6 +33,51 @@ impl IndentStyle {
     }
 }
 
+/// A standalone indent-depth tracker: how deep the current nesting level is,
+/// and how to render that depth as a literal prefix string. [`StyledFileWriter`]
+/// is built on top of one of these rather than reimplementing depth tracking
+/// itself — and it's just as usable on its own, independent of any output
+/// buffer, whenever code needs to build a self-consistent, *relatively*
+/// indented snippet (e.g. as a plain `String`, to be embedded later at
+/// whatever real depth it ends up at) without hardcoding literal
+/// `"    "`/`"        "` constants for each nesting level by hand.
+#[derive(Clone, Debug)]
+pub struct Indent {
+    style: IndentStyle,
+    depth: usize,
+}
+
+impl Indent {
+    pub fn new(style: IndentStyle) -> Self {
+        Self { style, depth: 0 }
+    }
+
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+
+    pub fn increase(&mut self) -> &mut Self {
+        self.depth += 1;
+        self
+    }
+
+    pub fn decrease(&mut self) -> &mut Self {
+        self.depth = self.depth.saturating_sub(1);
+        self
+    }
+
+    /// The literal prefix string for the current depth.
+    pub fn prefix(&self) -> String {
+        self.prefix_at(self.depth)
+    }
+
+    /// The literal prefix string for an arbitrary depth (e.g. the current
+    /// depth plus some extra levels, for a wrapped line's continuation).
+    pub fn prefix_at(&self, depth: usize) -> String {
+        self.style.unit().repeat(self.style.width() * depth)
+    }
+}
+
 /// Where the opening brace of a `block(...)` lands relative to its header.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BraceStyle {
@@ -108,18 +153,12 @@ impl Formatter {
     }
 }
 
-/// Spacing/indentation knobs for [`StyledFileWriter`].
+/// Spacing/wrapping knobs for [`IndentedBuffer`] alone — the subset of
+/// [`WriterConfig`] relevant to plain indented-line buffering, without any
+/// of [`StyledFileWriter`]'s brace-pairing/formatting concerns on top.
 #[derive(Clone, Debug)]
-pub struct WriterConfig {
+pub struct BufferConfig {
     pub indent_style: IndentStyle,
-    pub brace_style: BraceStyle,
-    /// Ensure the emitted text ends with exactly one trailing newline.
-    pub trailing_newline: bool,
-    /// Run when `finish`/`write_to_file` is called. If it errors (e.g. the
-    /// formatter binary isn't installed), the writer falls back to the
-    /// unformatted buffer rather than failing the whole generation — running
-    /// a formatter is a nicety, not a correctness requirement.
-    pub formatter: Option<Formatter>,
     /// Maximum line width, indentation included. `None` (the default)
     /// disables wrapping. Lines are only ever split on ASCII space
     /// boundaries — an unbreakable token wider than `max_width` on its own
@@ -130,65 +169,48 @@ pub struct WriterConfig {
     pub continuation_indent: usize,
 }
 
-impl Default for WriterConfig {
+impl Default for BufferConfig {
     fn default() -> Self {
         Self {
             indent_style: IndentStyle::Spaces(4),
-            brace_style: BraceStyle::SameLine,
-            trailing_newline: true,
-            formatter: None,
             max_width: None,
             continuation_indent: 1,
         }
     }
 }
 
-/// Line-oriented text buffer with automatic indentation, brace pairing, and
-/// optional post-hoc formatting. Intended for backends that render an AST/HIR
-/// into textual source.
-///
-/// Three ways to add content, from lowest to highest level:
-/// - [`StyledFileWriter::atom`] appends a token to the current line,
-///   inserting exactly one space of separation from whatever's already on it.
-/// - [`StyledFileWriter::write_line`] appends a complete line and terminates it.
-/// - [`StyledFileWriter::block`] writes a header, opens a brace pair, indents
-///   a closure's output, then closes the brace pair.
-///
-/// It also implements [`std::fmt::Write`], so existing call sites built
-/// around `write!`/`writeln!` into a `String` buffer can switch to a
-/// `StyledFileWriter` with no other changes.
-///
-/// When [`WriterConfig::max_width`] is set, a line that doesn't fit
-/// (indentation included) is wrapped across multiple lines on space
-/// boundaries, with continuation lines indented per
-/// [`WriterConfig::continuation_indent`].
-pub struct StyledFileWriter {
-    config: WriterConfig,
+/// Indented line buffer: owns the raw text accumulator, indent-depth
+/// tracking (via [`Indent`]), and optional max-width wrapping. This is the
+/// layer [`StyledFileWriter`] is built on top of (adding brace-pairing and
+/// formatting) — but it's a complete, useful primitive on its own wherever
+/// code needs to build a self-consistent, depth-tracked multi-line snippet
+/// (e.g. as a plain `String`, to be embedded later at whatever real depth it
+/// ends up at) without pulling in brace/formatter machinery, or hand-rolling
+/// `"    "`/`"        "` literals for each nesting level.
+pub struct IndentedBuffer {
+    config: BufferConfig,
+    indent: Indent,
     out: String,
     /// Content of the line currently being built, without its indent prefix.
     pending: String,
-    depth: usize,
 }
 
-impl StyledFileWriter {
-    pub fn new(config: WriterConfig) -> Self {
-        Self { config, out: String::new(), pending: String::new(), depth: 0 }
+impl IndentedBuffer {
+    pub fn new(config: BufferConfig) -> Self {
+        let indent = Indent::new(config.indent_style.clone());
+        Self { config, indent, out: String::new(), pending: String::new() }
     }
 
     pub fn indent_depth(&self) -> usize {
-        self.depth
-    }
-
-    fn prefix_at(&self, depth: usize) -> String {
-        self.config.indent_style.unit().repeat(self.config.indent_style.width() * depth)
+        self.indent.depth()
     }
 
     fn indent_prefix(&self) -> String {
-        self.prefix_at(self.depth)
+        self.indent.prefix()
     }
 
     fn continuation_prefix(&self) -> String {
-        self.prefix_at(self.depth + self.config.continuation_indent)
+        self.indent.prefix_at(self.indent.depth() + self.config.continuation_indent)
     }
 
     /// Append raw text to the current line with no spacing logic applied.
@@ -269,9 +291,26 @@ impl StyledFileWriter {
         self.newline()
     }
 
+    /// Write `text`, applying the current indent prefix to *every* line it
+    /// contains (splitting on `\n`) rather than only the first, unlike
+    /// [`Self::write_line`]. Each line may still carry its own additional
+    /// baked-in *relative* indentation (e.g. from a snippet rendered
+    /// standalone and now being embedded at whatever depth this call
+    /// happens to sit at) — that stacks additively with the real prefix.
+    /// Without this, embedding a pre-rendered multi-line expression via
+    /// `write_line` leaves every line after the first with no real indent
+    /// at all, since `write_line` indents the string once, up front, not
+    /// per embedded newline.
+    pub fn write_lines(&mut self, text: impl AsRef<str>) -> &mut Self {
+        for line in text.as_ref().split('\n') {
+            self.write_line(line);
+        }
+        self
+    }
+
     /// Append pre-rendered text verbatim, ignoring current indentation.
     /// Useful for splicing output built by an independent renderer (e.g. a
-    /// side-channel `StyledFileWriter`, or a hand-built literal block)
+    /// side-channel `IndentedBuffer`, or a hand-built literal block)
     /// directly into this buffer. Flushes any pending unterminated line
     /// first, and ensures the appended block ends with exactly one newline.
     pub fn write_verbatim(&mut self, text: &str) -> &mut Self {
@@ -306,17 +345,235 @@ impl StyledFileWriter {
 
     /// Increase the indent depth by one level. Low-level primitive for
     /// callers that need to interleave indentation with logic that isn't
-    /// expressible as a closure over just `&mut StyledFileWriter` (e.g. an
-    /// emitter struct with its own state) — prefer [`Self::indented`] or
-    /// [`Self::block`] when a closure works.
+    /// expressible as a closure over just `&mut Self` (e.g. an emitter
+    /// struct with its own state) — prefer [`Self::indented`] when a
+    /// closure works.
     pub fn increase_indent(&mut self) -> &mut Self {
-        self.depth += 1;
+        self.indent.increase();
         self
     }
 
     /// Decrease the indent depth by one level (saturating at zero).
     pub fn decrease_indent(&mut self) -> &mut Self {
-        self.depth = self.depth.saturating_sub(1);
+        self.indent.decrease();
+        self
+    }
+
+    /// Run `body` with the indent depth increased by one level. Does not
+    /// emit any delimiters — see [`StyledFileWriter::block`] for brace pairs.
+    pub fn indented<F, T, E>(&mut self, body: F) -> Result<T, E>
+    where
+        F: FnOnce(&mut Self) -> Result<T, E>,
+    {
+        self.increase_indent();
+        let result = body(self);
+        self.decrease_indent();
+        result
+    }
+
+    /// Swap out the raw buffered output built so far for `replacement`,
+    /// returning whatever was previously buffered. Indent depth and config
+    /// are untouched. Useful for redirecting a nested render into a scratch
+    /// buffer — e.g. rendering a statement as a standalone string for
+    /// embedding inline elsewhere — without losing this buffer's place
+    /// (indent depth) in the overall output. Pair two calls to swap out and
+    /// back in: `let saved = b.swap_buffer(String::new()); /* render into b
+    /// */ let scratch = b.swap_buffer(saved);`.
+    pub fn swap_buffer(&mut self, replacement: String) -> String {
+        debug_assert!(self.pending.is_empty(), "swap_buffer() called with an unterminated line pending");
+        std::mem::replace(&mut self.out, replacement)
+    }
+
+    /// The raw buffered contents, as-is — no formatter pass, no
+    /// trailing-newline normalization (that's [`StyledFileWriter::finish`]'s
+    /// job, one layer up).
+    pub fn raw_contents(&self) -> &str {
+        &self.out
+    }
+
+    fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+}
+
+impl fmt::Write for IndentedBuffer {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let mut parts = s.split('\n');
+        if let Some(first) = parts.next() {
+            self.pending.push_str(first);
+        }
+        for part in parts {
+            self.newline();
+            self.pending.push_str(part);
+        }
+        Ok(())
+    }
+}
+
+/// Spacing/indentation knobs for [`StyledFileWriter`].
+#[derive(Clone, Debug)]
+pub struct WriterConfig {
+    pub indent_style: IndentStyle,
+    pub brace_style: BraceStyle,
+    /// Ensure the emitted text ends with exactly one trailing newline.
+    pub trailing_newline: bool,
+    /// Run when `finish`/`write_to_file` is called. If it errors (e.g. the
+    /// formatter binary isn't installed), the writer falls back to the
+    /// unformatted buffer rather than failing the whole generation — running
+    /// a formatter is a nicety, not a correctness requirement.
+    pub formatter: Option<Formatter>,
+    /// Maximum line width, indentation included. `None` (the default)
+    /// disables wrapping. Lines are only ever split on ASCII space
+    /// boundaries — an unbreakable token wider than `max_width` on its own
+    /// is left as-is rather than cut mid-token.
+    pub max_width: Option<usize>,
+    /// Extra indent levels applied to a wrapped line's continuation lines,
+    /// on top of the depth the line itself was written at.
+    pub continuation_indent: usize,
+}
+
+impl Default for WriterConfig {
+    fn default() -> Self {
+        Self {
+            indent_style: IndentStyle::Spaces(4),
+            brace_style: BraceStyle::SameLine,
+            trailing_newline: true,
+            formatter: None,
+            max_width: None,
+            continuation_indent: 1,
+        }
+    }
+}
+
+impl WriterConfig {
+    fn buffer_config(&self) -> BufferConfig {
+        BufferConfig {
+            indent_style: self.indent_style.clone(),
+            max_width: self.max_width,
+            continuation_indent: self.continuation_indent,
+        }
+    }
+}
+
+/// Line-oriented text buffer with automatic indentation, brace pairing, and
+/// optional post-hoc formatting. Intended for backends that render an AST/HIR
+/// into textual source. Layers brace-pairing/formatting on top of an
+/// [`IndentedBuffer`], which owns the actual indent tracking and line buffer.
+///
+/// Three ways to add content, from lowest to highest level:
+/// - [`StyledFileWriter::atom`] appends a token to the current line,
+///   inserting exactly one space of separation from whatever's already on it.
+/// - [`StyledFileWriter::write_line`] appends a complete line and terminates it.
+/// - [`StyledFileWriter::block`] writes a header, opens a brace pair, indents
+///   a closure's output, then closes the brace pair.
+///
+/// It also implements [`std::fmt::Write`], so existing call sites built
+/// around `write!`/`writeln!` into a `String` buffer can switch to a
+/// `StyledFileWriter` with no other changes.
+///
+/// When [`WriterConfig::max_width`] is set, a line that doesn't fit
+/// (indentation included) is wrapped across multiple lines on space
+/// boundaries, with continuation lines indented per
+/// [`WriterConfig::continuation_indent`].
+pub struct StyledFileWriter {
+    buffer: IndentedBuffer,
+    brace_style: BraceStyle,
+    trailing_newline: bool,
+    formatter: Option<Formatter>,
+}
+
+impl StyledFileWriter {
+    pub fn new(config: WriterConfig) -> Self {
+        Self {
+            buffer: IndentedBuffer::new(config.buffer_config()),
+            brace_style: config.brace_style,
+            trailing_newline: config.trailing_newline,
+            formatter: config.formatter,
+        }
+    }
+
+    pub fn indent_depth(&self) -> usize {
+        self.buffer.indent_depth()
+    }
+
+    /// Append raw text to the current line with no spacing logic applied.
+    pub fn raw(&mut self, text: impl AsRef<str>) -> &mut Self {
+        self.buffer.raw(text);
+        self
+    }
+
+    /// Append a token to the current line, separated from any prior content
+    /// on that line by exactly one space.
+    pub fn atom(&mut self, text: impl AsRef<str>) -> &mut Self {
+        self.buffer.atom(text);
+        self
+    }
+
+    /// Flush the current line (indented if non-empty, blank otherwise) and
+    /// start a new one. Calling this with nothing pending emits a blank line.
+    /// If `max_width` is configured and the line doesn't fit, it's split
+    /// across multiple lines on space boundaries, with continuation lines
+    /// indented per `continuation_indent`.
+    pub fn newline(&mut self) -> &mut Self {
+        self.buffer.newline();
+        self
+    }
+
+    /// Write a complete, self-contained line.
+    pub fn write_line(&mut self, line: impl AsRef<str>) -> &mut Self {
+        self.buffer.write_line(line);
+        self
+    }
+
+    /// Write `text`, applying the current indent prefix to *every* line it
+    /// contains (splitting on `\n`) rather than only the first, unlike
+    /// [`Self::write_line`]. Each line may still carry its own additional
+    /// baked-in *relative* indentation (e.g. from a snippet rendered
+    /// standalone and now being embedded at whatever depth this call
+    /// happens to sit at) — that stacks additively with the real prefix.
+    /// Without this, embedding a pre-rendered multi-line expression via
+    /// `write_line` leaves every line after the first with no real indent
+    /// at all, since `write_line` indents the string once, up front, not
+    /// per embedded newline.
+    pub fn write_lines(&mut self, text: impl AsRef<str>) -> &mut Self {
+        self.buffer.write_lines(text);
+        self
+    }
+
+    /// Append pre-rendered text verbatim, ignoring current indentation.
+    /// Useful for splicing output built by an independent renderer (e.g. a
+    /// side-channel `StyledFileWriter`/`IndentedBuffer`, or a hand-built
+    /// literal block) directly into this buffer. Flushes any pending
+    /// unterminated line first, and ensures the appended block ends with
+    /// exactly one newline.
+    pub fn write_verbatim(&mut self, text: &str) -> &mut Self {
+        self.buffer.write_verbatim(text);
+        self
+    }
+
+    /// Ensure the buffer ends with exactly one blank line before whatever's
+    /// written next — without adding one to an otherwise-empty buffer.
+    /// Handy as a declaration separator (struct/function/etc.) that doesn't
+    /// pile up blank lines when called repeatedly. Flushes any pending
+    /// unterminated line first.
+    pub fn ensure_blank_line(&mut self) -> &mut Self {
+        self.buffer.ensure_blank_line();
+        self
+    }
+
+    /// Increase the indent depth by one level. Low-level primitive for
+    /// callers that need to interleave indentation with logic that isn't
+    /// expressible as a closure over just `&mut StyledFileWriter` (e.g. an
+    /// emitter struct with its own state) — prefer [`Self::indented`] or
+    /// [`Self::block`] when a closure works.
+    pub fn increase_indent(&mut self) -> &mut Self {
+        self.buffer.increase_indent();
+        self
+    }
+
+    /// Decrease the indent depth by one level (saturating at zero).
+    pub fn decrease_indent(&mut self) -> &mut Self {
+        self.buffer.decrease_indent();
         self
     }
 
@@ -350,7 +607,7 @@ impl StyledFileWriter {
         F: FnOnce(&mut Self) -> Result<(), E>,
     {
         let header = header.as_ref();
-        match self.config.brace_style {
+        match self.brace_style {
             BraceStyle::SameLine if header.is_empty() => self.write_line("{"),
             BraceStyle::SameLine => self.write_line(format!("{header} {{")),
             BraceStyle::NextLine => {
@@ -374,23 +631,34 @@ impl StyledFileWriter {
     /// back in: `let saved = w.swap_buffer(String::new()); /* render into w
     /// */ let scratch = w.swap_buffer(saved);`.
     pub fn swap_buffer(&mut self, replacement: String) -> String {
-        debug_assert!(self.pending.is_empty(), "swap_buffer() called with an unterminated line pending");
-        std::mem::replace(&mut self.out, replacement)
+        self.buffer.swap_buffer(replacement)
+    }
+
+    /// The raw buffered contents, as-is — no formatter pass, no
+    /// trailing-newline normalization (that's [`Self::finish`]'s job).
+    /// Useful when an entire `StyledFileWriter` (not just its buffer) is
+    /// swapped in as a scratch instance to render a self-contained,
+    /// relatively-indented snippet, and the result needs to come back out
+    /// exactly as written (`finish()` would apply this writer's formatter
+    /// and forced trailing newline, neither of which make sense for an
+    /// inline fragment headed for `write_lines` elsewhere).
+    pub fn raw_contents(&self) -> &str {
+        self.buffer.raw_contents()
     }
 
     /// Apply the configured formatter (if any) and return the final text.
     /// Formatter failures are swallowed (the unformatted buffer is returned
     /// instead) since formatting is a nicety, not a correctness requirement.
     pub fn finish(&self) -> String {
-        debug_assert!(self.pending.is_empty(), "finish() called with an unterminated line pending");
-        let mut text = self.out.clone();
-        if let Some(formatter) = &self.config.formatter {
+        debug_assert!(!self.buffer.has_pending(), "finish() called with an unterminated line pending");
+        let mut text = self.buffer.raw_contents().to_string();
+        if let Some(formatter) = &self.formatter {
             match formatter.apply(&text) {
                 Ok(formatted) => text = formatted,
                 Err(err) => tracing::warn!("StyledFileWriter: formatter failed, using unformatted output: {err}"),
             }
         }
-        if self.config.trailing_newline {
+        if self.trailing_newline {
             let trimmed = text.trim_end_matches('\n');
             text.truncate(trimmed.len());
             text.push('\n');
@@ -412,15 +680,7 @@ impl StyledFileWriter {
 
 impl fmt::Write for StyledFileWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        let mut parts = s.split('\n');
-        if let Some(first) = parts.next() {
-            self.pending.push_str(first);
-        }
-        for part in parts {
-            self.newline();
-            self.pending.push_str(part);
-        }
-        Ok(())
+        self.buffer.write_str(s)
     }
 }
 
@@ -621,6 +881,25 @@ mod tests {
     }
 
     #[test]
+    fn write_lines_indents_every_line_not_just_the_first() {
+        let mut w = StyledFileWriter::new(WriterConfig::default());
+        w.increase_indent();
+        // A pre-rendered snippet with its own baked-in *relative* indent,
+        // as if produced standalone at depth 0 (e.g. by an expression
+        // renderer building a nested `run { ... }` block as a string).
+        w.write_lines("run {\n    val x = 1\n}");
+        assert_eq!(w.finish(), "    run {\n        val x = 1\n    }\n");
+    }
+
+    #[test]
+    fn write_lines_matches_write_line_for_single_line_input() {
+        let mut w = StyledFileWriter::new(WriterConfig::default());
+        w.increase_indent();
+        w.write_lines("val x = 1");
+        assert_eq!(w.finish(), "    val x = 1\n");
+    }
+
+    #[test]
     fn raw_indent_primitives_compose_like_block() {
         let mut w = StyledFileWriter::new(WriterConfig::default());
         w.write_line("outer {");
@@ -642,5 +921,70 @@ mod tests {
         w.write_line("resumed");
         assert_eq!(scratch, "    scratch\n");
         assert_eq!(w.finish(), "outer\n    resumed\n");
+    }
+
+    #[test]
+    fn indent_component_tracks_depth_and_renders_prefixes_independent_of_any_buffer() {
+        let mut indent = Indent::new(IndentStyle::Spaces(2));
+        assert_eq!(indent.depth(), 0);
+        assert_eq!(indent.prefix(), "");
+        indent.increase().increase();
+        assert_eq!(indent.depth(), 2);
+        assert_eq!(indent.prefix(), "    ");
+        assert_eq!(indent.prefix_at(3), "      ");
+        indent.decrease();
+        assert_eq!(indent.prefix(), "  ");
+    }
+
+    #[test]
+    fn indented_buffer_works_standalone_without_a_styled_file_writer() {
+        let mut buf = IndentedBuffer::new(BufferConfig::default());
+        buf.write_line("outer {");
+        buf.indented(|b| -> Result<(), ()> {
+            b.write_line("inner");
+            Ok(())
+        })
+        .unwrap();
+        buf.write_line("}");
+        assert_eq!(buf.raw_contents(), "outer {\n    inner\n}\n");
+    }
+
+    /// The whole point of layering `StyledFileWriter` on top of a reusable
+    /// `IndentedBuffer`: a snippet can be built self-consistently at depth 0
+    /// in one buffer, then embedded via `write_lines` into another buffer
+    /// sitting at some real, unrelated depth — the two compose additively
+    /// (real prefix + the snippet's own already-consistent relative prefix)
+    /// instead of requiring the snippet builder to know its eventual
+    /// embedding depth, or to hardcode per-level literal spacing.
+    fn render_nested_snippet() -> String {
+        let mut scratch = IndentedBuffer::new(BufferConfig::default());
+        scratch.write_line("run {");
+        scratch
+            .indented(|b| -> Result<(), ()> {
+                b.write_line("val x = 1");
+                Ok(())
+            })
+            .unwrap();
+        scratch.write_line("}");
+        scratch.raw_contents().trim_end_matches('\n').to_string()
+    }
+
+    #[test]
+    fn snippet_built_standalone_embeds_correctly_at_any_real_depth() {
+        let snippet = render_nested_snippet();
+        assert_eq!(snippet, "run {\n    val x = 1\n}");
+
+        let mut w = StyledFileWriter::new(WriterConfig::default());
+        w.block("fun outer()", |w| -> Result<(), ()> {
+            w.block("fun inner()", |w| {
+                w.write_lines(&snippet);
+                Ok(())
+            })
+        })
+        .unwrap();
+        assert_eq!(
+            w.finish(),
+            "fun outer() {\n    fun inner() {\n        run {\n            val x = 1\n        }\n    }\n}\n"
+        );
     }
 }

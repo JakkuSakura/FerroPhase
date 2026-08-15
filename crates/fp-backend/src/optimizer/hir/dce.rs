@@ -647,6 +647,7 @@ mod tests {
                 }),
                 is_const: false,
                 is_extern: false,
+                is_async: false,
                 attrs: Vec::new(),
             }),
             span: Span::null(),

@@ -1,7 +1,8 @@
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprField, ExprIf, ExprIntrinsicCall,
     ExprIntrinsicContainer, ExprInvoke, ExprLet, ExprMatch,
-    ExprInvokeTarget, ExprKind, ExprReference, ExprStringTemplate, ExprStruct, ExprUnOp,
+    ExprInvokeTarget, ExprKind, ExprReference, ExprSelect, ExprSelectType, ExprStringTemplate,
+    ExprStruct, ExprUnOp,
     FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident, MacroTokenTree, Name,
     Path, PatternKind, StmtLet, Ty, Value,
 };
@@ -443,6 +444,62 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                         call_args,
                         Vec::new(),
                     )),
+                );
+                return Ok(NormalizeOutcome::Normalized(replacement));
+            }
+            if macro_name == "write" || macro_name == "writeln" {
+                // `write!(f, "template", args...)`/`writeln!(...)` — `f`
+                // (`std::fmt::Formatter`) is modeled directly as Kotlin's
+                // `StringBuilder` (see `kotlin_type_from_ty`), so this
+                // becomes a real, valid method call on it —
+                // `f.append(<the same portable Format-op string
+                // `format!` already produces>)` — rather than needing any
+                // fmt-specific codegen: `StringBuilder.append` already has
+                // the right "mutate the receiver, return it" semantics
+                // `write!`'s real expansion (`f.write_fmt(...)`) has, and
+                // the enclosing `fmt` method (an ordinary `fn(&self, f:
+                // &mut Formatter) -> fmt::Result` once both those types
+                // are mapped) needs no special handling either.
+                let Ok(args) = parse_expr_macro_tokens(&macro_expr.invocation.token_trees) else {
+                    return Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+                        id,
+                        ty_slot,
+                        span,
+                        ExprKind::Macro(macro_expr),
+                    )));
+                };
+                if args.is_empty() {
+                    return Err(fp_core::error::Error::from(format!(
+                        "{macro_name}! requires at least one argument (the formatter)"
+                    )));
+                }
+                let (mut template, skip) = build_print_template_from_args(&args[1..])?;
+                if macro_name == "writeln" {
+                    template.parts.push(FormatTemplatePart::Literal("\n".to_string()));
+                }
+                let mut call_args = Vec::with_capacity(args.len());
+                call_args.push(Expr::new(ExprKind::FormatString(template)));
+                call_args.extend(args[1 + skip..].iter().cloned());
+                let formatted = Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                    CallKind::Op(OpKind::Format),
+                    call_args,
+                    Vec::new(),
+                )));
+                let replacement = Expr::from_parts(
+                    id,
+                    ty_slot.clone(),
+                    span,
+                    ExprKind::Invoke(ExprInvoke {
+                        span: span.unwrap_or_default(),
+                        target: ExprInvokeTarget::Method(ExprSelect {
+                            span: span.unwrap_or_default(),
+                            obj: Box::new(args[0].clone()),
+                            field: Ident::new("append"),
+                            select: ExprSelectType::Method,
+                        }),
+                        args: vec![formatted],
+                        kwargs: Vec::new(),
+                    }),
                 );
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
@@ -1306,17 +1363,25 @@ fn build_print_template_from_args(args: &[Expr]) -> Result<(ExprStringTemplate, 
         ExprKind::FormatString(format) => Ok((format.clone(), 1)),
         ExprKind::Value(value) => {
             if let Value::String(string) = &**value {
-                if args.len() == 1 {
+                let template = string.value.clone();
+                let looks_like_format_template = template.contains('{') || template.contains('%');
+                if args.len() == 1 && !looks_like_format_template {
                     return Ok((
                         ExprStringTemplate {
-                            parts: vec![FormatTemplatePart::Literal(string.value.clone())],
+                            parts: vec![FormatTemplatePart::Literal(template)],
                         },
                         1,
                     ));
                 }
-
-                let template = string.value.clone();
-                let looks_like_format_template = template.contains('{') || template.contains('%');
+                // Even with no trailing args, a `{name}`-style placeholder can
+                // still be a real one — Rust's inline-captured-identifier
+                // format syntax (`write!(f, "{name}")`) needs no separate
+                // argument at all, unlike `{}` (positional/implicit), which
+                // *does* require one; `parse_format_template` (and this
+                // template's own `FormatArgRef::Named` resolution downstream)
+                // already distinguishes the two, so the single-arg case must
+                // still attempt real parsing rather than assuming "no args
+                // after the template" means "no placeholders in it".
                 if looks_like_format_template {
                     let parts = parse_format_template(&template)?;
                     return Ok((ExprStringTemplate { parts }, 1));

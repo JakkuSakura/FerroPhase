@@ -304,7 +304,7 @@ impl<'a> HirToAstLifter<'a> {
                 }),
                 sig,
                 body: self.lift_function_body(block, param_names, &reassigned_params)?,
-                is_async: false,
+                is_async: function.is_async,
                 visibility: lift_visibility(&item.visibility),
             }))
             .with_span(item.span))

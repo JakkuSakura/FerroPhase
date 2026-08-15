@@ -84,10 +84,12 @@ impl HirGenerator {
                 let body = self.transform_block_node_to_hir(&func.body)?;
 
                 let mut function = hir::Function::new(sig, Some(body), func.sig.is_const, false);
+                function.is_async = func.is_async;
                 function.attrs = func.attrs.clone();
                 Ok(function)
             } else {
                 let mut function = hir::Function::new(sig, None, func.sig.is_const, false);
+                function.is_async = func.is_async;
                 function.attrs = func.attrs.clone();
                 Ok(function)
             }

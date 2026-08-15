@@ -119,6 +119,7 @@ pub struct Function {
     pub body: Option<Block>,
     pub is_const: bool,
     pub is_extern: bool,
+    pub is_async: bool,
     pub attrs: Vec<crate::ast::Attribute>,
 }
 
@@ -695,6 +696,7 @@ impl Function {
             body,
             is_const,
             is_extern,
+            is_async: false,
             attrs: Vec::new(),
         }
     }
