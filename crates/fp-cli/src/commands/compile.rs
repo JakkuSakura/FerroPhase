@@ -840,47 +840,75 @@ async fn compile_emit_target(
         ));
     }
 
-    use crate::languages::frontend::{LanguageSource, detect_language_source_by_path};
-    use crate::languages::{FERROPHASE, detect_source_language};
-    let detected = detect_language_source_by_path(input);
-    let is_wit_input = matches!(detected, Some(LanguageSource::Wit));
-    let is_typescript_input = matches!(
-        detected,
-        Some(LanguageSource::TypeScript | LanguageSource::JavaScript)
-    );
-    let language = args
-        .source_language
-        .as_deref()
-        .map(|l| l.trim().to_ascii_lowercase())
-        .or_else(|| detect_source_language(input).map(|l| l.name.to_ascii_lowercase()))
-        .unwrap_or_else(|| FERROPHASE.to_string());
+    let language = compiler::resolve_source_language(input, args.source_language.as_deref())?;
 
-    let ast = if is_wit_input || is_typescript_input {
-        compiler::parse_language_target_file(input, args.source_language.as_deref())?
-    } else {
+    let ast = {
         let (provider, package_id, tag) = provider_and_package_for_input(input, &language)?;
         let materializer =
             crate::languages::materializer::materializer_for_language(
                 &crate::languages::backend::output_extension_for(target),
             );
+        let normalizer =
+            crate::languages::normalizer::normalizer_for_language(&language, !args.skip_typing);
         let wrapped: std::sync::Arc<dyn fp_core::package::provider::PackageProvider> =
             std::sync::Arc::new(TranspileMaterializingPackageProvider::new(
                 provider,
                 materializer.clone(),
-                crate::languages::normalizer::normalizer_for_language(&language, !args.skip_typing)
-                    .ok_or_else(|| {
-                        CliError::Compilation(format!("no normalizer for source language: {language}"))
-                    })?,
+                normalizer,
             ));
         let source = if args.skip_typing {
             wrapped
                 .load_package_source(&package_id)
                 .map_err(|e| CliError::Compilation(e.to_string()))?
         } else {
+            // Typechecking (real HIR type resolution, plus `std`/`libc`
+            // resolution via `std_provider_for`) is only wired up for a
+            // handful of source languages so far — same fallback
+            // `compile_project` already uses for its own multi-file
+            // `--target` path, applied here too instead of this single-file
+            // path being the only one that can't tolerate an unsupported
+            // language.
             let lossy = LossyCompileOptions {
                 enabled: args.lossy || fp_core::config::lossy_mode(),
             };
-            compiler::typecheck_package(wrapped, &package_id, lossy, &language)?
+            let wrapped_for_typecheck = wrapped.clone();
+            let package_id_for_typecheck = package_id.clone();
+            let language_for_typecheck = language.clone();
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                compiler::typecheck_package(
+                    wrapped_for_typecheck,
+                    &package_id_for_typecheck,
+                    lossy,
+                    &language_for_typecheck,
+                )
+            })) {
+                Ok(Ok(typed_source)) => typed_source,
+                Ok(Err(e)) => {
+                    warn!(
+                        "typecheck failed for {}: {} — falling back to untyped",
+                        input.display(),
+                        e
+                    );
+                    wrapped
+                        .load_package_source(&package_id)
+                        .map_err(|e| CliError::Compilation(e.to_string()))?
+                }
+                Err(panic_info) => {
+                    let msg = panic_info
+                        .downcast_ref::<String>()
+                        .map(|s| s.as_str())
+                        .or_else(|| panic_info.downcast_ref::<&str>().copied())
+                        .unwrap_or("(unknown)");
+                    warn!(
+                        "typecheck panicked for {}: {} — falling back to untyped",
+                        input.display(),
+                        msg
+                    );
+                    wrapped
+                        .load_package_source(&package_id)
+                        .map_err(|e| CliError::Compilation(e.to_string()))?
+                }
+            }
         };
         // Materialize portable ops post-typechecked-lifting too (see the
         // matching comment in `compile_project`'s phase 2) — the wrapping
@@ -925,76 +953,12 @@ async fn compile_emit_target(
     Ok(())
 }
 
-/// Computes the same `PackageItem` path tag a discovered package's real
-/// provider already tagged `input` with — one of the real (non-`todo!()`)
-/// providers' own already-exported module-path estimators, not a
-/// reimplementation. No fallback: an unsupported language is a real error,
-/// not a silent drop to the old single-file resolver.
-fn estimate_module_path(
-    language: &str,
-    root: &Path,
-    input: &Path,
-) -> Result<fp_core::ast::path::QualifiedPath> {
-    match language {
-        "rust" | "rs" => {
-            let rel = input.strip_prefix(root.join("src")).map_err(|_| {
-                CliError::Compilation(format!(
-                    "{} is not inside {}'s src/ directory",
-                    input.display(),
-                    root.display()
-                ))
-            })?;
-            Ok(fp_rust::provider::rs_relative_to_module_path(
-                &rel.display().to_string(),
-            ))
-        }
-        "ferrophase" | "fp" => {
-            let rel = input.strip_prefix(root.join("src")).map_err(|_| {
-                CliError::Compilation(format!(
-                    "{} is not inside {}'s src/ directory",
-                    input.display(),
-                    root.display()
-                ))
-            })?;
-            Ok(fp_lang::magnet_provider::module_path_from_relative(
-                &rel.display().to_string(),
-            ))
-        }
-        "typescript" | "ts" | "javascript" | "js" => estimate_typescript_module_path(root, input),
-        other => Err(CliError::Compilation(format!(
-            "no module-path estimator for source language: {other}"
-        ))),
-    }
-}
-
-#[cfg(feature = "lang-typescript")]
-fn estimate_typescript_module_path(
-    root: &Path,
-    input: &Path,
-) -> Result<fp_core::ast::path::QualifiedPath> {
-    Ok(fp_core::ast::path::QualifiedPath::new(
-        fp_typescript::package::estimate_module_path(root, input),
-    ))
-}
-
-#[cfg(not(feature = "lang-typescript"))]
-fn estimate_typescript_module_path(
-    _root: &Path,
-    _input: &Path,
-) -> Result<fp_core::ast::path::QualifiedPath> {
-    Err(CliError::Compilation(
-        "typescript support not compiled into this build".to_string(),
-    ))
-}
-
 /// A single file is a package with one member — find (and prefer) the real
 /// one if `input` belongs to a discoverable multi-file package; otherwise
-/// wrap it as a synthetic single-member package. Either way, everything
-/// downstream (materialize/normalize/typecheck) goes through the same
-/// `PackageProvider`-shaped pipeline `compile_project` already uses — no
-/// separate hand-threaded `ast::File` path, and no fallback-on-failure:
-/// once a manifest is found, any further failure (no provider for this
-/// language, no package contains this file, no estimator) is a real error.
+/// wrap it as a synthetic single-member package. Delegates to
+/// `compiler::resolve_source_package`, the same resolution
+/// `compile_source_file` uses, instead of maintaining a second
+/// independent implementation of "find (or synthesize) input's package".
 fn provider_and_package_for_input(
     input: &Path,
     language: &str,
@@ -1003,16 +967,7 @@ fn provider_and_package_for_input(
     PackageId,
     fp_core::ast::path::QualifiedPath,
 )> {
-    let input_abs = input.canonicalize().unwrap_or_else(|_| input.to_path_buf());
-    let (provider, package_id, package_root_abs) = compiler::find_manifest_package(input, language)?
-        .ok_or_else(|| {
-            CliError::Compilation(format!(
-                "no manifest (Cargo.toml/Magnet.toml) found above {}; `fp compile --target` requires a real package",
-                input.display()
-            ))
-        })?;
-    let tag = estimate_module_path(language, &package_root_abs, &input_abs)?;
-    Ok((provider, package_id, tag))
+    compiler::resolve_source_package(input, language, "cli")
 }
 
 async fn compile_project(
@@ -1051,8 +1006,7 @@ async fn compile_project(
     let ext = crate::languages::backend::output_extension_for(target);
     let mut file_count = 0;
 
-    let normalizer = crate::languages::normalizer::normalizer_for_language(lang, !args.skip_typing)
-        .ok_or_else(|| CliError::Compilation(format!("no normalizer for source language: {lang}")))?;
+    let normalizer = crate::languages::normalizer::normalizer_for_language(lang, !args.skip_typing);
     let materializer = crate::languages::materializer::materializer_for_language(
         &crate::languages::backend::output_extension_for(target)
     );
@@ -2214,14 +2168,14 @@ fn determine_output_path(
 struct TranspileMaterializingPackageProvider {
     inner: std::sync::Arc<dyn fp_core::package::provider::PackageProvider>,
     materializer: Option<std::sync::Arc<dyn fp_core::intrinsics::IntrinsicMaterializer>>,
-    normalizer: std::sync::Arc<dyn fp_core::intrinsics::IntrinsicNormalizer>,
+    normalizer: Option<std::sync::Arc<dyn fp_core::intrinsics::IntrinsicNormalizer>>,
 }
 
 impl TranspileMaterializingPackageProvider {
     fn new(
         inner: std::sync::Arc<dyn fp_core::package::provider::PackageProvider>,
         materializer: Option<std::sync::Arc<dyn fp_core::intrinsics::IntrinsicMaterializer>>,
-        normalizer: std::sync::Arc<dyn fp_core::intrinsics::IntrinsicNormalizer>,
+        normalizer: Option<std::sync::Arc<dyn fp_core::intrinsics::IntrinsicNormalizer>>,
     ) -> Self {
         Self {
             inner,
@@ -2272,12 +2226,14 @@ impl fp_core::package::provider::PackageProvider for TranspileMaterializingPacka
             }
         }
 
-        for pkg_item in &mut source.items {
-            fp_lang::normalization::normalize_items(
-                std::slice::from_mut(&mut pkg_item.item),
-                self.normalizer.as_ref(),
-            )
-            .map_err(|e| fp_core::package::provider::ProviderError::other(e.to_string()))?;
+        if let Some(ref norm) = self.normalizer {
+            for pkg_item in &mut source.items {
+                fp_lang::normalization::normalize_items(
+                    std::slice::from_mut(&mut pkg_item.item),
+                    norm.as_ref(),
+                )
+                .map_err(|e| fp_core::package::provider::ProviderError::other(e.to_string()))?;
+            }
         }
 
         Ok(source)

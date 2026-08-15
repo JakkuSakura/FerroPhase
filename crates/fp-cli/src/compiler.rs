@@ -16,7 +16,7 @@ use fp_core::{
         Value, Visibility,
     },
     diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager},
-    frontend::{FrontendParseMode, FrontendResult, FrontendSnapshot, LanguageFrontend},
+    frontend::{FrontendParseMode, FrontendResult, LanguageFrontend},
     lir::LirDataLayout,
 };
 use fp_goasm::config::GoAsmTarget;
@@ -45,6 +45,7 @@ use crate::languages::frontend::TomlFrontend;
 use crate::languages::frontend::TypeScriptFrontend;
 #[cfg(feature = "lang-wit")]
 use crate::languages::frontend::WitFrontend;
+use crate::languages::single_file::{in_memory_provider, single_file_provider};
 use crate::languages::{self, detect_source_language};
 use crate::{CliError, Result};
 #[cfg(feature = "lang-typescript")]
@@ -65,14 +66,25 @@ pub fn check_path(
     syntax_only: bool,
     lossy: LossyCompileOptions,
 ) -> Result<()> {
-    let ast = parse_file(path, None, lossy)?;
     if syntax_only {
+        // A pure syntax check never touches the package/compile pipeline at
+        // all, so it stays a direct parse rather than resolving a package
+        // for work that's about to be thrown away.
+        parse_file(path, None, lossy)?;
         return Ok(());
     }
 
+    let language = resolve_source_language(path, None)?;
     let executor = CompilerExecutor::new();
     let identity = CompilerIdentity::for_file(package, path);
-    let mut driver = compile_source_file(ast, &identity, lossy, &executor, PipelineMode::Native)?;
+    let mut driver = compile_source_file(
+        SourceInput::Path(path.to_path_buf()),
+        &language,
+        &identity,
+        lossy,
+        &executor,
+        PipelineMode::Native,
+    )?;
     drain_driver(&mut driver, lossy)
 }
 
@@ -100,7 +112,8 @@ pub fn eval_script(script: ScriptBlock) -> Result<Value> {
     let identity = CompilerIdentity::for_script();
     let executor = CompilerExecutor::new();
     let mut driver = compile_source_file(
-        ast,
+        SourceInput::InMemory(ast),
+        languages::FERROPHASE,
         &identity,
         LossyCompileOptions::default(),
         &executor,
@@ -130,14 +143,10 @@ pub fn eval_script(script: ScriptBlock) -> Result<Value> {
 }
 
 pub fn interpret_file(path: &Path, package: &str) -> Result<Value> {
-    let ast = parse_file_with_mode(
-        path,
-        None,
-        FrontendParseMode::Strict,
-        LossyCompileOptions::default(),
-    )?;
+    let language = resolve_source_language(path, None)?;
     execute_ast(
-        ast,
+        SourceInput::Path(path.to_path_buf()),
+        &language,
         CompilerIdentity::for_file(package, path),
         fp_core::context::ExecutionMode::Runtime,
         LossyCompileOptions::default(),
@@ -219,8 +228,6 @@ pub struct LossyCompileOptions {
 #[derive(Debug, Clone)]
 pub struct FrontendBundle {
     pub source_language: String,
-    pub ast: File,
-    pub frontend_snapshot: Option<FrontendSnapshot>,
 }
 
 #[derive(Debug, Clone)]
@@ -771,14 +778,22 @@ fn is_apple_target(target_triple: Option<&str>) -> bool {
 }
 
 fn execute_ast(
-    ast: File,
+    input: SourceInput,
+    language: &str,
     identity: CompilerIdentity,
     mode: fp_core::context::ExecutionMode,
     lossy: LossyCompileOptions,
 ) -> Result<Value> {
     let value_key = identity.path.to_key();
     let executor = CompilerExecutor::new();
-    let mut driver = compile_source_file(ast, &identity, lossy, &executor, PipelineMode::Native)?;
+    let mut driver = compile_source_file(
+        input,
+        language,
+        &identity,
+        lossy,
+        &executor,
+        PipelineMode::Native,
+    )?;
     drain_driver(&mut driver, lossy)?;
 
     match mode {
@@ -806,10 +821,17 @@ fn lower_file(
     source_language: Option<&str>,
     lossy: LossyCompileOptions,
 ) -> Result<LoweredProgram> {
-    let ast = parse_file(path, source_language, lossy)?;
+    let language = resolve_source_language(path, source_language)?;
     let identity = CompilerIdentity::for_file(package, path);
     let executor = CompilerExecutor::new();
-    let mut driver = compile_source_file(ast, &identity, lossy, &executor, PipelineMode::Native)?;
+    let mut driver = compile_source_file(
+        SourceInput::Path(path.to_path_buf()),
+        &language,
+        &identity,
+        lossy,
+        &executor,
+        PipelineMode::Native,
+    )?;
     drain_driver(&mut driver, lossy)?;
     let package_id =
         PackageId::new(identity.path.path().head().ok_or_else(|| {
@@ -838,24 +860,8 @@ fn std_provider_for(language: &str) -> Arc<dyn fp_core::package::provider::Packa
     }
 }
 
-/// Wraps an already-parsed single file as a one-member `PackageProvider`.
-/// Used by `compile_emit_target`'s single-file pipeline when no real
-/// package can be discovered for the input file. Delegates to `fp-lang`'s
-/// `single_file_provider` (disk-based sibling-module discovery through
-/// `FerroModuleSourceResolver` — the correct mechanism for a genuinely
-/// standalone file with no enclosing package/manifest), reused as-is
-/// rather than duplicated here.
-pub fn single_file_provider(
-    package_id: PackageId,
-    module_path: QualifiedPath,
-    source: File,
-) -> Result<Arc<dyn PackageProvider>> {
-    fp_lang::provider::single_file_provider(package_id, module_path, source)
-        .map_err(|e| CliError::Compilation(e.to_string()))
-}
-
 /// Package/provider discovery shared by every single-file compiler entry
-/// point — `compile_source_file` below, and `commands::compile`'s
+/// point — `resolve_input_package` below, and `commands::compile`'s
 /// `provider_and_package_for_input`. A single file is a package with one
 /// member — this only kicks in when `input` actually lives inside a
 /// discoverable multi-file package (a `Cargo.toml`/`Magnet.toml` manifest
@@ -902,59 +908,151 @@ pub fn find_manifest_package(
     Ok(Some((provider, package_id, package_root_abs)))
 }
 
+/// Computes the `PackageItem` path tag a package's own provider would tag
+/// `input` with, given its package root — the one implementation shared by
+/// `resolve_input_package`'s single-file resolution and
+/// `commands::compile::provider_and_package_for_input`'s `--target` path,
+/// instead of two independent per-language guesses. No fallback: an
+/// unsupported language is a real error, not a silent drop to some default
+/// estimator.
+pub(crate) fn module_path_for_language(
+    language: &str,
+    package_root: &Path,
+    input: &Path,
+) -> Result<QualifiedPath> {
+    match language {
+        "rust" | "rs" => {
+            let rel = input.strip_prefix(package_root.join("src")).map_err(|_| {
+                CliError::Compilation(format!(
+                    "{} is not inside {}'s src/ directory",
+                    input.display(),
+                    package_root.display()
+                ))
+            })?;
+            Ok(fp_rust::provider::rs_relative_to_module_path(
+                &rel.display().to_string(),
+            ))
+        }
+        "ferrophase" | "fp" => {
+            let rel = input.strip_prefix(package_root.join("src")).map_err(|_| {
+                CliError::Compilation(format!(
+                    "{} is not inside {}'s src/ directory",
+                    input.display(),
+                    package_root.display()
+                ))
+            })?;
+            Ok(fp_lang::magnet_provider::module_path_from_relative(
+                &rel.display().to_string(),
+            ))
+        }
+        "typescript" | "ts" | "javascript" | "js" => {
+            module_path_for_typescript(package_root, input)
+        }
+        other => Err(CliError::Compilation(format!(
+            "no module-path estimator for source language: {other}"
+        ))),
+    }
+}
+
+#[cfg(feature = "lang-typescript")]
+fn module_path_for_typescript(package_root: &Path, input: &Path) -> Result<QualifiedPath> {
+    Ok(QualifiedPath::new(fp_typescript::package::estimate_module_path(
+        package_root,
+        input,
+    )))
+}
+
+#[cfg(not(feature = "lang-typescript"))]
+fn module_path_for_typescript(_package_root: &Path, _input: &Path) -> Result<QualifiedPath> {
+    Err(CliError::Compilation(
+        "typescript support not compiled into this build".to_string(),
+    ))
+}
+
+/// A single compiler input: either a real on-disk file (the common case —
+/// parsed lazily, once a `PackageProvider` actually asks for its source), or
+/// an already-built in-memory `File` with no path to read from (e.g.
+/// `eval_script`'s synthetic `"<eval>"` script). Two genuinely different
+/// kinds of input, not one file-focused path with a bolted-on exception.
+enum SourceInput {
+    Path(PathBuf),
+    InMemory(File),
+}
+
+/// Resolves any compiler input to `(provider, package_id, module_path)` —
+/// the real enclosing package if `input` lives inside a discoverable
+/// multi-file package (a `Cargo.toml`/`Magnet.toml` manifest above it), else
+/// a synthetic one-member package. Either way, everything downstream goes
+/// through the same `PackageProvider`-shaped pipeline; parsing only ever
+/// happens lazily, inside whichever provider is returned, never eagerly here.
+fn resolve_input_package(
+    input: SourceInput,
+    language: &str,
+    identity: &CompilerIdentity,
+) -> Result<(Arc<dyn PackageProvider>, PackageId, QualifiedPath)> {
+    match input {
+        SourceInput::Path(path) => {
+            if let Some((provider, package_id, package_root_abs)) =
+                find_manifest_package(&path, language)?
+            {
+                let input_abs = path.canonicalize().unwrap_or_else(|_| path.clone());
+                let module_path = module_path_for_language(language, &package_root_abs, &input_abs)?;
+                Ok((provider, package_id, module_path))
+            } else {
+                let package_id =
+                    PackageId::new(identity.path.path().head().ok_or_else(|| {
+                        CliError::Compilation("source file has no package identity".to_string())
+                    })?);
+                let module_path = identity.path.path().clone();
+                let frontend = frontend_for_language(language)?;
+                let provider = single_file_provider(
+                    package_id.clone(),
+                    module_path.clone(),
+                    path,
+                    frontend,
+                    FrontendParseMode::Strict,
+                );
+                Ok((provider, package_id, module_path))
+            }
+        }
+        SourceInput::InMemory(source) => {
+            let package_id = PackageId::new(identity.path.path().head().ok_or_else(|| {
+                CliError::Compilation("source file has no package identity".to_string())
+            })?);
+            let module_path = identity.path.path().clone();
+            let provider = in_memory_provider(package_id.clone(), module_path.clone(), source)
+                .map_err(|e| CliError::Compilation(e.to_string()))?;
+            Ok((provider, package_id, module_path))
+        }
+    }
+}
+
+/// Resolves a real on-disk `path` to `(provider, package_id, module_path)` —
+/// the real enclosing package if discoverable, else a single-member
+/// package — for callers outside this module (`commands::compile`'s
+/// `--target` pipeline) that need the same resolution `compile_source_file`
+/// uses, instead of maintaining a second implementation.
+pub fn resolve_source_package(
+    path: &Path,
+    language: &str,
+    package: &str,
+) -> Result<(Arc<dyn PackageProvider>, PackageId, QualifiedPath)> {
+    let identity = CompilerIdentity::for_file(package, path);
+    resolve_input_package(SourceInput::Path(path.to_path_buf()), language, &identity)
+}
+
 fn compile_source_file(
-    ast: File,
+    input: SourceInput,
+    language: &str,
     identity: &CompilerIdentity,
     lossy: LossyCompileOptions,
     executor: &CompilerExecutor,
     pipeline: PipelineMode,
 ) -> Result<CompilerDriver> {
-    // `ast` is only ever used as a *fallback* value now: when `ast.path` is a
-    // real, on-disk file that belongs to a discoverable multi-file package
-    // (a `Cargo.toml`/`Magnet.toml` manifest above it), that package's own
-    // provider supplies (and parses) the source itself — `ast` is discarded
-    // unread, so a caller's own eager pre-parse (e.g. `check_path`'s
-    // syntax-only check) is never redundant work done twice for nothing, and
-    // sibling modules/imports resolve through the real package instead of
-    // this one file being treated as an isolated island. Only a genuinely
-    // standalone input (no manifest found, or a non-file-backed synthetic
-    // script like `eval_script`'s `"<eval>"`) falls back to wrapping `ast`
-    // as its own single-member package.
-    // TODO: language detection — only FerroPhase discovery is wired up here.
-    let discovered = if ast.path.exists() {
-        find_manifest_package(&ast.path, languages::FERROPHASE)?
-    } else {
-        None
-    };
+    let (input_provider, package_id, module_path) =
+        resolve_input_package(input, language, identity)?;
 
-    let (input_provider, package_id, module_path) = match discovered {
-        Some((provider, package_id, package_root_abs)) => {
-            let input_abs = ast.path.canonicalize().unwrap_or_else(|_| ast.path.clone());
-            let rel = input_abs
-                .strip_prefix(package_root_abs.join("src"))
-                .map_err(|_| {
-                    CliError::Compilation(format!(
-                        "{} is not inside its package's src/ directory",
-                        ast.path.display()
-                    ))
-                })?;
-            let module_path =
-                fp_lang::magnet_provider::module_path_from_relative(&rel.display().to_string());
-            (provider, package_id, module_path)
-        }
-        None => {
-            let package_id =
-                PackageId::new(identity.path.path().head().ok_or_else(|| {
-                    CliError::Compilation("source file has no package identity".to_string())
-                })?);
-            let module_path = identity.path.path().clone();
-            let input_provider =
-                single_file_provider(package_id.clone(), module_path.clone(), ast)?;
-            (input_provider, package_id, module_path)
-        }
-    };
-
-    let std_provider = std_provider_for(languages::FERROPHASE);
+    let std_provider = std_provider_for(language);
     let provider = Arc::new(fp_core::package::provider::CompositeProvider::new(vec![
         std_provider,
         input_provider,
@@ -1010,51 +1108,18 @@ fn parse_file(
     parse_file_with_mode(path, source_language, FrontendParseMode::Strict, lossy)
 }
 
-pub fn parse_language_target_file(path: &Path, source_language: Option<&str>) -> Result<File> {
-    parse_file_with_context(
-        path,
-        source_language,
-        FrontendParseMode::Strict,
-        LossyCompileOptions::default(),
-    )
-    .map(|parsed| parsed.ast)
-}
-
-/// Like `parse_language_target_file`, but also returns the frontend's
-/// `AstSerializer` — needed by callers that construct a `PackageProvider`
-/// directly from the parsed `File` (e.g. `single_file_provider`) rather
-/// than going through a path that already registers it internally (real
-/// providers like `RustPackageProvider` call
-/// `register_threadlocal_serializer` themselves during `load_package_source`).
-pub fn parse_language_target_file_with_serializer(
-    path: &Path,
-    source_language: Option<&str>,
-) -> Result<(File, Arc<dyn fp_core::ast::AstSerializer>)> {
-    let parsed = parse_file_with_context(
-        path,
-        source_language,
-        FrontendParseMode::Strict,
-        LossyCompileOptions::default(),
-    )?;
-    Ok((parsed.ast, parsed.serializer))
-}
-
 pub fn compile_file_to_lir_bundle(
     path: &Path,
     package: &str,
     source_language: Option<&str>,
     lossy: LossyCompileOptions,
 ) -> Result<LirBundle> {
-    let parsed = parse_file_with_context(path, source_language, FrontendParseMode::Strict, lossy)?;
-    let frontend = FrontendBundle {
-        source_language: parsed.source_language.clone(),
-        ast: parsed.ast.clone(),
-        frontend_snapshot: parsed.frontend_snapshot.clone(),
-    };
+    let language = resolve_source_language(path, source_language)?;
     let identity = CompilerIdentity::for_file(package, path);
     let executor = CompilerExecutor::new();
     let mut driver = compile_source_file(
-        parsed.ast,
+        SourceInput::Path(path.to_path_buf()),
+        &language,
         &identity,
         lossy,
         &executor,
@@ -1070,7 +1135,9 @@ pub fn compile_file_to_lir_bundle(
         executor,
     };
     Ok(LirBundle {
-        frontend,
+        frontend: FrontendBundle {
+            source_language: language,
+        },
         hir_program: lowered.hir()?,
         mir_program: lowered.mir()?,
         lir_program: lowered.lir()?,
@@ -1083,7 +1150,7 @@ pub fn parse_file_with_mode(
     parse_mode: FrontendParseMode,
     lossy: LossyCompileOptions,
 ) -> Result<File> {
-    parse_file_with_context(path, source_language, parse_mode, lossy).map(|parsed| parsed.ast)
+    parse_file_with_context(path, source_language, parse_mode, lossy)
 }
 
 /// The name an `ast::Item` is registered under during AST→HIR lowering
@@ -1217,17 +1284,11 @@ fn parse_file_with_context(
     source_language: Option<&str>,
     parse_mode: FrontendParseMode,
     lossy: LossyCompileOptions,
-) -> Result<ParsedAst> {
+) -> Result<File> {
     let frontend = select_frontend(path, source_language)?;
     frontend.set_parse_mode(parse_mode);
     let source = std::fs::read_to_string(path).map_err(CliError::Io)?;
-    let FrontendResult {
-        ast,
-        snapshot,
-        serializer,
-        diagnostics,
-        ..
-    } = frontend
+    let FrontendResult { ast, diagnostics, .. } = frontend
         .parse_file(&source, path)
         .map_err(|err| CliError::Compilation(err.to_string()))?;
     emit_frontend_diagnostics(&diagnostics.get_diagnostics(), lossy)?;
@@ -1238,24 +1299,42 @@ fn parse_file_with_context(
     // for every language frontend.
     let mut ast = ast;
     fp_core::ast::annotate_collected_items(&mut ast);
-    Ok(ParsedAst {
-        ast,
-        source_language: frontend.language().to_string(),
-        frontend_snapshot: snapshot,
-        serializer,
-    })
+    Ok(ast)
+}
+
+/// Resolves the effective source language for `path`: an explicit
+/// `source_language` override, else extension-based detection. No silent
+/// default — an undetectable language (unknown/missing extension, no
+/// override) is a real error, not a guess at FerroPhase.
+pub(crate) fn resolve_source_language(path: &Path, source_language: Option<&str>) -> Result<String> {
+    if let Some(lang) = source_language {
+        return Ok(lang.trim().to_ascii_lowercase());
+    }
+    detect_source_language(path)
+        .map(|lang| lang.name.to_ascii_lowercase())
+        .ok_or_else(|| {
+            CliError::InvalidInput(format!(
+                "cannot detect source language for {}: pass --source-language explicitly",
+                path.display()
+            ))
+        })
 }
 
 fn select_frontend(
     path: &Path,
     source_language: Option<&str>,
 ) -> Result<Box<dyn LanguageFrontend>> {
-    let language = source_language
-        .map(|lang| lang.trim().to_ascii_lowercase())
-        .or_else(|| detect_source_language(path).map(|lang| lang.name.to_ascii_lowercase()))
-        .unwrap_or_else(|| languages::FERROPHASE.to_string());
+    let language = resolve_source_language(path, source_language)?;
+    frontend_for_language(&language)
+}
 
-    match language.as_str() {
+/// Registry lookup: the one place a language name maps to its
+/// `LanguageFrontend` implementation. Callers that already know the
+/// resolved language (e.g. package/single-file provider construction)
+/// should call this directly instead of going through `select_frontend`'s
+/// path-based detection.
+pub(crate) fn frontend_for_language(language: &str) -> Result<Box<dyn LanguageFrontend>> {
+    match language {
         value if value == languages::C => Ok(Box::new(CFrontend::new().map_err(|err| {
             CliError::Compilation(format!("failed to initialize C frontend: {err}"))
         })?)),
@@ -1357,12 +1436,6 @@ struct LoweredProgram {
     executor: CompilerExecutor,
 }
 
-struct ParsedAst {
-    ast: File,
-    source_language: String,
-    frontend_snapshot: Option<FrontendSnapshot>,
-    serializer: Arc<dyn fp_core::ast::AstSerializer>,
-}
 
 impl LoweredProgram {
     fn hir(&self) -> Result<fp_core::hir::Program> {
