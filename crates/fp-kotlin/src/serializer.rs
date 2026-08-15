@@ -377,7 +377,7 @@ fn collect_string_fields_in_item(item: &Item, e: &KotlinEmitter, out: &mut HashS
     match item.kind() {
         ItemKind::DefStruct(s) => {
             for field in &s.value.fields {
-                if kotlin_type_from_ty(&field.value, e) == "String" {
+                if e.kotlin_type_from_ty(&field.value) == "String" {
                     out.insert(field.name.name.clone());
                 }
             }
@@ -540,7 +540,7 @@ fn collect_list_fields_in_item(item: &Item, e: &KotlinEmitter, out: &mut HashMap
     match item.kind() {
         ItemKind::DefStruct(s) => {
             for field in &s.value.fields {
-                let kt = kotlin_type_from_ty(&field.value, e);
+                let kt = e.kotlin_type_from_ty(&field.value);
                 if let Some(elem) = sized_collection_element_type(&kt) {
                     out.insert(field.name.name.clone(), elem.to_string());
                 }
@@ -1111,72 +1111,102 @@ fn fn_kw(f: &ItemDefFunction) -> &'static str {
     if f.is_async { "suspend fun" } else { "fun" }
 }
 
-fn emit_companion_function(f: &ItemDefFunction, self_name: &str, e: &mut KotlinEmitter) -> Result<()> {
-    let name = f.name.name.as_str();
-    e.current_fn_params = f.sig.params.iter().map(|p| p.name.name.clone()).collect();
-    e.current_self_name = Some(self_name.to_string());
-    let params = f.sig.params.iter()
-        .map(|p| format!("{}: {}", p.name.name, kotlin_type_from_ty(&p.ty, e).replace("Self", self_name)))
-        .collect::<Vec<_>>().join(", ");
-    let ret = f.sig.ret_ty.as_ref()
-        .map(|ty| format!(": {}", kotlin_type_from_ty(ty, e).replace("Self", self_name)))
-        .unwrap_or_else(|| ": Unit".to_string());
-
-    e.writer.write_line(&format!("{} {}({}){} {{", fn_kw(f), name, params, ret));
-    e.writer.increase_indent();
-    match untranspilable_reason(f) {
-        Some(reason) => emit_stub_body(&format!("{self_name}::{name}"), reason, e),
-        None => {
-            let len = f.body.stmts.len();
-            for (i, stmt) in f.body.stmts.iter().enumerate() {
-                let is_tail = i == len - 1 && f.sig.ret_ty.is_some();
-                emit_stmt(stmt, e, is_tail)?;
-            }
-        }
-    }
-    e.writer.decrease_indent();
-    e.writer.write_line("}\n");
-    Ok(())
+/// What should happen to a statement chain's final expression's value.
+/// Threaded through the statement-emission methods instead of an
+/// `is_tail: bool` so `if`/`when`/`if let` used as a *value* still emit
+/// their branches as ordinary direct statements -- at the real depth, via
+/// the same `self.writer.write_line`/`block` calls as everything else --
+/// rather than being rendered to a string and re-spliced back in.
+#[derive(Clone, Copy)]
+enum Tail<'a> {
+    /// Plain statement position -- the value (if any) is discarded.
+    None,
+    /// Function-body tail position -- wrap the value in `return`.
+    Return,
+    /// Assign the value to this already-declared variable.
+    Assign(&'a str),
 }
 
-fn emit_impl_function(f: &ItemDefFunction, self_name: &str, e: &mut KotlinEmitter) -> Result<()> {
-    let name = f.name.name.as_str();
-    if is_fmt_trait_method(f) {
-        // Kotlin resolves a real member (`Any.toString()`) over an
-        // extension function of the same name, so this inherent-impl
-        // path (unlike `emit_override_function`, a genuine `impl Display`
-        // always goes through) can't make `toString()` actually dispatch
-        // polymorphically — it still emits valid, callable code, just
-        // not a true override. See `emit_fmt_as_to_string`.
-        e.current_self_name = Some(self_name.to_string());
-        emit_fmt_as_to_string(f, Some(self_name), e)?;
-        return Ok(());
-    }
-    e.current_fn_params = f.sig.params.iter().map(|p| p.name.name.clone()).collect();
-    e.current_self_name = Some(self_name.to_string());
-    // Skip the first param (self) — Kotlin extension functions have implicit receiver
-    let params = f.sig.params.iter()
-        .map(|p| format!("{}: {}", p.name.name, kotlin_type_from_ty(&p.ty, e)))
-        .collect::<Vec<_>>().join(", ");
-    let ret = f.sig.ret_ty.as_ref()
-        .map(|ty| format!(": {}", kotlin_type_from_ty(ty, e).replace("Self", self_name)))
-        .unwrap_or_else(|| ": Unit".to_string());
-
-    e.writer.write_line(&format!("{} {}.{}({}){} {{", fn_kw(f), self_name, name, params, ret));
-    e.writer.increase_indent();
-    match untranspilable_reason(f) {
-        Some(reason) => emit_stub_body(&format!("{self_name}::{name}"), reason, e),
-        None => {
-            let len = f.body.stmts.len();
-            for (i, stmt) in f.body.stmts.iter().enumerate() {
-                let is_tail = i == len - 1 && f.sig.ret_ty.is_some();
-                emit_stmt(stmt, e, is_tail)?;
-            }
+impl KotlinEmitter {
+    /// Apply `tail` to an already-rendered value: discard it, `return` it,
+    /// or assign it to an already-declared variable.
+    fn write_tail(&mut self, tail: Tail, value: &str) {
+        match tail {
+            Tail::None => { self.writer.write_lines(value); }
+            Tail::Return => { self.writer.write_lines(&format!("return {}", value)); }
+            Tail::Assign(name) => { self.writer.write_lines(&format!("{} = {}", name, value)); }
         }
     }
-    e.writer.decrease_indent();
-    e.writer.write_line("}\n");
-    Ok(())
+
+    fn emit_companion_function(&mut self, f: &ItemDefFunction, self_name: &str) -> Result<()> {
+        let name = f.name.name.as_str();
+        self.current_fn_params = f.sig.params.iter().map(|p| p.name.name.clone()).collect();
+        self.current_self_name = Some(self_name.to_string());
+        let params = f.sig.params.iter()
+            .map(|p| format!("{}: {}", p.name.name, self.kotlin_type_from_ty(&p.ty).replace("Self", self_name)))
+            .collect::<Vec<_>>().join(", ");
+        let ret = f.sig.ret_ty.as_ref()
+            .map(|ty| format!(": {}", self.kotlin_type_from_ty(ty).replace("Self", self_name)))
+            .unwrap_or_else(|| ": Unit".to_string());
+
+        self.writer.write_line(&format!("{} {}({}){} {{", fn_kw(f), name, params, ret));
+        self.writer.increase_indent();
+        match untranspilable_reason(f) {
+            Some(reason) => self.emit_stub_body(&format!("{self_name}::{name}"), reason),
+            None => {
+                let len = f.body.stmts.len();
+                for (i, stmt) in f.body.stmts.iter().enumerate() {
+                    let tail = if i == len - 1 && f.sig.ret_ty.is_some() { Tail::Return } else { Tail::None };
+                    self.emit_stmt(stmt, tail)?;
+                }
+            }
+        }
+        self.writer.decrease_indent();
+        self.writer.write_line("}\n");
+        Ok(())
+    }
+}
+
+impl KotlinEmitter {
+    fn emit_impl_function(&mut self, f: &ItemDefFunction, self_name: &str) -> Result<()> {
+        let name = f.name.name.as_str();
+        if is_fmt_trait_method(f) {
+            // Kotlin resolves a real member (`Any.toString()`) over an
+            // extension function of the same name, so this inherent-impl
+            // path (unlike `emit_override_function`, a genuine `impl Display`
+            // always goes through) can't make `toString()` actually dispatch
+            // polymorphically — it still emits valid, callable code, just
+            // not a true override. See `emit_fmt_as_to_string`.
+            self.current_self_name = Some(self_name.to_string());
+            self.emit_fmt_as_to_string(f, Some(self_name))?;
+            return Ok(());
+        }
+        self.current_fn_params = f.sig.params.iter().map(|p| p.name.name.clone()).collect();
+        self.current_self_name = Some(self_name.to_string());
+        // Skip the first param (self) — Kotlin extension functions have implicit receiver
+        let params = f.sig.params.iter()
+            .map(|p| format!("{}: {}", p.name.name, self.kotlin_type_from_ty(&p.ty)))
+            .collect::<Vec<_>>().join(", ");
+        let ret = f.sig.ret_ty.as_ref()
+            .map(|ty| format!(": {}", self.kotlin_type_from_ty(ty).replace("Self", self_name)))
+            .unwrap_or_else(|| ": Unit".to_string());
+
+        self.writer.write_line(&format!("{} {}.{}({}){} {{", fn_kw(f), self_name, name, params, ret));
+        self.writer.increase_indent();
+        match untranspilable_reason(f) {
+            Some(reason) => self.emit_stub_body(&format!("{self_name}::{name}"), reason),
+            None => {
+                let len = f.body.stmts.len();
+                for (i, stmt) in f.body.stmts.iter().enumerate() {
+                    let tail = if i == len - 1 && f.sig.ret_ty.is_some() { Tail::Return } else { Tail::None };
+                    self.emit_stmt(stmt, tail)?;
+                }
+            }
+        }
+        self.writer.decrease_indent();
+        self.writer.write_line("}\n");
+        Ok(())
+    }
 }
 
 /// Like `emit_impl_function`, but nested as a real class member
@@ -1184,78 +1214,82 @@ fn emit_impl_function(f: &ItemDefFunction, self_name: &str, e: &mut KotlinEmitte
 /// for a trait's methods specifically, since Kotlin only recognizes an
 /// actual member override as satisfying an interface (an extension
 /// function never does, regardless of its name/signature match).
-fn emit_override_function(f: &ItemDefFunction, self_name: &str, e: &mut KotlinEmitter) -> Result<()> {
-    let name = f.name.name.as_str();
-    if is_fmt_trait_method(f) {
-        // `toString()` is the one Kotlin name that must go through a real
-        // class-member override (satisfying `Any.toString()`), which is
-        // exactly this path — a trait impl's methods are always emitted
-        // here. See `emit_fmt_as_to_string`.
-        e.current_self_name = Some(self_name.to_string());
-        emit_fmt_as_to_string(f, None, e)?;
-        return Ok(());
-    }
-    e.current_fn_params = f.sig.params.iter().map(|p| p.name.name.clone()).collect();
-    e.current_self_name = Some(self_name.to_string());
-    let params = f.sig.params.iter()
-        .map(|p| format!("{}: {}", p.name.name, kotlin_type_from_ty(&p.ty, e)))
-        .collect::<Vec<_>>().join(", ");
-    let ret = f.sig.ret_ty.as_ref()
-        .map(|ty| format!(": {}", kotlin_type_from_ty(ty, e).replace("Self", self_name)))
-        .unwrap_or_else(|| ": Unit".to_string());
+impl KotlinEmitter {
+    fn emit_override_function(&mut self, f: &ItemDefFunction, self_name: &str) -> Result<()> {
+        let name = f.name.name.as_str();
+        if is_fmt_trait_method(f) {
+            // `toString()` is the one Kotlin name that must go through a real
+            // class-member override (satisfying `Any.toString()`), which is
+            // exactly this path — a trait impl's methods are always emitted
+            // here. See `emit_fmt_as_to_string`.
+            self.current_self_name = Some(self_name.to_string());
+            self.emit_fmt_as_to_string(f, None)?;
+            return Ok(());
+        }
+        self.current_fn_params = f.sig.params.iter().map(|p| p.name.name.clone()).collect();
+        self.current_self_name = Some(self_name.to_string());
+        let params = f.sig.params.iter()
+            .map(|p| format!("{}: {}", p.name.name, self.kotlin_type_from_ty(&p.ty)))
+            .collect::<Vec<_>>().join(", ");
+        let ret = f.sig.ret_ty.as_ref()
+            .map(|ty| format!(": {}", self.kotlin_type_from_ty(ty).replace("Self", self_name)))
+            .unwrap_or_else(|| ": Unit".to_string());
 
-    e.writer.write_line(&format!("override {} {}({}){} {{", fn_kw(f), name, params, ret));
-    e.writer.increase_indent();
-    match untranspilable_reason(f) {
-        Some(reason) => emit_stub_body(&format!("{self_name}::{name}"), reason, e),
-        None => {
-            let len = f.body.stmts.len();
-            for (i, stmt) in f.body.stmts.iter().enumerate() {
-                let is_tail = i == len - 1 && f.sig.ret_ty.is_some();
-                emit_stmt(stmt, e, is_tail)?;
+        self.writer.write_line(&format!("override {} {}({}){} {{", fn_kw(f), name, params, ret));
+        self.writer.increase_indent();
+        match untranspilable_reason(f) {
+            Some(reason) => self.emit_stub_body(&format!("{self_name}::{name}"), reason),
+            None => {
+                let len = f.body.stmts.len();
+                for (i, stmt) in f.body.stmts.iter().enumerate() {
+                    let tail = if i == len - 1 && f.sig.ret_ty.is_some() { Tail::Return } else { Tail::None };
+                    self.emit_stmt(stmt, tail)?;
+                }
             }
         }
+        self.writer.decrease_indent();
+        self.writer.write_line("}\n");
+        Ok(())
     }
-    e.writer.decrease_indent();
-    e.writer.write_line("}\n");
-    Ok(())
 }
 
-fn emit_function(f: &ItemDefFunction, e: &mut KotlinEmitter) -> Result<()> {
-    let name = f.name.name.as_str();
-    e.current_fn_params = f.sig.params.iter().map(|p| p.name.name.clone()).collect();
-    e.current_self_name = None;
-    let params = f.sig.params.iter()
-        .map(|p| {
-            let kt = kotlin_type_from_ty(&p.ty, e);
-            // Same `.len()` vs `.size` tracking as `let`-bound locals (see
-            // `field_element_types`'s doc comment) — a List-typed parameter
-            // needs to be known by name too.
-            if let Some(elem) = sized_collection_element_type(&kt) {
-                e.field_element_types.insert(p.name.name.clone(), elem.to_string());
-            }
-            format!("{}: {}", p.name.name, kt)
-        })
-        .collect::<Vec<_>>().join(", ");
-    let ret = f.sig.ret_ty.as_ref()
-        .map(|ty| format!(": {}", kotlin_type_from_ty(ty, e)))
-        .unwrap_or_else(|| ": Unit".to_string());
+impl KotlinEmitter {
+    fn emit_function(&mut self, f: &ItemDefFunction) -> Result<()> {
+        let name = f.name.name.as_str();
+        self.current_fn_params = f.sig.params.iter().map(|p| p.name.name.clone()).collect();
+        self.current_self_name = None;
+        let params = f.sig.params.iter()
+            .map(|p| {
+                let kt = self.kotlin_type_from_ty(&p.ty);
+                // Same `.len()` vs `.size` tracking as `let`-bound locals (see
+                // `field_element_types`'s doc comment) — a List-typed parameter
+                // needs to be known by name too.
+                if let Some(elem) = sized_collection_element_type(&kt) {
+                    self.field_element_types.insert(p.name.name.clone(), elem.to_string());
+                }
+                format!("{}: {}", p.name.name, kt)
+            })
+            .collect::<Vec<_>>().join(", ");
+        let ret = f.sig.ret_ty.as_ref()
+            .map(|ty| format!(": {}", self.kotlin_type_from_ty(ty)))
+            .unwrap_or_else(|| ": Unit".to_string());
 
-    e.writer.write_line(&format!("{} {}({}){} {{", fn_kw(f), name, params, ret));
-    e.writer.increase_indent();
-    match untranspilable_reason(f) {
-        Some(reason) => emit_stub_body(name, reason, e),
-        None => {
-            let len = f.body.stmts.len();
-            for (i, stmt) in f.body.stmts.iter().enumerate() {
-                let is_tail = i == len - 1 && f.sig.ret_ty.is_some();
-                emit_stmt(stmt, e, is_tail)?;
+        self.writer.write_line(&format!("{} {}({}){} {{", fn_kw(f), name, params, ret));
+        self.writer.increase_indent();
+        match untranspilable_reason(f) {
+            Some(reason) => self.emit_stub_body(name, reason),
+            None => {
+                let len = f.body.stmts.len();
+                for (i, stmt) in f.body.stmts.iter().enumerate() {
+                    let tail = if i == len - 1 && f.sig.ret_ty.is_some() { Tail::Return } else { Tail::None };
+                    self.emit_stmt(stmt, tail)?;
+                }
             }
         }
+        self.writer.decrease_indent();
+        self.writer.write_line("}\n");
+        Ok(())
     }
-    e.writer.decrease_indent();
-    e.writer.write_line("}\n");
-    Ok(())
 }
 
 /// The single reason a function's real body isn't attempted (checked before
@@ -1285,9 +1319,11 @@ fn report_untranspilable(context: &str, reason: &str) {
 /// reports it (see `report_untranspilable`) — the one place both of those
 /// happen, so every stub call site does both instead of some only doing
 /// the first.
-fn emit_stub_body(context: &str, reason: &str, e: &mut KotlinEmitter) {
-    report_untranspilable(context, reason);
-    e.writer.write_line(&format!("throw NotImplementedError(\"{}\")", reason));
+impl KotlinEmitter {
+    fn emit_stub_body(&mut self, context: &str, reason: &str) {
+        report_untranspilable(context, reason);
+        self.writer.write_line(&format!("throw NotImplementedError(\"{}\")", reason));
+    }
 }
 
 /// `Display`/`Debug`'s `fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result`
@@ -1309,31 +1345,33 @@ fn is_fmt_trait_method(f: &ItemDefFunction) -> bool {
     f.name.name.as_str() == "fmt" && f.sig.receiver.is_some()
 }
 
-fn emit_fmt_as_to_string(
-    f: &ItemDefFunction,
-    extension_receiver: Option<&str>,
-    e: &mut KotlinEmitter,
-) -> Result<()> {
-    let formatter_name = f
-        .sig
-        .params
-        .first()
-        .map(|p| p.name.name.as_str())
-        .unwrap_or("f");
-    let header = match extension_receiver {
-        Some(receiver) => format!("fun {}.toString(): String", receiver),
-        None => "override fun toString(): String".to_string(),
-    };
-    e.writer.write_line(&format!("{} {{", header));
-    e.writer.increase_indent();
-    e.writer.write_line(&format!("val {} = StringBuilder()", formatter_name));
-    for stmt in &f.body.stmts {
-        emit_stmt(stmt, e, false)?;
+impl KotlinEmitter {
+    fn emit_fmt_as_to_string(
+        &mut self,
+        f: &ItemDefFunction,
+        extension_receiver: Option<&str>,
+    ) -> Result<()> {
+        let formatter_name = f
+            .sig
+            .params
+            .first()
+            .map(|p| p.name.name.as_str())
+            .unwrap_or("f");
+        let header = match extension_receiver {
+            Some(receiver) => format!("fun {}.toString(): String", receiver),
+            None => "override fun toString(): String".to_string(),
+        };
+        self.writer.write_line(&format!("{} {{", header));
+        self.writer.increase_indent();
+        self.writer.write_line(&format!("val {} = StringBuilder()", formatter_name));
+        for stmt in &f.body.stmts {
+            self.emit_stmt(stmt, Tail::None)?;
+        }
+        self.writer.write_line(&format!("return {}.toString()", formatter_name));
+        self.writer.decrease_indent();
+        self.writer.write_line("}\n");
+        Ok(())
     }
-    e.writer.write_line(&format!("return {}.toString()", formatter_name));
-    e.writer.decrease_indent();
-    e.writer.write_line("}\n");
-    Ok(())
 }
 
 /// Detect parser combinator functions that rely on winnow/nom patterns.
@@ -1407,70 +1445,72 @@ fn expr_contains_winnow(expr: &Expr) -> bool {
 
 // ── Import ───────────────────────────────────────────────────────────────────
 
-fn emit_import(imp: &ItemImport, e: &mut KotlinEmitter, emitted: &mut HashSet<String>) -> Result<()> {
-    let path = flatten_import_tree(&imp.tree);
-    if path.is_empty() { return Ok(()); }
+impl KotlinEmitter {
+    fn emit_import(&mut self, imp: &ItemImport, emitted: &mut HashSet<String>) -> Result<()> {
+        let path = flatten_import_tree(&imp.tree);
+        if path.is_empty() { return Ok(()); }
 
-    // Handle multi-name group imports: Rust `use foo::{A, B, C}` → `import foo.*`
-    let effective = if path.contains(",") {
-        let first = path.split(",").next().unwrap_or(&path);
-        // Drop the last segment (the specific name) to get the parent module
-        let parent = first.rsplitn(2, ".").nth(1).unwrap_or(first);
-        if parent.is_empty() { ".*".to_string() } else { format!("{}.*", parent) }
-    } else {
-        path.clone()
-    };
+        // Handle multi-name group imports: Rust `use foo::{A, B, C}` → `import foo.*`
+        let effective = if path.contains(",") {
+            let first = path.split(",").next().unwrap_or(&path);
+            // Drop the last segment (the specific name) to get the parent module
+            let parent = first.rsplitn(2, ".").nth(1).unwrap_or(first);
+            if parent.is_empty() { ".*".to_string() } else { format!("{}.*", parent) }
+        } else {
+            path.clone()
+        };
 
-    let pkg = known_package(&effective);
-    let kt = kt_import_for(pkg, &effective);
-    if let Some(import) = kt {
-        // A single logical import can expand to multiple Kotlin import lines
-        // (e.g. StdPath needs both `Path` and `Paths`).
-        // Every generated file across every workspace package lives in the same
-        // default (unnamed) Kotlin package, so a sibling *workspace* crate's
-        // symbols are already visible without an import too — and there's no
-        // package literally named after the crate to import from, since none
-        // of these files declare one. `e.workspace_packages` is the real set
-        // of sibling package names for this compile, not a hardcoded guess.
-        for import in import.split('\n') {
-            let first_segment = import.split('.').next().unwrap_or(import);
-            if pkg == KnownPackage::Other
-                && (e.local_modules.contains(first_segment)
-                    || e.workspace_packages.contains(first_segment)
-                    || e.workspace_packages.contains(&first_segment.replace('_', "-")))
-            {
+        let pkg = known_package(&effective);
+        let kt = kt_import_for(pkg, &effective);
+        if let Some(import) = kt {
+            // A single logical import can expand to multiple Kotlin import lines
+            // (self.g. StdPath needs both `Path` and `Paths`).
+            // Every generated file across every workspace package lives in the same
+            // default (unnamed) Kotlin package, so a sibling *workspace* crate's
+            // symbols are already visible without an import too — and there's no
+            // package literally named after the crate to import from, since none
+            // of these files declare one. `self.workspace_packages` is the real set
+            // of sibling package names for this compile, not a hardcoded guess.
+            for import in import.split('\n') {
+                let first_segment = import.split('.').next().unwrap_or(import);
+                if pkg == KnownPackage::Other
+                    && (self.local_modules.contains(first_segment)
+                        || self.workspace_packages.contains(first_segment)
+                        || self.workspace_packages.contains(&first_segment.replace('_', "-")))
+                {
+                    continue;
+                }
+                if emitted.insert(import.to_string()) {
+                    self.writer.write_line(&format!("import {}", import));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Adds an import for each of `e.referenced_paths` classified as a real
+    /// external (std-equivalent) package not already covered by the file's
+    /// own `use`-derived imports (`emitted`) — computed from actual typed
+    /// usage rather than the source file's own `use` list, which may not
+    /// (fully) account for spliced-in content. `KnownPackage::Other` covers
+    /// same-package/local references, which need no Kotlin import at all
+    /// (no generated file declares a `package`) — deliberately skipped here,
+    /// unlike `emit_import`'s handling of the same variant for genuine
+    /// external Rust crate dependencies written as an explicit `use`.
+    fn emit_referenced_path_imports(&mut self, emitted: &mut HashSet<String>) {
+        let paths: Vec<String> = self.referenced_paths.iter().cloned().collect();
+        for path in paths {
+            let pkg = known_package(&path);
+            if pkg == KnownPackage::Other {
                 continue;
             }
-            if emitted.insert(import.to_string()) {
-                e.writer.write_line(&format!("import {}", import));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Adds an import for each of `e.referenced_paths` classified as a real
-/// external (std-equivalent) package not already covered by the file's
-/// own `use`-derived imports (`emitted`) — computed from actual typed
-/// usage rather than the source file's own `use` list, which may not
-/// (fully) account for spliced-in content. `KnownPackage::Other` covers
-/// same-package/local references, which need no Kotlin import at all
-/// (no generated file declares a `package`) — deliberately skipped here,
-/// unlike `emit_import`'s handling of the same variant for genuine
-/// external Rust crate dependencies written as an explicit `use`.
-fn emit_referenced_path_imports(e: &mut KotlinEmitter, emitted: &mut HashSet<String>) {
-    let paths: Vec<String> = e.referenced_paths.iter().cloned().collect();
-    for path in paths {
-        let pkg = known_package(&path);
-        if pkg == KnownPackage::Other {
-            continue;
-        }
-        let Some(kt) = kt_import_for(pkg, &path) else {
-            continue;
-        };
-        for import in kt.split('\n') {
-            if emitted.insert(import.to_string()) {
-                e.writer.write_line(&format!("import {}", import));
+            let Some(kt) = kt_import_for(pkg, &path) else {
+                continue;
+            };
+            for import in kt.split('\n') {
+                if emitted.insert(import.to_string()) {
+                    self.writer.write_line(&format!("import {}", import));
+                }
             }
         }
     }
@@ -1536,233 +1576,383 @@ fn flatten_import_tree(tree: &fp_core::ast::ItemImportTree) -> String {
 
 // ── Statements ───────────────────────────────────────────────────────────────
 
-fn emit_stmt(stmt: &BlockStmt, e: &mut KotlinEmitter, is_tail: bool) -> Result<()> {
-    match stmt {
-        BlockStmt::Let(l) => {
-            let var_name = ident_from_pattern(&l.pat);
-            let mut type_ann = extract_type_annotation(&l.pat, e);
-            // Kotlin's `String.split(...)` returns a plain (immutable) `List`,
-            // never a `MutableList` — a Rust `Vec<T>` annotation on a
-            // `let x: Vec<T> = s.split(...).collect();` binding (the `.collect()`
-            // itself is dropped as redundant, see below) would otherwise be a
-            // declared-vs-actual type mismatch.
-            let init_is_split = l.init.as_ref().is_some_and(|init| method_chain_contains(init, "split"));
-            if init_is_split {
-                if let Some(t) = type_ann.as_deref().and_then(|t| t.strip_prefix("Mutable")) {
-                    type_ann = Some(t.to_string());
+impl KotlinEmitter {
+    fn emit_stmt(&mut self, stmt: &BlockStmt, tail: Tail) -> Result<()> {
+        match stmt {
+            BlockStmt::Let(l) => {
+                let var_name = ident_from_pattern(&l.pat);
+                let mut type_ann = extract_type_annotation(&l.pat, self);
+                // Kotlin's `String.split(...)` returns a plain (immutable) `List`,
+                // never a `MutableList` — a Rust `Vec<T>` annotation on a
+                // `let x: Vec<T> = s.split(...).collect();` binding (the `.collect()`
+                // itself is dropped as redundant, see below) would otherwise be a
+                // declared-vs-actual type mismatch.
+                let init_is_split = l.init.as_ref().is_some_and(|init| method_chain_contains(init, "split"));
+                if init_is_split {
+                    if let Some(t) = type_ann.as_deref().and_then(|t| t.strip_prefix("Mutable")) {
+                        type_ann = Some(t.to_string());
+                    }
                 }
-            }
-            let decl_kw = if is_mut_pattern(&l.pat) { "var" } else { "val" };
-            if var_name != "_" {
-                e.declare_name(&var_name);
-            }
-            // `.len()` needs `.size` on a List but `.length` on a String — record
-            // this name as list-typed (reusing `field_element_types`, which the
-            // `.len()` call site below checks by name) so it renders correctly.
-            if let Some(elem) = type_ann.as_deref().and_then(sized_collection_element_type) {
-                e.field_element_types.insert(var_name.clone(), elem.to_string());
-            }
-            // `let mut parts = s.split(sep);` — Kotlin's `.split()` returns a `List`,
-            // not a stateful iterator; remember `parts` so subsequent `.next()?` calls
-            // on it (see below) can be modeled as indexed access instead of erased.
-            if let Some(init) = &l.init {
-                if let ExprKind::Invoke(inv) = init.kind() {
-                    if let ExprInvokeTarget::Method(sel) = &inv.target {
-                        if sel.field.name.as_str() == "split" {
-                            e.split_iter_vars.insert(var_name.clone());
+                let decl_kw = if is_mut_pattern(&l.pat) { "var" } else { "val" };
+                if var_name != "_" {
+                    self.declare_name(&var_name);
+                }
+                // `.len()` needs `.size` on a List but `.length` on a String — record
+                // this name as list-typed (reusing `field_element_types`, which the
+                // `.len()` call site below checks by name) so it renders correctly.
+                if let Some(elem) = type_ann.as_deref().and_then(sized_collection_element_type) {
+                    self.field_element_types.insert(var_name.clone(), elem.to_string());
+                }
+                // `let mut parts = s.split(sep);` — Kotlin's `.split()` returns a `List`,
+                // not a stateful iterator; remember `parts` so subsequent `.next()?` calls
+                // on it (see below) can be modeled as indexed access instead of erased.
+                if let Some(init) = &l.init {
+                    if let ExprKind::Invoke(inv) = init.kind() {
+                        if let ExprInvokeTarget::Method(sel) = &inv.target {
+                            if sel.field.name.as_str() == "split" {
+                                self.split_iter_vars.insert(var_name.clone());
+                            }
                         }
                     }
                 }
-            }
-            if var_name == "_" {
-                if let Some(init) = &l.init {
-                    let val = render_expr(init, e)?;
-                    e.writer.write_lines(&val);
-                }
-            } else if let Some(init) = &l.init {
-                // Rust's manual-iterator `.next()?` extraction (e.g. `parts.next()?`
-                // after `let mut parts = s.split(sep)`) — render as an indexed access
-                // with an early return on exhaustion, matching `?`'s None-propagation.
-                if let ExprKind::Try(t) = init.kind() {
-                    if let ExprKind::Invoke(inv) = t.expr.kind() {
-                        if let ExprInvokeTarget::Method(sel) = &inv.target {
-                            if sel.field.name.as_str() == "next" && inv.args.is_empty() {
-                                if let ExprKind::Name(name) = sel.obj.kind() {
-                                    let obj_name = name.to_string();
-                                    if e.split_iter_vars.contains(&obj_name) {
-                                        let idx = *e.next_call_counters.get(&obj_name).unwrap_or(&0);
-                                        e.next_call_counters.insert(obj_name.clone(), idx + 1);
-                                        let obj_rendered = render_expr(&sel.obj, e)?;
-                                        let val = format!("{}.getOrNull({}) ?: return null", obj_rendered, idx);
-                                        if let Some(ref ty) = type_ann {
-                                            e.writer.write_lines(&format!("{} {} : {} = {}", decl_kw, var_name, ty, val));
-                                        } else {
-                                            e.writer.write_lines(&format!("{} {} = {}", decl_kw, var_name, val));
+                if var_name == "_" {
+                    if let Some(init) = &l.init {
+                        let val = self.render_expr(init)?;
+                        self.writer.write_lines(&val);
+                    }
+                } else if let Some(init) = &l.init {
+                    // Rust's manual-iterator `.next()?` extraction (self.g. `parts.next()?`
+                    // after `let mut parts = s.split(sep)`) — render as an indexed access
+                    // with an early return on exhaustion, matching `?`'s None-propagation.
+                    if let ExprKind::Try(t) = init.kind() {
+                        if let ExprKind::Invoke(inv) = t.expr.kind() {
+                            if let ExprInvokeTarget::Method(sel) = &inv.target {
+                                if sel.field.name.as_str() == "next" && inv.args.is_empty() {
+                                    if let ExprKind::Name(name) = sel.obj.kind() {
+                                        let obj_name = name.to_string();
+                                        if self.split_iter_vars.contains(&obj_name) {
+                                            let idx = *self.next_call_counters.get(&obj_name).unwrap_or(&0);
+                                            self.next_call_counters.insert(obj_name.clone(), idx + 1);
+                                            let obj_rendered = self.render_expr(&sel.obj)?;
+                                            let val = format!("{}.getOrNull({}) ?: return null", obj_rendered, idx);
+                                            if let Some(ref ty) = type_ann {
+                                                self.writer.write_lines(&format!("{} {} : {} = {}", decl_kw, var_name, ty, val));
+                                            } else {
+                                                self.writer.write_lines(&format!("{} {} = {}", decl_kw, var_name, val));
+                                            }
+                                            return Ok(());
                                         }
-                                        return Ok(());
                                     }
                                 }
                             }
                         }
                     }
-                }
-                // `assert_eq!`/`assert_ne!` lift each side of the comparison into its own
-                // `let`, discarding the field type the literal is compared against — track
-                // it across the pair so a `Long`-typed field's literal gets an `L` suffix.
-                if var_name == "__fp_assert_left" {
-                    e.pending_assert_long = matches!(init.kind(), ExprKind::Select(sel)
-                        if e.long_field_names.contains(sel.field.name.as_str()));
-                }
-                let mut val = render_expr(init, e)?;
-                if var_name == "__fp_assert_right" {
-                    if e.pending_assert_long && matches!(init.kind(), ExprKind::Value(v) if matches!(v.as_ref(), Value::Int(_) | Value::UInt(_))) {
-                        val.push('L');
+                    // `assert_eq!`/`assert_ne!` lift each side of the comparison into its own
+                    // `let`, discarding the field type the literal is compared against — track
+                    // it across the pair so a `Long`-typed field's literal gets an `L` suffix.
+                    if var_name == "__fp_assert_left" {
+                        self.pending_assert_long = matches!(init.kind(), ExprKind::Select(sel)
+                            if self.long_field_names.contains(sel.field.name.as_str()));
                     }
-                    e.pending_assert_long = false;
-                }
-                if let Some(ref ty) = type_ann {
-                    e.writer.write_lines(&format!("{} {} : {} = {}", decl_kw, var_name, ty, val));
+                    let mut val = self.render_expr(init)?;
+                    if var_name == "__fp_assert_right" {
+                        if self.pending_assert_long && matches!(init.kind(), ExprKind::Value(v) if matches!(v.as_ref(), Value::Int(_) | Value::UInt(_))) {
+                            val.push('L');
+                        }
+                        self.pending_assert_long = false;
+                    }
+                    if let Some(ref ty) = type_ann {
+                        self.writer.write_lines(&format!("{} {} : {} = {}", decl_kw, var_name, ty, val));
+                    } else {
+                        self.writer.write_lines(&format!("{} {} = {}", decl_kw, var_name, val));
+                    }
                 } else {
-                    e.writer.write_lines(&format!("{} {} = {}", decl_kw, var_name, val));
-                }
-            } else {
-                if let Some(ref ty) = type_ann {
-                    e.writer.write_line(&format!("{} {} : {} = null", decl_kw, var_name, ty));
-                } else {
-                    e.writer.write_line(&format!("{} {} = null", decl_kw, var_name));
+                    if let Some(ref ty) = type_ann {
+                        self.writer.write_line(&format!("{} {} : {} = null", decl_kw, var_name, ty));
+                    } else {
+                        self.writer.write_line(&format!("{} {} = null", decl_kw, var_name));
+                    }
                 }
             }
+            BlockStmt::Expr(se) => self.emit_stmt_expr(&se.expr, tail)?,
+            // A block-local item (nested `fn`/`struct`/...) has no file-level
+            // pre-pass of its own — local static methods stay unresolved to a
+            // companion object here (an edge case not exercised by any current
+            // caller; local `impl` blocks inside a function body are rare).
+            BlockStmt::Item(item) => return self.emit_item(item, &HashMap::new(), &HashMap::new()),
+            BlockStmt::Noop => {}
+            _ => {}
         }
-        BlockStmt::Expr(se) => emit_stmt_expr(&se.expr, e, is_tail)?,
-        // A block-local item (nested `fn`/`struct`/...) has no file-level
-        // pre-pass of its own — local static methods stay unresolved to a
-        // companion object here (an edge case not exercised by any current
-        // caller; local `impl` blocks inside a function body are rare).
-        BlockStmt::Item(item) => return emit_item(item, e, &HashMap::new(), &HashMap::new()),
-        BlockStmt::Noop => {}
-        _ => {}
+        Ok(())
     }
-    Ok(())
-}
 
-fn emit_stmt_expr(expr: &Expr, e: &mut KotlinEmitter, is_tail: bool) -> Result<()> {
-    match expr.kind() {
-        ExprKind::Block(block) => {
-            // A bare `{ ... }` immediately after a preceding statement gets glued to
-            // it as a trailing lambda argument by Kotlin's parser — wrap in `run` so
-            // it's unambiguously its own statement.
-            e.writer.write_line("run {");
-            e.writer.increase_indent();
-            for s in &block.stmts { emit_stmt(s, e, false)?; }
-            e.writer.decrease_indent();
-            e.writer.write_line("}");
-        }
-        ExprKind::If(if_expr) => emit_if_stmt(if_expr, e, is_tail)?,
-        ExprKind::While(wh) => {
-            let cond = render_expr(&wh.cond, e)?;
-            e.writer.write_lines(&format!("while ({}) {{", cond));
-            e.writer.increase_indent();
-            emit_box_body(&wh.body, e, false)?;
-            e.writer.decrease_indent();
-            e.writer.write_line("}");
-        }
-        ExprKind::Loop(lp) => {
-            e.writer.write_line("while (true) {");
-            e.writer.increase_indent();
-            emit_box_body(&lp.body, e, false)?;
-            e.writer.decrease_indent();
-            e.writer.write_line("}");
-        }
-        ExprKind::For(fr) => {
-            let iter_expr = render_expr(&fr.iter, e)?;
-            let var = ident_from_pattern(&fr.pat);
-            // Rust `for` patterns can't carry an explicit type annotation (unlike
-            // closure params) — infer the element type when iterating a struct
-            // field we know is `List<T>`/`MutableList<T>` (e.g. `for hunk in &f.hunks`).
-            let field_name = match fr.iter.kind() {
-                ExprKind::Select(sel) => Some(sel.field.name.as_str()),
-                ExprKind::Reference(r) => match r.referee.kind() {
+    fn emit_stmt_expr(&mut self, expr: &Expr, tail: Tail) -> Result<()> {
+        match expr.kind() {
+            ExprKind::Block(block) => {
+                // A bare `{ ... }` immediately after a preceding statement gets glued to
+                // it as a trailing lambda argument by Kotlin's parser — wrap in `run` so
+                // it's unambiguously its own statement.
+                let w = self.writer.clone();
+                w.block("run", |_| -> Result<()> {
+                    for s in &block.stmts { self.emit_stmt(s, Tail::None)?; }
+                    Ok(())
+                })?;
+            }
+            ExprKind::If(if_expr) => self.emit_if_stmt(if_expr, tail)?,
+            ExprKind::Match(mt) => self.emit_match_stmt(mt, tail)?,
+            ExprKind::While(wh) => {
+                let cond = self.render_expr(&wh.cond)?;
+                self.writer.write_lines(&format!("while ({}) {{", cond));
+                self.writer.increase_indent();
+                self.emit_box_body(&wh.body, Tail::None)?;
+                self.writer.decrease_indent();
+                self.writer.write_line("}");
+            }
+            ExprKind::Loop(lp) => {
+                self.writer.write_line("while (true) {");
+                self.writer.increase_indent();
+                self.emit_box_body(&lp.body, Tail::None)?;
+                self.writer.decrease_indent();
+                self.writer.write_line("}");
+            }
+            ExprKind::For(fr) => {
+                let iter_expr = self.render_expr(&fr.iter)?;
+                let var = ident_from_pattern(&fr.pat);
+                // Rust `for` patterns can't carry an explicit type annotation (unlike
+                // closure params) — infer the element type when iterating a struct
+                // field we know is `List<T>`/`MutableList<T>` (self.g. `for hunk in &f.hunks`).
+                let field_name = match fr.iter.kind() {
                     ExprKind::Select(sel) => Some(sel.field.name.as_str()),
+                    ExprKind::Reference(r) => match r.referee.kind() {
+                        ExprKind::Select(sel) => Some(sel.field.name.as_str()),
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
-            };
-            let var = match field_name.and_then(|f| e.field_element_types.get(f)) {
-                Some(ty) if var != "_" && !var.starts_with('(') => format!("{}: {}", var, ty),
-                _ => var,
-            };
-            e.writer.write_lines(&format!("for ({} in {}) {{", var, iter_expr));
-            e.writer.increase_indent();
-            emit_box_body(&fr.body, e, false)?;
-            e.writer.decrease_indent();
-            e.writer.write_line("}");
+                };
+                let var = match field_name.and_then(|f| self.field_element_types.get(f)) {
+                    Some(ty) if var != "_" && !var.starts_with('(') => format!("{}: {}", var, ty),
+                    _ => var,
+                };
+                self.writer.write_lines(&format!("for ({} in {}) {{", var, iter_expr));
+                self.writer.increase_indent();
+                self.emit_box_body(&fr.body, Tail::None)?;
+                self.writer.decrease_indent();
+                self.writer.write_line("}");
+            }
+            ExprKind::Return(ret) => {
+                if let Some(val) = &ret.value {
+                    let v = self.render_expr(val)?;
+                    self.writer.write_lines(&format!("return {}", v));
+                } else { self.writer.write_line("return"); }
+            }
+            ExprKind::Break(_) => { self.writer.write_line("break"); }
+            ExprKind::Continue(_) => { self.writer.write_line("continue"); }
+            _ => {
+                let rendered = self.render_expr(expr)?;
+                self.write_tail(tail, &rendered);
+            }
         }
-        ExprKind::Return(ret) => {
-            if let Some(val) = &ret.value {
-                let v = render_expr(val, e)?;
-                e.writer.write_lines(&format!("return {}", v));
-            } else { e.writer.write_line("return"); }
-        }
-        ExprKind::Break(_) => { e.writer.write_line("break"); }
-        ExprKind::Continue(_) => { e.writer.write_line("continue"); }
-        _ => {
-            let rendered = render_expr(expr, e)?;
-            if is_tail { e.writer.write_lines(&format!("return {}", rendered)); }
-            else { e.writer.write_lines(&rendered); }
-        }
+        Ok(())
     }
-    Ok(())
-}
 
-fn emit_if_stmt(if_expr: &fp_core::ast::ExprIf, e: &mut KotlinEmitter, is_tail: bool) -> Result<()> {
-    let cond = render_expr(&if_expr.cond, e)?;
-    e.writer.write_lines(&format!("if ({}) {{", cond));
-    e.writer.increase_indent();
-    emit_box_body(&if_expr.then, e, is_tail)?;
-    e.writer.decrease_indent();
-    if let Some(elze) = &if_expr.elze {
-        e.writer.write_line("} else {");
-        e.writer.increase_indent();
-        emit_box_body(elze, e, is_tail)?;
-        e.writer.decrease_indent();
-    }
-    e.writer.write_line("}");
-    Ok(())
-}
-
-fn emit_box_body(body: &BExpr, e: &mut KotlinEmitter, is_tail: bool) -> Result<()> {
-    if let ExprKind::Block(block) = body.kind() {
-        let last_index = block.stmts.len().checked_sub(1);
-        for (i, s) in block.stmts.iter().enumerate() {
-            emit_stmt(s, e, is_tail && Some(i) == last_index)?;
+    fn emit_if_stmt(&mut self, if_expr: &fp_core::ast::ExprIf, tail: Tail) -> Result<()> {
+        let cond = self.render_expr(&if_expr.cond)?;
+        self.writer.write_lines(&format!("if ({}) {{", cond));
+        self.writer.increase_indent();
+        self.emit_box_body(&if_expr.then, tail)?;
+        self.writer.decrease_indent();
+        if let Some(elze) = &if_expr.elze {
+            self.writer.write_line("} else {");
+            self.writer.increase_indent();
+            self.emit_box_body(elze, tail)?;
+            self.writer.decrease_indent();
         }
-    } else if let ExprKind::If(if_expr) = body.kind() {
-        // An "else if" continuation: `elze` is a bare `ExprKind::If`, not a
-        // `Block` wrapping one. Recursing through the statement-oriented
-        // `emit_if_stmt` (rather than falling through to the generic
-        // single-expression `render_expr` branch below) matters whenever
-        // that nested if's own body has more than one statement —
-        // `render_expr`'s `ExprKind::If` arm renders each branch via
-        // `render_expr_single`, which silently drops every `BlockStmt`
-        // that isn't a bare `Expr` and joins the survivors with a plain
-        // space, no `else`/statement separator at all.
-        emit_if_stmt(if_expr, e, is_tail)?;
-    } else {
-        let val = render_expr(body, e)?;
-        if is_tail {
-            e.writer.write_lines(&format!("return {}", val));
+        self.writer.write_line("}");
+        Ok(())
+    }
+
+    fn emit_box_body(&mut self, body: &BExpr, tail: Tail) -> Result<()> {
+        if let ExprKind::Block(block) = body.kind() {
+            let last_index = block.stmts.len().checked_sub(1);
+            for (i, s) in block.stmts.iter().enumerate() {
+                let stmt_tail = if Some(i) == last_index { tail } else { Tail::None };
+                self.emit_stmt(s, stmt_tail)?;
+            }
+        } else if let ExprKind::If(if_expr) = body.kind() {
+            // An "else if" continuation: `elze` is a bare `ExprKind::If`, not a
+            // `Block` wrapping one. Recursing through the statement-oriented
+            // `emit_if_stmt` (rather than falling through to the generic
+            // single-expression `render_expr` branch below) matters whenever
+            // that nested if's own body has more than one statement —
+            // `render_expr`'s `ExprKind::If` arm renders each branch via
+            // `render_expr_single`, which silently drops every `BlockStmt`
+            // that isn't a bare `Expr` and joins the survivors with a plain
+            // space, no `else`/statement separator at all.
+            self.emit_if_stmt(if_expr, tail)?;
+        } else if let ExprKind::Match(mt) = body.kind() {
+            self.emit_match_stmt(mt, tail)?;
         } else {
-            e.writer.write_lines(&val);
+            let val = self.render_expr(body)?;
+            self.write_tail(tail, &val);
+        }
+        Ok(())
+    }
+
+    /// Direct-write port of an `if let`/`match` used in statement or
+    /// function-tail position -- writes straight into `self.writer` at the
+    /// real depth, with `tail` deciding what happens to whichever arm's
+    /// value ends up chosen (discarded, `return`ed, or assigned to an
+    /// already-declared variable). Nested `if let`/`match` compose
+    /// correctly at any depth this way since there's never a string to
+    /// re-indent: `tail` just flows straight through the recursion.
+    fn emit_match_stmt(&mut self, mt: &fp_core::ast::ExprMatch, tail: Tail) -> Result<()> {
+        let scrutinee = match &mt.scrutinee {
+            Some(s) => self.render_expr(s)?,
+            None => "null".to_string(),
+        };
+
+        let is_single_arm = mt.cases.len() == 1
+            && !matches!(mt.cases[0].pat.as_ref().map(|p| &p.kind), Some(PatternKind::Wildcard(_)));
+        let is_two_arm = mt.cases.len() == 2 && is_else_arm(&mt.cases[1].pat);
+
+        if is_single_arm || is_two_arm {
+            let case = &mt.cases[0];
+            let non_monadic = if is_two_arm { non_monadic_tuple_variant(&case.pat) } else { None };
+            let effective_var = if non_monadic.is_some() {
+                None
+            } else if is_two_arm {
+                stripped_tuple_binding(&case.pat).or_else(|| match_case_binding(&case.pat))
+            } else {
+                match_case_binding(&case.pat)
+            };
+
+            self.push_scope();
+            if let Some((_, ref binding)) = non_monadic { self.declare_name(binding); }
+            if let Some(ref var) = effective_var {
+                if let Some(names) = var.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+                    for name in names.split(", ") { self.declare_name(name); }
+                }
+            }
+
+            let has_second_arm = mt.cases.len() > 1;
+
+            // A 2-arm match on an ordinary enum variant (not Some/Ok/Err/None) isn't a
+            // null-check equivalent — the scrutinee itself isn't interchangeable with its
+            // payload, so it needs a smart-cast + field access, not `val x = scrutinee`.
+            if let Some((variant_path, binding)) = non_monadic {
+                self.writer.write_line(&format!("if ({} is {}) {{", scrutinee, variant_path));
+                self.writer.increase_indent();
+                self.writer.write_line(&format!("val {} = {}.__data", binding, scrutinee));
+                self.emit_box_body(&case.body, tail)?;
+                self.writer.decrease_indent();
+                self.writer.write_line("} else {");
+                self.writer.increase_indent();
+                self.emit_box_body(&mt.cases[1].body, tail)?;
+                self.writer.decrease_indent();
+                self.writer.write_line("}");
+                self.pop_scope();
+                return Ok(());
+            }
+
+            match effective_var {
+                Some(var) if var.starts_with('(') => {
+                    // Tuple destructuring inside the wrapper, self.g. `Some((host, path))`
+                    // from `raw.split_once(':')` — null-check a temp, then destructure.
+                    let tmp = "__m";
+                    self.writer.write_line("run {");
+                    self.writer.increase_indent();
+                    self.writer.write_line(&format!("val {} = {}", tmp, scrutinee));
+                    self.writer.write_line(&format!("if ({} != null) {{", tmp));
+                    self.writer.increase_indent();
+                    self.writer.write_line(&format!("val {} = {}!!", var, tmp));
+                    self.emit_box_body(&case.body, tail)?;
+                    self.writer.decrease_indent();
+                    if has_second_arm {
+                        self.writer.write_line("} else {");
+                        self.writer.increase_indent();
+                        self.emit_box_body(&mt.cases[1].body, tail)?;
+                        self.writer.decrease_indent();
+                        self.writer.write_line("}");
+                    } else if !matches!(tail, Tail::None) {
+                        self.writer.write_line("} else {");
+                        self.writer.increase_indent();
+                        self.write_tail(tail, "null");
+                        self.writer.decrease_indent();
+                        self.writer.write_line("}");
+                    } else {
+                        self.writer.write_line("}");
+                    }
+                    self.writer.decrease_indent();
+                    self.writer.write_line("}");
+                }
+                Some(var) => {
+                    self.writer.write_line("run {");
+                    self.writer.increase_indent();
+                    self.writer.write_line(&format!("val {} = {}", var, scrutinee));
+                    self.writer.write_line(&format!("if ({} != null) {{", var));
+                    self.writer.increase_indent();
+                    self.emit_box_body(&case.body, tail)?;
+                    self.writer.decrease_indent();
+                    if has_second_arm {
+                        self.writer.write_line("} else {");
+                        self.writer.increase_indent();
+                        self.emit_box_body(&mt.cases[1].body, tail)?;
+                        self.writer.decrease_indent();
+                        self.writer.write_line("}");
+                    } else if !matches!(tail, Tail::None) {
+                        self.writer.write_line("} else {");
+                        self.writer.increase_indent();
+                        self.write_tail(tail, "null");
+                        self.writer.decrease_indent();
+                        self.writer.write_line("}");
+                    } else {
+                        self.writer.write_line("}");
+                    }
+                    self.writer.decrease_indent();
+                    self.writer.write_line("}");
+                }
+                None => {
+                    // No binding: a bare `if (scrutinee) { ... }`, never an `else`
+                    // -- matches this shape's pre-existing semantics (a bool guard
+                    // or non-binding pattern has nothing to smart-cast, so a second
+                    // arm here -- if any -- is unreachable).
+                    self.writer.write_line(&format!("if ({}) {{", scrutinee));
+                    self.writer.increase_indent();
+                    self.emit_box_body(&case.body, tail)?;
+                    self.writer.decrease_indent();
+                    self.writer.write_line("}");
+                }
+            }
+            self.pop_scope();
+            Ok(())
+        } else {
+            self.writer.write_line(&format!("when ({}) {{", scrutinee));
+            self.writer.increase_indent();
+            for case in &mt.cases {
+                let pat = render_match_pat(&case.pat, self);
+                let is_empty_body = matches!(case.body.kind(), ExprKind::Block(b) if b.stmts.is_empty());
+                if is_empty_body {
+                    self.writer.write_line(&format!("{} -> {{}}", pat));
+                } else {
+                    self.writer.write_line(&format!("{} -> {{", pat));
+                    self.writer.increase_indent();
+                    self.emit_box_body(&case.body, tail)?;
+                    self.writer.decrease_indent();
+                    self.writer.write_line("}");
+                }
+            }
+            self.writer.decrease_indent();
+            self.writer.write_line("}");
+            Ok(())
         }
     }
-    Ok(())
 }
 
 /// Extract a Kotlin type string from a pattern's type annotation (PatternKind::Type).
 fn extract_type_annotation(pat: &Pattern, e: &KotlinEmitter) -> Option<String> {
     match &pat.kind {
         PatternKind::Type(pt) => {
-            Some(kotlin_type_from_ty(&pt.ty, e))
+            Some(e.kotlin_type_from_ty(&pt.ty))
         }
         _ => None,
     }
@@ -1912,802 +2102,640 @@ fn expr_receiver_name(expr: &Expr) -> Option<String> {
 /// `increase_indent` primitives the rest of the emitter uses (rather than
 /// hand-rolled `"    "`/`"        "` literals for each nesting level) keeps
 /// nested snippets self-consistent no matter how deep they end up embedded.
-fn render_scratch(e: &mut KotlinEmitter, body: impl FnOnce(&mut KotlinEmitter) -> Result<()>) -> Result<String> {
-    let saved = std::mem::replace(&mut e.writer, StyledFileWriter::new(kotlin_writer_config()));
-    let result = body(e);
-    let scratch = std::mem::replace(&mut e.writer, saved);
-    result?;
-    Ok(scratch.raw_contents().trim_end_matches('\n').to_string())
-}
+impl KotlinEmitter {
+    fn render_expr(&mut self, expr: &Expr) -> Result<String> {
+        match expr.kind() {
+            ExprKind::Value(val) => {
+                let rendered = render_value(val);
+                // Kotlin has no byte-literal syntax — a `u8` value (self.g. from a Rust
+                // byte literal `b':'`) needs an explicit `.toByte()` conversion to be
+                // usable where an actual `Byte` (not `Int`) is expected.
+                let is_u8 = matches!(
+                    expr.ty(),
+                    Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U8)))
+                );
+                if is_u8 && matches!(val.as_ref(), Value::Int(_) | Value::UInt(_)) {
+                    Ok(format!("{}.toByte()", rendered))
+                } else {
+                    Ok(rendered)
+                }
+            }
+            ExprKind::Name(name) => {
+                let raw = name.to_string();
+                // `FerroIntrinsicNormalizer` already rewrites a bare `None` to
+                // `Value::Null` during normalization, and pattern rendering
+                // special-cases it too, but a bare `None` used directly as an
+                // expression (self.g. a tuple-constructor argument) can still reach
+                // here unrewritten — handle it defensively at the backend level.
+                if raw == "None" {
+                    return Ok("null".to_string());
+                }
+                // A bare `self` used as a call receiver (`self.other_method()`,
+                // rendered here since `render_expr` sees just the receiver
+                // expression, not the surrounding `Select`) — Kotlin has no
+                // implicit local named `self`; `this` is the equivalent and,
+                // unlike the field-access case (`ExprKind::Select` below, which
+                // drops it entirely), stays valid written out explicitly even
+                // inside an extension function body.
+                if raw == "self" {
+                    return Ok("this".to_string());
+                }
+                // `Self { field: value }` (constructor shorthand) / `Self::other()`
+                // — Kotlin has no `Self` expression-position equivalent, so swap
+                // in the real class/enum name (see `current_self_name`'s doc
+                // comment).
+                let raw = if let Some(self_name) = &self.current_self_name {
+                    substitute_self_prefix(&raw, self_name)
+                } else {
+                    raw
+                };
+                let dotted = raw.replace("::", ".");
+                // Uppercase enum variant references in qualified paths
+                Ok(uppercase_last_segment(&dotted))
+            }
+            ExprKind::Id(id) => Ok(id.to_string()),
 
-fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
-    match expr.kind() {
-        ExprKind::Value(val) => {
-            let rendered = render_value(val);
-            // Kotlin has no byte-literal syntax — a `u8` value (e.g. from a Rust
-            // byte literal `b':'`) needs an explicit `.toByte()` conversion to be
-            // usable where an actual `Byte` (not `Int`) is expected.
-            let is_u8 = matches!(
-                expr.ty(),
-                Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U8)))
-            );
-            if is_u8 && matches!(val.as_ref(), Value::Int(_) | Value::UInt(_)) {
-                Ok(format!("{}.toByte()", rendered))
-            } else {
-                Ok(rendered)
-            }
-        }
-        ExprKind::Name(name) => {
-            let raw = name.to_string();
-            // `FerroIntrinsicNormalizer` already rewrites a bare `None` to
-            // `Value::Null` during normalization, and pattern rendering
-            // special-cases it too, but a bare `None` used directly as an
-            // expression (e.g. a tuple-constructor argument) can still reach
-            // here unrewritten — handle it defensively at the backend level.
-            if raw == "None" {
-                return Ok("null".to_string());
-            }
-            // A bare `self` used as a call receiver (`self.other_method()`,
-            // rendered here since `render_expr` sees just the receiver
-            // expression, not the surrounding `Select`) — Kotlin has no
-            // implicit local named `self`; `this` is the equivalent and,
-            // unlike the field-access case (`ExprKind::Select` below, which
-            // drops it entirely), stays valid written out explicitly even
-            // inside an extension function body.
-            if raw == "self" {
-                return Ok("this".to_string());
-            }
-            // `Self { field: value }` (constructor shorthand) / `Self::other()`
-            // — Kotlin has no `Self` expression-position equivalent, so swap
-            // in the real class/enum name (see `current_self_name`'s doc
-            // comment).
-            let raw = if let Some(self_name) = &e.current_self_name {
-                substitute_self_prefix(&raw, self_name)
-            } else {
-                raw
-            };
-            let dotted = raw.replace("::", ".");
-            // Uppercase enum variant references in qualified paths
-            Ok(uppercase_last_segment(&dotted))
-        }
-        ExprKind::Id(id) => Ok(id.to_string()),
-
-        ExprKind::Invoke(inv) => {
-            match &inv.target {
-                ExprInvokeTarget::Method(sel) => {
-                    // `.or_else(|_| fallback)` / `.unwrap_or_else(|_| fallback)` on a
-                    // nullable value — Kotlin's `?:` already lazily evaluates its RHS
-                    // only when the LHS is null, which matches these methods' fallback
-                    // semantics exactly (the error/ignored-value closure param is never
-                    // used in this codebase). `.run`/`.let` (the generic method-name
-                    // mapping used elsewhere) would evaluate the fallback unconditionally.
-                    if matches!(sel.field.name.as_str(), "or_else" | "unwrap_or_else") && inv.args.len() == 1 {
-                        if let ExprKind::Closure(cl) = inv.args[0].kind() {
-                            let obj = render_expr(&sel.obj, e)?;
-                            let body = render_expr(&cl.body, e)?;
-                            let rhs = if body.contains('\n') {
-                                format!("run {{\n{}\n}}", body)
-                            } else {
-                                body
-                            };
-                            return Ok(format!("{} ?: {}", obj, rhs));
-                        }
-                    }
-                    // `Option::map_or(default, |x| body)` has no Kotlin equivalent method —
-                    // rewrite structurally as `obj?.let { x -> body } ?: default`.
-                    if sel.field.name.as_str() == "map_or" && inv.args.len() == 2 {
-                        if let ExprKind::Closure(cl) = inv.args[1].kind() {
-                            let obj = render_expr(&sel.obj, e)?;
-                            let default = render_expr(&inv.args[0], e)?;
-                            let param = cl.params.first().map(ident_from_pattern).unwrap_or_else(|| "it".to_string());
-                            let body = render_expr(&cl.body, e)?;
-                            return Ok(format!("{}?.let {{ {} -> {} }} ?: {}", obj, param, body, default));
-                        }
-                    }
-                    // `.map_err(SomeError::Variant)` / `.map_err(some_fn)` — Rust
-                    // lets a tuple-variant constructor (or any named function) be
-                    // passed as a bare value where a closure is expected, since
-                    // it's itself a first-class `Fn(T) -> U` item. Kotlin's
-                    // equivalent (a variant's own constructor, referenced through
-                    // a dotted qualifier) isn't usable as a bare value the same
-                    // way — `CoreError.IO` isn't a value, only `CoreError.IO(x)`
-                    // is — so wrap it in an explicit one-arg lambda instead.
-                    // `map_err` itself has no dedicated Result-mapping support
-                    // here; this only needs to compile, matching every other
-                    // Result-shaped call in this file.
-                    if sel.field.name.as_str() == "map_err" && inv.args.len() == 1
-                        && !matches!(inv.args[0].kind(), ExprKind::Closure(_))
-                    {
-                        let obj = render_expr(&sel.obj, e)?;
-                        let ctor = render_expr(&inv.args[0], e)?;
-                        return Ok(format!("{}.map_err {{ __e -> {}(__e) }}", obj, ctor));
-                    }
-                    // `Option::take()` — replaces a `var` with `None`/`null`, returning
-                    // the old value. Kotlin has no equivalent method; model it directly.
-                    // A function *parameter* receiver can't be reassigned at all in
-                    // Kotlin (always an implicit `val`, unlike a `let`-bound local) —
-                    // drop the reset for those (see `current_fn_params`'s doc comment).
-                    if sel.field.name.as_str() == "take" && inv.args.is_empty() {
-                        if let ExprKind::Name(name) = sel.obj.kind() {
-                            let obj = render_expr(&sel.obj, e)?;
-                            if e.current_fn_params.contains(&name_to_string(name)) {
-                                return Ok(obj);
+            ExprKind::Invoke(inv) => {
+                match &inv.target {
+                    ExprInvokeTarget::Method(sel) => {
+                        // `.or_else(|_| fallback)` / `.unwrap_or_else(|_| fallback)` on a
+                        // nullable value — Kotlin's `?:` already lazily evaluates its RHS
+                        // only when the LHS is null, which matches these methods' fallback
+                        // semantics exactly (the error/ignored-value closure param is never
+                        // used in this codebase). `.run`/`.let` (the generic method-name
+                        // mapping used elsewhere) would evaluate the fallback unconditionally.
+                        if matches!(sel.field.name.as_str(), "or_else" | "unwrap_or_else") && inv.args.len() == 1 {
+                            if let ExprKind::Closure(cl) = inv.args[0].kind() {
+                                let obj = self.render_expr(&sel.obj)?;
+                                let body = self.render_expr(&cl.body)?;
+                                let rhs = if body.contains('\n') {
+                                    format!("run {{\n{}\n}}", body)
+                                } else {
+                                    body
+                                };
+                                return Ok(format!("{} ?: {}", obj, rhs));
                             }
-                            return Ok(format!("run {{ val __t = {0}; {0} = null; __t }}", obj));
                         }
-                    }
-                    let obj = render_expr(&sel.obj, e)?;
-                    // `round`/`log2` have no Kotlin member-method equivalent — both are
-                    // top-level `kotlin.math` functions taking the receiver as an
-                    // argument (`kotlin.math.round(x)`, not `x.round()`).
-                    if matches!(sel.field.name.as_str(), "round" | "log2") && inv.args.is_empty() {
-                        return Ok(format!("kotlin.math.{}({})", sel.field.name.as_str(), obj));
-                    }
-                    // `.map` is ambiguous: `Option::map`/`Result::map` need Kotlin's
-                    // `.let { }` (no built-in `.map` on nullable types), but
-                    // `Iterator::map` needs Kotlin's own (identically-named) `.map { }`,
-                    // unchanged — the generic table below assumes the former. Detect the
-                    // latter structurally: an iterator-producing receiver just before it.
-                    let is_iterator_map = sel.field.name.as_str() == "map" && {
-                        if let ExprKind::Invoke(recv_inv) = sel.obj.kind() {
-                            if let ExprInvokeTarget::Method(recv_sel) = &recv_inv.target {
-                                matches!(recv_sel.field.name.as_str(),
-                                    "iter" | "iter_mut" | "into_iter" | "lines" | "chars")
+                        // `Option::map_or(default, |x| body)` has no Kotlin equivalent method —
+                        // rewrite structurally as `obj?.let { x -> body } ?: default`.
+                        if sel.field.name.as_str() == "map_or" && inv.args.len() == 2 {
+                            if let ExprKind::Closure(cl) = inv.args[1].kind() {
+                                let obj = self.render_expr(&sel.obj)?;
+                                let default = self.render_expr(&inv.args[0])?;
+                                let param = cl.params.first().map(ident_from_pattern).unwrap_or_else(|| "it".to_string());
+                                let body = self.render_expr(&cl.body)?;
+                                return Ok(format!("{}?.let {{ {} -> {} }} ?: {}", obj, param, body, default));
+                            }
+                        }
+                        // `.map_err(SomeError::Variant)` / `.map_err(some_fn)` — Rust
+                        // lets a tuple-variant constructor (or any named function) be
+                        // passed as a bare value where a closure is expected, since
+                        // it's itself a first-class `Fn(T) -> U` item. Kotlin's
+                        // equivalent (a variant's own constructor, referenced through
+                        // a dotted qualifier) isn't usable as a bare value the same
+                        // way — `CoreError.IO` isn't a value, only `CoreError.IO(x)`
+                        // is — so wrap it in an explicit one-arg lambda instead.
+                        // `map_err` itself has no dedicated Result-mapping support
+                        // here; this only needs to compile, matching every other
+                        // Result-shaped call in this file.
+                        if sel.field.name.as_str() == "map_err" && inv.args.len() == 1
+                            && !matches!(inv.args[0].kind(), ExprKind::Closure(_))
+                        {
+                            let obj = self.render_expr(&sel.obj)?;
+                            let ctor = self.render_expr(&inv.args[0])?;
+                            return Ok(format!("{}.map_err {{ __e -> {}(__e) }}", obj, ctor));
+                        }
+                        // `Option::take()` — replaces a `var` with `None`/`null`, returning
+                        // the old value. Kotlin has no equivalent method; model it directly.
+                        // A function *parameter* receiver can't be reassigned at all in
+                        // Kotlin (always an implicit `val`, unlike a `let`-bound local) —
+                        // drop the reset for those (see `current_fn_params`'s doc comment).
+                        if sel.field.name.as_str() == "take" && inv.args.is_empty() {
+                            if let ExprKind::Name(name) = sel.obj.kind() {
+                                let obj = self.render_expr(&sel.obj)?;
+                                if self.current_fn_params.contains(&name_to_string(name)) {
+                                    return Ok(obj);
+                                }
+                                return Ok(format!("run {{ val __t = {0}; {0} = null; __t }}", obj));
+                            }
+                        }
+                        let obj = self.render_expr(&sel.obj)?;
+                        // `round`/`log2` have no Kotlin member-method equivalent — both are
+                        // top-level `kotlin.math` functions taking the receiver as an
+                        // argument (`kotlin.math.round(x)`, not `x.round()`).
+                        if matches!(sel.field.name.as_str(), "round" | "log2") && inv.args.is_empty() {
+                            return Ok(format!("kotlin.math.{}({})", sel.field.name.as_str(), obj));
+                        }
+                        // `.map` is ambiguous: `Option::map`/`Result::map` need Kotlin's
+                        // `.let { }` (no built-in `.map` on nullable types), but
+                        // `Iterator::map` needs Kotlin's own (identically-named) `.map { }`,
+                        // unchanged — the generic table below assumes the former. Detect the
+                        // latter structurally: an iterator-producing receiver just before it.
+                        let is_iterator_map = sel.field.name.as_str() == "map" && {
+                            if let ExprKind::Invoke(recv_inv) = sel.obj.kind() {
+                                if let ExprInvokeTarget::Method(recv_sel) = &recv_inv.target {
+                                    matches!(recv_sel.field.name.as_str(),
+                                        "iter" | "iter_mut" | "into_iter" | "lines" | "chars")
+                                } else { false }
                             } else { false }
-                        } else { false }
-                    };
-                    // `.len()` needs `.size` on a List but `.length` on a String —
-                    // `map_kt_method` alone can't tell which, so check whether the
-                    // receiver's name is a known List (see `field_element_types`).
-                    let is_len_on_list = sel.field.name.as_str() == "len" && is_known_list_receiver(&sel.obj, e);
-                    // `.find` is also ambiguous: Rust's `str::find(pat: &str)` (a
-                    // substring search, needs Kotlin's `indexOf`, which takes a
-                    // `String` and returns `Int`) vs. `Iterator::find(predicate)`
-                    // (needs Kotlin's own identically-named, closure-taking
-                    // `find` — unchanged). Disambiguate by the argument's shape.
-                    let is_string_find = sel.field.name.as_str() == "find"
-                        && !matches!(inv.args.first().map(|a| a.kind()), Some(ExprKind::Closure(_)));
-                    // `.clone()` maps to `.copy()` (Kotlin's data-class convention)
-                    // by default, but a `String`/`enum class` has no `.copy()` —
-                    // already immutable, the call should just drop (see
-                    // `is_known_string_receiver`/`is_known_enum_receiver`).
-                    let is_clone_dropped = sel.field.name.as_str() == "clone"
-                        && (is_known_string_receiver(&sel.obj, e) || is_known_enum_receiver(&sel.obj, e));
-                    // `str::parse::<T>()` needs Kotlin's `.toLong()` — but a user's own
-                    // inherent/associated method that happens to be named `parse` (e.g. a
-                    // winnow-combinator-style `RefNode::parse`) is a different, unrelated
-                    // function that must stay `.parse(...)` unchanged. Only the real
-                    // `String`-receiver case gets the numeric-string mapping.
-                    let is_string_parse = sel.field.name.as_str() == "parse"
-                        && is_known_string_receiver(&sel.obj, e);
-                    // `map_kt_method`'s fallthrough (no entry for this Rust
-                    // name) returns the name unchanged — that's fine for a
-                    // known bare-property mapping (`len` → `length`, no
-                    // parens needed), but a genuine unmapped method (any
-                    // user-defined trait/inherent method, e.g. a custom
-                    // `RepoBackend::workdir()`) still needs real Kotlin call
-                    // parens even with zero args, unlike an actual property.
-                    let mut is_unmapped_passthrough = false;
-                    let method_name = if is_iterator_map {
-                        "map".to_string()
-                    } else if is_len_on_list {
-                        // Rust's `.len()` always returns `usize`, which this
-                        // workspace's type registry always maps to Kotlin
-                        // `Long` (see `kotlin_type_from_ty`) — but Kotlin's
-                        // `List.size` is natively `Int`. Coerce here so every
-                        // `.len()` call is `Long`-typed like every other
-                        // `usize` value, matching the convention rather than
-                        // Kotlin's native collection API.
-                        "size.toLong()".to_string()
-                    } else if is_string_find {
-                        "indexOf".to_string()
-                    } else if is_clone_dropped {
-                        "".to_string()
-                    } else if is_string_parse {
-                        "toLong()".to_string()
-                    } else {
-                        let mapped = map_kt_method(sel.field.name.as_str());
-                        is_unmapped_passthrough = mapped == sel.field.name.as_str();
-                        mapped
-                    };
-                    // `is_ascii_alphabetic`/etc. map to Kotlin `Char` methods (`isLetter()`),
-                    // but their receiver here is a `Byte` (indexed out of `.as_bytes()`) —
-                    // bridge it to a `Char` first.
-                    let obj = if matches!(method_name.as_str(), "isLetter()" | "isDigit()" | "isWhitespace()" | "isLetterOrDigit()")
-                        && is_byte_array_index(&sel.obj)
-                    {
-                        format!("{}.toInt().toChar()", obj)
-                    } else {
-                        obj
-                    };
-                    // Kotlin's `String.replace` only overloads `(Char, Char)` or
-                    // `(String, String)` — Rust's `str::replace` allows a char pattern
-                    // with a string replacement, so a `Char` arg here needs coercing to
-                    // a one-character string to match the mixed-type call.
-                    let is_replace = sel.field.name.as_str() == "replace";
-                    // `removePrefix`/`removeSuffix` (mapped from Rust's
-                    // `strip_prefix`/`strip_suffix`/`trim_end_matches`) take a
-                    // `CharSequence`, not `Char` — Rust's char-pattern overloads
-                    // need the same char-to-one-character-string coercion `replace` does.
-                    let needs_char_as_string = is_replace
-                        || matches!(sel.field.name.as_str(), "strip_prefix" | "strip_suffix" | "trim_end_matches");
-                    let args: Vec<String> = inv.args.iter()
-                        .map(|a| {
-                            if needs_char_as_string {
-                                if let ExprKind::Value(v) = a.kind() {
-                                    if let Value::Char(c) = v.as_ref() {
-                                        return Ok(format!("\"{}\"", escape_str_for_kt(&c.value.to_string())));
+                        };
+                        // `.len()` needs `.size` on a List but `.length` on a String —
+                        // `map_kt_method` alone can't tell which, so check whether the
+                        // receiver's name is a known List (see `field_element_types`).
+                        let is_len_on_list = sel.field.name.as_str() == "len" && is_known_list_receiver(&sel.obj, self);
+                        // `.find` is also ambiguous: Rust's `str::find(pat: &str)` (a
+                        // substring search, needs Kotlin's `indexOf`, which takes a
+                        // `String` and returns `Int`) vs. `Iterator::find(predicate)`
+                        // (needs Kotlin's own identically-named, closure-taking
+                        // `find` — unchanged). Disambiguate by the argument's shape.
+                        let is_string_find = sel.field.name.as_str() == "find"
+                            && !matches!(inv.args.first().map(|a| a.kind()), Some(ExprKind::Closure(_)));
+                        // `.clone()` maps to `.copy()` (Kotlin's data-class convention)
+                        // by default, but a `String`/`enum class` has no `.copy()` —
+                        // already immutable, the call should just drop (see
+                        // `is_known_string_receiver`/`is_known_enum_receiver`).
+                        let is_clone_dropped = sel.field.name.as_str() == "clone"
+                            && (is_known_string_receiver(&sel.obj, self) || is_known_enum_receiver(&sel.obj, self));
+                        // `str::parse::<T>()` needs Kotlin's `.toLong()` — but a user's own
+                        // inherent/associated method that happens to be named `parse` (self.g. a
+                        // winnow-combinator-style `RefNode::parse`) is a different, unrelated
+                        // function that must stay `.parse(...)` unchanged. Only the real
+                        // `String`-receiver case gets the numeric-string mapping.
+                        let is_string_parse = sel.field.name.as_str() == "parse"
+                            && is_known_string_receiver(&sel.obj, self);
+                        // `map_kt_method`'s fallthrough (no entry for this Rust
+                        // name) returns the name unchanged — that's fine for a
+                        // known bare-property mapping (`len` → `length`, no
+                        // parens needed), but a genuine unmapped method (any
+                        // user-defined trait/inherent method, self.g. a custom
+                        // `RepoBackend::workdir()`) still needs real Kotlin call
+                        // parens even with zero args, unlike an actual property.
+                        let mut is_unmapped_passthrough = false;
+                        let method_name = if is_iterator_map {
+                            "map".to_string()
+                        } else if is_len_on_list {
+                            // Rust's `.len()` always returns `usize`, which this
+                            // workspace's type registry always maps to Kotlin
+                            // `Long` (see `kotlin_type_from_ty`) — but Kotlin's
+                            // `List.size` is natively `Int`. Coerce here so every
+                            // `.len()` call is `Long`-typed like every other
+                            // `usize` value, matching the convention rather than
+                            // Kotlin's native collection API.
+                            "size.toLong()".to_string()
+                        } else if is_string_find {
+                            "indexOf".to_string()
+                        } else if is_clone_dropped {
+                            "".to_string()
+                        } else if is_string_parse {
+                            "toLong()".to_string()
+                        } else {
+                            let mapped = map_kt_method(sel.field.name.as_str());
+                            is_unmapped_passthrough = mapped == sel.field.name.as_str();
+                            mapped
+                        };
+                        // `is_ascii_alphabetic`/etc. map to Kotlin `Char` methods (`isLetter()`),
+                        // but their receiver here is a `Byte` (indexed out of `.as_bytes()`) —
+                        // bridge it to a `Char` first.
+                        let obj = if matches!(method_name.as_str(), "isLetter()" | "isDigit()" | "isWhitespace()" | "isLetterOrDigit()")
+                            && is_byte_array_index(&sel.obj)
+                        {
+                            format!("{}.toInt().toChar()", obj)
+                        } else {
+                            obj
+                        };
+                        // Kotlin's `String.replace` only overloads `(Char, Char)` or
+                        // `(String, String)` — Rust's `str::replace` allows a char pattern
+                        // with a string replacement, so a `Char` arg here needs coercing to
+                        // a one-character string to match the mixed-type call.
+                        let is_replace = sel.field.name.as_str() == "replace";
+                        // `removePrefix`/`removeSuffix` (mapped from Rust's
+                        // `strip_prefix`/`strip_suffix`/`trim_end_matches`) take a
+                        // `CharSequence`, not `Char` — Rust's char-pattern overloads
+                        // need the same char-to-one-character-string coercion `replace` does.
+                        let needs_char_as_string = is_replace
+                            || matches!(sel.field.name.as_str(), "strip_prefix" | "strip_suffix" | "trim_end_matches");
+                        let args: Vec<String> = inv.args.iter()
+                            .map(|a| {
+                                if needs_char_as_string {
+                                    if let ExprKind::Value(v) = a.kind() {
+                                        if let Value::Char(c) = v.as_ref() {
+                                            return Ok(format!("\"{}\"", escape_str_for_kt(&c.value.to_string())));
+                                        }
                                     }
                                 }
+                                self.render_expr(a)
+                            })
+                            .collect::<Result<Vec<_>>>()?;
+                        if method_name.is_empty() {
+                            Ok(obj)
+                        } else if method_name == "!!" {
+                            Ok(format!("{}!!", obj))
+                        } else if args.is_empty() {
+                            if is_unmapped_passthrough {
+                                Ok(format!("{}.{}()", obj, method_name))
+                            } else {
+                                Ok(format!("{}.{}", obj, method_name))
                             }
-                            render_expr(a, e)
-                        })
-                        .collect::<Result<Vec<_>>>()?;
-                    if method_name.is_empty() {
-                        Ok(obj)
-                    } else if method_name == "!!" {
-                        Ok(format!("{}!!", obj))
-                    } else if args.is_empty() {
-                        if is_unmapped_passthrough {
-                            Ok(format!("{}.{}()", obj, method_name))
+                        } else if method_name.ends_with("()") {
+                            let base = &method_name[..method_name.len() - 2];
+                            Ok(format!("{}.{}({})", obj, base, args.join(", ")))
                         } else {
-                            Ok(format!("{}.{}", obj, method_name))
-                        }
-                    } else if method_name.ends_with("()") {
-                        let base = &method_name[..method_name.len() - 2];
-                        Ok(format!("{}.{}({})", obj, base, args.join(", ")))
-                    } else {
-                        Ok(format!("{}.{}({})", obj, method_name, args.join(", ")))
-                    }
-                }
-                _ => {
-                    let name = invoke_name(&inv.target);
-                    // `Self::other_fn(...)` — Kotlin has no `Self` expression-
-                    // position equivalent; swap in the real class/enum name
-                    // (see `current_self_name`'s doc comment).
-                    let name = if let Some(self_name) = &e.current_self_name {
-                        substitute_self_prefix(&name, self_name)
-                    } else {
-                        name
-                    };
-                    // `std::env::current_dir()` — a zero-arg free function whose Kotlin
-                    // equivalent needs one arg (`System.getProperty("user.dir")`), which
-                    // the generic `map_kt_path` + "always append (args)" pipeline below
-                    // can't express without producing a spurious trailing `()`.
-                    if name == "std::env::current_dir" && inv.args.is_empty() {
-                        return Ok("System.getProperty(\"user.dir\")".to_string());
-                    }
-                    // Crates with no safe target-language equivalent (toml, serde_json,
-                    // tokio, ...) — render as an explicit stub instead of a broken
-                    // identifier reference. `TODO()` is typed `Nothing`, so it compiles
-                    // in any expression position.
-                    if let Some(pos) = name.rfind("::") {
-                        let prefix = name[..pos].replace("::", ".");
-                        if known_package(&prefix) == KnownPackage::Unsupported {
-                            return Ok(format!("TODO(\"unsupported: {}\")", name));
+                            Ok(format!("{}.{}({})", obj, method_name, args.join(", ")))
                         }
                     }
-                    // Rewrite type prefix in function paths like `PathBuf::from` → `Path.of`
-                    let mapped = map_kt_path(&name);
-                    let args: Vec<String> = inv.args.iter()
-                        .map(|a| render_expr(a, e))
-                        .collect::<Result<Vec<_>>>()?;
-                    Ok(format!("{}({})", mapped, args.join(", ")))
-                }
-            }
-        }
-
-        ExprKind::Select(sel) => {
-            let obj = render_expr(&sel.obj, e)?;
-            if obj == "self" {
-                let field = map_kt_field(sel.field.name.as_str());
-                Ok(field)
-            } else {
-                let field = map_kt_field(sel.field.name.as_str());
-                Ok(format!("{}.{}", obj, field))
-            }
-        }
-
-        ExprKind::Index(idx) => {
-            // Rust's `&s[..end]`/`s[start..]`/`&s[start..end]` (slicing with an
-            // omitted bound is common) has no direct Kotlin equivalent —
-            // `obj[range]` isn't valid indexing syntax. `String.substring`
-            // shares `..`'s start-inclusive/end-exclusive semantics; a slice/
-            // `Vec` (see `is_known_list_receiver`) needs `List.subList` instead
-            // — both require an explicit end, so an omitted one becomes `.size`.
-            if let ExprKind::Range(r) = idx.index.kind() {
-                let is_list = is_known_list_receiver(&idx.obj, e);
-                let obj = render_expr(&idx.obj, e)?;
-                let start = match &r.start {
-                    Some(s) => render_expr(s, e)?,
-                    None => "0".to_string(),
-                };
-                if !is_list && r.end.is_none() {
-                    return Ok(format!("{}.substring({})", obj, start));
-                }
-                let end = match &r.end {
-                    Some(end) => {
-                        let end = render_expr(end, e)?;
-                        if matches!(r.limit, fp_core::ast::ExprRangeLimit::Inclusive) {
-                            format!("({} + 1)", end)
+                    _ => {
+                        let name = invoke_name(&inv.target);
+                        // `Self::other_fn(...)` — Kotlin has no `Self` expression-
+                        // position equivalent; swap in the real class/enum name
+                        // (see `current_self_name`'s doc comment).
+                        let name = if let Some(self_name) = &self.current_self_name {
+                            substitute_self_prefix(&name, self_name)
                         } else {
-                            end
-                        }
-                    }
-                    None => format!("{}.size", obj),
-                };
-                return if is_list {
-                    Ok(format!("{}.subList({}, {})", obj, start, end))
-                } else {
-                    Ok(format!("{}.substring({}, {})", obj, start, end))
-                };
-            }
-            Ok(format!("{}[{}]", render_expr(&idx.obj, e)?, render_expr(&idx.index, e)?))
-        }
-
-        ExprKind::BinOp(bin) => {
-            let mut lhs = render_expr(&bin.lhs, e)?;
-            let mut rhs = render_expr(&bin.rhs, e)?;
-            // Kotlin's `==`/`!=` (unlike `<`/`>`, which have cross-type
-            // `compareTo` overloads) require matching numeric types — a
-            // `.len()`-derived `Long` (see `is_len_on_list`'s `.toLong()`)
-            // compared against a bare `Int` literal needs the literal
-            // suffixed to match.
-            if matches!(bin.kind, BinOpKind::Eq | BinOpKind::Ne) {
-                if lhs.ends_with(".toLong()") {
-                    if let Some(suffixed) = int_literal_as_long(&rhs) {
-                        rhs = suffixed;
-                    }
-                } else if rhs.ends_with(".toLong()") {
-                    if let Some(suffixed) = int_literal_as_long(&lhs) {
-                        lhs = suffixed;
-                    }
-                }
-            }
-            Ok(format!("({} {} {})", lhs, kotlin_bin_op(&bin.kind), rhs))
-        }
-
-        ExprKind::UnOp(un) => {
-            Ok(format!("{}({})", kotlin_un_op(&un.op), render_expr(&un.val, e)?))
-        }
-
-        ExprKind::If(if_expr) => {
-            let cond = render_expr(&if_expr.cond, e)?;
-            // Always brace-wrap: `then`/`elze` can be a multi-statement block
-            // (render_expr_single/render_expr on an ExprKind::Block renders
-            // just the inner statements, no braces of its own), and Kotlin
-            // accepts `if (c) { x } else { y }` as an expression too, so
-            // wrapping unconditionally is safe even for the single-expression
-            // case.
-            let then_val = render_expr_single(&if_expr.then, e)?;
-            if let Some(elze) = &if_expr.elze {
-                Ok(format!("if ({}) {{ {} }} else {{ {} }}", cond, then_val, render_expr_single(elze, e)?))
-            } else {
-                Ok(format!("if ({}) {{ {} }}", cond, then_val))
-            }
-        }
-
-        ExprKind::Match(mt) => {
-            let scrutinee = mt.scrutinee.as_ref()
-                .map(|s| render_expr(s, e)).transpose()?
-                .unwrap_or_else(|| "null".to_string());
-
-            // Single non-wildcard arm OR 2-arm match (Some/Ok + else) → val + if
-            let is_single_arm = mt.cases.len() == 1 && !matches!(mt.cases[0].pat.as_ref().map(|p| &p.kind), Some(PatternKind::Wildcard(_)));
-            let is_two_arm = mt.cases.len() == 2 && is_else_arm(&mt.cases[1].pat);
-
-            if is_single_arm || is_two_arm {
-                let case = &mt.cases[0];
-
-                // Determine the binding shape via pure pattern inspection (no rendering
-                // yet), so any names it introduces can be pre-seeded into a scope before
-                // the arm body renders — a same-named `let`-shadow inside that body (see
-                // the `ExprKind::Block` arm) needs to see these as already declared.
-                let non_monadic = if is_two_arm { non_monadic_tuple_variant(&case.pat) } else { None };
-                let effective_var = if non_monadic.is_some() {
-                    None
-                } else if is_two_arm {
-                    stripped_tuple_binding(&case.pat).or_else(|| match_case_binding(&case.pat))
-                } else {
-                    match_case_binding(&case.pat)
-                };
-
-                e.push_scope();
-                if let Some((_, ref binding)) = non_monadic {
-                    e.declare_name(binding);
-                }
-                if let Some(ref var) = effective_var {
-                    if let Some(names) = var.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
-                        for name in names.split(", ") { e.declare_name(name); }
-                    }
-                }
-                let body = render_expr(&case.body, e)?;
-                e.pop_scope();
-                let multiline = body.contains('\n');
-
-                // A 2-arm match on an ordinary enum variant (not Some/Ok/Err/None) isn't a
-                // null-check equivalent — the scrutinee itself isn't interchangeable with its
-                // payload, so it needs a smart-cast + field access, not `val x = scrutinee`.
-                if let Some((variant_path, binding)) = non_monadic {
-                    let else_body = render_expr(&mt.cases[1].body, e)?;
-                    let else_trimmed = else_body.trim();
-                    let body_lines: String = body.lines()
-                        .map(|l| format!("        {}", l))
-                        .collect::<Vec<_>>().join("\n");
-                    let else_clause = if else_trimmed.is_empty() {
-                        " else {\n        null\n    }".to_string()
-                    } else {
-                        format!(" else {{\n        {}\n    }}", else_body)
-                    };
-                    return Ok(format!(
-                        "if ({0} is {1}) {{\n    val {2} = {0}.__data\n{3}\n}}{4}",
-                        scrutinee, variant_path, binding, body_lines, else_clause
-                    ));
-                }
-                let else_body = if mt.cases.len() > 1 {
-                    Some(render_expr(&mt.cases[1].body, e)?)
-                } else {
-                    None
-                };
-                match effective_var {
-                    Some(var) if var.starts_with('(') => {
-                        // Tuple destructuring inside the wrapper, e.g. `Some((host, path))`
-                        // from `raw.split_once(':')` — null-check a temp, then destructure.
-                        let tmp = "__m";
-                        let else_trimmed = else_body.as_deref().map(str::trim).filter(|s| !s.is_empty());
-                        let body_lines: String = body.lines()
-                            .map(|l| format!("        {}", l))
-                            .collect::<Vec<_>>().join("\n");
-                        let else_clause = match else_trimmed {
-                            Some(eb) => format!(" else {{\n            {}\n        }}", eb),
-                            None => " else {\n            null\n        }".to_string(),
+                            name
                         };
-                        Ok(format!(
-                            "run {{\n    val {0} = {1}\n    if ({0} != null) {{\n        val {2} = {0}!!\n{3}\n    }}{4}\n}}",
-                            tmp, scrutinee, var, body_lines, else_clause
-                        ))
-                    }
-                    Some(var) => {
-                        if let Some(ref eb) = else_body {
-                            let eb_trim = eb.trim();
-                            let rendered_body = if multiline {
-                                let indented: String = body.lines()
-                                    .map(|l| format!("            {}", l))
-                                    .collect::<Vec<_>>().join("\n");
-                                format!("{{\n{}\n        }}", indented)
-                            } else {
-                                body.clone()
-                            };
-                            if eb_trim.is_empty() {
-                                Ok(format!("run {{\n    val {0} = {1}\n    if ({0} != null) {2}\n}}",
-                                    var, scrutinee, rendered_body))
-                            } else {
-                                Ok(format!("run {{\n    val {0} = {1}\n    if ({0} != null) {2} else {{\n            {3}\n        }}\n}}",
-                                    var, scrutinee, rendered_body, eb))
-                            }
-                        } else {
-                            if multiline {
-                                let indented: String = body.lines()
-                                    .map(|l| format!("        {}", l))
-                                    .collect::<Vec<_>>().join("\n");
-                                Ok(format!("run {{\n    val {0} = {1}\n    if ({0} != null) {{\n{2}\n    }} else {{\n        null\n    }}\n}}",
-                                    var, scrutinee, indented))
-                            } else {
-                                Ok(format!("run {{\n    val {0} = {1}\n    if ({0} != null) {{ {2} }} else {{ null }}\n}}", var, scrutinee, body))
+                        // `std::env::current_dir()` — a zero-arg free function whose Kotlin
+                        // equivalent needs one arg (`System.getProperty("user.dir")`), which
+                        // the generic `map_kt_path` + "always append (args)" pipeline below
+                        // can't express without producing a spurious trailing `()`.
+                        if name == "std::env::current_dir" && inv.args.is_empty() {
+                            return Ok("System.getProperty(\"user.dir\")".to_string());
+                        }
+                        // Crates with no safe target-language equivalent (toml, serde_json,
+                        // tokio, ...) — render as an explicit stub instead of a broken
+                        // identifier reference. `TODO()` is typed `Nothing`, so it compiles
+                        // in any expression position.
+                        if let Some(pos) = name.rfind("::") {
+                            let prefix = name[..pos].replace("::", ".");
+                            if known_package(&prefix) == KnownPackage::Unsupported {
+                                return Ok(format!("TODO(\"unsupported: {}\")", name));
                             }
                         }
-                    }
-                    None => {
-                        if multiline {
-                            let indented: String = body.lines()
-                                .map(|l| format!("        {}", l))
-                                .collect::<Vec<_>>().join("\n");
-                            Ok(format!("if ({0}) {{\n{1}\n}}", scrutinee, indented))
-                        } else {
-                            Ok(format!("if ({0}) {{ {1} }}", scrutinee, body))
-                        }
+                        // Rewrite type prefix in function paths like `PathBuf::from` → `Path.of`
+                        let mapped = map_kt_path(&name);
+                        let args: Vec<String> = inv.args.iter()
+                            .map(|a| self.render_expr(a))
+                            .collect::<Result<Vec<_>>>()?;
+                        Ok(format!("{}({})", mapped, args.join(", ")))
                     }
                 }
-            } else {
-                let mut buf = format!("when ({}) {{\n", scrutinee);
-                for case in &mt.cases {
-                    let pat = render_match_pat(&case.pat, e);
-                    let body = render_expr(&case.body, e)?;
-                    if body.is_empty() {
-                        // An empty Rust arm body (`_ => {}`) renders to an
-                        // empty string — Kotlin's `when` needs an actual
-                        // expression/block after `->`, not a blank.
-                        buf.push_str(&format!("    {} -> {{}}\n", pat));
-                    } else if body.contains('\n') {
-                        let indented: String = body.lines()
-                            .map(|l| format!("        {}", l))
-                            .collect::<Vec<_>>().join("\n");
-                        buf.push_str(&format!("    {} -> {{\n{}\n    }}\n", pat, indented));
-                    } else {
-                        buf.push_str(&format!("    {} -> {}\n", pat, body));
-                    }
-                }
-                buf.push('}');
-                Ok(buf)
             }
-        }
 
-        ExprKind::Block(block) => {
-            e.push_scope();
-            // Rust allows re-`let`-ing a name in the same scope (shadowing); Kotlin
-            // doesn't allow a flat re-declaration. When that would happen, nest the
-            // remainder of the block in a fresh `run { }` scope instead — each nested
-            // `val` then legitimately shadows the outer one.
-            let mut nest_depth: usize = 0;
-            let text = render_scratch(e, |e| {
-                for stmt in &block.stmts {
-                    if let BlockStmt::Let(l) = stmt {
-                        let name = ident_from_pattern(&l.pat);
-                        if name != "_" && !name.starts_with('(') && e.is_declared(&name) {
-                            e.writer.write_line("run {");
-                            e.writer.increase_indent();
-                            nest_depth += 1;
-                            e.push_scope();
-                        }
-                    }
-                    emit_stmt(stmt, e, false)?;
-                }
-                for _ in 0..nest_depth {
-                    e.writer.decrease_indent();
-                    e.writer.write_line("}");
-                    e.pop_scope();
-                }
-                Ok(())
-            });
-            e.pop_scope();
-            text
-        }
-
-        ExprKind::Assign(assign) => {
-            Ok(format!("{} = {}", render_expr(&assign.target, e)?, render_expr(&assign.value, e)?))
-        }
-
-        ExprKind::Struct(st) => {
-            let name = render_expr(&st.name, e)?;
-            let variant_name = uppercase_last_segment(&name);
-            let fields: Vec<String> = st.fields.iter().map(|f| {
-                // `None` means Rust field-init shorthand (`Field { name }` ≡ `Field { name: name }`),
-                // not an explicit null value.
-                let val = match &f.value { Some(v) => render_expr(v, e)?, None => f.name.name.clone() };
-                Ok(format!("{} = {}", f.name.name, val))
-            }).collect::<Result<Vec<_>>>()?;
-            Ok(format!("{}({})", variant_name, fields.join(", ")))
-        }
-
-        ExprKind::Array(arr) => {
-            let items: Vec<String> = arr.values.iter().map(|v| render_expr(v, e)).collect::<Result<Vec<_>>>()?;
-            Ok(format!("listOf({})", items.join(", ")))
-        }
-
-        ExprKind::Tuple(tup) => {
-            let items: Vec<String> = tup.values.iter().map(|v| render_expr(v, e)).collect::<Result<Vec<_>>>()?;
-            // Kotlin's built-in tuple constructors only go up to 3 elements.
-            let ctor = match items.len() {
-                3 => "Triple",
-                _ => "Pair",
-            };
-            Ok(format!("{}({})", ctor, items.join(", ")))
-        }
-
-        ExprKind::Reference(r) => render_expr(&r.referee, e),
-        ExprKind::Dereference(d) => render_expr(&d.referee, e),
-        ExprKind::Cast(c) => {
-            let inner = render_expr(&c.expr, e)?;
-            let conv = match kotlin_type_from_ty(&c.ty, e).as_str() {
-                "Byte" => Some("toByte()"),
-                "Short" => Some("toShort()"),
-                "Int" => Some("toInt()"),
-                "Long" => Some("toLong()"),
-                "Float" => Some("toFloat()"),
-                "Double" => Some("toDouble()"),
-                "Char" => Some("toInt().toChar()"),
-                _ => None,
-            };
-            match conv {
-                Some(m) => Ok(format!("{}.{}", inner, m)),
-                None => Ok(inner),
-            }
-        }
-        ExprKind::Paren(p) => Ok(format!("({})", render_expr(&p.expr, e)?)),
-
-        ExprKind::Closure(cl) => {
-            let params: Vec<String> = cl.params.iter().map(|p| {
-                let n = ident_from_pattern(p);
-                // An explicit `|c: char| ...` annotation parses as `PatternKind::Type`
-                // wrapping the ident pattern, not `Pattern.ty` (that slot is populated
-                // by type inference/checking, which this untyped pipeline never runs).
-                let ty_str = if let PatternKind::Type(pt) = &p.kind {
-                    Some(kotlin_type_from_ty(&pt.ty, e))
+            ExprKind::Select(sel) => {
+                let obj = self.render_expr(&sel.obj)?;
+                if obj == "self" {
+                    let field = map_kt_field(sel.field.name.as_str());
+                    Ok(field)
                 } else {
-                    kotlin_type_from_ty_slot(&p.ty, e)
+                    let field = map_kt_field(sel.field.name.as_str());
+                    Ok(format!("{}.{}", obj, field))
+                }
+            }
+
+            ExprKind::Index(idx) => {
+                // Rust's `&s[..end]`/`s[start..]`/`&s[start..end]` (slicing with an
+                // omitted bound is common) has no direct Kotlin equivalent —
+                // `obj[range]` isn't valid indexing syntax. `String.substring`
+                // shares `..`'s start-inclusive/end-exclusive semantics; a slice/
+                // `Vec` (see `is_known_list_receiver`) needs `List.subList` instead
+                // — both require an explicit end, so an omitted one becomes `.size`.
+                if let ExprKind::Range(r) = idx.index.kind() {
+                    let is_list = is_known_list_receiver(&idx.obj, self);
+                    let obj = self.render_expr(&idx.obj)?;
+                    let start = match &r.start {
+                        Some(s) => self.render_expr(s)?,
+                        None => "0".to_string(),
+                    };
+                    if !is_list && r.end.is_none() {
+                        return Ok(format!("{}.substring({})", obj, start));
+                    }
+                    let end = match &r.end {
+                        Some(end) => {
+                            let end = self.render_expr(end)?;
+                            if matches!(r.limit, fp_core::ast::ExprRangeLimit::Inclusive) {
+                                format!("({} + 1)", end)
+                            } else {
+                                end
+                            }
+                        }
+                        None => format!("{}.size", obj),
+                    };
+                    return if is_list {
+                        Ok(format!("{}.subList({}, {})", obj, start, end))
+                    } else {
+                        Ok(format!("{}.substring({}, {})", obj, start, end))
+                    };
+                }
+                Ok(format!("{}[{}]", self.render_expr(&idx.obj)?, self.render_expr(&idx.index)?))
+            }
+
+            ExprKind::BinOp(bin) => {
+                let mut lhs = self.render_expr(&bin.lhs)?;
+                let mut rhs = self.render_expr(&bin.rhs)?;
+                // Kotlin's `==`/`!=` (unlike `<`/`>`, which have cross-type
+                // `compareTo` overloads) require matching numeric types — a
+                // `.len()`-derived `Long` (see `is_len_on_list`'s `.toLong()`)
+                // compared against a bare `Int` literal needs the literal
+                // suffixed to match.
+                if matches!(bin.kind, BinOpKind::Eq | BinOpKind::Ne) {
+                    if lhs.ends_with(".toLong()") {
+                        if let Some(suffixed) = int_literal_as_long(&rhs) {
+                            rhs = suffixed;
+                        }
+                    } else if rhs.ends_with(".toLong()") {
+                        if let Some(suffixed) = int_literal_as_long(&lhs) {
+                            lhs = suffixed;
+                        }
+                    }
+                }
+                Ok(format!("({} {} {})", lhs, kotlin_bin_op(&bin.kind), rhs))
+            }
+
+            ExprKind::UnOp(un) => {
+                Ok(format!("{}({})", kotlin_un_op(&un.op), self.render_expr(&un.val)?))
+            }
+
+            ExprKind::If(if_expr) => {
+                let cond = self.render_expr(&if_expr.cond)?;
+                // Always brace-wrap: `then`/`elze` can be a multi-statement block
+                // (render_expr_single/render_expr on an ExprKind::Block renders
+                // just the inner statements, no braces of its own), and Kotlin
+                // accepts `if (c) { x } else { y }` as an expression too, so
+                // wrapping unconditionally is safe even for the single-expression
+                // case.
+                let then_val = render_expr_single(&if_expr.then, self)?;
+                if let Some(elze) = &if_expr.elze {
+                    Ok(format!("if ({}) {{ {} }} else {{ {} }}", cond, then_val, render_expr_single(elze, self)?))
+                } else {
+                    Ok(format!("if ({}) {{ {} }}", cond, then_val))
+                }
+            }
+
+            ExprKind::Match(mt) => {
+                let tmp = self.fresh_var("__m");
+                self.writer.write_line(&format!("var {}: Any? = null", tmp));
+                self.emit_match_stmt(mt, Tail::Assign(&tmp))?;
+                Ok(tmp)
+            }
+
+            ExprKind::Block(block) => {
+                let tmp = self.fresh_var("__b");
+                self.writer.write_line(&format!("var {}: Any? = null", tmp));
+                self.push_scope();
+                let len = block.stmts.len();
+                for (i, stmt) in block.stmts.iter().enumerate() {
+                    let stmt_tail = if i == len - 1 { Tail::Assign(&tmp) } else { Tail::None };
+                    self.emit_stmt(stmt, stmt_tail)?;
+                }
+                self.pop_scope();
+                Ok(tmp)
+            }
+
+            ExprKind::Assign(assign) => {
+                Ok(format!("{} = {}", self.render_expr(&assign.target)?, self.render_expr(&assign.value)?))
+            }
+
+            ExprKind::Struct(st) => {
+                let name = self.render_expr(&st.name)?;
+                let variant_name = uppercase_last_segment(&name);
+                let fields: Vec<String> = st.fields.iter().map(|f| {
+                    // `None` means Rust field-init shorthand (`Field { name }` ≡ `Field { name: name }`),
+                    // not an explicit null value.
+                    let val = match &f.value { Some(v) => self.render_expr(v)?, None => f.name.name.clone() };
+                    Ok(format!("{} = {}", f.name.name, val))
+                }).collect::<Result<Vec<_>>>()?;
+                Ok(format!("{}({})", variant_name, fields.join(", ")))
+            }
+
+            ExprKind::Array(arr) => {
+                let items: Vec<String> = arr.values.iter().map(|v| self.render_expr(v)).collect::<Result<Vec<_>>>()?;
+                Ok(format!("listOf({})", items.join(", ")))
+            }
+
+            ExprKind::Tuple(tup) => {
+                let items: Vec<String> = tup.values.iter().map(|v| self.render_expr(v)).collect::<Result<Vec<_>>>()?;
+                // Kotlin's built-in tuple constructors only go up to 3 elements.
+                let ctor = match items.len() {
+                    3 => "Triple",
+                    _ => "Pair",
                 };
-                if n.starts_with('(') {
-                    // Destructuring lambda param (`{ (a, b) -> ... }`) — Kotlin doesn't
-                    // support a blanket type annotation after the whole pattern here.
-                    n
-                } else if n == "_" {
-                    if let Some(ty) = ty_str { format!("it: {}", ty) } else { "it: Any?".to_string() }
-                } else if let Some(ty) = ty_str {
-                    format!("{}: {}", n, ty)
-                } else {
-                    format!("{}: Any?", n)
-                }
-            }).collect();
-            Ok(format!("{{ {} -> {} }}", params.join(", "), render_expr_single(&cl.body, e)?))
-        }
+                Ok(format!("{}({})", ctor, items.join(", ")))
+            }
 
-        ExprKind::Let(l) => {
-            Ok(format!("val {} = {}", ident_from_pattern(&l.pat), render_expr(&l.expr, e)?))
-        }
-
-        ExprKind::Return(ret) => {
-            if let Some(val) = &ret.value {
-                Ok(format!("return {}", render_expr(val, e)?))
-            } else { Ok("return".to_string()) }
-        }
-
-        ExprKind::IntrinsicCall(ic) => {
-            use fp_core::intrinsics::calls::OpKind;
-            use fp_core::intrinsics::calls::IntrinsicKind;
-            // Render all args first to avoid borrow conflicts
-            let args: Vec<String> = ic.args.iter()
-                .map(|a| render_expr(a, e))
-                .collect::<Result<Vec<_>>>()?;
-
-            match &ic.kind {
-                // A method-style intrinsic (`receiver.count()`, from e.g. a
-                // desugared `for` loop's length check) — NOT a plain
-                // function call. The generic fallback below (`name(args)`)
-                // would double up the parens `intrinsic_name` already
-                // includes for this one (`"count()"`), producing malformed
-                // `count()(receiver)`.
-                CallKind::Intrinsic(IntrinsicKind::Len) => {
-                    let receiver = args.first().cloned().unwrap_or_default();
-                    Ok(format!("{}.count()", receiver))
+            ExprKind::Reference(r) => self.render_expr(&r.referee),
+            ExprKind::Dereference(d) => self.render_expr(&d.referee),
+            ExprKind::Cast(c) => {
+                let inner = self.render_expr(&c.expr)?;
+                let conv = match self.kotlin_type_from_ty(&c.ty).as_str() {
+                    "Byte" => Some("toByte()"),
+                    "Short" => Some("toShort()"),
+                    "Int" => Some("toInt()"),
+                    "Long" => Some("toLong()"),
+                    "Float" => Some("toFloat()"),
+                    "Double" => Some("toDouble()"),
+                    "Char" => Some("toInt().toChar()"),
+                    _ => None,
+                };
+                match conv {
+                    Some(m) => Ok(format!("{}.{}", inner, m)),
+                    None => Ok(inner),
                 }
-                CallKind::Op(OpKind::MapOr) => {
-                    let receiver = args.first().cloned().unwrap_or_default();
-                    let default = args.get(1).cloned().unwrap_or_default();
-                    Ok(format!("{} ?: {}", receiver, default))
-                }
-                CallKind::Op(OpKind::Collect) => {
-                    let receiver = args.first().cloned().unwrap_or_default();
-                    Ok(format!("{}.toList()", receiver))
-                }
-                CallKind::Op(OpKind::Find) => {
-                    let receiver = args.first().cloned().unwrap_or_default();
-                    let pred = args.get(1).cloned();
-                    if let Some(p) = pred {
-                        Ok(format!("{}.firstOrNull {{ {} }}", receiver, p))
+            }
+            ExprKind::Paren(p) => Ok(format!("({})", self.render_expr(&p.expr)?)),
+
+            ExprKind::Closure(cl) => {
+                let params: Vec<String> = cl.params.iter().map(|p| {
+                    let n = ident_from_pattern(p);
+                    // An explicit `|c: char| ...` annotation parses as `PatternKind::Type`
+                    // wrapping the ident pattern, not `Pattern.ty` (that slot is populated
+                    // by type inference/checking, which this untyped pipeline never runs).
+                    let ty_str = if let PatternKind::Type(pt) = &p.kind {
+                        Some(self.kotlin_type_from_ty(&pt.ty))
                     } else {
-                        Ok(format!("{}.firstOrNull()", receiver))
+                        self.kotlin_type_from_ty_slot(&p.ty)
+                    };
+                    if n.starts_with('(') {
+                        // Destructuring lambda param (`{ (a, b) -> ... }`) — Kotlin doesn't
+                        // support a blanket type annotation after the whole pattern here.
+                        n
+                    } else if n == "_" {
+                        if let Some(ty) = ty_str { format!("it: {}", ty) } else { "it: Any?".to_string() }
+                    } else if let Some(ty) = ty_str {
+                        format!("{}: {}", n, ty)
+                    } else {
+                        format!("{}: Any?", n)
                     }
-                }
-                CallKind::Op(OpKind::UnwrapOr) => {
-                    let receiver = args.first().cloned().unwrap_or_default();
-                    let default = args.get(1).cloned().unwrap_or_default();
-                    Ok(format!("{} ?: {}", receiver, default))
-                }
-                CallKind::Op(OpKind::ToString) => {
-                    let receiver = args.first().cloned().unwrap_or_default();
-                    Ok(format!("{}.toString()", receiver))
-                }
-                CallKind::Op(OpKind::AndThen) => {
-                    let receiver = args.first().cloned().unwrap_or_default();
-                    Ok(format!("{}.let {{ it }}", receiver))
-                }
-                // `OptionUnwrap`/`OptionSome`/`OptionNone`/`VecNew`/`AsRef`/
-                // `Iter`/`ToOwned`/`AsStr`/`Clone` never reach here:
-                // `KotlinMaterializer::materialize_call` (run over the
-                // lifted AST before serialization, see `compile_project`'s
-                // phase 2 in `fp-cli`) already rewrites those into their
-                // real Kotlin-shaped `Expr` upstream. The arms below stay
-                // here rather than in the materializer because they render
-                // straight to a Kotlin-specific string form
-                // (`?:`/`.toList()`/a string-template literal) that has no
-                // generic `ast::Expr` equivalent to return instead.
-                CallKind::Op(op @ (OpKind::Format | OpKind::Print | OpKind::Println)) => {
-                    // Resolve each placeholder against its real argument and emit a
-                    // genuine Kotlin string template, instead of a fake "arg" literal
-                    // fed to `String.format(...)`.
-                    let template = match ic.args.first().map(|a| a.kind()) {
-                        Some(ExprKind::FormatString(fs)) => {
-                            let value_args = &args[1..];
-                            let mut next_implicit = 0usize;
-                            let mut out = String::new();
-                            for part in &fs.parts {
-                                match part {
-                                    FormatTemplatePart::Literal(lit) => out.push_str(lit),
-                                    FormatTemplatePart::Placeholder(ph) => {
-                                        match &ph.arg_ref {
-                                            // `{name}` with no separate trailing
-                                            // argument at all — Rust's inline-
-                                            // captured-identifier format syntax,
-                                            // which refers to a local variable
-                                            // directly rather than indexing into
-                                            // the macro's own argument list.
-                                            FormatArgRef::Named(name) if value_args.is_empty() => {
-                                                out.push_str(&format!("${{{}}}", name));
-                                            }
-                                            FormatArgRef::Positional(i) => {
-                                                let val = value_args.get(*i).cloned().unwrap_or_default();
-                                                out.push_str(&format!("${{{}}}", val));
-                                            }
-                                            FormatArgRef::Implicit | FormatArgRef::Named(_) => {
-                                                let i = next_implicit;
-                                                next_implicit += 1;
-                                                let val = value_args.get(i).cloned().unwrap_or_default();
-                                                out.push_str(&format!("${{{}}}", val));
+                }).collect();
+                Ok(format!("{{ {} -> {} }}", params.join(", "), render_expr_single(&cl.body, self)?))
+            }
+
+            ExprKind::Let(l) => {
+                Ok(format!("val {} = {}", ident_from_pattern(&l.pat), self.render_expr(&l.expr)?))
+            }
+
+            ExprKind::Return(ret) => {
+                if let Some(val) = &ret.value {
+                    Ok(format!("return {}", self.render_expr(val)?))
+                } else { Ok("return".to_string()) }
+            }
+
+            ExprKind::IntrinsicCall(ic) => {
+                use fp_core::intrinsics::calls::OpKind;
+                use fp_core::intrinsics::calls::IntrinsicKind;
+                // Render all args first to avoid borrow conflicts
+                let args: Vec<String> = ic.args.iter()
+                    .map(|a| self.render_expr(a))
+                    .collect::<Result<Vec<_>>>()?;
+
+                match &ic.kind {
+                    // A method-style intrinsic (`receiver.count()`, from self.g. a
+                    // desugared `for` loop's length check) — NOT a plain
+                    // function call. The generic fallback below (`name(args)`)
+                    // would double up the parens `intrinsic_name` already
+                    // includes for this one (`"count()"`), producing malformed
+                    // `count()(receiver)`.
+                    CallKind::Intrinsic(IntrinsicKind::Len) => {
+                        let receiver = args.first().cloned().unwrap_or_default();
+                        Ok(format!("{}.count()", receiver))
+                    }
+                    CallKind::Op(OpKind::MapOr) => {
+                        let receiver = args.first().cloned().unwrap_or_default();
+                        let default = args.get(1).cloned().unwrap_or_default();
+                        Ok(format!("{} ?: {}", receiver, default))
+                    }
+                    CallKind::Op(OpKind::Collect) => {
+                        let receiver = args.first().cloned().unwrap_or_default();
+                        Ok(format!("{}.toList()", receiver))
+                    }
+                    CallKind::Op(OpKind::Find) => {
+                        let receiver = args.first().cloned().unwrap_or_default();
+                        let pred = args.get(1).cloned();
+                        if let Some(p) = pred {
+                            Ok(format!("{}.firstOrNull {{ {} }}", receiver, p))
+                        } else {
+                            Ok(format!("{}.firstOrNull()", receiver))
+                        }
+                    }
+                    CallKind::Op(OpKind::UnwrapOr) => {
+                        let receiver = args.first().cloned().unwrap_or_default();
+                        let default = args.get(1).cloned().unwrap_or_default();
+                        Ok(format!("{} ?: {}", receiver, default))
+                    }
+                    CallKind::Op(OpKind::ToString) => {
+                        let receiver = args.first().cloned().unwrap_or_default();
+                        Ok(format!("{}.toString()", receiver))
+                    }
+                    CallKind::Op(OpKind::AndThen) => {
+                        let receiver = args.first().cloned().unwrap_or_default();
+                        Ok(format!("{}.let {{ it }}", receiver))
+                    }
+                    // `OptionUnwrap`/`OptionSome`/`OptionNone`/`VecNew`/`AsRef`/
+                    // `Iter`/`ToOwned`/`AsStr`/`Clone` never reach here:
+                    // `KotlinMaterializer::materialize_call` (run over the
+                    // lifted AST before serialization, see `compile_project`'s
+                    // phase 2 in `fp-cli`) already rewrites those into their
+                    // real Kotlin-shaped `Expr` upstream. The arms below stay
+                    // here rather than in the materializer because they render
+                    // straight to a Kotlin-specific string form
+                    // (`?:`/`.toList()`/a string-template literal) that has no
+                    // generic `ast::Expr` equivalent to return instead.
+                    CallKind::Op(op @ (OpKind::Format | OpKind::Print | OpKind::Println)) => {
+                        // Resolve each placeholder against its real argument and emit a
+                        // genuine Kotlin string template, instead of a fake "arg" literal
+                        // fed to `String.format(...)`.
+                        let template = match ic.args.first().map(|a| a.kind()) {
+                            Some(ExprKind::FormatString(fs)) => {
+                                let value_args = &args[1..];
+                                let mut next_implicit = 0usize;
+                                let mut out = String::new();
+                                for part in &fs.parts {
+                                    match part {
+                                        FormatTemplatePart::Literal(lit) => out.push_str(lit),
+                                        FormatTemplatePart::Placeholder(ph) => {
+                                            match &ph.arg_ref {
+                                                // `{name}` with no separate trailing
+                                                // argument at all — Rust's inline-
+                                                // captured-identifier format syntax,
+                                                // which refers to a local variable
+                                                // directly rather than indexing into
+                                                // the macro's own argument list.
+                                                FormatArgRef::Named(name) if value_args.is_empty() => {
+                                                    out.push_str(&format!("${{{}}}", name));
+                                                }
+                                                FormatArgRef::Positional(i) => {
+                                                    let val = value_args.get(*i).cloned().unwrap_or_default();
+                                                    out.push_str(&format!("${{{}}}", val));
+                                                }
+                                                FormatArgRef::Implicit | FormatArgRef::Named(_) => {
+                                                    let i = next_implicit;
+                                                    next_implicit += 1;
+                                                    let val = value_args.get(i).cloned().unwrap_or_default();
+                                                    out.push_str(&format!("${{{}}}", val));
+                                                }
                                             }
                                         }
                                     }
                                 }
+                                format!("\"{}\"", out)
                             }
-                            format!("\"{}\"", out)
+                            _ => args.first().cloned().unwrap_or_default(),
+                        };
+                        match op {
+                            OpKind::Format => Ok(template),
+                            OpKind::Print => Ok(format!("print({})", template)),
+                            OpKind::Println => Ok(format!("println({})", template)),
+                            _ => unreachable!(),
                         }
-                        _ => args.first().cloned().unwrap_or_default(),
-                    };
-                    match op {
-                        OpKind::Format => Ok(template),
-                        OpKind::Print => Ok(format!("print({})", template)),
-                        OpKind::Println => Ok(format!("println({})", template)),
-                        _ => unreachable!(),
+                    }
+                    _ => {
+                        let name = intrinsic_name(&ic.kind);
+                        Ok(format!("{}({})", name, args.join(", ")))
                     }
                 }
-                _ => {
-                    let name = intrinsic_name(&ic.kind);
-                    Ok(format!("{}({})", name, args.join(", ")))
-                }
             }
-        }
 
-        ExprKind::Range(r) => {
-            let start = r.start.as_ref().map(|s| render_expr(s, e)).transpose()?;
-            let end = r.end.as_ref().map(|s| render_expr(s, e)).transpose()?;
-            Ok(match (start, end) {
-                (Some(s), Some(en)) => format!("{}..{}", s, en),
-                (Some(s), None) => format!("{}..", s),
-                (None, Some(en)) => format!("..{}", en),
-                (None, None) => "..".to_string(),
-            })
-        }
+            ExprKind::Range(r) => {
+                let start = r.start.as_ref().map(|s| self.render_expr(s)).transpose()?;
+                let end = r.end.as_ref().map(|s| self.render_expr(s)).transpose()?;
+                Ok(match (start, end) {
+                    (Some(s), Some(en)) => format!("{}..{}", s, en),
+                    (Some(s), None) => format!("{}..", s),
+                    (None, Some(en)) => format!("..{}", en),
+                    (None, None) => "..".to_string(),
+                })
+            }
 
-        ExprKind::FormatString(fs) => {
-            let parts = fs.parts.iter().map(|p| match p {
-                FormatTemplatePart::Literal(lit) => Ok(lit.clone()),
-                FormatTemplatePart::Placeholder(_ph) => {
-                    let rendered = "arg".to_string();
-                    Ok(format!("${{{}}}", rendered))
-                }
-            }).collect::<Result<Vec<_>>>()?;
-            Ok(format!("\"{}\"", parts.join("")))
-        }
+            ExprKind::FormatString(fs) => {
+                let parts = fs.parts.iter().map(|p| match p {
+                    FormatTemplatePart::Literal(lit) => Ok(lit.clone()),
+                    FormatTemplatePart::Placeholder(_ph) => {
+                        let rendered = "arg".to_string();
+                        Ok(format!("${{{}}}", rendered))
+                    }
+                }).collect::<Result<Vec<_>>>()?;
+                Ok(format!("\"{}\"", parts.join("")))
+            }
 
-        ExprKind::Break(_) => Ok("break".to_string()),
-        ExprKind::Continue(_) => Ok("continue".to_string()),
+            ExprKind::Break(_) => Ok("break".to_string()),
+            ExprKind::Continue(_) => Ok("continue".to_string()),
 
-        ExprKind::Try(t) => {
-            // `?` operator → just render inner expr (error handling is implicit)
-            render_expr(&t.expr, e)
-        }
-        ExprKind::Macro(_m) => {
-            Ok("null".to_string())
-        }
-        ExprKind::ConstBlock(_) => Ok("null".to_string()),
-        ExprKind::ArrayRepeat(ar) => {
-            let elem = render_expr(&ar.elem, e)?;
-            Ok(format!("listOf({})", elem))
-        }
-        ExprKind::Await(a) => {
-            render_expr(&a.base, e)
-        }
+            ExprKind::Try(t) => {
+                // `?` operator → just render inner expr (error handling is implicit)
+                self.render_expr(&t.expr)
+            }
+            ExprKind::Macro(_m) => {
+                Ok("null".to_string())
+            }
+            ExprKind::ConstBlock(_) => Ok("null".to_string()),
+            ExprKind::ArrayRepeat(ar) => {
+                let elem = self.render_expr(&ar.elem)?;
+                Ok(format!("listOf({})", elem))
+            }
+            ExprKind::Await(a) => {
+                self.render_expr(&a.base)
+            }
 
-        _ => Ok(format!("/* unreachable: {:?} */", std::mem::discriminant(expr.kind()))),
+            _ => Ok(format!("/* unreachable: {:?} */", std::mem::discriminant(expr.kind()))),
+        }
     }
 }
 
@@ -2717,7 +2745,7 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
 /// clarity at "this body must render as a single value" positions (an
 /// if/else branch used as an expression), not a distinct implementation.
 fn render_expr_single(body: &BExpr, e: &mut KotlinEmitter) -> Result<String> {
-    render_expr(body, e)
+    e.render_expr(body)
 }
 
 /// `Self` (constructor shorthand, `Self::other_fn`) or a leading `Self::`
@@ -2744,8 +2772,8 @@ fn render_invoke_target(target: &ExprInvokeTarget, e: &mut KotlinEmitter) -> Res
             };
             Ok(raw.replace("::", "."))
         }
-        ExprInvokeTarget::Method(sel) => Ok(format!("{}.{}", render_expr(&sel.obj, e)?, sel.field.name)),
-        ExprInvokeTarget::Expr(bexpr) => render_expr(bexpr, e),
+        ExprInvokeTarget::Method(sel) => Ok(format!("{}.{}", e.render_expr(&sel.obj)?, sel.field.name)),
+        ExprInvokeTarget::Expr(bexpr) => e.render_expr(bexpr),
         _ => Ok("call".to_string()),
     }
 }
@@ -3286,59 +3314,61 @@ fn intrinsic_name(kind: &fp_core::intrinsics::calls::CallKind) -> String {
 
 // ── Type mapping ─────────────────────────────────────────────────────────────
 
-fn kotlin_type_from_ty(ty: &Ty, _e: &KotlinEmitter) -> String {
-    match ty {
-        Ty::Primitive(prim) => match prim {
-            TypePrimitive::Bool => "Boolean".into(),
-            TypePrimitive::Char => "Char".into(),
-            TypePrimitive::String => "String".into(),
-            TypePrimitive::Int(int_ty) => match int_ty {
-                TypeInt::I8 => "Byte".into(), TypeInt::I16 => "Short".into(),
-                TypeInt::I32 => "Int".into(), TypeInt::I64 => "Long".into(),
-                TypeInt::U8 => "Int".into(), TypeInt::U16 => "Int".into(),
-                TypeInt::U32 => "Long".into(), TypeInt::U64 => "Long".into(),
-                _ => "Int".into(),
+impl KotlinEmitter {
+    fn kotlin_type_from_ty(&self, ty: &Ty) -> String {
+        match ty {
+            Ty::Primitive(prim) => match prim {
+                TypePrimitive::Bool => "Boolean".into(),
+                TypePrimitive::Char => "Char".into(),
+                TypePrimitive::String => "String".into(),
+                TypePrimitive::Int(int_ty) => match int_ty {
+                    TypeInt::I8 => "Byte".into(), TypeInt::I16 => "Short".into(),
+                    TypeInt::I32 => "Int".into(), TypeInt::I64 => "Long".into(),
+                    TypeInt::U8 => "Int".into(), TypeInt::U16 => "Int".into(),
+                    TypeInt::U32 => "Long".into(), TypeInt::U64 => "Long".into(),
+                    _ => "Int".into(),
+                },
+                TypePrimitive::Decimal(d) => match d {
+                    fp_core::ast::DecimalType::F32 => "Float".into(),
+                    fp_core::ast::DecimalType::F64 => "Double".into(),
+                    _ => "Double".into(),
+                },
+                TypePrimitive::List => "List<Any>".into(),
             },
-            TypePrimitive::Decimal(d) => match d {
-                fp_core::ast::DecimalType::F32 => "Float".into(),
-                fp_core::ast::DecimalType::F64 => "Double".into(),
-                _ => "Double".into(),
+            // Rust's `Vec<T>` is the owned, growable collection type — `.push`/
+            // `.add`-style mutation is part of its normal API (mutability is
+            // tracked separately via the binding's own `let`/`let mut`, not the
+            // type), so this always needs Kotlin's `MutableList`, never the
+            // read-only `List` (which has no `.add()`).
+            Ty::Vec(v) => format!("MutableList<{}>", self.kotlin_type_from_ty(&v.ty)),
+            // Kotlin only has built-in tuple types up to 3 elements (Pair/Triple);
+            // anything wider needs a real named type — see ExprKind::Tuple in
+            // render_expr for the matching value-construction side.
+            Ty::Tuple(t) => match t.types.len() {
+                2 => format!("Pair<{}, {}>", self.kotlin_type_from_ty(&t.types[0]), self.kotlin_type_from_ty(&t.types[1])),
+                3 => format!("Triple<{}, {}, {}>", self.kotlin_type_from_ty(&t.types[0]), self.kotlin_type_from_ty(&t.types[1]), self.kotlin_type_from_ty(&t.types[2])),
+                _ => "Any".into(),
             },
-            TypePrimitive::List => "List<Any>".into(),
-        },
-        // Rust's `Vec<T>` is the owned, growable collection type — `.push`/
-        // `.add`-style mutation is part of its normal API (mutability is
-        // tracked separately via the binding's own `let`/`let mut`, not the
-        // type), so this always needs Kotlin's `MutableList`, never the
-        // read-only `List` (which has no `.add()`).
-        Ty::Vec(v) => format!("MutableList<{}>", kotlin_type_from_ty(&v.ty, _e)),
-        // Kotlin only has built-in tuple types up to 3 elements (Pair/Triple);
-        // anything wider needs a real named type — see ExprKind::Tuple in
-        // render_expr for the matching value-construction side.
-        Ty::Tuple(t) => match t.types.len() {
-            2 => format!("Pair<{}, {}>", kotlin_type_from_ty(&t.types[0], _e), kotlin_type_from_ty(&t.types[1], _e)),
-            3 => format!("Triple<{}, {}, {}>", kotlin_type_from_ty(&t.types[0], _e), kotlin_type_from_ty(&t.types[1], _e), kotlin_type_from_ty(&t.types[2], _e)),
+            Ty::Struct(s) => s.name.name.clone(),
+            Ty::Enum(en) => en.name.name.clone(),
+            Ty::Reference(r) => self.kotlin_type_from_ty(&r.ty),
+            Ty::Expr(expr) => map_name_to_kt(&expr_to_name(expr)),
+            Ty::Unit(_) => "Unit".into(),
+            Ty::Slice(sl) => format!("List<{}>", self.kotlin_type_from_ty(&sl.elem)),
+            Ty::Any(_) | Ty::Unknown(_) => "Any".into(),
+            Ty::Nothing(_) => "Nothing".into(),
+            // `dyn Trait` (typically seen inside `Arc<dyn Trait>`/`Box<dyn Trait>`
+            // field types) — a single trait bound with no concrete type behind
+            // it. The trait becomes a Kotlin `interface` of the same name (see
+            // `emit_trait`), so the bound's own name is already the right type.
+            Ty::TypeBounds(tb) => tb.bounds.first()
+                .map(|b| map_name_to_kt(&expr_to_name(b)))
+                .unwrap_or_else(|| "Any".into()),
+            Ty::ImplTraits(it) => it.bounds.bounds.first()
+                .map(|b| map_name_to_kt(&expr_to_name(b)))
+                .unwrap_or_else(|| "Any".into()),
             _ => "Any".into(),
-        },
-        Ty::Struct(s) => s.name.name.clone(),
-        Ty::Enum(en) => en.name.name.clone(),
-        Ty::Reference(r) => kotlin_type_from_ty(&r.ty, _e),
-        Ty::Expr(expr) => map_name_to_kt(&expr_to_name(expr)),
-        Ty::Unit(_) => "Unit".into(),
-        Ty::Slice(sl) => format!("List<{}>", kotlin_type_from_ty(&sl.elem, _e)),
-        Ty::Any(_) | Ty::Unknown(_) => "Any".into(),
-        Ty::Nothing(_) => "Nothing".into(),
-        // `dyn Trait` (typically seen inside `Arc<dyn Trait>`/`Box<dyn Trait>`
-        // field types) — a single trait bound with no concrete type behind
-        // it. The trait becomes a Kotlin `interface` of the same name (see
-        // `emit_trait`), so the bound's own name is already the right type.
-        Ty::TypeBounds(tb) => tb.bounds.first()
-            .map(|b| map_name_to_kt(&expr_to_name(b)))
-            .unwrap_or_else(|| "Any".into()),
-        Ty::ImplTraits(it) => it.bounds.bounds.first()
-            .map(|b| map_name_to_kt(&expr_to_name(b)))
-            .unwrap_or_else(|| "Any".into()),
-        _ => "Any".into(),
+        }
     }
 }
 
@@ -3364,7 +3394,7 @@ fn name_to_string(name: &fp_core::ast::Name) -> String {
                     if s.args.is_empty() { name.to_string() }
                     else {
                         let args = s.args.iter()
-                            .map(|ty| kotlin_type_from_ty(ty, &KotlinEmitter::new()))
+                            .map(|ty| KotlinEmitter::new().kotlin_type_from_ty(ty))
                             .collect::<Vec<_>>().join(", ");
                         format!("{}<{}>", name, args)
                     }
@@ -3375,13 +3405,15 @@ fn name_to_string(name: &fp_core::ast::Name) -> String {
     }
 }
 
-fn kotlin_type_from_ty_slot(ty: &TySlot, e: &KotlinEmitter) -> Option<String> {
-    match ty {
-        Some(t) => {
-            let raw = kotlin_type_from_ty(t, e);
-            if raw == "Any" || raw == "Nothing" || raw == "Unit" { None } else { Some(raw) }
+impl KotlinEmitter {
+    fn kotlin_type_from_ty_slot(&self, ty: &TySlot) -> Option<String> {
+        match ty {
+            Some(t) => {
+                let raw = self.kotlin_type_from_ty(t);
+                if raw == "Any" || raw == "Nothing" || raw == "Unit" { None } else { Some(raw) }
+            }
+            None => None,
         }
-        None => None,
     }
 }
 
