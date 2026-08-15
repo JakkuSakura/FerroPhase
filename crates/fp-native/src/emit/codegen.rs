@@ -10,21 +10,34 @@ pub fn emit_text_from_selection(
     format: TargetFormat,
     arch: TargetArch,
 ) -> Result<CodegenOutput> {
-    // Validates every defined function's LIR shape against what the native
-    // emitter below can actually handle — not just whichever one happens to
-    // be named `main`, since `emit_lir_program` (used by the JVM/CIL/goasm/
-    // URCL-to-native transpile paths in `container/pipeline.rs`) can hand
-    // this a program transpiled from foreign bytecode with no `main` at
-    // all. A defined `main` is only required to produce a runnable
-    // executable or JIT-execute a plan — both check for that explicitly at
-    // that point (see `EmitPlan::entry_offset`), not unconditionally here
-    // for every plan.
-    let defined_functions = lir_program
+    // Validated function set: prefer `main` alone, exactly like before —
+    // every real FerroPhase compile goes through this same path with
+    // (often many) non-`main` functions this validation has never actually
+    // exercised, so widening it to *all* defined functions unconditionally
+    // would risk newly rejecting programs that compiled fine yesterday for
+    // reasons unrelated to what's actually being fixed here. Only fall
+    // back to validating every defined function when there's no `main` at
+    // all — the one new case that needs to work: `emit_lir_program` (used
+    // by the JVM/CIL/goasm/URCL-to-native transpile paths in
+    // `container/pipeline.rs`) can hand this a program transpiled from
+    // foreign bytecode with no `main`. A defined `main` is only required
+    // to produce a runnable executable or JIT-execute a plan — both check
+    // for that explicitly at that point (see `EmitPlan::entry_offset`),
+    // not unconditionally here for every plan.
+    let main_fn = lir_program
         .functions
         .iter()
-        .filter(|func| !func.is_declaration);
+        .find(|func| func.name.as_str() == "main" && !func.is_declaration);
+    let to_validate: Vec<&fp_core::lir::LirFunction> = match main_fn {
+        Some(main) => vec![main],
+        None => lir_program
+            .functions
+            .iter()
+            .filter(|func| !func.is_declaration)
+            .collect(),
+    };
 
-    for func in defined_functions {
+    for func in to_validate {
         if func.basic_blocks.is_empty() {
             return Err(Error::from(format!(
                 "native emitter requires at least one basic block in function {}",

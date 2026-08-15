@@ -820,7 +820,7 @@ fn pe_executable_emits_rdata_base_relocs() {
         symbols,
         rodata_symbols: HashMap::new(),
         data_symbols: HashMap::new(),
-        entry_offset: 0,
+        entry_offset: Some(0),
     };
     let out_dir = tempfile::tempdir().unwrap();
     let exe = out_dir.path().join("rdata-reloc.exe");
