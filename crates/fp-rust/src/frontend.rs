@@ -24,6 +24,11 @@ impl RustFrontend {
             inner: FerroFrontend::new(),
         }
     }
+
+    /// See `FerroFrontend::register_file_only`.
+    pub fn register_file_only(&self, source: &str, path: &Path) -> fp_core::span::FileId {
+        self.inner.register_file_only(source, path)
+    }
 }
 
 impl Default for RustFrontend {

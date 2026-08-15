@@ -1613,8 +1613,10 @@ dependencies = [
 name = "fp-rust"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "fp-core",
  "fp-lang",
+ "serde",
  "toml 0.8.23",
 ]
 

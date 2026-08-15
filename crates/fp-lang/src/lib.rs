@@ -44,6 +44,22 @@ impl FerroFrontend {
         }
     }
 
+    /// Registers a file's content in the global source map (for span/
+    /// diagnostic lookups) WITHOUT tokenizing/parsing it — used by a
+    /// caller that already has a pre-parsed `Vec<Item>` for this file
+    /// from a build-time cache (see `fp-rust`'s `std_cache.bin`) and only
+    /// needs the same `FileId` this file would have gotten had it gone
+    /// through `parse_file`, so the cached items' spans (assigned when the
+    /// cache was built, in the same file-iteration order) still resolve
+    /// to the right file. Must be called for cache-hit files in the exact
+    /// same relative order `parse_file` would otherwise have been called,
+    /// or the assigned `FileId`s will drift out of sync with the cache.
+    pub fn register_file_only(&self, source: &str, path: &Path) -> FileId {
+        let cleaned = self.clean_source(source);
+        let source_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        register_source(source_path, &cleaned)
+    }
+
     fn wrap_statement_like_expr_input<'a>(&self, source: &'a str) -> std::borrow::Cow<'a, str> {
         let trimmed = source.trim_start();
         if trimmed.starts_with("let ") || trimmed.starts_with("defer ") {

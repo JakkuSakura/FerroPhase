@@ -232,6 +232,16 @@ pub struct WorkspaceContext {
     /// once per unqualified identifier/path reference across every
     /// compiled file.
     sorted_packages_cache: RefCell<Option<Vec<Rc<RefCell<CompiledPackage>>>>>,
+    /// Reverse index over every loaded package's `hir_exports`, keyed by
+    /// each export key's LAST path segment (e.g. `"core::option::Option"`
+    /// indexes under `"Option"`) — `find_export_by_name`/
+    /// `find_export_by_suffix` used to linear-scan every package's full
+    /// `hir_exports` on every call, which made cross-package bare-name
+    /// resolution (`Option`, `Some`, `None`, called repeatedly throughout
+    /// a compile) pathologically slow once a dependency the size of real
+    /// std was loaded. Cached alongside the total export count it was
+    /// built from across all packages; rebuilt only when that total grows.
+    export_suffix_index: RefCell<Option<(usize, HashMap<String, Vec<(String, crate::hir::Res)>>)>>,
 }
 
 impl WorkspaceContext {
@@ -244,6 +254,7 @@ impl WorkspaceContext {
             next_package_id: Rc::new(Cell::new(0)),
             hir_packages: RefCell::new(HashMap::new()),
             sorted_packages_cache: RefCell::new(None),
+            export_suffix_index: RefCell::new(None),
         }
     }
 
@@ -274,6 +285,7 @@ impl WorkspaceContext {
             next_package_id: self.next_package_id.clone(),
             hir_packages: RefCell::new(HashMap::new()),
             sorted_packages_cache: RefCell::new(None),
+            export_suffix_index: RefCell::new(None),
         }
     }
 
@@ -466,15 +478,12 @@ impl WorkspaceContext {
     /// match (in `sorted_packages` order) wins if two packages export
     /// the same bare name from different modules.
     pub fn find_export_by_name(&self, name: &str) -> Option<crate::hir::Res> {
-        for package in self.sorted_packages() {
-            let package = package.borrow();
-            for (key, res) in package.hir_exports.iter() {
-                if key.rsplit("::").next() == Some(name) {
-                    return Some(res.clone());
-                }
-            }
-        }
-        None
+        self.with_export_suffix_index(|index| {
+            index
+                .get(name)
+                .and_then(|candidates| candidates.first())
+                .map(|(_, res)| res.clone())
+        })
     }
 
     /// Same idea as `find_export_by_name`, but for a multi-segment
@@ -484,16 +493,49 @@ impl WorkspaceContext {
     /// (e.g. `core::option::Option::Some`), so match on the export key
     /// ending with `"::" + suffix`, or being exactly `suffix`.
     pub fn find_export_by_suffix(&self, suffix: &str) -> Option<crate::hir::Res> {
+        let last_segment = suffix.rsplit("::").next().unwrap_or(suffix);
         let dotted_suffix = format!("::{suffix}");
-        for package in self.sorted_packages() {
-            let package = package.borrow();
-            for (key, res) in package.hir_exports.iter() {
-                if key == suffix || key.ends_with(&dotted_suffix) {
-                    return Some(res.clone());
+        self.with_export_suffix_index(|index| {
+            index.get(last_segment).and_then(|candidates| {
+                candidates
+                    .iter()
+                    .find(|(key, _)| key == suffix || key.ends_with(&dotted_suffix))
+                    .map(|(_, res)| res.clone())
+            })
+        })
+    }
+
+    /// Rebuilds `export_suffix_index` only when the total export count
+    /// across every loaded package has grown since it was last built —
+    /// packages only ever gain exports during compilation (via
+    /// `CompiledPackage::hir_exports.extend`), never lose them, so a
+    /// grown total reliably signals staleness without needing every
+    /// caller of `hir_exports.extend` to explicitly invalidate this cache.
+    fn with_export_suffix_index<T>(
+        &self,
+        f: impl FnOnce(&HashMap<String, Vec<(String, crate::hir::Res)>>) -> T,
+    ) -> T {
+        let packages = self.sorted_packages();
+        let total_exports: usize = packages.iter().map(|p| p.borrow().hir_exports.len()).sum();
+        let mut cache = self.export_suffix_index.borrow_mut();
+        let needs_rebuild = match &*cache {
+            Some((cached_total, _)) => *cached_total != total_exports,
+            None => true,
+        };
+        if needs_rebuild {
+            let mut index: HashMap<String, Vec<(String, crate::hir::Res)>> = HashMap::new();
+            for package in &packages {
+                for (key, res) in package.borrow().hir_exports.iter() {
+                    let last_segment = key.rsplit("::").next().unwrap_or(key.as_str());
+                    index
+                        .entry(last_segment.to_owned())
+                        .or_default()
+                        .push((key.clone(), res.clone()));
                 }
             }
+            *cache = Some((total_exports, index));
         }
-        None
+        f(&cache.as_ref().expect("just populated above").1)
     }
 
     pub fn is_loaded(&self, package_id: &PackageId) -> bool {

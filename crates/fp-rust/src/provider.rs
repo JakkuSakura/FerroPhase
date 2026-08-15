@@ -375,8 +375,46 @@ fn is_cfg_test(attrs: &[Attribute]) -> bool {
     })
 }
 
+/// Pre-parsed cache of real std source, bundled into the binary by
+/// `build.rs` from `std_cache.bin` (empty if none has been generated yet
+/// — see `package_std_parse_cache` in `build.rs`). Keyed by the same
+/// `relative_str` `load_real_std_package` already iterates by
+/// (`crate::embedded_std::module_paths()`), value is that file's raw
+/// parsed `Vec<Item>` (pre-`flatten_items`) — a direct substitute for
+/// `frontend.parse_file(...).ast.items`, letting the winnow tokenizer/
+/// parser be skipped entirely for every file the cache already covers.
+static STD_CACHE_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/std_cache.bin"));
+
+/// Deserialized fresh on each call rather than memoized behind a `static`
+/// — `Item` embeds `ExprClosured`'s `SharedScopedContext` (an `Rc`-based
+/// type), so `HashMap<String, Vec<Item>>` isn't `Sync` and can't live in a
+/// `static`/`OnceLock`. `load_real_std_package` is only ever called once
+/// per package load in practice, so the extra deserialize is negligible
+/// next to the winnow parsing it replaces.
+fn cached_std_items() -> HashMap<String, Vec<Item>> {
+    if STD_CACHE_BYTES.is_empty() {
+        return HashMap::new();
+    }
+    match bincode::deserialize(STD_CACHE_BYTES) {
+        Ok(cache) => cache,
+        Err(err) => {
+            eprintln!("fp-rust: failed to deserialize bundled std parse cache: {err}");
+            HashMap::new()
+        }
+    }
+}
+
 /// Parse every embedded real-std `.rs` file, skipping (with a warning) any
 /// that `RustFrontend` can't handle yet, rather than failing the whole load.
+///
+/// Consults `cached_std_items()` first for each file — a cache hit still
+/// registers the file in the source map (`RustFrontend::register_file_only`)
+/// so its cached spans' `FileId`s stay in sync with this run's, but skips
+/// the actual tokenize/parse. Setting `FP_STD_CACHE_DUMP=<path>` bypasses
+/// the cache entirely (always parses fresh from source, so the dump is
+/// never built from a possibly-stale cache) and writes the resulting
+/// per-file item map to that path afterward, for `build.rs` to bundle into
+/// the next build.
 fn load_real_std_package() -> ProviderResult<PackageSource> {
     let frontend = RustFrontend::new();
     let package_id = PackageId::new(STD_PACKAGE_NAME);
@@ -384,7 +422,16 @@ fn load_real_std_package() -> ProviderResult<PackageSource> {
     let mut descriptors = Vec::new();
     let mut items = Vec::new();
     let mut parsed = 0usize;
+    let mut cache_hits = 0usize;
     let mut skipped = 0usize;
+
+    let dump_path = std::env::var("FP_STD_CACHE_DUMP").ok();
+    let cache = if dump_path.is_some() {
+        HashMap::new()
+    } else {
+        cached_std_items()
+    };
+    let mut fresh_cache: HashMap<String, Vec<Item>> = HashMap::new();
 
     for relative_str in crate::embedded_std::module_paths() {
         let path = root.join(relative_str);
@@ -395,18 +442,29 @@ fn load_real_std_package() -> ProviderResult<PackageSource> {
         if module_path.is_empty() {
             continue;
         }
-        let result = match frontend.parse_file(source, &path) {
-            Ok(result) => result,
-            Err(_) => {
-                skipped += 1;
-                continue;
+        let file_items = if let Some(cached) = cache.get(*relative_str) {
+            frontend.register_file_only(source, &path);
+            cache_hits += 1;
+            cached.clone()
+        } else {
+            match frontend.parse_file(source, &path) {
+                Ok(result) => {
+                    register_threadlocal_serializer(result.serializer.clone());
+                    parsed += 1;
+                    if dump_path.is_some() {
+                        fresh_cache.insert(relative_str.to_string(), result.ast.items.clone());
+                    }
+                    result.ast.items
+                }
+                Err(_) => {
+                    skipped += 1;
+                    continue;
+                }
             }
         };
-        register_threadlocal_serializer(result.serializer.clone());
-        parsed += 1;
         flatten_items(
             &QualifiedPath::new(module_path.clone()),
-            &result.ast.items,
+            &file_items,
             &mut items,
         );
         descriptors.push(ModuleDescriptor {
@@ -420,8 +478,21 @@ fn load_real_std_package() -> ProviderResult<PackageSource> {
         });
     }
     eprintln!(
-        "fp-rust: real std parse result — {parsed} file(s) parsed, {skipped} skipped (parse errors)"
+        "fp-rust: real std parse result — {parsed} file(s) parsed, {cache_hits} from cache, {skipped} skipped (parse errors)"
     );
+
+    if let Some(dump_path) = dump_path {
+        match bincode::serialize(&fresh_cache) {
+            Ok(bytes) => match std::fs::write(&dump_path, &bytes) {
+                Ok(()) => eprintln!(
+                    "fp-rust: wrote std parse cache ({} file(s)) to {dump_path}",
+                    fresh_cache.len()
+                ),
+                Err(err) => eprintln!("fp-rust: failed to write std cache to {dump_path}: {err}"),
+            },
+            Err(err) => eprintln!("fp-rust: failed to serialize std cache: {err}"),
+        }
+    }
 
     let module_ids = descriptors.iter().map(|desc| desc.id.clone()).collect();
     let package = PackageDescriptor {

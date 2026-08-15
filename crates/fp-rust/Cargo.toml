@@ -8,3 +8,5 @@ build = "build.rs"
 fp-core = { path = "../fp-core" }
 fp-lang = { path = "../fp-lang" }
 toml = "0.8"
+bincode = "1.3"
+serde = { version = "1", features = ["derive"] }
