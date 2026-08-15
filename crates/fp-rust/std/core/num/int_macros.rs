@@ -3987,7 +3987,7 @@ macro_rules! int_impl {
         #[rustc_const_unstable(feature = "integer_widen_truncate", issue = "154330")]
         #[inline]
         pub const fn truncate<Target>(self) -> Target
-            where Self: [const] traits::TruncateTarget<Target>
+            where Self: traits::TruncateTarget<Target>
         {
             traits::TruncateTarget::internal_truncate(self)
         }
@@ -4009,7 +4009,7 @@ macro_rules! int_impl {
         #[rustc_const_unstable(feature = "integer_widen_truncate", issue = "154330")]
         #[inline]
         pub const fn saturating_truncate<Target>(self) -> Target
-            where Self: [const] traits::TruncateTarget<Target>
+            where Self: traits::TruncateTarget<Target>
         {
             traits::TruncateTarget::internal_saturating_truncate(self)
         }
@@ -4031,7 +4031,7 @@ macro_rules! int_impl {
         #[rustc_const_unstable(feature = "integer_widen_truncate", issue = "154330")]
         #[inline]
         pub const fn checked_truncate<Target>(self) -> Option<Target>
-            where Self: [const] traits::TruncateTarget<Target>
+            where Self: traits::TruncateTarget<Target>
         {
             traits::TruncateTarget::internal_checked_truncate(self)
         }
@@ -4050,7 +4050,7 @@ macro_rules! int_impl {
         #[rustc_const_unstable(feature = "integer_widen_truncate", issue = "154330")]
         #[inline]
         pub const fn widen<Target>(self) -> Target
-            where Self: [const] traits::WidenTarget<Target>
+            where Self: traits::WidenTarget<Target>
         {
             traits::WidenTarget::internal_widen(self)
         }
@@ -4072,7 +4072,7 @@ macro_rules! int_impl {
         #[unstable(feature = "integer_casts", issue = "157388")]
         #[rustc_const_unstable(feature = "integer_casts", issue = "157388")]
         #[inline(always)]
-        pub const fn saturating_cast<T: [const] BoundedCastFromInt<Self>>(self) -> T {
+        pub const fn saturating_cast<T: BoundedCastFromInt<Self>>(self) -> T {
             T::saturating_cast_from(self)
         }
 
@@ -4092,7 +4092,7 @@ macro_rules! int_impl {
         #[unstable(feature = "integer_casts", issue = "157388")]
         #[rustc_const_unstable(feature = "integer_casts", issue = "157388")]
         #[inline(always)]
-        pub const fn wrapping_cast<T: [const] BoundedCastFromInt<Self>>(self) -> T {
+        pub const fn wrapping_cast<T: BoundedCastFromInt<Self>>(self) -> T {
             T::wrapping_cast_from(self)
         }
 
@@ -4110,7 +4110,7 @@ macro_rules! int_impl {
         #[unstable(feature = "integer_casts", issue = "157388")]
         #[rustc_const_unstable(feature = "integer_casts", issue = "157388")]
         #[inline(always)]
-        pub const fn checked_cast<T: [const] CheckedCastFromInt<Self>>(self) -> Option<T> {
+        pub const fn checked_cast<T: CheckedCastFromInt<Self>>(self) -> Option<T> {
             T::checked_cast_from(self)
         }
 
@@ -4139,7 +4139,7 @@ macro_rules! int_impl {
         #[rustc_const_unstable(feature = "integer_casts", issue = "157388")]
         #[inline(always)]
         #[track_caller]
-        pub const fn strict_cast<T: [const] CheckedCastFromInt<Self>>(self) -> T {
+        pub const fn strict_cast<T: CheckedCastFromInt<Self>>(self) -> T {
             T::strict_cast_from(self)
         }
 
@@ -4154,7 +4154,7 @@ macro_rules! int_impl {
         #[unstable(feature = "integer_casts", issue = "157388")]
         #[rustc_const_unstable(feature = "integer_casts", issue = "157388")]
         #[inline(always)]
-        pub const unsafe fn unchecked_cast<T: [const] CheckedCastFromInt<Self>>(self) -> T {
+        pub const unsafe fn unchecked_cast<T: CheckedCastFromInt<Self>>(self) -> T {
             assert_unsafe_precondition!(
                 check_language_ub,
                 concat!(stringify!($SelfT), "::unchecked_cast must fit in the target type"),

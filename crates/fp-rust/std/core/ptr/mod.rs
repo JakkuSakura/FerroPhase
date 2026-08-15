@@ -805,7 +805,7 @@ pub const unsafe fn write_bytes<T>(dst: *mut T, val: u8, count: usize) {
 #[rustc_const_unstable(feature = "const_drop_in_place", issue = "109342")]
 pub const unsafe fn drop_in_place<T: PointeeSized>(to_drop: *mut T)
 where
-    T: [const] Destruct,
+    T: Destruct,
 {
     // Due to historic reasons, `drop_in_place` takes a pointer rather than a reference,
     // which results in worse codegen since we don't apply noalias/dereferenceable llvm
@@ -822,7 +822,7 @@ where
 #[lang = "drop_glue"]
 pub(crate) const unsafe fn drop_glue<T: PointeeSized>(_: &mut T)
 where
-    T: [const] Destruct,
+    T: Destruct,
 {
     // Code here does not matter - this is replaced by the
     // real drop glue by the compiler.

@@ -1856,7 +1856,7 @@ pub const fn three_way_compare<T: Copy>(lhs: T, rhss: T) -> crate::cmp::Ordering
 #[rustc_intrinsic]
 #[track_caller]
 #[miri::intrinsic_fallback_is_spec] // the fallbacks all `assume` to tell Miri
-pub const unsafe fn disjoint_bitor<T: [const] fallback::DisjointBitOr>(a: T, b: T) -> T {
+pub const unsafe fn disjoint_bitor<T: fallback::DisjointBitOr>(a: T, b: T) -> T {
     // SAFETY: same preconditions as this function.
     unsafe { fallback::DisjointBitOr::disjoint_bitor(a, b) }
 }
@@ -1925,7 +1925,7 @@ pub const fn mul_with_overflow<T: Copy>(x: T, y: T) -> (T, bool);
 #[rustc_nounwind]
 #[rustc_intrinsic]
 #[miri::intrinsic_fallback_is_spec]
-pub const fn carrying_mul_add<T: [const] fallback::CarryingMulAdd<Unsigned = U>, U>(
+pub const fn carrying_mul_add<T: fallback::CarryingMulAdd<Unsigned = U>, U>(
     multiplier: T,
     multiplicand: T,
     addend: T,
@@ -2030,7 +2030,7 @@ pub const unsafe fn unchecked_mul<T: Copy>(x: T, y: T) -> T;
 #[rustc_intrinsic]
 #[rustc_allow_const_fn_unstable(const_trait_impl, funnel_shifts)]
 #[miri::intrinsic_fallback_is_spec]
-pub const fn rotate_left<T: [const] fallback::FunnelShift>(x: T, shift: u32) -> T {
+pub const fn rotate_left<T: fallback::FunnelShift>(x: T, shift: u32) -> T {
     // Make sure to call the intrinsic for `funnel_shl`, not the fallback impl.
     // SAFETY: we modulo `shift` so that the result is definitely less than the size of
     // `T` in bits.
@@ -2052,7 +2052,7 @@ pub const fn rotate_left<T: [const] fallback::FunnelShift>(x: T, shift: u32) -> 
 #[rustc_intrinsic]
 #[rustc_allow_const_fn_unstable(const_trait_impl, funnel_shifts)]
 #[miri::intrinsic_fallback_is_spec]
-pub const fn rotate_right<T: [const] fallback::FunnelShift>(x: T, shift: u32) -> T {
+pub const fn rotate_right<T: fallback::FunnelShift>(x: T, shift: u32) -> T {
     // Make sure to call the intrinsic for `funnel_shr`, not the fallback impl.
     // SAFETY: we modulo `shift` so that the result is definitely less than the size of
     // `T` in bits.
@@ -2152,7 +2152,7 @@ pub const fn saturating_sub<T: Copy>(a: T, b: T) -> T;
 #[unstable(feature = "funnel_shifts", issue = "145686")]
 #[track_caller]
 #[miri::intrinsic_fallback_is_spec]
-pub const unsafe fn unchecked_funnel_shl<T: [const] fallback::FunnelShift>(
+pub const unsafe fn unchecked_funnel_shl<T: fallback::FunnelShift>(
     a: T,
     b: T,
     shift: u32,
@@ -2180,7 +2180,7 @@ pub const unsafe fn unchecked_funnel_shl<T: [const] fallback::FunnelShift>(
 #[unstable(feature = "funnel_shifts", issue = "145686")]
 #[track_caller]
 #[miri::intrinsic_fallback_is_spec]
-pub const unsafe fn unchecked_funnel_shr<T: [const] fallback::FunnelShift>(
+pub const unsafe fn unchecked_funnel_shr<T: fallback::FunnelShift>(
     a: T,
     b: T,
     shift: u32,
@@ -2198,7 +2198,7 @@ pub const unsafe fn unchecked_funnel_shr<T: [const] fallback::FunnelShift>(
 #[rustc_const_unstable(feature = "uint_carryless_mul", issue = "152080")]
 #[unstable(feature = "uint_carryless_mul", issue = "152080")]
 #[miri::intrinsic_fallback_is_spec]
-pub const fn carryless_mul<T: [const] fallback::CarrylessMul>(a: T, b: T) -> T {
+pub const fn carryless_mul<T: fallback::CarrylessMul>(a: T, b: T) -> T {
     a.carryless_mul(b)
 }
 

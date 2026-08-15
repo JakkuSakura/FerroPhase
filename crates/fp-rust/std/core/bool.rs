@@ -33,7 +33,7 @@ impl bool {
     #[stable(feature = "bool_to_option", since = "1.62.0")]
     #[rustc_const_unstable(feature = "const_bool", issue = "151531")]
     #[inline]
-    pub const fn then_some<T: [const] Destruct>(self, t: T) -> Option<T> {
+    pub const fn then_some<T: Destruct>(self, t: T) -> Option<T> {
         if self { Some(t) } else { None }
     }
 
@@ -62,7 +62,7 @@ impl bool {
     #[rustc_diagnostic_item = "bool_then"]
     #[rustc_const_unstable(feature = "const_bool", issue = "151531")]
     #[inline]
-    pub const fn then<T, F: [const] FnOnce() -> T + [const] Destruct>(self, f: F) -> Option<T> {
+    pub const fn then<T, F: FnOnce() -> T + Destruct>(self, f: F) -> Option<T> {
         if self { Some(f()) } else { None }
     }
 
@@ -96,7 +96,7 @@ impl bool {
     #[stable(feature = "bool_to_result", since = "CURRENT_RUSTC_VERSION")]
     #[rustc_const_unstable(feature = "const_bool", issue = "151531")]
     #[inline]
-    pub const fn ok_or<E: [const] Destruct>(self, err: E) -> Result<(), E> {
+    pub const fn ok_or<E: Destruct>(self, err: E) -> Result<(), E> {
         if self { Ok(()) } else { Err(err) }
     }
 
@@ -123,7 +123,7 @@ impl bool {
     #[stable(feature = "bool_to_result", since = "CURRENT_RUSTC_VERSION")]
     #[rustc_const_unstable(feature = "const_bool", issue = "151531")]
     #[inline]
-    pub const fn ok_or_else<E, F: [const] FnOnce() -> E + [const] Destruct>(
+    pub const fn ok_or_else<E, F: FnOnce() -> E + Destruct>(
         self,
         f: F,
     ) -> Result<(), E> {

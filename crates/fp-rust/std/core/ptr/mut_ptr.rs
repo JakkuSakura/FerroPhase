@@ -1376,7 +1376,7 @@ impl<T: PointeeSized> *mut T {
     #[inline(always)]
     pub const unsafe fn drop_in_place(self)
     where
-        T: [const] Destruct,
+        T: Destruct,
     {
         // SAFETY: the caller must uphold the safety contract for `drop_in_place`.
         unsafe { drop_in_place(self) }
@@ -1895,7 +1895,7 @@ impl<T> *mut [T] {
     #[inline(always)]
     pub const unsafe fn get_unchecked_mut<I>(self, index: I) -> *mut I::Output
     where
-        I: [const] SliceIndex<[T]>,
+        I: SliceIndex<[T]>,
     {
         // SAFETY: the caller ensures that `self` is dereferenceable and `index` in-bounds.
         unsafe { index.get_unchecked_mut(self) }

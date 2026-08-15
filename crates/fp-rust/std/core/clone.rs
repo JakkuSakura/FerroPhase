@@ -244,7 +244,7 @@ pub const trait Clone: Sized {
     #[stable(feature = "rust1", since = "1.0.0")]
     fn clone_from(&mut self, source: &Self)
     where
-        Self: [const] Destruct,
+        Self: Destruct,
     {
         *self = source.clone()
     }
@@ -280,7 +280,7 @@ pub const trait Clone: Sized {
 // implementations of `TrivialClone`. To keep it from appearing in error
 // messages, make it a `#[marker]` trait.
 #[marker]
-pub const unsafe trait TrivialClone: [const] Clone {}
+pub const unsafe trait TrivialClone: Clone {}
 
 /// Derive macro generating an impl of the trait `Clone`.
 #[rustc_builtin_macro]

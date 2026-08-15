@@ -831,7 +831,7 @@ pub const fn cold_path() {
 #[rustc_const_unstable(feature = "const_select_unpredictable", issue = "145938")]
 pub const fn select_unpredictable<T>(condition: bool, true_val: T, false_val: T) -> T
 where
-    T: [const] Destruct,
+    T: Destruct,
 {
     // FIXME(https://github.com/rust-lang/unsafe-code-guidelines/issues/245):
     // Change this to use ManuallyDrop instead.

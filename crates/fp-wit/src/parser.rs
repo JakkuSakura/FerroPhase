@@ -217,6 +217,7 @@ impl<'a> Lowering<'a> {
                     .cases
                     .iter()
                     .map(|case| EnumTypeVariant {
+                        attrs: Vec::new(),
                         name: make_ident(&case.name),
                         value: Ty::Unit(TypeUnit),
                         discriminant: None,
@@ -229,11 +230,13 @@ impl<'a> Lowering<'a> {
                 repr: ReprOptions::default(),
                 variants: vec![
                     EnumTypeVariant {
+                        attrs: Vec::new(),
                         name: make_ident("none"),
                         value: Ty::Unit(TypeUnit),
                         discriminant: None,
                     },
                     EnumTypeVariant {
+                        attrs: Vec::new(),
                         name: make_ident("some"),
                         value: self.lower_type(inner)?,
                         discriminant: None,
@@ -258,11 +261,13 @@ impl<'a> Lowering<'a> {
                     repr: ReprOptions::default(),
                     variants: vec![
                         EnumTypeVariant {
+                            attrs: Vec::new(),
                             name: make_ident("ok"),
                             value: ok_ty.unwrap_or(Ty::Unit(TypeUnit)),
                             discriminant: None,
                         },
                         EnumTypeVariant {
+                            attrs: Vec::new(),
                             name: make_ident("err"),
                             value: err_ty.unwrap_or(Ty::Unit(TypeUnit)),
                             discriminant: None,
@@ -317,6 +322,7 @@ impl<'a> Lowering<'a> {
                     None => Ty::Unit(TypeUnit),
                 };
                 Ok(EnumTypeVariant {
+                    attrs: Vec::new(),
                     name: make_ident(&case.name),
                     value,
                     discriminant: None,

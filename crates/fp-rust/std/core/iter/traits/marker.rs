@@ -64,7 +64,7 @@ impl<I: FusedIterator + ?Sized> FusedIterator for &mut I {}
 #[unstable(feature = "trusted_len", issue = "37572")]
 #[rustc_unsafe_specialization_marker]
 #[rustc_const_unstable(feature = "const_iter", issue = "92476")]
-pub const unsafe trait TrustedLen: [const] Iterator {}
+pub const unsafe trait TrustedLen: Iterator {}
 
 #[unstable(feature = "trusted_len", issue = "37572")]
 #[rustc_const_unstable(feature = "const_iter", issue = "92476")]

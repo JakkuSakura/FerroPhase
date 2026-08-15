@@ -124,6 +124,9 @@ pub(crate) fn parse_item_winnow(input: &mut &[Token], file: FileId) -> ModalResu
         Some(TokenKind::Keyword(Keyword::Const)) if starts_const_struct(*input) => {
             parse_const_struct_item(input, visibility, attrs)
         }
+        Some(TokenKind::Keyword(Keyword::Const)) if starts_const_impl(*input) => {
+            parse_impl_item(input, file, attrs)
+        }
         Some(TokenKind::Keyword(Keyword::Unsafe)) if starts_unsafe_fn(*input) => {
             parse_fn_item(input, file, visibility, attrs, false)
         }
@@ -141,7 +144,7 @@ pub(crate) fn parse_item_winnow(input: &mut &[Token], file: FileId) -> ModalResu
         }
         Some(TokenKind::Keyword(Keyword::Type)) => parse_type_alias_item(input, visibility, attrs),
         Some(TokenKind::Keyword(Keyword::Struct)) => parse_struct_item(input, visibility, attrs),
-        Some(TokenKind::Keyword(Keyword::Enum)) => parse_enum_item(input, visibility, attrs),
+        Some(TokenKind::Keyword(Keyword::Enum)) => parse_enum_item(input, file, visibility, attrs),
         Some(TokenKind::Keyword(Keyword::Mod)) => parse_mod_item(input, file, visibility, attrs),
         Some(TokenKind::Keyword(Keyword::Opaque)) => {
             parse_opaque_type_item(input, visibility, attrs)
@@ -370,9 +373,27 @@ fn parse_fn_item_core(
     attrs: Vec<Attribute>,
     quoted: bool,
 ) -> ModalResult<Item> {
-    let _is_unsafe = skip_keyword(input, Keyword::Unsafe).is_ok();
-    let is_async = skip_keyword(input, Keyword::Async).is_ok();
-    let is_const = skip_keyword(input, Keyword::Const).is_ok();
+    // Real Rust allows `unsafe`/`async`/`const` in any relative order before
+    // `fn` (e.g. `const unsafe fn`, not just this parser's original assumed
+    // `unsafe async const fn`) — keep consuming whichever modifier keyword
+    // comes next until none match, rather than checking each only once in
+    // a fixed sequence.
+    let mut is_async = false;
+    let mut is_const = false;
+    loop {
+        if skip_keyword(input, Keyword::Unsafe).is_ok() {
+            continue;
+        }
+        if skip_keyword(input, Keyword::Async).is_ok() {
+            is_async = true;
+            continue;
+        }
+        if skip_keyword(input, Keyword::Const).is_ok() {
+            is_const = true;
+            continue;
+        }
+        break;
+    }
     if quoted {
         skip_keyword(input, Keyword::Quote)?;
     }
@@ -575,6 +596,10 @@ fn peek_keyword(input: &[Token], keyword: Keyword) -> bool {
 }
 
 fn parse_impl_item(input: &mut &[Token], file: FileId, attrs: Vec<Attribute>) -> ModalResult<Item> {
+    // `const impl<T> Trait for X` (const trait impls) — the `const`
+    // modifier has no effect we need to model, same treatment as `unsafe`
+    // below.
+    let _is_const = skip_keyword(input, Keyword::Const).is_ok();
     let _is_unsafe = skip_keyword(input, Keyword::Unsafe).is_ok();
     skip_keyword(input, Keyword::Impl)?;
     let generics_params = parse_optional_generic_params(input)?;
@@ -833,10 +858,8 @@ fn peek_two_stars(input: &[Token]) -> bool {
 fn starts_unsafe_fn(input: &[Token]) -> bool {
     matches!(
         input,
-        [first, second, ..]
-            if first.kind == TokenKind::Keyword(Keyword::Unsafe)
-                && second.kind == TokenKind::Keyword(Keyword::Fn)
-    )
+        [first, ..] if first.kind == TokenKind::Keyword(Keyword::Unsafe)
+    ) && super::skips_modifiers_to_fn(input)
 }
 
 fn starts_unsafe_impl(input: &[Token]) -> bool {
@@ -845,6 +868,26 @@ fn starts_unsafe_impl(input: &[Token]) -> bool {
         [first, second, ..]
             if first.kind == TokenKind::Keyword(Keyword::Unsafe)
                 && second.kind == TokenKind::Keyword(Keyword::Impl)
+    )
+}
+
+fn starts_const_impl(input: &[Token]) -> bool {
+    // `const unsafe impl<T> Trait for X` is valid too (modifiers in any
+    // order, same as `parse_fn_item_core`'s fix for `const unsafe fn`) —
+    // skip an optional `unsafe` between `const` and `impl`, not just the
+    // direct `const impl` pair.
+    matches!(
+        input,
+        [first, ..] if first.kind == TokenKind::Keyword(Keyword::Const)
+    ) && matches!(
+        &input[1..],
+        [second, ..] if second.kind == TokenKind::Keyword(Keyword::Impl)
+    ) || matches!(
+        input,
+        [first, second, third, ..]
+            if first.kind == TokenKind::Keyword(Keyword::Const)
+                && second.kind == TokenKind::Keyword(Keyword::Unsafe)
+                && third.kind == TokenKind::Keyword(Keyword::Impl)
     )
 }
 
@@ -1074,6 +1117,7 @@ fn parse_abi_fn_item(
 
 fn parse_enum_item(
     input: &mut &[Token],
+    file: FileId,
     visibility: Visibility,
     attrs: Vec<Attribute>,
 ) -> ModalResult<Item> {
@@ -1083,7 +1127,13 @@ fn parse_enum_item(
     skip_symbol(input, "{")?;
     let mut variants = Vec::new();
     while peek_symbol(input) != Some("}") {
-        skip_outer_attrs_for_field(input)?;
+        // `parse_outer_attrs` captures each attribute as a real `Attribute`
+        // (`ast_to_hir` needs these, e.g. for `#[op(variant = "...")]` on
+        // `Option::Some`/`::None`) — including skipping-with-a-warning any
+        // single malformed one (see `parse_attrs`'s own per-attribute
+        // recovery), so a `thiserror`-style `#[error("...", expr)]` doesn't
+        // take the rest of the enum's attributes down with it.
+        let variant_attrs = parse_outer_attrs(input, file)?;
         let variant_name = ident_like(input)?;
         let value = if skip_symbol(input, "{").is_ok() {
             let mut fields = Vec::new();
@@ -1143,6 +1193,7 @@ fn parse_enum_item(
             None
         };
         variants.push(EnumTypeVariant {
+            attrs: variant_attrs,
             name: variant_name,
             value,
             discriminant,
@@ -1297,17 +1348,59 @@ fn parse_attrs(input: &mut &[Token], file: FileId, inner: bool) -> ModalResult<V
             }
             skip_symbol(&mut probe, "[")?;
         }
-        let meta = parse_attr_meta_direct(&mut probe, file)?;
-        skip_symbol(&mut probe, "]")?;
-        *input = probe;
-        attrs.push(Attribute {
-            style: if inner {
-                AttrStyle::Inner
-            } else {
-                AttrStyle::Outer
-            },
-            meta,
-        });
+        // `probe` is now positioned right after the opening `[` — save that
+        // so a single malformed attribute (e.g. `thiserror`'s
+        // `#[error("...", expr)]`, mixing a format string with arbitrary
+        // trailing expressions — not structured-meta grammar at all) can be
+        // skipped on its own, without discarding every other attribute
+        // parsed before or after it in the same run.
+        let after_open_bracket = probe;
+        match parse_attr_meta_direct(&mut probe, file).and_then(|meta| {
+            skip_symbol(&mut probe, "]")?;
+            Ok(meta)
+        }) {
+            Ok(meta) => {
+                *input = probe;
+                attrs.push(Attribute {
+                    style: if inner {
+                        AttrStyle::Inner
+                    } else {
+                        AttrStyle::Outer
+                    },
+                    meta,
+                });
+            }
+            Err(err) => {
+                let mut skip = after_open_bracket;
+                let mut depth = 1usize;
+                while let Some((token, rest)) = skip.split_first() {
+                    skip = rest;
+                    if token.kind == TokenKind::Symbol {
+                        match token.lexeme.as_str() {
+                            "[" => depth += 1,
+                            "]" => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                if depth != 0 {
+                    return Err(err);
+                }
+                fp_core::diagnostics::diagnostic_manager().add_diagnostic(
+                    fp_core::diagnostics::Diagnostic::warning(format!(
+                        "attribute did not parse as a structured attribute ({err}); \
+                         skipping just this one — any `#[op(...)]`/`#[intrinsic = \"...\"]` \
+                         marker on it is lost"
+                    )),
+                );
+                *input = skip;
+            }
+        }
     }
     Ok(attrs)
 }

@@ -571,7 +571,7 @@ impl<T> [T] {
     #[rustc_const_unstable(feature = "const_index", issue = "143775")]
     pub const fn get<I>(&self, index: I) -> Option<&I::Output>
     where
-        I: [const] SliceIndex<Self>,
+        I: SliceIndex<Self>,
     {
         index.get(self)
     }
@@ -599,7 +599,7 @@ impl<T> [T] {
     #[rustc_no_writable]
     pub const fn get_mut<I>(&mut self, index: I) -> Option<&mut I::Output>
     where
-        I: [const] SliceIndex<Self>,
+        I: SliceIndex<Self>,
     {
         index.get_mut(self)
     }
@@ -639,7 +639,7 @@ impl<T> [T] {
     #[rustc_const_unstable(feature = "const_index", issue = "143775")]
     pub const unsafe fn get_unchecked<I>(&self, index: I) -> &I::Output
     where
-        I: [const] SliceIndex<Self>,
+        I: SliceIndex<Self>,
     {
         // SAFETY: the caller must uphold most of the safety requirements for `get_unchecked`;
         // the slice is dereferenceable because `self` is a safe reference.
@@ -685,7 +685,7 @@ impl<T> [T] {
     #[rustc_no_writable]
     pub const unsafe fn get_unchecked_mut<I>(&mut self, index: I) -> &mut I::Output
     where
-        I: [const] SliceIndex<Self>,
+        I: SliceIndex<Self>,
     {
         // SAFETY: the caller must uphold the safety requirements for `get_unchecked_mut`;
         // the slice is dereferenceable because `self` is a safe reference.
@@ -4259,7 +4259,7 @@ impl<T> [T] {
     #[rustc_const_unstable(feature = "const_clone", issue = "142757")]
     pub const fn clone_from_slice(&mut self, src: &[T])
     where
-        T: [const] Clone + [const] Destruct,
+        T: Clone + Destruct,
     {
         self.spec_clone_from(src);
     }
@@ -5595,13 +5595,13 @@ const unsafe fn copy_from_slice_impl<T: Clone>(dest: &mut [T], src: &[T]) {
 const trait CloneFromSpec<T> {
     fn spec_clone_from(&mut self, src: &[T])
     where
-        T: [const] Destruct;
+        T: Destruct;
 }
 
 #[rustc_const_unstable(feature = "const_clone", issue = "142757")]
 const impl<T> CloneFromSpec<T> for [T]
 where
-    T: [const] Clone + [const] Destruct,
+    T: Clone + Destruct,
 {
     #[track_caller]
     default fn spec_clone_from(&mut self, src: &[T]) {
@@ -5623,7 +5623,7 @@ where
 #[rustc_const_unstable(feature = "const_clone", issue = "142757")]
 const impl<T> CloneFromSpec<T> for [T]
 where
-    T: [const] TrivialClone + [const] Destruct,
+    T: TrivialClone + Destruct,
 {
     #[track_caller]
     fn spec_clone_from(&mut self, src: &[T]) {

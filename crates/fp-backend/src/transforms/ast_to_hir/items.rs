@@ -273,6 +273,7 @@ impl HirGenerator {
             };
             let stub_methods = attrs_has_name(&impl_block.attrs, "unimplemented")
                 || self.is_unimplemented_type_expr(&self_ty);
+            let impl_op_class = fp_core::intrinsics::extract_op_attr(&impl_block.attrs, "class");
 
             let mut items = Vec::new();
             let mut method_names = HashSet::new();
@@ -296,7 +297,10 @@ impl HirGenerator {
                         }
                         let method_def_id = self.def_id_for_item(item);
                         if let Some(tag) = fp_core::intrinsics::extract_op_attr(&func.attrs, "method") {
-                            if let Some(op) = fp_core::intrinsics::OpKind::from_op_tag(&tag) {
+                            let op = impl_op_class
+                                .as_deref()
+                                .and_then(|class| fp_core::intrinsics::OpKind::from_class_and_member(class, &tag));
+                            if let Some(op) = op {
                                 self.op_defs.insert(method_def_id, op);
                             }
                         }

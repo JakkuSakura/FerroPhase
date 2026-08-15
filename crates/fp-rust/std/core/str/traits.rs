@@ -54,7 +54,7 @@ impl PartialOrd for str {
 #[rustc_const_unstable(feature = "const_index", issue = "143775")]
 const impl<I> ops::Index<I> for str
 where
-    I: [const] SliceIndex<str>,
+    I: SliceIndex<str>,
 {
     type Output = I::Output;
 
@@ -68,7 +68,7 @@ where
 #[rustc_const_unstable(feature = "const_index", issue = "143775")]
 const impl<I> ops::IndexMut<I> for str
 where
-    I: [const] SliceIndex<str>,
+    I: SliceIndex<str>,
 {
     #[inline]
     fn index_mut(&mut self, index: I) -> &mut I::Output {

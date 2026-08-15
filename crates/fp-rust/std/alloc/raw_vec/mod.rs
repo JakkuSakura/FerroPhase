@@ -167,7 +167,7 @@ const fn min_non_zero_cap(size: usize) -> usize {
 
 #[rustc_const_unstable(feature = "const_heap", issue = "79597")]
 #[rustfmt::skip] // FIXME(fee1-dead): temporary measure before rustfmt is bumped
-const impl<T, A: [const] Allocator + [const] Destruct> RawVec<T, A> {
+const impl<T, A: Allocator + Destruct> RawVec<T, A> {
     /// Like `with_capacity`, but parameterized over the choice of
     /// allocator for the returned `RawVec`.
     #[cfg(not(no_global_oom_handling))]
@@ -418,7 +418,7 @@ impl<T, A: Allocator> RawVec<T, A> {
 }
 
 #[rustc_const_unstable(feature = "const_heap", issue = "79597")]
-const unsafe impl<#[may_dangle] T, A: [const] Allocator + [const] Destruct> Drop for RawVec<T, A> {
+const unsafe impl<#[may_dangle] T, A: Allocator + Destruct> Drop for RawVec<T, A> {
     /// Frees the memory owned by the `RawVec` *without* trying to drop its contents.
     fn drop(&mut self) {
         // SAFETY: We are in a Drop impl, self.inner will not be used again.
@@ -428,7 +428,7 @@ const unsafe impl<#[may_dangle] T, A: [const] Allocator + [const] Destruct> Drop
 
 #[rustc_const_unstable(feature = "const_heap", issue = "79597")]
 #[rustfmt::skip] // FIXME(fee1-dead): temporary measure before rustfmt is bumped
-const impl<A: [const] Allocator + [const] Destruct> RawVecInner<A> {
+const impl<A: Allocator + Destruct> RawVecInner<A> {
     #[cfg(not(no_global_oom_handling))]
     #[inline]
     fn with_capacity_in(capacity: usize, alloc: A, elem_layout: Layout) -> Self {
@@ -865,7 +865,7 @@ impl<A: Allocator> RawVecInner<A> {
 }
 
 #[rustc_const_unstable(feature = "const_heap", issue = "79597")]
-const impl<A: [const] Allocator> RawVecInner<A> {
+const impl<A: Allocator> RawVecInner<A> {
     /// # Safety
     ///
     /// This function deallocates the owned allocation, but does not update `ptr` or `cap` to

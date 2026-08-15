@@ -456,6 +456,46 @@ impl WorkspaceContext {
         None
     }
 
+    /// `find_export` requires the caller's exact fully-qualified key —
+    /// but a bare name (`Option`, `Some`) has no way to know which
+    /// module of some OTHER package defines it (e.g. `core::option::Option`
+    /// in real std). This scans every package's `hir_exports` for a key
+    /// whose LAST path segment matches `name`, so a bare reference can
+    /// still resolve without the caller needing to spell out the
+    /// defining module. Ambiguous only in the sense that the first
+    /// match (in `sorted_packages` order) wins if two packages export
+    /// the same bare name from different modules.
+    pub fn find_export_by_name(&self, name: &str) -> Option<crate::hir::Res> {
+        for package in self.sorted_packages() {
+            let package = package.borrow();
+            for (key, res) in package.hir_exports.iter() {
+                if key.rsplit("::").next() == Some(name) {
+                    return Some(res.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Same idea as `find_export_by_name`, but for a multi-segment
+    /// suffix (e.g. `Option::Some`) instead of a single bare name — the
+    /// caller's own module path prefix (e.g. an importing package's
+    /// module) never matches the defining package's real qualified key
+    /// (e.g. `core::option::Option::Some`), so match on the export key
+    /// ending with `"::" + suffix`, or being exactly `suffix`.
+    pub fn find_export_by_suffix(&self, suffix: &str) -> Option<crate::hir::Res> {
+        let dotted_suffix = format!("::{suffix}");
+        for package in self.sorted_packages() {
+            let package = package.borrow();
+            for (key, res) in package.hir_exports.iter() {
+                if key == suffix || key.ends_with(&dotted_suffix) {
+                    return Some(res.clone());
+                }
+            }
+        }
+        None
+    }
+
     pub fn is_loaded(&self, package_id: &PackageId) -> bool {
         self.crates.borrow().contains_key(package_id)
     }

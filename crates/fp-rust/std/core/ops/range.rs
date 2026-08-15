@@ -122,8 +122,8 @@ impl<Idx: PartialOrd<Idx>> Range<Idx> {
     #[rustc_const_unstable(feature = "const_range", issue = "none")]
     pub const fn contains<U>(&self, item: &U) -> bool
     where
-        Idx: [const] PartialOrd<U>,
-        U: ?Sized + [const] PartialOrd<Idx>,
+        Idx: PartialOrd<U>,
+        U: ?Sized + PartialOrd<Idx>,
     {
         <Self as RangeBounds<Idx>>::contains(self, item)
     }
@@ -150,7 +150,7 @@ impl<Idx: PartialOrd<Idx>> Range<Idx> {
     #[rustc_const_unstable(feature = "const_range", issue = "none")]
     pub const fn is_empty(&self) -> bool
     where
-        Idx: [const] PartialOrd<Idx>,
+        Idx: PartialOrd<Idx>,
     {
         !(self.start < self.end)
     }
@@ -228,8 +228,8 @@ impl<Idx: PartialOrd<Idx>> RangeFrom<Idx> {
     #[rustc_const_unstable(feature = "const_range", issue = "none")]
     pub const fn contains<U>(&self, item: &U) -> bool
     where
-        Idx: [const] PartialOrd<U>,
-        U: ?Sized + [const] PartialOrd<Idx>,
+        Idx: PartialOrd<U>,
+        U: ?Sized + PartialOrd<Idx>,
     {
         <Self as RangeBounds<Idx>>::contains(self, item)
     }
@@ -312,8 +312,8 @@ impl<Idx: PartialOrd<Idx>> RangeTo<Idx> {
     #[rustc_const_unstable(feature = "const_range", issue = "none")]
     pub const fn contains<U>(&self, item: &U) -> bool
     where
-        Idx: [const] PartialOrd<U>,
-        U: ?Sized + [const] PartialOrd<Idx>,
+        Idx: PartialOrd<U>,
+        U: ?Sized + PartialOrd<Idx>,
     {
         <Self as RangeBounds<Idx>>::contains(self, item)
     }
@@ -521,8 +521,8 @@ impl<Idx: PartialOrd<Idx>> RangeInclusive<Idx> {
     #[rustc_const_unstable(feature = "const_range", issue = "none")]
     pub const fn contains<U>(&self, item: &U) -> bool
     where
-        Idx: [const] PartialOrd<U>,
-        U: ?Sized + [const] PartialOrd<Idx>,
+        Idx: PartialOrd<U>,
+        U: ?Sized + PartialOrd<Idx>,
     {
         <Self as RangeBounds<Idx>>::contains(self, item)
     }
@@ -558,7 +558,7 @@ impl<Idx: PartialOrd<Idx>> RangeInclusive<Idx> {
     #[rustc_const_unstable(feature = "const_range", issue = "none")]
     pub const fn is_empty(&self) -> bool
     where
-        Idx: [const] PartialOrd,
+        Idx: PartialOrd,
     {
         self.exhausted || !(self.start <= self.end)
     }
@@ -641,8 +641,8 @@ impl<Idx: PartialOrd<Idx>> RangeToInclusive<Idx> {
     #[rustc_const_unstable(feature = "const_range", issue = "none")]
     pub const fn contains<U>(&self, item: &U) -> bool
     where
-        Idx: [const] PartialOrd<U>,
-        U: ?Sized + [const] PartialOrd<Idx>,
+        Idx: PartialOrd<U>,
+        U: ?Sized + PartialOrd<Idx>,
     {
         <Self as RangeBounds<Idx>>::contains(self, item)
     }
@@ -802,7 +802,7 @@ impl<T: Clone> Bound<&T> {
     #[rustc_const_unstable(feature = "const_range", issue = "none")]
     pub const fn cloned(self) -> Bound<T>
     where
-        T: [const] Clone,
+        T: Clone,
     {
         match self {
             Bound::Unbounded => Bound::Unbounded,
@@ -867,8 +867,8 @@ pub const trait RangeBounds<T: ?Sized> {
     #[stable(feature = "range_contains", since = "1.35.0")]
     fn contains<U>(&self, item: &U) -> bool
     where
-        T: [const] PartialOrd<U>,
-        U: ?Sized + [const] PartialOrd<T>,
+        T: PartialOrd<U>,
+        U: ?Sized + PartialOrd<T>,
     {
         (match self.start_bound() {
             Included(start) => start <= item,
@@ -935,7 +935,7 @@ pub const trait RangeBounds<T: ?Sized> {
     #[unstable(feature = "range_bounds_is_empty", issue = "137300")]
     fn is_empty(&self) -> bool
     where
-        T: [const] PartialOrd,
+        T: PartialOrd,
     {
         !match (self.start_bound(), self.end_bound()) {
             (Unbounded, _) | (_, Unbounded) => true,
@@ -954,7 +954,7 @@ pub const trait RangeBounds<T: ?Sized> {
 /// by range syntax like `..`, `a..`, `..b`, `..=c`, `d..e`, or `f..=g`.
 #[unstable(feature = "range_into_bounds", issue = "136903")]
 #[rustc_const_unstable(feature = "const_range", issue = "none")]
-pub const trait IntoBounds<T>: [const] RangeBounds<T> {
+pub const trait IntoBounds<T>: RangeBounds<T> {
     /// Convert this range into the start and end bounds.
     /// Returns `(start_bound, end_bound)`.
     ///
@@ -1000,8 +1000,8 @@ pub const trait IntoBounds<T>: [const] RangeBounds<T> {
     fn intersect<R>(self, other: R) -> (Bound<T>, Bound<T>)
     where
         Self: Sized,
-        T: [const] Ord + [const] Destruct,
-        R: Sized + [const] IntoBounds<T>,
+        T: Ord + Destruct,
+        R: Sized + IntoBounds<T>,
     {
         let (self_start, self_end) = IntoBounds::into_bounds(self);
         let (other_start, other_end) = IntoBounds::into_bounds(other);

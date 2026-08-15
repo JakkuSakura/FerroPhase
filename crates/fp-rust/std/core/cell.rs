@@ -334,7 +334,7 @@ impl<T: Copy> Clone for Cell<T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_const_unstable(feature = "const_default", issue = "143894")]
-const impl<T: [const] Default> Default for Cell<T> {
+const impl<T: Default> Default for Cell<T> {
     /// Creates a `Cell<T>`, with the `Default` value for T.
     #[inline]
     fn default() -> Cell<T> {
@@ -432,7 +432,7 @@ impl<T> Cell<T> {
     #[rustc_should_not_be_called_on_const_items]
     pub const fn set(&self, val: T)
     where
-        T: [const] Destruct,
+        T: Destruct,
     {
         self.replace(val);
     }
@@ -570,10 +570,10 @@ impl<T: Copy> Cell<T> {
     #[stable(feature = "cell_update", since = "1.88.0")]
     #[rustc_const_unstable(feature = "const_cell_traits", issue = "147787")]
     #[rustc_should_not_be_called_on_const_items]
-    pub const fn update(&self, f: impl [const] FnOnce(T) -> T)
+    pub const fn update(&self, f: impl FnOnce(T) -> T)
     where
         // FIXME(const-hack): `Copy` should imply `const Destruct`
-        T: [const] Destruct,
+        T: Destruct,
     {
         let old = self.get();
         self.set(f(old));
@@ -670,7 +670,7 @@ impl<T: Default> Cell<T> {
     #[rustc_const_unstable(feature = "const_cell_traits", issue = "147787")]
     pub const fn take(&self) -> T
     where
-        T: [const] Default,
+        T: Default,
     {
         self.replace(Default::default())
     }
@@ -1461,7 +1461,7 @@ impl<T: Clone> Clone for RefCell<T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_const_unstable(feature = "const_default", issue = "143894")]
-const impl<T: [const] Default> Default for RefCell<T> {
+const impl<T: Default> Default for RefCell<T> {
     /// Creates a `RefCell<T>`, with the `Default` value for T.
     #[inline]
     fn default() -> RefCell<T> {
@@ -2567,7 +2567,7 @@ impl<T: ?Sized> UnsafeCell<T> {
 
 #[stable(feature = "unsafe_cell_default", since = "1.10.0")]
 #[rustc_const_unstable(feature = "const_default", issue = "143894")]
-const impl<T: [const] Default> Default for UnsafeCell<T> {
+const impl<T: Default> Default for UnsafeCell<T> {
     /// Creates an `UnsafeCell`, with the `Default` value for T.
     fn default() -> UnsafeCell<T> {
         UnsafeCell::new(Default::default())
@@ -2674,7 +2674,7 @@ impl<T: ?Sized> SyncUnsafeCell<T> {
 
 #[unstable(feature = "sync_unsafe_cell", issue = "95439")]
 #[rustc_const_unstable(feature = "const_default", issue = "143894")]
-const impl<T: [const] Default> Default for SyncUnsafeCell<T> {
+const impl<T: Default> Default for SyncUnsafeCell<T> {
     /// Creates an `SyncUnsafeCell`, with the `Default` value for T.
     fn default() -> SyncUnsafeCell<T> {
         SyncUnsafeCell::new(Default::default())

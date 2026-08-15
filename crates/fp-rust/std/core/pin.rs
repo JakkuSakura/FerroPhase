@@ -1360,7 +1360,7 @@ impl<Ptr: Deref> Pin<Ptr> {
     #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
     pub const fn as_ref(&self) -> Pin<&Ptr::Target>
     where
-        Ptr: [const] Deref,
+        Ptr: Deref,
     {
         // SAFETY: see documentation on this function
         unsafe { Pin::new_unchecked(&*self.pointer) }
@@ -1408,7 +1408,7 @@ impl<Ptr: DerefMut> Pin<Ptr> {
     #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
     pub const fn as_mut(&mut self) -> Pin<&mut Ptr::Target>
     where
-        Ptr: [const] DerefMut,
+        Ptr: DerefMut,
     {
         // SAFETY: see documentation on this function
         unsafe { Pin::new_unchecked(&mut *self.pointer) }
@@ -1427,7 +1427,7 @@ impl<Ptr: DerefMut> Pin<Ptr> {
     #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
     pub const fn as_deref_mut(self: Pin<&mut Self>) -> Pin<&mut Ptr::Target>
     where
-        Ptr: [const] DerefMut,
+        Ptr: DerefMut,
     {
         // SAFETY: What we're asserting here is that going from
         //
@@ -1680,7 +1680,7 @@ impl<T: ?Sized> Pin<&'static mut T> {
 
 #[stable(feature = "pin", since = "1.33.0")]
 #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
-const impl<Ptr: [const] Deref> Deref for Pin<Ptr> {
+const impl<Ptr: Deref> Deref for Pin<Ptr> {
     type Target = Ptr::Target;
     fn deref(&self) -> &Ptr::Target {
         Pin::get_ref(Pin::as_ref(self))
@@ -1723,7 +1723,7 @@ mod helper {
 
     #[unstable(feature = "pin_derefmut_internals", issue = "none")]
     #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
-    const impl<Ptr: [const] super::DerefMut> PinDerefMutHelper for PinHelper<Ptr>
+    const impl<Ptr: super::DerefMut> PinDerefMutHelper for PinHelper<Ptr>
     where
         Ptr::Target: crate::marker::Unpin,
     {
@@ -1741,8 +1741,8 @@ mod helper {
 #[cfg(not(doc))]
 const impl<Ptr> DerefMut for Pin<Ptr>
 where
-    Ptr: [const] Deref,
-    helper::PinHelper<Ptr>: [const] helper::PinDerefMutHelper<Target = Self::Target>,
+    Ptr: Deref,
+    helper::PinHelper<Ptr>: helper::PinDerefMutHelper<Target = Self::Target>,
 {
     #[inline]
     fn deref_mut(&mut self) -> &mut Ptr::Target {
@@ -1767,7 +1767,7 @@ where
 #[cfg(doc)]
 const impl<Ptr> DerefMut for Pin<Ptr>
 where
-    Ptr: [const] DerefMut,
+    Ptr: DerefMut,
     <Ptr as Deref>::Target: Unpin,
 {
     fn deref_mut(&mut self) -> &mut Ptr::Target {

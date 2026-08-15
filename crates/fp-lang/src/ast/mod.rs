@@ -309,22 +309,37 @@ pub fn parse_file_tokens(
     crate::ast::items::parse_file_tokens(tokens, file)
 }
 
+/// True if `input` (already known to start with a `const`/`async`/`unsafe`
+/// modifier keyword) leads to `fn` once every modifier keyword in the run
+/// is skipped — real Rust allows these in any relative order (`const
+/// unsafe fn`, `unsafe fn`, ...), not just the single fixed pair this used
+/// to check (`first == X && second == Fn`), which missed e.g. `const
+/// unsafe fn` (`second` is `unsafe`, not `fn`).
+pub(super) fn skips_modifiers_to_fn(input: &[Token]) -> bool {
+    let mut rest = input;
+    loop {
+        match rest.first().map(|t| &t.kind) {
+            Some(TokenKind::Keyword(Keyword::Unsafe | Keyword::Async | Keyword::Const)) => {
+                rest = &rest[1..];
+            }
+            Some(TokenKind::Keyword(Keyword::Fn)) => return true,
+            _ => return false,
+        }
+    }
+}
+
 fn starts_const_fn(input: &[Token]) -> bool {
     matches!(
         input,
-        [first, second, ..]
-            if first.kind == TokenKind::Keyword(Keyword::Const)
-                && second.kind == TokenKind::Keyword(Keyword::Fn)
-    )
+        [first, ..] if first.kind == TokenKind::Keyword(Keyword::Const)
+    ) && skips_modifiers_to_fn(input)
 }
 
 fn starts_async_fn(input: &[Token]) -> bool {
     matches!(
         input,
-        [first, second, ..]
-            if first.kind == TokenKind::Keyword(Keyword::Async)
-                && second.kind == TokenKind::Keyword(Keyword::Fn)
-    )
+        [first, ..] if first.kind == TokenKind::Keyword(Keyword::Async)
+    ) && skips_modifiers_to_fn(input)
 }
 
 fn starts_const_struct(input: &[Token]) -> bool {

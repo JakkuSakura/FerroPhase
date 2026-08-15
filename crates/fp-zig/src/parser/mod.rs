@@ -152,6 +152,7 @@ fn parse_enum_decl(
         };
         let variant_name = Ident::new(name_node.utf8_text(source.as_bytes())?);
         variants.push(EnumTypeVariant {
+            attrs: Vec::new(),
             name: variant_name,
             value: Ty::unit(),
             discriminant: None,

@@ -31,7 +31,7 @@ unsafe_impl_trusted_step![NonZero<u8> NonZero<u16> NonZero<u32> NonZero<u64> Non
 )]
 #[unstable(feature = "step_trait", issue = "42168")]
 #[rustc_const_unstable(feature = "step_trait", issue = "42168")]
-pub const trait Step: [const] Clone + [const] PartialOrd + Sized {
+pub const trait Step: Clone + PartialOrd + Sized {
     /// Returns the bounds on the number of *successor* steps required to get from `start` to `end`
     /// like [`Iterator::size_hint()`][Iterator::size_hint()].
     ///

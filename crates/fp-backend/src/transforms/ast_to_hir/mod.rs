@@ -907,12 +907,21 @@ impl HirGenerator {
 
     fn load_default_prelude_defs(&mut self) {
         let prelude_prefix = "std::prelude::";
+        // Real std nests prelude re-exports one level deeper than this
+        // prefix — `std::prelude::v1::Some`/`std::prelude::rust_2021::Vec`,
+        // not `std::prelude::Some` directly (`std::prelude::mod.rs` is
+        // itself just `pub mod v1; pub mod rust_2015 { pub use v1::*; }`
+        // ...). Take the *last* path segment under the prefix as the
+        // prelude-visible bare name, rather than requiring an exact
+        // one-level match — otherwise every real prelude item (`Some`,
+        // `None`, `Vec`, `String`, ...) is silently dropped, and any code
+        // using them unqualified fails to resolve at all.
         let type_aliases: Vec<_> = self
             .global_type_defs
             .iter()
             .filter_map(|(key, entry)| {
                 key.strip_prefix(prelude_prefix)
-                    .filter(|name| !name.contains("::"))
+                    .and_then(|rest| rest.rsplit("::").next())
                     .map(|name| (name.to_owned(), entry.res.clone()))
             })
             .collect();
@@ -921,12 +930,44 @@ impl HirGenerator {
             .iter()
             .filter_map(|(key, entry)| {
                 key.strip_prefix(prelude_prefix)
-                    .filter(|name| !name.contains("::"))
+                    .and_then(|rest| rest.rsplit("::").next())
                     .map(|name| (name.to_owned(), entry.res.clone()))
             })
             .collect();
         self.prelude_type_defs = type_aliases.into_iter().collect();
         self.prelude_value_defs = value_aliases.into_iter().collect();
+
+        // `self.global_value_defs`/`global_type_defs` only ever hold *this*
+        // module's own (freshly `reset_file_context`-cleared) declarations
+        // — std's prelude re-exports live in a dependency package, compiled
+        // in its own, separate `HirGenerator` invocation entirely. Its
+        // exported symbol table (`hir_exports`, the third element
+        // `hir_definitions()` returns) is where those actually surface;
+        // scan it the same way, merging in rather than overwriting what's
+        // already collected above.
+        if let Some(ref workspace) = self.workspace {
+            for (_module_path, _hir_program, exports) in workspace.hir_definitions() {
+                for (key, res) in &exports {
+                    let Some(rest) = key.strip_prefix(prelude_prefix) else {
+                        continue;
+                    };
+                    let Some(name) = rest.rsplit("::").next() else {
+                        continue;
+                    };
+                    // A prelude export could be looked up in either
+                    // namespace (`Option` as a type, `Some`/`None` as
+                    // values) — record it in both; an entry that's never
+                    // consulted in the "wrong" namespace is simply unused,
+                    // not incorrect.
+                    self.prelude_value_defs
+                        .entry(name.to_owned())
+                        .or_insert_with(|| res.clone());
+                    self.prelude_type_defs
+                        .entry(name.to_owned())
+                        .or_insert_with(|| res.clone());
+                }
+            }
+        }
     }
     #[deprecated = "there should be only one, shared program. not to copy things around"]
     fn seed_workspace_definitions(&mut self, program: &mut hir::Program) {
@@ -1025,8 +1066,17 @@ impl HirGenerator {
                         self.unimplemented_type_def_ids.insert(def_id);
                     }
 
+                    let enum_op_class = fp_core::intrinsics::extract_op_attr(&def_enum.attrs, "class");
                     for variant in &def_enum.value.variants {
                         let variant_def_id = self.next_def_id();
+                        if let Some(tag) = fp_core::intrinsics::extract_op_attr(&variant.attrs, "variant") {
+                            let op = enum_op_class
+                                .as_deref()
+                                .and_then(|class| fp_core::intrinsics::OpKind::from_class_and_member(class, &tag));
+                            if let Some(op) = op {
+                                self.op_defs.insert(variant_def_id, op);
+                            }
+                        }
 
                         let variant_path = fp_core::ast::path::QualifiedPath::new(vec![
                             def_enum.name.name.clone(),
@@ -1289,16 +1339,53 @@ impl HirGenerator {
             // `lookup_global_res`'s identical fallback.
             .or_else(|| self.workspace.as_ref()?.find_export(&qualified))
             .or_else(|| self.workspace.as_ref()?.find_export(name))
+            // Bare name, defining package unknown (e.g. `Option` really
+            // lives at `core::option::Option` in real std) — fall back
+            // to a suffix scan across every package's exports.
+            .or_else(|| self.workspace.as_ref()?.find_export_by_name(name))
     }
 
     fn resolve_value_symbol(&self, name: &str) -> Option<hir::Res> {
-        let qualified = self.module_path.with_segment(name.to_string()).to_key();
         self.resolve_lexical_value_symbol(name)
-            .or_else(|| self.lookup_symbol(&qualified, &self.global_value_defs))
+            .or_else(|| self.resolve_global_value_symbol(name))
+    }
+
+    /// `self.op_defs` only ever holds THIS package's own tagged ops until
+    /// `seed_workspace_definitions` merges every workspace dependency's
+    /// `op_defs` into the final output `hir::Program` — which happens only
+    /// at the very end of `transform_package`, after all items/patterns
+    /// have already been lowered. A pattern-lowering decision that needs to
+    /// know whether a cross-package def (e.g. std's `Option::None`) is a
+    /// tagged op can't wait for that; it has to check the dependency's own
+    /// `hir_program.op_defs` directly.
+    fn op_kind_for_def(&self, def_id: hir::DefId) -> Option<fp_core::intrinsics::OpKind> {
+        if let Some(op) = self.op_defs.get(&def_id).copied() {
+            return Some(op);
+        }
+        let workspace = self.workspace.as_ref()?;
+        for (_module_path, hir_program, _exports) in workspace.hir_definitions() {
+            if let Some(op) = hir_program.op_defs.get(&def_id).copied() {
+                return Some(op);
+            }
+        }
+        None
+    }
+
+    /// Same tiers as `resolve_value_symbol`, minus the lexical-scope tier —
+    /// used to answer "does this bare identifier already name something at
+    /// module/prelude/workspace scope?" without that answer being masked by
+    /// a shadowing local. Used to disambiguate a bare-identifier *pattern*
+    /// (`None`, a unit variant) from an ordinary new-binding pattern of the
+    /// same syntax — the same ambiguity real Rust resolves via name
+    /// resolution, not parser syntax.
+    fn resolve_global_value_symbol(&self, name: &str) -> Option<hir::Res> {
+        let qualified = self.module_path.with_segment(name.to_string()).to_key();
+        self.lookup_symbol(&qualified, &self.global_value_defs)
             .or_else(|| self.prelude_value_defs.get(name).cloned())
             .or_else(|| self.lookup_symbol(name, &self.global_value_defs))
             .or_else(|| self.workspace.as_ref()?.find_export(&qualified))
             .or_else(|| self.workspace.as_ref()?.find_export(name))
+            .or_else(|| self.workspace.as_ref()?.find_export_by_name(name))
     }
 
     fn push_value_scope(&mut self) {
@@ -1577,7 +1664,7 @@ impl HirGenerator {
         program.def_map = self.program_def_map.clone();
         program.def_paths = self.def_paths.clone();
         program.placeholder_defs = self.placeholder_defs.clone();
-        program.op_defs = self.op_defs.clone();
+        program.op_defs.extend(self.op_defs.clone());
         Ok(program)
     }
 
@@ -1663,7 +1750,7 @@ impl HirGenerator {
         program.items.push(item);
         program.def_paths = self.def_paths.clone();
         program.placeholder_defs = self.placeholder_defs.clone();
-        program.op_defs = self.op_defs.clone();
+        program.op_defs.extend(self.op_defs.clone());
         Ok(program)
     }
 
@@ -1713,7 +1800,7 @@ impl HirGenerator {
         program.def_map = self.program_def_map.clone();
         program.def_paths = self.def_paths.clone();
         program.placeholder_defs = self.placeholder_defs.clone();
-        program.op_defs = self.op_defs.clone();
+        program.op_defs.extend(self.op_defs.clone());
 
         Ok(program)
     }

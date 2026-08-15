@@ -2451,7 +2451,14 @@ impl HirGenerator {
         // lazily against the workspace on a local-lookup miss, instead of
         // being eagerly copied into `global_value_defs`/`global_type_defs`
         // up front (see `seed_workspace_definitions`).
-        local.or_else(|| self.workspace.as_ref()?.find_export(&key))
+        local
+            .or_else(|| self.workspace.as_ref()?.find_export(&key))
+            // The caller's own module-path prefix never matches the
+            // defining package's real qualified key (e.g. this
+            // package's `Option::Some` vs. std's
+            // `core::option::Option::Some`) — fall back to a suffix
+            // match across every package's exports.
+            .or_else(|| self.workspace.as_ref()?.find_export_by_suffix(&key))
     }
 
     // make_path_segment moved to helpers.rs

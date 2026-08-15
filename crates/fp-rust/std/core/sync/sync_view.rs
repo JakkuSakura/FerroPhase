@@ -99,7 +99,7 @@ unsafe impl<T: ?Sized> Sync for SyncView<T> {}
 #[rustc_const_unstable(feature = "const_default", issue = "143894")]
 const impl<T> Default for SyncView<T>
 where
-    T: [const] Default,
+    T: Default,
 {
     #[inline]
     fn default() -> Self {
@@ -208,7 +208,7 @@ const impl<T> From<T> for SyncView<T> {
 #[rustc_const_unstable(feature = "const_trait_impl", issue = "143874")]
 const impl<F, Args> FnOnce<Args> for SyncView<F>
 where
-    F: [const] FnOnce<Args>,
+    F: FnOnce<Args>,
     Args: Tuple,
 {
     type Output = F::Output;
@@ -222,7 +222,7 @@ where
 #[rustc_const_unstable(feature = "const_trait_impl", issue = "143874")]
 const impl<F, Args> FnMut<Args> for SyncView<F>
 where
-    F: [const] FnMut<Args>,
+    F: FnMut<Args>,
     Args: Tuple,
 {
     extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
@@ -234,7 +234,7 @@ where
 #[rustc_const_unstable(feature = "const_trait_impl", issue = "143874")]
 const impl<F, Args> Fn<Args> for SyncView<F>
 where
-    F: Sync + [const] Fn<Args>,
+    F: Sync + Fn<Args>,
     Args: Tuple,
 {
     extern "rust-call" fn call(&self, args: Args) -> Self::Output {
@@ -341,7 +341,7 @@ where
 #[rustc_const_unstable(feature = "const_clone", issue = "142757")]
 const impl<T> Clone for SyncView<T>
 where
-    T: Sync + [const] Clone,
+    T: Sync + Clone,
 {
     #[inline]
     fn clone(&self) -> Self {
@@ -352,7 +352,7 @@ where
 #[doc(hidden)]
 #[unstable(feature = "trivial_clone", issue = "none")]
 #[rustc_const_unstable(feature = "const_clone", issue = "142757")]
-const unsafe impl<T> TrivialClone for SyncView<T> where T: Sync + [const] TrivialClone {}
+const unsafe impl<T> TrivialClone for SyncView<T> where T: Sync + TrivialClone {}
 
 #[unstable(feature = "exclusive_wrapper", issue = "98407")]
 impl<T> Copy for SyncView<T> where T: Sync + Copy {}
@@ -361,7 +361,7 @@ impl<T> Copy for SyncView<T> where T: Sync + Copy {}
 #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
 const impl<T, U> PartialEq<SyncView<U>> for SyncView<T>
 where
-    T: Sync + [const] PartialEq<U> + ?Sized,
+    T: Sync + PartialEq<U> + ?Sized,
     U: Sync + ?Sized,
 {
     #[inline]
@@ -375,7 +375,7 @@ impl<T> StructuralPartialEq for SyncView<T> where T: Sync + StructuralPartialEq 
 
 #[unstable(feature = "exclusive_wrapper", issue = "98407")]
 #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
-const impl<T> Eq for SyncView<T> where T: Sync + [const] Eq + ?Sized {}
+const impl<T> Eq for SyncView<T> where T: Sync + Eq + ?Sized {}
 
 #[unstable(feature = "exclusive_wrapper", issue = "98407")]
 impl<T> Hash for SyncView<T>
@@ -392,7 +392,7 @@ where
 #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
 const impl<T, U> PartialOrd<SyncView<U>> for SyncView<T>
 where
-    T: Sync + [const] PartialOrd<U> + ?Sized,
+    T: Sync + PartialOrd<U> + ?Sized,
     U: Sync + ?Sized,
 {
     #[inline]
@@ -405,7 +405,7 @@ where
 #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
 const impl<T> Ord for SyncView<T>
 where
-    T: Sync + [const] Ord + ?Sized,
+    T: Sync + Ord + ?Sized,
 {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {

@@ -595,14 +595,17 @@ use crate::{cmp, convert, hint, mem, slice};
 #[lang = "Option"]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[allow(clippy::derived_hash_with_manual_eq)] // PartialEq is manually implemented equivalently
+#[op(class = "Option")]
 pub enum Option<T> {
     /// No value.
     #[lang = "None"]
     #[stable(feature = "rust1", since = "1.0.0")]
+    #[op(variant = "none")]
     None,
     /// Some value of type `T`.
     #[lang = "Some"]
     #[stable(feature = "rust1", since = "1.0.0")]
+    #[op(variant = "some")]
     Some(#[stable(feature = "rust1", since = "1.0.0")] T),
 }
 
@@ -657,7 +660,7 @@ impl<T> Option<T> {
     #[inline]
     #[stable(feature = "is_some_and", since = "1.70.0")]
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
-    pub const fn is_some_and(self, f: impl [const] FnOnce(T) -> bool + [const] Destruct) -> bool {
+    pub const fn is_some_and(self, f: impl FnOnce(T) -> bool + Destruct) -> bool {
         match self {
             None => false,
             Some(x) => f(x),
@@ -706,7 +709,7 @@ impl<T> Option<T> {
     #[inline]
     #[stable(feature = "is_none_or", since = "1.82.0")]
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
-    pub const fn is_none_or(self, f: impl [const] FnOnce(T) -> bool + [const] Destruct) -> bool {
+    pub const fn is_none_or(self, f: impl FnOnce(T) -> bool + Destruct) -> bool {
         match self {
             None => true,
             Some(x) => f(x),
@@ -1038,7 +1041,7 @@ impl<T> Option<T> {
     #[op(method = "unwrap_or")]
     pub const fn unwrap_or(self, default: T) -> T
     where
-        T: [const] Destruct,
+        T: Destruct,
     {
         match self {
             Some(x) => x,
@@ -1061,7 +1064,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn unwrap_or_else<F>(self, f: F) -> T
     where
-        F: [const] FnOnce() -> T + [const] Destruct,
+        F: FnOnce() -> T + Destruct,
     {
         match self {
             Some(x) => x,
@@ -1093,7 +1096,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn unwrap_or_default(self) -> T
     where
-        T: [const] Default,
+        T: Default,
     {
         match self {
             Some(x) => x,
@@ -1160,7 +1163,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn map<U, F>(self, f: F) -> Option<U>
     where
-        F: [const] FnOnce(T) -> U + [const] Destruct,
+        F: FnOnce(T) -> U + Destruct,
     {
         match self {
             Some(x) => Some(f(x)),
@@ -1191,7 +1194,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn inspect<F>(self, f: F) -> Self
     where
-        F: [const] FnOnce(&T) + [const] Destruct,
+        F: FnOnce(&T) + Destruct,
     {
         if let Some(ref x) = self {
             f(x);
@@ -1225,8 +1228,8 @@ impl<T> Option<T> {
     #[op(method = "map_or")]
     pub const fn map_or<U, F>(self, default: U, f: F) -> U
     where
-        F: [const] FnOnce(T) -> U + [const] Destruct,
-        U: [const] Destruct,
+        F: FnOnce(T) -> U + Destruct,
+        U: Destruct,
     {
         match self {
             Some(t) => f(t),
@@ -1272,8 +1275,8 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn map_or_else<U, D, F>(self, default: D, f: F) -> U
     where
-        D: [const] FnOnce() -> U + [const] Destruct,
-        F: [const] FnOnce(T) -> U + [const] Destruct,
+        D: FnOnce() -> U + Destruct,
+        F: FnOnce(T) -> U + Destruct,
     {
         match self {
             Some(t) => f(t),
@@ -1301,8 +1304,8 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn map_or_default<U, F>(self, f: F) -> U
     where
-        U: [const] Default,
-        F: [const] FnOnce(T) -> U + [const] Destruct,
+        U: Default,
+        F: FnOnce(T) -> U + Destruct,
     {
         match self {
             Some(t) => f(t),
@@ -1334,7 +1337,7 @@ impl<T> Option<T> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
-    pub const fn ok_or<E: [const] Destruct>(self, err: E) -> Result<T, E> {
+    pub const fn ok_or<E: Destruct>(self, err: E) -> Result<T, E> {
         match self {
             Some(v) => Ok(v),
             None => Err(err),
@@ -1362,7 +1365,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn ok_or_else<E, F>(self, err: F) -> Result<T, E>
     where
-        F: [const] FnOnce() -> E + [const] Destruct,
+        F: FnOnce() -> E + Destruct,
     {
         match self {
             Some(v) => Ok(v),
@@ -1389,7 +1392,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
     pub const fn as_deref(&self) -> Option<&T::Target>
     where
-        T: [const] Deref,
+        T: Deref,
     {
         self.as_ref().map(Deref::deref)
     }
@@ -1413,7 +1416,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
     pub const fn as_deref_mut(&mut self) -> Option<&mut T::Target>
     where
-        T: [const] DerefMut,
+        T: DerefMut,
     {
         self.as_mut().map(DerefMut::deref_mut)
     }
@@ -1497,8 +1500,8 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn and<U>(self, optb: Option<U>) -> Option<U>
     where
-        T: [const] Destruct,
-        U: [const] Destruct,
+        T: Destruct,
+        U: Destruct,
     {
         match self {
             Some(_) => optb,
@@ -1542,7 +1545,7 @@ impl<T> Option<T> {
     #[op(method = "and_then")]
     pub const fn and_then<U, F>(self, f: F) -> Option<U>
     where
-        F: [const] FnOnce(T) -> Option<U> + [const] Destruct,
+        F: FnOnce(T) -> Option<U> + Destruct,
     {
         match self {
             Some(x) => f(x),
@@ -1579,8 +1582,8 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn filter<P>(self, predicate: P) -> Self
     where
-        P: [const] FnOnce(&T) -> bool + [const] Destruct,
-        T: [const] Destruct,
+        P: FnOnce(&T) -> bool + Destruct,
+        T: Destruct,
     {
         if let Some(x) = self {
             if predicate(&x) {
@@ -1622,7 +1625,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn or(self, optb: Option<T>) -> Option<T>
     where
-        T: [const] Destruct,
+        T: Destruct,
     {
         match self {
             x @ Some(_) => x,
@@ -1648,10 +1651,10 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn or_else<F>(self, f: F) -> Option<T>
     where
-        F: [const] FnOnce() -> Option<T> + [const] Destruct,
-        //FIXME(const_hack): this `T: [const] Destruct` is unnecessary, but even precise live drops can't tell
+        F: FnOnce() -> Option<T> + Destruct,
+        //FIXME(const_hack): this `T: Destruct` is unnecessary, but even precise live drops can't tell
         // no value of type `T` gets dropped here
-        T: [const] Destruct,
+        T: Destruct,
     {
         match self {
             x @ Some(_) => x,
@@ -1685,7 +1688,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn xor(self, optb: Option<T>) -> Option<T>
     where
-        T: [const] Destruct,
+        T: Destruct,
     {
         match (self, optb) {
             (a @ Some(_), None) => a,
@@ -1723,7 +1726,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn insert(&mut self, value: T) -> &mut T
     where
-        T: [const] Destruct,
+        T: Destruct,
     {
         *self = Some(value);
 
@@ -1756,7 +1759,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn get_or_insert(&mut self, value: T) -> &mut T
     where
-        T: [const] Destruct,
+        T: Destruct,
     {
         self.get_or_insert_with(const || value)
     }
@@ -1783,7 +1786,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn get_or_insert_default(&mut self) -> &mut T
     where
-        T: [const] Default,
+        T: Default,
     {
         self.get_or_insert_with(T::default)
     }
@@ -1810,7 +1813,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn get_or_insert_with<F>(&mut self, f: F) -> &mut T
     where
-        F: [const] FnOnce() -> T + [const] Destruct,
+        F: FnOnce() -> T + Destruct,
     {
         if let None = self {
             // The effect of the following statement is identical to
@@ -1819,7 +1822,7 @@ impl<T> Option<T> {
             // we just checked that the old value is `None`, which contains no fields to drop.
             // This implementation strategy
             //
-            // * avoids needing a `T: [const] Destruct` bound, to the benefit of `const` callers,
+            // * avoids needing a `T: Destruct` bound, to the benefit of `const` callers,
             // * and avoids possibly compiling needless drop code (as would sometimes happen in the
             //   previous implementation), to the benefit of non-`const` callers.
             //
@@ -1861,25 +1864,6 @@ impl<T> Option<T> {
     /// assert_eq!(o1, Some(12345));
     /// assert_eq!(o2, None);
     /// ```
-    #[inline]
-    #[unstable(feature = "option_get_or_try_insert_with", issue = "143648")]
-    pub fn get_or_try_insert_with<'a, R, F>(
-        &'a mut self,
-        f: F,
-    ) -> <R::Residual as Residual<&'a mut T>>::TryType
-    where
-        F: FnOnce() -> R,
-        R: Try<Output = T, Residual: Residual<&'a mut T>>,
-    {
-        if let None = self {
-            *self = Some(f()?);
-        }
-        // SAFETY: a `None` variant for `self` would have been replaced by a `Some`
-        // variant in the code above.
-
-        Try::from_output(unsafe { self.as_mut().unwrap_unchecked() })
-    }
-
     /////////////////////////////////////////////////////////////////////////
     // Misc
     /////////////////////////////////////////////////////////////////////////
@@ -1936,7 +1920,7 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn take_if<P>(&mut self, predicate: P) -> Option<T>
     where
-        P: [const] FnOnce(&mut T) -> bool + [const] Destruct,
+        P: FnOnce(&mut T) -> bool + Destruct,
     {
         if self.as_mut().map_or(false, predicate) { self.take() } else { None }
     }
@@ -1984,8 +1968,8 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn zip<U>(self, other: Option<U>) -> Option<(T, U)>
     where
-        T: [const] Destruct,
-        U: [const] Destruct,
+        T: Destruct,
+        U: Destruct,
     {
         match (self, other) {
             (Some(a), Some(b)) => Some((a, b)),
@@ -2025,9 +2009,9 @@ impl<T> Option<T> {
     #[rustc_const_unstable(feature = "const_option_ops", issue = "143956")]
     pub const fn zip_with<U, F, R>(self, other: Option<U>, f: F) -> Option<R>
     where
-        F: [const] FnOnce(T, U) -> R + [const] Destruct,
-        T: [const] Destruct,
-        U: [const] Destruct,
+        F: FnOnce(T, U) -> R + Destruct,
+        T: Destruct,
+        U: Destruct,
     {
         match (self, other) {
             (Some(a), Some(b)) => Some(f(a, b)),
@@ -2275,9 +2259,9 @@ const fn expect_failed(msg: &str) -> ! {
 #[op(class = "Option")]
 const impl<T> Clone for Option<T>
 where
-    // FIXME(const_hack): the T: [const] Destruct should be inferred from the Self: [const] Destruct in clone_from.
+    // FIXME(const_hack): the T: Destruct should be inferred from the Self: Destruct in clone_from.
     // See https://github.com/rust-lang/rust/issues/144207
-    T: [const] Clone + [const] Destruct,
+    T: Clone + Destruct,
 {
     #[inline]
     #[op(method = "clone")]
@@ -2303,7 +2287,7 @@ impl<T> crate::clone::UseCloned for Option<T> where T: crate::clone::UseCloned {
 #[doc(hidden)]
 #[unstable(feature = "trivial_clone", issue = "none")]
 #[rustc_const_unstable(feature = "const_clone", issue = "142757")]
-const unsafe impl<T> TrivialClone for Option<T> where T: [const] TrivialClone + [const] Destruct {}
+const unsafe impl<T> TrivialClone for Option<T> where T: TrivialClone + Destruct {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_const_unstable(feature = "const_default", issue = "143894")]
@@ -2442,7 +2426,7 @@ const impl<'a, T> From<&'a mut Option<T>> for Option<&'a mut T> {
 impl<T> crate::marker::StructuralPartialEq for Option<T> {}
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
-const impl<T: [const] PartialEq> PartialEq for Option<T> {
+const impl<T: PartialEq> PartialEq for Option<T> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         // Spelling out the cases explicitly optimizes better than
@@ -2461,7 +2445,7 @@ const impl<T: [const] PartialEq> PartialEq for Option<T> {
 // not optimal.
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
-const impl<T: [const] PartialOrd> PartialOrd for Option<T> {
+const impl<T: PartialOrd> PartialOrd for Option<T> {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         match (self, other) {
@@ -2475,7 +2459,7 @@ const impl<T: [const] PartialOrd> PartialOrd for Option<T> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
-const impl<T: [const] Ord> Ord for Option<T> {
+const impl<T: Ord> Ord for Option<T> {
     #[inline]
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         match (self, other) {
@@ -2864,54 +2848,6 @@ impl<A, V: FromIterator<A>> FromIterator<Option<A>> for Option<V> {
     }
 }
 
-#[unstable(feature = "try_trait_v2", issue = "84277", old_name = "try_trait")]
-#[rustc_const_unstable(feature = "const_try", issue = "74935")]
-const impl<T> ops::Try for Option<T> {
-    type Output = T;
-    type Residual = Option<convert::Infallible>;
-
-    #[inline]
-    fn from_output(output: Self::Output) -> Self {
-        Some(output)
-    }
-
-    #[inline]
-    fn branch(self) -> ControlFlow<Self::Residual, Self::Output> {
-        match self {
-            Some(v) => ControlFlow::Continue(v),
-            None => ControlFlow::Break(None),
-        }
-    }
-}
-
-#[unstable(feature = "try_trait_v2", issue = "84277", old_name = "try_trait")]
-#[rustc_const_unstable(feature = "const_try", issue = "74935")]
-// Note: manually specifying the residual type instead of using the default to work around
-// https://github.com/rust-lang/rust/issues/99940
-const impl<T> ops::FromResidual<Option<convert::Infallible>> for Option<T> {
-    #[inline]
-    fn from_residual(residual: Option<convert::Infallible>) -> Self {
-        match residual {
-            None => None,
-        }
-    }
-}
-
-#[diagnostic::do_not_recommend]
-#[unstable(feature = "try_trait_v2_yeet", issue = "96374")]
-#[rustc_const_unstable(feature = "const_try", issue = "74935")]
-const impl<T> ops::FromResidual<ops::Yeet<()>> for Option<T> {
-    #[inline]
-    fn from_residual(ops::Yeet(()): ops::Yeet<()>) -> Self {
-        None
-    }
-}
-
-#[unstable(feature = "try_trait_v2_residual", issue = "91285")]
-#[rustc_const_unstable(feature = "const_try", issue = "74935")]
-const impl<T> ops::Residual<T> for Option<convert::Infallible> {
-    type TryType = Option<T>;
-}
 
 impl<T> Option<Option<T>> {
     /// Converts from `Option<Option<T>>` to `Option<T>`.

@@ -86,7 +86,7 @@ where
     #[inline]
     pub const fn dismiss(guard: Self) -> T
     where
-        F: [const] Destruct,
+        F: Destruct,
     {
         // First we ensure that dropping the guard will not trigger
         // its destructor
@@ -135,7 +135,7 @@ where
 #[rustc_const_unstable(feature = "const_drop_guard", issue = "none")]
 const impl<T, F> Drop for DropGuard<T, F>
 where
-    F: [const] FnOnce(T),
+    F: FnOnce(T),
 {
     fn drop(&mut self) {
         // SAFETY: `DropGuard` is in the process of being dropped.

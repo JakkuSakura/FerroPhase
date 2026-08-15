@@ -256,7 +256,7 @@ impl<T: ?Sized> ManuallyDrop<T> {
     #[rustc_const_unstable(feature = "const_drop_in_place", issue = "109342")]
     pub const unsafe fn drop(slot: &mut ManuallyDrop<T>)
     where
-        T: [const] Destruct,
+        T: Destruct,
     {
         // SAFETY: we are dropping the value pointed to by a mutable reference
         // which is guaranteed to be valid for writes.

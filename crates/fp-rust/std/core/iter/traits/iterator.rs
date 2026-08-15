@@ -223,8 +223,8 @@ pub const trait Iterator {
     #[stable(feature = "rust1", since = "1.0.0")]
     fn count(self) -> usize
     where
-        Self: Sized + [const] Destruct,
-        Self::Item: [const] Destruct,
+        Self: Sized + Destruct,
+        Self::Item: Destruct,
     {
         self.fold(
             0,
@@ -256,14 +256,14 @@ pub const trait Iterator {
     #[stable(feature = "rust1", since = "1.0.0")]
     fn last(self) -> Option<Self::Item>
     where
-        Self: Sized + [const] Destruct,
-        Self::Item: [const] Destruct,
+        Self: Sized + Destruct,
+        Self::Item: Destruct,
     {
         #[inline]
         #[rustc_const_unstable(feature = "const_destruct", issue = "133214")]
         const fn some<T>(_: Option<T>, x: T) -> Option<T>
         where
-            T: [const] Destruct,
+            T: Destruct,
         {
             Some(x)
         }
@@ -510,7 +510,7 @@ pub const trait Iterator {
     fn chain<U>(self, other: U) -> Chain<Self, U::IntoIter>
     where
         Self: Sized,
-        U: [const] IntoIterator<Item = Self::Item>,
+        U: IntoIterator<Item = Self::Item>,
     {
         Chain::new(self, other.into_iter())
     }
@@ -2486,8 +2486,8 @@ pub const trait Iterator {
     fn try_fold<B, F, R>(&mut self, init: B, mut f: F) -> R
     where
         Self: Sized,
-        F: [const] FnMut(B, Self::Item) -> R + [const] Destruct,
-        R: [const] Try<Output = B>,
+        F: FnMut(B, Self::Item) -> R + Destruct,
+        R: Try<Output = B>,
     {
         let mut accum = init;
         while let Some(x) = self.next() {
@@ -2663,8 +2663,8 @@ pub const trait Iterator {
     #[stable(feature = "rust1", since = "1.0.0")]
     fn fold<B, F>(mut self, init: B, mut f: F) -> B
     where
-        Self: Sized + [const] Destruct,
-        F: [const] FnMut(B, Self::Item) -> B + [const] Destruct,
+        Self: Sized + Destruct,
+        F: FnMut(B, Self::Item) -> B + Destruct,
     {
         let mut accum = init;
         while let Some(x) = self.next() {
@@ -2700,8 +2700,8 @@ pub const trait Iterator {
     #[stable(feature = "iterator_fold_self", since = "1.51.0")]
     fn reduce<F>(mut self, f: F) -> Option<Self::Item>
     where
-        Self: Sized + [const] Destruct,
-        F: [const] FnMut(Self::Item, Self::Item) -> Self::Item + [const] Destruct,
+        Self: Sized + Destruct,
+        F: FnMut(Self::Item, Self::Item) -> Self::Item + Destruct,
     {
         let first = self.next()?;
         Some(self.fold(first, f))
@@ -2771,11 +2771,11 @@ pub const trait Iterator {
     #[unstable(feature = "iterator_try_reduce", issue = "87053")]
     fn try_reduce<R>(
         &mut self,
-        f: impl [const] FnMut(Self::Item, Self::Item) -> R + [const] Destruct,
+        f: impl FnMut(Self::Item, Self::Item) -> R + Destruct,
     ) -> ChangeOutputType<R, Option<R::Output>>
     where
         Self: Sized,
-        R: [const] Try<Output = Self::Item, Residual: [const] Residual<Option<Self::Item>>>,
+        R: Try<Output = Self::Item, Residual: Residual<Option<Self::Item>>>,
     {
         let first = match self.next() {
             Some(i) => i,
@@ -3589,7 +3589,7 @@ pub const trait Iterator {
     #[inline]
     fn cycle(self) -> Cycle<Self>
     where
-        Self: Sized + [const] Clone,
+        Self: Sized + Clone,
     {
         Cycle::new(self)
     }
@@ -3669,7 +3669,7 @@ pub const trait Iterator {
     fn sum<S>(self) -> S
     where
         Self: Sized,
-        S: [const] Sum<Self::Item>,
+        S: Sum<Self::Item>,
     {
         Sum::sum(self)
     }
@@ -3701,7 +3701,7 @@ pub const trait Iterator {
     fn product<P>(self) -> P
     where
         Self: Sized,
-        P: [const] Product<Self::Item>,
+        P: Product<Self::Item>,
     {
         Product::product(self)
     }

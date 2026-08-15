@@ -132,8 +132,8 @@ impl<Idx: PartialOrd<Idx>> Range<Idx> {
     #[rustc_const_unstable(feature = "const_range", issue = "none")]
     pub const fn contains<U>(&self, item: &U) -> bool
     where
-        Idx: [const] PartialOrd<U>,
-        U: ?Sized + [const] PartialOrd<Idx>,
+        Idx: PartialOrd<U>,
+        U: ?Sized + PartialOrd<Idx>,
     {
         <Self as RangeBounds<Idx>>::contains(self, item)
     }
@@ -164,7 +164,7 @@ impl<Idx: PartialOrd<Idx>> Range<Idx> {
     #[rustc_const_unstable(feature = "const_range", issue = "none")]
     pub const fn is_empty(&self) -> bool
     where
-        Idx: [const] PartialOrd,
+        Idx: PartialOrd,
     {
         !(self.start < self.end)
     }
@@ -290,8 +290,8 @@ impl<Idx: PartialOrd<Idx>> RangeInclusive<Idx> {
     #[rustc_const_unstable(feature = "const_range", issue = "none")]
     pub const fn contains<U>(&self, item: &U) -> bool
     where
-        Idx: [const] PartialOrd<U>,
-        U: ?Sized + [const] PartialOrd<Idx>,
+        Idx: PartialOrd<U>,
+        U: ?Sized + PartialOrd<Idx>,
     {
         <Self as RangeBounds<Idx>>::contains(self, item)
     }
@@ -322,7 +322,7 @@ impl<Idx: PartialOrd<Idx>> RangeInclusive<Idx> {
     #[rustc_const_unstable(feature = "const_range", issue = "none")]
     pub const fn is_empty(&self) -> bool
     where
-        Idx: [const] PartialOrd,
+        Idx: PartialOrd,
     {
         !(self.start <= self.last)
     }
@@ -534,8 +534,8 @@ impl<Idx: PartialOrd<Idx>> RangeFrom<Idx> {
     #[rustc_const_unstable(feature = "const_range", issue = "none")]
     pub const fn contains<U>(&self, item: &U) -> bool
     where
-        Idx: [const] PartialOrd<U>,
-        U: ?Sized + [const] PartialOrd<Idx>,
+        Idx: PartialOrd<U>,
+        U: ?Sized + PartialOrd<Idx>,
     {
         <Self as RangeBounds<Idx>>::contains(self, item)
     }
@@ -685,8 +685,8 @@ impl<Idx: PartialOrd<Idx>> RangeToInclusive<Idx> {
     #[rustc_const_unstable(feature = "const_range", issue = "none")]
     pub const fn contains<U>(&self, item: &U) -> bool
     where
-        Idx: [const] PartialOrd<U>,
-        U: ?Sized + [const] PartialOrd<Idx>,
+        Idx: PartialOrd<U>,
+        U: ?Sized + PartialOrd<Idx>,
     {
         <Self as RangeBounds<Idx>>::contains(self, item)
     }

@@ -194,7 +194,7 @@ const unsafe impl<T> TrivialClone for NonZero<T> where T: ZeroablePrimitive {}
 #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
 const impl<T> PartialEq for NonZero<T>
 where
-    T: ZeroablePrimitive + [const] PartialEq,
+    T: ZeroablePrimitive + PartialEq,
 {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -212,13 +212,13 @@ impl<T> StructuralPartialEq for NonZero<T> where T: ZeroablePrimitive + Structur
 
 #[stable(feature = "nonzero", since = "1.28.0")]
 #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
-const impl<T> Eq for NonZero<T> where T: ZeroablePrimitive + [const] Eq {}
+const impl<T> Eq for NonZero<T> where T: ZeroablePrimitive + Eq {}
 
 #[stable(feature = "nonzero", since = "1.28.0")]
 #[rustc_const_unstable(feature = "const_cmp", issue = "143800")]
 const impl<T> PartialOrd for NonZero<T>
 where
-    T: ZeroablePrimitive + [const] PartialOrd,
+    T: ZeroablePrimitive + PartialOrd,
 {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -252,7 +252,7 @@ const impl<T> Ord for NonZero<T>
 where
     // FIXME(const_hack): the T: ~const Destruct should be inferred from the Self: ~const Destruct.
     // See https://github.com/rust-lang/rust/issues/144207
-    T: ZeroablePrimitive + [const] Ord + [const] Destruct,
+    T: ZeroablePrimitive + Ord + Destruct,
 {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
@@ -309,7 +309,7 @@ where
 #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
 const impl<T> BitOr for NonZero<T>
 where
-    T: ZeroablePrimitive + [const] BitOr<Output = T>,
+    T: ZeroablePrimitive + BitOr<Output = T>,
 {
     type Output = Self;
 
@@ -324,7 +324,7 @@ where
 #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
 const impl<T> BitOr<T> for NonZero<T>
 where
-    T: ZeroablePrimitive + [const] BitOr<Output = T>,
+    T: ZeroablePrimitive + BitOr<Output = T>,
 {
     type Output = Self;
 
@@ -339,7 +339,7 @@ where
 #[rustc_const_unstable(feature = "const_ops", issue = "143802")]
 const impl<T> BitOr<NonZero<T>> for T
 where
-    T: ZeroablePrimitive + [const] BitOr<Output = T>,
+    T: ZeroablePrimitive + BitOr<Output = T>,
 {
     type Output = NonZero<T>;
 
@@ -355,7 +355,7 @@ where
 const impl<T> BitOrAssign for NonZero<T>
 where
     T: ZeroablePrimitive,
-    Self: [const] BitOr<Output = Self>,
+    Self: BitOr<Output = Self>,
 {
     #[inline]
     fn bitor_assign(&mut self, rhs: Self) {
@@ -368,7 +368,7 @@ where
 const impl<T> BitOrAssign<T> for NonZero<T>
 where
     T: ZeroablePrimitive,
-    Self: [const] BitOr<T, Output = Self>,
+    Self: BitOr<T, Output = Self>,
 {
     #[inline]
     fn bitor_assign(&mut self, rhs: T) {

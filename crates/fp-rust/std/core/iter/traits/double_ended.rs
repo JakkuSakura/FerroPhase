@@ -41,7 +41,7 @@ use crate::ops::{ControlFlow, Try};
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_diagnostic_item = "DoubleEndedIterator"]
 #[rustc_const_unstable(feature = "const_iter", issue = "92476")]
-pub const trait DoubleEndedIterator: [const] Iterator {
+pub const trait DoubleEndedIterator: Iterator {
     /// Removes and returns an element from the end of the iterator.
     ///
     /// Returns `None` when there are no more elements.
@@ -282,8 +282,8 @@ pub const trait DoubleEndedIterator: [const] Iterator {
     fn try_rfold<B, F, R>(&mut self, init: B, mut f: F) -> R
     where
         Self: Sized,
-        F: [const] FnMut(B, Self::Item) -> R + [const] Destruct,
-        R: [const] Try<Output = B>,
+        F: FnMut(B, Self::Item) -> R + Destruct,
+        R: Try<Output = B>,
     {
         let mut accum = init;
         while let Some(x) = self.next_back() {
@@ -352,8 +352,8 @@ pub const trait DoubleEndedIterator: [const] Iterator {
     #[stable(feature = "iter_rfold", since = "1.27.0")]
     fn rfold<B, F>(mut self, init: B, mut f: F) -> B
     where
-        Self: Sized + [const] Destruct,
-        F: [const] FnMut(B, Self::Item) -> B + [const] Destruct,
+        Self: Sized + Destruct,
+        F: FnMut(B, Self::Item) -> B + Destruct,
     {
         let mut accum = init;
         while let Some(x) = self.next_back() {

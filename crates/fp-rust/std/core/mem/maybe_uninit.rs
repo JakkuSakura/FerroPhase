@@ -825,7 +825,7 @@ impl<T> MaybeUninit<T> {
     #[rustc_const_unstable(feature = "const_drop_in_place", issue = "109342")]
     pub const unsafe fn assume_init_drop(&mut self)
     where
-        T: [const] Destruct,
+        T: Destruct,
     {
         // SAFETY: the caller must guarantee that `self` is initialized and
         // satisfies all invariants of `T`.
@@ -1486,7 +1486,7 @@ impl<T> [MaybeUninit<T>] {
     #[rustc_const_unstable(feature = "const_drop_in_place", issue = "109342")]
     pub const unsafe fn assume_init_drop(&mut self)
     where
-        T: [const] Destruct,
+        T: Destruct,
     {
         if !self.is_empty() {
             // SAFETY: the caller must guarantee that every element of `self`

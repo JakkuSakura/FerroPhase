@@ -379,7 +379,7 @@ pub const unsafe trait Allocator {
 #[rustc_const_unstable(feature = "const_heap", issue = "79597")]
 const unsafe impl<A> Allocator for &A
 where
-    A: [const] Allocator + ?Sized,
+    A: Allocator + ?Sized,
 {
     #[inline]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {

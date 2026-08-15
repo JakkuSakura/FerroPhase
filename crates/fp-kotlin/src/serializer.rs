@@ -1689,14 +1689,14 @@ fn emit_stmt_expr(expr: &Expr, e: &mut KotlinEmitter, is_tail: bool) -> Result<(
             let cond = render_expr(&wh.cond, e)?;
             e.writer.write_line(&format!("while ({}) {{", cond));
             e.writer.increase_indent();
-            emit_box_body(&wh.body, e)?;
+            emit_box_body(&wh.body, e, false)?;
             e.writer.decrease_indent();
             e.writer.write_line("}");
         }
         ExprKind::Loop(lp) => {
             e.writer.write_line("while (true) {");
             e.writer.increase_indent();
-            emit_box_body(&lp.body, e)?;
+            emit_box_body(&lp.body, e, false)?;
             e.writer.decrease_indent();
             e.writer.write_line("}");
         }
@@ -1720,7 +1720,7 @@ fn emit_stmt_expr(expr: &Expr, e: &mut KotlinEmitter, is_tail: bool) -> Result<(
             };
             e.writer.write_line(&format!("for ({} in {}) {{", var, iter_expr));
             e.writer.increase_indent();
-            emit_box_body(&fr.body, e)?;
+            emit_box_body(&fr.body, e, false)?;
             e.writer.decrease_indent();
             e.writer.write_line("}");
         }
@@ -1745,21 +1745,24 @@ fn emit_if_stmt(if_expr: &fp_core::ast::ExprIf, e: &mut KotlinEmitter, is_tail: 
     let cond = render_expr(&if_expr.cond, e)?;
     e.writer.write_line(&format!("if ({}) {{", cond));
     e.writer.increase_indent();
-    emit_box_body(&if_expr.then, e)?;
+    emit_box_body(&if_expr.then, e, is_tail)?;
     e.writer.decrease_indent();
     if let Some(elze) = &if_expr.elze {
         e.writer.write_line("} else {");
         e.writer.increase_indent();
-        emit_box_body(elze, e)?;
+        emit_box_body(elze, e, is_tail)?;
         e.writer.decrease_indent();
     }
     e.writer.write_line("}");
     Ok(())
 }
 
-fn emit_box_body(body: &BExpr, e: &mut KotlinEmitter) -> Result<()> {
+fn emit_box_body(body: &BExpr, e: &mut KotlinEmitter, is_tail: bool) -> Result<()> {
     if let ExprKind::Block(block) = body.kind() {
-        for s in &block.stmts { emit_stmt(s, e, false)?; }
+        let last_index = block.stmts.len().checked_sub(1);
+        for (i, s) in block.stmts.iter().enumerate() {
+            emit_stmt(s, e, is_tail && Some(i) == last_index)?;
+        }
     } else if let ExprKind::If(if_expr) = body.kind() {
         // An "else if" continuation: `elze` is a bare `ExprKind::If`, not a
         // `Block` wrapping one. Recursing through the statement-oriented
@@ -1770,10 +1773,14 @@ fn emit_box_body(body: &BExpr, e: &mut KotlinEmitter) -> Result<()> {
         // `render_expr_single`, which silently drops every `BlockStmt`
         // that isn't a bare `Expr` and joins the survivors with a plain
         // space, no `else`/statement separator at all.
-        emit_if_stmt(if_expr, e, false)?;
+        emit_if_stmt(if_expr, e, is_tail)?;
     } else {
         let val = render_expr(body, e)?;
-        e.writer.write_line(&val);
+        if is_tail {
+            e.writer.write_line(&format!("return {}", val));
+        } else {
+            e.writer.write_line(&val);
+        }
     }
     Ok(())
 }
@@ -2604,10 +2611,16 @@ fn render_expr(expr: &Expr, e: &mut KotlinEmitter) -> Result<String> {
                     let receiver = args.first().cloned().unwrap_or_default();
                     Ok(format!("{}.let {{ it }}", receiver))
                 }
-                CallKind::Op(OpKind::OptionUnwrap) => {
-                    let receiver = args.first().cloned().unwrap_or_default();
-                    Ok(format!("{}!!", receiver))
-                }
+                // `OptionUnwrap`/`OptionSome`/`OptionNone`/`VecNew`/`AsRef`/
+                // `Iter`/`ToOwned`/`AsStr`/`Clone` never reach here:
+                // `KotlinMaterializer::materialize_call` (run over the
+                // lifted AST before serialization, see `compile_project`'s
+                // phase 2 in `fp-cli`) already rewrites those into their
+                // real Kotlin-shaped `Expr` upstream. The arms below stay
+                // here rather than in the materializer because they render
+                // straight to a Kotlin-specific string form
+                // (`?:`/`.toList()`/a string-template literal) that has no
+                // generic `ast::Expr` equivalent to return instead.
                 CallKind::Op(op @ (OpKind::Format | OpKind::Print | OpKind::Println)) => {
                     // Resolve each placeholder against its real argument and emit a
                     // genuine Kotlin string template, instead of a fake "arg" literal
@@ -2922,6 +2935,15 @@ fn is_else_arm(pat: &Option<fp_core::ast::BPattern>) -> bool {
                 (simple == "Err" || simple == "None")
                     && ts.patterns.iter().all(|inner| matches!(&inner.kind, PatternKind::Wildcard(_)))
             }
+            // `None` with no parens (a unit variant, not a tuple-struct
+            // shape) parses as a bare `Variant` pattern instead.
+            PatternKind::Variant(v) if v.pattern.is_none() => match v.name.kind() {
+                ExprKind::Name(name) => {
+                    let raw = name.to_string();
+                    raw.rsplit("::").next().unwrap_or(&raw) == "None"
+                }
+                _ => false,
+            },
             _ => false,
         },
     }

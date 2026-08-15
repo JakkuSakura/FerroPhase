@@ -442,6 +442,7 @@ pub struct Vec<T, #[unstable(feature = "allocator_api", issue = "32838")] A: All
 // Inherent methods
 ////////////////////////////////////////////////////////////////////////////////
 
+#[op(class = "Vec")]
 impl<T> Vec<T> {
     /// Constructs a new, empty `Vec<T>`.
     ///
@@ -458,6 +459,7 @@ impl<T> Vec<T> {
     #[rustc_diagnostic_item = "vec_new"]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[must_use]
+    #[op(method = "new")]
     pub const fn new() -> Self {
         Vec { buf: RawVec::new(), len: 0 }
     }
@@ -913,7 +915,7 @@ impl<T> Vec<T> {
 #[cfg(not(no_global_oom_handling))]
 #[rustc_const_unstable(feature = "const_heap", issue = "79597")]
 #[rustfmt::skip] // FIXME(fee1-dead): temporary measure before rustfmt is bumped
-const impl<T, A: [const] Allocator + [const] Destruct> Vec<T, A> {
+const impl<T, A: Allocator + Destruct> Vec<T, A> {
     /// Constructs a new, empty `Vec<T, A>` with at least the specified capacity
     /// with the provided allocator.
     ///
@@ -3871,7 +3873,7 @@ impl<T: Hash, A: Allocator> Hash for Vec<T, A> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_const_unstable(feature = "const_index", issue = "143775")]
-const impl<T, I: [const] SliceIndex<[T]>, A: Allocator> Index<I> for Vec<T, A> {
+const impl<T, I: SliceIndex<[T]>, A: Allocator> Index<I> for Vec<T, A> {
     type Output = I::Output;
 
     #[inline]
@@ -3882,7 +3884,7 @@ const impl<T, I: [const] SliceIndex<[T]>, A: Allocator> Index<I> for Vec<T, A> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_const_unstable(feature = "const_index", issue = "143775")]
-const impl<T, I: [const] SliceIndex<[T]>, A: Allocator> IndexMut<I> for Vec<T, A> {
+const impl<T, I: SliceIndex<[T]>, A: Allocator> IndexMut<I> for Vec<T, A> {
     #[inline]
     fn index_mut(&mut self, index: I) -> &mut Self::Output {
         IndexMut::index_mut(&mut **self, index)
@@ -4292,7 +4294,7 @@ impl<T: Ord, A: Allocator> Ord for Vec<T, A> {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_const_unstable(feature = "const_heap", issue = "79597")]
-const unsafe impl<#[may_dangle] T: [const] Destruct, A: [const] Allocator + [const] Destruct> Drop
+const unsafe impl<#[may_dangle] T: Destruct, A: Allocator + Destruct> Drop
     for Vec<T, A>
 {
     fn drop(&mut self) {
@@ -4514,7 +4516,7 @@ impl From<&str> for Vec<u8> {
 
 #[stable(feature = "array_try_from_vec", since = "1.48.0")]
 #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
-const impl<T: [const] Destruct, A: [const] Allocator + [const] Destruct, const N: usize>
+const impl<T: Destruct, A: Allocator + Destruct, const N: usize>
     TryFrom<Vec<T, A>> for [T; N]
 {
     type Error = Vec<T, A>;

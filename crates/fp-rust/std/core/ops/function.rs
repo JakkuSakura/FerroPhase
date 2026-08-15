@@ -73,7 +73,7 @@ use crate::marker::Tuple;
 #[fundamental] // so that regex can rely that `&str: !FnMut`
 #[must_use = "closures are lazy and do nothing unless called"]
 #[rustc_const_unstable(feature = "const_trait_impl", issue = "143874")]
-pub const trait Fn<Args: Tuple>: [const] FnMut<Args> {
+pub const trait Fn<Args: Tuple>: FnMut<Args> {
     /// Performs the call operation.
     #[unstable(feature = "fn_traits", issue = "29625")]
     extern "rust-call" fn call(&self, args: Args) -> Self::Output;
@@ -257,7 +257,7 @@ mod impls {
     #[rustc_const_unstable(feature = "const_trait_impl", issue = "143874")]
     const impl<A: Tuple, F: ?Sized> Fn<A> for &F
     where
-        F: [const] Fn<A>,
+        F: Fn<A>,
     {
         extern "rust-call" fn call(&self, args: A) -> F::Output {
             (**self).call(args)
@@ -268,7 +268,7 @@ mod impls {
     #[rustc_const_unstable(feature = "const_trait_impl", issue = "143874")]
     const impl<A: Tuple, F: ?Sized> FnMut<A> for &F
     where
-        F: [const] Fn<A>,
+        F: Fn<A>,
     {
         extern "rust-call" fn call_mut(&mut self, args: A) -> F::Output {
             (**self).call(args)
@@ -279,7 +279,7 @@ mod impls {
     #[rustc_const_unstable(feature = "const_trait_impl", issue = "143874")]
     const impl<A: Tuple, F: ?Sized> FnOnce<A> for &F
     where
-        F: [const] Fn<A>,
+        F: Fn<A>,
     {
         type Output = F::Output;
 
@@ -292,7 +292,7 @@ mod impls {
     #[rustc_const_unstable(feature = "const_trait_impl", issue = "143874")]
     const impl<A: Tuple, F: ?Sized> FnMut<A> for &mut F
     where
-        F: [const] FnMut<A>,
+        F: FnMut<A>,
     {
         extern "rust-call" fn call_mut(&mut self, args: A) -> F::Output {
             (*self).call_mut(args)
@@ -303,7 +303,7 @@ mod impls {
     #[rustc_const_unstable(feature = "const_trait_impl", issue = "143874")]
     const impl<A: Tuple, F: ?Sized> FnOnce<A> for &mut F
     where
-        F: [const] FnMut<A>,
+        F: FnMut<A>,
     {
         type Output = F::Output;
         extern "rust-call" fn call_once(self, args: A) -> F::Output {

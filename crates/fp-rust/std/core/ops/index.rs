@@ -167,7 +167,7 @@ see chapter in The Book <https://doc.rust-lang.org/book/ch08-02-strings.html#ind
 #[doc(alias = "]")]
 #[doc(alias = "[]")]
 #[rustc_const_unstable(feature = "const_index", issue = "143775")]
-pub const trait IndexMut<Idx: ?Sized>: [const] Index<Idx> {
+pub const trait IndexMut<Idx: ?Sized>: Index<Idx> {
     /// Performs the mutable indexing (`container[index]`) operation.
     ///
     /// # Panics

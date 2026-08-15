@@ -69,11 +69,13 @@ fn serialize_enum_with_impl_and_struct_variant_construction() {
             repr: ReprOptions::default(),
             variants: vec![
                 EnumTypeVariant {
+                    attrs: Vec::new(),
                     name: Ident::new("Point"),
                     value: Ty::unit(),
                     discriminant: None,
                 },
                 EnumTypeVariant {
+                    attrs: Vec::new(),
                     name: Ident::new("Rectangle"),
                     value: Ty::Structural(TypeStructural {
                         fields: vec![

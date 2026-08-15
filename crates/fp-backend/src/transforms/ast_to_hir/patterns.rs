@@ -8,6 +8,32 @@ impl HirGenerator {
         use fp_core::ast::PatternKind;
         match pat.kind() {
             PatternKind::Ident(ident) => {
+                // A bare identifier pattern is syntactically ambiguous
+                // between a new binding and a reference to an existing
+                // nullary variant/const (`None`) — the parser always
+                // produces `Ident` for this shape (see
+                // `parse_general_pattern`, fp-lang), so disambiguate here
+                // by identity: only treat it as a variant reference when
+                // the name already resolves, at module/prelude/workspace
+                // scope (never lexical — a pattern always introduces a
+                // fresh binding unless it names something truly global),
+                // to a portable-op-tagged def (`#[op(variant = "...")]`,
+                // e.g. `OptionNone`).
+                if let Some(hir::Res::Def(def_id)) = self.resolve_global_value_symbol(ident.ident.as_str()) {
+                    if self.op_kind_for_def(def_id).is_some() {
+                        let hir_pat = hir::Pat {
+                            hir_id: self.next_id(),
+                            kind: hir::PatKind::Variant(hir::Path {
+                                segments: vec![hir::PathSegment {
+                                    name: hir::Symbol::new(ident.ident.as_str().to_string()),
+                                    args: None,
+                                }],
+                                res: Some(hir::Res::Def(def_id)),
+                            }),
+                        };
+                        return Ok((hir_pat, None, false));
+                    }
+                }
                 let mutable = ident.mutability.unwrap_or(false);
                 let hir_pat = hir::Pat {
                     hir_id: self.next_id(),

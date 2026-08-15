@@ -613,7 +613,7 @@ const impl From<SocketAddrV6> for SocketAddr {
 
 #[stable(feature = "addr_from_into_ip", since = "1.17.0")]
 #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
-const impl<I: [const] Into<IpAddr>> From<(I, u16)> for SocketAddr {
+const impl<I: Into<IpAddr>> From<(I, u16)> for SocketAddr {
     /// Converts a tuple struct (Into<[`IpAddr`]>, `u16`) into a [`SocketAddr`].
     ///
     /// This conversion creates a [`SocketAddr::V4`] for an [`IpAddr::V4`]

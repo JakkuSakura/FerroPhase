@@ -517,6 +517,8 @@ common_struct! {
 
 common_struct! {
     pub struct EnumTypeVariant {
+        #[serde(default)]
+        pub attrs: Vec<Attribute>,
         pub name: Ident,
         pub value: Ty,
         #[serde(default, skip_serializing_if = "Option::is_none")]

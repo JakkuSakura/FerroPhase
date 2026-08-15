@@ -190,7 +190,7 @@ impl<B, C> ControlFlow<B, C> {
     #[rustc_const_unstable(feature = "const_control_flow", issue = "148739")]
     pub const fn break_value(self) -> Option<B>
     where
-        Self: [const] Destruct,
+        Self: Destruct,
     {
         match self {
             ControlFlow::Continue(..) => None,
@@ -279,7 +279,7 @@ impl<B, C> ControlFlow<B, C> {
     #[rustc_const_unstable(feature = "const_control_flow", issue = "148739")]
     pub const fn map_break<T, F>(self, f: F) -> ControlFlow<T, C>
     where
-        F: [const] FnOnce(B) -> T + [const] Destruct,
+        F: FnOnce(B) -> T + Destruct,
     {
         match self {
             ControlFlow::Continue(x) => ControlFlow::Continue(x),
@@ -303,7 +303,7 @@ impl<B, C> ControlFlow<B, C> {
     #[rustc_const_unstable(feature = "const_control_flow", issue = "148739")]
     pub const fn continue_value(self) -> Option<C>
     where
-        Self: [const] Destruct,
+        Self: Destruct,
     {
         match self {
             ControlFlow::Continue(x) => Some(x),
@@ -391,7 +391,7 @@ impl<B, C> ControlFlow<B, C> {
     #[rustc_const_unstable(feature = "const_control_flow", issue = "148739")]
     pub const fn map_continue<T, F>(self, f: F) -> ControlFlow<B, T>
     where
-        F: [const] FnOnce(C) -> T + [const] Destruct,
+        F: FnOnce(C) -> T + Destruct,
     {
         match self {
             ControlFlow::Continue(x) => ControlFlow::Continue(f(x)),
@@ -430,7 +430,7 @@ impl<R: ops::Try> ControlFlow<R, R::Output> {
     #[rustc_const_unstable(feature = "const_control_flow", issue = "148739")]
     pub(crate) const fn from_try(r: R) -> Self
     where
-        R: [const] ops::Try,
+        R: ops::Try,
     {
         match R::branch(r) {
             ControlFlow::Continue(v) => ControlFlow::Continue(v),
@@ -443,7 +443,7 @@ impl<R: ops::Try> ControlFlow<R, R::Output> {
     #[rustc_const_unstable(feature = "const_control_flow", issue = "148739")]
     pub(crate) const fn into_try(self) -> R
     where
-        R: [const] ops::Try,
+        R: ops::Try,
     {
         match self {
             ControlFlow::Continue(v) => R::from_output(v),

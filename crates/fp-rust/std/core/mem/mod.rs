@@ -884,7 +884,7 @@ pub const fn swap<T>(x: &mut T, y: &mut T) {
 #[inline]
 #[stable(feature = "mem_take", since = "1.40.0")]
 #[rustc_const_unstable(feature = "const_default", issue = "143894")]
-pub const fn take<T: [const] Default>(dest: &mut T) -> T {
+pub const fn take<T: Default>(dest: &mut T) -> T {
     replace(dest, T::default())
 }
 
@@ -1037,7 +1037,7 @@ pub const fn replace<T>(dest: &mut T, src: T) -> T {
 #[rustc_diagnostic_item = "mem_drop"]
 pub const fn drop<T>(_x: T)
 where
-    T: [const] Destruct,
+    T: Destruct,
 {
 }
 

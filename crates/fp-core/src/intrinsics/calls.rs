@@ -135,6 +135,33 @@ impl OpKind {
             _ => None,
         }
     }
+
+    /// Resolves a short, unqualified `#[op(method = "...")]`/
+    /// `#[op(variant = "...")]` tag using its enclosing declaration's own
+    /// `#[op(class = "...")]` name for context — so the std source can
+    /// write natural, short tags (`#[op(method = "new")]` inside
+    /// `#[op(class = "Vec")]`, `#[op(variant = "some")]` inside
+    /// `#[op(class = "Option")]`) instead of inventing a globally-unique
+    /// flat string per op (`"vec_new"`, `"option_some"`) that duplicates
+    /// information the enclosing `impl`/`enum` already states. Checked
+    /// before falling back to `from_op_tag` (which stays for the ops that
+    /// are unambiguous without any class context — `clone`/`as_ref`/... —
+    /// and for the flat, no-enclosing-declaration free functions).
+    pub fn from_class_and_member(class: &str, member: &str) -> Option<Self> {
+        match (class, member) {
+            ("Vec", "new") => Some(Self::VecNew),
+            ("Option", "some") => Some(Self::OptionSome),
+            ("Option", "none") => Some(Self::OptionNone),
+            ("Option", "unwrap") => Some(Self::OptionUnwrap),
+            ("Option", "as_ref") => Some(Self::AsRef),
+            ("Option", "unwrap_or") => Some(Self::UnwrapOr),
+            ("Option", "map_or") => Some(Self::MapOr),
+            ("Option", "iter") => Some(Self::Iter),
+            ("Option", "and_then") => Some(Self::AndThen),
+            ("Option", "clone") => Some(Self::Clone),
+            _ => None,
+        }
+    }
 }
 
 /// Known type descriptors that serializers map to target-ecosystem equivalents.

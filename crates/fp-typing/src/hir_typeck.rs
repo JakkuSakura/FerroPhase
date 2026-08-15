@@ -285,10 +285,15 @@ impl HirTypeChecker {
             let Some(context) = self.shared.typing_context.clone() else {
                 continue;
             };
+            // See the matching comment in `check_expr`'s `ConstBlock` arm:
+            // snapshot-and-drop the `Ref` guard before the request, not
+            // inline in its field list, or it stays borrowed across the
+            // `.await` below.
+            let typeck_results_snapshot = self.shared.results.borrow().clone();
             let value = context
                 .request_comptime(crate::ComptimeRequest {
                     program: self.shared.program.as_ref().clone(),
-                    typeck_results: self.shared.results.borrow().clone(),
+                    typeck_results: typeck_results_snapshot,
                     block: hir::Block {
                         hir_id,
                         stmts: Vec::new(),
@@ -928,10 +933,19 @@ impl HirTypeChecker {
                     self.expected_expr_types.pop();
                     let body_ty = body_result?;
                     if let Some(context) = self.shared.typing_context.clone() {
+                        // Snapshot and drop the `Ref` guard *before*
+                        // constructing the request, not inline inside its
+                        // field list — a temporary borrow created there
+                        // would otherwise stay alive until the end of this
+                        // whole statement (Rust's temporary-lifetime rule),
+                        // i.e. across the `.await` below, and panic when
+                        // another task polled during that suspension tries
+                        // its own `borrow_mut()` on the same `RefCell`.
+                        let typeck_results_snapshot = self.shared.results.borrow().clone();
                         let value = context
                             .request_comptime(crate::ComptimeRequest {
                                 program: self.shared.program.as_ref().clone(),
-                                typeck_results: self.shared.results.borrow().clone(),
+                                typeck_results: typeck_results_snapshot,
                                 block: hir::Block {
                                     hir_id: expr.hir_id,
                                     stmts: Vec::new(),

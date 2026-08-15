@@ -859,12 +859,14 @@ async fn compile_emit_target(
         compiler::parse_language_target_file(input, args.source_language.as_deref())?
     } else {
         let (provider, package_id, tag) = provider_and_package_for_input(input, &language)?;
+        let materializer =
+            crate::languages::materializer::materializer_for_language(
+                &crate::languages::backend::output_extension_for(target),
+            );
         let wrapped: std::sync::Arc<dyn fp_core::package::provider::PackageProvider> =
             std::sync::Arc::new(TranspileMaterializingPackageProvider::new(
                 provider,
-                crate::languages::materializer::materializer_for_language(
-                    &crate::languages::backend::output_extension_for(target),
-                ),
+                materializer.clone(),
                 crate::languages::normalizer::normalizer_for_language(&language, !args.skip_typing)
                     .ok_or_else(|| {
                         CliError::Compilation(format!("no normalizer for source language: {language}"))
@@ -880,12 +882,20 @@ async fn compile_emit_target(
             };
             compiler::typecheck_package(wrapped, &package_id, lossy, &language)?
         };
+        // Materialize portable ops post-typechecked-lifting too (see the
+        // matching comment in `compile_project`'s phase 2) — the wrapping
+        // above only materializes pre-HIR source; `HirToAstLifter`'s
+        // `program.op_defs`-based classification happens after that.
         let items: Vec<Item> = source
             .items
             .into_iter()
             .filter(|pkg_item| pkg_item.path == tag)
-            .map(|pkg_item| pkg_item.item)
-            .collect();
+            .map(|pkg_item| match &materializer {
+                Some(mat) => crate::materialize::materialize_item(pkg_item.item, mat.as_ref())
+                    .map_err(|e| CliError::Compilation(e.to_string())),
+                None => Ok(pkg_item.item),
+            })
+            .collect::<Result<Vec<Item>>>()?;
         File {
             path: input.to_path_buf(),
             attrs: vec![],
@@ -1055,7 +1065,7 @@ async fn compile_project(
     let materializing_provider: std::sync::Arc<dyn fp_core::package::provider::PackageProvider> =
         std::sync::Arc::new(TranspileMaterializingPackageProvider::new(
             provider.clone(),
-            materializer,
+            materializer.clone(),
             normalizer,
         ));
 
@@ -1169,6 +1179,25 @@ async fn compile_project(
     let diagnostics_snapshot = fp_core::diagnostics::diagnostic_manager().snapshot();
     for (package_id, source) in &prepared {
         let name = package_id.as_str();
+
+        // Materialize portable ops (`IntrinsicCall(CallKind::Op(_))`) into
+        // this target's real shape (`Some(x)` -> `x`, `Vec::new()` -> an
+        // empty list literal, ...) *after* typechecked lifting produced
+        // them — the pre-typecheck `TranspileMaterializingPackageProvider`
+        // wrapping above only ever sees raw, pre-HIR source, so it never
+        // observes ops that `HirToAstLifter` classifies post-typecheck
+        // (`program.op_defs`, resolved by real `DefId`, not by name). The
+        // lifter's own job stops at producing the bare op node; turning it
+        // into this target's real code is this materializer's job.
+        let mut source = source.clone();
+        if let Some(mat) = &materializer {
+            for pkg_item in &mut source.items {
+                pkg_item.item =
+                    crate::materialize::materialize_item(pkg_item.item.clone(), mat.as_ref())
+                        .map_err(|e| CliError::Compilation(e.to_string()))?;
+            }
+        }
+        let source = &source;
 
         // Serialize package via language-specific serializer
         let files = if let crate::languages::backend::LanguageTarget::Kotlin = target {

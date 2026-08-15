@@ -15,7 +15,7 @@ use fp_core::ast::{
 use fp_core::error::Result;
 use fp_core::hir;
 use fp_core::hir::DefId;
-use fp_core::intrinsics::{CallKind, OpKind};
+use fp_core::intrinsics::CallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 use fp_typing::TypeckResults;
@@ -211,6 +211,7 @@ impl<'a> HirToAstLifter<'a> {
                         .iter()
                         .map(|variant| -> Result<ast::EnumTypeVariant> {
                             Ok(ast::EnumTypeVariant {
+                                attrs: Vec::new(),
                                 name: Ident::new(variant.name.as_str()),
                                 value: variant
                                     .payload
@@ -367,7 +368,10 @@ impl<'a> HirToAstLifter<'a> {
                     Value::Bytes(ast::ValueBytes::from(bytes.as_slice()))
                 }
             }),
-            hir::ExprKind::Path(path) => Expr::name(Name::path(self.lift_path(path))),
+            hir::ExprKind::Path(path) => match self.try_lift_path_as_intrinsic(path)? {
+                Some(intrinsic) => intrinsic,
+                None => Expr::name(Name::path(self.lift_path(path))),
+            },
             hir::ExprKind::Query(_) => {
                 return Err(fp_core::error::Error::from(
                     "HIR query expressions cannot be lifted back into AST expressions".to_string(),
@@ -458,20 +462,25 @@ impl<'a> HirToAstLifter<'a> {
                 expr: Box::new(self.lift_expr(value)?),
                 ty: self.lift_type(ty)?,
             })),
-            hir::ExprKind::Struct(path, fields) => Expr::new(ast::ExprKind::Struct(ExprStruct {
-                span: expr.span,
-                name: Box::new(Expr::path(self.lift_path(path))),
-                fields: fields
-                    .iter()
-                    .map(|field| {
-                        ast::ExprField::new(
-                            Ident::new(field.name.as_str()),
-                            self.lift_expr(&field.expr).unwrap_or_else(|_| Expr::unit()),
-                        )
-                    })
-                    .collect(),
-                update: None,
-            })),
+            hir::ExprKind::Struct(path, fields) => {
+                match self.try_lift_struct_as_intrinsic(path, fields)? {
+                    Some(intrinsic) => intrinsic,
+                    None => Expr::new(ast::ExprKind::Struct(ExprStruct {
+                        span: expr.span,
+                        name: Box::new(Expr::path(self.lift_path(path))),
+                        fields: fields
+                            .iter()
+                            .map(|field| {
+                                ast::ExprField::new(
+                                    Ident::new(field.name.as_str()),
+                                    self.lift_expr(&field.expr).unwrap_or_else(|_| Expr::unit()),
+                                )
+                            })
+                            .collect(),
+                        update: None,
+                    })),
+                }
+            }
             hir::ExprKind::If(cond, then_branch, else_branch) => Expr::new(ast::ExprKind::If(ExprIf {
                 span: expr.span,
                 cond: Box::new(self.lift_expr(cond)?),
@@ -814,12 +823,73 @@ impl<'a> HirToAstLifter<'a> {
         args.iter().map(|arg| self.lift_expr(&arg.value)).collect()
     }
 
+    /// Reclassifies an enum tuple-variant construction (`hir::ExprKind::
+    /// Struct`, not `Call` — this compiler represents `Some(x)`/`None` as
+    /// an aggregate construction from the start, never as a plain function
+    /// call to the variant's constructor) as an `ast::ExprIntrinsicCall`
+    /// when the variant's own resolved `DefId` was tagged
+    /// `#[op(variant = "...")]`. Same uniform, no-per-op-special-casing
+    /// shape as `try_lift_call_as_intrinsic` — a tuple variant's fields are
+    /// synthetically named by position (`"0"`, `"1"`, ...), so sorting by
+    /// that name recovers the original positional argument order.
+    fn try_lift_struct_as_intrinsic(
+        &self,
+        path: &hir::Path,
+        fields: &[hir::StructExprField],
+    ) -> Result<Option<Expr>> {
+        let Some(hir::Res::Def(def_id)) = &path.res else {
+            return Ok(None);
+        };
+        let Some(op) = self.program.op_defs.get(def_id).copied() else {
+            return Ok(None);
+        };
+        let mut ordered_fields: Vec<&hir::StructExprField> = fields.iter().collect();
+        ordered_fields.sort_by_key(|field| field.name.as_str().parse::<usize>().unwrap_or(usize::MAX));
+        let args = ordered_fields
+            .into_iter()
+            .map(|field| self.lift_expr(&field.expr))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Some(Expr::new(ast::ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+            CallKind::Op(op),
+            args,
+            Vec::new(),
+        )))))
+    }
+
+    /// Reclassifies a bare path reference (e.g. `Option::None`, used as a
+    /// value with no call/struct syntax at all — a unit variant) as an
+    /// `ast::ExprIntrinsicCall` with no arguments, when the path's own
+    /// resolved `DefId` was tagged `#[op(variant = "...")]`. Same
+    /// identity-based dispatch as `try_lift_struct_as_intrinsic`, just for
+    /// the zero-field case that never goes through `hir::ExprKind::Struct`.
+    fn try_lift_path_as_intrinsic(&self, path: &hir::Path) -> Result<Option<Expr>> {
+        let Some(hir::Res::Def(def_id)) = &path.res else {
+            return Ok(None);
+        };
+        let Some(op) = self.program.op_defs.get(def_id).copied() else {
+            return Ok(None);
+        };
+        Ok(Some(Expr::new(ast::ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+            CallKind::Op(op),
+            Vec::new(),
+            Vec::new(),
+        )))))
+    }
+
     /// Reclassifies a plain function-style `Call` as an `ast::
     /// ExprIntrinsicCall` when the callee's own resolved `DefId` was tagged
-    /// `#[op(func = "...")]` in its source declaration (`program.op_defs`,
-    /// populated once during `ast_to_hir` lowering). No path/name matching:
-    /// the callee is already resolved to a specific declaration by the
-    /// compiler, so its identity alone decides this — never its syntax.
+    /// `#[op(func = "...")]`/`#[op(variant = "...")]`/`#[op(method = "...")]`
+    /// in its source declaration (`program.op_defs`, populated once during
+    /// `ast_to_hir` lowering). No path/name matching: the callee is already
+    /// resolved to a specific declaration by the compiler, so its identity
+    /// alone decides this — never its syntax.
+    ///
+    /// Deliberately produces the *bare* `IntrinsicCall(CallKind::Op(op))`
+    /// node uniformly, for every op, with no per-op special-casing: turning
+    /// an op into real target-language shape (`Some(x)` -> `x`, `Vec::new()`
+    /// -> an empty list literal, ...) is a target-specific *materializer*'s
+    /// job (e.g. `KotlinMaterializer::materialize_call`), not this lifter's
+    /// — the lifter's only job is bringing typed HIR back to AST.
     fn try_lift_call_as_intrinsic(
         &self,
         callee: &hir::Expr,
@@ -834,21 +904,11 @@ impl<'a> HirToAstLifter<'a> {
         let Some(op) = self.program.op_defs.get(def_id).copied() else {
             return Ok(None);
         };
-        match op {
-            OpKind::OptionSome | OpKind::OptionUnwrap | OpKind::Clone => {
-                Ok(Some(match args.first() {
-                    Some(arg) => self.lift_expr(&arg.value)?,
-                    None => Expr::new(ast::ExprKind::Value(Box::new(Value::Null(Default::default())))),
-                }))
-            }
-            OpKind::OptionNone => Ok(Some(Expr::new(ast::ExprKind::Value(Box::new(Value::Null(
-                Default::default(),
-            )))))),
-            OpKind::VecNew => Ok(Some(Expr::new(ast::ExprKind::IntrinsicContainer(
-                ast::ExprIntrinsicContainer::VecElements { elements: vec![] },
-            )))),
-            _ => Ok(None),
-        }
+        Ok(Some(Expr::new(ast::ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+            CallKind::Op(op),
+            self.lift_positional_args(args)?,
+            self.lift_keyword_args(args)?,
+        )))))
     }
 
     /// Reclassifies a method-call-syntax `MethodCall` as an `ast::
@@ -859,6 +919,11 @@ impl<'a> HirToAstLifter<'a> {
     /// composition needed: the typechecker already resolved this method
     /// call to one specific, globally-unique `DefId`, so a same-named user
     /// method (a different `DefId`) is never misclassified.
+    ///
+    /// Same uniform shape as `try_lift_call_as_intrinsic` — the receiver
+    /// becomes the op's first positional arg, and every op-specific
+    /// rewrite (drop-the-method, fold-into-elvis, ...) belongs to a
+    /// target's materializer, not here.
     fn try_lift_method_call_as_intrinsic(
         &self,
         call_hir_id: hir::HirId,
@@ -874,24 +939,14 @@ impl<'a> HirToAstLifter<'a> {
         let Some(op) = self.program.op_defs.get(def_id).copied() else {
             return Ok(None);
         };
-        match op {
-            OpKind::AsRef | OpKind::Iter | OpKind::ToOwned | OpKind::AsStr => {
-                Ok(Some(self.lift_expr(receiver)?))
-            }
-            OpKind::Clone => Ok(Some(self.lift_expr(receiver)?)),
-            OpKind::MapOr | OpKind::Collect | OpKind::Find | OpKind::UnwrapOr | OpKind::ToString
-            | OpKind::AndThen => {
-                let mut call_args = Vec::with_capacity(1 + args.len());
-                call_args.push(self.lift_expr(receiver)?);
-                call_args.extend(self.lift_positional_args(args)?);
-                Ok(Some(Expr::new(ast::ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                    CallKind::Op(op),
-                    call_args,
-                    self.lift_keyword_args(args)?,
-                )))))
-            }
-            _ => Ok(None),
-        }
+        let mut call_args = Vec::with_capacity(1 + args.len());
+        call_args.push(self.lift_expr(receiver)?);
+        call_args.extend(self.lift_positional_args(args)?);
+        Ok(Some(Expr::new(ast::ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+            CallKind::Op(op),
+            call_args,
+            self.lift_keyword_args(args)?,
+        )))))
     }
 
     fn lift_keyword_args(&self, args: &[hir::CallArg]) -> Result<Vec<ExprKwArg>> {

@@ -7,10 +7,9 @@ use fp_compiler::{
     CompilerDriver, CompilerExecutor, CompilerSession, ConstValueId, FullyQualifiedPath, LirId,
     PipelineMode,
 };
-use fp_core::intrinsics::{IntrinsicMaterializer, IntrinsicNormalizer};
 use fp_core::ast::path::QualifiedPath;
-use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
-use fp_core::package::{PackageDescriptor, PackageId, PackageSource};
+use fp_core::package::provider::PackageProvider;
+use fp_core::package::{PackageId, PackageSource};
 use fp_core::{
     ast::{
         Expr, ExprBlock, File, Ident, Item, ItemDefConst, ItemDefFunction, ItemKind, ScriptBlock,

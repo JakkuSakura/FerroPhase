@@ -1054,7 +1054,7 @@ impl<T: PointeeSized> NonNull<T> {
     #[rustc_const_unstable(feature = "const_drop_in_place", issue = "109342")]
     pub const unsafe fn drop_in_place(mut self)
     where
-        T: [const] Destruct,
+        T: Destruct,
     {
         // SAFETY: the caller must uphold the safety contract for `drop_in_place`.
         unsafe { ptr::drop_glue(self.as_mut()) }
@@ -1596,7 +1596,7 @@ impl<T> NonNull<[T]> {
     #[inline]
     pub const unsafe fn get_unchecked_mut<I>(self, index: I) -> NonNull<I::Output>
     where
-        I: [const] SliceIndex<[T]>,
+        I: SliceIndex<[T]>,
     {
         // SAFETY: the caller ensures that `self` is dereferenceable and `index` in-bounds.
         // As a consequence, the resulting pointer cannot be null.

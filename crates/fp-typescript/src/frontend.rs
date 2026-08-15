@@ -856,6 +856,7 @@ fn lower_enum_decl(enum_decl: &TsEnumDecl, visibility: Visibility) -> Vec<Item> 
             .and_then(|expr| infer_expr_type(expr.as_ref()))
             .unwrap_or_else(Ty::unit);
         variants.push(EnumTypeVariant {
+            attrs: Vec::new(),
             name: Ident::new(variant_name),
             value,
             discriminant: None,

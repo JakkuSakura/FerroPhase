@@ -281,6 +281,28 @@ impl HirGenerator {
                             .filter(|path| path.ends_with(&suffix))
                             .cloned()
                             .collect();
+                        // `global_type_defs_by_def_id` only ever holds
+                        // *this* module's own predeclared types —
+                        // `type_def_id` resolved above can just as easily
+                        // name a workspace dependency's type (`Option`,
+                        // `Vec`, ...), whose own `HirGenerator` instance
+                        // (and its local maps) no longer exists. Its real
+                        // path survives in that dependency's own lowered
+                        // `hir::Program::def_paths` instead — fall back to
+                        // scanning those when the local map has nothing.
+                        if type_paths.is_empty() {
+                            if let Some(ref workspace) = self.workspace {
+                                for (_module_path, hir_program, _exports) in
+                                    workspace.hir_definitions()
+                                {
+                                    if let Some(def_path) =
+                                        hir_program.def_paths.get(&type_def_id)
+                                    {
+                                        type_paths.push(def_path.join("::"));
+                                    }
+                                }
+                            }
+                        }
                         type_paths.sort();
                         for type_path in type_paths {
                             let mut associated_path = parse_path(&type_path)

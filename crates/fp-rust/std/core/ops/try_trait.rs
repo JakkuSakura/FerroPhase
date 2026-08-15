@@ -130,7 +130,7 @@ use crate::ops::ControlFlow;
 #[doc(alias = "?")]
 #[lang = "Try"]
 #[rustc_const_unstable(feature = "const_try", issue = "74935")]
-pub const trait Try: [const] FromResidual {
+pub const trait Try: FromResidual {
     /// The type of the value produced by `?` when *not* short-circuiting.
     #[unstable(feature = "try_trait_v2", issue = "84277", old_name = "try_trait")]
     type Output;
@@ -365,7 +365,7 @@ pub const trait Residual<O>: Sized {
     /// The "return" type of this meta-function.
     #[unstable(feature = "try_trait_v2_residual", issue = "91285")]
     // FIXME: ought to be implied
-    type TryType: [const] Try<Output = O, Residual = Self>;
+    type TryType: Try<Output = O, Residual = Self>;
 }
 
 /// Used in `try {}` blocks so the type produced in the `?` desugaring
@@ -378,7 +378,7 @@ pub const trait Residual<O>: Sized {
 #[expect(unreachable_pub)]
 #[inline] // FIXME: force would be nice, but fails -- see #148915
 #[lang = "into_try_type"]
-pub const fn residual_into_try_type<R: [const] Residual<O>, O>(
+pub const fn residual_into_try_type<R: Residual<O>, O>(
     r: R,
 ) -> <R as Residual<O>>::TryType {
     FromResidual::from_residual(r)
@@ -408,9 +408,9 @@ impl<T> NeverShortCircuit<T> {
     #[rustc_const_unstable(feature = "const_array", issue = "147606")]
     pub(crate) const fn wrap_mut_1<A, F>(
         mut f: F,
-    ) -> impl [const] FnMut(A) -> Self + [const] Destruct
+    ) -> impl FnMut(A) -> Self + Destruct
     where
-        F: [const] FnMut(A) -> T + [const] Destruct,
+        F: FnMut(A) -> T + Destruct,
     {
         const move |a| NeverShortCircuit(f(a))
     }
@@ -419,9 +419,9 @@ impl<T> NeverShortCircuit<T> {
     #[rustc_const_unstable(feature = "const_array", issue = "147606")]
     pub(crate) const fn wrap_mut_2<A, B, F>(
         mut f: F,
-    ) -> impl [const] FnMut(A, B) -> Self + [const] Destruct
+    ) -> impl FnMut(A, B) -> Self + Destruct
     where
-        F: [const] FnMut(A, B) -> T + [const] Destruct,
+        F: FnMut(A, B) -> T + Destruct,
     {
         const move |a, b| NeverShortCircuit(f(a, b))
     }
@@ -452,7 +452,7 @@ const impl<T> FromResidual for NeverShortCircuit<T> {
     }
 }
 #[rustc_const_unstable(feature = "const_never_short_circuit", issue = "none")]
-const impl<T: [const] Destruct> Residual<T> for NeverShortCircuitResidual {
+const impl<T: Destruct> Residual<T> for NeverShortCircuitResidual {
     type TryType = NeverShortCircuit<T>;
 }
 

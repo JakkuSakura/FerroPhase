@@ -64,7 +64,7 @@ impl ByteStr {
     #[inline]
     #[unstable(feature = "bstr", issue = "134915")]
     #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
-    pub const fn new<B: ?Sized + [const] AsRef<[u8]>>(bytes: &B) -> &Self {
+    pub const fn new<B: ?Sized + AsRef<[u8]>>(bytes: &B) -> &Self {
         ByteStr::from_bytes(bytes.as_ref())
     }
 

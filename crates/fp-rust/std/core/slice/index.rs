@@ -10,7 +10,7 @@ use crate::{ops, range};
 #[rustc_const_unstable(feature = "const_index", issue = "143775")]
 const impl<T, I> ops::Index<I> for [T]
 where
-    I: [const] SliceIndex<[T]>,
+    I: SliceIndex<[T]>,
 {
     type Output = I::Output;
 
@@ -24,7 +24,7 @@ where
 #[rustc_const_unstable(feature = "const_index", issue = "143775")]
 const impl<T, I> ops::IndexMut<I> for [T]
 where
-    I: [const] SliceIndex<[T]>,
+    I: SliceIndex<[T]>,
 {
     #[inline(always)]
     #[rustc_no_writable]
@@ -895,7 +895,7 @@ const unsafe impl<T> SliceIndex<[T]> for range::RangeToInclusive<usize> {
 #[rustc_const_unstable(feature = "const_range", issue = "none")]
 pub const fn range<R>(range: R, bounds: ops::RangeTo<usize>) -> ops::Range<usize>
 where
-    R: [const] ops::RangeBounds<usize> + [const] Destruct,
+    R: ops::RangeBounds<usize> + Destruct,
 {
     let len = bounds.end;
     into_slice_range(len, (range.start_bound().copied(), range.end_bound().copied()))
