@@ -2,6 +2,7 @@
 
 use crate::commands::{setup_progress_bar, validate_paths_exist};
 use crate::compile_options::BackendKind;
+use crate::container::NativeAsmSource;
 use crate::compiler::{
     self, BytecodeCompileOptions, CraneliftCompileOptions, EbpfCompileOptions, JvmCompileOptions,
     LlvmCompileOptions, LossyCompileOptions, NativeCompileOptions, NativeEmitterKind,
@@ -264,17 +265,12 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     for (_i, input_file) in args.input.iter().enumerate() {
         progress.set_message(format!("Compiling {}", input_file.display()));
 
-        let container_kind =
-            container_registry.detect_input_kind(input_file, args.source_language.as_deref());
-        let urcl_container_input =
-            container_kind == Some(crate::container::ContainerInputKind::Urcl);
-        let goasm_container_input =
-            container_kind == Some(crate::container::ContainerInputKind::GoAsm);
-        let cil_container_input = container_kind == Some(crate::container::ContainerInputKind::Cil);
-        let jvm_container_input =
-            container_kind == Some(crate::container::ContainerInputKind::JvmBytecode);
-        let archive_container_input =
-            container_kind == Some(crate::container::ContainerInputKind::NativeArchive);
+        // Classified exactly once per input, then threaded through both
+        // output-path derivation and the actual compile/transpile dispatch
+        // below — instead of each independently re-detecting (and, for the
+        // byte-sniffed case, re-reading) the same input.
+        let input_class =
+            container_registry.classify_input(input_file, args.source_language.as_deref());
 
         let output_file = determine_output_path(
             input_file,
@@ -282,13 +278,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
             target,
             args.emitter,
             args.target_triple.as_deref(),
-            detect_native_asm_source(args.source_language.as_deref(), input_file).is_some(),
-            detect_native_object_source(args.source_language.as_deref(), input_file),
-            archive_container_input,
-            urcl_container_input,
-            goasm_container_input,
-            cil_container_input,
-            jvm_container_input,
+            input_class,
             emit_text_bytecode,
             output_is_dir,
             args.link || args.exec,
@@ -297,7 +287,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
         // Compile single file
         if let Some(artifact_path) =
-            compile_file(input_file, &output_file, &args, target, config).await?
+            compile_file(input_file, &output_file, &args, target, config, input_class).await?
         {
             compiled_files.push(artifact_path);
         }
@@ -412,6 +402,7 @@ async fn compile_file(
     args: &CompileArgs,
     target: CompileTarget,
     _config: &CliConfig,
+    input_class: crate::container::InputClass,
 ) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
 
@@ -426,12 +417,23 @@ async fn compile_file(
         ));
     }
 
-    if let Some(artifact) = maybe_transpile_native_asm(input, output, args).await? {
+    let native_asm_kind = match input_class {
+        crate::container::InputClass::NativeAsm(kind) => Some(kind),
+        _ => None,
+    };
+    let container_kind = match input_class {
+        crate::container::InputClass::Container(kind) => Some(kind),
+        _ => None,
+    };
+
+    if let Some(artifact) = maybe_transpile_native_asm(input, output, args, native_asm_kind).await?
+    {
         return Ok(Some(artifact));
     }
 
     if let Some(artifact) =
-        crate::container::maybe_transpile_container(input, output, args, _config).await?
+        crate::container::maybe_transpile_container(input, output, args, _config, container_kind)
+            .await?
     {
         return Ok(Some(artifact));
     }
@@ -647,58 +649,16 @@ fn try_compile_with_compiler(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NativeAsmSource {
-    Auto,
-    X86_64,
-    Aarch64,
-}
-
-fn detect_native_object_source(source_language: Option<&str>, input: &Path) -> bool {
-    if let Some(lang) = source_language.map(|lang| lang.trim().to_ascii_lowercase()) {
-        if matches!(
-            lang.as_str(),
-            "object" | "native-object" | "obj" | "native-obj" | "o"
-        ) {
-            return true;
-        }
-    }
-
-    let extension_matches = matches!(
-        input
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ext.to_ascii_lowercase())
-            .as_deref(),
-        Some("o" | "obj")
-    );
-
-    if extension_matches {
-        return true;
-    }
-
-    // Fallback: header sniffing (no full parse).
-    // This enables `fp compile --backend binary` to accept native objects/binaries
-    // without relying on filename extensions (e.g. `/tmp/ls`).
-    let mut buf = [0u8; 4096];
-    let mut file = match std::fs::File::open(input) {
-        Ok(file) => file,
-        Err(_) => return false,
-    };
-    let read_len = match std::io::Read::read(&mut file, &mut buf) {
-        Ok(len) => len,
-        Err(_) => return false,
-    };
-
-    object::read::FileKind::parse(&buf[..read_len]).is_ok()
-}
-
+/// `source_kind` is the classification `compile_once` already computed once
+/// for this input via `ContainerRegistry::classify_input` — not re-detected
+/// here.
 async fn maybe_transpile_native_asm(
     input: &Path,
     output: &Path,
     args: &CompileArgs,
+    source_kind: Option<crate::container::NativeAsmSource>,
 ) -> Result<Option<PathBuf>> {
-    let Some(source_kind) = detect_native_asm_source(args.source_language.as_deref(), input) else {
+    let Some(source_kind) = source_kind else {
         return Ok(None);
     };
 
@@ -763,44 +723,6 @@ async fn maybe_transpile_native_asm(
             )))
         })?;
     Ok(Some(output_path))
-}
-
-fn detect_native_asm_source(
-    source_language: Option<&str>,
-    input: &Path,
-) -> Option<NativeAsmSource> {
-    match source_language.map(|lang| lang.trim().to_ascii_lowercase()) {
-        Some(lang)
-            if matches!(
-                lang.as_str(),
-                "x86_64-asm" | "asm-x86_64" | "x86asm" | "x86_64asm"
-            ) =>
-        {
-            return Some(NativeAsmSource::X86_64);
-        }
-        Some(lang)
-            if matches!(
-                lang.as_str(),
-                "aarch64-asm" | "asm-aarch64" | "arm64-asm" | "aarch64asm"
-            ) =>
-        {
-            return Some(NativeAsmSource::Aarch64);
-        }
-        Some(lang) if matches!(lang.as_str(), "asm" | "native-asm") => {
-            return Some(NativeAsmSource::Auto);
-        }
-        Some(_) => return None,
-        None => {}
-    }
-
-    match input
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_ascii_lowercase())
-    {
-        Some(ext) if ext == "s" || ext == "asm" => Some(NativeAsmSource::Auto),
-        _ => None,
-    }
 }
 
 enum ParsedNativeAsm {
@@ -1888,19 +1810,66 @@ fn validate_inputs(args: &CompileArgs) -> Result<()> {
     Ok(())
 }
 
+/// The default filename extension for `--backend binary` output, given
+/// which raw/foreign artifact `input` classified as (if any). `link_requested`
+/// only matters for object/archive container inputs re-emitted as native —
+/// deriving a bare `input.<ext>` path (no `--output` given) always uses the
+/// unlinked extension regardless of `--link`/`--exec` (pass `false`), while
+/// writing under an explicit output *directory* respects it.
+fn native_binary_extension(
+    input_class: crate::container::InputClass,
+    emitter: EmitterKind,
+    link_requested: bool,
+    target_triple: Option<&str>,
+) -> &'static str {
+    use crate::container::{ContainerInputKind, InputClass};
+    match emitter {
+        EmitterKind::Goasm => return "s",
+        EmitterKind::Urcl => return "urcl",
+        EmitterKind::Native => match input_class {
+            InputClass::NativeAsm(_) => return "s",
+            InputClass::Container(ContainerInputKind::NativeObject) => {
+                return if link_requested { "out" } else { "o" };
+            }
+            InputClass::Container(ContainerInputKind::NativeArchive) => {
+                return if link_requested { "out" } else { "a" };
+            }
+            InputClass::Container(
+                ContainerInputKind::Urcl
+                | ContainerInputKind::GoAsm
+                | ContainerInputKind::Cil
+                | ContainerInputKind::JvmBytecode,
+            ) => return "o",
+            InputClass::Source => {}
+        },
+        EmitterKind::Llvm | EmitterKind::Cranelift => {}
+    }
+    if is_windows_target(target_triple) {
+        "exe"
+    } else {
+        "out"
+    }
+}
+
+/// True when `--backend binary` should write to (or derive a name from)
+/// `output`/`input` as-is, rather than applying the normal linked-binary
+/// extension defaulting below — i.e. every raw/foreign-artifact re-emission
+/// case `native_binary_extension` above also special-cases.
+fn is_raw_binary_passthrough(input_class: crate::container::InputClass, emitter: EmitterKind) -> bool {
+    match emitter {
+        EmitterKind::Goasm | EmitterKind::Urcl => true,
+        EmitterKind::Native => !matches!(input_class, crate::container::InputClass::Source),
+        EmitterKind::Llvm | EmitterKind::Cranelift => false,
+    }
+}
+
 fn determine_output_path(
     input: &Path,
     output: Option<&PathBuf>,
     target: CompileTarget,
     emitter: EmitterKind,
     target_triple: Option<&str>,
-    native_asm_input: bool,
-    native_object_input: bool,
-    native_archive_input: bool,
-    urcl_container_input: bool,
-    goasm_container_input: bool,
-    cil_container_input: bool,
-    jvm_container_input: bool,
+    input_class: crate::container::InputClass,
     emit_text_bytecode: bool,
     output_is_dir: bool,
     native_link_requested: bool,
@@ -1933,57 +1902,11 @@ fn determine_output_path(
         }
     };
 
-    let goasm_text_target = matches!(backend, BackendKind::Binary) && emitter == EmitterKind::Goasm;
-    let urcl_text_target = matches!(backend, BackendKind::Binary) && emitter == EmitterKind::Urcl;
-    let native_asm_text_target = matches!(backend, BackendKind::Binary)
-        && emitter == EmitterKind::Native
-        && native_asm_input;
-    let native_object_target = matches!(backend, BackendKind::Binary)
-        && emitter == EmitterKind::Native
-        && native_object_input;
-    let native_archive_target = matches!(backend, BackendKind::Binary)
-        && emitter == EmitterKind::Native
-        && native_archive_input;
-    let urcl_object_target = matches!(backend, BackendKind::Binary)
-        && emitter == EmitterKind::Native
-        && urcl_container_input;
-    let goasm_object_target = matches!(backend, BackendKind::Binary)
-        && emitter == EmitterKind::Native
-        && goasm_container_input;
-    let cil_object_target = matches!(backend, BackendKind::Binary)
-        && emitter == EmitterKind::Native
-        && cil_container_input;
-    let jvm_object_target = matches!(backend, BackendKind::Binary)
-        && emitter == EmitterKind::Native
-        && jvm_container_input;
-
     if let Some(output) = output {
         if output_is_dir {
             let extension = match backend {
                 BackendKind::Binary => {
-                    if goasm_text_target {
-                        "s"
-                    } else if urcl_text_target {
-                        "urcl"
-                    } else if native_asm_text_target {
-                        "s"
-                    } else if native_object_target {
-                        if native_link_requested { "out" } else { "o" }
-                    } else if native_archive_target {
-                        if native_link_requested { "out" } else { "a" }
-                    } else if urcl_object_target {
-                        "o"
-                    } else if goasm_object_target {
-                        "o"
-                    } else if cil_object_target {
-                        "o"
-                    } else if jvm_object_target {
-                        "o"
-                    } else if is_windows_target(target_triple) {
-                        "exe"
-                    } else {
-                        "out"
-                    }
+                    native_binary_extension(input_class, emitter, native_link_requested, target_triple)
                 }
                 BackendKind::Ebpf => {
                     if exec_requested {
@@ -2016,17 +1939,11 @@ fn determine_output_path(
             return Ok(path);
         }
 
-        if matches!(backend, BackendKind::Binary)
-            && !goasm_text_target
-            && !urcl_text_target
-            && !native_asm_text_target
-            && !native_object_target
-            && !native_archive_target
-            && !urcl_object_target
-            && !goasm_object_target
-            && !cil_object_target
-            && !jvm_object_target
-        {
+        if matches!(backend, BackendKind::Binary) {
+            if is_raw_binary_passthrough(input_class, emitter) {
+                return Ok(output.clone());
+            }
+
             let mut path = output.clone();
             let desired_ext = if is_windows_target(target_triple) {
                 "exe"
@@ -2042,30 +1959,6 @@ fn determine_output_path(
             }
 
             return Ok(path);
-        }
-
-        if native_asm_text_target {
-            return Ok(output.clone());
-        }
-
-        if native_archive_target {
-            return Ok(output.clone());
-        }
-
-        if urcl_object_target {
-            return Ok(output.clone());
-        }
-
-        if goasm_object_target {
-            return Ok(output.clone());
-        }
-
-        if cil_object_target {
-            return Ok(output.clone());
-        }
-
-        if jvm_object_target {
-            return Ok(output.clone());
         }
 
         if matches!(backend, BackendKind::Bytecode) && emit_text_bytecode {
@@ -2092,31 +1985,7 @@ fn determine_output_path(
         Ok(output.clone())
     } else {
         let extension = match backend {
-            BackendKind::Binary => {
-                if goasm_text_target {
-                    "s"
-                } else if urcl_text_target {
-                    "urcl"
-                } else if native_asm_text_target {
-                    "s"
-                } else if native_object_target {
-                    "o"
-                } else if native_archive_target {
-                    "a"
-                } else if urcl_object_target {
-                    "o"
-                } else if goasm_object_target {
-                    "o"
-                } else if cil_object_target {
-                    "o"
-                } else if jvm_object_target {
-                    "o"
-                } else if is_windows_target(target_triple) {
-                    "exe"
-                } else {
-                    "out" // Use .out extension on Unix systems for clarity
-                }
-            }
+            BackendKind::Binary => native_binary_extension(input_class, emitter, false, target_triple),
             BackendKind::Ebpf => {
                 if exec_requested {
                     "o"

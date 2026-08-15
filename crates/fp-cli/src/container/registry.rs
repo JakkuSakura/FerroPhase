@@ -16,6 +16,34 @@ pub(crate) enum ContainerInputKind {
     Urcl,
 }
 
+/// Native assembly text dialects — not a container format (no header/magic
+/// bytes to sniff, just an extension/language-override match), but the same
+/// "this input is a foreign artifact, not source for the language registry"
+/// classification `ContainerInputKind` covers, so it shares one
+/// classification step with it rather than being detected independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NativeAsmSource {
+    Auto,
+    X86_64,
+    Aarch64,
+}
+
+/// What `classify_input` decided a path is, computed exactly once per input
+/// file. Replaces three independent detectors (`detect_input_kind`,
+/// `detect_native_object_source`, `detect_native_asm_source`) that used to
+/// be called at different points in the compile hot path — sometimes more
+/// than once each — re-deriving the same answer (and, for the byte-sniffed
+/// case, re-reading the file) every time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InputClass {
+    Container(ContainerInputKind),
+    NativeAsm(NativeAsmSource),
+    /// Not a recognized foreign artifact — the source-language registry
+    /// (`languages::detect_source_language`/`provider_for_language`) owns
+    /// this input instead.
+    Source,
+}
+
 pub(crate) struct ReadContainer {
     pub(crate) kind: ContainerInputKind,
     pub(crate) payload: Vec<u8>,
@@ -32,77 +60,100 @@ impl ContainerRegistry {
         }
     }
 
-    pub(crate) fn detect_input_kind(
+    /// Classifies `input` exactly once: an explicit `--source-language`
+    /// override wins outright (container keywords, then asm keywords), else
+    /// the extension decides, else (only for inputs with neither) a shallow
+    /// magic-byte sniff of the first 4KiB — matching `inspect`'s behavior —
+    /// decides among the container kinds. Never sniffs for asm: unlike a
+    /// container format, plain assembly text has no header to recognize
+    /// without an extension or an explicit override.
+    pub(crate) fn classify_input(
         &self,
         input: &std::path::Path,
         source_language: Option<&str>,
-    ) -> Option<ContainerInputKind> {
+    ) -> InputClass {
+        if let Some(lang) = source_language.map(|lang| lang.trim().to_ascii_lowercase()) {
+            match lang.as_str() {
+                "object" | "native-object" | "obj" | "native-obj" | "o" => {
+                    return InputClass::Container(ContainerInputKind::NativeObject);
+                }
+                "archive" | "ar" | "native-archive" | "a" | "lib" => {
+                    return InputClass::Container(ContainerInputKind::NativeArchive);
+                }
+                "jvm" | "jvm-bytecode" | "bytecode-jvm" | "class" | "jar" => {
+                    return InputClass::Container(ContainerInputKind::JvmBytecode);
+                }
+                "cil" | "msil" | "dotnet-cil" => {
+                    return InputClass::Container(ContainerInputKind::Cil);
+                }
+                "goasm" | "go-asm" => {
+                    return InputClass::Container(ContainerInputKind::GoAsm);
+                }
+                "urcl" => {
+                    return InputClass::Container(ContainerInputKind::Urcl);
+                }
+                "x86_64-asm" | "asm-x86_64" | "x86asm" | "x86_64asm" => {
+                    return InputClass::NativeAsm(NativeAsmSource::X86_64);
+                }
+                "aarch64-asm" | "asm-aarch64" | "arm64-asm" | "aarch64asm" => {
+                    return InputClass::NativeAsm(NativeAsmSource::Aarch64);
+                }
+                "asm" | "native-asm" => {
+                    return InputClass::NativeAsm(NativeAsmSource::Auto);
+                }
+                _ => return InputClass::Source,
+            }
+        }
+
         let extension = input
             .extension()
             .and_then(|ext| ext.to_str())
             .map(|ext| ext.to_ascii_lowercase());
 
-        if let Some(lang) = source_language.map(|lang| lang.trim().to_ascii_lowercase()) {
-            match lang.as_str() {
-                "object" | "native-object" | "obj" | "native-obj" | "o" => {
-                    return Some(ContainerInputKind::NativeObject);
-                }
-                "archive" | "ar" | "native-archive" | "a" | "lib" => {
-                    return Some(ContainerInputKind::NativeArchive);
-                }
-                "jvm" | "jvm-bytecode" | "bytecode-jvm" | "class" | "jar" => {
-                    return Some(ContainerInputKind::JvmBytecode);
-                }
-                "cil" | "msil" | "dotnet-cil" => {
-                    return Some(ContainerInputKind::Cil);
-                }
-                "goasm" | "go-asm" => {
-                    return Some(ContainerInputKind::GoAsm);
-                }
-                "urcl" => {
-                    return Some(ContainerInputKind::Urcl);
-                }
-                _ => {}
-            }
-        }
-
         match extension.as_deref() {
-            Some("o" | "obj") => Some(ContainerInputKind::NativeObject),
-            Some("a" | "lib") => Some(ContainerInputKind::NativeArchive),
-            Some("class" | "jar") => Some(ContainerInputKind::JvmBytecode),
-            Some("il" | "dll" | "exe") => Some(ContainerInputKind::Cil),
-            Some("goasm") => Some(ContainerInputKind::GoAsm),
-            Some("urcl") => Some(ContainerInputKind::Urcl),
-            _ => {
-                // Magic sniff: allow container inputs without a canonical extension.
-                // This is intentionally shallow (header-based), matching `inspect` behavior.
-                let prefix = {
-                    use std::io::Read;
-
-                    let mut file = std::fs::File::open(input).ok()?;
-                    let mut buf = vec![0u8; 4096];
-                    let n = file.read(&mut buf).ok()?;
-                    buf.truncate(n);
-                    buf
-                };
-
-                if self.object_reader.can_read(&prefix) {
-                    return Some(ContainerInputKind::NativeObject);
-                }
-                if fp_native::archive::can_read_archive(&prefix) {
-                    return Some(ContainerInputKind::NativeArchive);
-                }
-                if prefix.starts_with(b"PK\x03\x04") || prefix.starts_with(b"\xCA\xFE\xBA\xBE") {
-                    return Some(ContainerInputKind::JvmBytecode);
-                }
-                if prefix.starts_with(b"MZ") {
-                    // This could also be a native PE, but we default to the .NET ecosystem
-                    // container unless explicitly overridden via `--source-language`.
-                    return Some(ContainerInputKind::Cil);
-                }
-                None
-            }
+            Some("o" | "obj") => InputClass::Container(ContainerInputKind::NativeObject),
+            Some("a" | "lib") => InputClass::Container(ContainerInputKind::NativeArchive),
+            Some("class" | "jar") => InputClass::Container(ContainerInputKind::JvmBytecode),
+            Some("il" | "dll" | "exe") => InputClass::Container(ContainerInputKind::Cil),
+            Some("goasm") => InputClass::Container(ContainerInputKind::GoAsm),
+            Some("urcl") => InputClass::Container(ContainerInputKind::Urcl),
+            Some("s" | "asm") => InputClass::NativeAsm(NativeAsmSource::Auto),
+            _ => self
+                .sniff_container_kind(input)
+                .map(InputClass::Container)
+                .unwrap_or(InputClass::Source),
         }
+    }
+
+    /// Magic-sniff fallback for container inputs with no canonical
+    /// extension (e.g. `/tmp/ls`) — intentionally shallow (header-based),
+    /// matching `inspect`'s own behavior. Reads at most 4KiB, once.
+    fn sniff_container_kind(&self, input: &std::path::Path) -> Option<ContainerInputKind> {
+        let prefix = {
+            use std::io::Read;
+
+            let mut file = std::fs::File::open(input).ok()?;
+            let mut buf = vec![0u8; 4096];
+            let n = file.read(&mut buf).ok()?;
+            buf.truncate(n);
+            buf
+        };
+
+        if self.object_reader.can_read(&prefix) {
+            return Some(ContainerInputKind::NativeObject);
+        }
+        if fp_native::archive::can_read_archive(&prefix) {
+            return Some(ContainerInputKind::NativeArchive);
+        }
+        if prefix.starts_with(b"PK\x03\x04") || prefix.starts_with(b"\xCA\xFE\xBA\xBE") {
+            return Some(ContainerInputKind::JvmBytecode);
+        }
+        if prefix.starts_with(b"MZ") {
+            // This could also be a native PE, but we default to the .NET ecosystem
+            // container unless explicitly overridden via `--source-language`.
+            return Some(ContainerInputKind::Cil);
+        }
+        None
     }
 
     pub(crate) fn read_container(

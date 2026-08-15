@@ -11,16 +11,21 @@ use tokio::process::Command;
 
 use super::registry::{ContainerInputKind, ContainerRegistry};
 
+/// `kind` is the classification `compile_once` already computed once for
+/// this input via `ContainerRegistry::classify_input` — not re-detected
+/// here, so the input is only ever read from disk for its actual payload,
+/// never re-sniffed.
 pub(crate) async fn maybe_transpile_container(
     input: &Path,
     output: &Path,
     args: &CompileArgs,
     _config: &CliConfig,
+    kind: Option<ContainerInputKind>,
 ) -> Result<Option<PathBuf>> {
-    let registry = ContainerRegistry::new();
-    let Some(kind) = registry.detect_input_kind(input, args.source_language.as_deref()) else {
+    let Some(kind) = kind else {
         return Ok(None);
     };
+    let registry = ContainerRegistry::new();
 
     let payload = tokio::fs::read(input).await.map_err(|err| {
         CliError::Io(std::io::Error::other(format!(
