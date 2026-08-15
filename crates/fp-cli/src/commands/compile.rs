@@ -455,10 +455,10 @@ async fn compile_file(
         );
     }
 
-    try_compile_with_compiler(input, output, args, backend)
+    try_compile_with_compiler(input, output, args, backend).await
 }
 
-fn try_compile_with_compiler(
+async fn try_compile_with_compiler(
     input: &Path,
     output: &Path,
     args: &CompileArgs,
@@ -641,6 +641,14 @@ fn try_compile_with_compiler(
                 },
             )?;
             Ok(Some(artifact))
+        }
+        BackendKind::Rust => {
+            // Reuse the same AST-target Rust transpile path `--target rust`
+            // already goes through (`fp_lang::PrettyAstSerializer`) instead
+            // of a second Rust-emission implementation.
+            compile_emit_target(input, output, args, crate::languages::backend::LanguageTarget::Rust)
+                .await?;
+            Ok(Some(output.to_path_buf()))
         }
         _ => Err(CliError::Compilation(format!(
             "fp-compiler does not support backend {} on this path",

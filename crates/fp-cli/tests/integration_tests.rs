@@ -52,7 +52,7 @@ fn test_cli_completions_basic() {
 #[test]
 fn test_cli_eval_simple() {
     let mut cmd = fp_cmd();
-    cmd.arg("eval").arg("--expr").arg("1 + 2");
+    cmd.arg("eval").arg("1 + 2");
 
     cmd.assert()
         .success()
