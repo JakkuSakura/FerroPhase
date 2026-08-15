@@ -917,43 +917,69 @@ impl MirLowering {
     }
 
     pub fn with_typeck_results(mut self, results: &TypeckResults) -> Result<Self> {
-        self.typeck_type_exprs = results
-            .type_expr_types
-            .iter()
-            .map(|(id, ty)| lower_hir_ty(ty).map(|ty| (*id, ty)))
-            .collect::<Result<HashMap<_, _>>>()?;
-        self.typeck_exprs = results
-            .expr_types
-            .iter()
-            .map(|(id, ty)| lower_hir_ty(ty).map(|ty| (*id, ty)))
-            .collect::<Result<HashMap<_, _>>>()?;
+        self.typeck_type_exprs = self.lower_ty_map(results.type_expr_types.iter());
+        self.typeck_exprs = self.lower_ty_map(results.expr_types.iter());
         self.typeck_const_block_values = results.const_block_values.clone();
         self.typeck_method_resolutions = results.method_resolutions.clone();
-        self.typeck_generic_call_args = results
-            .generic_call_args
-            .iter()
-            .map(|(hir_id, resolution)| {
-                resolution
-                    .args
-                    .iter()
-                    .map(lower_hir_ty)
-                    .collect::<Result<Vec<_>>>()
-                    .map(|args| (*hir_id, args))
-            })
-            .collect::<Result<HashMap<_, _>>>()?;
-        self.typeck_generic_method_args = results
-            .generic_method_args
-            .iter()
-            .map(|(hir_id, resolution)| {
-                resolution
-                    .args
-                    .iter()
-                    .map(lower_hir_ty)
-                    .collect::<Result<Vec<_>>>()
-                    .map(|args| (*hir_id, args))
-            })
-            .collect::<Result<HashMap<_, _>>>()?;
+        self.typeck_generic_call_args = self.lower_generic_args_map(results.generic_call_args.iter());
+        self.typeck_generic_method_args =
+            self.lower_generic_args_map(results.generic_method_args.iter());
         Ok(self)
+    }
+
+    /// A single unresolvable type recorded elsewhere in this package's
+    /// typeck results (e.g. an unrelated item that failed to typecheck)
+    /// must not block MIR lowering for every *other*, independently-correct
+    /// item — skip just that one hir_id's entry (recording a diagnostic)
+    /// instead of aborting the whole map. Every real consumer of these maps
+    /// already looks entries up via `.get(&hir_id) -> Option<_>`, so a
+    /// missing entry here is the same sparse-map shape they already
+    /// tolerate — not a new kind of gap.
+    fn lower_ty_map<'a>(
+        &mut self,
+        entries: impl Iterator<Item = (&'a hir::HirId, &'a hir::ty::Ty)>,
+    ) -> HashMap<hir::HirId, Ty> {
+        entries
+            .filter_map(|(id, ty)| match lower_hir_ty(ty) {
+                Ok(lowered) => Some((*id, lowered)),
+                Err(error) => {
+                    self.emit_warning(
+                        Span::default(),
+                        format!("skipping unresolvable type for HIR node {id:?}: {error}"),
+                    );
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Same reasoning as `lower_ty_map`, for the generic-args resolution
+    /// maps: if any one argument in a resolution fails to lower, that
+    /// resolution as a whole is skipped (a partial arg list would be
+    /// nonsensical), but other hir_ids' resolutions are unaffected.
+    fn lower_generic_args_map<'a>(
+        &mut self,
+        entries: impl Iterator<Item = (&'a hir::HirId, &'a fp_typing::types::GenericCallResolution)>,
+    ) -> HashMap<hir::HirId, Vec<Ty>> {
+        entries
+            .filter_map(|(id, resolution)| {
+                match resolution
+                    .args
+                    .iter()
+                    .map(lower_hir_ty)
+                    .collect::<Result<Vec<_>>>()
+                {
+                    Ok(args) => Some((*id, args)),
+                    Err(error) => {
+                        self.emit_warning(
+                            Span::default(),
+                            format!("skipping unresolvable generic args for HIR node {id:?}: {error}"),
+                        );
+                        None
+                    }
+                }
+            })
+            .collect()
     }
 
     /// Convert a comptime-evaluated `Value` (from `const { ... }` block
