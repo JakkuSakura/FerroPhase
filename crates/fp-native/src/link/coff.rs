@@ -528,6 +528,9 @@ pub fn emit_object_coff(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Resul
 }
 
 pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Result<()> {
+    let entry_offset = plan.entry_offset.ok_or_else(|| {
+        Error::from("native emitter requires a defined main function to produce an executable")
+    })?;
     const IMAGE_FILE_EXECUTABLE_IMAGE: u16 = 0x0002;
     const IMAGE_FILE_LARGE_ADDRESS_AWARE: u16 = 0x0020;
 
@@ -665,7 +668,7 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
         );
     }
     let entry_rva = text_rva
-        + u32::try_from(plan.entry_offset)
+        + u32::try_from(entry_offset)
             .map_err(|e| Error::from(format!("entry offset out of range: {e}")))?;
 
     let (import_table_rva, import_table_size, iat_rvas) =

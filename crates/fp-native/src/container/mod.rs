@@ -271,7 +271,7 @@ mod tests {
             symbols,
             rodata_symbols: HashMap::new(),
             data_symbols: HashMap::new(),
-            entry_offset: 0,
+            entry_offset: None,
         };
         let container = crate::link::object_writer::container_from_emit_plan(
             TargetFormat::Elf,

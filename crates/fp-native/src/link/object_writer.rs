@@ -829,7 +829,7 @@ mod tests {
             symbols,
             rodata_symbols: HashMap::new(),
             data_symbols: HashMap::new(),
-            entry_offset: 0,
+            entry_offset: None,
         };
 
         let container = container_from_emit_plan(TargetFormat::Elf, TargetArch::X86_64, &plan)
@@ -897,7 +897,7 @@ mod tests {
             symbols,
             rodata_symbols: HashMap::new(),
             data_symbols: HashMap::new(),
-            entry_offset: 0,
+            entry_offset: None,
         };
 
         let container = container_from_emit_plan(TargetFormat::Elf, TargetArch::X86_64, &plan)

@@ -242,6 +242,9 @@ fn emit_br_reg(out: &mut Vec<u8>, rn: u32) {
 }
 
 pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Result<()> {
+    let entry_offset = plan.entry_offset.ok_or_else(|| {
+        Error::from("native emitter requires a defined main function to produce an executable")
+    })?;
     const ELF_MAGIC: [u8; 4] = [0x7F, b'E', b'L', b'F'];
     const ELFCLASS64: u8 = 2;
     const ELFDATA2LSB: u8 = 1;
@@ -414,7 +417,7 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     out.resize(text_offset, 0);
     let plt_addr = base_addr + plt_offset as u64;
     let got_addr = base_addr + got_offset as u64;
-    let main_addr = base_addr + program_text_offset as u64 + plan.entry_offset;
+    let main_addr = base_addr + program_text_offset as u64 + entry_offset;
     let exit = externs
         .iter()
         .find(|symbol| symbol.name == "exit")

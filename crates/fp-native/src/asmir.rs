@@ -161,7 +161,7 @@ pub fn lower_to_x86_64(program: &AsmProgram) -> x86_64_asm::AsmX86_64Program {
                     .saturating_add(1);
                 let mut ctx = PhysicalRegisterLoweringContext::new(
                     next_virtual_id,
-                    build_operand_type_map(function),
+                    merged_register_types(program, function),
                 );
 
                 x86_64_asm::AsmX86_64Function {
@@ -206,7 +206,7 @@ pub fn lower_to_aarch64(program: &AsmProgram) -> aarch64_asm::AsmAarch64Program 
                     .saturating_add(1);
                 let mut ctx = PhysicalRegisterLoweringContext::new(
                     next_virtual_id,
-                    build_operand_type_map(function),
+                    merged_register_types(program, function),
                 );
 
                 aarch64_asm::AsmAarch64Function {
@@ -253,6 +253,129 @@ fn canonicalize_physical_registers(program: &mut AsmProgram) {
                 &mut next_virtual_id,
             );
         }
+    }
+
+    // Every synthetic id just assigned above came from a real physical
+    // register whose size/bank (embedded right in `map`'s key) is known
+    // precisely — record the corresponding type now, while that
+    // information still exists, so later passes that only know instruction
+    // ids (never these) can still resolve a register operand's type by id
+    // instead of finding no entry at all.
+    program.physical_register_types.extend(
+        map.into_iter()
+            .map(|((_name, size_bits, bank_id), id)| {
+                (id, asm_type_for_register_identity(size_bits, bank_from_id(bank_id)))
+            }),
+    );
+}
+
+/// A virtual register referenced directly in source syntax (e.g. assembly
+/// text spelling a register as `v1:64`) carries its own known `size_bits`/
+/// `bank` right on the `AsmRegister::Virtual` operand itself — but if
+/// nothing in the function ever *produces* that id as an instruction
+/// result (a live-in/parameter-like register, never defined locally), it
+/// has no entry in `build_operand_type_map` either. Scan every operand
+/// once and record a type for any such id, so later passes that only know
+/// instruction ids still resolve it instead of finding nothing at all.
+/// `.or_insert_with` so this never overrides a real, more precise
+/// instruction-result type recorded elsewhere.
+fn record_source_virtual_register_types(program: &mut AsmProgram) {
+    let mut discovered = HashMap::new();
+    for function in &program.functions {
+        for block in &function.basic_blocks {
+            for instruction in &block.instructions {
+                for operand in &instruction.operands {
+                    collect_operand_register_type(operand, &mut discovered);
+                }
+                for reg in instruction
+                    .implicit_uses
+                    .iter()
+                    .chain(instruction.implicit_defs.iter())
+                {
+                    collect_register_type(reg, &mut discovered);
+                }
+            }
+        }
+    }
+    for (id, ty) in discovered {
+        program.physical_register_types.entry(id).or_insert(ty);
+    }
+}
+
+fn collect_operand_register_type(operand: &AsmOperand, types: &mut HashMap<u32, AsmType>) {
+    match operand {
+        AsmOperand::Register { reg, .. } | AsmOperand::Predicate { reg, .. } => {
+            collect_register_type(reg, types);
+        }
+        AsmOperand::Memory(memory) => {
+            for reg in [&memory.base, &memory.index, &memory.segment]
+                .into_iter()
+                .filter_map(|reg| reg.as_ref())
+            {
+                collect_register_type(reg, types);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_register_type(reg: &AsmRegister, types: &mut HashMap<u32, AsmType>) {
+    if let AsmRegister::Virtual { id, size_bits, bank } = reg {
+        types
+            .entry(*id)
+            .or_insert_with(|| asm_type_for_register_identity(*size_bits, bank.clone()));
+    }
+}
+
+/// Inverse of `register_bank_id` for the purpose of reconstructing a
+/// plausible `AsmType` below — `register_bank(ty: &AsmType)` (the direction
+/// the rest of this file already relies on) only ever distinguishes
+/// Float/Vector from everything else, so collapsing `Predicate`/`Special`/
+/// `Custom` back to `General` here matches that existing limitation rather
+/// than introducing a new one: no `AsmType` in this codebase round-trips
+/// through those bank variants regardless.
+fn bank_from_id(bank_id: u8) -> AsmRegisterBank {
+    match bank_id {
+        1 => AsmRegisterBank::Float,
+        2 => AsmRegisterBank::Vector,
+        _ => AsmRegisterBank::General,
+    }
+}
+
+/// The `AsmType` a physical register of this size/bank should be treated as
+/// by code that resolves a register operand's type from an `AsmType` (via
+/// `register_bank`/`type_size_bits`) — chosen so it round-trips back to the
+/// same bank and size.
+fn asm_type_for_register_identity(size_bits: u16, bank: AsmRegisterBank) -> AsmType {
+    match bank {
+        AsmRegisterBank::Float => match size_bits {
+            32 => AsmType::F32,
+            64 => AsmType::F64,
+            other => integer_type_for_size_bits(other),
+        },
+        AsmRegisterBank::Vector => {
+            // Element type/count aren't recoverable from bank+size alone,
+            // but `register_bank`/`type_size_bits` (the only consumers)
+            // only need this to report bank=Vector and total `size_bits`
+            // wide — any byte-element vector of the matching count does.
+            AsmType::Vector(Box::new(AsmType::I8), u32::from(size_bits.div_ceil(8)))
+        }
+        AsmRegisterBank::General | AsmRegisterBank::Predicate | AsmRegisterBank::Special => {
+            integer_type_for_size_bits(size_bits)
+        }
+        AsmRegisterBank::Custom(_) => integer_type_for_size_bits(size_bits),
+    }
+}
+
+fn integer_type_for_size_bits(size_bits: u16) -> AsmType {
+    match size_bits {
+        1 => AsmType::I1,
+        8 => AsmType::I8,
+        16 => AsmType::I16,
+        32 => AsmType::I32,
+        64 => AsmType::I64,
+        128 => AsmType::I128,
+        other => AsmType::Integer(u32::from(other)),
     }
 }
 
@@ -675,6 +798,7 @@ pub fn lift_from_x86_64(program: &x86_64_asm::AsmX86_64Program) -> Result<AsmPro
         }],
         globals: Vec::new(),
         type_definitions: Vec::new(),
+        physical_register_types: HashMap::new(),
         functions: program
             .functions
             .iter()
@@ -737,6 +861,7 @@ pub fn lift_from_x86_64(program: &x86_64_asm::AsmX86_64Program) -> Result<AsmPro
         }
     }
     canonicalize_physical_registers(&mut lifted);
+    record_source_virtual_register_types(&mut lifted);
     Ok(lifted)
 }
 
@@ -762,6 +887,7 @@ pub fn lift_from_aarch64(program: &aarch64_asm::AsmAarch64Program) -> Result<Asm
         }],
         globals: Vec::new(),
         type_definitions: Vec::new(),
+        physical_register_types: HashMap::new(),
         functions: program
             .functions
             .iter()
@@ -824,6 +950,7 @@ pub fn lift_from_aarch64(program: &aarch64_asm::AsmAarch64Program) -> Result<Asm
         }
     }
     canonicalize_physical_registers(&mut lifted);
+    record_source_virtual_register_types(&mut lifted);
     Ok(lifted)
 }
 
@@ -1289,8 +1416,15 @@ pub fn normalize_for_target(program: &mut AsmProgram) {
 }
 
 fn normalize_program_generic(program: &mut AsmProgram) {
+    // Cloned up front: `program.functions` is borrowed mutably below, so it
+    // can't also be reached through `&program` at the same time to merge
+    // this in per-function via `merged_register_types`.
+    let physical_register_types = program.physical_register_types.clone();
     for function in &mut program.functions {
-        let register_types = build_operand_type_map(function);
+        // Reconstructed types first so a real instruction-result type wins
+        // on any collision, matching `merged_register_types`.
+        let mut register_types = physical_register_types.clone();
+        register_types.extend(build_operand_type_map(function));
         for block in &mut function.basic_blocks {
             for instruction in &mut block.instructions {
                 instruction.opcode = AsmOpcode::Generic(generic_opcode(&instruction.kind));
@@ -1315,6 +1449,21 @@ fn build_operand_type_map(function: &AsmFunction) -> HashMap<u32, AsmType> {
                 .then(|| (instruction.id, instruction.ty.clone()))
         })
         .collect()
+}
+
+/// `build_operand_type_map(function)` alone only ever has entries for real
+/// instruction ids — it knows nothing about the synthetic ids
+/// `canonicalize_physical_registers` assigns when lowering a raw physical
+/// register reference, since those never correspond to any instruction.
+/// Every caller that resolves a register operand's type by id needs both
+/// merged, or it panics on any register that started out physical.
+fn merged_register_types(program: &AsmProgram, function: &AsmFunction) -> HashMap<u32, AsmType> {
+    // Reconstructed types go first so a real instruction-result type (more
+    // precise than a size/bank-derived guess) wins if an id somehow ended
+    // up in both.
+    let mut types = program.physical_register_types.clone();
+    types.extend(build_operand_type_map(function));
+    types
 }
 
 fn normalize_program_for_x86_64(program: &mut AsmProgram) {
@@ -4995,15 +5144,32 @@ mod tests {
                 basic_blocks: vec![LirBasicBlock {
                     id: 0,
                     label: Some(Name::new("entry")),
-                    instructions: vec![LirInstruction {
-                        id: 7,
-                        kind: LirInstructionKind::Add(reg(1, LirType::I32), i32_value(4)),
-                        result: Some(LirRegister {
+                    instructions: vec![
+                        // Defines register 1 before the Add below references
+                        // it as a value — a register use with no producing
+                        // instruction anywhere in scope (and not a
+                        // parameter/local either) isn't well-formed LIR, so
+                        // this test shouldn't construct one just to exercise
+                        // the Add opcode/operand shape.
+                        LirInstruction {
+                            id: 1,
+                            kind: LirInstructionKind::Add(i32_value(0), i32_value(0)),
+                            result: Some(LirRegister {
+                                id: 1,
+                                ty: LirType::I32,
+                            }),
+                            debug_info: None,
+                        },
+                        LirInstruction {
                             id: 7,
-                            ty: LirType::I32,
-                        }),
-                        debug_info: None,
-                    }],
+                            kind: LirInstructionKind::Add(reg(1, LirType::I32), i32_value(4)),
+                            result: Some(LirRegister {
+                                id: 7,
+                                ty: LirType::I32,
+                            }),
+                            debug_info: None,
+                        },
+                    ],
                     terminator: LirTerminator::Return(Some(reg(7, LirType::I32))),
                     predecessors: Vec::new(),
                     successors: Vec::new(),
@@ -5022,7 +5188,7 @@ mod tests {
         };
 
         let program = select_program(&lir, TargetFormat::Elf, TargetArch::X86_64).unwrap();
-        let inst = &program.functions[0].basic_blocks[0].instructions[0];
+        let inst = &program.functions[0].basic_blocks[0].instructions[1];
 
         assert_eq!(inst.opcode, AsmOpcode::Generic(AsmGenericOpcode::Add));
         assert_eq!(inst.operands.len(), 3);
@@ -5037,7 +5203,7 @@ mod tests {
         assert!(matches!(&inst.operands[2], AsmOperand::Immediate(4)));
 
         let x86 = lower_to_x86_64(&program);
-        let inst = &x86.functions[0].blocks[0].instructions[0];
+        let inst = &x86.functions[0].blocks[0].instructions[1];
         assert_eq!(inst.opcode, X86Opcode::Add);
     }
 

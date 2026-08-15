@@ -202,6 +202,9 @@ fn emit_arm64_stub(buf: &mut [u8], stub_addr: u64, ptr_addr: u64) -> Result<()> 
 /// This intentionally avoids the system linker. It does not support dynamic
 /// libraries, relocations, or any calls into libc yet.
 pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Result<()> {
+    let entry_offset = plan.entry_offset.ok_or_else(|| {
+        Error::from("native emitter requires a defined main function to produce an executable")
+    })?;
     // Constants from mach-o/loader.h
     const MH_MAGIC_64: u32 = 0xfeedfacf;
     const MH_EXECUTE: u32 = 0x2;
@@ -388,7 +391,7 @@ pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     let linkedit_vmsize = align_up(linkedit_filesize, page);
     vmaddr_linkedit = vmaddr_text + (linkedit_fileoff - text_fileoff);
 
-    let entryoff = text_offset + plan.entry_offset;
+    let entryoff = text_offset + entry_offset;
 
     let mut out = Vec::new();
 
@@ -693,7 +696,7 @@ pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     out.push(0x0f); // N_SECT | N_EXT
     out.push(1);
     put_u16(&mut out, 0);
-    put_u64(&mut out, vmaddr_text + text_offset + plan.entry_offset);
+    put_u64(&mut out, vmaddr_text + text_offset + entry_offset);
     for sym in &externs {
         let str = *str_offsets
             .get(&sym.name)

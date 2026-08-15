@@ -125,7 +125,14 @@ pub struct EmitPlan {
     pub symbols: HashMap<String, u64>,
     pub rodata_symbols: HashMap<String, u64>,
     pub data_symbols: HashMap<String, u64>,
-    pub entry_offset: u64,
+    /// `None` for a plan with no `main` function — a plain relocatable
+    /// object transpile/roundtrip (see `emit_plan_from_asmir`, used by the
+    /// object/archive/JVM-jar-to-native transpile paths) never has or needs
+    /// a runnable entrypoint. Only producing an *executable* (`write_executable`)
+    /// or JIT-executing a plan requires one; both error explicitly if it's
+    /// missing at that point instead of this being gated unconditionally
+    /// for every plan regardless of what it's used for.
+    pub entry_offset: Option<u64>,
 }
 
 pub struct CodegenOutput {
@@ -137,12 +144,12 @@ pub struct CodegenOutput {
     pub symbols: HashMap<String, u64>,
     pub rodata_symbols: HashMap<String, u64>,
     pub data_symbols: HashMap<String, u64>,
-    pub entry_offset: u64,
+    pub entry_offset: Option<u64>,
 }
 
 impl CodegenOutput {
     fn validate_text_layout(&self) -> Result<()> {
-        if self.entry_offset > self.text.len() as u64 {
+        if self.entry_offset.is_some_and(|entry| entry > self.text.len() as u64) {
             return Err(Error::from("entry offset is outside __text"));
         }
         for (name, offset) in &self.symbols {
@@ -288,10 +295,14 @@ pub fn write_executable(path: &Path, plan: &EmitPlan) -> Result<()> {
 
 pub fn dump_asm(path: &Path, plan: &EmitPlan) -> Result<()> {
     let mut out = String::new();
+    let entry = plan
+        .entry_offset
+        .map(|offset| format!("0x{offset:x}"))
+        .unwrap_or_else(|| "none".to_string());
     writeln!(
         &mut out,
-        "fp-native dump: format={:?} arch={:?} entry=0x{:x}",
-        plan.format, plan.arch, plan.entry_offset
+        "fp-native dump: format={:?} arch={:?} entry={entry}",
+        plan.format, plan.arch
     )
     .ok();
     writeln!(&mut out, "\nAsmIR:").ok();

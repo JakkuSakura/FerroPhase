@@ -10,42 +10,53 @@ pub fn emit_text_from_selection(
     format: TargetFormat,
     arch: TargetArch,
 ) -> Result<CodegenOutput> {
-    let func = lir_program
+    // Validates every defined function's LIR shape against what the native
+    // emitter below can actually handle — not just whichever one happens to
+    // be named `main`, since `emit_lir_program` (used by the JVM/CIL/goasm/
+    // URCL-to-native transpile paths in `container/pipeline.rs`) can hand
+    // this a program transpiled from foreign bytecode with no `main` at
+    // all. A defined `main` is only required to produce a runnable
+    // executable or JIT-execute a plan — both check for that explicitly at
+    // that point (see `EmitPlan::entry_offset`), not unconditionally here
+    // for every plan.
+    let defined_functions = lir_program
         .functions
         .iter()
-        .find(|func| func.name.as_str() == "main" && !func.is_declaration)
-        .ok_or_else(|| Error::from("native emitter requires a defined main function"))?;
+        .filter(|func| !func.is_declaration);
 
-    if func.basic_blocks.is_empty() {
-        return Err(Error::from(
-            "native emitter requires at least one basic block",
-        ));
-    }
+    for func in defined_functions {
+        if func.basic_blocks.is_empty() {
+            return Err(Error::from(format!(
+                "native emitter requires at least one basic block in function {}",
+                func.name
+            )));
+        }
 
-    for block in &func.basic_blocks {
-        for inst in &block.instructions {
-            if let LirInstructionKind::Call {
-                function: _, args, ..
-            } = &inst.kind
-            {
-                if !args.iter().all(is_call_arg_value) {
-                    return Err(Error::from(
-                        "native emitter only supports register/constant/local/stack call args",
-                    ));
+        for block in &func.basic_blocks {
+            for inst in &block.instructions {
+                if let LirInstructionKind::Call {
+                    function: _, args, ..
+                } = &inst.kind
+                {
+                    if !args.iter().all(is_call_arg_value) {
+                        return Err(Error::from(
+                            "native emitter only supports register/constant/local/stack call args",
+                        ));
+                    }
                 }
             }
-        }
-        match &block.terminator {
-            LirTerminator::Return(_)
-            | LirTerminator::Br(_)
-            | LirTerminator::CondBr { .. }
-            | LirTerminator::Switch { .. }
-            | LirTerminator::Unreachable
-            | LirTerminator::Invoke { .. } => {}
-            other => {
-                return Err(Error::from(format!(
-                    "native emitter does not support terminator {other:?}"
-                )));
+            match &block.terminator {
+                LirTerminator::Return(_)
+                | LirTerminator::Br(_)
+                | LirTerminator::CondBr { .. }
+                | LirTerminator::Switch { .. }
+                | LirTerminator::Unreachable
+                | LirTerminator::Invoke { .. } => {}
+                other => {
+                    return Err(Error::from(format!(
+                        "native emitter does not support terminator {other:?}"
+                    )));
+                }
             }
         }
     }

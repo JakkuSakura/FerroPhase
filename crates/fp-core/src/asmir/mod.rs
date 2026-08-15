@@ -1,6 +1,8 @@
 pub mod pretty;
 pub mod sysop;
 
+use std::collections::HashMap;
+
 use crate::container::ContainerFile;
 use crate::lir::{
     CallingConvention, DebugInfo, Linkage, LirDataLayout, Name, StackSlot, Ty, Visibility,
@@ -25,6 +27,15 @@ pub struct AsmProgram {
     pub globals: Vec<AsmGlobal>,
     pub functions: Vec<AsmFunction>,
     pub type_definitions: Vec<AsmTypeDefinition>,
+    /// Types for synthetic virtual-register ids assigned when a raw physical
+    /// register reference is canonicalized into a virtual one (see
+    /// fp-native's `canonicalize_physical_registers`). Those ids never
+    /// correspond to any instruction id, so they never appear in a
+    /// per-function instruction-id-keyed type map — this is the one place
+    /// their (precisely known, from the physical register's real size/bank)
+    /// type survives from the lift step to later passes that resolve a
+    /// register operand's type by id.
+    pub physical_register_types: HashMap<AsmVirtualRegId, Ty>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -713,6 +724,7 @@ impl AsmProgram {
             globals: Vec::new(),
             functions: Vec::new(),
             type_definitions: Vec::new(),
+            physical_register_types: HashMap::new(),
         }
     }
 }

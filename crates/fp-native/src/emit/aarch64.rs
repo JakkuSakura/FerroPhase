@@ -1215,8 +1215,11 @@ pub fn emit_text_from_asmir(program: &AsmProgram, format: TargetFormat) -> Resul
         emit_panic_stub(&mut asm, id);
     }
 
-    let entry_offset = entry_offset
-        .ok_or_else(|| Error::from("native emitter requires an explicit main entrypoint"))?;
+    // `None` when `program` has no `main` (e.g. a plain object/archive
+    // transpile roundtrip) — only producing an executable or JIT-executing
+    // this plan actually needs a real entrypoint; both check for that
+    // explicitly at that point instead of it being required unconditionally
+    // here for every plan.
     let func_offsets = asm.function_offsets();
     let mut symbols = HashMap::new();
     for (idx, func) in program.functions.iter().enumerate() {
@@ -8137,6 +8140,7 @@ mod tests {
                 is_declaration: false,
             }],
             type_definitions: Vec::new(),
+            physical_register_types: std::collections::HashMap::new(),
         }
     }
 
@@ -8194,6 +8198,7 @@ mod tests {
                 is_declaration: false,
             }],
             type_definitions: Vec::new(),
+            physical_register_types: std::collections::HashMap::new(),
         }
     }
 }

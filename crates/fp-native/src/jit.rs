@@ -181,7 +181,10 @@ impl JitEngine {
             symbols.insert(name.clone(), (rodata_base + *offset) as *const c_void);
         }
 
-        let entry = (text_base + plan.entry_offset) as *const c_void;
+        let entry_offset = plan.entry_offset.ok_or_else(|| {
+            Error::from("native emitter requires a defined main function to JIT-execute")
+        })?;
+        let entry = (text_base + entry_offset) as *const c_void;
 
         Ok(JitModule {
             _text: text,
