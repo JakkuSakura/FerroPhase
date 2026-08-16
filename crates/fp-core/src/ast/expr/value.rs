@@ -875,8 +875,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
     let (kind, _name) = match &invoke.target {
         ExprInvokeTarget::Function(name) => {
             let kind = crate::lang::lookup_op_intrinsic(name)
-                .or_else(|| crate::lang::lookup_intrinsic(name))
-                .or_else(|| detect_intrinsic_call(name))?;
+                .or_else(|| crate::lang::lookup_intrinsic(name))?;
             (kind, name)
         }
         _ => return None,
@@ -1117,51 +1116,6 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
         CallKind::Intrinsic(_) => None,
     }?;
     Some(call)
-}
-
-fn detect_intrinsic_call(name: &Name) -> Option<CallKind> {
-    if let Some(kind) = crate::lang::lookup_intrinsic(name) {
-        return Some(kind);
-    }
-
-    match name {
-        Name::Ident(ident) => match ident.name.as_str() {
-            "print" => Some(CallKind::Print),
-            "println" => Some(CallKind::Println),
-            "len" => Some(CallKind::Len),
-            "type" => Some(CallKind::TypeOf),
-            "catch_unwind" => Some(CallKind::CatchUnwind),
-            "catch_unwind_result" => Some(CallKind::CatchUnwindResult),
-            _ => None,
-        },
-        Name::Path(path) => {
-            let names: Vec<_> = path.segments.iter().map(|seg| seg.name.as_str()).collect();
-            match names.as_slice() {
-                ["std", "print"] | ["std", "io", "print"] => Some(CallKind::Print),
-                ["std", "println"] | ["std", "io", "println"] => Some(CallKind::Println),
-                ["std", "len"] | ["std", "builtins", "len"] | ["len"] => Some(CallKind::Len),
-                ["type"] | ["std", "type"] | ["std", "builtins", "type"] => Some(CallKind::TypeOf),
-                ["std", "time", "now"] => Some(CallKind::TimeNow),
-                ["std", "task", "spawn"] => Some(CallKind::Spawn),
-                ["std", "task", "join"] => Some(CallKind::Join),
-                ["std", "task", "select"] => Some(CallKind::Select),
-                ["proc_macro", "token_stream_from_str"]
-                | ["std", "proc_macro", "token_stream_from_str"]
-                | ["proc_macro", "TokenStream", "from_str"]
-                | ["std", "proc_macro", "TokenStream", "from_str"] => {
-                    Some(CallKind::ProcMacroTokenStreamFromStr)
-                }
-                ["proc_macro", "token_stream_to_string"]
-                | ["std", "proc_macro", "token_stream_to_string"]
-                | ["proc_macro", "TokenStream", "to_string"]
-                | ["std", "proc_macro", "TokenStream", "to_string"] => {
-                    Some(CallKind::ProcMacroTokenStreamToString)
-                }
-                _ => None,
-            }
-        }
-        _ => None,
-    }
 }
 
 fn build_string_template_from_args(

@@ -954,18 +954,47 @@ fn normalize_expr(expr: &mut Expr, n: &dyn IntrinsicNormalizer) -> Result<()> {
 
 fn resolve_lang_intrinsic(invoke: &ExprInvoke) -> Option<CallKind> {
     let name = match &invoke.target {
-        ExprInvokeTarget::Function(name) => name.to_string(),
+        ExprInvokeTarget::Function(name) => name,
         _ => return None,
     };
-    let fn_name = match name.as_str() {
-        "print" | "println" | "std::print" | "std::println" | "std::io::print"
-        | "std::io::println" => name.rsplit("::").next().unwrap_or(&name),
-        _ if !name.contains("::") => name.as_str(),
-        _ => return None,
-    };
-    intrinsic_macro_kind(fn_name).or_else(|| {
-        operation_kind(fn_name).map(CallKind::Op)
-    })
+    match name {
+        Name::Ident(ident) => {
+            let fn_name = ident.name.as_str();
+            intrinsic_macro_kind(fn_name).or_else(|| operation_kind(fn_name).map(CallKind::Op))
+        }
+        // Path-qualified builtins — FerroPhase's own std module layout
+        // (`std::time::now`, `std::task::spawn`, etc.), so the segment
+        // table lives here rather than in generic/shared call-resolution
+        // code. Segment-matched (not string-matched) so a leading `::`
+        // absolute-path prefix doesn't need special-casing.
+        Name::Path(path) => {
+            let segments: Vec<&str> = path.segments.iter().map(|seg| seg.name.as_str()).collect();
+            match segments.as_slice() {
+                ["std", "print"] | ["std", "io", "print"] => Some(CallKind::Print),
+                ["std", "println"] | ["std", "io", "println"] => Some(CallKind::Println),
+                ["std", "len"] | ["std", "builtins", "len"] | ["len"] => Some(CallKind::Len),
+                ["type"] | ["std", "type"] | ["std", "builtins", "type"] => Some(CallKind::TypeOf),
+                ["std", "time", "now"] => Some(CallKind::TimeNow),
+                ["std", "task", "spawn"] => Some(CallKind::Spawn),
+                ["std", "task", "join"] => Some(CallKind::Join),
+                ["std", "task", "select"] => Some(CallKind::Select),
+                ["proc_macro", "token_stream_from_str"]
+                | ["std", "proc_macro", "token_stream_from_str"]
+                | ["proc_macro", "TokenStream", "from_str"]
+                | ["std", "proc_macro", "TokenStream", "from_str"] => {
+                    Some(CallKind::ProcMacroTokenStreamFromStr)
+                }
+                ["proc_macro", "token_stream_to_string"]
+                | ["std", "proc_macro", "token_stream_to_string"]
+                | ["proc_macro", "TokenStream", "to_string"]
+                | ["std", "proc_macro", "TokenStream", "to_string"] => {
+                    Some(CallKind::ProcMacroTokenStreamToString)
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 fn operation_kind(name: &str) -> Option<OpKind> {
@@ -1044,6 +1073,8 @@ fn intrinsic_macro_kind(name: &str) -> Option<CallKind> {
         "generate_method" => Some(CallKind::Intrinsic(IntrinsicKind::GenerateMethod)),
         "compile_error" => Some(CallKind::Intrinsic(IntrinsicKind::CompileError)),
         "compile_warning" => Some(CallKind::Intrinsic(IntrinsicKind::CompileWarning)),
+        "catch_unwind" => Some(CallKind::Intrinsic(IntrinsicKind::CatchUnwind)),
+        "catch_unwind_result" => Some(CallKind::Intrinsic(IntrinsicKind::CatchUnwindResult)),
         "some" | "Some" => Some(CallKind::Op(OpKind::OptionSome)),
         "none" | "None" => Some(CallKind::Op(OpKind::OptionNone)),
         "unwrap" | "Unwrap" => Some(CallKind::Op(OpKind::OptionUnwrap)),

@@ -73,13 +73,15 @@ impl HirGenerator {
             return self.transform_expr_to_hir_inner(ast_expr);
         };
 
-        // `Invoke` (plain function/method calls) is deliberately NOT
-        // normalized here anymore — portable-op detection for ordinary
-        // calls needs the receiver's real resolved type to disambiguate
-        // safely from a same-named user function/method (see
-        // `HirToAstLifter`'s post-typecheck reclassification, which now
-        // owns this). Genuine macro/intrinsic-container/struct shapes are
-        // unambiguous by construction and keep resolving immediately.
+        // Method-call `Invoke`s are deliberately NOT normalized here —
+        // portable-op detection for a method call needs the receiver's real
+        // resolved type to disambiguate safely from a same-named user
+        // method (see `HirToAstLifter`'s post-typecheck reclassification,
+        // which owns that case). A bare function-name call has no such
+        // receiver-type ambiguity, so it's safe — and necessary, since no
+        // later pass re-visits it for every pipeline mode — to resolve
+        // eagerly here, same as the other unambiguous-by-construction
+        // shapes below.
         let needs_normalization = matches!(
             ast_expr.kind(),
             ast::ExprKind::Macro(_)
@@ -87,6 +89,9 @@ impl HirGenerator {
                 | ast::ExprKind::IntrinsicContainer(_)
                 | ast::ExprKind::Struct(_)
                 | ast::ExprKind::Structural(_)
+        ) || matches!(
+            ast_expr.kind(),
+            ast::ExprKind::Invoke(invoke) if matches!(invoke.target, ast::ExprInvokeTarget::Function(_))
         );
         if !needs_normalization {
             return self.transform_expr_to_hir_inner(ast_expr);
@@ -760,12 +765,6 @@ impl HirGenerator {
                         ));
                     }
                 }
-                if self.intrinsic_normalizer.is_none() {
-                    if let Some(intrinsic_call) = ast::intrinsic_call_from_invoke(invoke) {
-                        return self.transform_intrinsic_call_to_hir(&intrinsic_call);
-                    }
-                }
-
                 let func_expr = hir::Expr {
                     hir_id: self.next_id(),
                     kind: hir::ExprKind::Path(
