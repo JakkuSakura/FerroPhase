@@ -67,6 +67,8 @@ impl String {
 impl str {
     pub fn len(&self) -> usize { compile_error!("compiler intrinsic") }
 
+    pub fn lines(&self) -> ::std::alloc::Vec<&str> { compile_error!("compiler intrinsic") }
+
     /// Raw data pointer — only safe to pass to a C function that also
     /// receives an explicit length (e.g. `write`/`memcpy`'s buffer
     /// parameters). Never NUL-terminated; do not pass this to a C function
@@ -126,6 +128,10 @@ impl String {
     }
 
     pub fn contains(&self, needle: &str) -> bool {
+        compile_error!("compiler intrinsic")
+    }
+
+    pub fn lines(&self) -> ::std::alloc::Vec<&str> {
         compile_error!("compiler intrinsic")
     }
 }

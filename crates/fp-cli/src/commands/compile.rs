@@ -814,8 +814,15 @@ async fn compile_emit_target(
             })) {
                 Ok(Ok(typed_source)) => typed_source,
                 Ok(Err(e)) => {
+                    if !lossy.enabled {
+                        return Err(CliError::Compilation(format!(
+                            "typecheck failed for {}: {}",
+                            input.display(),
+                            e
+                        )));
+                    }
                     warn!(
-                        "typecheck failed for {}: {} — falling back to untyped",
+                        "typecheck failed for {}: {} — falling back to untyped (lossy mode)",
                         input.display(),
                         e
                     );
@@ -829,8 +836,15 @@ async fn compile_emit_target(
                         .map(|s| s.as_str())
                         .or_else(|| panic_info.downcast_ref::<&str>().copied())
                         .unwrap_or("(unknown)");
+                    if !lossy.enabled {
+                        return Err(CliError::Compilation(format!(
+                            "typecheck panicked for {}: {}",
+                            input.display(),
+                            msg
+                        )));
+                    }
                     warn!(
-                        "typecheck panicked for {}: {} — falling back to untyped",
+                        "typecheck panicked for {}: {} — falling back to untyped (lossy mode)",
                         input.display(),
                         msg
                     );
@@ -993,8 +1007,15 @@ async fn compile_project(
             })) {
                 Ok(Ok(typed_source)) => typed_source,
                 Ok(Err(e)) => {
+                    if !lossy.enabled {
+                        return Err(CliError::Compilation(format!(
+                            "typecheck failed for {}: {}",
+                            package_id.as_str(),
+                            e
+                        )));
+                    }
                     warn!(
-                        "typecheck failed for {}: {} — falling back to untyped",
+                        "typecheck failed for {}: {} — falling back to untyped (lossy mode)",
                         package_id.as_str(),
                         e
                     );
@@ -1008,8 +1029,15 @@ async fn compile_project(
                         .map(|s| s.as_str())
                         .or_else(|| panic_info.downcast_ref::<&str>().copied())
                         .unwrap_or("(unknown)");
+                    if !lossy.enabled {
+                        return Err(CliError::Compilation(format!(
+                            "typecheck panicked for {}: {}",
+                            package_id.as_str(),
+                            msg
+                        )));
+                    }
                     warn!(
-                        "typecheck panicked for {}: {} — falling back to untyped",
+                        "typecheck panicked for {}: {} — falling back to untyped (lossy mode)",
                         package_id.as_str(),
                         msg
                     );

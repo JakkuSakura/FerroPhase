@@ -150,6 +150,25 @@ impl HirTypeChecker {
         self.record_error(message);
         Ty::error()
     }
+
+    /// `record_error`, but with a real span attached (`TypingDiagnostic::
+    /// error_with_span`) — use whenever the caller already has the
+    /// offending expression's span in scope, so the diagnostic is
+    /// locatable instead of a bare, file/line-less message.
+    fn record_error_with_span(&self, message: impl Into<String>, span: fp_core::span::Span) {
+        if let Some(context) = &self.shared.typing_context {
+            context
+                .diagnostics
+                .borrow_mut()
+                .push(crate::types::TypingDiagnostic::error_with_span(message, span));
+        }
+    }
+
+    /// `error_ty`, but with a real span attached — see `record_error_with_span`.
+    fn error_ty_with_span(&self, message: impl Into<String>, span: fp_core::span::Span) -> Ty {
+        self.record_error_with_span(message, span);
+        Ty::error()
+    }
 }
 
 impl Drop for GenericScope<'_> {
@@ -757,7 +776,7 @@ impl HirTypeChecker {
                             }
                             output
                         }
-                        Err(error) => self.error_ty(error.to_string()),
+                        Err(error) => self.error_ty_with_span(error.to_string(), expr.span),
                     }
                 }
                 hir::ExprKind::FieldAccess(receiver, field) => {

@@ -97,11 +97,33 @@ impl HirGenerator {
             return self.transform_expr_to_hir_inner(ast_expr);
         }
 
-        let mut normalized = normalizer.normalize_expr(ast_expr.clone())?.into_inner();
+        let expr_span = ast_expr.span();
+        let mut normalized = match normalizer.normalize_expr(ast_expr.clone()) {
+            Ok(n) => n.into_inner(),
+            // A malformed macro/format construct (e.g. an unsupported format
+            // spec) shouldn't fail type-checking for the *entire* package —
+            // degrade just this one expression via the same
+            // diagnostic-manager-backed placeholder every other unlowerable
+            // construct in this file already uses.
+            Err(e) => {
+                let span = self.create_span(1);
+                let hir_id = self.next_id();
+                let kind = self.error_placeholder_expr_kind(e.to_string(), expr_span);
+                return Ok(hir::Expr { hir_id, span, kind });
+            }
+        };
         if matches!(ast_expr.kind(), ast::ExprKind::Macro(_))
             && matches!(normalized.kind(), ast::ExprKind::IntrinsicCall(_))
         {
-            normalized = normalizer.normalize_expr(normalized)?.into_inner();
+            normalized = match normalizer.normalize_expr(normalized) {
+                Ok(n) => n.into_inner(),
+                Err(e) => {
+                    let span = self.create_span(1);
+                    let hir_id = self.next_id();
+                    let kind = self.error_placeholder_expr_kind(e.to_string(), expr_span);
+                    return Ok(hir::Expr { hir_id, span, kind });
+                }
+            };
         }
         self.transform_expr_to_hir_inner(&normalized)
     }

@@ -114,6 +114,7 @@ common_struct! {
         pub alternate: bool,
         pub zero: bool,
         pub width: Option<usize>,
+        pub dynamic_width: bool,
         pub precision: Option<usize>,
         pub dynamic_precision: bool,
         pub ty: Option<char>,
@@ -738,6 +739,7 @@ fn parse_rust_format_spec(raw: &str) -> Result<RustFormatSpec, String> {
             alternate: false,
             zero: false,
             width: None,
+            dynamic_width: false,
             precision: None,
             dynamic_precision: false,
             ty: None,
@@ -790,7 +792,21 @@ fn parse_rust_format_spec(raw: &str) -> Result<RustFormatSpec, String> {
         idx += 1;
     }
 
-    let (width, next) = parse_decimal(bytes, idx)?;
+    let (mut width, mut next) = parse_decimal(bytes, idx)?;
+    let mut dynamic_width = false;
+    if width.is_some() && next < bytes.len() && bytes[next] == b'$' {
+        // `{:5$}` — width taken from the argument at index 5, not a literal width.
+        dynamic_width = true;
+        width = None;
+        next += 1;
+    } else if width.is_none() {
+        // `{:name$}` — width taken from a named argument/const.
+        let ident_end = scan_ident(bytes, idx);
+        if ident_end > idx && ident_end < bytes.len() && bytes[ident_end] == b'$' {
+            dynamic_width = true;
+            next = ident_end + 1;
+        }
+    }
     idx = next;
 
     let mut precision = None;
@@ -802,11 +818,23 @@ fn parse_rust_format_spec(raw: &str) -> Result<RustFormatSpec, String> {
             idx += 1;
         } else {
             let (parsed, next_idx) = parse_decimal(bytes, idx)?;
-            if parsed.is_none() {
+            if parsed.is_some() && next_idx < bytes.len() && bytes[next_idx] == b'$' {
+                // `{:.5$}` — precision taken from the argument at index 5.
+                dynamic_precision = true;
+                idx = next_idx + 1;
+            } else if parsed.is_none() && {
+                let ident_end = scan_ident(bytes, idx);
+                ident_end > idx && ident_end < bytes.len() && bytes[ident_end] == b'$'
+            } {
+                // `{:.name$}` — precision taken from a named argument/const.
+                dynamic_precision = true;
+                idx = scan_ident(bytes, idx) + 1;
+            } else if parsed.is_none() {
                 return Err("format precision requires digits".to_string());
+            } else {
+                precision = parsed;
+                idx = next_idx;
             }
-            precision = parsed;
-            idx = next_idx;
         }
     }
 
@@ -833,6 +861,7 @@ fn parse_rust_format_spec(raw: &str) -> Result<RustFormatSpec, String> {
         alternate,
         zero,
         width,
+        dynamic_width,
         precision,
         dynamic_precision,
         ty,
@@ -868,6 +897,19 @@ fn parse_decimal(bytes: &[u8], mut idx: usize) -> Result<(Option<usize>, usize),
         return Ok((None, idx));
     }
     Ok((Some(value), idx))
+}
+
+/// Consume a `[A-Za-z_][A-Za-z0-9_]*` identifier starting at `idx`, returning
+/// the end index (== `idx` if no identifier starts there). Used to recognize
+/// named dynamic width/precision references (`{:name$}`, `{:.name$}`).
+fn scan_ident(bytes: &[u8], mut idx: usize) -> usize {
+    if idx < bytes.len() && (bytes[idx].is_ascii_alphabetic() || bytes[idx] == b'_') {
+        idx += 1;
+        while idx < bytes.len() && (bytes[idx].is_ascii_alphanumeric() || bytes[idx] == b'_') {
+            idx += 1;
+        }
+    }
+    idx
 }
 
 /// Attempt to recognise canonical intrinsic calls inside a generic invoke expression.
@@ -1685,5 +1727,55 @@ common_struct! {
         #[serde(default)]
         pub span: Span,
         pub dict: Box<Expr>,
+    }
+}
+
+#[cfg(test)]
+mod format_spec_tests {
+    use super::*;
+
+    #[test]
+    fn parses_literal_width_and_precision() {
+        let spec = parse_rust_format_spec("5.2?").unwrap();
+        assert_eq!(spec.width, Some(5));
+        assert!(!spec.dynamic_width);
+        assert_eq!(spec.precision, Some(2));
+        assert!(!spec.dynamic_precision);
+        assert_eq!(spec.ty, Some('?'));
+    }
+
+    #[test]
+    fn parses_numeric_dynamic_width() {
+        let spec = parse_rust_format_spec("5$").unwrap();
+        assert_eq!(spec.width, None);
+        assert!(spec.dynamic_width);
+    }
+
+    #[test]
+    fn parses_named_dynamic_width() {
+        let spec = parse_rust_format_spec("name$").unwrap();
+        assert_eq!(spec.width, None);
+        assert!(spec.dynamic_width);
+    }
+
+    #[test]
+    fn parses_numeric_dynamic_precision() {
+        let spec = parse_rust_format_spec(".5$").unwrap();
+        assert_eq!(spec.precision, None);
+        assert!(spec.dynamic_precision);
+    }
+
+    #[test]
+    fn parses_named_dynamic_precision() {
+        let spec = parse_rust_format_spec(".name$").unwrap();
+        assert_eq!(spec.precision, None);
+        assert!(spec.dynamic_precision);
+    }
+
+    #[test]
+    fn parses_reported_hex_width_case() {
+        let spec = parse_rust_format_spec("HEX_WIDTH$?").unwrap();
+        assert!(spec.dynamic_width);
+        assert_eq!(spec.ty, Some('?'));
     }
 }

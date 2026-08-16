@@ -1817,7 +1817,7 @@ impl KotlinEmitter {
 
         if is_single_arm || is_two_arm {
             let case = &mt.cases[0];
-            let non_monadic = if is_two_arm { non_monadic_tuple_variant(&case.pat) } else { None };
+            let non_monadic = if is_two_arm { non_monadic_tuple_variant(self, &case.pat) } else { None };
             let effective_var = if non_monadic.is_some() {
                 None
             } else if is_two_arm {
@@ -1929,6 +1929,18 @@ impl KotlinEmitter {
             self.writer.write_line(&format!("when ({}) {{", scrutinee));
             self.writer.increase_indent();
             for case in &mt.cases {
+                if let Some((variant_path, binding)) = non_monadic_tuple_variant(self, &case.pat) {
+                    self.writer.write_line(&format!("is {} -> {{", variant_path));
+                    self.writer.increase_indent();
+                    self.push_scope();
+                    self.declare_name(&binding);
+                    self.writer.write_line(&format!("val {} = {}.__data", binding, scrutinee));
+                    self.emit_box_body(&case.body, tail)?;
+                    self.pop_scope();
+                    self.writer.decrease_indent();
+                    self.writer.write_line("}");
+                    continue;
+                }
                 let pat = render_match_pat(&case.pat, self);
                 let is_empty_body = matches!(case.body.kind(), ExprKind::Block(b) if b.stmts.is_empty());
                 if is_empty_body {
@@ -2140,18 +2152,38 @@ impl KotlinEmitter {
                 if raw == "self" {
                     return Ok("this".to_string());
                 }
-                // `Self { field: value }` (constructor shorthand) / `Self::other()`
-                // — Kotlin has no `Self` expression-position equivalent, so swap
-                // in the real class/enum name (see `current_self_name`'s doc
-                // comment).
-                let raw = if let Some(self_name) = &self.current_self_name {
-                    substitute_self_prefix(&raw, self_name)
-                } else {
-                    raw
-                };
-                let dotted = raw.replace("::", ".");
-                // Uppercase enum variant references in qualified paths
-                Ok(uppercase_last_segment(&dotted))
+                // A module-qualified enum-variant VALUE (self.g. Rust
+                // `types::FileStatus::Modified` used as a plain value, not a
+                // match pattern) — resolve the declaring enum's real name from
+                // this expression's own resolved type (`Ty::Expr` wrapping the
+                // real `DefPath`-derived path built by
+                // `HirToAstLifter::def_id_to_ty`) rather than guessing from the
+                // path text: a `DefPath`'s own declaring segment is
+                // structurally always last, so `ty()`'s last path segment is
+                // the real enum name regardless of how many module segments
+                // precede it. Look the exact Kotlin spelling up in the same
+                // `enum_variant_names` registry `render_match_pat` already
+                // uses for the pattern case.
+                if let Some(enum_name) = enum_name_from_ty(expr.ty()) {
+                    let variant_name = match name {
+                        fp_core::ast::Name::Path(p) => {
+                            p.segments.last().map(|s| s.name.clone())
+                        }
+                        fp_core::ast::Name::Ident(id) => Some(id.name.clone()),
+                        _ => None,
+                    };
+                    if let Some(kotlin_variant) = variant_name
+                        .as_deref()
+                        .and_then(|v| self.enum_variant_names.get(&enum_name).and_then(|m| m.get(v)))
+                    {
+                        return Ok(format!("{}.{}", enum_name, kotlin_variant));
+                    }
+                }
+                // Not a resolved enum-variant value (plain function/const
+                // reference, `Self::`-shorthand path, or type info genuinely
+                // unavailable) — an ordinary qualified name, rendered from its
+                // real segments with no enum-specific guessing.
+                Ok(qualified_name_with_self(name, self.current_self_name.as_deref()))
             }
             ExprKind::Id(id) => Ok(id.to_string()),
 
@@ -2991,6 +3023,55 @@ fn uppercase_last_segment(name: &str) -> String {
     }
 }
 
+/// The enum's own bare declared name for an enum-variant VALUE expression,
+/// derived from the expression's real resolved type (`Ty::Expr` wrapping the
+/// real, `DefPath`-derived path `HirToAstLifter::def_id_to_ty` builds from
+/// the type-checker's own resolved `DefId` — never derived from this
+/// particular use's own path text). A `DefPath`'s own declaring segment is
+/// structurally always last (module segments only ever precede it), so the
+/// last path segment reliably names the real enum regardless of how many
+/// module segments precede it — no position-counting/guessing needed.
+fn enum_name_from_ty(ty: Option<&Ty>) -> Option<String> {
+    match ty? {
+        Ty::Enum(en) => Some(en.name.name.clone()),
+        Ty::Expr(expr) => match expr.kind() {
+            ExprKind::Name(fp_core::ast::Name::Path(p)) => {
+                p.segments.last().map(|s| s.name.clone())
+            }
+            ExprKind::Name(fp_core::ast::Name::Ident(id)) => Some(id.name.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Renders an ordinary (non-enum-variant) qualified name from its real
+/// segments — no `::`/`.` text search-and-replace — swapping a literal
+/// `Self` first segment for the real class/enum name (see
+/// `current_self_name`'s doc comment) by checking/replacing that one real
+/// `Ident`, not by substring-searching the joined text.
+fn qualified_name_with_self(name: &fp_core::ast::Name, self_name: Option<&str>) -> String {
+    match name {
+        fp_core::ast::Name::Ident(id) => {
+            if id.name == "Self" {
+                self_name.unwrap_or(id.name.as_str()).to_string()
+            } else {
+                id.name.clone()
+            }
+        }
+        fp_core::ast::Name::Path(p) => {
+            let mut segments: Vec<String> = p.segments.iter().map(|s| s.name.clone()).collect();
+            if let (Some(first), Some(sn)) = (segments.first_mut(), self_name) {
+                if first == "Self" {
+                    *first = sn.to_string();
+                }
+            }
+            segments.join(".")
+        }
+        _ => name_to_string(name),
+    }
+}
+
 /// Resolves `raw_name` (a pattern's own qualified source path, e.g.
 /// `"GitRefNode::Branch"` or a bare `"Branch"` when the variant was
 /// brought into scope via `use`) to its real Kotlin sealed-subclass path,
@@ -3093,7 +3174,7 @@ fn is_tuple_struct_binding(pat: &Option<fp_core::ast::BPattern>, names: &[&str])
 /// variant (not Some/Ok/Err/None — those get the null-check fast path instead),
 /// return the Kotlin sealed-subclass path (`Enum.VARIANT`) and the binding name.
 /// Requires the pattern to be written with its enum-qualified path.
-fn non_monadic_tuple_variant(pat: &Option<fp_core::ast::BPattern>) -> Option<(String, String)> {
+fn non_monadic_tuple_variant(e: &KotlinEmitter, pat: &Option<fp_core::ast::BPattern>) -> Option<(String, String)> {
     let p = pat.as_ref()?;
     let PatternKind::TupleStruct(ts) = &p.kind else { return None };
     if ts.patterns.len() != 1 {
@@ -3111,7 +3192,7 @@ fn non_monadic_tuple_variant(pat: &Option<fp_core::ast::BPattern>) -> Option<(St
         PatternKind::Ident(id) => id.ident.name.clone(),
         _ => return None,
     };
-    let variant_path = uppercase_last_segment(&raw).replace("::", ".");
+    let variant_path = resolve_variant_kotlin_path(e, &raw);
     Some((variant_path, binding))
 }
 
