@@ -286,6 +286,23 @@ fn cfg_target_os_attr(value: &str) -> ast::Attribute {
     }
 }
 
+fn cfg_feature_attr(value: &str) -> ast::Attribute {
+    let cfg_name = ast::Path::from_ident(ident("cfg"));
+    let feature_name = ast::Path::from_ident(ident("feature"));
+    let value_expr = ast::Expr::value(ast::Value::string(value.to_string()));
+    let meta = ast::AttrMeta::List(ast::AttrMetaList {
+        name: cfg_name,
+        items: vec![ast::AttrMeta::NameValue(ast::AttrMetaNameValue {
+            name: feature_name,
+            value: value_expr.into(),
+        })],
+    });
+    ast::Attribute {
+        style: ast::AttrStyle::Outer,
+        meta,
+    }
+}
+
 #[test]
 fn test_hir_generator_creation() {
     let generator = HirGenerator::new();
@@ -549,7 +566,7 @@ fn cfg_filters_items_by_target_os() -> Result<()> {
 
     let package = package_from_items(vec![linux_fn, mac_fn])?;
     let mut generator = HirGenerator::new();
-    generator.set_target_triple(Some("x86_64-apple-darwin"));
+    generator.set_target_triple(Some("x86_64-apple-darwin"))?;
     let program = generator.transform_package(&package)?;
 
     let names = program
@@ -563,6 +580,48 @@ fn cfg_filters_items_by_target_os() -> Result<()> {
 
     assert!(names.contains(&"mac_only".to_string()));
     assert!(!names.contains(&"linux_only".to_string()));
+    Ok(())
+}
+
+#[test]
+fn cfg_filters_items_by_cargo_feature() -> Result<()> {
+    let mut selected = make_fn(
+        "selected",
+        Vec::new(),
+        int_ty(),
+        ast::Expr::value(ast::Value::int(1)),
+    );
+    let mut excluded = make_fn(
+        "excluded",
+        Vec::new(),
+        int_ty(),
+        ast::Expr::value(ast::Value::int(2)),
+    );
+    if let ast::ItemKind::DefFunction(def) = selected.kind_mut() {
+        def.attrs.push(cfg_feature_attr("selected"));
+    }
+    if let ast::ItemKind::DefFunction(def) = excluded.kind_mut() {
+        def.attrs.push(cfg_feature_attr("excluded"));
+    }
+
+    let package = package_from_items(vec![selected, excluded])?;
+    let target_env = fp_core::cfg::TargetEnv::from_triple(Some("x86_64-apple-darwin"))
+        .map_err(|error| crate::error::optimization_error(error.to_string()))?
+        .with_features(["selected"]);
+    let mut generator = HirGenerator::new();
+    generator.set_cfg_environment(target_env);
+    let program = generator.transform_package(&package)?;
+
+    let names = program
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            hir::ItemKind::Function(func) => Some(func.sig.name.as_str().to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(names, vec!["selected"]);
     Ok(())
 }
 

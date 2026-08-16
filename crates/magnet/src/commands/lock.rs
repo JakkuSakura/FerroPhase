@@ -29,6 +29,7 @@ pub fn lock(options: &LockOptions) -> Result<()> {
         refresh_index: false,
         write_lock: true,
         target: None,
+        root_features: Default::default(),
     };
     resolve_graph(&options.path, &graph_options)?;
     let root = resolve_root(&options.path);

@@ -1,24 +1,65 @@
 use crate::ast::{self, File, ItemKind};
+use cfg_expr::targets::{Family, TargetInfo, get_builtin_target_by_triple};
+use cfg_expr::{Expression, Predicate};
+use std::collections::BTreeSet;
+use target_lexicon::HOST;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+#[error("unsupported Rust target triple '{triple}'")]
+pub struct TargetEnvError {
+    triple: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetEnv {
     pub os: String,
     pub lang: Option<String>,
+    triple: String,
+    target: &'static TargetInfo,
+    features: BTreeSet<String>,
 }
 
 impl TargetEnv {
     pub fn host() -> Self {
-        Self {
-            os: host_target_os(),
-            lang: None,
-        }
+        Self::from_triple(None).expect("target-lexicon host triple must be known by cfg-expr")
     }
 
-    pub fn from_triple(triple: Option<&str>) -> Self {
-        Self {
-            os: target_os_from_triple(triple),
+    pub fn from_triple(triple: Option<&str>) -> Result<Self, TargetEnvError> {
+        let triple = triple
+            .map(str::to_owned)
+            .unwrap_or_else(|| HOST.to_string());
+        let target = get_builtin_target_by_triple(&triple).ok_or_else(|| TargetEnvError {
+            triple: triple.clone(),
+        })?;
+        Ok(Self {
+            os: target
+                .os
+                .as_ref()
+                .map(|os| os.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
             lang: None,
-        }
+            triple,
+            target,
+            features: BTreeSet::new(),
+        })
+    }
+
+    pub fn with_features<I, S>(mut self, features: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.features = features.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn target_triple(&self) -> &str {
+        &self.triple
+    }
+
+    pub fn has_feature(&self, feature: &str) -> bool {
+        self.features.contains(feature)
     }
 }
 
@@ -81,10 +122,7 @@ fn cfg_attrs_enabled(attrs: &[ast::Attribute], env: &TargetEnv) -> bool {
 }
 
 fn cfg_list_items_enabled(items: &[ast::AttrMeta], env: &TargetEnv) -> bool {
-    if items.is_empty() {
-        return false;
-    }
-    items.iter().all(|item| cfg_meta_enabled(item, env))
+    !items.is_empty() && items.iter().all(|item| cfg_meta_enabled(item, env))
 }
 
 /// Evaluates a single `cfg` predicate (the parsed inner content of
@@ -92,69 +130,152 @@ fn cfg_list_items_enabled(items: &[ast::AttrMeta], env: &TargetEnv) -> bool {
 /// identical grammar). `pub` so it can also be reused to normalize `cfg!()`
 /// as an expression-position macro, not just attribute-position filtering.
 pub fn cfg_meta_enabled(meta: &ast::AttrMeta, env: &TargetEnv) -> bool {
+    let Some(source) = cfg_expression(meta) else {
+        return false;
+    };
+    let Ok(expression) = Expression::parse(&source) else {
+        return false;
+    };
+    expression.eval(|predicate| predicate_enabled(predicate, env))
+}
+
+fn cfg_expression(meta: &ast::AttrMeta) -> Option<String> {
     match meta {
-        ast::AttrMeta::Path(path) => match path.last().as_str() {
-            "unix" => env.os == "linux" || env.os == "macos",
-            "windows" => env.os == "windows",
-            _ => false,
-        },
-        ast::AttrMeta::NameValue(nv) => {
-            let Some(value) = string_literal_value(&nv.value) else {
-                return false;
-            };
-            match nv.name.last().as_str() {
-                "target_os" => value == env.os,
-                "target_lang" => env.lang.as_deref() == Some(value.as_str()),
-                _ => false,
-            }
+        ast::AttrMeta::Path(path) => Some(path.last().as_str().to_owned()),
+        ast::AttrMeta::NameValue(name_value) => {
+            let value = string_literal_value(&name_value.value)?;
+            Some(format!("{} = {value:?}", name_value.name.last().as_str()))
         }
-        ast::AttrMeta::List(list) => match list.name.last().as_str() {
-            "any" => list.items.iter().any(|item| cfg_meta_enabled(item, env)),
-            "all" => list.items.iter().all(|item| cfg_meta_enabled(item, env)),
-            "not" => {
-                if list.items.len() != 1 {
-                    return false;
-                }
-                !cfg_meta_enabled(&list.items[0], env)
-            }
+        ast::AttrMeta::List(list) => {
+            let items = list
+                .items
+                .iter()
+                .map(cfg_expression)
+                .collect::<Option<Vec<_>>>()?;
+            Some(format!(
+                "{}({})",
+                list.name.last().as_str(),
+                items.join(", ")
+            ))
+        }
+    }
+}
+
+fn predicate_enabled(predicate: &Predicate<'_>, env: &TargetEnv) -> bool {
+    match predicate {
+        Predicate::Target(target) => target.matches(env.target),
+        Predicate::Feature(feature) => env.has_feature(feature),
+        Predicate::Flag(flag) => match *flag {
+            "unix" => env.target.families.contains(&Family::unix),
+            "windows" => env.target.families.contains(&Family::windows),
+            "wasm" => env.target.families.contains(&Family::wasm),
             _ => false,
         },
+        Predicate::KeyValue { key, val } => {
+            *key == "target_lang" && env.lang.as_deref() == Some(*val)
+        }
+        Predicate::Test
+        | Predicate::DebugAssertions
+        | Predicate::ProcMacro
+        | Predicate::TargetFeature(_) => false,
     }
 }
 
 fn string_literal_value(expr: &ast::Expr) -> Option<String> {
-    if let ast::ExprKind::Value(value) = expr.kind() {
-        if let ast::Value::String(string) = &**value {
-            return Some(string.value.clone());
-        }
+    if let ast::ExprKind::Value(value) = expr.kind()
+        && let ast::Value::String(string) = &**value
+    {
+        return Some(string.value.clone());
     }
     None
 }
 
-fn host_target_os() -> String {
-    if cfg!(target_os = "linux") {
-        "linux".to_string()
-    } else if cfg!(target_os = "macos") {
-        "macos".to_string()
-    } else if cfg!(target_os = "windows") {
-        "windows".to_string()
-    } else {
-        "unknown".to_string()
-    }
-}
-
-fn target_os_from_triple(triple: Option<&str>) -> String {
-    let Some(triple) = triple else {
-        return host_target_os();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{
+        AttrMeta, AttrMetaList, AttrMetaNameValue, AttrStyle, Attribute, Expr, ExprBlock, File,
+        Ident, Item, ItemDefFunction, ItemKind, Path, Value,
     };
-    let triple = triple.to_ascii_lowercase();
-    if triple.contains("apple-darwin") || triple.contains("apple") || triple.contains("darwin") {
-        "macos".to_string()
-    } else if triple.contains("windows") || triple.contains("mingw") {
-        "windows".to_string()
-    } else if triple.contains("linux") {
-        "linux".to_string()
-    } else {
-        "unknown".to_string()
+    use std::path::PathBuf;
+
+    fn path(name: &str) -> Path {
+        Path::from_ident(Ident::new(name))
+    }
+
+    fn cfg_attribute(meta: AttrMeta) -> Attribute {
+        Attribute {
+            style: AttrStyle::Outer,
+            meta: AttrMeta::List(AttrMetaList {
+                name: path("cfg"),
+                items: vec![meta],
+            }),
+        }
+    }
+
+    fn cfg_feature(name: &str) -> AttrMeta {
+        AttrMeta::NameValue(AttrMetaNameValue {
+            name: path("feature"),
+            value: Expr::value(Value::string(name.to_string())).into(),
+        })
+    }
+
+    fn cfg_target_os(name: &str) -> AttrMeta {
+        AttrMeta::NameValue(AttrMetaNameValue {
+            name: path("target_os"),
+            value: Expr::value(Value::string(name.to_string())).into(),
+        })
+    }
+
+    fn function(name: &str, cfg: AttrMeta) -> Item {
+        let mut item = Item::from(ItemKind::DefFunction(ItemDefFunction::new_simple(
+            Ident::new(name),
+            ExprBlock::new_expr(Expr::value(Value::unit())),
+        )));
+        let ItemKind::DefFunction(def) = item.kind_mut() else {
+            unreachable!("constructed function item has the wrong kind");
+        };
+        def.attrs.push(cfg_attribute(cfg));
+        item
+    }
+
+    #[test]
+    fn filters_items_by_target_and_feature_set() -> Result<(), TargetEnvError> {
+        let env =
+            TargetEnv::from_triple(Some("x86_64-pc-windows-msvc"))?.with_features(["selected"]);
+        let mut file = File {
+            path: PathBuf::from("lib.rs"),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![
+                function(
+                    "selected_windows",
+                    AttrMeta::List(AttrMetaList {
+                        name: path("all"),
+                        items: vec![AttrMeta::Path(path("windows")), cfg_feature("selected")],
+                    }),
+                ),
+                function("other_feature", cfg_feature("other")),
+                function("linux_only", cfg_target_os("linux")),
+            ],
+        };
+
+        filter_items_in_file(&mut file, &env);
+
+        let names = file
+            .items
+            .iter()
+            .filter_map(|item| match item.kind() {
+                ItemKind::DefFunction(def) => Some(def.name.name.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["selected_windows"]);
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unknown_target_triples() {
+        assert!(TargetEnv::from_triple(Some("unknown-target")).is_err());
     }
 }

@@ -9,7 +9,7 @@ use fp_core::package::provider::PackageProvider;
 use fp_typescript::TypeScriptPackageProvider;
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::path::PathBuf;
 #[cfg(feature = "cargo-fallback")]
@@ -19,6 +19,29 @@ use std::time::Instant;
 use tracing::{info, warn};
 
 pub(crate) const REGISTRY_SOURCE: &str = "registry+crates.io";
+pub const PACKAGE_GRAPH_SCHEMA_VERSION: u32 = 2;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CargoFeatureSelection {
+    pub default_features: bool,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub features: BTreeSet<String>,
+}
+
+impl Default for CargoFeatureSelection {
+    fn default() -> Self {
+        Self {
+            default_features: true,
+            features: BTreeSet::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EffectiveCargoConfiguration {
+    pub target: String,
+    pub root_features: CargoFeatureSelection,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageGraph {
@@ -29,6 +52,8 @@ pub struct PackageGraph {
     pub selected_package: Option<String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub build_options: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_cargo_configuration: Option<EffectiveCargoConfiguration>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +72,8 @@ pub struct PackageNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entry: Option<PathBuf>,
     pub dependencies: Vec<DependencyEdge>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub enabled_features: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +122,8 @@ pub struct PackageGraphOptions {
     pub refresh_index: bool,
     pub write_lock: bool,
     pub target: Option<String>,
+    /// Applied to every package selected as a resolution root.
+    pub root_features: CargoFeatureSelection,
 }
 
 impl Default for PackageGraphOptions {
@@ -113,6 +142,7 @@ impl Default for PackageGraphOptions {
             refresh_index: false,
             write_lock: true,
             target: None,
+            root_features: CargoFeatureSelection::default(),
         }
     }
 }
@@ -160,11 +190,12 @@ impl PackageGraph {
         }
 
         let graph = Self {
-            schema_version: 1,
+            schema_version: PACKAGE_GRAPH_SCHEMA_VERSION,
             root: root.clone(),
             packages: resolved_packages,
             selected_package: None,
             build_options: HashMap::new(),
+            effective_cargo_configuration: None,
         };
 
         if options.write_lock {
@@ -302,6 +333,10 @@ impl PackageGraph {
             options.target.as_deref().unwrap_or("default")
         );
         let target_ctx = TargetContext::from_env(options.target.as_deref())?;
+        let effective_cargo_configuration = EffectiveCargoConfiguration {
+            target: target_ctx.triple().to_owned(),
+            root_features: options.root_features.clone(),
+        };
         let registry = if options.resolve_registry {
             info!("graph: initializing registry client");
             let loader = RegistryLoader::new(RegistryOptions {
@@ -339,11 +374,12 @@ impl PackageGraph {
         );
 
         let graph = Self {
-            schema_version: 1,
+            schema_version: PACKAGE_GRAPH_SCHEMA_VERSION,
             root: root.clone(),
             packages,
             selected_package: None,
             build_options: HashMap::new(),
+            effective_cargo_configuration: Some(effective_cargo_configuration),
         };
         if options.write_lock {
             let lock = MagnetLock::from_graph(&graph, &root, cache_dir.as_deref()).trim_to_roots();
@@ -401,15 +437,17 @@ impl PackageGraph {
                 module_roots,
                 entry,
                 dependencies,
+                enabled_features: Vec::new(),
             });
         }
 
         Ok(Self {
-            schema_version: 1,
+            schema_version: PACKAGE_GRAPH_SCHEMA_VERSION,
             root,
             packages,
             selected_package: None,
             build_options: HashMap::new(),
+            effective_cargo_configuration: None,
         })
     }
 
@@ -436,14 +474,16 @@ impl PackageGraph {
             module_roots: default_module_roots(&root),
             entry: detect_entry(&root, &["js", "mjs", "cjs"]),
             dependencies,
+            enabled_features: Vec::new(),
         };
 
         Ok(Self {
-            schema_version: 1,
+            schema_version: PACKAGE_GRAPH_SCHEMA_VERSION,
             root,
             packages: vec![node],
             selected_package: None,
             build_options: HashMap::new(),
+            effective_cargo_configuration: None,
         })
     }
 
@@ -479,14 +519,16 @@ impl PackageGraph {
             module_roots: default_module_roots(&root),
             entry: detect_entry(&root, &["py"]),
             dependencies,
+            enabled_features: Vec::new(),
         };
 
         Ok(Self {
-            schema_version: 1,
+            schema_version: PACKAGE_GRAPH_SCHEMA_VERSION,
             root,
             packages: vec![node],
             selected_package: None,
             build_options: HashMap::new(),
+            effective_cargo_configuration: None,
         })
     }
 }
@@ -651,6 +693,7 @@ fn package_to_node_with_lock_loader(
         module_roots: vec![module_root],
         entry,
         dependencies: edges,
+        enabled_features: Vec::new(),
     })
 }
 
@@ -984,8 +1027,22 @@ fn has_typescript_sources(root: &Path) -> bool {
 mod tests {
     use super::*;
     use crate::models::ManifestModel;
+    use std::collections::BTreeSet;
     use std::fs;
+    use std::path::Path;
     use tempfile::tempdir;
+
+    fn write_cargo_package(root: &Path, name: &str, extra_manifest: &str) -> Result<()> {
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(
+            root.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n{extra_manifest}"
+            ),
+        )?;
+        fs::write(root.join("src").join("lib.rs"), "pub fn value() {}")?;
+        Ok(())
+    }
 
     #[test]
     fn build_graph_from_package_manifest() -> Result<()> {
@@ -1023,6 +1080,119 @@ edition = "2021"
         let graph = PackageGraph::from_cargo_manifest(&root.join("Cargo.toml"))?;
         assert_eq!(graph.packages.len(), 1);
         assert_eq!(graph.packages[0].name, "cargo-demo");
+        Ok(())
+    }
+
+    #[test]
+    fn cargo_graph_records_effective_target_and_feature_closures() -> Result<()> {
+        let temp = tempdir()?;
+        let root = temp.path();
+        write_cargo_package(
+            root,
+            "root",
+            r#"
+[dependencies]
+default_dep = { path = "default_dep", optional = true }
+extra_dep = { path = "extra_dep", optional = true, default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+windows_dep = { path = "windows_dep", default-features = false }
+
+[features]
+default = ["dep:default_dep"]
+extra = ["dep:extra_dep", "extra_dep/child_feature"]
+"#,
+        )?;
+        write_cargo_package(root.join("default_dep").as_path(), "default_dep", "")?;
+        write_cargo_package(
+            root.join("extra_dep").as_path(),
+            "extra_dep",
+            "\n[features]\nchild_feature = []\n",
+        )?;
+        write_cargo_package(root.join("windows_dep").as_path(), "windows_dep", "")?;
+
+        let options = PackageGraphOptions {
+            cargo_fetch: false,
+            resolve_registry: false,
+            use_lock: false,
+            write_lock: false,
+            target: Some("x86_64-pc-windows-msvc".to_string()),
+            root_features: CargoFeatureSelection {
+                default_features: false,
+                features: BTreeSet::from(["extra".to_string()]),
+            },
+            ..PackageGraphOptions::default()
+        };
+        let graph =
+            PackageGraph::from_cargo_manifest_with_options(&root.join("Cargo.toml"), &options)?;
+
+        let configuration = graph
+            .effective_cargo_configuration
+            .as_ref()
+            .expect("Cargo graph must record its effective configuration");
+        assert_eq!(configuration.target, "x86_64-pc-windows-msvc");
+        assert!(!configuration.root_features.default_features);
+        assert_eq!(
+            configuration.root_features.features,
+            BTreeSet::from(["extra".to_string()])
+        );
+
+        let root_package = graph
+            .packages
+            .iter()
+            .find(|package| package.name == "root")
+            .expect("missing root package");
+        let root_dependency_names = root_package
+            .dependencies
+            .iter()
+            .map(|dependency| dependency.name.clone())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            root_dependency_names,
+            BTreeSet::from(["extra_dep".to_string(), "windows_dep".to_string()])
+        );
+
+        let package_names = graph
+            .packages
+            .iter()
+            .map(|package| package.name.clone())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            package_names,
+            BTreeSet::from([
+                "extra_dep".to_string(),
+                "root".to_string(),
+                "windows_dep".to_string(),
+            ])
+        );
+
+        let extra_dependency = graph
+            .packages
+            .iter()
+            .find(|package| package.name == "extra_dep")
+            .expect("missing feature-enabled path dependency");
+        assert_eq!(extra_dependency.enabled_features, ["child_feature"]);
+
+        let no_default_options = PackageGraphOptions {
+            root_features: CargoFeatureSelection {
+                default_features: false,
+                features: BTreeSet::new(),
+            },
+            ..options
+        };
+        let no_default_graph = PackageGraph::from_cargo_manifest_with_options(
+            &root.join("Cargo.toml"),
+            &no_default_options,
+        )?;
+        let no_default_package_names = no_default_graph
+            .packages
+            .iter()
+            .map(|package| package.name.clone())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            no_default_package_names,
+            BTreeSet::from(["root".to_string(), "windows_dep".to_string()])
+        );
         Ok(())
     }
 

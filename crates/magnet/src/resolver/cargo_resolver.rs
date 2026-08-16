@@ -1,14 +1,14 @@
 use crate::configs::CargoManifestConfig;
 use crate::models::{
-    DependencyModel, LockIndex, PackageGraphOptions, PackageModel, PackageNode, REGISTRY_SOURCE,
-    WorkspaceModel, dependency_to_edge, parse_cargo_features,
+    CargoFeatureSelection, DependencyModel, LockIndex, PackageGraphOptions, PackageModel,
+    PackageNode, REGISTRY_SOURCE, WorkspaceModel, dependency_to_edge, parse_cargo_features,
 };
 use crate::registry::ResolvedCrate;
 use crate::resolver::{RegistryLoaderHandle, target::TargetContext};
 use eyre::Result;
 use semver::VersionReq;
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque, hash_map::Entry};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -149,7 +149,7 @@ impl CargoResolver {
     pub async fn resolve_async(&mut self) -> Result<Vec<PackageNode>> {
         let roots = self.roots.clone();
         for root in roots {
-            self.add_feature_request(&root, FeatureRequest::root());
+            self.add_feature_request(&root, FeatureRequest::root(&self.options.root_features));
         }
         info!(
             "graph: resolver queue initialized with {} root(s)",
@@ -270,8 +270,14 @@ impl CargoResolver {
 
     fn add_feature_request(&mut self, path: &Path, request: FeatureRequest) {
         let key = canonicalize_path(path);
-        let entry = self.feature_requests.entry(key.clone()).or_default();
-        if entry.merge(request) {
+        let should_enqueue = match self.feature_requests.entry(key.clone()) {
+            Entry::Vacant(entry) => {
+                entry.insert(request);
+                true
+            }
+            Entry::Occupied(mut entry) => entry.get_mut().merge(request),
+        };
+        if should_enqueue {
             self.enqueue_registry(key);
         }
     }
@@ -764,6 +770,12 @@ fn package_to_node_with_resolved(
     let source = git_roots
         .get(&package.root_path)
         .map(|git| git.source.clone());
+    let mut enabled_features = feature_state
+        .enabled_features
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    enabled_features.sort();
 
     Ok(PackageNode {
         name: package.name,
@@ -776,6 +788,7 @@ fn package_to_node_with_resolved(
         module_roots: vec![module_root],
         entry,
         dependencies: edges,
+        enabled_features,
     })
 }
 
@@ -873,10 +886,10 @@ struct FeatureRequest {
 }
 
 impl FeatureRequest {
-    fn root() -> Self {
+    fn root(selection: &CargoFeatureSelection) -> Self {
         Self {
-            default: true,
-            features: HashSet::new(),
+            default: selection.default_features,
+            features: selection.features.iter().cloned().collect(),
         }
     }
 
@@ -910,15 +923,15 @@ struct FeatureState {
 }
 
 fn resolve_feature_state(package: &PackageModel, request: &FeatureRequest) -> Result<FeatureState> {
+    let feature_map = load_package_features(package)?;
     let mut enabled_features = HashSet::new();
-    if request.default {
+    if request.default && feature_map.contains_key("default") {
         enabled_features.insert("default".to_string());
     }
     enabled_features.extend(request.features.iter().cloned());
 
     let mut enabled_deps = HashSet::new();
     let mut dep_features: HashMap<String, HashSet<String>> = HashMap::new();
-    let feature_map = load_package_features(package)?;
 
     let mut queue: VecDeque<String> = enabled_features.iter().cloned().collect();
     while let Some(feature) = queue.pop_front() {

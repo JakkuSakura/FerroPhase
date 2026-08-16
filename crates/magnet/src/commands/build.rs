@@ -81,6 +81,7 @@ pub fn build(options: &BuildOptions) -> Result<()> {
         refresh_index: false,
         write_lock: true,
         target: None,
+        root_features: Default::default(),
     };
     let profile = resolve_profile(options.release, options.profile.as_deref());
     info!("build: generating workspace graph");

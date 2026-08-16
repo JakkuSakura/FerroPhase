@@ -189,6 +189,7 @@ fn module_path_for_file(root: &Path, file_path: &Path) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::PACKAGE_GRAPH_SCHEMA_VERSION;
     use tempfile::tempdir;
 
     fn write_file(path: &Path) {
@@ -210,7 +211,7 @@ mod tests {
         write_file(&src.join("modules/utils/math.fp"));
 
         let graph = PackageGraph {
-            schema_version: 1,
+            schema_version: PACKAGE_GRAPH_SCHEMA_VERSION,
             root: root.to_path_buf(),
             packages: vec![PackageNode {
                 name: "demo".to_string(),
@@ -223,9 +224,11 @@ mod tests {
                 module_roots: vec![src.clone()],
                 entry: Some(src.join("mod.fp")),
                 dependencies: Vec::new(),
+                enabled_features: Vec::new(),
             }],
             selected_package: None,
             build_options: Default::default(),
+            effective_cargo_configuration: None,
         };
 
         let workspace = build_workspace_document(&graph)?;
@@ -258,7 +261,7 @@ mod tests {
         write_file(&src.join("foo/mod.fp"));
 
         let graph = PackageGraph {
-            schema_version: 1,
+            schema_version: PACKAGE_GRAPH_SCHEMA_VERSION,
             root: root.to_path_buf(),
             packages: vec![PackageNode {
                 name: "demo".to_string(),
@@ -271,9 +274,11 @@ mod tests {
                 module_roots: vec![src.clone()],
                 entry: Some(src.join("foo.fp")),
                 dependencies: Vec::new(),
+                enabled_features: Vec::new(),
             }],
             selected_package: None,
             build_options: Default::default(),
+            effective_cargo_configuration: None,
         };
 
         let err = build_workspace_document(&graph).unwrap_err();

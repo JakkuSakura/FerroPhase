@@ -32,6 +32,7 @@ pub fn check(config_path: &Path) -> Result<()> {
         refresh_index: false,
         write_lock: true,
         target: None,
+        root_features: Default::default(),
     };
     let _graph = resolve_graph(&workspace.root_path, &graph_options)?;
 

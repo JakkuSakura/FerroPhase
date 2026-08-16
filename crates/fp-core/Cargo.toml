@@ -23,6 +23,8 @@ toml = "0.8"
 bigdecimal = { version = "0.4", features = ["serde"] }
 num-bigint = { version = "0.4", features = ["serde"] }
 sqlparser = "0.41.0"
+cfg-expr = { version = "0.20", features = ["targets"] }
+target-lexicon = "0.13"
 
 [dev-dependencies]
 fp-backend = { path = "../fp-backend" }

@@ -33,6 +33,10 @@ impl TargetContext {
         }
         Ok(trimmed == self.triple)
     }
+
+    pub fn triple(&self) -> &str {
+        &self.triple
+    }
 }
 
 fn strip_cfg_expression(spec: &str) -> Option<&str> {
@@ -71,6 +75,14 @@ mod tests {
         let ctx = TargetContext::from_triple("x86_64-unknown-linux-gnu")?;
         assert!(!ctx.is_active("cfg(windows)")?);
         assert!(ctx.is_active("cfg(unix)")?);
+        Ok(())
+    }
+
+    #[test]
+    fn cfg_windows_is_active_on_windows_target() -> Result<()> {
+        let ctx = TargetContext::from_triple("x86_64-pc-windows-msvc")?;
+        assert!(ctx.is_active("cfg(windows)")?);
+        assert!(!ctx.is_active("cfg(unix)")?);
         Ok(())
     }
 

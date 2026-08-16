@@ -73,6 +73,7 @@ pub fn run(options: &RunOptions) -> Result<()> {
         refresh_index: false,
         write_lock: true,
         target: None,
+        root_features: Default::default(),
     };
     let graph_path =
         write_workspace_graph(&root, &package, &output_dir, build_options, &graph_options)?;

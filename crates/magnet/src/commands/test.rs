@@ -169,6 +169,7 @@ fn write_workspace_graph(
         refresh_index: false,
         write_lock: true,
         target: None,
+        root_features: Default::default(),
     };
     let mut graph = resolve_graph(root, &graph_options)?;
     graph.selected_package = Some(package.name.clone());

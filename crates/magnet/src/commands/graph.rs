@@ -26,6 +26,7 @@ pub fn graph(config_path: &Path, output_path: Option<&Path>) -> Result<()> {
         refresh_index: false,
         write_lock: true,
         target: None,
+        root_features: Default::default(),
     };
     let graph = resolve_graph(config_path, &options)?;
 

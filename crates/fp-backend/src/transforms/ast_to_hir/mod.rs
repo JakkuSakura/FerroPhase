@@ -613,8 +613,14 @@ impl HirGenerator {
         self
     }
 
-    pub fn set_target_triple(&mut self, target_triple: Option<&str>) {
-        self.target_env = TargetEnv::from_triple(target_triple);
+    pub fn set_target_triple(&mut self, target_triple: Option<&str>) -> Result<()> {
+        self.target_env = TargetEnv::from_triple(target_triple)
+            .map_err(|error| fp_core::Error::from(error.to_string()))?;
+        Ok(())
+    }
+
+    pub fn set_cfg_environment(&mut self, target_env: TargetEnv) {
+        self.target_env = target_env;
     }
 
     pub fn set_cfg_filtering(&mut self, enabled: bool) {
