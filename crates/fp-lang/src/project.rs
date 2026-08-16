@@ -32,43 +32,37 @@ pub fn list_members(root: &Path) -> Vec<(String, PathBuf)> {
 }
 
 fn parse_toml_members(content: &str, root: &Path) -> Option<Vec<(String, PathBuf)>> {
-    // Simple line-based parsing for [workspace] members
-    let mut in_workspace = false;
+    let manifest: toml::Value = content.parse().ok()?;
+    let members = manifest
+        .get("workspace")
+        .and_then(|workspace| workspace.get("members"))
+        .and_then(|members| members.as_array())?;
+
     let mut result = Vec::new();
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed == "[workspace]" {
-            in_workspace = true;
-        } else if trimmed.starts_with('[') {
-            in_workspace = false;
-        } else if in_workspace && trimmed.starts_with("members") {
-            let value = trimmed.splitn(2, '=').nth(1).unwrap_or("");
-            let cleaned = value.trim().trim_start_matches('[').trim_end_matches(']');
-            for member in cleaned.split(',') {
-                let member = member.trim().trim_matches('"').trim();
-                if member.contains('*') {
-                    let base = member.split('*').next().unwrap_or("");
-                    let parent = root.join(base);
-                    if let Ok(entries) = std::fs::read_dir(&parent) {
-                        for entry in entries.flatten() {
-                            if entry.file_type().map_or(false, |t| t.is_dir()) {
-                                let p = entry.path();
-                                let _rel = p.strip_prefix(root).unwrap_or(&p);
-                                result.push((
-                                    p.file_name().unwrap_or_default().to_string_lossy().to_string(),
-                                    p,
-                                ));
-                            }
-                        }
+    for member in members {
+        let Some(member) = member.as_str() else {
+            continue;
+        };
+        if member.contains('*') {
+            let base = member.split('*').next().unwrap_or("");
+            let parent = root.join(base);
+            if let Ok(entries) = std::fs::read_dir(&parent) {
+                for entry in entries.flatten() {
+                    if entry.file_type().map_or(false, |t| t.is_dir()) {
+                        let p = entry.path();
+                        result.push((
+                            p.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                            p,
+                        ));
                     }
-                } else if !member.is_empty() {
-                    let p = root.join(member);
-                    result.push((
-                        p.file_name().unwrap_or_default().to_string_lossy().to_string(),
-                        p,
-                    ));
                 }
             }
+        } else if !member.is_empty() {
+            let p = root.join(member);
+            result.push((
+                p.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                p,
+            ));
         }
     }
     if result.is_empty() { None } else { Some(result) }

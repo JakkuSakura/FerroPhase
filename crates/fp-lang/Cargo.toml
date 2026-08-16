@@ -9,6 +9,7 @@ fp-prql = { path = "../fp-prql" }
 eyre = "0.6"
 thiserror = "2.0.17"
 winnow = "0.6"
+toml = "0.8"
 tracing = "0.1"
 bigdecimal = "0.4"
 num-bigint = "0.4"

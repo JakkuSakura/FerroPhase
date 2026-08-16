@@ -1528,6 +1528,7 @@ dependencies = [
  "fp-prql",
  "num-bigint",
  "thiserror 2.0.19",
+ "toml 0.8.23",
  "tracing",
  "unicode-normalization",
  "winnow 0.6.26",

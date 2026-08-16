@@ -865,10 +865,14 @@ fn std_provider_for(language: &str) -> Arc<dyn fp_core::package::provider::Packa
 /// `provider_and_package_for_input`. A single file is a package with one
 /// member — this only kicks in when `input` actually lives inside a
 /// discoverable multi-file package (a `Cargo.toml`/`Magnet.toml` manifest
-/// somewhere above it), so sibling modules/imports resolve correctly
-/// instead of `input` being (incorrectly) treated as an isolated
-/// standalone file. Returns `None` when no manifest is found at all —
-/// callers fall back to wrapping `input` as its own single-member package.
+/// somewhere above it *and* a declared package under that manifest whose
+/// root actually contains `input`), so sibling modules/imports resolve
+/// correctly instead of `input` being (incorrectly) treated as an isolated
+/// standalone file. Returns `None` both when no manifest is found at all,
+/// and when a manifest is found but doesn't actually cover `input` (e.g. a
+/// standalone script sitting under an unrelated workspace root) — either
+/// way, callers fall back to wrapping `input` as its own single-member
+/// package.
 pub fn find_manifest_package(
     input: &Path,
     language: &str,
@@ -898,13 +902,18 @@ pub fn find_manifest_package(
             break;
         }
     }
-    let (package_id, package_root_abs) = found.ok_or_else(|| {
-        CliError::Compilation(format!(
-            "no package in {} contains {}",
-            root.display(),
-            input.display()
-        ))
-    })?;
+    // A manifest existing somewhere above `input` doesn't mean it's *for*
+    // `input` — e.g. a standalone `.fp` script can sit anywhere under a
+    // large Cargo workspace root without being part of any of that
+    // workspace's own crates (this repo's own `examples/*.fp` next to its
+    // Rust-workspace `Cargo.toml` is exactly this case). Match the same
+    // "no manifest at all" fallback above instead of treating "found a
+    // manifest, but no declared package covers this file" as an error —
+    // both mean the same thing to the caller: wrap `input` as its own
+    // single-member package.
+    let Some((package_id, package_root_abs)) = found else {
+        return Ok(None);
+    };
     Ok(Some((provider, package_id, package_root_abs)))
 }
 
