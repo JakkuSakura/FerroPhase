@@ -1444,15 +1444,34 @@ impl<'a> HirToAstLifter<'a> {
             }
         }
         if let Some(hir::Res::Def(def_id)) = &path.res {
-            if let Some(enum_name) = self
-                .workspace
-                .and_then(|w| w.find_hir_enum_for_variant(*def_id))
-            {
-                if let Some(variant_name) = path.segments.last() {
-                    return Path::plain(vec![
-                        Ident::new(enum_name),
-                        Ident::new(variant_name.name.as_str()),
-                    ]);
+            // `Some`/`None`/`Ok`/`Err` already have dedicated, correct
+            // handling (`program.op_defs`, checked earlier by
+            // `try_lift_struct_as_intrinsic`/`try_lift_path_as_intrinsic`,
+            // which materialize them away entirely — this function is only
+            // reached when that check already didn't classify the path as
+            // an op). A known, pre-existing `DefId`/`package_id` collision
+            // (confirmed: cross-package `DefId`s aren't always unique)
+            // means `find_hir_enum_for_variant` can otherwise match one of
+            // these against a real but unrelated enum sharing a numeric
+            // `DefId` — exclude the four monadic-wrapper names explicitly
+            // rather than trusting a lookup that's already known to
+            // collide for them.
+            let is_monadic_wrapper = path
+                .segments
+                .last()
+                .map(|s| matches!(s.name.as_str(), "Some" | "None" | "Ok" | "Err"))
+                .unwrap_or(false);
+            if !is_monadic_wrapper {
+                if let Some(enum_name) = self
+                    .workspace
+                    .and_then(|w| w.find_hir_enum_for_variant(*def_id))
+                {
+                    if let Some(variant_name) = path.segments.last() {
+                        return Path::plain(vec![
+                            Ident::new(enum_name),
+                            Ident::new(variant_name.name.as_str()),
+                        ]);
+                    }
                 }
             }
         }
