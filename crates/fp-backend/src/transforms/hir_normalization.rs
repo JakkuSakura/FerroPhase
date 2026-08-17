@@ -87,9 +87,17 @@ fn normalize_item(
         hir::ItemKind::Expr(expr) => {
             normalize_expr(expr, op_defs, typeck, promote_op_only);
         }
-        hir::ItemKind::Struct(_) | hir::ItemKind::Impl(_) | hir::ItemKind::Query(_) => {
-            // No expressions to walk, mirroring `optimizer::hir::dce`'s
-            // `item_has_unresolved_paths`.
+        hir::ItemKind::Impl(imp) => {
+            for impl_item in &mut imp.items {
+                if let hir::ImplItemKind::Method(function) = &mut impl_item.kind {
+                    if let Some(body) = &mut function.body {
+                        normalize_block(body, op_defs, typeck, promote_op_only);
+                    }
+                }
+            }
+        }
+        hir::ItemKind::Struct(_) | hir::ItemKind::Query(_) => {
+            // No expressions to walk.
         }
     }
 }
