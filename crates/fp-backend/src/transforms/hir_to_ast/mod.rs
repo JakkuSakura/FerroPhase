@@ -34,6 +34,11 @@ use fp_typing::TypeckResults;
 pub struct HirToAstLifter<'a> {
     program: &'a hir::Program,
     typeck: Option<&'a TypeckResults>,
+    /// Cross-package lookup for a resolved `DefId`'s real identity (e.g.
+    /// `WorkspaceContext::find_hir_enum_for_variant`, consulted by
+    /// `lift_path`) — `None` for the roundtrip/test call sites that never
+    /// go through a real multi-package workspace.
+    workspace: Option<&'a fp_core::workspace::WorkspaceContext>,
     /// Target-language (Kotlin, ...) lexical scopes currently open during a
     /// lift, one frame per emitted block — tracks which surface names have
     /// already been declared directly in that block (not nested ones),
@@ -54,10 +59,15 @@ pub struct HirToAstLifter<'a> {
 }
 
 impl<'a> HirToAstLifter<'a> {
-    pub fn new(program: &'a hir::Program, typeck: Option<&'a TypeckResults>) -> Self {
+    pub fn new(
+        program: &'a hir::Program,
+        typeck: Option<&'a TypeckResults>,
+        workspace: Option<&'a fp_core::workspace::WorkspaceContext>,
+    ) -> Self {
         Self {
             program,
             typeck,
+            workspace,
             scope_names: RefCell::new(Vec::new()),
             renamed_locals: RefCell::new(HashMap::new()),
         }
@@ -1392,23 +1402,53 @@ impl<'a> HirToAstLifter<'a> {
         Ok(items)
     }
 
-    /// Lifts an `hir::Path` to an `ast::Path`, substituting a renamed
-    /// local's new name (see `declare_binding_name`) for its original one
-    /// when this path is a reference to it (`hir::Res::Local`) — a bare
-    /// single-segment local variable reference is the only path shape
-    /// `renamed_locals` ever has an entry for.
-    fn lift_path(&self, path: &hir::Path) -> Path {
-        if let Some(hir::Res::Local(hir_id)) = &path.res {
-            if let Some(renamed) = self.renamed_locals.borrow().get(hir_id) {
-                return Path::plain(vec![Ident::new(renamed.clone())]);
-            }
-        }
+    /// Verbatim conversion from a HIR path to its AST equivalent — no
+    /// resolution, no lookup, just copying each segment's own name across.
+    /// The correct conversion for any path whose identity needs no further
+    /// resolution (a local, a plain function/const/struct reference, ...).
+    fn lift_path_verbatim(path: &hir::Path) -> Path {
         Path::plain(
             path.segments
                 .iter()
                 .map(|segment| Ident::new(segment.name.as_str()))
                 .collect(),
         )
+    }
+
+    /// Lifts an `hir::Path` to an `ast::Path`, substituting a renamed
+    /// local's new name (see `declare_binding_name`) for its original one
+    /// when this path is a reference to it (`hir::Res::Local`) — a bare
+    /// single-segment local variable reference is the only path shape
+    /// `renamed_locals` ever has an entry for. A path resolving
+    /// (`hir::Res::Def`) to a real enum variant is rewritten to its real
+    /// declaring enum's name (via `WorkspaceContext::find_hir_enum_for_variant`,
+    /// a confirmed structural fact from the compiler's own name
+    /// resolution) rather than trusting the source text's own segments,
+    /// which may be module-qualified in ways Kotlin (flat-imports
+    /// everything, no "module" object) has no equivalent for — a `Res::Def`
+    /// that ISN'T a variant (a function/const/struct reference) falls
+    /// through to the plain conversion below, which is simply correct for
+    /// those, not a guess.
+    fn lift_path(&self, path: &hir::Path) -> Path {
+        if let Some(hir::Res::Local(hir_id)) = &path.res {
+            if let Some(renamed) = self.renamed_locals.borrow().get(hir_id) {
+                return Path::plain(vec![Ident::new(renamed.clone())]);
+            }
+        }
+        if let Some(hir::Res::Def(def_id)) = &path.res {
+            if let Some(enum_name) = self
+                .workspace
+                .and_then(|w| w.find_hir_enum_for_variant(*def_id))
+            {
+                if let Some(variant_name) = path.segments.last() {
+                    return Path::plain(vec![
+                        Ident::new(enum_name),
+                        Ident::new(variant_name.name.as_str()),
+                    ]);
+                }
+            }
+        }
+        Self::lift_path_verbatim(path)
     }
 }
 

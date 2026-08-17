@@ -477,7 +477,8 @@ fn collect_enum_fields_in_item(item: &Item, enum_type_names: &HashSet<String>, o
 /// Workspace-wide `enum_name -> (rust_variant_name -> real_kotlin_variant_name)`
 /// registry, built once from every `DefEnum`'s own definition — the single
 /// source of truth `emit_enum` itself uses to name a variant's Kotlin
-/// sealed-subclass (`variant.name.name.to_uppercase()`). A match arm
+/// sealed-subclass (faithfully, i.e. unchanged from the Rust source name —
+/// see `emit_enum`'s doc comment for why). A match arm
 /// referencing that variant (`render_match_pat`) looks itself up here
 /// instead of re-deriving the name by string-manipulating its own
 /// (source-side, possibly differently-qualified) pattern text — the same
@@ -507,7 +508,7 @@ fn collect_enum_variant_names_in_item(
                 .value
                 .variants
                 .iter()
-                .map(|v| (v.name.name.clone(), v.name.name.to_uppercase()))
+                .map(|v| (v.name.name.clone(), v.name.name.clone()))
                 .collect();
             out.insert(en.name.name.clone(), variants);
         }
@@ -994,7 +995,13 @@ impl KotlinEmitter {
         if has_data {
             self.writer.write_line(format!("sealed class {}{} {{", name, header_suffix));
             for (i, variant) in variants.iter().enumerate() {
-                let vname = variant.name.name.to_uppercase();
+                // Faithful to the Rust source name — Kotlin class/object names
+                // are conventionally PascalCase anyway (matching a variant's
+                // own casing), and every reference site (match patterns,
+                // struct-literal construction, plain value references) reads
+                // this same name back verbatim, so there's no separate
+                // casing transform for those sites to independently reproduce.
+                let vname = variant.name.name.clone();
                 match &variant.value {
                     Ty::Unit(_) | Ty::Nothing(_) => {
                         self.writer.write_line(format!("    object {} : {}()", vname, name));
@@ -1040,7 +1047,7 @@ impl KotlinEmitter {
             self.writer.write_line(format!("enum class {}{} {{", name, header_suffix));
             for (i, variant) in variants.iter().enumerate() {
                 let comma = if i < variants.len() - 1 || !static_methods.is_empty() || !traits.is_empty() { "," } else { "" };
-                self.writer.write_line(format!("    {}{}", variant.name.name.to_uppercase(), comma));
+                self.writer.write_line(format!("    {}{}", variant.name.name, comma));
             }
             if static_methods.is_empty() && traits.is_empty() {
                 self.writer.write_line("}\n");
@@ -2527,8 +2534,12 @@ impl KotlinEmitter {
             }
 
             ExprKind::Struct(st) => {
-                let name = self.render_expr(&st.name)?;
-                let variant_name = uppercase_last_segment(&name);
+                // `st.name` is an `ExprKind::Name` for every real enum-variant
+                // constructor call — `render_expr`'s own `Name` arm already
+                // resolves it fully (typed registry lookup, then the plain
+                // structural join for anything else), so no separate
+                // post-processing is needed here at all.
+                let variant_name = self.render_expr(&st.name)?;
                 let fields: Vec<String> = st.fields.iter().map(|f| {
                     // `None` means Rust field-init shorthand (`Field { name }` ≡ `Field { name: name }`),
                     // not an explicit null value.
@@ -3010,18 +3021,6 @@ fn is_else_arm(pat: &Option<fp_core::ast::BPattern>) -> bool {
     }
 }
 
-/// Uppercase the last path segment for Kotlin enum constant references.
-fn uppercase_last_segment(name: &str) -> String {
-    if let Some(pos) = name.rfind('.') {
-        let (prefix, variant) = name.split_at(pos + 1);
-        format!("{}{}", prefix, variant.to_uppercase())
-    } else if let Some(pos) = name.rfind("::") {
-        let (prefix, variant) = name.split_at(pos + 2);
-        format!("{}{}", prefix, variant.to_uppercase())
-    } else {
-        name.to_string()
-    }
-}
 
 /// The enum's own bare declared name for an enum-variant VALUE expression,
 /// derived from the expression's real resolved type (`Ty::Expr` wrapping the
@@ -3097,7 +3096,9 @@ fn resolve_variant_kotlin_path(e: &KotlinEmitter, raw_name: &str) -> String {
     {
         return format!("{}.{}", enum_name, kotlin_variant);
     }
-    uppercase_last_segment(raw_name).replace("::", ".")
+    // No registry entry — join the segments already split out above; no
+    // separate re-derivation from the raw, `::`-joined string.
+    segments.join(".")
 }
 
 fn render_match_pat(pat: &Option<fp_core::ast::BPattern>, e: &KotlinEmitter) -> String {

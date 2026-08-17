@@ -1323,10 +1323,29 @@ impl str {
     ///
     /// assert_eq!(lines.next(), None);
     /// ```
+    // Simplified stub signature: the real `Lines<'_>` return type
+    // (`Map<SplitInclusive<'_, char>, LinesMap>`) is a real iterator-adapter
+    // chain that doesn't resolve through this compiler's type-checker (its
+    // constituent generic adapter/closure-struct types aren't modeled deeply
+    // enough), which silently degraded every caller's element type to `Any`
+    // instead of erroring. `Vec<&str>` is a deliberately simplified,
+    // reliably-resolvable stand-in for typing purposes only — the standard
+    // "shadow the real stub with a simplified one" technique (see e.g.
+    // typeshed/pytype's practice of loosening a stdlib stub's precision when
+    // the exact real type isn't useful to the tool consuming it). The body
+    // below never actually runs — `.lines()` calls are rendered directly by
+    // each backend's own name mapping (self.g. `map_kt_method`) — matching
+    // the `compile_error!("compiler intrinsic")` stub convention this
+    // compiler's OWN native stdlib (`fp-lang/src/std`) already uses
+    // throughout for real-but-backend-special-cased methods; this is the
+    // first use of that convention within this vendored-rustc-source tree,
+    // where sibling methods on this same `impl` (`starts_with`, `contains`)
+    // instead keep their real generic `Pattern`-trait-dispatched bodies,
+    // which happen to already resolve fine on their own.
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
-    pub fn lines(&self) -> Lines<'_> {
-        Lines(self.split_inclusive('\n').map(LinesMap))
+    pub fn lines(&self) -> alloc::vec::Vec<&str> {
+        compile_error!("compiler intrinsic")
     }
 
     /// Returns an iterator over the lines of a string.

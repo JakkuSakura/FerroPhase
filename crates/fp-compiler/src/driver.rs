@@ -580,7 +580,11 @@ impl CompilerDriver {
                 // counterpart, `use` items with no HIR counterpart, or an
                 // individual item that fails to lift without poisoning the
                 // rest of the package).
-                let lifter = fp_backend::transforms::HirToAstLifter::new(hir, typeck);
+                let lifter = fp_backend::transforms::HirToAstLifter::new(
+                    hir,
+                    typeck,
+                    Some(state.typing_ctx.env_ctx.as_ref()),
+                );
                 (
                     lifter.lift_items_by_path(),
                     lifter.referenced_paths_by_path(),

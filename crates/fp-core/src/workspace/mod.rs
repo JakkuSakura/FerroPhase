@@ -438,6 +438,32 @@ impl WorkspaceContext {
         ))
     }
 
+    /// Cross-package counterpart to `hir_typeck::expr_path_ty`'s own
+    /// same-package enum-variant scan — given a variant's resolved `DefId`,
+    /// route directly to the one package that could define it
+    /// (`def_id.package_id`, the same trick `find_hir_impl_method` uses
+    /// above) and scan *only* that package's own HIR items for the `Enum`
+    /// whose `variants` contains this `def_id`, returning its real
+    /// declared name. A confirmed structural fact (a `DefId` match), never
+    /// a guess — `None` here means "this `def_id` is not an enum variant"
+    /// (some other `Res::Def`, e.g. a function/const/struct), not
+    /// "couldn't find it".
+    pub fn find_hir_enum_for_variant(&self, def_id: crate::hir::DefId) -> Option<String> {
+        let package = self.hir_packages.borrow().get(&def_id.package_id)?.clone();
+        let package = package.borrow();
+        let program = package.hir_program.as_ref()?;
+        program.items.iter().find_map(|item| {
+            let crate::hir::ItemKind::Enum(enum_def) = &item.kind else {
+                return None;
+            };
+            enum_def
+                .variants
+                .iter()
+                .any(|v| v.def_id == def_id)
+                .then(|| enum_def.name.as_str().to_string())
+        })
+    }
+
     /// Cross-package counterpart to `find_struct`/`find_enum`, for a
     /// `type X = Y;` alias (e.g. `libc`'s `pub type char = u8;`) by its
     /// fully-qualified defining path (`"libc::char"`) — so a dependent
