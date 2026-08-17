@@ -5952,6 +5952,33 @@ impl MirLowering {
         self.method_defs.entry(qualified_name).or_insert(def);
     }
 
+    /// Disambiguating suffix for a method's qualified/mangled name, when
+    /// its impl targets a concrete instantiation of a generic struct —
+    /// e.g. `impl Vec<&str> { fn join }` vs `impl Vec<String> { fn join }`
+    /// are two already-concrete methods (this is only reached for
+    /// non-generic impls; a truly generic `impl<T> Vec<T>` is
+    /// disambiguated further downstream instead, per call-site
+    /// substitution). Every qualified-name computation for a method
+    /// (`register_method_lowering_info`, `lower_method`) derives its
+    /// struct-path prefix purely from the struct's own module path
+    /// segments, dropping any generic arguments the impl specializes —
+    /// so two impls of this shape would otherwise both compute the
+    /// identical name ("std::alloc::Vec::join"), colliding once both
+    /// reach the same LIR workspace ("duplicate LIR artifact
+    /// `Vec__join`"). Hashes the fully resolved Self type (not just its
+    /// raw HIR argument syntax) so aliases/paths that resolve to the same
+    /// concrete type still collide the way they should.
+    fn method_self_type_spec_suffix(&self, method_context: Option<&MethodContext>) -> Option<String> {
+        match method_context.map(|ctx| &ctx.mir_self_ty.kind) {
+            Some(TyKind::Adt(_, substs)) if !substs.is_empty() => {
+                let mut hasher = DefaultHasher::new();
+                method_context.unwrap().mir_self_ty.hash(&mut hasher);
+                Some(format!("_spec_{:x}", hasher.finish()))
+            }
+            _ => None,
+        }
+    }
+
     /// Shared by `register_impl_signatures` (signature-only pre-pass) and
     /// `lower_impl` (real lowering) so the two paths can never drift apart.
     fn register_method_lowering_info(
@@ -5977,7 +6004,13 @@ impl MirLowering {
                 }
             })
             .unwrap_or_else(|| struct_name.to_string());
-        let fn_name = format!("{}::{}", struct_prefix, function.sig.name.as_str());
+        let fn_name = format!(
+            "{}::{}{}",
+            struct_prefix,
+            function.sig.name.as_str(),
+            self.method_self_type_spec_suffix(method_context)
+                .unwrap_or_default()
+        );
         let fn_ty = self.function_pointer_ty(&sig);
         let struct_def = method_context.and_then(|ctx| ctx.def_id);
         let method_name = function.sig.name.as_str().to_string();
@@ -6134,6 +6167,12 @@ impl MirLowering {
                 format!("{}::{}", path, method_name)
             }
             _ => method_name.to_string(),
+        };
+        // See `method_self_type_spec_suffix`'s doc comment — disambiguates
+        // e.g. `impl Vec<&str> { fn join }` from `impl Vec<String> { fn join }`.
+        let qualified_name = match self.method_self_type_spec_suffix(method_context) {
+            Some(suffix) => qualified_name + &suffix,
+            None => qualified_name,
         };
 
         let mir_function = mir::Function {

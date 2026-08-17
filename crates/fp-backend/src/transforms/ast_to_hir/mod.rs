@@ -1243,6 +1243,41 @@ impl HirGenerator {
                                 continue;
                             }
                         };
+                        // `impl Vec<&str> { fn join }` / `impl Vec<String> {
+                        // fn join }` are two genuinely different,
+                        // already-concrete methods (this impl declares no
+                        // generic parameter of its own to substitute), but
+                        // `canonical_type_path` only ever returns the base
+                        // struct's nominal path ("std::alloc::Vec") --
+                        // dropping the impl's own concrete generic
+                        // arguments entirely. Left alone, both compute the
+                        // identical qualified path "std::alloc::Vec::join",
+                        // colliding once both reach the same LIR workspace
+                        // ("duplicate LIR artifact `Vec__join`"). A truly
+                        // generic impl (`impl<T> Vec<T> { fn push }`) is
+                        // unaffected — it has its own generic params, so
+                        // this check is skipped; its per-call-site
+                        // specializations are disambiguated further
+                        // downstream instead (hir_to_mir's
+                        // `specialization_suffix`, keyed off the
+                        // *substituted* type, not the impl itself).
+                        if impl_block.generics_params.is_empty() {
+                            if let Some(args) = self_path
+                                .segments
+                                .last()
+                                .and_then(|segment| segment.args.as_ref())
+                                .filter(|args| !args.args.is_empty())
+                            {
+                                use std::hash::{Hash, Hasher};
+                                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                                for arg in &args.args {
+                                    format!("{:?}", arg).hash(&mut hasher);
+                                }
+                                if let Some(last) = method_path.last_mut() {
+                                    last.push_str(&format!("_spec_{:x}", hasher.finish()));
+                                }
+                            }
+                        }
                         for impl_item in &impl_block.items {
                             let ast::ItemKind::DefFunction(function) = impl_item.kind() else {
                                 continue;
