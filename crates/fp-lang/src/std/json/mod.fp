@@ -226,52 +226,52 @@ pub fn print(value: Value) {
 
 fn print_value(value: &Value) {
     match value {
-        Value::Null => print("null"),
+        Value::Null => ::std::intrinsics::print("null"),
         Value::Bool(b) => {
             if b {
-                print("true");
+                ::std::intrinsics::print("true");
             } else {
-                print("false");
+                ::std::intrinsics::print("false");
             }
         }
-        Value::Number(n) => print(n.to_string()),
+        Value::Number(n) => ::std::intrinsics::print(n.to_string()),
         Value::String(s) => {
-            print("\"");
-            print(s);
-            print("\"");
+            ::std::intrinsics::print("\"");
+            ::std::intrinsics::print(s);
+            ::std::intrinsics::print("\"");
         }
         Value::Array(items) => {
-            print("[");
+            ::std::intrinsics::print("[");
             let mut idx: i64 = 0;
             let items_len: i64 = items.len() as i64;
             while idx < items_len {
                 if idx > 0 {
-                    print(",");
+                    ::std::intrinsics::print(",");
                 }
                 let item = items[idx];
                 print_value(&item);
                 idx = idx + 1;
             }
 
-            print("]");
+            ::std::intrinsics::print("]");
         }
         Value::Object(fields) => {
-            print("{");
+            ::std::intrinsics::print("{");
             let mut idx: i64 = 0;
             let fields_len: i64 = fields.len() as i64;
             while idx < fields_len {
                 if idx > 0 {
-                    print(",");
+                    ::std::intrinsics::print(",");
                 }
                 let field = fields[idx];
-                print("\"");
-                print(field.key);
-                print("\":");
+                ::std::intrinsics::print("\"");
+                ::std::intrinsics::print(field.key);
+                ::std::intrinsics::print("\":");
                 print_value(&field.value);
                 idx = idx + 1;
             }
 
-            print("}");
+            ::std::intrinsics::print("}");
         }
     }
 }

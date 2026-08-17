@@ -1046,6 +1046,13 @@ impl<'a> LirCodegen<'a> {
                             );
                         }
                     }
+                    lir::LirIntrinsicKind::ProcMacroTokenStreamFromStr
+                    | lir::LirIntrinsicKind::ProcMacroTokenStreamToString => {
+                        return Err(fp_core::error::Error::from(
+                            "proc-macro token stream parsing/printing is not supported by the LLVM backend"
+                                .to_string(),
+                        ));
+                    }
                 }
             }
             lir::LirInstructionKind::LandingPad {

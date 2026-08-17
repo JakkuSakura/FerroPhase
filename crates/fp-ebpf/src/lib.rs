@@ -642,6 +642,13 @@ impl<'a> TextFunctionEmitter<'a> {
                 ));
             }
             fp_core::lir::LirIntrinsicKind::Format => unreachable!("validated earlier"),
+            fp_core::lir::LirIntrinsicKind::ProcMacroTokenStreamFromStr
+            | fp_core::lir::LirIntrinsicKind::ProcMacroTokenStreamToString => {
+                return Err(Error::from(
+                    "proc-macro token stream parsing/printing is not supported on the eBPF backend"
+                        .to_string(),
+                ));
+            }
         }
         Ok(())
     }
@@ -1068,6 +1075,13 @@ impl<'a> MachineFunctionEmitter<'a> {
                 });
             }
             fp_core::lir::LirIntrinsicKind::Format => unreachable!("validated earlier"),
+            fp_core::lir::LirIntrinsicKind::ProcMacroTokenStreamFromStr
+            | fp_core::lir::LirIntrinsicKind::ProcMacroTokenStreamToString => {
+                return Err(Error::from(
+                    "proc-macro token stream parsing/printing is not supported on the eBPF backend"
+                        .to_string(),
+                ));
+            }
         }
         Ok(())
     }
@@ -1531,6 +1545,10 @@ fn validate_instruction(
             }
             fp_core::lir::LirIntrinsicKind::Format => Err(Error::from(
                 "Format is not supported by the current fp-ebpf runtime ABI",
+            )),
+            fp_core::lir::LirIntrinsicKind::ProcMacroTokenStreamFromStr
+            | fp_core::lir::LirIntrinsicKind::ProcMacroTokenStreamToString => Err(Error::from(
+                "proc-macro token stream parsing/printing is not supported on the eBPF backend",
             )),
         },
         ExtractValue { .. } | InsertValue { .. } => Err(Error::from(

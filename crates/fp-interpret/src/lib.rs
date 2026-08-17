@@ -541,6 +541,24 @@ impl LirInterpreter {
                 instr.result.as_ref().map(|result| &result.ty),
             ),
             LirInstructionKind::IntrinsicCall { kind, format, args } => {
+                // Neither carries format-string semantics (their single
+                // argument is real payload — text to tokenize, or a
+                // `TokenStream` to print — not something to interpolate),
+                // so check for them before `render_intrinsic` (which
+                // assumes a `{}`-per-argument template and would error
+                // confusingly otherwise). Real token-stream support
+                // requires an actual tokenizer, which doesn't exist yet —
+                // fail loudly here rather than silently return a
+                // placeholder unit value for a `TokenStream`/`str` result.
+                if matches!(
+                    kind,
+                    fp_core::lir::LirIntrinsicKind::ProcMacroTokenStreamFromStr
+                        | fp_core::lir::LirIntrinsicKind::ProcMacroTokenStreamToString
+                ) {
+                    return Err(VmError::Runtime(
+                        "proc-macro token stream parsing/printing is not yet implemented".into(),
+                    ));
+                }
                 let rendered = self.render_intrinsic(format, args)?;
                 match kind {
                     fp_core::lir::LirIntrinsicKind::Print => {
@@ -551,8 +569,12 @@ impl LirInterpreter {
                         println!("{rendered}");
                         return Ok(());
                     }
-                    fp_core::lir::LirIntrinsicKind::Format => {}
-                    fp_core::lir::LirIntrinsicKind::TimeNow => {}
+                    fp_core::lir::LirIntrinsicKind::Format
+                    | fp_core::lir::LirIntrinsicKind::TimeNow => {}
+                    fp_core::lir::LirIntrinsicKind::ProcMacroTokenStreamFromStr
+                    | fp_core::lir::LirIntrinsicKind::ProcMacroTokenStreamToString => {
+                        unreachable!("handled above")
+                    }
                 }
                 self.write_typed_result(dst, self.result_type(instr)?, Value::unit())
             }

@@ -1822,6 +1822,12 @@ impl LirGenerator {
                 let lir_kind = match kind {
                     IntrinsicKind::Format => lir::LirIntrinsicKind::Format,
                     IntrinsicKind::TimeNow => lir::LirIntrinsicKind::TimeNow,
+                    IntrinsicKind::ProcMacroTokenStreamFromStr => {
+                        lir::LirIntrinsicKind::ProcMacroTokenStreamFromStr
+                    }
+                    IntrinsicKind::ProcMacroTokenStreamToString => {
+                        lir::LirIntrinsicKind::ProcMacroTokenStreamToString
+                    }
                     IntrinsicKind::Print | IntrinsicKind::Println => {
                         return Err(fp_core::error::Error::from(
                             "print/println must be emitted as statements".to_string(),
@@ -1963,9 +1969,10 @@ impl LirGenerator {
                         fp_core::error::Error::from("intrinsic has no destination type")
                     })?,
                 ));
-                // `Format`/`TimeNow` (the only sub-cases reaching here,
-                // since every other sub-case above returns early) — merge
-                // into the outer `instructions` so they aren't dropped.
+                // `Format`/`TimeNow`/`ProcMacroTokenStream{FromStr,ToString}`
+                // (the only sub-cases reaching here, since every other
+                // sub-case above returns early) — merge into the outer
+                // `instructions` so they aren't dropped.
                 instructions.append(&mut intrinsic_instructions);
             }
             mir::Rvalue::BinaryOp(bin_op, lhs, rhs) => {

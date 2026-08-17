@@ -579,6 +579,8 @@ pub enum AsmIntrinsicKind {
     Println,
     Format,
     TimeNow,
+    ProcMacroTokenStreamFromStr,
+    ProcMacroTokenStreamToString,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -193,8 +193,10 @@ fn emit_intrinsic(
             }
             writeln!(out, "    MOV {}, 0", dst).ok();
         }
-        LirIntrinsicKind::TimeNow => {
-            writeln!(out, "    ; intrinsic TimeNow").ok();
+        LirIntrinsicKind::TimeNow
+        | LirIntrinsicKind::ProcMacroTokenStreamFromStr
+        | LirIntrinsicKind::ProcMacroTokenStreamToString => {
+            writeln!(out, "    ; intrinsic {:?}", kind).ok();
             writeln!(out, "    MOV {}, 0", dst).ok();
         }
     }

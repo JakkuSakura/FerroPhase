@@ -1001,6 +1001,13 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                     .call(func, &[fmt_ptr, args_ptr, count_val, newline_val]);
                 return Ok(None);
             }
+            LirIntrinsicKind::ProcMacroTokenStreamFromStr
+            | LirIntrinsicKind::ProcMacroTokenStreamToString => {
+                return Err(fp_core::error::Error::from(
+                    "proc-macro token stream parsing/printing is not supported by the cranelift backend"
+                        .to_string(),
+                ));
+            }
         }
     }
 

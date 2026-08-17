@@ -533,6 +533,18 @@ pub enum LirIntrinsicKind {
     Println,
     Format,
     TimeNow,
+    /// Parses proc-macro source text into a `TokenStream`. Not yet
+    /// implemented by any backend — real token-stream support requires an
+    /// actual tokenizer, so every backend must fail loudly rather than
+    /// silently substitute a placeholder value if this is ever genuinely
+    /// invoked (real user programs that don't use proc-macro APIs never
+    /// reach this; it only exists so `std::proc_macro`'s own wrapper
+    /// functions, compiled unconditionally as part of `std`, have a real
+    /// (if unimplemented) MIR/LIR shape instead of silently becoming unit).
+    ProcMacroTokenStreamFromStr,
+    /// Prints a `TokenStream` back to source text — see
+    /// `ProcMacroTokenStreamFromStr`'s doc comment.
+    ProcMacroTokenStreamToString,
 }
 
 /// Comptime-only operations that build struct metadata.

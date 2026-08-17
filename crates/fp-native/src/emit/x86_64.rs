@@ -4577,6 +4577,12 @@ fn emit_intrinsic_call(
             store_vreg_float(asm, layout, dst_id, FReg::Xmm0, result_ty)?;
             return Ok(());
         }
+        AsmIntrinsicKind::ProcMacroTokenStreamFromStr
+        | AsmIntrinsicKind::ProcMacroTokenStreamToString => {
+            return Err(Error::from(
+                "proc-macro token stream parsing/printing is not supported by the x86_64 backend",
+            ));
+        }
     }
 
     let format_offset = intern_cstring(rodata, rodata_pool, format);
