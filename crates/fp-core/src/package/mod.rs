@@ -332,6 +332,16 @@ pub struct CompiledPackage {
     /// MIR struct field types keyed by DefId, computed during MIR lowering.
     pub mir_struct_fields: HashMap<crate::mir::DefId, Vec<crate::mir::Ty>>,
     pub mir_adt_defs: HashMap<crate::hir::DefId, crate::mir::ty::AdtDef>,
+    /// Top-level consts resolved by direct constant-folding during MIR
+    /// lowering (see `MirLowering::lower_const`'s fast path) — a
+    /// directly-foldable const (no `let`, no side effects requiring the
+    /// real interpreter) never becomes a comptime entry, so without this,
+    /// nothing would ever surface its value to a caller that only knows
+    /// how to ask "what did evaluating this package's comptime entries
+    /// produce" (e.g. `evaluate_comptime_lir`'s "no comptime entries at
+    /// all" case, which otherwise has nothing to fall back to but an
+    /// arbitrary placeholder).
+    pub mir_resolved_const_values: HashMap<String, crate::mir::Constant>,
 }
 
 impl CompiledPackage {
@@ -371,6 +381,7 @@ impl CompiledPackage {
             items: Vec::new(),
             mir_struct_fields: HashMap::new(),
             mir_adt_defs: HashMap::new(),
+            mir_resolved_const_values: HashMap::new(),
         }
     }
 

@@ -623,7 +623,7 @@ impl CompilerDriver {
             // the lifted AST above is already complete regardless.
             let fqp = FullyQualifiedPath::new(package_path.clone());
             return match self.lower_to_mir(&hir_id, &fqp).await {
-                Ok((mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes)) => {
+                Ok((mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes, resolved_const_values)) => {
                     if let Some(package) = self
                         .state.borrow()
                         .typing_ctx
@@ -636,6 +636,10 @@ impl CompilerDriver {
                             .mir_struct_fields
                             .extend(struct_layouts.clone());
                         package.borrow_mut().mir_adt_defs.extend(adt_defs.clone());
+                        package
+                            .borrow_mut()
+                            .mir_resolved_const_values
+                            .extend(resolved_const_values);
                     }
                     match self.lower_to_lir(
                         &mir_id,
@@ -676,7 +680,7 @@ impl CompilerDriver {
         }
 
         let fqp = FullyQualifiedPath::new(package_path.clone());
-        let (mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes) =
+        let (mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes, resolved_const_values) =
             self.lower_to_mir(&hir_id, &fqp).await?;
         if let Some(package) = self
             .state.borrow()
@@ -690,6 +694,10 @@ impl CompilerDriver {
                 .mir_struct_fields
                 .extend(struct_layouts);
             package.borrow_mut().mir_adt_defs.extend(adt_defs.clone());
+            package
+                .borrow_mut()
+                .mir_resolved_const_values
+                .extend(resolved_const_values);
         }
         // `lower_to_lir` falls back to the workspace's other packages'
         // `mir_adt_defs` lazily on a miss (see `LirGenerator::
@@ -762,13 +770,14 @@ impl CompilerDriver {
         let module_path = QualifiedPath::new(Vec::new());
         let hir_id = HirId::new(format!("hir:{}", self.module_state_key(&module_path)));
         let fqp = FullyQualifiedPath::new(module_path.clone());
-        let (mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes) =
+        let (mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes, resolved_const_values) =
             self.lower_to_mir(&hir_id, &fqp).await?;
         {
             let mut package = package.borrow_mut();
             package.mir_program = Some(self.state.borrow().mir(&mir_id)?.clone());
             package.mir_struct_fields.extend(struct_layouts);
             package.mir_adt_defs.extend(adt_defs.clone());
+            package.mir_resolved_const_values.extend(resolved_const_values);
         }
         // See the identical comment in `compile_items_to_lir_units` —
         // `lower_to_lir` falls back to the workspace's other packages
@@ -941,7 +950,7 @@ impl CompilerDriver {
         self.state.borrow_mut().insert_hir(hir_id.clone(), program.clone());
         self.state.borrow_mut()
             .insert_hir_typeck(hir_id.clone(), typeck_results.clone());
-        let (mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes) =
+        let (mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes, resolved_const_values) =
             self.lower_to_mir(&hir_id, &fqp).await?;
         // Merge onto the current package the same way `compile_package`'s
         // own `lower_to_mir` callers already do — otherwise a struct/enum
@@ -957,6 +966,10 @@ impl CompilerDriver {
         {
             package.borrow_mut().mir_struct_fields.extend(struct_layouts);
             package.borrow_mut().mir_adt_defs.extend(adt_defs);
+            package
+                .borrow_mut()
+                .mir_resolved_const_values
+                .extend(resolved_const_values);
         }
         let lir_id = self.lower_to_lir(
             &mir_id,
@@ -1015,9 +1028,34 @@ impl CompilerDriver {
             })?;
         let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
         if comptime_entries.is_empty() {
+            // No comptime entry needed the real interpreter, but that
+            // doesn't mean nothing was computed for this package — a
+            // directly-foldable top-level const (e.g. `const X = 1 + 2 *
+            // 3;`, no `let` needed — see `MirLowering::lower_const`'s
+            // constant-folding fast path) resolves its value without ever
+            // becoming a comptime entry. Surface each one the same way an
+            // interpreted entry's value already is (`insert_typing_const`,
+            // populating `resolved_consts` so a caller looking up a const
+            // by name — e.g. `eval_script` — finds it) instead of
+            // unconditionally substituting a unit placeholder that looks
+            // exactly like a real "this evaluates to nothing" result.
+            let folded = state
+                .borrow()
+                .typing_ctx
+                .env_ctx
+                .compiled_package(&package_id)
+                .map(|package| package.borrow().mir_resolved_const_values.clone())
+                .unwrap_or_default();
+            let mut last_value = None;
+            for (key, constant) in &folded {
+                if let Some(value) = Self::mir_constant_to_value(constant) {
+                    state.borrow_mut().insert_typing_const(key.clone(), value.clone());
+                    last_value = Some(value);
+                }
+            }
             state
                 .borrow_mut()
-                .insert_const_value(value_id.clone(), Value::unit());
+                .insert_const_value(value_id.clone(), last_value.unwrap_or_else(Value::unit));
             return Ok(HashMap::new());
         }
         // Query each package's own `lir_workspace` directly instead of
@@ -1150,6 +1188,7 @@ impl CompilerDriver {
             HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>,
             HashMap<fp_core::hir::DefId, fp_core::mir::ty::AdtDef>,
             HashMap<String, u64>,
+            HashMap<String, fp_core::mir::Constant>,
         ),
         CompilerDriverError,
     > {
@@ -1172,6 +1211,7 @@ impl CompilerDriver {
             HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>,
             HashMap<fp_core::hir::DefId, fp_core::mir::ty::AdtDef>,
             HashMap<String, u64>,
+            HashMap<String, fp_core::mir::Constant>,
         ),
         CompilerDriverError,
     > {
@@ -1249,9 +1289,17 @@ impl CompilerDriver {
             full_layouts.insert((key.def_id, key.args.clone()), fields);
         }
         let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
+        let resolved_const_values = lowering.take_resolved_const_values();
         let mir_id = MirId::new(format!("mir:{}", Self::module_state_key_for(state, path.path())));
         state.borrow_mut().insert_mir(mir_id.clone(), mir);
-        Ok((mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes))
+        Ok((
+            mir_id,
+            struct_layouts,
+            full_layouts,
+            adt_defs,
+            opaque_payload_sizes,
+            resolved_const_values,
+        ))
     }
 
     fn lower_to_lir(
@@ -1346,6 +1394,80 @@ impl CompilerDriver {
     /// `Rc<TypingContext>` for compiler hooks that do not hold a driver.
     fn resolved_const_values_snapshot(typing_ctx: &TypingContext) -> HashMap<String, Value> {
         typing_ctx.resolved_consts.borrow().clone()
+    }
+
+    /// The reverse of `value_to_mir_constant` — needed because a
+    /// directly-foldable top-level const (e.g. `const X = 1 + 2 * 3;`, no
+    /// `let` needed) never becomes a comptime entry requiring the
+    /// interpreter (see `lower_const`'s constant-folding fast path in
+    /// hir_to_mir), so its value never reaches `resolved_consts` the way
+    /// an interpreted one does unless something converts its already-
+    /// computed `mir::Constant` back into a `Value` — see
+    /// `resolve_folded_const_values`, the sole caller.
+    fn mir_constant_to_value(constant: &mir::Constant) -> Option<Value> {
+        match &constant.literal {
+            mir::ConstantKind::Bool(v) => Some(Value::bool(*v)),
+            mir::ConstantKind::Int(v) => Some(Value::int(*v)),
+            mir::ConstantKind::UInt(v) => Some(Value::uint(*v)),
+            mir::ConstantKind::Float(v) => Some(Value::decimal(*v)),
+            mir::ConstantKind::Str(v) => Some(Value::string(v.clone())),
+            mir::ConstantKind::Null => Some(Value::null()),
+            mir::ConstantKind::Val(value) => Self::mir_const_value_to_value(value),
+            // A function reference, token stream, or global-path constant
+            // has no meaningful runtime `Value` representation outside
+            // actual execution — an honest "can't convert this" rather
+            // than a placeholder.
+            mir::ConstantKind::Ty(_)
+            | mir::ConstantKind::Fn(_)
+            | mir::ConstantKind::FnDef(_, _)
+            | mir::ConstantKind::Global(_)
+            | mir::ConstantKind::TokenStream { .. }
+            | mir::ConstantKind::Undef => None,
+        }
+    }
+
+    fn mir_const_value_to_value(value: &mir::ConstValue) -> Option<Value> {
+        match value {
+            mir::ConstValue::Unit => Some(Value::unit()),
+            mir::ConstValue::Bool(v) => Some(Value::bool(*v)),
+            mir::ConstValue::Int(v) => Some(Value::int(*v)),
+            mir::ConstValue::UInt(v) => Some(Value::uint(*v)),
+            mir::ConstValue::Float(v) => Some(Value::decimal(*v)),
+            mir::ConstValue::Str(v) => Some(Value::string(v.clone())),
+            mir::ConstValue::Null => Some(Value::null()),
+            // The comptime interpreter represents every positional
+            // aggregate (tuple *or* struct) as `Value::Tuple` — see
+            // `value_to_const_value`'s own doc comment on the same
+            // asymmetry in the forward direction.
+            mir::ConstValue::Tuple(values) | mir::ConstValue::Struct(values) => {
+                let values = values
+                    .iter()
+                    .map(Self::mir_const_value_to_value)
+                    .collect::<Option<Vec<_>>>()?;
+                Some(Value::Tuple(fp_core::ast::ValueTuple::new(values)))
+            }
+            mir::ConstValue::Array(values) => {
+                let values = values
+                    .iter()
+                    .map(Self::mir_const_value_to_value)
+                    .collect::<Option<Vec<_>>>()?;
+                Some(Value::List(fp_core::ast::ValueList::new(values)))
+            }
+            mir::ConstValue::List { elements, .. } => {
+                let values = elements
+                    .iter()
+                    .map(Self::mir_const_value_to_value)
+                    .collect::<Option<Vec<_>>>()?;
+                Some(Value::List(fp_core::ast::ValueList::new(values)))
+            }
+            // No `Value::Map` constructor exists to convert into (see
+            // `all_adt_field_tys`'s neighbors) — an honest "can't convert
+            // this" rather than a placeholder.
+            mir::ConstValue::Map { .. } => None,
+            // A function reference has no meaningful runtime `Value`
+            // representation outside actual execution.
+            mir::ConstValue::Fn(_) => None,
+        }
     }
 
     /// The authoritative source for an Adt's real field list — populated by

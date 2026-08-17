@@ -902,6 +902,15 @@ impl MirLowering {
         std::mem::take(&mut self.adt_defs)
     }
 
+    /// Every top-level const resolved by direct folding this pass (see
+    /// `lower_const`'s fast path) — a directly-foldable const never
+    /// becomes a comptime entry requiring the real interpreter, so its
+    /// value would otherwise never reach `driver.rs`'s `resolved_consts`
+    /// the way an interpreted const's value already does.
+    pub fn take_resolved_const_values(&mut self) -> HashMap<String, mir::Constant> {
+        std::mem::take(&mut self.resolved_const_values)
+    }
+
     /// Struct field types only — enums are exported separately via
     /// `enum_layout_map` (keyed by `(DefId, args)`, since two different
     /// instantiations of a generic enum need different field lists, unlike
@@ -3717,9 +3726,16 @@ impl MirLowering {
             def_id,
             ConstInfo {
                 ty: ty.clone(),
-                value: init_constant,
+                value: init_constant.clone(),
             },
         );
+        // A const resolved this way (directly foldable — no `let`, no
+        // side effects requiring the real interpreter) never becomes a
+        // comptime entry, so nothing else would ever surface its value to
+        // `driver.rs`'s `resolved_consts` the way an interpreted const's
+        // value already does — see `all_resolved_const_values`, the
+        // exporter this feeds.
+        self.resolved_const_values.insert(key, init_constant);
 
         let mir_static = mir::Static {
             name: konst.name.clone().into(),
