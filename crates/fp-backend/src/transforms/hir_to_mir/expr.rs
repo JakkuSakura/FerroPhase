@@ -9109,7 +9109,7 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
-    fn struct_def_from_ty(&self, ty: &Ty) -> Option<hir::DefId> {
+    fn struct_def_from_ty(&mut self, ty: &Ty) -> Option<hir::DefId> {
         match &ty.kind {
             TyKind::Ref(_, inner, _) => self.struct_def_from_ty(inner.as_ref()),
             TyKind::RawPtr(type_and_mut) => self.struct_def_from_ty(type_and_mut.ty.as_ref()),
@@ -9120,46 +9120,63 @@ impl<'a> BodyBuilder<'a> {
             // `struct_defs` (keyed by the real `DefId`) directly first,
             // rather than only via the name-based fallback below, which
             // needs `display_type_name` to already know the name.
-            TyKind::Adt(adt, _) if self.lowering.struct_defs.contains_key(&adt.did) => {
-                Some(adt.did)
+            //
+            // A struct declared in a dependency package (e.g. `std`) may
+            // not be registered yet if nothing has forced its layout to be
+            // computed so far — mirror `compute_adt_layout`'s lazy foreign-
+            // struct/enum registration here too, rather than falling
+            // through to the name-based fallback below (which needs
+            // `struct_defs_by_tail_name` to already have an entry, i.e. the
+            // very registration we're trying to trigger).
+            TyKind::Adt(adt, _) => {
+                if !self.lowering.struct_defs.contains_key(&adt.did) {
+                    self.lowering.try_lazily_register_adt(adt.did, Span::null());
+                }
+                if self.lowering.struct_defs.contains_key(&adt.did) {
+                    Some(adt.did)
+                } else {
+                    Self::struct_def_from_ty_by_name(self.lowering, ty)
+                }
             }
-            _ => self
-                .lowering
-                .struct_layouts_by_ty
-                .get(ty)
-                .map(|key| key.def_id)
-                .or_else(|| {
-                    let name = self.lowering.display_type_name(ty)?;
-                    // `struct_defs_by_tail_name` narrows straight to the
-                    // (usually one-element) candidate set sharing `name`'s
-                    // tail segment — provably safe, since the match
-                    // condition below can only hold when `def.name`'s tail
-                    // segment equals `name`'s tail segment (see that
-                    // field's doc comment) — instead of scanning every
-                    // struct definition in the program with a `format!`
-                    // allocation per iteration.
-                    let candidates = self
-                        .lowering
-                        .struct_defs_by_tail_name
-                        .get(MirLowering::name_tail(&name))?;
-                    let matches: Vec<hir::DefId> = candidates
-                        .iter()
-                        .filter_map(|def_id| {
-                            let def = self.lowering.struct_defs.get(def_id)?;
-                            if def.name == name || def.name.ends_with(&format!("::{}", name)) {
-                                Some(*def_id)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-                    if matches.len() == 1 {
-                        matches.into_iter().next()
-                    } else {
-                        None
-                    }
-                }),
+            _ => Self::struct_def_from_ty_by_name(self.lowering, ty),
         }
+    }
+
+    fn struct_def_from_ty_by_name(lowering: &MirLowering, ty: &Ty) -> Option<hir::DefId> {
+        lowering
+            .struct_layouts_by_ty
+            .get(ty)
+            .map(|key| key.def_id)
+            .or_else(|| {
+                let name = lowering.display_type_name(ty)?;
+                // `struct_defs_by_tail_name` narrows straight to the
+                // (usually one-element) candidate set sharing `name`'s
+                // tail segment — provably safe, since the match
+                // condition below can only hold when `def.name`'s tail
+                // segment equals `name`'s tail segment (see that
+                // field's doc comment) — instead of scanning every
+                // struct definition in the program with a `format!`
+                // allocation per iteration.
+                let candidates = lowering
+                    .struct_defs_by_tail_name
+                    .get(MirLowering::name_tail(&name))?;
+                let matches: Vec<hir::DefId> = candidates
+                    .iter()
+                    .filter_map(|def_id| {
+                        let def = lowering.struct_defs.get(def_id)?;
+                        if def.name == name || def.name.ends_with(&format!("::{}", name)) {
+                            Some(*def_id)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if matches.len() == 1 {
+                    matches.into_iter().next()
+                } else {
+                    None
+                }
+            })
     }
 
     fn boxed_inner_ty(&self, ty: &Ty) -> Option<Ty> {
