@@ -1,5 +1,5 @@
 use fp_core::ast::{
-    AstSerializer, Expr, ExprBlock, ExprKind, File, Ident, Item, ItemDefConst, ItemDefFunction,
+    AstSerializer, Expr, ExprBlock, File, Ident, Item, ItemDefConst, ItemDefFunction,
     ItemDefStruct, ItemKind, StructuralField, Ty, TypePrimitive, Value,
 };
 
@@ -67,8 +67,8 @@ fn serialize_basic_go_ast() {
         value: Expr::value(Value::int(42)).into(),
     };
 
-    let body = Expr::new(ExprKind::Block(ExprBlock::new()));
-    let func = ItemDefFunction::new_simple(Ident::new("main"), body.into());
+    let body = ExprBlock::new();
+    let func = ItemDefFunction::new_simple(Ident::new("main"), body);
 
     let file = File {
         path: Default::default(),

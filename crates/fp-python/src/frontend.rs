@@ -1129,17 +1129,11 @@ mod tests {
         let ItemKind::DefFunction(function) = file.items[0].kind() else {
             panic!("expected function item");
         };
-        match function.body.kind() {
-            ExprKind::Block(block) => {
-                let last_stmt = block.stmts.first().expect("with stmt");
-                let BlockStmt::Expr(expr_stmt) = last_stmt else {
-                    panic!("expected expr stmt");
-                };
-                assert!(matches!(expr_stmt.expr.kind(), ExprKind::With(_)));
-            }
-            ExprKind::With(_) => {}
-            other => panic!("expected with-shaped function body, got {:?}", other),
-        }
+        let first_stmt = function.body.stmts.first().expect("with stmt");
+        let BlockStmt::Expr(expr_stmt) = first_stmt else {
+            panic!("expected expr stmt");
+        };
+        assert!(matches!(expr_stmt.expr.kind(), ExprKind::With(_)));
     }
 
     #[test]

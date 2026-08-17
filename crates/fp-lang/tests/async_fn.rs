@@ -1,4 +1,4 @@
-use fp_core::ast::{ExprKind, ItemKind};
+use fp_core::ast::ItemKind;
 use fp_core::frontend::LanguageFrontend;
 use fp_lang::FerroFrontend;
 
@@ -11,7 +11,7 @@ fn async_fn_body_wrapped() {
     let item = res.ast.items.first().cloned().expect("file item");
     match item.kind() {
         ItemKind::DefFunction(def) => {
-            assert!(matches!(def.body.kind(), ExprKind::Async(_)));
+            assert!(def.is_async);
         }
         other => panic!("expected function item, got {:?}", other),
     }
@@ -29,7 +29,7 @@ fn async_trait_method_body_wrapped() {
             let first = def.items.first().expect("trait item");
             match first.kind() {
                 ItemKind::DefFunction(func) => {
-                    assert!(matches!(func.body.kind(), ExprKind::Async(_)));
+                    assert!(func.is_async);
                 }
                 other => panic!("expected function member, got {:?}", other),
             }

@@ -252,7 +252,7 @@ fn node_contains_splice_quote(file: &File) -> bool {
     }
     fn item_contains(item: &Item) -> bool {
         match item.kind() {
-            ItemKind::DefFunction(f) => expr_contains(f.body.as_ref()),
+            ItemKind::DefFunction(f) => expr_contains(&Expr::block(f.body.clone())),
             ItemKind::Expr(e) => expr_contains(e),
             ItemKind::Module(m) => m.items.iter().any(|it| item_contains(it)),
             _ => false,
@@ -428,7 +428,7 @@ fn items_contain_const_block(items: &[Item]) -> bool {
     }
 
     items.iter().any(|item| match item.kind() {
-        ItemKind::DefFunction(def) => expr_contains_const_block(&def.body),
+        ItemKind::DefFunction(def) => expr_contains_const_block(&Expr::block(def.body.clone())),
         _ => false,
     })
 }

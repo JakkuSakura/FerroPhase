@@ -1277,6 +1277,7 @@ mod tests {
         let file = File {
             path: PathBuf::from("test.fp"),
             attrs: Vec::new(),
+            collected_items: Vec::new(),
             items,
         };
         PowerShellTarget::new()
@@ -1322,7 +1323,6 @@ mod tests {
             },
         );
         let inventory = ShellInventory {
-            groups: HashMap::new(),
             hosts,
         };
         let script = render_node(
@@ -1377,7 +1377,6 @@ mod tests {
             },
         );
         let inventory = ShellInventory {
-            groups: HashMap::new(),
             hosts,
         };
         let script = render_node(

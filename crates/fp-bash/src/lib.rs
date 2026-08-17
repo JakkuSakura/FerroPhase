@@ -1366,10 +1366,11 @@ fn extern_command(function: &ItemDeclFunction) -> Option<String> {
     Some(text.value.clone())
 }
 
+pub mod package;
+
 #[cfg(test)]
 mod tests {
     use super::*;
-pub mod package;
 
 use fp_core::ast::{
         Abi, AttrMeta, AttrMetaNameValue, AttrStyle, Attribute, Expr, ExprInvoke, ExprInvokeTarget,
@@ -1410,6 +1411,7 @@ use fp_core::ast::{
         let file = File {
             path: PathBuf::from("test.fp"),
             attrs: Vec::new(),
+            collected_items: Vec::new(),
             items,
         };
         BashTarget::new()
@@ -1446,7 +1448,6 @@ use fp_core::ast::{
             },
         );
         let inventory = ShellInventory {
-            groups: HashMap::new(),
             hosts,
         };
         let script = render_node(vec![extern_decl("ssh", "bash", "ssh", 2)], expr, &inventory);
@@ -1493,7 +1494,6 @@ use fp_core::ast::{
             },
         );
         let inventory = ShellInventory {
-            groups: HashMap::new(),
             hosts,
         };
         let script = render_node(

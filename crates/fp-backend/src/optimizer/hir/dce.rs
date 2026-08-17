@@ -580,25 +580,31 @@ mod tests {
         Symbol::new(name)
     }
 
+    const TEST_PKG: hir::PackageId = hir::PackageId(0);
+
+    fn hid(index: u32) -> hir::HirId {
+        hir::HirId::new(TEST_PKG, index)
+    }
+
     fn unit_ty() -> TypeExpr {
         TypeExpr {
-            hir_id: 0,
+            hir_id: hid(0),
             kind: TypeExprKind::Tuple(Vec::new()),
             span: Span::null(),
         }
     }
 
-    fn literal_expr(hir_id: hir::HirId, value: i64) -> Expr {
+    fn literal_expr(hir_id: u32, value: i64) -> Expr {
         Expr {
-            hir_id,
+            hir_id: hid(hir_id),
             kind: ExprKind::Literal(hir::Lit::Integer(value)),
             span: Span::null(),
         }
     }
 
-    fn path_expr(hir_id: hir::HirId, segments: &[&str], res: Option<hir::Res>) -> Expr {
+    fn path_expr(hir_id: u32, segments: &[&str], res: Option<hir::Res>) -> Expr {
         Expr {
-            hir_id,
+            hir_id: hid(hir_id),
             kind: ExprKind::Path(Path {
                 segments: segments
                     .iter()
@@ -613,13 +619,9 @@ mod tests {
         }
     }
 
-    fn call_expr(
-        hir_id: hir::HirId,
-        callee_segments: &[&str],
-        callee_res: Option<hir::Res>,
-    ) -> Expr {
+    fn call_expr(hir_id: u32, callee_segments: &[&str], callee_res: Option<hir::Res>) -> Expr {
         Expr {
-            hir_id,
+            hir_id: hid(hir_id),
             kind: ExprKind::Call(
                 Box::new(path_expr(hir_id + 1, callee_segments, callee_res)),
                 Vec::new(),
@@ -631,7 +633,7 @@ mod tests {
     fn function_item(index: u32, name: &str) -> Item {
         let def_id = hir::DefId::local(index);
         Item {
-            hir_id: index,
+            hir_id: hid(index),
             def_id,
             visibility: Visibility::Private,
             kind: ItemKind::Function(Function {
@@ -643,7 +645,7 @@ mod tests {
                     abi: hir::Abi::Rust,
                 },
                 body: Some(hir::Block {
-                    hir_id: index,
+                    hir_id: hid(index),
                     stmts: Vec::new(),
                     expr: Some(Box::new(literal_expr(index, 0))),
                 }),
@@ -659,7 +661,7 @@ mod tests {
     fn expr_item(index: u32, expr: Expr) -> Item {
         let def_id = hir::DefId::local(index);
         Item {
-            hir_id: index,
+            hir_id: hid(index),
             def_id,
             visibility: Visibility::Private,
             kind: ItemKind::Expr(expr),

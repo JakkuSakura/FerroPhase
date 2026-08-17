@@ -1,23 +1,30 @@
-use fp_core::ast::{
-    self, AstSerializer, Expr, ExprAssign, ExprStruct, Item, ItemKind, Node, NodeKind, Ty, Value,
-};
+use fp_core::ast::{self, Expr, ExprAssign, ExprStruct, Item, ItemKind, Ty, Value};
 use fp_core::ops::BinOpKind;
 
 use crate::ZigParser;
 
 use super::{ZigEmitter, ZigSerializer};
 
+fn file_with_item(item: Item) -> ast::File {
+    ast::File {
+        path: "test.fp".into(),
+        attrs: Vec::new(),
+        collected_items: Vec::new(),
+        items: vec![item],
+    }
+}
+
 #[test]
 fn renders_basic_function_stub() {
-    let body = Expr::value(Value::unit()).into();
+    let body = ast::ExprBlock::new();
     let mut function = ast::ItemDefFunction::new_simple(ast::Ident::new("main"), body);
     function.sig.ret_ty = Some(Ty::unit());
 
     let item = Item::new(ItemKind::DefFunction(function));
-    let node = Node::from(ast::NodeKind::Item(item));
+    let file = file_with_item(item);
 
     let serializer = ZigSerializer;
-    let rendered = serializer.serialize_file(&node).expect("serialize");
+    let rendered = serializer.serialize_file(&file).expect("serialize");
 
     assert!(rendered.contains("pub fn main"));
     assert!(rendered.contains("TODO"));
@@ -85,10 +92,7 @@ pub fn main() void {
 "#;
 
     let mut parser = ZigParser::new().expect("create parser");
-    let node = parser.parse_str(source).expect("parse");
-    let NodeKind::File(file) = node.kind() else {
-        panic!("expected file node");
-    };
+    let file = parser.parse_str(source).expect("parse");
 
     assert_eq!(file.items.len(), 2, "unexpected item count");
 

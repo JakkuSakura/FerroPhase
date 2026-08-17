@@ -207,13 +207,13 @@ mod tests {
             program: fp_core::hir::Program::new(),
             typeck_results: TypeckResults::default(),
             block: fp_core::hir::Block {
-                hir_id: 0,
+                hir_id: fp_core::hir::HirId::new(fp_core::hir::PackageId(0), 0),
                 stmts: Vec::new(),
                 expr: None,
             },
-            expression_id: 0,
+            expression_id: fp_core::hir::HirId::new(fp_core::hir::PackageId(0), 0),
             expected_ty: fp_core::hir::TypeExpr {
-                hir_id: 0,
+                hir_id: fp_core::hir::HirId::new(fp_core::hir::PackageId(0), 0),
                 kind: fp_core::hir::TypeExprKind::Tuple(Vec::new()),
                 span: fp_core::span::Span::null(),
             },

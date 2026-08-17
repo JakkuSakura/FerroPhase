@@ -86,7 +86,7 @@ impl<'a> HirToAstLifter<'a> {
         if frame.insert(name.to_string()) {
             name.to_string()
         } else {
-            let renamed = format!("{name}{hir_id}");
+            let renamed = format!("{name}{}", hir_id.index);
             frame.insert(renamed.clone());
             self.renamed_locals.borrow_mut().insert(hir_id, renamed.clone());
             renamed

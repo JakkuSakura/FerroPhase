@@ -5,9 +5,11 @@ use fp_core::hir::{
 };
 use fp_core::span::Span;
 
+const TEST_PKG: hir::PackageId = hir::PackageId(0);
+
 pub fn literal_expr(value: i64) -> Expr {
     Expr::new(
-        0,
+        hir::HirId::new(TEST_PKG, 0),
         ExprKind::Literal(hir::Lit::Integer(value)),
         Span::new(0, 0, 0),
     )
@@ -15,7 +17,7 @@ pub fn literal_expr(value: i64) -> Expr {
 
 pub fn unit_type() -> TypeExpr {
     TypeExpr {
-        hir_id: 0,
+        hir_id: hir::HirId::new(TEST_PKG, 0),
         kind: TypeExprKind::Tuple(Vec::new()),
         span: Span::new(0, 0, 0),
     }
@@ -23,7 +25,7 @@ pub fn unit_type() -> TypeExpr {
 
 pub fn function_item(name: &str, body: Expr) -> Item {
     let func_body = Block {
-        hir_id: 1,
+        hir_id: hir::HirId::new(TEST_PKG, 1),
         stmts: Vec::new(),
         expr: Some(Box::new(body)),
     };
@@ -42,7 +44,7 @@ pub fn function_item(name: &str, body: Expr) -> Item {
     let function = Function::new(sig, Some(func_body), false, false);
 
     Item {
-        hir_id: 0,
+        hir_id: hir::HirId::new(TEST_PKG, 0),
         def_id: hir::DefId::local(0),
         visibility: hir::Visibility::Public,
         kind: ItemKind::Function(function),

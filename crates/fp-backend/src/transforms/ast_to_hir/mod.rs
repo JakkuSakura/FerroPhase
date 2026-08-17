@@ -58,7 +58,7 @@ fn query_origin(document: &QueryDocument) -> QueryOrigin {
 /// The generator now supports lossy mode and will gradually become more pure.
 pub struct HirGenerator {
     package_id: hir::PackageId,
-    next_hir_id: hir::HirId,
+    next_hir_id: u32,
     next_def_id: u32,
     current_file: FileId,
     current_position: u32,

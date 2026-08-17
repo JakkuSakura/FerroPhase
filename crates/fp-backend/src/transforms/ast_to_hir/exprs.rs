@@ -498,7 +498,7 @@ impl HirGenerator {
     pub(super) fn next_id(&mut self) -> hir::HirId {
         let id = self.next_hir_id;
         self.next_hir_id += 1;
-        id
+        hir::HirId::new(self.package_id, id)
     }
 
     /// Generate next definition ID

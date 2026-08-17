@@ -1,8 +1,9 @@
 use fp_core::ast::{
     AstSerializer, BlockStmt, EnumTypeVariant, Expr, ExprBlock, ExprField, ExprKind, ExprMatch,
     ExprMatchCase, ExprStruct, File, Ident, Item, ItemDefConst, ItemDefEnum, ItemDefFunction,
-    ItemDefStruct, ItemImpl, ItemKind, Name, Path, Pattern, PatternKind, PatternVariant, StmtLet,
-    StructuralField, Ty, TypeEnum, TypePrimitive, TypeStructural, Value, Visibility,
+    ItemDefStruct, ItemImpl, ItemKind, Name, Path, Pattern, PatternKind, PatternVariant,
+    ReprOptions, StmtLet, StructuralField, Ty, TypeEnum, TypePrimitive, TypeStructural, Value,
+    Visibility,
 };
 
 use fp_core::ast::path::PathPrefix;
@@ -31,12 +32,13 @@ fn serialize_basic_gdscript_module() {
         value: Expr::value(Value::int(42)).into(),
     };
 
-    let body = Expr::new(ExprKind::Block(ExprBlock::new()));
-    let func = ItemDefFunction::new_simple(Ident::new("main"), body.into());
+    let body = ExprBlock::new();
+    let func = ItemDefFunction::new_simple(Ident::new("main"), body);
 
     let file = File {
         path: Default::default(),
         attrs: Vec::new(),
+        collected_items: Vec::new(),
         items: vec![
             Item::new(ItemKind::DefStruct(user_struct)),
             Item::new(ItemKind::DefConst(const_item)),
@@ -129,7 +131,10 @@ fn serialize_enum_with_impl_and_struct_variant_construction() {
         ],
     }));
 
-    let describe_fn = ItemDefFunction::new_simple(Ident::new("describe"), describe_match.into());
+    let describe_fn = ItemDefFunction::new_simple(
+        Ident::new("describe"),
+        ExprBlock::new_expr(describe_match),
+    );
     let impl_shape = ItemImpl::new_ident(
         Ident::new("Shape"),
         vec![Item::new(ItemKind::DefFunction(describe_fn))],
@@ -149,14 +154,16 @@ fn serialize_enum_with_impl_and_struct_variant_construction() {
         update: None,
     }));
 
-    let body = Expr::new(ExprKind::Block(ExprBlock::new_stmts(vec![BlockStmt::Let(
-        StmtLet::new_simple(Ident::new("rect"), rect_struct),
-    )])));
-    let main_fn = ItemDefFunction::new_simple(Ident::new("main"), body.into());
+    let body = ExprBlock::new_stmts(vec![BlockStmt::Let(StmtLet::new_simple(
+        Ident::new("rect"),
+        rect_struct,
+    ))]);
+    let main_fn = ItemDefFunction::new_simple(Ident::new("main"), body);
 
     let file = File {
         path: Default::default(),
         attrs: Vec::new(),
+        collected_items: Vec::new(),
         items: vec![
             Item::new(ItemKind::DefEnum(shape_enum)),
             Item::new(ItemKind::Impl(impl_shape)),

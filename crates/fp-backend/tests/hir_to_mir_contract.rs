@@ -18,9 +18,15 @@ fn def_id(index: u32) -> hir::DefId {
     hir::DefId::local(index)
 }
 
+const TEST_PKG: hir::PackageId = hir::PackageId(0);
+
+fn hid(index: u32) -> hir::HirId {
+    hir::HirId::new(TEST_PKG, index)
+}
+
 fn primitive_type(kind: TypePrimitive) -> TypeExpr {
     TypeExpr {
-        hir_id: 0,
+        hir_id: hid(0),
         kind: TypeExprKind::Primitive(kind),
         span: span(),
     }
@@ -28,7 +34,7 @@ fn primitive_type(kind: TypePrimitive) -> TypeExpr {
 
 fn path_type(name: &str) -> TypeExpr {
     TypeExpr {
-        hir_id: 0,
+        hir_id: hid(0),
         kind: TypeExprKind::Path(Path {
             segments: vec![PathSegment {
                 name: Symbol::new(name),
@@ -41,7 +47,7 @@ fn path_type(name: &str) -> TypeExpr {
 }
 
 fn literal_expr(hir_id: u32, value: i64) -> Expr {
-    Expr::new(hir_id, ExprKind::Literal(Lit::Integer(value)), span())
+    Expr::new(hid(hir_id), ExprKind::Literal(Lit::Integer(value)), span())
 }
 
 fn program_with_items(items: Vec<Item>) -> Program {
@@ -59,7 +65,7 @@ fn mir_lowering() -> MirLowering {
 
 fn binding_pat(hir_id: u32, name: &str, mutable: bool) -> Pat {
     Pat {
-        hir_id,
+        hir_id: hid(hir_id),
         kind: PatKind::Binding {
             name: Symbol::new(name),
             mutable,
@@ -67,9 +73,9 @@ fn binding_pat(hir_id: u32, name: &str, mutable: bool) -> Pat {
     }
 }
 
-fn local_path(hir_id: u32, name: &str, local_id: u32) -> Expr {
+fn local_path(hir_id: u32, name: &str, local_id: hir::HirId) -> Expr {
     Expr::new(
-        hir_id,
+        hid(hir_id),
         ExprKind::Path(Path {
             segments: vec![PathSegment {
                 name: Symbol::new(name),
@@ -83,9 +89,9 @@ fn local_path(hir_id: u32, name: &str, local_id: u32) -> Expr {
 
 fn slice_expr(hir_id: u32, base: Expr, start: Expr, end: Expr) -> Expr {
     Expr::new(
-        hir_id,
+        hid(hir_id),
         ExprKind::Slice(hir::SliceExpr {
-            hir_id: hir_id + 10_000,
+            hir_id: hid(hir_id + 10_000),
             base: Box::new(base),
             start: Some(Box::new(start)),
             end: Some(Box::new(end)),
@@ -97,9 +103,9 @@ fn slice_expr(hir_id: u32, base: Expr, start: Expr, end: Expr) -> Expr {
 
 fn local_stmt(hir_id: u32, pat: Pat, ty: TypeExpr, init: Expr) -> hir::Stmt {
     hir::Stmt {
-        hir_id,
+        hir_id: hid(hir_id),
         kind: hir::StmtKind::Local(hir::Local {
-            hir_id,
+            hir_id: hid(hir_id),
             pat,
             ty: Some(ty),
             init: Some(init),
@@ -111,7 +117,7 @@ fn local_stmt(hir_id: u32, pat: Pat, ty: TypeExpr, init: Expr) -> hir::Stmt {
 fn lowers_constant_return_function_into_mir_assign_and_return() {
     let body_expr = literal_expr(1, 5);
     let body = hir::Block {
-        hir_id: 2,
+        hir_id: hid(2),
         stmts: Vec::new(),
         expr: Some(Box::new(body_expr.clone())),
     };
@@ -126,7 +132,7 @@ fn lowers_constant_return_function_into_mir_assign_and_return() {
 
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
-        hir_id: 3,
+        hir_id: hid(3),
         def_id: def_id(10),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
@@ -184,7 +190,7 @@ fn lowers_constant_return_function_into_mir_assign_and_return() {
 fn lowers_identity_function_with_parameter() {
     // Parameter binding `x: i32`
     let param_pat = Pat {
-        hir_id: 5,
+        hir_id: hid(5),
         kind: PatKind::Binding {
             name: hir::Symbol::new("x"),
             mutable: false,
@@ -192,7 +198,7 @@ fn lowers_identity_function_with_parameter() {
     };
     let param_ty = primitive_type(TypePrimitive::Int(TypeInt::I32));
     let param = hir::Param {
-        hir_id: 6,
+        hir_id: hid(6),
         pat: param_pat.clone(),
         ty: param_ty.clone(),
         is_context: false,
@@ -206,9 +212,9 @@ fn lowers_identity_function_with_parameter() {
         }],
         res: Some(hir::Res::Local(param_pat.hir_id)),
     };
-    let body_expr = Expr::new(7, ExprKind::Path(path), span());
+    let body_expr = Expr::new(hid(7), ExprKind::Path(path), span());
     let body = hir::Block {
-        hir_id: 8,
+        hir_id: hid(8),
         stmts: Vec::new(),
         expr: Some(Box::new(body_expr)),
     };
@@ -223,7 +229,7 @@ fn lowers_identity_function_with_parameter() {
 
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
-        hir_id: 9,
+        hir_id: hid(9),
         def_id: def_id(11),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
@@ -266,7 +272,7 @@ fn lowers_identity_function_with_parameter() {
 #[test]
 fn rejects_unresolved_value_path_in_function_body() {
     let body_expr = Expr::new(
-        21,
+        hid(21),
         ExprKind::Path(Path {
             segments: vec![PathSegment {
                 name: Symbol::new("missing_value"),
@@ -277,7 +283,7 @@ fn rejects_unresolved_value_path_in_function_body() {
         span(),
     );
     let body = hir::Block {
-        hir_id: 22,
+        hir_id: hid(22),
         stmts: Vec::new(),
         expr: Some(Box::new(body_expr)),
     };
@@ -292,7 +298,7 @@ fn rejects_unresolved_value_path_in_function_body() {
 
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
-        hir_id: 23,
+        hir_id: hid(23),
         def_id: def_id(42),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
@@ -315,16 +321,16 @@ fn rejects_unresolved_value_path_in_function_body() {
 #[test]
 fn rejects_binary_operations_with_unit_operands() {
     let unit_expr = Expr::new(
-        30,
+        hid(30),
         ExprKind::Block(hir::Block {
-            hir_id: 31,
+            hir_id: hid(31),
             stmts: Vec::new(),
             expr: None,
         }),
         span(),
     );
     let body_expr = Expr::new(
-        32,
+        hid(32),
         ExprKind::Binary(
             hir::BinOp::Eq,
             Box::new(unit_expr),
@@ -333,7 +339,7 @@ fn rejects_binary_operations_with_unit_operands() {
         span(),
     );
     let body = hir::Block {
-        hir_id: 34,
+        hir_id: hid(34),
         stmts: Vec::new(),
         expr: Some(Box::new(body_expr)),
     };
@@ -348,7 +354,7 @@ fn rejects_binary_operations_with_unit_operands() {
 
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
-        hir_id: 35,
+        hir_id: hid(35),
         def_id: def_id(43),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
@@ -374,13 +380,13 @@ fn rejects_enum_variant_call_with_missing_payload_values() {
     let variant_def_id = def_id(101);
 
     let enum_item = Item {
-        hir_id: 40,
+        hir_id: hid(40),
         def_id: enum_def_id,
         visibility: Visibility::Public,
         kind: ItemKind::Enum(hir::Enum {
             name: Symbol::new("MaybeInt"),
             variants: vec![hir::EnumVariant {
-                hir_id: 41,
+                hir_id: hid(41),
                 def_id: variant_def_id,
                 name: Symbol::new("Some"),
                 discriminant: None,
@@ -393,10 +399,10 @@ fn rejects_enum_variant_call_with_missing_payload_values() {
     };
 
     let body_expr = Expr::new(
-        42,
+        hid(42),
         ExprKind::Call(
             Box::new(Expr::new(
-                43,
+                hid(43),
                 ExprKind::Path(Path {
                     segments: vec![PathSegment {
                         name: Symbol::new("Some"),
@@ -411,7 +417,7 @@ fn rejects_enum_variant_call_with_missing_payload_values() {
         span(),
     );
     let body = hir::Block {
-        hir_id: 44,
+        hir_id: hid(44),
         stmts: Vec::new(),
         expr: Some(Box::new(body_expr)),
     };
@@ -421,7 +427,7 @@ fn rejects_enum_variant_call_with_missing_payload_values() {
             name: hir::Symbol::new("main"),
             inputs: Vec::new(),
             output: TypeExpr {
-                hir_id: 45,
+                hir_id: hid(45),
                 kind: TypeExprKind::Path(Path {
                     segments: vec![PathSegment {
                         name: Symbol::new("MaybeInt"),
@@ -439,7 +445,7 @@ fn rejects_enum_variant_call_with_missing_payload_values() {
         false,
     );
     let function_item = Item {
-        hir_id: 46,
+        hir_id: hid(46),
         def_id: def_id(102),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
@@ -466,13 +472,13 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
     let variant_def_id = def_id(112);
 
     let payload_struct_item = Item {
-        hir_id: 50,
+        hir_id: hid(50),
         def_id: payload_struct_def_id,
         visibility: Visibility::Public,
         kind: ItemKind::Struct(hir::Struct {
             name: Symbol::new("Some"),
             fields: vec![hir::StructField {
-                hir_id: 51,
+                hir_id: hid(51),
                 name: Symbol::new("value"),
                 ty: primitive_type(TypePrimitive::Int(TypeInt::I32)),
                 vis: Visibility::Public,
@@ -484,18 +490,18 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
     };
 
     let enum_item = Item {
-        hir_id: 52,
+        hir_id: hid(52),
         def_id: enum_def_id,
         visibility: Visibility::Public,
         kind: ItemKind::Enum(hir::Enum {
             name: Symbol::new("MaybeInt"),
             variants: vec![hir::EnumVariant {
-                hir_id: 53,
+                hir_id: hid(53),
                 def_id: variant_def_id,
                 name: Symbol::new("Some"),
                 discriminant: None,
                 payload: Some(TypeExpr {
-                    hir_id: 54,
+                    hir_id: hid(54),
                     kind: TypeExprKind::Path(Path {
                         segments: vec![PathSegment {
                             name: Symbol::new("Some"),
@@ -513,7 +519,7 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
     };
 
     let body_expr = Expr::new(
-        55,
+        hid(55),
         ExprKind::Struct(
             Path {
                 segments: vec![PathSegment {
@@ -527,7 +533,7 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
         span(),
     );
     let body = hir::Block {
-        hir_id: 56,
+        hir_id: hid(56),
         stmts: Vec::new(),
         expr: Some(Box::new(body_expr)),
     };
@@ -537,7 +543,7 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
             name: hir::Symbol::new("main"),
             inputs: Vec::new(),
             output: TypeExpr {
-                hir_id: 57,
+                hir_id: hid(57),
                 kind: TypeExprKind::Path(Path {
                     segments: vec![PathSegment {
                         name: Symbol::new("MaybeInt"),
@@ -555,7 +561,7 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
         false,
     );
     let function_item = Item {
-        hir_id: 58,
+        hir_id: hid(58),
         def_id: def_id(113),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
@@ -588,7 +594,7 @@ fn stubs_bodyless_functions_as_unreachable() {
 
     let function = Function::new(sig, None, false, false);
     let item = Item {
-        hir_id: 60,
+        hir_id: hid(60),
         def_id: def_id(120),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
@@ -627,7 +633,7 @@ fn stubs_bodyless_functions_as_unreachable() {
 #[test]
 fn lowers_const_item_to_mir_static_with_integer_initializer() {
     let const_body = hir::Body {
-        hir_id: 12,
+        hir_id: hid(12),
         params: Vec::new(),
         value: literal_expr(13, 7),
     };
@@ -637,7 +643,7 @@ fn lowers_const_item_to_mir_static_with_integer_initializer() {
         body: const_body,
     };
     let item = Item {
-        hir_id: 14,
+        hir_id: hid(14),
         def_id: def_id(42),
         visibility: Visibility::Public,
         kind: ItemKind::Const(konst),
@@ -674,23 +680,23 @@ fn lowers_const_item_to_mir_static_with_integer_initializer() {
 #[test]
 fn lowers_index_expression_into_place_projection() {
     let values_pat = Pat {
-        hir_id: 20,
+        hir_id: hid(20),
         kind: PatKind::Binding {
             name: Symbol::new("values"),
             mutable: false,
         },
     };
     let idx_pat = Pat {
-        hir_id: 21,
+        hir_id: hid(21),
         kind: PatKind::Binding {
             name: Symbol::new("idx"),
             mutable: false,
         },
     };
 
-    let array_len = Expr::new(22, ExprKind::Literal(Lit::Integer(3)), span());
+    let array_len = Expr::new(hid(22), ExprKind::Literal(Lit::Integer(3)), span());
     let values_ty = TypeExpr {
-        hir_id: 23,
+        hir_id: hid(23),
         kind: TypeExprKind::Array(
             Box::new(primitive_type(TypePrimitive::Int(TypeInt::I64))),
             Some(Box::new(array_len)),
@@ -700,14 +706,14 @@ fn lowers_index_expression_into_place_projection() {
     let idx_ty = path_type("usize");
 
     let values_param = hir::Param {
-        hir_id: 24,
+        hir_id: hid(24),
         pat: values_pat.clone(),
         ty: values_ty,
         is_context: false,
         default: None,
     };
     let idx_param = hir::Param {
-        hir_id: 25,
+        hir_id: hid(25),
         pat: idx_pat.clone(),
         ty: idx_ty,
         is_context: false,
@@ -715,7 +721,7 @@ fn lowers_index_expression_into_place_projection() {
     };
 
     let values_path = Expr::new(
-        26,
+        hid(26),
         ExprKind::Path(Path {
             segments: vec![PathSegment {
                 name: Symbol::new("values"),
@@ -726,7 +732,7 @@ fn lowers_index_expression_into_place_projection() {
         span(),
     );
     let idx_path = Expr::new(
-        27,
+        hid(27),
         ExprKind::Path(Path {
             segments: vec![PathSegment {
                 name: Symbol::new("idx"),
@@ -738,12 +744,12 @@ fn lowers_index_expression_into_place_projection() {
     );
 
     let body_expr = Expr::new(
-        28,
+        hid(28),
         ExprKind::Index(Box::new(values_path), Box::new(idx_path)),
         span(),
     );
     let body = hir::Block {
-        hir_id: 29,
+        hir_id: hid(29),
         stmts: Vec::new(),
         expr: Some(Box::new(body_expr)),
     };
@@ -758,7 +764,7 @@ fn lowers_index_expression_into_place_projection() {
 
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
-        hir_id: 30,
+        hir_id: hid(30),
         def_id: def_id(40),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
@@ -796,16 +802,16 @@ fn lowers_index_expression_into_place_projection() {
 #[test]
 fn lowers_index_on_static_slice_into_subslice_then_index_projection() {
     let values_pat = Pat {
-        hir_id: 41,
+        hir_id: hid(41),
         kind: PatKind::Binding {
             name: Symbol::new("values"),
             mutable: false,
         },
     };
 
-    let array_len = Expr::new(42, ExprKind::Literal(Lit::Integer(4)), span());
+    let array_len = Expr::new(hid(42), ExprKind::Literal(Lit::Integer(4)), span());
     let values_ty = TypeExpr {
-        hir_id: 43,
+        hir_id: hid(43),
         kind: TypeExprKind::Array(
             Box::new(primitive_type(TypePrimitive::Int(TypeInt::I64))),
             Some(Box::new(array_len)),
@@ -814,7 +820,7 @@ fn lowers_index_on_static_slice_into_subslice_then_index_projection() {
     };
 
     let values_param = hir::Param {
-        hir_id: 44,
+        hir_id: hid(44),
         pat: values_pat.clone(),
         ty: values_ty,
         is_context: false,
@@ -826,12 +832,12 @@ fn lowers_index_on_static_slice_into_subslice_then_index_projection() {
     let end = literal_expr(47, 3);
     let slice = slice_expr(48, values_path, start, end);
     let body_expr = Expr::new(
-        49,
+        hid(49),
         ExprKind::Index(Box::new(slice), Box::new(literal_expr(50, 0))),
         span(),
     );
     let body = hir::Block {
-        hir_id: 51,
+        hir_id: hid(51),
         stmts: Vec::new(),
         expr: Some(Box::new(body_expr)),
     };
@@ -846,7 +852,7 @@ fn lowers_index_on_static_slice_into_subslice_then_index_projection() {
 
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
-        hir_id: 52,
+        hir_id: hid(52),
         def_id: def_id(53),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
@@ -903,9 +909,9 @@ fn lowers_index_on_dynamic_slice_into_explicit_slice_value_then_index_projection
     let start_pat = binding_pat(61, "start", false);
     let end_pat = binding_pat(62, "end", false);
 
-    let array_len = Expr::new(63, ExprKind::Literal(Lit::Integer(4)), span());
+    let array_len = Expr::new(hid(63), ExprKind::Literal(Lit::Integer(4)), span());
     let values_ty = TypeExpr {
-        hir_id: 64,
+        hir_id: hid(64),
         kind: TypeExprKind::Array(
             Box::new(primitive_type(TypePrimitive::Int(TypeInt::I64))),
             Some(Box::new(array_len)),
@@ -915,21 +921,21 @@ fn lowers_index_on_dynamic_slice_into_explicit_slice_value_then_index_projection
 
     let usize_ty = path_type("usize");
     let values_param = hir::Param {
-        hir_id: 65,
+        hir_id: hid(65),
         pat: values_pat.clone(),
         ty: values_ty,
         is_context: false,
         default: None,
     };
     let start_param = hir::Param {
-        hir_id: 66,
+        hir_id: hid(66),
         pat: start_pat.clone(),
         ty: usize_ty.clone(),
         is_context: false,
         default: None,
     };
     let end_param = hir::Param {
-        hir_id: 67,
+        hir_id: hid(67),
         pat: end_pat.clone(),
         ty: usize_ty,
         is_context: false,
@@ -941,12 +947,12 @@ fn lowers_index_on_dynamic_slice_into_explicit_slice_value_then_index_projection
     let end_path = local_path(70, "end", end_pat.hir_id);
     let slice = slice_expr(71, values_path, start_path, end_path);
     let body_expr = Expr::new(
-        72,
+        hid(72),
         ExprKind::Index(Box::new(slice), Box::new(literal_expr(73, 0))),
         span(),
     );
     let body = hir::Block {
-        hir_id: 74,
+        hir_id: hid(74),
         stmts: Vec::new(),
         expr: Some(Box::new(body_expr)),
     };
@@ -961,7 +967,7 @@ fn lowers_index_on_dynamic_slice_into_explicit_slice_value_then_index_projection
 
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
-        hir_id: 75,
+        hir_id: hid(75),
         def_id: def_id(76),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
@@ -1034,12 +1040,12 @@ fn return_value_is_materialized_before_finally_runs() {
     );
 
     let return_expr = Expr::new(
-        103,
+        hid(103),
         ExprKind::Return(Some(Box::new(local_path(104, "x", x_pat.hir_id)))),
         span(),
     );
     let finally_expr = Expr::new(
-        105,
+        hid(105),
         ExprKind::Assign(
             Box::new(local_path(106, "x", x_pat.hir_id)),
             Box::new(literal_expr(107, 2)),
@@ -1047,7 +1053,7 @@ fn return_value_is_materialized_before_finally_runs() {
         span(),
     );
     let try_expr = Expr::new(
-        108,
+        hid(108),
         ExprKind::Try(hir::TryExpr {
             expr: Box::new(return_expr),
             catches: Vec::new(),
@@ -1058,12 +1064,12 @@ fn return_value_is_materialized_before_finally_runs() {
     );
 
     let body = hir::Block {
-        hir_id: 109,
+        hir_id: hid(109),
         stmts: Vec::new(),
         expr: Some(Box::new(Expr::new(
-            110,
+            hid(110),
             ExprKind::Block(hir::Block {
-                hir_id: 111,
+                hir_id: hid(111),
                 stmts: vec![x_stmt],
                 expr: Some(Box::new(try_expr)),
             }),
@@ -1080,7 +1086,7 @@ fn return_value_is_materialized_before_finally_runs() {
     };
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
-        hir_id: 112,
+        hir_id: hid(112),
         def_id: def_id(113),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),
@@ -1155,12 +1161,12 @@ fn break_value_is_materialized_before_finally_runs() {
     );
 
     let break_expr = Expr::new(
-        123,
+        hid(123),
         ExprKind::Break(Some(Box::new(local_path(124, "x", x_pat.hir_id)))),
         span(),
     );
     let finally_expr = Expr::new(
-        125,
+        hid(125),
         ExprKind::Assign(
             Box::new(local_path(126, "x", x_pat.hir_id)),
             Box::new(literal_expr(127, 2)),
@@ -1168,7 +1174,7 @@ fn break_value_is_materialized_before_finally_runs() {
         span(),
     );
     let try_expr = Expr::new(
-        128,
+        hid(128),
         ExprKind::Try(hir::TryExpr {
             expr: Box::new(break_expr),
             catches: Vec::new(),
@@ -1178,9 +1184,9 @@ fn break_value_is_materialized_before_finally_runs() {
         span(),
     );
     let loop_expr = Expr::new(
-        129,
+        hid(129),
         ExprKind::Loop(hir::Block {
-            hir_id: 130,
+            hir_id: hid(130),
             stmts: vec![x_stmt],
             expr: Some(Box::new(try_expr)),
         }),
@@ -1188,7 +1194,7 @@ fn break_value_is_materialized_before_finally_runs() {
     );
 
     let body = hir::Block {
-        hir_id: 131,
+        hir_id: hid(131),
         stmts: Vec::new(),
         expr: Some(Box::new(loop_expr)),
     };
@@ -1201,7 +1207,7 @@ fn break_value_is_materialized_before_finally_runs() {
     };
     let function = Function::new(sig, Some(body), false, false);
     let item = Item {
-        hir_id: 132,
+        hir_id: hid(132),
         def_id: def_id(133),
         visibility: Visibility::Public,
         kind: ItemKind::Function(function),

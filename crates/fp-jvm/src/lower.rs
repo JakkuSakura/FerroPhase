@@ -470,8 +470,8 @@ mod tests {
                 mir_id: 0,
                 kind: mir::ItemKind::Function(mir::Function {
                     name: "main".into(),
-                    path: vec!["main".into()],
                     def_id: None,
+                    substs: Vec::new(),
                     sig: mir::FunctionSig {
                         inputs: vec![],
                         output: int_ty.clone(),
@@ -495,6 +495,7 @@ mod tests {
                                 },
                                 mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
                                     span: fp_core::span::Span::default(),
+                                    ty: int_ty.clone(),
                                     user_ty: None,
                                     literal: mir::ConstantKind::Int(7),
                                 })),

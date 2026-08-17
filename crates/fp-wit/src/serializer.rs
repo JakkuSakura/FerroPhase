@@ -1160,13 +1160,15 @@ mod tests {
 
     #[test]
     fn function_docs_are_serialized() {
-        let mut func = ItemDefFunction::new_simple(Ident::new("greet"), Expr::unit().into());
+        let mut func =
+            ItemDefFunction::new_simple(Ident::new("greet"), fp_core::ast::ExprBlock::new());
         func.attrs.push(doc_attr("Greets the caller"));
 
         let item = Item::from(func);
         let file = AstFile {
             path: PathBuf::new(),
             attrs: Vec::new(),
+            collected_items: Vec::new(),
             items: vec![item],
         };
 

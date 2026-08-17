@@ -9,9 +9,15 @@ fn span() -> Span {
     Span::null()
 }
 
+const TEST_PKG: fp_core::hir::PackageId = fp_core::hir::PackageId(0);
+
+fn hid(index: u32) -> fp_core::hir::HirId {
+    fp_core::hir::HirId::new(TEST_PKG, index)
+}
+
 fn path_expr(hir_id: u32, name: &str) -> Expr {
     Expr::new(
-        hir_id,
+        hid(hir_id),
         ExprKind::Path(Path {
             segments: vec![PathSegment {
                 name: Symbol::new(name),
@@ -30,9 +36,9 @@ fn projects_hir_slice_expr_syntax_directly() {
     let end = path_expr(3, "j");
 
     let slice_expr = Expr::new(
-        4,
+        hid(4),
         ExprKind::Slice(SliceExpr {
-            hir_id: 5,
+            hir_id: hid(5),
             base: Box::new(base),
             start: Some(Box::new(start)),
             end: Some(Box::new(end)),
@@ -64,7 +70,7 @@ fn projects_intrinsic_slice_compatibility_path() {
     let end = path_expr(12, "end");
 
     let slice_call = Expr::new(
-        13,
+        hid(13),
         ExprKind::IntrinsicCall(IntrinsicCallExpr {
             kind: IntrinsicKind::Slice,
             callargs: vec![

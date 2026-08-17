@@ -3821,7 +3821,10 @@ impl MirLowering {
         span: Span,
     ) {
         let ty = self.lower_type_expr(&const_block.ty);
-        let name = hir::Symbol::new(format!("__const_block_{expr_hir_id}"));
+        let name = hir::Symbol::new(format!(
+            "__const_block_{}_{}",
+            expr_hir_id.package_id.0, expr_hir_id.index
+        ));
         let konst = hir::Const {
             name: name.clone(),
             ty: (*const_block.ty).clone(),
@@ -5028,7 +5031,7 @@ impl MirLowering {
                         .fields
                         .iter()
                         .map(|field| mir::ty::FieldDef {
-                            did: hir::DefId::local(field.hir_id),
+                            did: hir::DefId::new(item.def_id.package_id, field.hir_id.index),
                             ident: mir::Symbol::from(field.name.as_str()),
                             vis: mir::ty::Visibility::Public,
                             ty: self.lower_type_expr(&field.ty),
@@ -10735,7 +10738,7 @@ impl<'a> BodyBuilder<'a> {
                     })
                 } else {
                     let expr = hir::Expr {
-                        hir_id: 0,
+                        hir_id: pat.hir_id,
                         kind: hir::ExprKind::Path(path.clone()),
                         span,
                     };

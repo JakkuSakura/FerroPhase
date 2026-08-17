@@ -1032,7 +1032,7 @@ impl HirTypeChecker {
                                 },
                             )))
                         }
-                        _ => ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id)),
+                        _ => ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id.index)),
                     };
                     Ty {
                         kind: TyKind::Array(Box::new(element), length),
@@ -1168,7 +1168,7 @@ impl HirTypeChecker {
                                     .map(|ty| (**ty).clone())
                             })
                             .unwrap_or_else(|| Ty {
-                                kind: TyKind::Infer(ty::InferTy::FreshTy(param.hir_id)),
+                                kind: TyKind::Infer(ty::InferTy::FreshTy(param.hir_id.index)),
                             });
                         self.bind_pattern(&param.pat, param_ty.clone())?;
                         param_types.push(param_ty);
@@ -1380,18 +1380,18 @@ impl HirTypeChecker {
                                 size: 8,
                             }),
                         )),
-                        _ => ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id)),
+                        _ => ty::ConstKind::Infer(ty::InferConst::Fresh(expr.hir_id.index)),
                     },
                 ),
             },
             hir::TypeExprKind::Infer => Ty {
-                kind: TyKind::Infer(ty::InferTy::FreshTy(expr.hir_id)),
+                kind: TyKind::Infer(ty::InferTy::FreshTy(expr.hir_id.index)),
             },
             hir::TypeExprKind::ConstBlock(body) => {
                 self.pending_type_const_blocks
                     .push((expr.hir_id, (**body).clone()));
                 Ty {
-                    kind: TyKind::Infer(ty::InferTy::FreshTy(expr.hir_id)),
+                    kind: TyKind::Infer(ty::InferTy::FreshTy(expr.hir_id.index)),
                 }
             }
             hir::TypeExprKind::Error => self.error_ty("invalid type expression"),
@@ -3126,6 +3126,12 @@ fn primitive_ty(primitive: TypePrimitive) -> Ty {
 mod tests {
     use super::*;
 
+    const TEST_PKG: hir::PackageId = hir::PackageId(0);
+
+    fn hid(index: u32) -> hir::HirId {
+        hir::HirId::new(TEST_PKG, index)
+    }
+
     /// Test-only stand-in for the old `HirTypeChecker::new(program).check()`
     /// single-future entry point — drives `spawn_package_typecheck`'s
     /// per-item tasks to completion on a standalone executor (no driver,
@@ -3161,21 +3167,21 @@ mod tests {
         let a_def_id = hir::DefId::local(1);
 
         let b_item = hir::Item {
-            hir_id: 10,
+            hir_id: hid(10),
             def_id: b_def_id,
             visibility: hir::Visibility::Private,
             kind: hir::ItemKind::Const(hir::Const {
                 name: "B".into(),
                 ty: hir::TypeExpr {
-                    hir_id: 11,
+                    hir_id: hid(11),
                     kind: hir::TypeExprKind::Primitive(TypePrimitive::Int(TypeInt::I64)),
                     span: fp_core::span::Span::null(),
                 },
                 body: hir::Body {
-                    hir_id: 12,
+                    hir_id: hid(12),
                     params: Vec::new(),
                     value: hir::Expr {
-                        hir_id: 13,
+                        hir_id: hid(13),
                         kind: hir::ExprKind::Literal(hir::Lit::Integer(41)),
                         span: fp_core::span::Span::null(),
                     },
@@ -3185,25 +3191,25 @@ mod tests {
         };
 
         let a_item = hir::Item {
-            hir_id: 20,
+            hir_id: hid(20),
             def_id: a_def_id,
             visibility: hir::Visibility::Private,
             kind: hir::ItemKind::Const(hir::Const {
                 name: "A".into(),
                 ty: hir::TypeExpr {
-                    hir_id: 21,
+                    hir_id: hid(21),
                     kind: hir::TypeExprKind::Primitive(TypePrimitive::Int(TypeInt::I64)),
                     span: fp_core::span::Span::null(),
                 },
                 body: hir::Body {
-                    hir_id: 22,
+                    hir_id: hid(22),
                     params: Vec::new(),
                     value: hir::Expr {
-                        hir_id: 23,
+                        hir_id: hid(23),
                         kind: hir::ExprKind::Binary(
                             hir::BinOp::Add,
                             Box::new(hir::Expr {
-                                hir_id: 24,
+                                hir_id: hid(24),
                                 kind: hir::ExprKind::Path(hir::Path {
                                     segments: vec![hir::PathSegment {
                                         name: "B".into(),
@@ -3214,7 +3220,7 @@ mod tests {
                                 span: fp_core::span::Span::null(),
                             }),
                             Box::new(hir::Expr {
-                                hir_id: 25,
+                                hir_id: hid(25),
                                 kind: hir::ExprKind::Literal(hir::Lit::Integer(1)),
                                 span: fp_core::span::Span::null(),
                             }),
@@ -3249,13 +3255,13 @@ mod tests {
     #[test]
     fn records_literal_type_by_hir_id() {
         let expr = hir::Expr {
-            hir_id: 7,
+            hir_id: hid(7),
             kind: hir::ExprKind::Literal(hir::Lit::Integer(4)),
             span: fp_core::span::Span::null(),
         };
         let mut program = hir::Program::new();
         let item = hir::Item {
-            hir_id: 1,
+            hir_id: hid(1),
             def_id: hir::DefId::local(1),
             visibility: hir::Visibility::Private,
             kind: hir::ItemKind::Expr(expr),
@@ -3271,24 +3277,24 @@ mod tests {
         program.def_map.insert(item.def_id, item);
 
         let (_, results) = typecheck_program_sync(program).expect("HIR type check");
-        assert_eq!(results.expr_types.get(&7), Some(&Ty::int(ty::IntTy::I64)));
+        assert_eq!(results.expr_types.get(&hid(7)), Some(&Ty::int(ty::IntTy::I64)));
     }
 
     #[test]
     fn records_binding_pattern_type() {
         let pattern = hir::Pat {
-            hir_id: 8,
+            hir_id: hid(8),
             kind: hir::PatKind::Binding {
                 name: "value".into(),
                 mutable: false,
             },
         };
         let expr = hir::Expr {
-            hir_id: 9,
+            hir_id: hid(9),
             kind: hir::ExprKind::Let(
                 pattern,
                 Box::new(hir::TypeExpr {
-                    hir_id: 10,
+                    hir_id: hid(10),
                     kind: hir::TypeExprKind::Primitive(TypePrimitive::Int(TypeInt::I64)),
                     span: fp_core::span::Span::null(),
                 }),
@@ -3298,7 +3304,7 @@ mod tests {
         };
         let mut program = hir::Program::new();
         let item = hir::Item {
-            hir_id: 1,
+            hir_id: hid(1),
             def_id: hir::DefId::local(1),
             visibility: hir::Visibility::Private,
             kind: hir::ItemKind::Expr(expr),
@@ -3308,6 +3314,6 @@ mod tests {
         program.def_map.insert(item.def_id, item);
 
         let (_, results) = typecheck_program_sync(program).expect("HIR type check");
-        assert_eq!(results.pat_types.get(&8), Some(&Ty::int(ty::IntTy::I64)));
+        assert_eq!(results.pat_types.get(&hid(8)), Some(&Ty::int(ty::IntTy::I64)));
     }
 }

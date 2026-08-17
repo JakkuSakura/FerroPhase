@@ -12,11 +12,36 @@ pub mod ty;
 pub use ident::{DefPath, Symbol};
 pub use ty::{Abi, Ty};
 
-pub type HirId = u32;
 pub type NodeId = u32;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PackageId(pub u32);
+
+/// Identifies a HIR node. Namespaced by `PackageId` (mirroring `DefId`) so
+/// that two separately-lowered packages (each with their own `HirGenerator`
+/// instance, each numbering its own nodes from zero) can never produce
+/// colliding ids — without this, a lookup keyed by a foreign package's
+/// `HirId` (e.g. resolving a lazily-pulled-in dependency item's type through
+/// the consuming package's own `TypeckResults`/`typeck_type_exprs` cache)
+/// could silently hit an unrelated entry that merely shares the same bare
+/// index, returning a wrong-but-plausible value with no diagnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct HirId {
+    pub package_id: PackageId,
+    pub index: u32,
+}
+
+impl HirId {
+    pub const fn new(package_id: PackageId, index: u32) -> Self {
+        Self { package_id, index }
+    }
+}
+
+impl fmt::Display for HirId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.package_id.0, self.index)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DefId {
@@ -57,7 +82,7 @@ impl fmt::Display for DefId {
 pub struct Program {
     pub items: Vec<Item>,
     pub def_map: HashMap<DefId, Item>,
-    pub next_hir_id: HirId,
+    pub next_hir_id: u32,
     /// Fully-qualified path for a definition's `DefId`, recorded once at
     /// first registration (module segments + the definition's own bare
     /// name as the last segment). Analogous to rustc's `DefPathTable`:
@@ -699,10 +724,10 @@ impl Program {
         }
     }
 
-    pub fn next_id(&mut self) -> HirId {
+    pub fn next_id(&mut self, package_id: PackageId) -> HirId {
         let id = self.next_hir_id;
         self.next_hir_id += 1;
-        id
+        HirId::new(package_id, id)
     }
 }
 
