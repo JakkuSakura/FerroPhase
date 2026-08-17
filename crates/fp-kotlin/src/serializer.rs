@@ -718,13 +718,41 @@ fn collect_deps_from_stmt(stmt: &BlockStmt, deps: &mut BTreeSet<String>) {
     }
 }
 
+/// Kotlin has no scoped/local imports — a Rust `use` statement written
+/// inside a function body (valid, block-scoped Rust syntax) must still be
+/// hoisted to the file's top-level `import` list rather than emitted where
+/// it's found (see `emit_item`'s `ItemKind::Import` arm, which is a no-op
+/// specifically because every import — top-level or nested — is collected
+/// here first). Mirrors `collect_deps_from_item`'s recursive shape.
+fn collect_nested_imports_from_item(item: &Item, imports: &mut Vec<ItemImport>) {
+    match item.kind() {
+        ItemKind::Import(imp) => imports.push(imp.clone()),
+        ItemKind::Module(m) => {
+            for child in &m.items { collect_nested_imports_from_item(child, imports); }
+        }
+        ItemKind::DefFunction(f) => {
+            for stmt in &f.body.stmts { collect_nested_imports_from_stmt(stmt, imports); }
+        }
+        _ => {}
+    }
+}
+
+fn collect_nested_imports_from_stmt(stmt: &BlockStmt, imports: &mut Vec<ItemImport>) {
+    if let BlockStmt::Item(item) = stmt {
+        collect_nested_imports_from_item(item, imports);
+    }
+}
+
 impl KotlinEmitter {
     fn emit_file(&mut self, file: &File) -> Result<()> {
         let mut imports = Vec::new();
         let mut non_imports = Vec::new();
         for item in &file.items {
             if let ItemKind::Import(imp) = item.kind() { imports.push(imp.clone()); }
-            else { non_imports.push(item); }
+            else {
+                collect_nested_imports_from_item(item, &mut imports);
+                non_imports.push(item);
+            }
         }
         let mut emitted_imports: HashSet<String> = HashSet::new();
         for imp in &imports { self.emit_import(imp, &mut emitted_imports)?; }
@@ -854,7 +882,11 @@ impl KotlinEmitter {
                 for child in &m.items { self.emit_item(child, static_methods, trait_impls)?; }
                 Ok(())
             }
-            ItemKind::Import(imp) => self.emit_import(imp, &mut HashSet::new()),
+            // Only ever reached in statement position (a block-scoped Rust
+            // `use`) — `emit_file` already hoisted every import, top-level
+            // or nested, to the file's top via `collect_nested_imports_from_item`.
+            // Kotlin has no scoped imports, so there is nothing to emit here.
+            ItemKind::Import(_) => Ok(()),
             ItemKind::DefConst(c) => {
                 let name = c.name.name.as_str();
                 let val = self.render_expr(&c.value)?;
@@ -2692,7 +2724,9 @@ impl KotlinEmitter {
                                 let mut out = String::new();
                                 for part in &fs.parts {
                                     match part {
-                                        FormatTemplatePart::Literal(lit) => out.push_str(lit),
+                                        FormatTemplatePart::Literal(lit) => {
+                                            out.push_str(&escape_str_for_kt(lit))
+                                        }
                                         FormatTemplatePart::Placeholder(ph) => {
                                             match &ph.arg_ref {
                                                 // `{name}` with no separate trailing
@@ -2749,7 +2783,7 @@ impl KotlinEmitter {
 
             ExprKind::FormatString(fs) => {
                 let parts = fs.parts.iter().map(|p| match p {
-                    FormatTemplatePart::Literal(lit) => Ok(lit.clone()),
+                    FormatTemplatePart::Literal(lit) => Ok(escape_str_for_kt(lit)),
                     FormatTemplatePart::Placeholder(_ph) => {
                         let rendered = "arg".to_string();
                         Ok(format!("${{{}}}", rendered))

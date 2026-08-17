@@ -1531,7 +1531,7 @@ impl HirGenerator {
         };
 
         let idx_hir_id = self.next_id();
-        let idx_name = hir::Symbol::new(format!("__fp_idx{}", idx_hir_id));
+        let idx_name = hir::Symbol::new(format!("__fp_idx{}", idx_hir_id.index));
         let idx_pat = hir::Pat {
             hir_id: idx_hir_id,
             kind: hir::PatKind::Binding {
@@ -1797,7 +1797,7 @@ impl HirGenerator {
 
         let base_lowered = self.transform_expr_to_hir(&for_expr.iter)?;
         let base_hir_id = self.next_id();
-        let base_name = hir::Symbol::new(format!("__fp_iter_base{}", base_hir_id));
+        let base_name = hir::Symbol::new(format!("__fp_iter_base{}", base_hir_id.index));
         let base_pat = hir::Pat {
             hir_id: base_hir_id,
             kind: hir::PatKind::Binding {
@@ -1874,7 +1874,7 @@ impl HirGenerator {
         value_ident: &ast::Ident,
     ) -> Result<hir::ExprKind> {
         let idx_hir_id = self.next_id();
-        let idx_name = hir::Symbol::new(format!("__fp_idx{}", idx_hir_id));
+        let idx_name = hir::Symbol::new(format!("__fp_idx{}", idx_hir_id.index));
         let idx_pat = hir::Pat {
             hir_id: idx_hir_id,
             kind: hir::PatKind::Binding {
