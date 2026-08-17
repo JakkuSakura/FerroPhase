@@ -941,8 +941,23 @@ impl CompilerDriver {
         self.state.borrow_mut().insert_hir(hir_id.clone(), program.clone());
         self.state.borrow_mut()
             .insert_hir_typeck(hir_id.clone(), typeck_results.clone());
-        let (mir_id, _, full_layouts, _, opaque_payload_sizes) =
+        let (mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes) =
             self.lower_to_mir(&hir_id, &fqp).await?;
+        // Merge onto the current package the same way `compile_package`'s
+        // own `lower_to_mir` callers already do — otherwise a struct/enum
+        // first introduced by *this* probe (e.g. resolving a `const fn`
+        // like `Vec::new()` mid-typecheck) never reaches `mir_struct_fields`/
+        // `mir_adt_defs`, and `value_to_const_value`'s Adt lookup misses
+        // for exactly the case that matters.
+        if let Some(package) = self
+            .state.borrow()
+            .typing_ctx
+            .env_ctx
+            .compiled_package(&package_id)
+        {
+            package.borrow_mut().mir_struct_fields.extend(struct_layouts);
+            package.borrow_mut().mir_adt_defs.extend(adt_defs);
+        }
         let lir_id = self.lower_to_lir(
             &mir_id,
             &fqp,
@@ -1081,7 +1096,7 @@ impl CompilerDriver {
                     .insert(name.clone(), struct_ty.clone());
                 state.borrow().typing_ctx.wake_comptime(&name);
             }
-            let constant = Self::value_to_mir_constant(&value, &entry.ty).ok_or_else(|| {
+            let constant = Self::value_to_mir_constant(&value, &entry.ty, &dependency_packages).ok_or_else(|| {
                 CompilerDriverError::UnsupportedWork(format!(
                     "unsupported comptime result for {}",
                     entry.key
@@ -1333,7 +1348,27 @@ impl CompilerDriver {
         typing_ctx.resolved_consts.borrow().clone()
     }
 
-    fn value_to_mir_constant(value: &Value, ty: &mir::Ty) -> Option<mir::Constant> {
+    /// The authoritative source for an Adt's real field list — populated by
+    /// `fp-backend`'s `take_adt_defs()` specifically so a downstream
+    /// consumer with no live `MirLowering` (like this one) can look it up.
+    /// Never use `Ty::Adt(adt_def, _).variants` directly: it's deliberately
+    /// left empty by several real construction paths (`adt_shell_ty`, the
+    /// general Adt case in `lower_hir_ty`) that only ever needed to convey
+    /// type *identity*, not full field layout.
+    fn lookup_real_adt_def(
+        packages: &[Rc<RefCell<fp_core::package::CompiledPackage>>],
+        def_id: hir::DefId,
+    ) -> Option<mir::ty::AdtDef> {
+        packages
+            .iter()
+            .find_map(|p| p.borrow().mir_adt_defs.get(&def_id).cloned())
+    }
+
+    fn value_to_mir_constant(
+        value: &Value,
+        ty: &mir::Ty,
+        packages: &[Rc<RefCell<fp_core::package::CompiledPackage>>],
+    ) -> Option<mir::Constant> {
         let literal = match value {
             Value::Bool(value) => mir::ConstantKind::Bool(value.value),
             Value::Int(value) => mir::ConstantKind::Int(value.value),
@@ -1347,7 +1382,7 @@ impl CompilerDriver {
                 mir::ConstantKind::Str(s)
             }
             Value::Null(_) => mir::ConstantKind::Null,
-            _ => mir::ConstantKind::Val(Self::value_to_const_value(value, ty)?),
+            _ => mir::ConstantKind::Val(Self::value_to_const_value(value, ty, packages)?),
         };
         Some(mir::Constant {
             span: Span::null(),
@@ -1357,7 +1392,11 @@ impl CompilerDriver {
         })
     }
 
-    fn value_to_const_value(value: &Value, ty: &mir::Ty) -> Option<mir::ConstValue> {
+    fn value_to_const_value(
+        value: &Value,
+        ty: &mir::Ty,
+        packages: &[Rc<RefCell<fp_core::package::CompiledPackage>>],
+    ) -> Option<mir::ConstValue> {
         match value {
             Value::Unit(_) => Some(mir::ConstValue::Unit),
             Value::Bool(value) => Some(mir::ConstValue::Bool(value.value)),
@@ -1424,19 +1463,31 @@ impl CompilerDriver {
                         .values
                         .iter()
                         .zip(fields.iter())
-                        .map(|(value, field_ty)| Self::value_to_const_value(value, field_ty))
+                        .map(|(value, field_ty)| Self::value_to_const_value(value, field_ty, packages))
                         .collect::<Option<Vec<_>>>()?;
                     Some(mir::ConstValue::Tuple(values))
                 }
+                // Never derive field info from `adt_def.variants` directly
+                // (see `lookup_real_adt_def`'s doc comment) — look up the
+                // real, registered `AdtDef` instead, and convert each field
+                // against its own declared `Ty` rather than blindly
+                // guessing (the previous untyped conversion always
+                // produced a signed `Int` even for an unsigned field).
                 TyKind::Adt(adt_def, _substs) => {
-                    let variant = adt_def.variants.first()?;
+                    let variant = Self::lookup_real_adt_def(packages, adt_def.did)?
+                        .variants
+                        .first()?
+                        .clone();
                     if tuple.values.len() != variant.fields.len() {
                         return None;
                     }
                     let values = tuple
                         .values
                         .iter()
-                        .map(Self::value_to_untyped_const_value)
+                        .zip(variant.fields.iter())
+                        .map(|(value, field_def)| {
+                            Self::value_to_const_value(value, &field_def.ty, packages)
+                        })
                         .collect::<Option<Vec<_>>>()?;
                     Some(mir::ConstValue::Struct(values))
                 }
@@ -1447,7 +1498,7 @@ impl CompilerDriver {
                     let values = list
                         .values
                         .iter()
-                        .map(|value| Self::value_to_const_value(value, elem_ty))
+                        .map(|value| Self::value_to_const_value(value, elem_ty, packages))
                         .collect::<Option<Vec<_>>>()?;
                     Some(mir::ConstValue::Array(values))
                 }
@@ -1455,7 +1506,7 @@ impl CompilerDriver {
                     let values = list
                         .values
                         .iter()
-                        .map(|value| Self::value_to_const_value(value, elem_ty))
+                        .map(|value| Self::value_to_const_value(value, elem_ty, packages))
                         .collect::<Option<Vec<_>>>()?;
                     Some(mir::ConstValue::List {
                         elements: values,
@@ -1474,12 +1525,17 @@ impl CompilerDriver {
                         .fields
                         .iter()
                         .zip(fields.iter())
-                        .map(|(field, field_ty)| Self::value_to_const_value(&field.value, field_ty))
+                        .map(|(field, field_ty)| {
+                            Self::value_to_const_value(&field.value, field_ty, packages)
+                        })
                         .collect::<Option<Vec<_>>>()?;
                     Some(mir::ConstValue::Struct(values))
                 }
                 TyKind::Adt(adt_def, _substs) => {
-                    let variant = adt_def.variants.first()?;
+                    let variant = Self::lookup_real_adt_def(packages, adt_def.did)?
+                        .variants
+                        .first()?
+                        .clone();
                     if value_struct.structural.fields.len() != variant.fields.len() {
                         return None;
                     }
@@ -1487,7 +1543,10 @@ impl CompilerDriver {
                         .structural
                         .fields
                         .iter()
-                        .map(|field| Self::value_to_untyped_const_value(&field.value))
+                        .zip(variant.fields.iter())
+                        .map(|(field, field_def)| {
+                            Self::value_to_const_value(&field.value, &field_def.ty, packages)
+                        })
                         .collect::<Option<Vec<_>>>()?;
                     Some(mir::ConstValue::Struct(values))
                 }
@@ -1502,71 +1561,32 @@ impl CompilerDriver {
                         .fields
                         .iter()
                         .zip(fields.iter())
-                        .map(|(field, field_ty)| Self::value_to_const_value(&field.value, field_ty))
+                        .map(|(field, field_ty)| {
+                            Self::value_to_const_value(&field.value, field_ty, packages)
+                        })
                         .collect::<Option<Vec<_>>>()?;
                     Some(mir::ConstValue::Struct(values))
                 }
                 TyKind::Adt(adt_def, _substs) => {
-                    let variant = adt_def.variants.first()?;
+                    let variant = Self::lookup_real_adt_def(packages, adt_def.did)?
+                        .variants
+                        .first()?
+                        .clone();
                     if structural.fields.len() != variant.fields.len() {
                         return None;
                     }
                     let values = structural
                         .fields
                         .iter()
-                        .map(|field| Self::value_to_untyped_const_value(&field.value))
+                        .zip(variant.fields.iter())
+                        .map(|(field, field_def)| {
+                            Self::value_to_const_value(&field.value, &field_def.ty, packages)
+                        })
                         .collect::<Option<Vec<_>>>()?;
                     Some(mir::ConstValue::Struct(values))
                 }
                 _ => None,
             },
-            _ => None,
-        }
-    }
-
-    fn value_to_untyped_const_value(value: &Value) -> Option<mir::ConstValue> {
-        match value {
-            Value::Unit(_) => Some(mir::ConstValue::Unit),
-            Value::Bool(value) => Some(mir::ConstValue::Bool(value.value)),
-            Value::Int(value) => Some(mir::ConstValue::Int(value.value)),
-            Value::UInt(value) => Some(mir::ConstValue::UInt(value.value)),
-            Value::Decimal(value) => Some(mir::ConstValue::Float(value.value)),
-            Value::String(value) => Some(mir::ConstValue::Str(value.value.clone())),
-            Value::Bytes(bytes) => {
-                let s = String::from_utf8_lossy(&bytes.value)
-                    .trim_end_matches('\0')
-                    .to_string();
-                Some(mir::ConstValue::Str(s))
-            }
-            Value::Null(_) => Some(mir::ConstValue::Null),
-            Value::Tuple(tuple) => Some(mir::ConstValue::Tuple(
-                tuple
-                    .values
-                    .iter()
-                    .map(|value| Self::value_to_untyped_const_value(value))
-                    .collect::<Option<Vec<_>>>()?,
-            )),
-            Value::List(list) => Some(mir::ConstValue::Array(
-                list.values
-                    .iter()
-                    .map(|value| Self::value_to_untyped_const_value(value))
-                    .collect::<Option<Vec<_>>>()?,
-            )),
-            Value::Struct(value_struct) => Some(mir::ConstValue::Struct(
-                value_struct
-                    .structural
-                    .fields
-                    .iter()
-                    .map(|field| Self::value_to_untyped_const_value(&field.value))
-                    .collect::<Option<Vec<_>>>()?,
-            )),
-            Value::Structural(structural) => Some(mir::ConstValue::Struct(
-                structural
-                    .fields
-                    .iter()
-                    .map(|field| Self::value_to_untyped_const_value(&field.value))
-                    .collect::<Option<Vec<_>>>()?,
-            )),
             _ => None,
         }
     }

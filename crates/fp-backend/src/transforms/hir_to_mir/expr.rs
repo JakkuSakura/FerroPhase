@@ -6884,16 +6884,18 @@ impl MirLowering {
         };
 
         match &ty.kind {
+            // `adt_def.variants` is deliberately empty for several real
+            // construction paths (`adt_shell_ty`, the general Adt case in
+            // `lower_hir_ty`) — those only ever needed to convey type
+            // *identity*, not full field layout. `struct_field` is the
+            // authoritative, substitution-aware lookup (via `struct_defs`/
+            // `struct_layout_for_ty`/`struct_layout_for_instance`) already
+            // used elsewhere in this file for exactly this; never derive
+            // field info from `adt_def.variants` directly.
             TyKind::Adt(adt_def, _) => {
-                let variant = adt_def.variants.first()?;
-                let field_index = variant
-                    .fields
-                    .iter()
-                    .position(|field_def| field_def.ident.as_str() == field)?;
-                let layout = self.struct_layout_for_ty(ty)?;
-                let field_ty = layout.field_tys.get(field_index)?;
+                let (field_index, field_info) = self.struct_field(adt_def.did, ty, field, span)?;
                 let field_value = values.get(field_index)?;
-                Some(self.const_value_to_constant(span, field_value, field_ty))
+                Some(self.const_value_to_constant(span, field_value, &field_info.ty))
             }
             TyKind::Tuple(field_tys) => {
                 if let Some(key) = self.struct_layouts_by_ty.get(ty) {

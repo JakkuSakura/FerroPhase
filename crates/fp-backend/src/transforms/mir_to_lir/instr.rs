@@ -55,8 +55,8 @@ pub struct LirGenerator {
     /// cross-package functions.
     function_package_ids: HashMap<String, fp_core::package::PackageId>,
     runtime_symbol_map: fn(&str) -> Option<lir::RuntimeSymbol>,
-    /// Dependency packages, queried lazily by `lookup_adt_def`/
-    /// `lookup_mir_layout` on a local-lookup miss — a cheap `Rc` snapshot,
+    /// Dependency packages, queried lazily by `lookup_adt_def` on a
+    /// local-lookup miss — a cheap `Rc` snapshot,
     /// not a copy of their MIR data. Replaces eagerly flattening every
     /// dependency's `mir_adt_defs`/`mir_struct_fields` into `adt_defs`/a
     /// local layout map up front (see `driver.rs`'s old `all_adt_defs`/
@@ -159,8 +159,8 @@ impl LirGenerator {
         self
     }
 
-    /// Dependency packages to fall back to, lazily, for `lookup_adt_def`/
-    /// `lookup_mir_layout` — includes this package's own entry too (see
+    /// Dependency packages to fall back to, lazily, for `lookup_adt_def` —
+    /// includes this package's own entry too (see
     /// `driver.rs`'s callers, which extend it with this exact package's
     /// freshly-computed ADT defs/struct fields before calling in here), so
     /// there's no separate local map to check first.
@@ -176,15 +176,6 @@ impl LirGenerator {
         for package in &self.dependency_packages {
             if let Some(def) = package.borrow().mir_adt_defs.get(def_id) {
                 return Some(def.clone());
-            }
-        }
-        None
-    }
-
-    fn lookup_mir_layout(&self, def_id: &mir::DefId) -> Option<Vec<mir::Ty>> {
-        for package in &self.dependency_packages {
-            if let Some(layout) = package.borrow().mir_struct_fields.get(def_id) {
-                return Some(layout.clone());
             }
         }
         None
@@ -396,14 +387,14 @@ impl LirGenerator {
     /// For an ADT reference whose own generic args are already fully
     /// resolved (e.g. `Vec<BenchCase>`), this isn't enough on its own:
     /// `lir_type_from_ty` still needs to resolve *that ADT's own field
-    /// list* — via `full_layouts` for this exact `(def_id, args)` if
-    /// present, or else falls back to the un-substituted generic template
-    /// via `lookup_adt_def`. If `full_layouts` is missing this
-    /// instantiation and the template's own fields still carry a bare
-    /// `Param` (as they always do for a generic struct's own declaration),
-    /// predeclaring a function that merely *references* this ADT would
-    /// still crash deep inside `lir_type_from_ty`'s recursive field
-    /// expansion — so check that path too, recursively.
+    /// list* — via `full_layouts`/`struct_layouts` for this exact
+    /// `(def_id, args)` if already cached, or else by instantiating the
+    /// registered declaration's generic fields with these `substs` (see
+    /// `instantiate_ty`). That instantiation only fails when
+    /// `lookup_adt_def` has never heard of this `DefId` at all — check
+    /// that condition here too, recursively, so predeclaring a function
+    /// that merely *references* an unregistered ADT is caught here rather
+    /// than crashing deep inside `lir_type_from_ty`'s field expansion.
     fn contains_unresolved_param(&self, ty: &Ty) -> bool {
         match &ty.kind {
             // An unconstrained inference variable (e.g. `build_type`'s own
@@ -440,19 +431,18 @@ impl LirGenerator {
                     .struct_layouts
                     .borrow()
                     .contains_key(&(adt.did, substs_types.clone()))
-                    || self.lookup_mir_layout(&adt.did).is_some()
                     || self.full_layouts.contains_key(&(adt.did, substs_types))
                 {
                     return false;
                 }
-                self.lookup_adt_def(&adt.did)
-                    .and_then(|def| def.variants.first().cloned())
-                    .is_some_and(|variant| {
-                        variant
-                            .fields
-                            .iter()
-                            .any(|field| self.contains_unresolved_param(&field.ty))
-                    })
+                // Not yet cached for this exact instantiation, but
+                // `lir_type_from_ty` can still compute it on demand (via
+                // `lookup_adt_def` + `instantiate_ty`) as long as the
+                // declaration is registered at all — the template's own
+                // fields always mention a bare `Param` (that's what makes
+                // it generic) and substituting it is exactly the point,
+                // so that alone is never a reason to call this unresolved.
+                self.lookup_adt_def(&adt.did).is_none()
             }
             _ => false,
         }
@@ -956,24 +946,24 @@ impl LirGenerator {
                 self.lir_type_from_ty(ty),
                 lir::LirFunctionRef::Name(lir::Name::new(name.as_str().to_string())),
             )),
+            // `ty.kind` isn't always `TyKind::Tuple` for a `ConstValue::
+            // Tuple` payload — `fp-interpret` stores every register-
+            // resident aggregate this way regardless of nominal type, so a
+            // struct/enum-typed comptime result (e.g. `Vec::new()`'s
+            // `{ptr,len,capacity}`) arrives here as `Tuple` even when `ty`
+            // is `TyKind::Adt`. Delegate to `lir_type_from_ty` (which
+            // already resolves `Adt` via the substitution-aware
+            // `struct_layouts`/`full_layouts` cache, computing on demand
+            // via `instantiate_ty` rather than guessing from an
+            // unsubstituted or mismatched-instantiation field list) and
+            // the generic `LirType`-driven converter below, instead of
+            // requiring `ty.kind` to literally be `Tuple`.
             mir::ConstValue::Tuple(elements) => {
-                let element_types = match &ty.kind {
-                    TyKind::Tuple(items) => items.clone(),
-                    _ => {
-                        return Err(fp_core::error::Error::from(format!(
-                            "tuple constant requires tuple type hint, got `{ty}`"
-                        )));
-                    }
-                };
-                let mut lowered = Vec::with_capacity(elements.len());
-                for (elem, elem_ty) in elements.iter().zip(element_types.iter()) {
-                    lowered.push(self.const_value_to_lir_constant(elem, elem_ty)?);
-                }
                 let lir_ty = self.lir_type_from_ty(ty);
-                Ok(lir::LirConstant::aggregate(
-                    lir_ty,
-                    lir::LirConstantAggregate::Struct(lowered),
-                ))
+                self.const_value_to_lir_constant_with_lir_type(
+                    &mir::ConstValue::Tuple(elements.clone()),
+                    &lir_ty,
+                )
             }
             mir::ConstValue::Array(elements) => {
                 let elem_ty = match &ty.kind {
@@ -6251,6 +6241,66 @@ impl LirGenerator {
             || matches!(ty.kind, TyKind::Never)
     }
 
+    /// Replaces every `TyKind::Param(ParamTy{index, ..})` occurrence in
+    /// `ty` with `substs[index]` — the same "instantiate a generic
+    /// declaration's field types with a specific instantiation's concrete
+    /// arguments" step rustc's own `layout_of` always performs (via
+    /// `tcx.type_of(field.did).instantiate(tcx, args)`) before ever
+    /// computing a layout, rather than caching one instantiation's already-
+    /// substituted fields and reusing them (wrongly) for a different one.
+    /// `ParamTy::index` is positional, so no separate generic-parameter
+    /// name list is needed — see `lir_type_from_ty`'s `TyKind::Adt` arm,
+    /// the sole caller.
+    fn instantiate_ty(ty: &Ty, substs: &[mir::ty::GenericArg]) -> Ty {
+        let kind = match &ty.kind {
+            TyKind::Param(param) => {
+                return match substs.get(param.index as usize) {
+                    Some(mir::ty::GenericArg::Type(concrete)) => concrete.clone(),
+                    _ => ty.clone(),
+                };
+            }
+            TyKind::RawPtr(TypeAndMut { ty: inner, mutbl }) => TyKind::RawPtr(TypeAndMut {
+                ty: Box::new(Self::instantiate_ty(inner, substs)),
+                mutbl: *mutbl,
+            }),
+            TyKind::Ref(region, inner, mutbl) => TyKind::Ref(
+                region.clone(),
+                Box::new(Self::instantiate_ty(inner, substs)),
+                *mutbl,
+            ),
+            TyKind::Slice(inner) => TyKind::Slice(Box::new(Self::instantiate_ty(inner, substs))),
+            TyKind::Array(inner, len) => {
+                TyKind::Array(Box::new(Self::instantiate_ty(inner, substs)), len.clone())
+            }
+            TyKind::Tuple(elements) => TyKind::Tuple(
+                elements
+                    .iter()
+                    .map(|elem| Box::new(Self::instantiate_ty(elem, substs)))
+                    .collect(),
+            ),
+            TyKind::Adt(adt, inner_substs) => {
+                let instantiated: Vec<mir::ty::GenericArg> = inner_substs
+                    .iter()
+                    .map(|arg| match arg {
+                        mir::ty::GenericArg::Type(inner) => {
+                            mir::ty::GenericArg::Type(Self::instantiate_ty(inner, substs))
+                        }
+                        other => other.clone(),
+                    })
+                    .collect();
+                TyKind::Adt(adt.clone(), instantiated)
+            }
+            // Every other kind either can't nest a struct field's own
+            // `Param` (primitives, `Never`) or isn't a shape real
+            // FerroPhase struct fields are declared with (function
+            // pointers, trait objects, closures, ...) — pass through
+            // unchanged rather than guessing at a substitution rule with
+            // nothing to verify it against.
+            other => other.clone(),
+        };
+        Ty { kind }
+    }
+
     fn lir_type_from_ty(&self, ty: &Ty) -> lir::LirType {
         match &ty.kind {
             TyKind::Bool => lir::LirType::I1,
@@ -6340,8 +6390,8 @@ impl LirGenerator {
             // An opaque enum-payload-slot placeholder (`MirLowering::
             // opaque_ty`, minted for a slot where variants disagree on the
             // payload type) has a synthetic `DefId` matching nothing in
-            // `struct_layouts`/`full_layouts`/`adt_defs`/`lookup_mir_layout`
-            // — it was never a real struct/enum, just a byte count for
+            // `struct_layouts`/`full_layouts`/`adt_defs` — it was never a
+            // real struct/enum, just a byte count for
             // whichever variant's payload is actually stored there at
             // runtime. Recognized by its single synthetic variant's ident,
             // the same name `opaque_payload_sizes` is keyed by.
@@ -6380,19 +6430,10 @@ impl LirGenerator {
             }
             TyKind::Adt(adt, substs) => {
                 let key = (adt.did, Self::adt_substs_types(substs));
-                // `full_layouts` is checked before the legacy
-                // `lookup_mir_layout` channel below on purpose: it's keyed
-                // by `(DefId, substs)` (like `struct_layouts` above), so two
-                // different instantiations of the same generic struct (e.g.
-                // `Vec<u8>` vs. `Vec<Value>`) get distinct entries.
-                // `lookup_mir_layout` is keyed by bare `DefId` — built by
-                // `all_adt_field_tys()` collapsing *every* instantiation of
-                // a generic struct into one entry (last-write-wins, in
-                // whatever order its source `HashMap` happens to iterate),
-                // so consulting it first would nondeterministically hand
-                // back a randomly-chosen *other* instantiation's field
-                // list. Keep it only as a fallback for defs `full_layouts`
-                // doesn't know about at all.
+                // `full_layouts` is an exact-instantiation cache (keyed by
+                // `(DefId, substs)`, like `struct_layouts` above) — when
+                // this exact instantiation has already been computed
+                // elsewhere, reuse it directly.
                 if let Some(field_tys) = self.full_layouts.get(&key) {
                     let fields: Vec<Option<lir::LirType>> = field_tys
                         .iter()
@@ -6407,39 +6448,39 @@ impl LirGenerator {
                         name: None,
                     };
                 }
-                if self.lookup_mir_layout(&adt.did).is_some() {
-                    if substs.iter().any(|arg| {
-                        matches!(
-                            arg,
-                            mir::ty::GenericArg::Type(ty)
-                                if matches!(ty.kind, TyKind::Infer(_))
-                        )
-                    }) {
-                        panic!(
-                            "MIR-to-LIR ICE: unresolved ADT substitution for {}: {:?}",
-                            adt.did, ty
-                        );
-                    }
-                    let field_tys = self.lookup_mir_layout(&adt.did).unwrap();
-                    let fields: Vec<Option<lir::LirType>> = field_tys
-                        .iter()
-                        .map(|ty| Some(self.lir_type_from_ty(ty)))
-                        .collect();
-                    let struct_fields: Vec<lir::LirType> =
-                        fields.iter().map(|f| f.clone().unwrap()).collect();
-                    self.struct_layouts.borrow_mut().insert(key, fields);
-                    return lir::LirType::Struct {
-                        fields: struct_fields,
-                        packed: false,
-                        name: None,
-                    };
+                // Otherwise, compute it — the same way rustc's own
+                // `layout_of` always does (`tcx.type_of(field.did)
+                // .instantiate(tcx, args)`), instead of reusing a
+                // *different* instantiation's already-substituted fields.
+                // `lookup_adt_def` returns the struct's real, registered
+                // declaration (`finalize_adt_definitions` populates
+                // `AdtDef.variants[0].fields[i].ty` with the *generic*,
+                // unsubstituted field types — the same for every
+                // instantiation, unlike `struct_layouts`/`full_layouts`),
+                // so substituting its `Param`s with this call's own
+                // `substs` via `instantiate_ty` gives the correct fields
+                // for *this* instantiation specifically, computed on
+                // demand and cached for reuse. There is deliberately no
+                // further fallback beyond this: a `DefId` `lookup_adt_def`
+                // has never even heard of is a genuine "this type is
+                // unknown" error, not something to guess an answer for.
+                if substs.iter().any(|arg| {
+                    matches!(
+                        arg,
+                        mir::ty::GenericArg::Type(ty) if matches!(ty.kind, TyKind::Infer(_))
+                    )
+                }) {
+                    panic!(
+                        "MIR-to-LIR ICE: unresolved ADT substitution for {}: {:?}",
+                        adt.did, ty
+                    );
                 }
                 if let Some(populated) = self.lookup_adt_def(&adt.did) {
                     if let Some(variant) = populated.variants.first() {
                         let fields: Vec<Option<lir::LirType>> = variant
                             .fields
                             .iter()
-                            .map(|f| Some(self.lir_type_from_ty(&f.ty)))
+                            .map(|f| Some(self.lir_type_from_ty(&Self::instantiate_ty(&f.ty, substs))))
                             .collect();
                         let struct_fields: Vec<lir::LirType> =
                             fields.iter().map(|f| f.clone().unwrap()).collect();
@@ -6451,7 +6492,7 @@ impl LirGenerator {
                         };
                     }
                 }
-                panic!("MIR-to-LIR ICE: missing layout for ADT {}", adt.did)
+                panic!("MIR-to-LIR ICE: unknown ADT {} — never registered by any compiled package", adt.did)
             }
             TyKind::FnDef(def_id, substs) => panic!(
                 "MIR-to-LIR ICE: function definition {} with substitutions {:?} used as a data type",
