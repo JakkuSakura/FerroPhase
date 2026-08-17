@@ -519,7 +519,7 @@ fn lowers_println_macro_into_intrinsic_call() -> OptimizeResult<()> {
         other => panic!("expected intrinsic call, found {:?}", other),
     };
 
-    assert_eq!(call.kind, IntrinsicKind::Println);
+    assert_eq!(call.kind.intrinsic_kind(), Some(IntrinsicKind::Println));
     let template = match call.callargs.first().map(|arg| &arg.value.kind) {
         Some(hir::ExprKind::FormatString(template)) => template,
         other => panic!("println expects format template argument, got {:?}", other),
@@ -586,7 +586,7 @@ fn lowers_print_macro_into_intrinsic_call() -> OptimizeResult<()> {
         other => panic!("expected intrinsic call, found {:?}", other),
     };
 
-    assert_eq!(call.kind, IntrinsicKind::Print);
+    assert_eq!(call.kind.intrinsic_kind(), Some(IntrinsicKind::Print));
     let template = match call.callargs.first().map(|arg| &arg.value.kind) {
         Some(hir::ExprKind::FormatString(template)) => template,
         other => panic!("print expects format template argument, got {:?}", other),
@@ -666,12 +666,12 @@ fn lowers_sizeof_and_field_count_intrinsics() -> OptimizeResult<()> {
         if let ItemKind::Const(konst) = &item.kind {
             let expr = &konst.body.value;
             if let hir::ExprKind::IntrinsicCall(call) = &expr.kind {
-                match call.kind {
-                    IntrinsicKind::SizeOf => {
+                match call.kind.intrinsic_kind() {
+                    Some(IntrinsicKind::SizeOf) => {
                         saw_sizeof = true;
                         assert_eq!(call.callargs.len(), 1);
                     }
-                    IntrinsicKind::FieldCount => {
+                    Some(IntrinsicKind::FieldCount) => {
                         saw_field_count = true;
                         assert_eq!(call.callargs.len(), 1);
                     }

@@ -794,25 +794,21 @@ impl HirGenerator {
                 // op because its *own resolved declaration* was tagged
                 // `#[intrinsic = "..."]`/`#[op(func = "...")]` — e.g.
                 // `catch_unwind`'s real (stub-bodied) declaration, or
-                // `std::time::now`'s. Recognizing this from the resolved
-                // `DefId` (rather than by re-deriving it from the call
-                // site's own name/path, which can't tell a builtin from a
-                // same-named real user function of the same name) is what
-                // makes these usable under every pipeline, not just
-                // `TypecheckedTranspile`'s post-typecheck `HirToAstLifter`
-                // pass.
-                if let Some(hir::Res::Def(def_id)) = path.res {
-                    let kind = self
-                        .op_kind_for_def(def_id)
-                        .map(CallKind::Op)
-                        .or_else(|| self.intrinsic_kind_for_def(def_id));
-                    if let Some(kind) = kind {
-                        if let Some(call) = fp_core::ast::build_intrinsic_call(kind, invoke) {
-                            return self.transform_intrinsic_call_to_hir(&call);
-                        }
-                    }
-                }
-
+                // `std::time::now`'s. But recognizing this HERE, pre-
+                // typecheck, forces every match through the low-level
+                // `transform_intrinsic_call_to_hir` path, which can only
+                // represent a genuine `IntrinsicKind` — many `#[op(...)]`s
+                // (`Vec::new`, `Iter`, `AsRef`, `OptionSome`, `ResultOk`, ...)
+                // have no such equivalent and exist purely for POST-typecheck,
+                // backend-specific materialization. Always lower as an
+                // ordinary `Call` here; reclassification (by this same real
+                // `DefId`, never by re-deriving it from the call site's own
+                // name/path) happens post-typecheck instead — see
+                // `hir_to_mir::expr::lower_call` (`Native`) and
+                // `HirToAstLifter::try_lift_call_as_intrinsic`
+                // (`TypecheckedTranspile`), both consulting the same
+                // `program.op_defs`/`intrinsic_defs` tables via
+                // `transforms::resolve_call_kind`.
                 let func_expr = hir::Expr {
                     hir_id: self.next_id(),
                     kind: hir::ExprKind::Path(path),
@@ -1589,7 +1585,7 @@ impl HirGenerator {
             let len_call = hir::Expr {
                 hir_id: self.next_id(),
                 kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-                    kind: IntrinsicKind::Len,
+                    kind: CallKind::Intrinsic(IntrinsicKind::Len),
                     callargs: vec![hir::CallArg {
                         name: hir::Symbol::new("arg0"),
                         value: base_expr.clone(),
@@ -1756,7 +1752,7 @@ impl HirGenerator {
             let len_call = hir::Expr {
                 hir_id: self.next_id(),
                 kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-                    kind: IntrinsicKind::Len,
+                    kind: CallKind::Intrinsic(IntrinsicKind::Len),
                     callargs: vec![hir::CallArg {
                         name: hir::Symbol::new("arg0"),
                         value: base_expr.clone(),
@@ -1838,7 +1834,7 @@ impl HirGenerator {
         let len_call = hir::Expr {
             hir_id: self.next_id(),
             kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-                kind: IntrinsicKind::Len,
+                kind: CallKind::Intrinsic(IntrinsicKind::Len),
                 callargs: vec![hir::CallArg {
                     name: hir::Symbol::new("arg0"),
                     value: base_expr.clone(),
@@ -2302,12 +2298,8 @@ impl HirGenerator {
             }
         }
 
-        let kind = call
-            .kind
-            .intrinsic_kind()
-            .ok_or_else(|| fp_core::error::Error::from("high-level op reached the compiler HIR"))?;
         Ok(hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-            kind,
+            kind: call.kind,
             callargs,
         }))
     }

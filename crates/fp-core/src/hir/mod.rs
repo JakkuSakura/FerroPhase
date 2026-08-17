@@ -416,7 +416,7 @@ pub enum FormatArgRef {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IntrinsicCallExpr {
-    pub kind: IntrinsicKind,
+    pub kind: CallKind,
     pub callargs: Vec<CallArg>,
 }
 
@@ -1086,6 +1086,13 @@ impl FormatPlaceholder {
 impl IntrinsicCallExpr {
     pub fn span(&self) -> Span {
         Span::union(self.callargs.iter().map(CallArg::span))
+    }
+
+    pub fn intrinsic_kind(&self) -> Option<IntrinsicKind> {
+        match self.kind {
+            CallKind::Intrinsic(k) => Some(k),
+            CallKind::Op(_) => None,
+        }
     }
 }
 

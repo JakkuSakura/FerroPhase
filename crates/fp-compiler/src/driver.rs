@@ -523,7 +523,7 @@ impl CompilerDriver {
                     .extend(type_alias_exports);
             }
         }
-        let (hir_program, typeck_results) = self
+        let (mut hir_program, typeck_results) = self
             .type_check_program(hir_program)
             .await
             .map_err(|error| {
@@ -531,6 +531,18 @@ impl CompilerDriver {
                     "package HIR type checking failed: {error}"
                 ))
             })?;
+        // Formalized post-typecheck `#[op(...)]` promotion (see
+        // `hir_normalization` for the full rationale): only
+        // `TypecheckedTranspile` (Kotlin/Shell AST-lift) promotes
+        // pure-`Op`-only calls to `IntrinsicCall(CallKind::Op(..))` in
+        // place. `Native` leaves them as ordinary calls to their real stub
+        // bodies (see `hir_materialization` for why that's correct here).
+        let promote_op_only = matches!(self.pipeline, PipelineMode::TypecheckedTranspile);
+        fp_backend::transforms::hir_normalization::normalize_program(
+            &mut hir_program,
+            Some(&typeck_results),
+            promote_op_only,
+        );
         let current_package_id = self
             .state.borrow()
             .typing_ctx

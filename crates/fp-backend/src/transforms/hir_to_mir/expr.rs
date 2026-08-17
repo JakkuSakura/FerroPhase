@@ -26,7 +26,7 @@ use fp_core::mir::{self, Symbol};
 use fp_core::ops::format_value_with_spec;
 use fp_core::span::Span;
 use fp_typing::TypeckResults;
-use std::collections::{HashMap, HashSet, VecDeque, hash_map::DefaultHasher};
+use std::collections::{HashMap, HashSet, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 
 const DIAGNOSTIC_CONTEXT: &str = "hir→mir";
@@ -6789,7 +6789,7 @@ impl MirLowering {
         let hir::ExprKind::IntrinsicCall(call) = &base.kind else {
             return None;
         };
-        if call.kind != IntrinsicKind::TypeOf || call.callargs.len() != 1 {
+        if call.kind.intrinsic_kind() != Some(IntrinsicKind::TypeOf) || call.callargs.len() != 1 {
             return None;
         }
         let type_arg = &call.callargs[0].value;
@@ -15852,7 +15852,37 @@ impl<'a> BodyBuilder<'a> {
                 });
             }
             hir::ExprKind::IntrinsicCall(call) => {
-                if matches!(call.kind, IntrinsicKind::Print | IntrinsicKind::Println) {
+                // Portable `#[op(...)]` calls with no low-level intrinsic
+                // equivalent (`CallKind::Op` variants that don't map via
+                // `intrinsic_kind()`) haven't been normalized/materialized
+                // away by the time MIR lowering runs -- fail loudly here
+                // rather than silently mis-lowering them, matching the
+                // "unsupported intrinsic" fallback already used below for
+                // intrinsics this function doesn't otherwise handle.
+                let Some(kind) = call.kind.intrinsic_kind() else {
+                    self.lowering.emit_error(
+                        expr.span,
+                        format!(
+                            "portable op {:?} reached MIR operand lowering, which only handles genuine intrinsics",
+                            call.kind
+                        ),
+                    );
+                    let unit_ty = self.lowering.error_ty();
+                    let local_id = self.allocate_temp(unit_ty.clone(), expr.span);
+                    let local_place = mir::Place::from_local(local_id);
+                    self.push_statement(mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            local_place.clone(),
+                            mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                        ),
+                    });
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::copy(local_place),
+                        ty: unit_ty,
+                    });
+                };
+                if matches!(kind, IntrinsicKind::Print | IntrinsicKind::Println) {
                     self.emit_printf_call(call, expr.span)?;
                     let unit_ty = MirLowering::unit_ty();
                     let local_id = self.allocate_temp(unit_ty.clone(), expr.span);
@@ -15870,7 +15900,7 @@ impl<'a> BodyBuilder<'a> {
                         ty: unit_ty,
                     });
                 }
-                if call.kind == IntrinsicKind::Format {
+                if kind == IntrinsicKind::Format {
                     let (format, args) = self.prepare_format_call(call, expr.span)?;
                     let string_ty = Ty {
                         kind: TyKind::RawPtr(TypeAndMut {
@@ -15899,7 +15929,7 @@ impl<'a> BodyBuilder<'a> {
                         ty: string_ty,
                     });
                 }
-                if call.kind == IntrinsicKind::Panic {
+                if kind == IntrinsicKind::Panic {
                     self.emit_panic_intrinsic(call, expr.span)?;
                     let unit_ty = MirLowering::unit_ty();
                     return Ok(OperandInfo {
@@ -15912,13 +15942,13 @@ impl<'a> BodyBuilder<'a> {
                         ty: unit_ty,
                     });
                 }
-                if call.kind == IntrinsicKind::CatchUnwind {
+                if kind == IntrinsicKind::CatchUnwind {
                     return self.lower_catch_unwind(expr, call, None);
                 }
-                if call.kind == IntrinsicKind::CatchUnwindResult {
+                if kind == IntrinsicKind::CatchUnwindResult {
                     return self.lower_catch_unwind_result(expr, call, None);
                 }
-                if call.kind == IntrinsicKind::TimeNow {
+                if kind == IntrinsicKind::TimeNow {
                     let args = &call.callargs;
                     if !args.is_empty() {
                         self.lowering
@@ -15946,7 +15976,7 @@ impl<'a> BodyBuilder<'a> {
                         ty: now_ty,
                     });
                 }
-                if call.kind == IntrinsicKind::FsReadToString {
+                if kind == IntrinsicKind::FsReadToString {
                     let ty = expected.cloned().unwrap_or_else(|| Ty {
                         kind: TyKind::Slice(Box::new(Ty {
                             kind: TyKind::Int(IntTy::I8),
@@ -15960,7 +15990,7 @@ impl<'a> BodyBuilder<'a> {
                         ty,
                     });
                 }
-                if call.kind == IntrinsicKind::FsExists {
+                if kind == IntrinsicKind::FsExists {
                     let ty = Ty { kind: TyKind::Bool };
                     let local_id = self.allocate_temp(ty.clone(), expr.span);
                     let local_place = mir::Place::from_local(local_id);
@@ -15970,7 +16000,7 @@ impl<'a> BodyBuilder<'a> {
                         ty,
                     });
                 }
-                if call.kind == IntrinsicKind::FsRemoveFile {
+                if kind == IntrinsicKind::FsRemoveFile {
                     self.lower_fs_remove_file_as_statement(expr, call)?;
                     let unit_ty = MirLowering::unit_ty();
                     return Ok(OperandInfo {
@@ -15983,7 +16013,7 @@ impl<'a> BodyBuilder<'a> {
                         ty: unit_ty,
                     });
                 }
-                if call.kind == IntrinsicKind::EnvVarExists {
+                if kind == IntrinsicKind::EnvVarExists {
                     let ty = Ty { kind: TyKind::Bool };
                     let local_id = self.allocate_temp(ty.clone(), expr.span);
                     let local_place = mir::Place::from_local(local_id);
@@ -15993,7 +16023,7 @@ impl<'a> BodyBuilder<'a> {
                         ty,
                     });
                 }
-                if call.kind == IntrinsicKind::EnvVar {
+                if kind == IntrinsicKind::EnvVar {
                     let ty = expected.cloned().unwrap_or_else(|| Ty {
                         kind: TyKind::Slice(Box::new(Ty {
                             kind: TyKind::Int(IntTy::I8),
@@ -16008,7 +16038,7 @@ impl<'a> BodyBuilder<'a> {
                     });
                 }
                 if matches!(
-                    call.kind,
+                    kind,
                     IntrinsicKind::FsWriteString
                         | IntrinsicKind::FsAppendString
                         | IntrinsicKind::FsIsDir
@@ -16016,7 +16046,7 @@ impl<'a> BodyBuilder<'a> {
                 ) {
                     self.lowering.emit_error(
                         expr.span,
-                        format!("{:?} is not implemented for compiled backends", call.kind),
+                        format!("{:?} is not implemented for compiled backends", kind),
                     );
                     let ty = expected
                         .cloned()
@@ -16026,7 +16056,7 @@ impl<'a> BodyBuilder<'a> {
                         ty,
                     });
                 }
-                if call.kind == IntrinsicKind::Slice {
+                if kind == IntrinsicKind::Slice {
                     let args = &call.callargs;
                     if args.len() != 3 {
                         self.lowering.emit_error(
@@ -16083,7 +16113,7 @@ impl<'a> BodyBuilder<'a> {
                         ty: slice_ty.clone(),
                     });
                 }
-                if call.kind == IntrinsicKind::Len {
+                if kind == IntrinsicKind::Len {
                     let args = &call.callargs;
                     let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
 
@@ -16163,7 +16193,7 @@ impl<'a> BodyBuilder<'a> {
                     });
                 }
                 if matches!(
-                    call.kind,
+                    kind,
                     IntrinsicKind::Spawn | IntrinsicKind::Join | IntrinsicKind::Select
                 ) {
                     let mut lowered_args = Vec::with_capacity(call.callargs.len());
@@ -16171,14 +16201,14 @@ impl<'a> BodyBuilder<'a> {
                         lowered_args.push(self.lower_operand(&arg.value, None)?);
                     }
 
-                    match call.kind {
+                    match kind {
                         IntrinsicKind::Spawn | IntrinsicKind::Select => {
                             if lowered_args.is_empty() {
                                 self.lowering.emit_error(
                                     expr.span,
                                     format!(
                                         "{:?} intrinsic expects at least one argument",
-                                        call.kind
+                                        kind
                                     ),
                                 );
                                 let unit_ty = MirLowering::unit_ty();
@@ -16268,7 +16298,7 @@ impl<'a> BodyBuilder<'a> {
                 // mir::Rvalue::IntrinsicCall so MIR→LIR can convert
                 // them to ComptimeOp instructions.
                 if matches!(
-                    call.kind,
+                    kind,
                     IntrinsicKind::CreateStruct
                         | IntrinsicKind::AddField
                         | IntrinsicKind::BuildType
@@ -16288,7 +16318,7 @@ impl<'a> BodyBuilder<'a> {
                         kind: mir::StatementKind::Assign(
                             local_place.clone(),
                             mir::Rvalue::IntrinsicCall {
-                                kind: call.kind,
+                                kind: kind,
                                 format: String::new(),
                                 args: operands,
                             },
@@ -16313,7 +16343,7 @@ impl<'a> BodyBuilder<'a> {
                     expr.span,
                     format!(
                         "unsupported intrinsic {:?} during MIR operand lowering",
-                        call.kind
+                        kind
                     ),
                 );
                 let unit_ty = self.lowering.error_ty();
@@ -16731,7 +16761,13 @@ impl<'a> BodyBuilder<'a> {
         }
         let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
 
-        match call.kind {
+        // Portable ops with no intrinsic equivalent have no constant-folding
+        // rule here either -- same "not handled" outcome as `_ => None` below.
+        let Some(kind) = call.kind.intrinsic_kind() else {
+            return None;
+        };
+
+        match kind {
             IntrinsicKind::SizeOf => {
                 let target_expr = match arg_values.get(0) {
                     Some(expr) => *expr,
@@ -17003,14 +17039,19 @@ impl<'a> BodyBuilder<'a> {
             }
         }
 
-        if call.kind == IntrinsicKind::Println {
+        let printf_kind = call
+            .kind
+            .intrinsic_kind()
+            .filter(|k| matches!(k, IntrinsicKind::Print | IntrinsicKind::Println))
+            .unwrap_or(IntrinsicKind::Print);
+        if printf_kind == IntrinsicKind::Println {
             format.push('\n');
         }
 
         self.push_statement(mir::Statement {
             source_info: span,
             kind: mir::StatementKind::IntrinsicCall {
-                kind: call.kind,
+                kind: printf_kind,
                 format,
                 args: ordered_operands,
             },
@@ -17198,7 +17239,7 @@ impl<'a> BodyBuilder<'a> {
                         .any(|part| matches!(part, hir::FormatTemplatePart::Placeholder(_)));
                     if has_placeholders {
                         let format_call = hir::IntrinsicCallExpr {
-                            kind: IntrinsicKind::Format,
+                            kind: fp_core::intrinsics::CallKind::Intrinsic(IntrinsicKind::Format),
                             callargs: call.callargs.clone(),
                         };
                         let (format, args) = match self.prepare_format_call(&format_call, span) {
@@ -19128,7 +19169,8 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::Match(scrutinee, arms) => {
                 self.lower_match_expr(expr.span, scrutinee, arms, place, expected_ty)?;
             }
-            hir::ExprKind::IntrinsicCall(call) => match call.kind {
+            hir::ExprKind::IntrinsicCall(call) => match call.kind.intrinsic_kind() {
+                Some(kind) => match kind {
                 IntrinsicKind::Print | IntrinsicKind::Println => {
                     self.emit_printf_call(call, expr.span)?;
                     let statement = mir::Statement {
@@ -19215,7 +19257,7 @@ impl<'a> BodyBuilder<'a> {
                 | IntrinsicKind::FsIsFile => {
                     self.lowering.emit_error(
                         expr.span,
-                        format!("{:?} is not implemented for compiled backends", call.kind),
+                        format!("{:?} is not implemented for compiled backends", kind),
                     );
                     let statement = mir::Statement {
                         source_info: expr.span,
@@ -19259,7 +19301,7 @@ impl<'a> BodyBuilder<'a> {
                     } else {
                         self.lowering.emit_error(
                             expr.span,
-                            format!("{:?} intrinsic expects at least one argument", call.kind),
+                            format!("{:?} intrinsic expects at least one argument", kind),
                         );
                         let statement = mir::Statement {
                             source_info: expr.span,
@@ -19320,7 +19362,7 @@ impl<'a> BodyBuilder<'a> {
                         kind: mir::StatementKind::Assign(
                             place.clone(),
                             mir::Rvalue::IntrinsicCall {
-                                kind: call.kind,
+                                kind: kind,
                                 format: String::new(),
                                 args: operands,
                             },
@@ -19351,6 +19393,28 @@ impl<'a> BodyBuilder<'a> {
                         expr.span,
                         format!(
                             "intrinsic {:?} is not yet supported for MIR assignment",
+                            call.kind
+                        ),
+                    );
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                        ),
+                    };
+                    self.push_statement(statement);
+                }
+                },
+                None => {
+                    // Portable op with no intrinsic equivalent and no
+                    // constant-folding rule -- same "not yet supported"
+                    // fallback the wildcard arm above uses for intrinsics
+                    // this function doesn't otherwise handle.
+                    self.lowering.emit_warning(
+                        expr.span,
+                        format!(
+                            "portable op {:?} is not yet supported for MIR assignment",
                             call.kind
                         ),
                     );

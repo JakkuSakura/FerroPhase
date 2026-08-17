@@ -1379,21 +1379,6 @@ impl HirGenerator {
         None
     }
 
-    /// Same shape as `op_kind_for_def`, for `#[intrinsic = "..."]`-tagged
-    /// free functions instead of `#[op(...)]`-tagged ones.
-    fn intrinsic_kind_for_def(&self, def_id: hir::DefId) -> Option<fp_core::intrinsics::CallKind> {
-        if let Some(kind) = self.intrinsic_defs.get(&def_id).copied() {
-            return Some(kind);
-        }
-        let workspace = self.workspace.as_ref()?;
-        for (_module_path, hir_program, _exports) in workspace.hir_definitions() {
-            if let Some(kind) = hir_program.intrinsic_defs.get(&def_id).copied() {
-                return Some(kind);
-            }
-        }
-        None
-    }
-
     /// Same tiers as `resolve_value_symbol`, minus the lexical-scope tier —
     /// used to answer "does this bare identifier already name something at
     /// module/prelude/workspace scope?" without that answer being masked by
@@ -5567,7 +5552,8 @@ fn function_body_is_compiler_intrinsic_marker(function: &hir::Function) -> bool 
     }
     matches!(
         body.expr.as_deref().map(|expr| &expr.kind),
-        Some(hir::ExprKind::IntrinsicCall(call)) if call.kind == IntrinsicKind::CompileError
+        Some(hir::ExprKind::IntrinsicCall(call))
+            if call.kind == fp_core::intrinsics::CallKind::Intrinsic(IntrinsicKind::CompileError)
     )
 }
 
