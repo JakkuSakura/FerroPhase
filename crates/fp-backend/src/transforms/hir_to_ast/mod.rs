@@ -1099,6 +1099,7 @@ impl<'a> HirToAstLifter<'a> {
                 span: ty.span,
                 inner: None,
             }),
+            hir::TypeExprKind::Any => Ty::Any(ast::TypeAny),
         })
     }
 
@@ -1295,6 +1296,7 @@ impl<'a> HirToAstLifter<'a> {
                 span: fp_core::span::Span::default(),
                 inner: None,
             })),
+            TyKind::Any => Some(Ty::Any(ast::TypeAny)),
         }
     }
 

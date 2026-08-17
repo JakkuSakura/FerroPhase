@@ -6462,6 +6462,12 @@ impl LirGenerator {
             // `Ptr(_)` or an aggregate), so this is what makes a `type`-typed
             // struct field/local/return value round-trip correctly.
             TyKind::Type => lir::LirType::Ptr(Box::new(lir::LirType::Void)),
+            // `any` — a fixed, concrete, fully type-erased value. Same
+            // storage strategy as `TyKind::Type`: always boxed/pointer-sized,
+            // never a scalar destination — see `TyKind::Any`'s own doc
+            // comment for why this must be handled here rather than falling
+            // into the `Infer`/`Param`/... "unresolved" panic arm below.
+            TyKind::Any => lir::LirType::Ptr(Box::new(lir::LirType::Void)),
             TyKind::Dynamic(_, _)
             | TyKind::Closure(_, _)
             | TyKind::Generator(_, _, _)

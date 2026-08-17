@@ -2519,7 +2519,7 @@ impl HirGenerator {
             ast::Ty::Nothing(_) => Ok(self.create_null_type()),
             ast::Ty::Any(_) => Ok(hir::TypeExpr::new(
                 self.next_id(),
-                hir::TypeExprKind::Infer,
+                hir::TypeExprKind::Any,
                 Span::new(self.current_file, 0, 0),
             )),
             ast::Ty::TypeBounds(bounds) => {

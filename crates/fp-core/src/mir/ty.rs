@@ -96,6 +96,13 @@ pub enum TyKind {
     /// compile-time type information and are manipulated by comptime
     /// intrinsics (create_struct, addfield, build_type).
     Type,
+
+    /// The FerroPhase `any` type: a fixed, concrete, fully type-erased
+    /// runtime value (e.g. `spawn(fut: any) -> any`) — not an unresolved
+    /// inference variable, so it must lower to a real LIR type rather than
+    /// hit the "unsupported unresolved type" ICE that any lingering
+    /// `Infer(_)` does.
+    Any,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

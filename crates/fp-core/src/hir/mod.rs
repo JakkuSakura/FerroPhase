@@ -525,6 +525,11 @@ pub enum TypeExprKind {
     /// an opaque handle into the comptime interpreter's own type pool, not
     /// a plain integer — see `TyKind::Type`'s own doc comment.
     Type,
+    /// The `any` surface annotation — a fully type-erased runtime value
+    /// (e.g. `spawn(fut: any) -> any`). Lowers to `TyKind::Any`: a fixed,
+    /// concrete "erased" type, not an inference placeholder — see
+    /// `TyKind::Any`'s own doc comment for why this must not reuse `Infer`.
+    Any,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1202,9 +1207,11 @@ impl TypeExprKind {
             TypeExprKind::Ref(ty) => ty.span(),
             TypeExprKind::FnPtr(func) => func.span(),
             TypeExprKind::ConstBlock(body) => body.span(),
-            TypeExprKind::Never | TypeExprKind::Infer | TypeExprKind::Error | TypeExprKind::Type => {
-                Span::null()
-            }
+            TypeExprKind::Never
+            | TypeExprKind::Infer
+            | TypeExprKind::Error
+            | TypeExprKind::Type
+            | TypeExprKind::Any => Span::null(),
         }
     }
 }

@@ -919,6 +919,7 @@ fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
         TypeExprKind::Infer => "_".into(),
         TypeExprKind::Error => "<error>".into(),
         TypeExprKind::Type => "type".into(),
+        TypeExprKind::Any => "any".into(),
     }
 }
 

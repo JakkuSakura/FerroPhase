@@ -242,6 +242,7 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
             ));
         }
         hir::ty::TyKind::Type => TyKind::Type,
+        hir::ty::TyKind::Any => TyKind::Any,
         _ => {
             return Err(fp_core::error::Error::from(
                 "unsupported HIR type in MIR type bridge",
@@ -3976,6 +3977,7 @@ impl MirLowering {
             // lookup missed, so fall back the same way `Infer` does.
             hir::TypeExprKind::ConstBlock(_) => self.error_ty(),
             hir::TypeExprKind::Type => Ty { kind: TyKind::Type },
+            hir::TypeExprKind::Any => Ty { kind: TyKind::Any },
         }
     }
 
@@ -5708,6 +5710,7 @@ impl MirLowering {
                 .cloned()
                 .unwrap_or_else(|| self.error_ty()),
             hir::TypeExprKind::Type => Ty { kind: TyKind::Type },
+            hir::TypeExprKind::Any => Ty { kind: TyKind::Any },
         }
     }
 
@@ -7583,6 +7586,9 @@ impl MirLowering {
             // Pointer-sized handle — see `TyKind::Type`'s own doc comment
             // and `lir_type_from_ty`'s matching `Ptr(Void)` lowering.
             TyKind::Type => Some(8),
+            // Same storage strategy as `TyKind::Type` — see `TyKind::Any`'s
+            // own doc comment.
+            TyKind::Any => Some(8),
             TyKind::Adt(adt, substs) => {
                 if let Some(size) = self
                     .display_type_name(ty)
@@ -7756,6 +7762,7 @@ impl MirLowering {
             | TyKind::Uint(_)
             | TyKind::Float(_)
             | TyKind::FnDef(_, _)
+            | TyKind::Any
             | TyKind::Never => false,
         }
     }
@@ -18286,7 +18293,8 @@ impl<'a> BodyBuilder<'a> {
             | TyKind::Placeholder(_)
             | TyKind::Bound(_, _)
             | TyKind::Infer(_)
-            | TyKind::Type => {
+            | TyKind::Type
+            | TyKind::Any => {
                 if let TyKind::Adt(adt, substs) = &ty.kind {
                     // A payload slot opaqued out by `enum_layout_for_
                     // instance` (heterogeneous per-variant types sharing a

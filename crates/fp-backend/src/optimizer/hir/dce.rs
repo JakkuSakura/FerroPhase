@@ -270,7 +270,8 @@ fn type_has_unresolved_paths(ty: &hir::TypeExpr) -> bool {
         | hir::TypeExprKind::Never
         | hir::TypeExprKind::Infer
         | hir::TypeExprKind::Error
-        | hir::TypeExprKind::Type => false,
+        | hir::TypeExprKind::Type
+        | hir::TypeExprKind::Any => false,
     }
 }
 
@@ -541,7 +542,8 @@ fn collect_type_refs(
         | hir::TypeExprKind::Never
         | hir::TypeExprKind::Infer
         | hir::TypeExprKind::Error
-        | hir::TypeExprKind::Type => {}
+        | hir::TypeExprKind::Type
+        | hir::TypeExprKind::Any => {}
     }
 }
 

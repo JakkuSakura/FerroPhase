@@ -1404,6 +1404,7 @@ impl HirTypeChecker {
             hir::TypeExprKind::Type => Ty {
                 kind: TyKind::Type,
             },
+            hir::TypeExprKind::Any => Ty { kind: TyKind::Any },
         };
         self.shared.results.borrow_mut().record_type_expr_type(expr.hir_id, ty.clone());
         Ok(ty)

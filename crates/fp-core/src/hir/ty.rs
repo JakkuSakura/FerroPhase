@@ -105,6 +105,17 @@ pub enum TyKind {
     /// `Value::Type`, which is exactly what this kind's LIR lowering
     /// (`Ptr(Void)`) is shaped to trigger.
     Type,
+    /// The `any` surface annotation's runtime representation: a fixed,
+    /// concrete, fully type-erased value — always boxed/pointer-sized at
+    /// the LIR level (`Ptr(Void)`), same storage strategy as `Type`. Must
+    /// not be represented as `Infer(_)`: unlike a closure parameter with no
+    /// type annotation (a genuine placeholder awaiting unification against
+    /// a call site), `any` never gets refined into something more
+    /// concrete — it's meant to stay erased for the lifetime of the value,
+    /// so treating it as an unresolved inference variable left it looking
+    /// "still pending" all the way through to MIR-to-LIR, which has no
+    /// rule for lowering a genuinely-unresolved `Infer` and panics.
+    Any,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
