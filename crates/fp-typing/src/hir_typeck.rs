@@ -1401,6 +1401,9 @@ impl HirTypeChecker {
             hir::TypeExprKind::TypeBinaryOp(_) => {
                 self.error_ty("type expressions cannot be combined with a type operator")
             }
+            hir::TypeExprKind::Type => Ty {
+                kind: TyKind::Type,
+            },
         };
         self.shared.results.borrow_mut().record_type_expr_type(expr.hir_id, ty.clone());
         Ok(ty)
@@ -2899,14 +2902,30 @@ impl HirTypeChecker {
             | IntrinsicKind::ProcMacroTokenStreamFromStr => Ty {
                 kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
             },
-            IntrinsicKind::FieldType | IntrinsicKind::VecType => {
+            IntrinsicKind::VecType => {
                 self.error_ty("type-valued intrinsic has no HIR type representation")
             }
-            IntrinsicKind::TypeOf
-            | IntrinsicKind::CreateStruct
-            | IntrinsicKind::AddField
-            | IntrinsicKind::BuildType => {
-                self.error_ty("type-valued intrinsic typing is not implemented")
+            // `type(x)`/`.field_type(name)` are reflection *queries* — they
+            // report on a real, already-known type, so (unlike
+            // `create_struct`/`addfield`/`build_type` below) their result
+            // has a real, ordinary struct shape: `std::meta::TypeDescriptor`/
+            // `FieldTypeDescriptor`, the same real structs any other value
+            // of those types would be.
+            IntrinsicKind::TypeOf => self
+                .well_known_struct_ty("TypeDescriptor", Vec::new())
+                .unwrap_or_else(|| self.error_ty("std::meta::TypeDescriptor is not declared")),
+            IntrinsicKind::FieldType => self
+                .well_known_struct_ty("FieldTypeDescriptor", Vec::new())
+                .unwrap_or_else(|| {
+                    self.error_ty("std::meta::FieldTypeDescriptor is not declared")
+                }),
+            // `create_struct`/`addfield`/`build_type` *construct*/mutate a
+            // type value (backing `TypeBuilder.ty: type`), consumed only by
+            // the comptime interpreter (`Value::Type`) via dedicated
+            // `ComptimeOp`s — same opaque-handle kind as the `type`
+            // keyword's own surface annotation (`TypeExprKind::Type`).
+            IntrinsicKind::CreateStruct | IntrinsicKind::AddField | IntrinsicKind::BuildType => {
+                Ty { kind: TyKind::Type }
             }
             IntrinsicKind::FsWriteString
             | IntrinsicKind::FsAppendString

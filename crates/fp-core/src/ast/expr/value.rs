@@ -912,17 +912,27 @@ fn scan_ident(bytes: &[u8], mut idx: usize) -> usize {
     idx
 }
 
-/// Attempt to recognise canonical intrinsic calls inside a generic invoke expression.
+/// Attempt to recognise canonical intrinsic calls inside a generic invoke expression,
+/// resolving which intrinsic (if any) by the callee's *name* — for callers (pre-HIR
+/// AST normalization) that have no resolved `DefId` to consult yet. Anything that
+/// resolves a real declaration first and already knows the `CallKind` from that
+/// declaration's own `#[op]`/`#[intrinsic]` attribute should call
+/// `build_intrinsic_call` directly instead, skipping this name lookup entirely.
 pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCall> {
-    let (kind, _name) = match &invoke.target {
-        ExprInvokeTarget::Function(name) => {
-            let kind = crate::lang::lookup_op_intrinsic(name)
-                .or_else(|| crate::lang::lookup_intrinsic(name))?;
-            (kind, name)
-        }
+    let kind = match &invoke.target {
+        ExprInvokeTarget::Function(name) => crate::lang::lookup_op_intrinsic(name)
+            .or_else(|| crate::lang::lookup_intrinsic(name))?,
         _ => return None,
     };
+    build_intrinsic_call(kind, invoke)
+}
 
+/// Shapes `invoke`'s arguments the way each `CallKind` expects (e.g. `Print`/
+/// `Println` need their first argument rebuilt into a `FormatString` template),
+/// given an already-known `CallKind` — shared by both `intrinsic_call_from_invoke`
+/// (name-resolved) and any `DefId`-resolved caller (see `hir::Program::intrinsic_defs`/
+/// `op_defs`), so the two never disagree on how a given intrinsic's call is built.
+pub fn build_intrinsic_call(kind: CallKind, invoke: &ExprInvoke) -> Option<ExprIntrinsicCall> {
     let call = match kind {
         CallKind::Print | CallKind::Println => {
             let (template, skip) =

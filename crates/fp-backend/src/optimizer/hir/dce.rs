@@ -269,7 +269,8 @@ fn type_has_unresolved_paths(ty: &hir::TypeExpr) -> bool {
         hir::TypeExprKind::Primitive(_)
         | hir::TypeExprKind::Never
         | hir::TypeExprKind::Infer
-        | hir::TypeExprKind::Error => false,
+        | hir::TypeExprKind::Error
+        | hir::TypeExprKind::Type => false,
     }
 }
 
@@ -539,7 +540,8 @@ fn collect_type_refs(
         hir::TypeExprKind::Primitive(_)
         | hir::TypeExprKind::Never
         | hir::TypeExprKind::Infer
-        | hir::TypeExprKind::Error => {}
+        | hir::TypeExprKind::Error
+        | hir::TypeExprKind::Type => {}
     }
 }
 
@@ -677,6 +679,7 @@ mod tests {
             def_paths: HashMap::new(),
             placeholder_defs: HashSet::new(),
             op_defs: HashMap::new(),
+            intrinsic_defs: HashMap::new(),
         }
     }
 

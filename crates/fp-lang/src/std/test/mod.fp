@@ -32,18 +32,18 @@ fn run_tests() -> TestReport {
     let mut idx = 0;
     while idx < tests.len() as i64 {
         let test: TestCase = tests[idx];
-        let ok = catch_unwind(test.run);
+        let ok = ::std::intrinsics::catch_unwind(test.run);
         if ok {
             passed = passed + 1;
-            println("  {} ... ok", test.name);
+            ::std::intrinsics::println("  {} ... ok", test.name);
         } else {
             failed = failed + 1;
-            println("  {} ... FAILED", test.name);
+            ::std::intrinsics::println("  {} ... FAILED", test.name);
         }
         idx = idx + 1;
     }
     let total = passed + failed;
-    println(
+    ::std::intrinsics::println(
         "test result: {} passed; {} failed; {} total",
         passed,
         failed,

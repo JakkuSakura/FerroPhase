@@ -91,6 +91,20 @@ pub enum TyKind {
     /// A placeholder for a type which could not be computed; this is
     /// propagated to avoid useless error messages.
     Error(ErrorGuaranteed),
+
+    /// The `type`/`type<T>` surface annotation's runtime representation: an
+    /// opaque, immutable handle into the comptime interpreter's own type
+    /// pool (not a plain integer, despite being pointer/word-sized at the
+    /// LIR level) — `create_struct`/`addfield`/`build_type` construct and
+    /// mutate values of this kind, and `type(x)`'s reflection queries are a
+    /// separate concept (see `TypeOf`/`FieldType`, typed as the real
+    /// `std::meta::TypeDescriptor`/`FieldTypeDescriptor` structs, not this).
+    /// Operations on a `Type`-kinded value are always the dedicated
+    /// `ComptimeOp` LIR instructions, never ordinary arithmetic/pointer
+    /// coercion — see `fp-interpret`'s object-table auto-boxing for
+    /// `Value::Type`, which is exactly what this kind's LIR lowering
+    /// (`Ptr(Void)`) is shaped to trigger.
+    Type,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

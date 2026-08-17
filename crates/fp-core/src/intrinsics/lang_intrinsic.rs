@@ -48,6 +48,16 @@ pub enum LangIntrinsic {
     TestCommandMockPush,
     TestCommandMockTakeCalls,
     TestCommandMockApply,
+    CatchUnwind,
+    CatchUnwindResult,
+    Print,
+    Println,
+    Spawn,
+    Join,
+    Select,
+    ProcMacroTokenStreamFromStr,
+    ProcMacroTokenStreamToString,
+    FieldType,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -280,6 +290,66 @@ const LANG_INSTRINSTICS: &[LangIntrinsicSpec] = &[
         lang_item: "test_command_mock_apply",
         capability: LangIntrinsicCapability::InterpreterOnly,
         call_kind: Some(CallKind::TestCommandMockApply),
+    },
+    LangIntrinsicSpec {
+        intrinsic: LangIntrinsic::CatchUnwind,
+        lang_item: "catch_unwind",
+        capability: LangIntrinsicCapability::RuntimeOnly,
+        call_kind: Some(CallKind::CatchUnwind),
+    },
+    LangIntrinsicSpec {
+        intrinsic: LangIntrinsic::CatchUnwindResult,
+        lang_item: "catch_unwind_result",
+        capability: LangIntrinsicCapability::RuntimeOnly,
+        call_kind: Some(CallKind::CatchUnwindResult),
+    },
+    LangIntrinsicSpec {
+        intrinsic: LangIntrinsic::Print,
+        lang_item: "print",
+        capability: LangIntrinsicCapability::RuntimeOnly,
+        call_kind: Some(CallKind::Print),
+    },
+    LangIntrinsicSpec {
+        intrinsic: LangIntrinsic::Println,
+        lang_item: "println",
+        capability: LangIntrinsicCapability::RuntimeOnly,
+        call_kind: Some(CallKind::Println),
+    },
+    LangIntrinsicSpec {
+        intrinsic: LangIntrinsic::Spawn,
+        lang_item: "spawn",
+        capability: LangIntrinsicCapability::RuntimeOnly,
+        call_kind: Some(CallKind::Spawn),
+    },
+    LangIntrinsicSpec {
+        intrinsic: LangIntrinsic::Join,
+        lang_item: "join",
+        capability: LangIntrinsicCapability::RuntimeOnly,
+        call_kind: Some(CallKind::Join),
+    },
+    LangIntrinsicSpec {
+        intrinsic: LangIntrinsic::Select,
+        lang_item: "select",
+        capability: LangIntrinsicCapability::RuntimeOnly,
+        call_kind: Some(CallKind::Select),
+    },
+    LangIntrinsicSpec {
+        intrinsic: LangIntrinsic::ProcMacroTokenStreamFromStr,
+        lang_item: "proc_macro_token_stream_from_str",
+        capability: LangIntrinsicCapability::ConstOnly,
+        call_kind: Some(CallKind::ProcMacroTokenStreamFromStr),
+    },
+    LangIntrinsicSpec {
+        intrinsic: LangIntrinsic::ProcMacroTokenStreamToString,
+        lang_item: "proc_macro_token_stream_to_string",
+        capability: LangIntrinsicCapability::ConstOnly,
+        call_kind: Some(CallKind::ProcMacroTokenStreamToString),
+    },
+    LangIntrinsicSpec {
+        intrinsic: LangIntrinsic::FieldType,
+        lang_item: "field_type",
+        capability: LangIntrinsicCapability::ConstOnly,
+        call_kind: Some(CallKind::FieldType),
     },
 ];
 

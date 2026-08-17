@@ -1,5 +1,5 @@
 use crate::ast::{TypeBinaryOpKind, TypePrimitive};
-use crate::intrinsics::{IntrinsicKind, OpKind};
+use crate::intrinsics::{CallKind, IntrinsicKind, OpKind};
 use crate::query::{QueryIrDocument, QueryOrigin};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -91,6 +91,16 @@ pub struct Program {
     /// where the earlier, retired `compile_mode_std_path`/path-based
     /// registry design went wrong.
     pub op_defs: HashMap<DefId, OpKind>,
+    /// A free function's compiler intrinsic, when its source declaration was
+    /// tagged `#[intrinsic = "..."]` — populated the same way and at the
+    /// same site as `op_defs`, and consulted the same way: keyed by the
+    /// *resolved* identity of a call's callee (`hir::Res::Def`), never by
+    /// re-deriving and name/path-comparing a call site's own syntax. A
+    /// bare-name call with no real declaration to resolve to (nothing in
+    /// scope, not even this intrinsic's own) simply never reaches this map —
+    /// it stays an ordinary (and, for a genuinely undefined name, erroring)
+    /// call, same as any other unresolved identifier.
+    pub intrinsic_defs: HashMap<DefId, CallKind>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -484,6 +494,12 @@ pub enum TypeExprKind {
     Never,
     Infer,
     Error,
+    /// The `type`/`type<T>` surface annotation — a compile-time value that
+    /// is itself a type (e.g. `TypeBuilder.ty: type`, mutated by
+    /// `create_struct`/`addfield`/`build_type`). Lowers to `TyKind::Type`:
+    /// an opaque handle into the comptime interpreter's own type pool, not
+    /// a plain integer — see `TyKind::Type`'s own doc comment.
+    Type,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -679,6 +695,7 @@ impl Program {
             def_paths: HashMap::new(),
             placeholder_defs: HashSet::new(),
             op_defs: HashMap::new(),
+            intrinsic_defs: HashMap::new(),
         }
     }
 
@@ -1160,7 +1177,9 @@ impl TypeExprKind {
             TypeExprKind::Ref(ty) => ty.span(),
             TypeExprKind::FnPtr(func) => func.span(),
             TypeExprKind::ConstBlock(body) => body.span(),
-            TypeExprKind::Never | TypeExprKind::Infer | TypeExprKind::Error => Span::null(),
+            TypeExprKind::Never | TypeExprKind::Infer | TypeExprKind::Error | TypeExprKind::Type => {
+                Span::null()
+            }
         }
     }
 }

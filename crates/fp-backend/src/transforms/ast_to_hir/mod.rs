@@ -111,6 +111,12 @@ pub struct HirGenerator {
     /// `transform_item_to_hir`, impl methods in `items.rs`'s
     /// `transform_impl`).
     op_defs: HashMap<hir::DefId, fp_core::intrinsics::OpKind>,
+    /// Mirrored into the final `hir::Program::intrinsic_defs` the same way
+    /// `op_defs` is — a free function's compiler intrinsic, keyed by that
+    /// definition's own real `DefId`, populated from its own
+    /// `#[intrinsic = "..."]` source attribute at the same point `op_defs`
+    /// is (free functions in `transform_item_to_hir`).
+    intrinsic_defs: HashMap<hir::DefId, fp_core::intrinsics::CallKind>,
     resolving_type_aliases: HashSet<String>,
     resolved_names: ResolvedNameTable,
     target_env: TargetEnv,
@@ -532,6 +538,7 @@ impl HirGenerator {
             unimplemented_type_def_ids: HashSet::new(),
             placeholder_defs: HashSet::new(),
             op_defs: HashMap::new(),
+            intrinsic_defs: HashMap::new(),
             resolving_type_aliases: HashSet::new(),
             resolved_names: ResolvedNameTable::new(),
             target_env: TargetEnv::host(),
@@ -988,6 +995,7 @@ impl HirGenerator {
             program.def_map.extend(hir_program.def_map);
             program.def_paths.extend(hir_program.def_paths);
             program.op_defs.extend(hir_program.op_defs);
+            program.intrinsic_defs.extend(hir_program.intrinsic_defs);
             // Cross-package exported value/type symbols (`_exports`) are
             // *not* eagerly copied into `global_value_defs`/
             // `global_type_defs` here — `resolve_type_symbol`/
@@ -1371,6 +1379,21 @@ impl HirGenerator {
         None
     }
 
+    /// Same shape as `op_kind_for_def`, for `#[intrinsic = "..."]`-tagged
+    /// free functions instead of `#[op(...)]`-tagged ones.
+    fn intrinsic_kind_for_def(&self, def_id: hir::DefId) -> Option<fp_core::intrinsics::CallKind> {
+        if let Some(kind) = self.intrinsic_defs.get(&def_id).copied() {
+            return Some(kind);
+        }
+        let workspace = self.workspace.as_ref()?;
+        for (_module_path, hir_program, _exports) in workspace.hir_definitions() {
+            if let Some(kind) = hir_program.intrinsic_defs.get(&def_id).copied() {
+                return Some(kind);
+            }
+        }
+        None
+    }
+
     /// Same tiers as `resolve_value_symbol`, minus the lexical-scope tier —
     /// used to answer "does this bare identifier already name something at
     /// module/prelude/workspace scope?" without that answer being masked by
@@ -1665,6 +1688,7 @@ impl HirGenerator {
         program.def_paths = self.def_paths.clone();
         program.placeholder_defs = self.placeholder_defs.clone();
         program.op_defs.extend(self.op_defs.clone());
+        program.intrinsic_defs.extend(self.intrinsic_defs.clone());
         Ok(program)
     }
 
@@ -1751,6 +1775,7 @@ impl HirGenerator {
         program.def_paths = self.def_paths.clone();
         program.placeholder_defs = self.placeholder_defs.clone();
         program.op_defs.extend(self.op_defs.clone());
+        program.intrinsic_defs.extend(self.intrinsic_defs.clone());
         Ok(program)
     }
 
@@ -1801,6 +1826,7 @@ impl HirGenerator {
         program.def_paths = self.def_paths.clone();
         program.placeholder_defs = self.placeholder_defs.clone();
         program.op_defs.extend(self.op_defs.clone());
+        program.intrinsic_defs.extend(self.intrinsic_defs.clone());
 
         Ok(program)
     }
@@ -2232,6 +2258,13 @@ impl HirGenerator {
                         self.op_defs.insert(def_id, op);
                     }
                 }
+                if let Some(tag) = fp_core::lang::extract_intrinsic_item(&func_def.attrs) {
+                    if let Some(kind) = fp_core::intrinsics::lang_intrinsic_for_lang_item(&tag)
+                        .and_then(fp_core::intrinsics::lang_intrinsic_call_kind)
+                    {
+                        self.intrinsic_defs.insert(def_id, kind);
+                    }
+                }
                 let lower_body = !attrs_has_name(&func_def.attrs, "unimplemented");
                 let mut function = self.transform_function_with_body(func_def, None, lower_body)?;
                 // Many `std` functions have a fake body whose sole purpose is
@@ -2643,13 +2676,9 @@ impl HirGenerator {
                 hir::TypeExprKind::Never,
                 self.normalize_span(ty.span()),
             )),
-            // FIXME: Ty::Type lowered as I64 is a pragmatic hack — the
-            // comptime type handle is stored as u64, so I64 allows struct
-            // construction without tripping over Never/Infer→error_ty().
-            // Should be a dedicated HIR/MIR variant for comp time type values.
             ast::Ty::Type(_) => Ok(hir::TypeExpr::new(
                 self.next_id(),
-                hir::TypeExprKind::Primitive(ast::TypePrimitive::Int(ast::TypeInt::I64)),
+                hir::TypeExprKind::Type,
                 ty.span(),
             )),
             ast::Ty::ConstBlock(block) => {

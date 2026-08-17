@@ -406,7 +406,15 @@ impl LirGenerator {
     /// expansion — so check that path too, recursively.
     fn contains_unresolved_param(&self, ty: &Ty) -> bool {
         match &ty.kind {
-            TyKind::Param(_) => true,
+            // An unconstrained inference variable (e.g. `build_type`'s own
+            // `-> type<_>` — a stub declaration whose body is dropped and
+            // whose real calls are always intercepted as the `BuildType`
+            // intrinsic before ever reaching this signature, so nothing
+            // ever unifies `_` with a concrete type) is exactly as
+            // "not concrete yet" as an unresolved generic parameter — skip
+            // predeclaring its LIR signature the same way, rather than
+            // reaching MIR-to-LIR with a raw `Infer` and panicking.
+            TyKind::Param(_) | TyKind::Infer(_) => true,
             TyKind::Ref(_, inner, _) | TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
                 self.contains_unresolved_param(inner)
             }
@@ -6442,6 +6450,18 @@ impl LirGenerator {
                 "MIR-to-LIR ICE: function definition {} with substitutions {:?} used as a data type",
                 def_id, substs
             ),
+            // An immutable handle into the comptime interpreter's own type
+            // pool — not a plain integer, so it can't be a scalar int/float
+            // destination (the generic "runtime value conversion" coercion
+            // path has no rule for boxing one, and shouldn't need one:
+            // every real operation on a `type` value is a dedicated
+            // `ComptimeOp` LIR instruction, never ordinary arithmetic).
+            // `Ptr(Void)` is exactly the shape `fp-interpret`'s own
+            // `Value::Type` storage already expects (its `encode_storage_word`
+            // auto-boxes into the object table whenever the destination is
+            // `Ptr(_)` or an aggregate), so this is what makes a `type`-typed
+            // struct field/local/return value round-trip correctly.
+            TyKind::Type => lir::LirType::Ptr(Box::new(lir::LirType::Void)),
             TyKind::Dynamic(_, _)
             | TyKind::Closure(_, _)
             | TyKind::Generator(_, _, _)
@@ -6452,8 +6472,7 @@ impl LirGenerator {
             | TyKind::Bound(_, _)
             | TyKind::Placeholder(_)
             | TyKind::Infer(_)
-            | TyKind::Error(_)
-            | TyKind::Type => {
+            | TyKind::Error(_) => {
                 panic!("MIR-to-LIR ICE: unsupported unresolved type in typed MIR: {ty:?}")
             }
             TyKind::Never => lir::LirType::Void,

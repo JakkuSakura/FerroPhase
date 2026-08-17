@@ -241,6 +241,7 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
                 "cannot lower an HIR error type into MIR",
             ));
         }
+        hir::ty::TyKind::Type => TyKind::Type,
         _ => {
             return Err(fp_core::error::Error::from(
                 "unsupported HIR type in MIR type bridge",
@@ -3971,6 +3972,7 @@ impl MirLowering {
             // `resolve_pending_type_const_blocks`); reaching here means that
             // lookup missed, so fall back the same way `Infer` does.
             hir::TypeExprKind::ConstBlock(_) => self.error_ty(),
+            hir::TypeExprKind::Type => Ty { kind: TyKind::Type },
         }
     }
 
@@ -5702,6 +5704,7 @@ impl MirLowering {
                 .get(&ty_expr.hir_id)
                 .cloned()
                 .unwrap_or_else(|| self.error_ty()),
+            hir::TypeExprKind::Type => Ty { kind: TyKind::Type },
         }
     }
 
@@ -7574,6 +7577,9 @@ impl MirLowering {
             }
             TyKind::Never => Some(0),
             TyKind::Slice(_) => Some(16),
+            // Pointer-sized handle — see `TyKind::Type`'s own doc comment
+            // and `lir_type_from_ty`'s matching `Ptr(Void)` lowering.
+            TyKind::Type => Some(8),
             TyKind::Adt(adt, substs) => {
                 if let Some(size) = self
                     .display_type_name(ty)
@@ -9462,15 +9468,33 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn lower(mut self) -> Result<mir::Body> {
+        let has_body = self.function.body.is_some();
         if let Some(body) = &self.function.body {
             self.lower_block(body)?;
         }
 
+        // A body-less declaration (its real body was a compiler-intrinsic
+        // marker, dropped by `function_body_is_compiler_intrinsic_marker`)
+        // never assigns its return local from anything real, so there's
+        // nothing to validate here.
+        //
+        // Separately: `any` (e.g. `spawn(fut: any) -> any`) has no real
+        // unification support — every occurrence gets its own, never-unified
+        // fresh inference variable, even when semantically meant to be "the
+        // same type" (a wrapper's own declared return type vs. the type its
+        // body's tail call to the real intrinsic actually produces). Neither
+        // side of such a comparison carries verifiable type information, so
+        // an `Infer` on either side is a "don't know, don't fail" case, not
+        // a genuine mismatch — this mirrors `contains_unresolved_param`'s
+        // identical tolerance for `Infer` in MIR-to-LIR.
         let expected_return_ty = self.sig.output.clone();
-        if self.locals[0].ty != expected_return_ty {
+        let actual_return_ty = &self.locals[0].ty;
+        let either_unresolved = matches!(actual_return_ty.kind, TyKind::Infer(_))
+            || matches!(expected_return_ty.kind, TyKind::Infer(_));
+        if has_body && !either_unresolved && *actual_return_ty != expected_return_ty {
             return Err(fp_core::error::Error::from(format!(
                 "function body lowered to `{}` but expected return type `{}`",
-                self.locals[0].ty, expected_return_ty
+                actual_return_ty, expected_return_ty
             )));
         }
 
@@ -19268,6 +19292,27 @@ impl<'a> BodyBuilder<'a> {
                         kind: mir::StatementKind::Assign(
                             place.clone(),
                             mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, operands),
+                        ),
+                    };
+                    self.push_statement(statement);
+                    return Ok(());
+                }
+                IntrinsicKind::ProcMacroTokenStreamFromStr
+                | IntrinsicKind::ProcMacroTokenStreamToString => {
+                    let mut operands = Vec::with_capacity(call.callargs.len());
+                    for arg in &call.callargs {
+                        let value = self.lower_operand(&arg.value, None)?;
+                        operands.push(value.operand);
+                    }
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::IntrinsicCall {
+                                kind: call.kind,
+                                format: String::new(),
+                                args: operands,
+                            },
                         ),
                     };
                     self.push_statement(statement);

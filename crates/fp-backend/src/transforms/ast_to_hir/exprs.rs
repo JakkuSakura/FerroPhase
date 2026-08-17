@@ -73,15 +73,18 @@ impl HirGenerator {
             return self.transform_expr_to_hir_inner(ast_expr);
         };
 
-        // Method-call `Invoke`s are deliberately NOT normalized here —
-        // portable-op detection for a method call needs the receiver's real
-        // resolved type to disambiguate safely from a same-named user
-        // method (see `HirToAstLifter`'s post-typecheck reclassification,
-        // which owns that case). A bare function-name call has no such
-        // receiver-type ambiguity, so it's safe — and necessary, since no
-        // later pass re-visits it for every pipeline mode — to resolve
-        // eagerly here, same as the other unambiguous-by-construction
-        // shapes below.
+        // `Invoke` (plain function/method calls) is deliberately NOT
+        // normalized here — by name, at all. Method calls need the
+        // receiver's real resolved type to disambiguate safely from a
+        // same-named user method (see `HirToAstLifter`'s post-typecheck
+        // reclassification). Bare function-name calls are recognized in
+        // `transform_invoke_to_hir`'s `Function` arm instead, purely from
+        // the callee's *resolved* `DefId` and that declaration's own
+        // `#[op]`/`#[intrinsic]` attribute (`hir::Program::op_defs`/
+        // `intrinsic_defs`) — never by name/path-matching the call site,
+        // which can't tell a builtin apart from a same-named real user
+        // function (e.g. `std::json`'s own `print`, called from within
+        // `json` itself, is not the builtin print intrinsic).
         let needs_normalization = matches!(
             ast_expr.kind(),
             ast::ExprKind::Macro(_)
@@ -89,9 +92,6 @@ impl HirGenerator {
                 | ast::ExprKind::IntrinsicContainer(_)
                 | ast::ExprKind::Struct(_)
                 | ast::ExprKind::Structural(_)
-        ) || matches!(
-            ast_expr.kind(),
-            ast::ExprKind::Invoke(invoke) if matches!(invoke.target, ast::ExprInvokeTarget::Function(_))
         );
         if !needs_normalization {
             return self.transform_expr_to_hir_inner(ast_expr);
@@ -787,11 +787,35 @@ impl HirGenerator {
                         ));
                     }
                 }
+
+                let path = self.name_to_hir_path_with_scope(name, PathResolutionScope::Value)?;
+
+                // A call's callee is only ever a compiler intrinsic/portable
+                // op because its *own resolved declaration* was tagged
+                // `#[intrinsic = "..."]`/`#[op(func = "...")]` — e.g.
+                // `catch_unwind`'s real (stub-bodied) declaration, or
+                // `std::time::now`'s. Recognizing this from the resolved
+                // `DefId` (rather than by re-deriving it from the call
+                // site's own name/path, which can't tell a builtin from a
+                // same-named real user function of the same name) is what
+                // makes these usable under every pipeline, not just
+                // `TypecheckedTranspile`'s post-typecheck `HirToAstLifter`
+                // pass.
+                if let Some(hir::Res::Def(def_id)) = path.res {
+                    let kind = self
+                        .op_kind_for_def(def_id)
+                        .map(CallKind::Op)
+                        .or_else(|| self.intrinsic_kind_for_def(def_id));
+                    if let Some(kind) = kind {
+                        if let Some(call) = fp_core::ast::build_intrinsic_call(kind, invoke) {
+                            return self.transform_intrinsic_call_to_hir(&call);
+                        }
+                    }
+                }
+
                 let func_expr = hir::Expr {
                     hir_id: self.next_id(),
-                    kind: hir::ExprKind::Path(
-                        self.name_to_hir_path_with_scope(name, PathResolutionScope::Value)?,
-                    ),
+                    kind: hir::ExprKind::Path(path),
                     span: self.create_span(1),
                 };
                 let args =

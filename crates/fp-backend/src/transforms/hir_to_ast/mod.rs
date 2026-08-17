@@ -1095,6 +1095,10 @@ impl<'a> HirToAstLifter<'a> {
                 collected_items: Vec::new(),
                 expr: Box::new(self.lift_expr(body)?),
             }),
+            hir::TypeExprKind::Type => Ty::Type(ast::TypeType {
+                span: ty.span,
+                inner: None,
+            }),
         })
     }
 
@@ -1287,6 +1291,10 @@ impl<'a> HirToAstLifter<'a> {
             | TyKind::Placeholder(_)
             | TyKind::Infer(_)
             | TyKind::Error(_) => None,
+            TyKind::Type => Some(Ty::Type(ast::TypeType {
+                span: fp_core::span::Span::default(),
+                inner: None,
+            })),
         }
     }
 
