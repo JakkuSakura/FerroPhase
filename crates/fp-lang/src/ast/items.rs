@@ -810,7 +810,23 @@ fn starts_context_param_marker(input: &[Token]) -> bool {
 fn parse_fn_param_name(input: &mut &[Token]) -> ModalResult<Ident> {
     let mut probe = *input;
     let simple_name = ident_like(&mut probe)?;
-    let mut destructured = probe;
+    // Consume an optional `::ident` chain before the destructuring
+    // wrapper (e.g. `ops::Yeet(e)`) — the same qualified-path shape
+    // match-arm patterns already support via `parse_name`'s identical
+    // loop (`mod.rs:411-422`). The whole prefix path is discarded either
+    // way, matching the existing lossy `Wrapping(n)` handling below
+    // (`FunctionParam` has no slot for a real destructuring pattern, only
+    // a bare `name`/`ty`) — this just also tolerates a qualified prefix
+    // instead of only an unqualified one.
+    let mut path_probe = probe;
+    loop {
+        let mut next = path_probe;
+        if skip_symbol(&mut next, "::").is_err() || ident_like(&mut next).is_err() {
+            break;
+        }
+        path_probe = next;
+    }
+    let mut destructured = path_probe;
     if skip_symbol(&mut destructured, "(").is_ok() {
         let inner_name = ident_like(&mut destructured)?;
         skip_symbol(&mut destructured, ")")?;

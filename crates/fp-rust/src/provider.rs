@@ -456,8 +456,19 @@ fn load_real_std_package() -> ProviderResult<PackageSource> {
                     }
                     result.ast.items
                 }
-                Err(_) => {
+                Err(err) => {
                     skipped += 1;
+                    // Verbose per-file diagnostics are opt-in (`358 skipped`
+                    // on every run would otherwise be noisy) — but the
+                    // failure itself is silent by default beyond that
+                    // aggregate count, which makes a *specific* regression
+                    // (e.g. one file losing a syntax construct it used to
+                    // support) invisible until something downstream that
+                    // depended on it breaks. Set `FP_STD_PARSE_VERBOSE=1` to
+                    // see exactly which file and why.
+                    if std::env::var("FP_STD_PARSE_VERBOSE").is_ok() {
+                        eprintln!("fp-rust: failed to parse {}: {err}", path.display());
+                    }
                     continue;
                 }
             }
