@@ -1393,21 +1393,55 @@ impl CompilerDriver {
                 Some(mir::ConstValue::Str(s))
             }
             Value::Null(_) => Some(mir::ConstValue::Null),
-            Value::Tuple(tuple) => {
-                let TyKind::Tuple(fields) = &ty.kind else {
-                    return None;
-                };
-                if tuple.values.len() != fields.len() {
-                    return None;
+            // A raw pointer's comptime value is just its address — e.g.
+            // `Vec::new()`'s `ptr: *mut T` field, always null before any
+            // allocation happens. There's no dedicated pointer/address
+            // `ConstValue` variant, so mirror `Value::Null`'s treatment
+            // for a null address (the only case that can arise from a
+            // `const`/`const fn` evaluation — a real heap/stack address
+            // from a genuinely *runtime* allocation has no meaningful
+            // representation as a compile-time constant at all) and
+            // otherwise surface the address as a plain integer.
+            Value::Pointer(pointer) => Some(if pointer.value == 0 {
+                mir::ConstValue::Null
+            } else {
+                mir::ConstValue::UInt(pointer.value as u64)
+            }),
+            // `fp-interpret` stores every register-resident aggregate as a
+            // plain `Value::Tuple` regardless of its nominal type (structs
+            // included — see `default_value_for_type`/`load_value_at`), so
+            // a struct/enum-typed comptime result (e.g. `Vec::new()`'s
+            // `Vec<T>{ptr,len,capacity}`) arrives here as `Value::Tuple`
+            // even though `ty.kind` is `TyKind::Adt`, not `TyKind::Tuple`.
+            // Mirror the `Value::Struct`/`TyKind::Adt` arm below rather
+            // than rejecting it.
+            Value::Tuple(tuple) => match &ty.kind {
+                TyKind::Tuple(fields) => {
+                    if tuple.values.len() != fields.len() {
+                        return None;
+                    }
+                    let values = tuple
+                        .values
+                        .iter()
+                        .zip(fields.iter())
+                        .map(|(value, field_ty)| Self::value_to_const_value(value, field_ty))
+                        .collect::<Option<Vec<_>>>()?;
+                    Some(mir::ConstValue::Tuple(values))
                 }
-                let values = tuple
-                    .values
-                    .iter()
-                    .zip(fields.iter())
-                    .map(|(value, field_ty)| Self::value_to_const_value(value, field_ty))
-                    .collect::<Option<Vec<_>>>()?;
-                Some(mir::ConstValue::Tuple(values))
-            }
+                TyKind::Adt(adt_def, _substs) => {
+                    let variant = adt_def.variants.first()?;
+                    if tuple.values.len() != variant.fields.len() {
+                        return None;
+                    }
+                    let values = tuple
+                        .values
+                        .iter()
+                        .map(Self::value_to_untyped_const_value)
+                        .collect::<Option<Vec<_>>>()?;
+                    Some(mir::ConstValue::Struct(values))
+                }
+                _ => None,
+            },
             Value::List(list) => match &ty.kind {
                 TyKind::Array(elem_ty, _) => {
                     let values = list

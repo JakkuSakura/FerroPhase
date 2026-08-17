@@ -243,7 +243,7 @@ impl LirInterpreter {
         args: &[Value],
     ) -> LirResult<Value> {
         self.data_layout = program.data_layout.clone();
-        let saved_registers = self.state.regs.gpr;
+        let saved_registers = self.state.regs.gpr.clone();
         let saved_register_values = self.register_values.clone();
         self.state.push_frame(func.name.as_str().to_string());
         self.register_values.clear();

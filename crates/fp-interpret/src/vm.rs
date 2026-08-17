@@ -171,37 +171,41 @@ impl VirtMem {
     }
 }
 
+/// Initial capacity only — `RegFile` grows on demand (see `write`), since
+/// LIR register ids are numbered globally across an entire compiled
+/// package/program (`LirGenerator`'s `next_id()` never resets per
+/// function), not locally per function. A fixed-size register file sized
+/// for "one function's local register count" silently dropped writes to
+/// any register id beyond it once a package grew large enough that a
+/// deeply-compiled function's instructions referenced register ids past
+/// this bound — e.g. a `const` global's own initializer, evaluated in
+/// isolation via `run_function`, referencing register ids in the
+/// thousands purely because of its position in the overall compile order.
 const REG_COUNT: usize = 1024;
 
 #[derive(Clone)]
 pub struct RegFile {
-    pub gpr: [u64; REG_COUNT],
+    pub gpr: Vec<u64>,
 }
 
 impl RegFile {
     pub fn new(sp: u64) -> Self {
-        let mut gpr = [0u64; REG_COUNT];
+        let mut gpr = vec![0u64; REG_COUNT];
         gpr[1] = sp;
         Self { gpr }
     }
 
     pub fn read(&self, reg: RegisterId) -> u64 {
         let idx = reg as usize;
-        if idx >= REG_COUNT {
-            eprintln!("[fp-interpret] RegFile::read out of range: reg={reg}");
-            0
-        } else {
-            self.gpr[idx]
-        }
+        self.gpr.get(idx).copied().unwrap_or(0)
     }
 
     pub fn write(&mut self, reg: RegisterId, value: u64) {
         let idx = reg as usize;
-        if idx < REG_COUNT {
-            self.gpr[idx] = value;
-        } else {
-            eprintln!("[fp-interpret] RegFile::write out of range: reg={reg}");
+        if idx >= self.gpr.len() {
+            self.gpr.resize(idx + 1, 0);
         }
+        self.gpr[idx] = value;
     }
 
     pub fn sp(&self) -> u64 {
