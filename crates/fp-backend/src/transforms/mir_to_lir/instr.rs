@@ -825,7 +825,35 @@ impl LirGenerator {
         Ok(lir_constant)
     }
 
+    /// A fieldless (C-like) enum's variant literal (e.g. `Value::C`) is
+    /// sometimes const-folded straight to its bare discriminant scalar,
+    /// while the enum's own registered layout (used everywhere else it
+    /// appears, e.g. as a struct field) is the canonical
+    /// `Struct{fields:[tag_ty]}` shape every enum gets, even a payload-
+    /// less one, for consistency with enums that do carry a payload. Both
+    /// describe the same value — when a scalar integer constant is asked
+    /// for against such a single-field struct type, build it against the
+    /// struct's own field type and wrap it, instead of every caller
+    /// needing to special-case this itself (three call sites already
+    /// needed exactly this before it was centralized here).
+    fn single_field_struct_tag_ty<'a>(ty: &'a lir::LirType) -> Option<&'a lir::LirType> {
+        match ty {
+            lir::LirType::Struct { fields, .. } => match fields.as_slice() {
+                [tag_ty] => Some(tag_ty),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn integer_constant(&self, ty: &lir::LirType, value: i64) -> Result<lir::LirConstant> {
+        if let Some(tag_ty) = Self::single_field_struct_tag_ty(ty) {
+            let inner = self.integer_constant(tag_ty, value)?;
+            return Ok(lir::LirConstant::aggregate(
+                ty.clone(),
+                lir::LirConstantAggregate::Struct(vec![inner]),
+            ));
+        }
         let integer =
             match ty {
                 lir::LirType::I1 => lir::LirInteger::I1(value != 0),
@@ -860,6 +888,13 @@ impl LirGenerator {
     }
 
     fn unsigned_constant(&self, ty: &lir::LirType, value: u64) -> Result<lir::LirConstant> {
+        if let Some(tag_ty) = Self::single_field_struct_tag_ty(ty) {
+            let inner = self.unsigned_constant(tag_ty, value)?;
+            return Ok(lir::LirConstant::aggregate(
+                ty.clone(),
+                lir::LirConstantAggregate::Struct(vec![inner]),
+            ));
+        }
         let integer =
             match ty {
                 lir::LirType::I1 => lir::LirInteger::I1(value != 0),
@@ -5532,16 +5567,13 @@ impl LirGenerator {
             ) {
                 return Ok(lir::LirConstant::undef(target_ty.clone()));
             }
-            // A fieldless (C-like) enum's variant literal (e.g. `ErrorKind::
-            // Other`) is sometimes const-folded straight to its bare
-            // discriminant scalar, while the enum's own registered layout
-            // (used everywhere else it appears, e.g. as a struct field) is
-            // the canonical `Struct{fields:[tag_ty]}` shape every enum gets
-            // — even a payload-less one, for consistency with enums that do
-            // carry a payload. Both describe the same value; wrap the bare
-            // scalar in a single-field struct to match.
-            if let lir::LirType::Struct { fields, .. } = target_ty {
-                if fields.len() == 1 && fields[0] == constant.ty {
+            // See `single_field_struct_tag_ty`'s doc comment: a fieldless
+            // (C-like) enum's variant literal is sometimes const-folded
+            // straight to its bare discriminant scalar rather than the
+            // enum's own canonical `Struct{fields:[tag_ty]}` shape. Both
+            // describe the same value; wrap the bare scalar to match.
+            if let Some(tag_ty) = Self::single_field_struct_tag_ty(target_ty) {
+                if *tag_ty == constant.ty {
                     return Ok(lir::LirConstant::aggregate(
                         target_ty.clone(),
                         lir::LirConstantAggregate::Struct(vec![constant]),
