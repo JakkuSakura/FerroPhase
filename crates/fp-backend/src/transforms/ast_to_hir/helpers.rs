@@ -419,24 +419,6 @@ impl HirGenerator {
                 item_exists,
                 scope_contains,
             ) {
-                // `resolve_item_path` returns the path *unexpanded* when it
-                // already resolved via `scope_contains` (the same tiered
-                // `resolve_value_symbol`/`resolve_type_symbol` call that
-                // already produced `resolved`) rather than by discovering
-                // a genuinely longer canonical form. In that case there is
-                // nothing new to look up — re-deriving via
-                // `lookup_global_res` here is actively wrong, not just
-                // redundant: `lookup_global_res` has no prelude-tier
-                // awareness and can find a completely different,
-                // same-named declaration elsewhere in the workspace (this
-                // is exactly what broke bare `Ok`/`Err`/`Some`/`None`
-                // resolving to their real, tagged declarations — a
-                // same-named but unrelated item elsewhere in `std` won
-                // instead). Trust `resolved` directly whenever the
-                // "canonical" path is just the original path echoed back.
-                if canonical.segments == segments.iter().map(|s| s.name.as_str().to_string()).collect::<Vec<_>>() {
-                    return Ok(hir::Path { segments, res: resolved });
-                }
                 let mut canonical_segments = Vec::with_capacity(canonical.segments.len());
                 let offset = canonical.segments.len().saturating_sub(segments.len());
                 for (idx, seg) in canonical.segments.iter().enumerate() {
@@ -447,13 +429,34 @@ impl HirGenerator {
                     };
                     canonical_segments.push(self.make_path_segment(seg, args));
                 }
-                let mut canonical_res = self.lookup_global_res(&canonical, scope);
-                if canonical_res.is_none() && self.module_defs.contains(&canonical) {
-                    canonical_res = Some(hir::Res::Module(canonical.segments.clone()));
-                }
-                if canonical_res.is_none() {
-                    canonical_res = resolved.clone();
-                }
+                // `resolved` (above) already went through the real,
+                // priority-ordered resolution for this name (lexical,
+                // then this package's own qualified declaration, then
+                // prelude, then plain global) — the same tiered lookup
+                // `scope_contains` uses internally, which is what let
+                // `resolve_item_path` confirm this path resolves at all.
+                // Once that's settled, it's authoritative: never
+                // re-derive `res` via `lookup_global_res`, which has no
+                // notion of that priority (it only sees the plain global
+                // tier) and can resolve to a completely different,
+                // same-named declaration elsewhere in the workspace (this
+                // is exactly what broke bare `Ok`/`Err`/`Some`/`None`
+                // resolving to their real, tagged declarations — a
+                // same-named but unrelated item elsewhere in `std` won
+                // instead). `lookup_global_res` is only ever needed to
+                // find a `Res` for the cases `resolved` didn't cover in
+                // the first place (e.g. a multi-segment path, where the
+                // single-segment tiered lookup above never ran) — never
+                // as a second opinion on something already answered.
+                let canonical_res = if resolved.is_some() {
+                    resolved.clone()
+                } else {
+                    let mut canonical_res = self.lookup_global_res(&canonical, scope);
+                    if canonical_res.is_none() && self.module_defs.contains(&canonical) {
+                        canonical_res = Some(hir::Res::Module(canonical.segments.clone()));
+                    }
+                    canonical_res
+                };
                 return Ok(hir::Path {
                     segments: canonical_segments,
                     res: canonical_res,
