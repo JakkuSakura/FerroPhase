@@ -277,6 +277,24 @@ pub fn materialize_expr(
             expr_try.expr = Box::new(materialize_expr(*expr_try.expr, strategy)?);
             ast::Expr::with_ty(ast::ExprKind::Try(expr_try), ty)
         }
+        // `return Ok(x);`/`break Some(x);` — omitted from this walker
+        // before, so a portable op used directly as a `return`/`break`
+        // value (rather than immediately bound to a `let` or passed as an
+        // ordinary argument) fell into the catch-all below with zero
+        // recursion, silently skipping materialization for its inner
+        // value entirely.
+        ast::ExprKind::Return(mut expr_return) => {
+            if let Some(value) = expr_return.value.take() {
+                expr_return.value = Some(Box::new(materialize_expr(*value, strategy)?));
+            }
+            ast::Expr::with_ty(ast::ExprKind::Return(expr_return), ty)
+        }
+        ast::ExprKind::Break(mut expr_break) => {
+            if let Some(value) = expr_break.value.take() {
+                expr_break.value = Some(Box::new(materialize_expr(*value, strategy)?));
+            }
+            ast::Expr::with_ty(ast::ExprKind::Break(expr_break), ty)
+        }
         ast::ExprKind::Closure(mut closure) => {
             closure.body = Box::new(materialize_expr(*closure.body, strategy)?);
             ast::Expr::with_ty(ast::ExprKind::Closure(closure), ty)
