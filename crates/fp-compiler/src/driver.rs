@@ -801,29 +801,19 @@ impl CompilerDriver {
     /// suspending there is what lets the executor make progress on other,
     /// independent items in the meantime, exactly like any other suspend
     /// point) is answered with a *real* value computed by the interpreter,
-    /// never a placeholder:
-    ///
-    /// 1. If a value for that block's `expression_id` is already cached
-    ///    (`resolved_block_values`, populated by a previous round of step 2
-    ///    below), answer immediately from the cache.
-    /// 2. Otherwise, once ticking the shared executor makes no more
-    ///    progress and requests are still waiting, attempt real evaluation
-    ///    right now via `resolve_comptime_values_now`, using whatever HIR
-    ///    typing has recorded so far — this is safe even mid-pass, since
-    ///    both `ConstBlock` arms record their block's own body type
-    ///    (`check_expr`/`typeck_exprs`) *before* ever awaiting the value, so
-    ///    a request being pending never means its own recorded types are
-    ///    incomplete. Cache whatever new values come back and loop; the
-    ///    answer-from-cache step above completes the matching requests next
-    ///    time around, which resumes their tasks and unblocks further
-    ///    typing (possibly exposing further comptime requests, handled the
-    ///    same way).
-    /// 3. If that attempt yields nothing new and the executor is
-    ///    genuinely stalled (`has_parked_tasks`), this is a real dependency
-    ///    cycle (or an unrecoverable evaluation error) — every request
-    ///    still waiting is completed with a real `Err`, not a placeholder,
-    ///    which fails only the specific item(s) involved (per-item
-    ///    isolation — see `typecheck_item`), not the whole package.
+    /// never a placeholder — and answered immediately, not deferred until
+    /// the executor stalls: a `ComptimeRequest` carries its own
+    /// self-sufficient snapshot (`request.program`/`request.typeck_results`,
+    /// captured right after its own body finished type-checking), so
+    /// nothing is gained by waiting. Every request drained this round is
+    /// resolved right here via `resolve_one_comptime_request` (item-scoped —
+    /// see that method's doc comment) and completed on the spot, `Ok` or
+    /// `Err`; a request's own failure only fails the specific item awaiting
+    /// it (per-item isolation, matching `typecheck_item`), not the whole
+    /// package. If a tick makes no executor progress *and* there were no
+    /// requests to resolve, that's a genuine stall — a real dependency
+    /// cycle among same-package items with no comptime request involved at
+    /// all — and the whole type-check fails.
     async fn type_check_program(
         &mut self,
         program: hir::Program,
@@ -831,8 +821,6 @@ impl CompilerDriver {
         let context = self.state.borrow().typing_ctx.clone();
         let (shared, mut future) =
             fp_typing::spawn_package_typecheck(program, Some(context.clone()));
-        let mut resolved_block_values: HashMap<hir::HirId, Value> = HashMap::new();
-        let mut pending_requests: Vec<fp_typing::PendingComptimeRequest> = Vec::new();
         loop {
             let poll = {
                 let waker = Waker::noop();
@@ -876,85 +864,52 @@ impl CompilerDriver {
                     while context.executor.tick().is_some() {
                         progressed = true;
                     }
-                    pending_requests.extend(self.state.borrow().typing_ctx.take_comptime_requests());
-                    if !pending_requests.is_empty() {
-                        let mut still_pending = Vec::new();
-                        for request in pending_requests.drain(..) {
-                            let expression_id = request.request().expression_id;
-                            if let Some(value) = resolved_block_values.get(&expression_id) {
-                                request.complete(Ok(value.clone()));
-                                progressed = true;
-                            } else {
-                                still_pending.push(request);
-                            }
-                        }
-                        pending_requests = still_pending;
+                    let requests = self.state.borrow().typing_ctx.take_comptime_requests();
+                    for request in requests {
+                        let result = self
+                            .resolve_one_comptime_request(request.request())
+                            .await
+                            .map_err(|error| fp_core::error::Error::from(error.to_string()));
+                        request.complete(result);
+                        progressed = true;
                     }
                     if progressed {
                         continue;
                     }
-                    if pending_requests.is_empty() {
-                        if context.executor.has_parked_tasks() {
-                            return Err(fp_core::error::Error::from(
-                                "HIR type checking stalled: a genuine dependency cycle among \
-                                 same-package items prevented further progress",
-                            ));
-                        }
+                    if context.executor.has_parked_tasks() {
                         return Err(fp_core::error::Error::from(
-                            "HIR type checking suspended without a comptime request",
+                            "HIR type checking stalled: a genuine dependency cycle among \
+                             same-package items prevented further progress",
                         ));
                     }
-                    // Nothing else can progress except by answering the
-                    // requests still waiting — try to compute their values
-                    // for real, using everything typed so far.
-                    let (program_snapshot, typeck_snapshot) =
-                        fp_typing::finish_package_typecheck(&shared);
-                    let new_values = self
-                        .resolve_comptime_values_now(&program_snapshot, &typeck_snapshot)
-                        .await
-                        .unwrap_or_default();
-                    if new_values.is_empty() {
-                        // A genuine stall: evaluation couldn't produce
-                        // anything new and nothing else can run either.
-                        // Fail every still-pending request with a real
-                        // error (naming the stuck expressions) instead of
-                        // hanging or silently defaulting — this only fails
-                        // the specific item(s) awaiting these requests, not
-                        // the rest of the package (see `typecheck_item`).
-                        for request in pending_requests.drain(..) {
-                            let expression_id = request.request().expression_id;
-                            request.complete(Err(fp_core::error::Error::from(format!(
-                                "comptime evaluation for expression {expression_id} did not \
-                                 converge — this usually means a dependency cycle among \
-                                 `const {{ .. }}` blocks or the same-package items they call"
-                            ))));
-                        }
-                    } else {
-                        resolved_block_values.extend(new_values);
-                    }
+                    return Err(fp_core::error::Error::from(
+                        "HIR type checking suspended without a comptime request",
+                    ));
                 }
             }
         }
     }
 
-    /// Attempts real, interpreter-backed evaluation of every currently
-    /// registerable comptime entry in `program`, using `typeck_results` as
-    /// it stands right now (possibly mid-typing-pass — see
-    /// `type_check_program`'s doc comment for why that's sound). Lowers
-    /// into a scratch HIR/MIR/LIR slot (not the package's real one, which
-    /// isn't populated until the whole pass finishes) and reuses
-    /// `lower_to_mir`/`lower_to_lir`/`evaluate_comptime_lir` unchanged.
-    /// Returns whatever values could be computed; a lowering failure here
-    /// just means "not everything needed is typed yet" (e.g. this round's
-    /// snapshot still has an unchecked item in the middle of some other
-    /// pending request's dependency chain) — reported as an empty map, not
-    /// propagated, since the caller retries on the next round once more
-    /// typing has happened.
-    async fn resolve_comptime_values_now(
+    /// Resolves exactly one pending comptime request, using only its own
+    /// self-sufficient snapshot — `request.program`/`request.typeck_results`,
+    /// captured at the moment its own body finished type-checking (see
+    /// `fp_typing::ComptimeRequest`'s doc comment: everything that body can
+    /// legally reference is, by construction, already fully typed there).
+    /// Never re-fetches a fresher whole-package snapshot and never lowers
+    /// any item's body other than the one synthetic function built from
+    /// this request's own `block`/`expected_ty`
+    /// (`MirLowering::transform_comptime_request`, via
+    /// `lower_to_mir_for_comptime_request_with`) — called immediately for
+    /// every request as soon as it's dequeued (`type_check_program`'s
+    /// `Poll::Pending` arm), not deferred until the executor stalls. A
+    /// genuine failure here (not "try again later" — there is no "later"
+    /// for this call, its inputs are already final) only fails the one
+    /// item awaiting this specific request, via `request.complete(Err(..))`
+    /// — the same per-item isolation `typecheck_item` already relies on.
+    async fn resolve_one_comptime_request(
         &mut self,
-        program: &hir::Program,
-        typeck_results: &fp_typing::TypeckResults,
-    ) -> Result<HashMap<hir::HirId, Value>, CompilerDriverError> {
+        request: &fp_typing::ComptimeRequest,
+    ) -> Result<Value, CompilerDriverError> {
         let package_id = self
             .state.borrow()
             .typing_ctx
@@ -969,11 +924,12 @@ impl CompilerDriver {
         let module_path = QualifiedPath::new(vec!["__comptime_probe__".to_string()]);
         let hir_id = HirId::new(format!("hir:{}", self.module_state_key(&module_path)));
         let fqp = FullyQualifiedPath::new(module_path);
-        self.state.borrow_mut().insert_hir(hir_id.clone(), program.clone());
+        self.state.borrow_mut().insert_hir(hir_id.clone(), request.program.clone());
         self.state.borrow_mut()
-            .insert_hir_typeck(hir_id.clone(), typeck_results.clone());
+            .insert_hir_typeck(hir_id.clone(), request.typeck_results.clone());
         let (mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes, resolved_const_values) =
-            self.lower_to_mir(&hir_id, &fqp).await?;
+            Self::lower_to_mir_for_comptime_request_with(&self.state, &hir_id, &fqp, request)
+                .await?;
         // Merge onto the current package the same way `compile_package`'s
         // own `lower_to_mir` callers already do — otherwise a struct/enum
         // first introduced by *this* probe (e.g. resolving a `const fn`
@@ -1000,7 +956,13 @@ impl CompilerDriver {
             &full_layouts,
             &opaque_payload_sizes,
         )?;
-        self.evaluate_comptime_lir(&lir_id, &fqp).await
+        let values = self.evaluate_comptime_lir(&lir_id, &fqp).await?;
+        values.get(&request.expression_id).cloned().ok_or_else(|| {
+            CompilerDriverError::UnresolvableComptime(format!(
+                "expression {} did not produce a comptime value",
+                request.expression_id
+            ))
+        })
     }
 
     /// Interprets every comptime entry in `lir_id`'s `LirProgram` for real
@@ -1304,6 +1266,104 @@ impl CompilerDriver {
         // `EnumLayout::tag_ty`/`payload_tys` here (a mismatched/union slot
         // is an opaque placeholder at this point; sized separately via
         // `opaque_payload_sizes` below, since it has no fields of its own).
+        for (key, layout) in lowering.enum_layout_map() {
+            let mut fields = Vec::with_capacity(1 + layout.payload_tys.len());
+            fields.push(layout.tag_ty.clone());
+            fields.extend(layout.payload_tys.iter().cloned());
+            full_layouts.insert((key.def_id, key.args.clone()), fields);
+        }
+        let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
+        let resolved_const_values = lowering.take_resolved_const_values();
+        let mir_id = MirId::new(format!("mir:{}", Self::module_state_key_for(state, path.path())));
+        state.borrow_mut().insert_mir(mir_id.clone(), mir);
+        Ok((
+            mir_id,
+            struct_layouts,
+            full_layouts,
+            adt_defs,
+            opaque_payload_sizes,
+            resolved_const_values,
+        ))
+    }
+
+    /// Same shape as `lower_to_mir_with`, but calls
+    /// `MirLowering::transform_comptime_request_async` instead of
+    /// `.transform_async` — item-scoped to exactly the one pending
+    /// `request` (see that method's own doc comment), never the whole
+    /// package. Everything downstream (diagnostics, layout extraction) is
+    /// identical and reused verbatim, since it only reads from `lowering`'s
+    /// accumulated state and the returned `mir::Program`, never from
+    /// `hir.items` directly.
+    async fn lower_to_mir_for_comptime_request_with(
+        state: &Rc<RefCell<CompilerState>>,
+        hir_id: &HirId,
+        path: &FullyQualifiedPath,
+        request: &fp_typing::ComptimeRequest,
+    ) -> Result<
+        (
+            MirId,
+            HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>>,
+            HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>,
+            HashMap<fp_core::hir::DefId, fp_core::mir::ty::AdtDef>,
+            HashMap<String, u64>,
+            HashMap<String, fp_core::mir::Constant>,
+        ),
+        CompilerDriverError,
+    > {
+        let hir = state.borrow().hir(hir_id)?.clone();
+        let typeck_results = state.borrow().hir_typeck(hir_id)?.clone();
+        let mut lowering = MirLowering::new()
+            .with_typeck_results(&typeck_results)
+            .map_err(|error| {
+                CompilerDriverError::InternalCompilerError(format!(
+                    "HIR-to-MIR setup failed for {}: {error}",
+                    path.to_key()
+                ))
+            })?;
+        for (key, value) in state.borrow().resolved_const_values() {
+            lowering.seed_resolved_const(key.to_string(), value.clone());
+        }
+        let result = lowering.transform_comptime_request_async(hir, request).await;
+        let mir = match result {
+            Ok(mir) => mir,
+            Err(error) => {
+                let (diagnostics, _) = lowering.take_diagnostics();
+                let details = diagnostics
+                    .iter()
+                    .map(|diagnostic| diagnostic.message.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                return Err(CompilerDriverError::InternalCompilerError(if details.is_empty() {
+                    format!("HIR-to-MIR lowering failed: {error}")
+                } else {
+                    format!("HIR-to-MIR lowering failed: {error}; diagnostics: {details}")
+                }));
+            }
+        };
+        lowering.walk_program_types_for_layouts(&mir);
+        let (diagnostics, had_errors) = lowering.take_diagnostics();
+        if had_errors {
+            let details = diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.message.as_str())
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(CompilerDriverError::InternalCompilerError(format!(
+                "HIR-to-MIR lowering reported diagnostics: {details}"
+            )));
+        }
+        let adt_defs: HashMap<fp_core::hir::DefId, fp_core::mir::ty::AdtDef> =
+            lowering.take_adt_defs();
+        let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
+            lowering.all_adt_field_tys().into_iter().collect();
+        let mut full_layouts: HashMap<
+            (fp_core::mir::DefId, Vec<fp_core::mir::Ty>),
+            Vec<fp_core::mir::Ty>,
+        > = lowering
+            .struct_layout_map()
+            .iter()
+            .map(|(key, layout)| ((key.def_id, key.args.clone()), layout.field_tys.clone()))
+            .collect();
         for (key, layout) in lowering.enum_layout_map() {
             let mut fields = Vec::with_capacity(1 + layout.payload_tys.len());
             fields.push(layout.tag_ty.clone());

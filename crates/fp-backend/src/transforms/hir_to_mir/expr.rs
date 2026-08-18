@@ -289,6 +289,21 @@ struct MethodDefinition {
     assoc_types: HashMap<String, hir::TypeExpr>,
 }
 
+/// Raw HIR needed to lower a *non-generic* method's body on demand
+/// (`ensure_method_lowered`), keyed by the method's own `impl_item.def_id`.
+/// Populated only by `register_impl_signatures`'s signature-only pre-pass —
+/// the counterpart to `MethodDefinition`/`register_generic_method_definition`,
+/// which does the same job for generic methods (those get lowered per-call
+/// via specialization instead, keyed by substs, not by this map). The
+/// pre-pass itself needs no typed bodies, so this is safe to populate
+/// unconditionally for a whole, possibly mid-typecheck package.
+#[derive(Clone)]
+struct MethodHirRef {
+    function: hir::Function,
+    span: Span,
+    method_context: Option<MethodContext>,
+}
+
 #[derive(Clone, Debug)]
 struct FunctionSpecializationInfo {
     def_id: hir::DefId,
@@ -486,6 +501,9 @@ pub struct MirLowering {
     method_lookup: HashMap<String, MethodLoweringInfo>,
     method_defs: HashMap<String, MethodDefinition>,
     method_defs_by_def: HashMap<hir::DefId, MethodDefinition>,
+    /// Raw HIR for every non-generic method, keyed by `impl_item.def_id` —
+    /// see `MethodHirRef`'s own doc comment.
+    method_hir_defs: HashMap<hir::DefId, MethodHirRef>,
     /// Reverse index from `(self_def, method_name)` to the method's key in
     /// `method_defs_by_def` — lets `real_indexable_struct_def_id`/
     /// `call_real_method_into_place` find a struct's `index`/`index_set`
@@ -514,6 +532,15 @@ pub struct MirLowering {
         HashMap<(hir::DefId, Vec<Ty>, Vec<Ty>, Option<Ty>), MethodLoweringInfo>,
     extra_items: Vec<mir::Item>,
     extra_bodies: Vec<(mir::BodyId, mir::Body)>,
+    /// Marks a function/method `DefId` whose body has already been lowered
+    /// and pushed into `extra_items`/`extra_bodies` (or, for the normal
+    /// whole-package pipeline, `mir_program.items`/`.bodies` directly) —
+    /// see `ensure_function_lowered`/`ensure_method_lowered`. Neither
+    /// `function_sigs` nor `method_lookup_by_def` can serve as this guard:
+    /// both are also populated by signature-only registration (the
+    /// call-site lazy fallback, the impl signature pre-pass) with no body
+    /// ever lowered.
+    lowered_items: HashSet<hir::DefId>,
     opaque_types: HashMap<String, Ty>,
     /// Byte size for an opaque type minted for a *mismatched enum payload
     /// slot* (`enum_layout_for_instance`'s per-slot merge loop) — the
@@ -546,6 +573,17 @@ pub struct MirLowering {
     /// whether anything here references them or not.
     hir_def_map: HashMap<hir::DefId, hir::Item>,
     hir_def_paths: HashMap<hir::DefId, hir::DefPath>,
+    /// Package this `MirLowering` instance is itself compiling — the
+    /// package every id in `program.items` shares, captured once at the
+    /// top of `lower_program`/`transform_comptime_request`. `hir_def_map`
+    /// spans the whole workspace (this package's own items plus every
+    /// dependency's, via `seed_workspace_definitions`), but only *this*
+    /// package's own structs/enums/consts/impls get registered by the
+    /// registration passes below — a dependency's own items are only ever
+    /// safe to reference by signature (the dependency compiles its own
+    /// body separately; see `ensure_function_lowered`/
+    /// `ensure_method_lowered`), never to lower a body from here.
+    current_package_id: Option<hir::PackageId>,
 }
 
 impl MirLowering {
@@ -612,6 +650,7 @@ impl MirLowering {
             method_lookup: HashMap::new(),
             method_defs: HashMap::new(),
             method_defs_by_def: HashMap::new(),
+            method_hir_defs: HashMap::new(),
             method_defs_by_self_and_name: HashMap::new(),
             method_specializations: HashMap::new(),
             function_specializations: HashMap::new(),
@@ -619,6 +658,7 @@ impl MirLowering {
             method_specialization_call_cache: HashMap::new(),
             extra_items: Vec::new(),
             extra_bodies: Vec::new(),
+            lowered_items: HashSet::new(),
             opaque_types: HashMap::new(),
             opaque_ty_sizes: HashMap::new(),
             synthetic_runtime_functions: HashSet::new(),
@@ -632,6 +672,7 @@ impl MirLowering {
             adt_defs: HashMap::new(),
             hir_def_map: HashMap::new(),
             hir_def_paths: HashMap::new(),
+            current_package_id: None,
         }
     }
 
@@ -653,6 +694,91 @@ impl MirLowering {
     /// every recursive expression operation an artificial future.
     pub async fn transform_async(&mut self, hir_program: hir::Program) -> Result<mir::Program> {
         self.transform(hir_program)
+    }
+
+    /// Item-scoped lowering for exactly one pending `const { .. }` block,
+    /// answering a `fp_typing::ComptimeRequest` directly from its own
+    /// self-sufficient snapshot (see `ComptimeRequest`'s doc comment and
+    /// `CompilerDriver::resolve_one_comptime_request`). Unlike `transform`
+    /// (used for the real, whole-package compile, where every item's body
+    /// genuinely needs lowering), this never lowers any function, method,
+    /// or const body other than the one synthetic function built directly
+    /// from `request.block`/`request.expected_ty` — no walk of `main`'s or
+    /// any other item's own body at all. Whatever that one body actually
+    /// references (other consts, plain functions, generic methods)
+    /// resolves correctly and on demand via `register_const_value`/
+    /// `ensure_function_lowered`/`ensure_method_lowered`/
+    /// `ensure_function_specialization`'s existing lazy mechanisms.
+    pub fn transform_comptime_request(
+        &mut self,
+        hir_program: hir::Program,
+        request: &fp_typing::ComptimeRequest,
+    ) -> Result<mir::Program> {
+        self.hir_def_map = hir_program.def_map.clone();
+        self.hir_def_paths = hir_program.def_paths.clone();
+        self.current_package_id = hir_program.items.first().map(|item| item.def_id.package_id);
+        self.next_synthetic_hir_def_id = hir_program
+            .items
+            .iter()
+            .map(|item| item.def_id)
+            .max()
+            .unwrap_or(hir::DefId::local(0))
+            .saturating_add(1);
+
+        // Whole-program-safe, order-independent registration only — none
+        // of this requires any item's body to be typed (mirrors
+        // `lower_program`'s matching passes verbatim; deliberately stops
+        // short of that function's const-registration and per-item body
+        // loop, which is exactly the whole-package dependency this entry
+        // point exists to avoid).
+        for item in &hir_program.items {
+            match &item.kind {
+                hir::ItemKind::Struct(def) => {
+                    self.register_struct(&hir_program.def_paths, item.def_id, def, item.span);
+                }
+                hir::ItemKind::Enum(def) => {
+                    self.register_enum(&hir_program.def_paths, item.def_id, def, item.span);
+                }
+                _ => {}
+            }
+        }
+        self.finalize_adt_definitions(&hir_program);
+        for item in &hir_program.items {
+            if let hir::ItemKind::Impl(impl_block) = &item.kind {
+                self.register_impl_signatures(impl_block);
+            }
+        }
+
+        let body = request.block.expr.as_ref().ok_or_else(|| {
+            fp_core::error::Error::from(
+                "internal compiler error: comptime request block has no body expression",
+            )
+        })?;
+        self.register_const_block_comptime_entry_direct(
+            request.expression_id,
+            &request.expected_ty,
+            body,
+            body.span,
+        );
+
+        let mut mir_program = mir::Program::new();
+        self.flush_extra_items(&mut mir_program);
+        self.append_runtime_stubs(&mut mir_program);
+
+        if self.has_errors {
+            return Err(fp_core::error::Error::from(
+                "internal compiler error: HIR-to-MIR lowering reported an error",
+            ));
+        }
+        Ok(mir_program)
+    }
+
+    pub async fn transform_comptime_request_async(
+        &mut self,
+        hir_program: hir::Program,
+        request: &fp_typing::ComptimeRequest,
+    ) -> Result<mir::Program> {
+        self.transform_comptime_request(hir_program, request)
     }
 
     pub fn compute_adt_layout(&mut self, def_id: hir::DefId, substs: &[Ty], span: Span) {
@@ -1064,6 +1190,7 @@ impl MirLowering {
         // compile, not per lookup.
         self.hir_def_map = program.def_map.clone();
         self.hir_def_paths = program.def_paths.clone();
+        self.current_package_id = program.items.first().map(|item| item.def_id.package_id);
         let mut mir_program = mir::Program::new();
         self.next_synthetic_hir_def_id = program
             .items
@@ -1126,13 +1253,25 @@ impl MirLowering {
                     if !function.sig.generics.params.is_empty() {
                         self.register_generic_function(item.def_id, function);
                     } else {
-                        let (mir_item, body_id, body) = self.lower_function(item, function)?;
-                        mir_program.items.push(mir_item);
-                        mir_program.bodies.insert(body_id, body);
+                        // Idempotent — a prior call site may have already
+                        // lowered this on demand (`ensure_function_lowered`'s
+                        // `resolve_callee_path` fallback); this proactive
+                        // call is what guarantees full-package coverage for
+                        // items with no local caller (see comment above).
+                        self.ensure_function_lowered(item.def_id)?;
                     }
                 }
                 hir::ItemKind::Impl(impl_block) => {
-                    self.lower_impl(item, impl_block, Some(&mut mir_program))?;
+                    // Non-generic methods, on demand (idempotent, same
+                    // reasoning as the `Function` arm above); generic
+                    // methods were already registered — raw HIR only — by
+                    // `register_impl_signatures`'s pre-pass, and lower per
+                    // call site via `ensure_method_specialization`.
+                    for impl_item in &impl_block.items {
+                        if let hir::ImplItemKind::Method(_) = &impl_item.kind {
+                            self.ensure_method_lowered(impl_item.def_id)?;
+                        }
+                    }
                 }
                 hir::ItemKind::Query(query) => {
                     mir_program.items.push(self.lower_query(item, query));
@@ -1234,6 +1373,116 @@ impl MirLowering {
         for (body_id, body) in self.extra_bodies.drain(..) {
             program.bodies.insert(body_id, body);
         }
+    }
+
+    /// On-demand counterpart to `lower_function`, for a non-generic free
+    /// function: lowers `def_id`'s body at most once (guarded by
+    /// `lowered_items`), pushing the result into `extra_items`/
+    /// `extra_bodies`. Callable both proactively (`lower_program`'s main
+    /// loop, ensuring full package coverage) and reactively (a call site
+    /// whose callee hasn't been lowered yet — `resolve_callee_path`'s
+    /// `hir_def_map` fallback), mirroring the same lazy pattern
+    /// `register_const_value`/`try_lazily_register_adt`/
+    /// `ensure_function_specialization` already use for consts/ADTs/
+    /// generics. A miss (unknown `def_id`, or a non-`Function` item) is not
+    /// an error here — the caller's own resolution path already reports a
+    /// real diagnostic when nothing usable comes back.
+    fn ensure_function_lowered(&mut self, def_id: hir::DefId) -> Result<()> {
+        if self.lowered_items.contains(&def_id) {
+            return Ok(());
+        }
+        // `def_id` isn't necessarily a *function* — `resolve_callee_path`
+        // calls this unconditionally for any `Res::Def`, including a
+        // method's `impl_item.def_id` (never present in `hir_def_map`;
+        // `ensure_method_lowered` owns that case instead). Only claim
+        // `lowered_items` once we've confirmed this really is a function —
+        // marking it here on a miss would permanently block
+        // `ensure_method_lowered` from ever getting a real chance at the
+        // same `def_id` afterwards.
+        let Some(item) = self.hir_def_map.get(&def_id).cloned() else {
+            return Ok(());
+        };
+        let hir::ItemKind::Function(function) = &item.kind else {
+            return Ok(());
+        };
+        self.lowered_items.insert(def_id);
+        if let Some(current) = self.current_package_id {
+            if def_id.package_id != current {
+                // A dependency package's own function — that package
+                // compiles its own body separately, in its own
+                // `MirLowering` instance (own struct/enum/const
+                // registrations); lowering it here would build it against
+                // *this* package's registrations instead, silently
+                // producing a wrong/incomplete body the moment it
+                // references anything this package never registered. Only
+                // this call site's own operand needs a signature — the
+                // real body is supplied later, correctly, by
+                // `predeclare_dependency_function_signatures` reading that
+                // package's own compiled MIR.
+                let sig = self.lower_function_sig(&function.sig, None);
+                self.function_sigs.insert(def_id, sig);
+                return Ok(());
+            }
+        }
+        if !function.sig.generics.params.is_empty() {
+            // Generic: raw HIR registration only, lowered per call site via
+            // `ensure_function_specialization` — this function doesn't own
+            // that path.
+            self.register_generic_function(def_id, function);
+            return Ok(());
+        }
+        let (mir_item, body_id, body) = self.lower_function(&item, function)?;
+        self.extra_items.push(mir_item);
+        self.extra_bodies.push((body_id, body));
+        Ok(())
+    }
+
+    /// On-demand counterpart to `lower_impl`'s per-method loop, for a single
+    /// non-generic method: lowers `def_id`'s body at most once (guarded by
+    /// `lowered_items`) from the raw HIR `register_impl_signatures`'s
+    /// signature-only pre-pass already stashed in `method_hir_defs`,
+    /// pushing the result into `extra_items`/`extra_bodies`. See
+    /// `ensure_function_lowered`'s doc comment — same pattern, same two
+    /// caller shapes. A miss (unknown `def_id`, e.g. a generic method —
+    /// those are lowered per call site via `ensure_method_specialization`
+    /// instead) is not an error here, for the same reason.
+    fn ensure_method_lowered(&mut self, def_id: hir::DefId) -> Result<()> {
+        if self.lowered_items.contains(&def_id) {
+            return Ok(());
+        }
+        // Same reasoning as `ensure_function_lowered`: only claim
+        // `lowered_items` once we've confirmed `def_id` really is a
+        // non-generic method — `resolve_callee_path`'s `Res::Def` branch
+        // tries `ensure_function_lowered` on every def_id first (a plain
+        // function, by far the common case), which correctly leaves
+        // `lowered_items` untouched on its own miss so this function still
+        // gets a real chance afterwards.
+        let Some(method_ref) = self.method_hir_defs.get(&def_id).cloned() else {
+            return Ok(());
+        };
+        self.lowered_items.insert(def_id);
+        if let Some(current) = self.current_package_id {
+            if def_id.package_id != current {
+                // Same reasoning as `ensure_function_lowered`'s
+                // cross-package guard — this method's own package compiles
+                // its body separately.
+                let sig = self.lower_function_sig(
+                    &method_ref.function.sig,
+                    method_ref.method_context.as_ref(),
+                );
+                self.function_sigs.insert(def_id, sig);
+                return Ok(());
+            }
+        }
+        let (mir_item, body_id, body, _sig) = self.lower_method(
+            def_id,
+            &method_ref.function,
+            method_ref.span,
+            method_ref.method_context.as_ref(),
+        )?;
+        self.extra_items.push(mir_item);
+        self.extra_bodies.push((body_id, body));
+        Ok(())
     }
 
     fn lower_function(
@@ -3837,23 +4086,44 @@ impl MirLowering {
         const_block: &hir::ExprConstBlock,
         span: Span,
     ) {
-        let ty = self.lower_type_expr(&const_block.ty);
+        self.register_const_block_comptime_entry_direct(
+            expr_hir_id,
+            &const_block.ty,
+            &const_block.body,
+            span,
+        );
+    }
+
+    /// Shared by `register_const_block_comptime_entry` (found incidentally
+    /// while walking a body that contains a `const { .. }` block) and
+    /// `transform_comptime_request` (fed directly from a
+    /// `fp_typing::ComptimeRequest`'s own `expected_ty`/`block.expr`, with
+    /// no body walk at all) — both just need `ty`/`body` unboxed, not an
+    /// `hir::ExprConstBlock` specifically.
+    fn register_const_block_comptime_entry_direct(
+        &mut self,
+        expr_hir_id: hir::HirId,
+        ty: &hir::TypeExpr,
+        body: &hir::Expr,
+        span: Span,
+    ) {
+        let lowered_ty = self.lower_type_expr(ty);
         let name = hir::Symbol::new(format!(
             "__const_block_{}_{}",
             expr_hir_id.package_id.0, expr_hir_id.index
         ));
         let konst = hir::Const {
             name: name.clone(),
-            ty: (*const_block.ty).clone(),
+            ty: ty.clone(),
             body: hir::Body {
                 hir_id: expr_hir_id,
                 params: Vec::new(),
-                value: (*const_block.body).clone(),
+                value: body.clone(),
             },
         };
         let key = self.const_key(name.as_str(), span);
         let def_id = self.next_synthetic_def_id();
-        match self.lower_executable_const(def_id, &konst, ty, key, Some(expr_hir_id)) {
+        match self.lower_executable_const(def_id, &konst, lowered_ty, key, Some(expr_hir_id)) {
             Ok(mir_item) => self.extra_items.push(mir_item),
             Err(error) => self.emit_warning(
                 span,
@@ -5911,6 +6181,19 @@ impl MirLowering {
             let Some(struct_name) = struct_name.as_deref() else {
                 continue;
             };
+            let method_span = function
+                .body
+                .as_ref()
+                .map(|body| body.span())
+                .unwrap_or_else(Span::null);
+            self.method_hir_defs.insert(
+                impl_item.def_id,
+                MethodHirRef {
+                    function: function.clone(),
+                    span: method_span,
+                    method_context: method_context.clone(),
+                },
+            );
             let sig = self.lower_function_sig(&function.sig, method_context.as_ref());
             self.register_method_lowering_info(
                 struct_name,
@@ -15021,6 +15304,17 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
+            if self.lowering.function_sigs.get(def_id).is_none() {
+                // Not yet lowered/registered — e.g. a same-package function
+                // this MIR-lowering pass hasn't proactively reached yet
+                // (out-of-order cross-module reference), or one deliberately
+                // never visited at all (the comptime-probe's item-scoped
+                // entry point, `transform_comptime_request`, never walks an
+                // unrelated item's body). Lower it on demand now, mirroring
+                // `register_const_value`/`try_lazily_register_adt`'s
+                // existing lazy pattern for the same reason.
+                self.lowering.ensure_function_lowered(*def_id)?;
+            }
             if let Some(sig) = self.lowering.function_sigs.get(def_id).cloned() {
                 let name = self
                     .lowering
@@ -15031,25 +15325,6 @@ impl<'a> BodyBuilder<'a> {
                         _ => None,
                     })
                     .unwrap_or_else(|| hir::Symbol::new(format!("fn#{}", def_id)));
-                let ty = self.lowering.function_pointer_ty(&sig);
-                let operand = mir::Operand::Constant(mir::Constant {
-                    span: callee.span,
-                    ty: ty.clone(),
-                    user_ty: None,
-                    literal: mir::ConstantKind::FnDef(*def_id, Vec::new()),
-                });
-                return Ok((operand, sig, Some(String::from(name))));
-            }
-            let referenced_fn_sig = self.lowering.hir_def_map.get(def_id).and_then(|item| {
-                match &item.kind {
-                    hir::ItemKind::Function(func) => Some(func.sig.clone()),
-                    _ => None,
-                }
-            });
-            if let Some(fn_sig) = referenced_fn_sig {
-                let sig = self.lowering.lower_function_sig(&fn_sig, None);
-                self.lowering.function_sigs.insert(*def_id, sig.clone());
-                let name = fn_sig.name.clone();
                 let ty = self.lowering.function_pointer_ty(&sig);
                 let operand = mir::Operand::Constant(mir::Constant {
                     span: callee.span,
@@ -15124,7 +15399,16 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let Some(hir::Res::Def(def_id)) = resolved_path.res.as_ref() {
-            if let Some(info) = self.lowering.method_lookup_by_def.get(def_id) {
+            if let Some(info) = self.lowering.method_lookup_by_def.get(def_id).cloned() {
+                // `method_lookup_by_def` only proves the *signature* was
+                // registered (the order-independent pre-pass populates it
+                // for every non-generic method up front) — the body itself
+                // may not have been lowered yet if this MIR-lowering pass
+                // never proactively reached this method's own `impl` item
+                // (e.g. the comptime-probe's item-scoped entry point, which
+                // deliberately never walks unrelated items). Ensure it now,
+                // on demand, before referencing it.
+                self.lowering.ensure_method_lowered(*def_id)?;
                 let literal = match info.def_id {
                     Some(def_id) => mir::ConstantKind::FnDef(def_id, Vec::new()),
                     None => mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone())),
@@ -19552,9 +19836,13 @@ impl<'a> BodyBuilder<'a> {
                 let mut resolved_info: Option<(MethodLoweringInfo, Option<PlaceInfo>)> = None;
                 let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
 
-                if let Some(def_id) = self.lowering.typeck_method_resolutions.get(&expr.hir_id) {
-                    if let Some(info) = self.lowering.method_lookup_by_def.get(def_id) {
+                if let Some(def_id) = self.lowering.typeck_method_resolutions.get(&expr.hir_id).copied() {
+                    if let Some(info) = self.lowering.method_lookup_by_def.get(&def_id) {
                         resolved_info = Some((info.clone(), None));
+                        // Signature presence doesn't imply the body's been
+                        // lowered yet (see `resolve_callee_path`'s matching
+                        // comment) — ensure it now.
+                        self.lowering.ensure_method_lowered(def_id)?;
                     }
                 }
 
