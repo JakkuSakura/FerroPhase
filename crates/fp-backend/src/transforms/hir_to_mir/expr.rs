@@ -504,6 +504,15 @@ pub struct MirLowering {
     /// Raw HIR for every non-generic method, keyed by `impl_item.def_id` —
     /// see `MethodHirRef`'s own doc comment.
     method_hir_defs: HashMap<hir::DefId, MethodHirRef>,
+    /// Reverse index from a method's own `impl_item.def_id` to its owning
+    /// `Impl` item (and that item's index within it) — built once, lazily,
+    /// on first need by `try_lazily_register_method`. Unlike structs,
+    /// enums, consts, and top-level functions, an individual method's own
+    /// `DefId` is never a key in `hir_def_map` (only the *owning* `Impl`
+    /// item's own top-level `DefId` is), so resolving one requires this
+    /// one-time scan first — mirrors `hir_def_map` itself being a
+    /// one-time whole-workspace snapshot.
+    method_owner_index: Option<HashMap<hir::DefId, (hir::Item, usize)>>,
     /// Reverse index from `(self_def, method_name)` to the method's key in
     /// `method_defs_by_def` — lets `real_indexable_struct_def_id`/
     /// `call_real_method_into_place` find a struct's `index`/`index_set`
@@ -651,6 +660,7 @@ impl MirLowering {
             method_defs: HashMap::new(),
             method_defs_by_def: HashMap::new(),
             method_hir_defs: HashMap::new(),
+            method_owner_index: None,
             method_defs_by_self_and_name: HashMap::new(),
             method_specializations: HashMap::new(),
             function_specializations: HashMap::new(),
@@ -6150,59 +6160,151 @@ impl MirLowering {
             &impl_block.self_ty,
             &assoc_types_from_impl_items(&impl_block.items),
         );
-        let impl_is_generic = !impl_block.generics.params.is_empty();
-
         for impl_item in &impl_block.items {
-            let hir::ImplItemKind::Method(function) = &impl_item.kind else {
-                continue;
-            };
-            let method_name = function.sig.name.as_str();
-            let is_hashmap_impl = struct_name
-                .as_deref()
-                .map(|name| name.ends_with("HashMap"))
-                .unwrap_or(false);
-            let is_hashmap_method = matches!(method_name, "from" | "len" | "get_unchecked")
-                || method_name.ends_with("::from")
-                || method_name.ends_with("::len")
-                || method_name.ends_with("::get_unchecked");
-            if is_hashmap_impl && is_hashmap_method {
-                continue;
-            }
-            if impl_is_generic || !function.sig.generics.params.is_empty() {
-                self.register_generic_method_definition(
-                    struct_name.as_deref(),
-                    method_context.as_ref(),
-                    impl_item,
-                    function,
-                    impl_block,
-                );
-                continue;
-            }
-            let Some(struct_name) = struct_name.as_deref() else {
-                continue;
-            };
-            let method_span = function
-                .body
-                .as_ref()
-                .map(|body| body.span())
-                .unwrap_or_else(Span::null);
-            self.method_hir_defs.insert(
-                impl_item.def_id,
-                MethodHirRef {
-                    function: function.clone(),
-                    span: method_span,
-                    method_context: method_context.clone(),
-                },
-            );
-            let sig = self.lower_function_sig(&function.sig, method_context.as_ref());
-            self.register_method_lowering_info(
-                struct_name,
+            self.register_impl_signature_for_item(
+                struct_name.as_deref(),
                 method_context.as_ref(),
+                impl_block,
                 impl_item,
-                function,
-                sig,
             );
         }
+    }
+
+    /// Registers exactly one impl item's signature — extracted so
+    /// `register_impl_signatures`'s eager, whole-impl pre-pass and
+    /// `try_lazily_register_method`'s on-demand, single-method lookup
+    /// share one implementation and can never drift apart, the same way
+    /// `try_lazily_register_adt` reuses `register_struct`/`register_enum`
+    /// rather than re-deriving their logic.
+    fn register_impl_signature_for_item(
+        &mut self,
+        struct_name: Option<&str>,
+        method_context: Option<&MethodContext>,
+        impl_block: &hir::Impl,
+        impl_item: &hir::ImplItem,
+    ) {
+        let hir::ImplItemKind::Method(function) = &impl_item.kind else {
+            return;
+        };
+        let method_name = function.sig.name.as_str();
+        let is_hashmap_impl = struct_name
+            .map(|name| name.ends_with("HashMap"))
+            .unwrap_or(false);
+        let is_hashmap_method = matches!(method_name, "from" | "len" | "get_unchecked")
+            || method_name.ends_with("::from")
+            || method_name.ends_with("::len")
+            || method_name.ends_with("::get_unchecked");
+        if is_hashmap_impl && is_hashmap_method {
+            return;
+        }
+        let impl_is_generic = !impl_block.generics.params.is_empty();
+        if impl_is_generic || !function.sig.generics.params.is_empty() {
+            self.register_generic_method_definition(
+                struct_name,
+                method_context,
+                impl_item,
+                function,
+                impl_block,
+            );
+            return;
+        }
+        let Some(struct_name) = struct_name else {
+            return;
+        };
+        let method_span = function
+            .body
+            .as_ref()
+            .map(|body| body.span())
+            .unwrap_or_else(Span::null);
+        self.method_hir_defs.insert(
+            impl_item.def_id,
+            MethodHirRef {
+                function: function.clone(),
+                span: method_span,
+                method_context: method_context.cloned(),
+            },
+        );
+        let sig = self.lower_function_sig(&function.sig, method_context);
+        self.register_method_lowering_info(struct_name, method_context, impl_item, function, sig);
+    }
+
+    /// On-demand registration for a method defined in a *different*
+    /// package (std/libc/etc.) — reached only when `def_id` isn't already
+    /// registered locally. Mirrors `try_lazily_register_adt` exactly, one
+    /// level down: unlike structs/enums/consts/functions, an individual
+    /// method's own `DefId` is never a key in `hir_def_map` (only the
+    /// *owning* `Impl` item's own top-level `DefId` is), so this first
+    /// needs a one-time, cached reverse index (`method_owner_index`) —
+    /// built by scanning every `Impl` item `hir_def_map` knows about
+    /// (this package's own, plus every workspace dependency's) exactly
+    /// once — before it can do its own point lookup.
+    fn try_lazily_register_method(&mut self, def_id: hir::DefId) {
+        if self.method_owner_index.is_none() {
+            let mut index = HashMap::new();
+            for item in self.hir_def_map.values() {
+                if let hir::ItemKind::Impl(impl_block) = &item.kind {
+                    for (item_idx, impl_item) in impl_block.items.iter().enumerate() {
+                        if matches!(impl_item.kind, hir::ImplItemKind::Method(_)) {
+                            index.insert(impl_item.def_id, (item.clone(), item_idx));
+                        }
+                    }
+                }
+            }
+            self.method_owner_index = Some(index);
+        }
+        let Some((owning_item, item_idx)) = self
+            .method_owner_index
+            .as_ref()
+            .and_then(|index| index.get(&def_id))
+            .cloned()
+        else {
+            return;
+        };
+        let hir::ItemKind::Impl(impl_block) = owning_item.kind else {
+            return;
+        };
+        let impl_item = impl_block.items[item_idx].clone();
+        let struct_name = self.struct_name_from_type(&impl_block.self_ty);
+        let method_context = self.make_method_context(
+            &impl_block.self_ty,
+            &assoc_types_from_impl_items(&impl_block.items),
+        );
+        self.register_impl_signature_for_item(
+            struct_name.as_deref(),
+            method_context.as_ref(),
+            &impl_block,
+            &impl_item,
+        );
+    }
+
+    /// Uniform method-signature lookup: check the cache, lazily register
+    /// on a miss, then check again — the exact "check the cache; lazily
+    /// register on a miss; proceed" shape `compute_adt_layout` already
+    /// uses for ADTs. Every method-resolution call site should go through
+    /// this rather than reading `method_lookup_by_def` directly, so a
+    /// method defined in this package or any dependency's resolves the
+    /// same way, with no caller-visible distinction between the two.
+    fn ensure_method_info(&mut self, def_id: hir::DefId) -> Option<MethodLoweringInfo> {
+        if let Some(info) = self.method_lookup_by_def.get(&def_id) {
+            return Some(info.clone());
+        }
+        self.try_lazily_register_method(def_id);
+        self.method_lookup_by_def.get(&def_id).cloned()
+    }
+
+    /// Generic counterpart to `ensure_method_info` — same "check the
+    /// cache; lazily register on a miss; proceed" shape, but reading
+    /// `method_defs_by_def` (a generic method's raw, unspecialized HIR;
+    /// its real signature needs concrete substs only known at the call
+    /// site — see `register_generic_method_definition`) instead of
+    /// `method_lookup_by_def`. `try_lazily_register_method` itself
+    /// already dispatches to whichever of the two a given method needs.
+    fn ensure_generic_method_def(&mut self, def_id: hir::DefId) -> Option<MethodDefinition> {
+        if let Some(def) = self.method_defs_by_def.get(&def_id) {
+            return Some(def.clone());
+        }
+        self.try_lazily_register_method(def_id);
+        self.method_defs_by_def.get(&def_id).cloned()
     }
 
     /// Shared by `register_impl_signatures` (order-independent pre-pass)
@@ -13997,9 +14099,13 @@ impl<'a> BodyBuilder<'a> {
                 }
             }
             if let Some(hir::Res::Def(def_id)) = &path.res {
-                if let Some(def) = self.lowering.method_defs_by_def.get(def_id) {
-                    generic_method_def = Some(def.clone());
-                }
+                // `ensure_generic_method_def` is the uniform lookup —
+                // resolves a generic method (`Vec::from`, etc.) in this
+                // package or any dependency's the same way, lazily
+                // registering it on a miss instead of requiring it to
+                // already be known (see `resolve_callee_path`'s matching
+                // comment for the non-generic case).
+                generic_method_def = self.lowering.ensure_generic_method_def(*def_id);
             }
         }
 
@@ -15399,15 +15505,20 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let Some(hir::Res::Def(def_id)) = resolved_path.res.as_ref() {
-            if let Some(info) = self.lowering.method_lookup_by_def.get(def_id).cloned() {
-                // `method_lookup_by_def` only proves the *signature* was
-                // registered (the order-independent pre-pass populates it
-                // for every non-generic method up front) — the body itself
-                // may not have been lowered yet if this MIR-lowering pass
-                // never proactively reached this method's own `impl` item
-                // (e.g. the comptime-probe's item-scoped entry point, which
-                // deliberately never walks unrelated items). Ensure it now,
-                // on demand, before referencing it.
+            // `ensure_method_info` is the uniform lookup — it resolves a
+            // method in this package or any dependency's the same way
+            // (mirrors `compute_adt_layout`'s existing "check the cache,
+            // lazily register on a miss" shape for ADTs). A hit only
+            // proves the *signature* is known — the body itself may not
+            // be lowered yet if this pass never proactively reached this
+            // method's own `impl` item (e.g. the comptime-probe's
+            // item-scoped entry point, which deliberately never walks
+            // unrelated items, or a dependency's own method, whose body
+            // belongs to that package's own separate compile). Ensure it
+            // now, on demand, before referencing it — a no-op for a
+            // cross-package method, which `ensure_method_lowered`'s
+            // existing `current_package_id` guard already handles.
+            if let Some(info) = self.lowering.ensure_method_info(*def_id) {
                 self.lowering.ensure_method_lowered(*def_id)?;
                 let literal = match info.def_id {
                     Some(def_id) => mir::ConstantKind::FnDef(def_id, Vec::new()),
@@ -16800,6 +16911,26 @@ impl<'a> BodyBuilder<'a> {
                 // directly rather than through typeck) — best effort:
                 // lower the body as ordinary code.
                 self.lower_operand(&const_block.body, expected)
+            }
+            // Unlike `MethodCall` (which `lower_expr_into_place` handles
+            // for real, via its own dedicated `Call` lowering, further
+            // down in that function's own `match`), `FieldAccess` gets no
+            // such treatment there — its only arm (grouped with
+            // `Literal`/`Path`/`Index`/`ConstBlock`) just calls straight
+            // back into `lower_operand` for this same `expr`. Reaching
+            // this wildcard arm with a `FieldAccess` means the const-fold/
+            // `lower_place` attempts above (~15455-15473) — the only two
+            // legitimate ways to resolve one — already failed for real;
+            // routing through `lower_expr_into_place` here would just
+            // re-enter `lower_operand` for a `hir_id` still on the call
+            // stack (still in `active_exprs`), tripping the re-entrancy
+            // guard's "recursive expression detected" — a false positive
+            // that masks the actual failure. Emit that failure directly.
+            hir::ExprKind::FieldAccess(_, _) => {
+                let message = "unable to lower field access to an operand: neither a \
+                     constant value nor a real place could be computed for it";
+                self.lowering.emit_error(expr.span, message);
+                Err(fp_core::error::Error::from(message))
             }
             _ => {
                 // Fallback: evaluate into temporary local
@@ -19837,11 +19968,13 @@ impl<'a> BodyBuilder<'a> {
                 let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
 
                 if let Some(def_id) = self.lowering.typeck_method_resolutions.get(&expr.hir_id).copied() {
-                    if let Some(info) = self.lowering.method_lookup_by_def.get(&def_id) {
-                        resolved_info = Some((info.clone(), None));
+                    // `ensure_method_info` is the uniform lookup, same
+                    // shape as `compute_adt_layout` — see `resolve_callee_path`'s
+                    // matching comment.
+                    if let Some(info) = self.lowering.ensure_method_info(def_id) {
+                        resolved_info = Some((info, None));
                         // Signature presence doesn't imply the body's been
-                        // lowered yet (see `resolve_callee_path`'s matching
-                        // comment) — ensure it now.
+                        // lowered yet — ensure it now.
                         self.lowering.ensure_method_lowered(def_id)?;
                     }
                 }
