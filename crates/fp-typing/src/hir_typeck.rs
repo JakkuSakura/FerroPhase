@@ -2317,10 +2317,35 @@ impl HirTypeChecker {
         Ok(a.clone())
     }
 
+    /// A substitution can itself resolve to another still-unsubstituted
+    /// `Param` (e.g. one generic scope's `T` bound to an enclosing scope's
+    /// own, not-yet-closed-over `U`) — a single `.get()` lookup doesn't
+    /// walk that chain to its end. Depth-bounded the same way the
+    /// autoderef chain in `method_output` is (a real chain this deep would
+    /// be pathological): fails closed (returns the last-seen `Param`
+    /// unresolved) rather than looping forever on a genuine cycle.
+    fn resolve_param_transitively<'a>(
+        &self,
+        param: &'a ty::ParamTy,
+        substitutions: &'a HashMap<ty::ParamTy, Ty>,
+    ) -> Option<&'a Ty> {
+        let mut resolved = substitutions.get(param)?;
+        for _ in 0..8 {
+            let TyKind::Param(next_param) = &resolved.kind else {
+                return Some(resolved);
+            };
+            let Some(next) = substitutions.get(next_param) else {
+                return Some(resolved);
+            };
+            resolved = next;
+        }
+        Some(resolved)
+    }
+
     fn substitute_param_map(&self, ty: &Ty, substitutions: &HashMap<ty::ParamTy, Ty>) -> Ty {
         match &ty.kind {
-            TyKind::Param(param) => match substitutions.get(param) {
-                Some(ty) => ty.clone(),
+            TyKind::Param(param) => match self.resolve_param_transitively(param, substitutions) {
+                Some(resolved) => resolved.clone(),
                 None => ty.clone(),
             },
             TyKind::Ref(region, inner, mutable) => Ty {
@@ -2858,11 +2883,21 @@ impl HirTypeChecker {
                 index: index as u32,
                 name: parameter.name.clone(),
             };
-            let Some(argument) = substitutions.get(&param) else {
-                return Err(Error::from(format!(
-                    "could not infer generic parameter `{}` in impl method",
-                    parameter.name
-                )));
+            // A hit that's itself still `Param` (transitively, after
+            // `resolve_param_transitively` walks any chain) is not a real
+            // resolution — e.g. bound to an enclosing scope's own,
+            // not-yet-closed-over generic — and must fail the same way a
+            // lookup miss does, not be silently returned as if it were a
+            // concrete type (see `resolve_param_transitively`'s doc
+            // comment).
+            let argument = match self.resolve_param_transitively(&param, substitutions) {
+                Some(argument) if !matches!(argument.kind, TyKind::Param(_)) => argument,
+                _ => {
+                    return Err(Error::from(format!(
+                        "could not infer generic parameter `{}` in impl method",
+                        parameter.name
+                    )));
+                }
             };
             args.push(argument.clone());
         }
@@ -2871,11 +2906,14 @@ impl HirTypeChecker {
                 index: index as u32,
                 name: parameter.name.clone(),
             };
-            let Some(argument) = substitutions.get(&param) else {
-                return Err(Error::from(format!(
-                    "could not infer generic parameter `{}` in method",
-                    parameter.name
-                )));
+            let argument = match self.resolve_param_transitively(&param, substitutions) {
+                Some(argument) if !matches!(argument.kind, TyKind::Param(_)) => argument,
+                _ => {
+                    return Err(Error::from(format!(
+                        "could not infer generic parameter `{}` in method",
+                        parameter.name
+                    )));
+                }
             };
             args.push(argument.clone());
         }
