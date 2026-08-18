@@ -96,8 +96,12 @@ fn normalize_item(
                 }
             }
         }
-        hir::ItemKind::Struct(_) | hir::ItemKind::Query(_) => {
-            // No expressions to walk.
+        hir::ItemKind::Struct(_) | hir::ItemKind::Query(_) | hir::ItemKind::Trait(_) => {
+            // No expressions to walk (trait default-method bodies are
+            // never emitted to a backend directly — they're only a
+            // fallback signature source for `method_output`'s typechecking
+            // resolution, not something `hir_normalization`/materialization
+            // needs to promote ops within).
         }
     }
 }

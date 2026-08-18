@@ -401,4 +401,99 @@ impl HirGenerator {
 
         result
     }
+
+    /// Lowers a trait definition into a real `hir::Trait` — the shared
+    /// declaration every concrete `impl Trait for X` is checked/resolved
+    /// against (see `HirTypeChecker::method_output`'s trait-default-method
+    /// fallback, which searches an already-resolved trait's `items` when a
+    /// concrete impl doesn't redeclare a requested method itself). `Self`
+    /// resolves to the same `hir::Res::SelfTy` lexical binding
+    /// `transform_impl` registers for a real impl's own `self_ty` — here
+    /// there's no concrete self-type to substitute (the trait definition
+    /// itself is never instantiated on its own), so default-method bodies
+    /// referencing `Self`/`Self::AssocType` stay abstract; that's fine,
+    /// since these bodies are never type-checked on their own (see
+    /// `HirTypeChecker::check_item`'s `ItemKind::Trait` arm) — only their
+    /// signatures are ever read, after substitution against a real impl's
+    /// concrete `Self`.
+    pub(super) fn transform_trait(&mut self, def_trait: &ast::ItemDefTrait) -> Result<hir::Trait> {
+        self.push_type_scope();
+        self.current_type_scope()
+            .insert("Self".to_string(), hir::Res::SelfTy);
+        self.push_value_scope();
+        self.current_value_scope()
+            .insert("Self".to_string(), hir::Res::SelfTy);
+        let result = (|| {
+            let generics = self.transform_generics(&def_trait.generics_params);
+            let self_ty = hir::TypeExpr::new(
+                self.next_id(),
+                hir::TypeExprKind::Path(hir::Path {
+                    segments: vec![hir::PathSegment {
+                        name: hir::Symbol::new("Self"),
+                        args: None,
+                    }],
+                    res: Some(hir::Res::SelfTy),
+                }),
+                Span::new(self.current_file, 0, 0),
+            );
+
+            let mut items = Vec::new();
+            for item in &def_trait.items {
+                match item.kind() {
+                    ast::ItemKind::DefFunction(func) => {
+                        // A default-provided method (has a real body) —
+                        // the fallback signature source `method_output`
+                        // reads when a concrete impl doesn't redeclare it.
+                        let function = self.transform_function_with_body(
+                            func,
+                            Some(self_ty.clone()),
+                            true,
+                        )?;
+                        items.push(hir::TraitItem {
+                            def_id: self.def_id_for_item(item),
+                            hir_id: self.next_id(),
+                            name: func.name.name.clone().into(),
+                            kind: hir::TraitItemKind::Method(function),
+                        });
+                    }
+                    ast::ItemKind::DeclFunction(func_decl) => {
+                        // An abstract method (no body) — every concrete
+                        // impl must supply its own; never used as a
+                        // fallback signature source.
+                        let function =
+                            self.transform_decl_function_sig(func_decl, Some(self_ty.clone()))?;
+                        items.push(hir::TraitItem {
+                            def_id: self.def_id_for_item(item),
+                            hir_id: self.next_id(),
+                            name: func_decl.name.name.clone().into(),
+                            kind: hir::TraitItemKind::Method(function),
+                        });
+                    }
+                    ast::ItemKind::DeclType(decl_type) => {
+                        // A bare `type Item;` declaration — no bound type
+                        // (that binding is always on the impl side,
+                        // `hir::ImplItemKind::AssocType`); this only
+                        // records that the name exists so a default
+                        // method's signature can reference `Self::Item`.
+                        items.push(hir::TraitItem {
+                            def_id: self.def_id_for_item(item),
+                            hir_id: self.next_id(),
+                            name: decl_type.name.name.clone().into(),
+                            kind: hir::TraitItemKind::AssocType(hir::TraitAssocType {
+                                name: decl_type.name.name.clone().into(),
+                            }),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+
+            Ok(hir::Trait { generics, items })
+        })();
+
+        self.pop_value_scope();
+        self.pop_type_scope();
+
+        result
+    }
 }

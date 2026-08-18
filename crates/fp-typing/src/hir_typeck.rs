@@ -448,6 +448,19 @@ impl HirTypeChecker {
                         }
                     }
                 }
+                hir::ItemKind::Trait(_) => {
+                    // Trait definitions exist here purely as a fallback
+                    // signature/default-body source for `method_output`'s
+                    // trait-default-method resolution (see there) — the
+                    // vendored `core`/`alloc`/`std` source this almost
+                    // always originates from is already known-correct real
+                    // rustc code, and re-verifying a default method's body
+                    // here would require checking it against an abstract,
+                    // uninstantiated `Self`/`Self::AssocType`, which this
+                    // scope-based checker has no general mechanism for.
+                    // Concrete `impl Trait for X` blocks are still fully
+                    // checked as normal, above.
+                }
                 hir::ItemKind::Query(_) => {}
                 hir::ItemKind::Expr(expr) => {
                     self.check_expr(expr).await?;
@@ -1573,16 +1586,54 @@ impl HirTypeChecker {
             .iter()
             .find_map(|segment| segment.args.as_ref())
         {
-            Some(args) => args
-                .args
-                .iter()
-                .map(|arg| match arg {
-                    hir::GenericArg::Type(ty) => self.check_type_expr(ty).map(GenericArg::Type),
-                    hir::GenericArg::Const(_) => Ok(GenericArg::Type(
-                        self.error_ty("const generic arguments are not supported"),
-                    )),
-                })
-                .collect::<Result<Vec<_>>>()?,
+            Some(args) => {
+                let mut checked = args
+                    .args
+                    .iter()
+                    .map(|arg| match arg {
+                        hir::GenericArg::Type(ty) => self.check_type_expr(ty).map(GenericArg::Type),
+                        hir::GenericArg::Const(_) => Ok(GenericArg::Type(
+                            self.error_ty("const generic arguments are not supported"),
+                        )),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                // A source reference may omit trailing generic params that
+                // have a declared default (`Vec<T>`, never spelling out
+                // `Vec<T, A = Global>`'s allocator) — without padding
+                // these back in, this `Adt`'s arg count (1) permanently
+                // disagrees with every impl's own arg count (2, since an
+                // impl block's generics are always written out in full),
+                // so `generic_args_compatible`/`unify_call_types` can
+                // never match this receiver against any of that type's
+                // impls at all (see `method_output`'s `matches_receiver`).
+                // A param with no declared default falls back to a fresh
+                // type parameter, exactly like the fully-omitted (`None`)
+                // case below — still less specific than a real default,
+                // but at least the right *count*, so matching by base
+                // ADT + arity-correct unification still works.
+                let declared_params = match &item.kind {
+                    hir::ItemKind::Struct(def) => Some(&def.generics.params),
+                    hir::ItemKind::Enum(def) => Some(&def.generics.params),
+                    _ => None,
+                };
+                if let Some(declared_params) = declared_params {
+                    for (index, parameter) in declared_params.iter().enumerate().skip(checked.len()) {
+                        let default_ty = match &parameter.kind {
+                            hir::GenericParamKind::Type { default: Some(default) } => {
+                                Some(self.check_type_expr(default)?)
+                            }
+                            _ => None,
+                        };
+                        checked.push(GenericArg::Type(default_ty.unwrap_or_else(|| Ty {
+                            kind: TyKind::Param(ty::ParamTy {
+                                index: index as u32,
+                                name: parameter.name.clone(),
+                            }),
+                        })));
+                    }
+                }
+                checked
+            }
             None => match &item.kind {
                 hir::ItemKind::Struct(def) => def
                     .generics
@@ -2307,6 +2358,24 @@ impl HirTypeChecker {
         receiver_ty: &Ty,
         method: &hir::Symbol,
     ) -> Result<Option<Ty>> {
+        let mut current = receiver_ty.clone();
+        for _ in 0..8 {
+            if let Some(signature) = self.method_declared_signature_at(&current, method)? {
+                return Ok(Some(signature));
+            }
+            match self.deref_target(&current) {
+                Some(target) => current = target,
+                None => break,
+            }
+        }
+        Ok(None)
+    }
+
+    fn method_declared_signature_at(
+        &mut self,
+        receiver_ty: &Ty,
+        method: &hir::Symbol,
+    ) -> Result<Option<Ty>> {
         let receiver_ty = match &receiver_ty.kind {
             TyKind::Ref(_, inner, _) => inner.as_ref(),
             _ => receiver_ty,
@@ -2345,40 +2414,72 @@ impl HirTypeChecker {
                         && scope.generic_args_compatible(impl_args, receiver_args)
                 }
                 (None, TyKind::Adt(_, _), _) => false,
-                (None, _, _) => self_ty == receiver_ty,
+                (None, _, _) => scope
+                    .unify_call_types(self_ty, receiver_ty, &mut HashMap::new())
+                    .is_ok(),
                 (Some(_), _, _) => false,
             };
             if !matches_receiver {
                 continue;
             }
+            let mut find_signature = |scope: &mut Self, function: &hir::Function| -> Result<Option<Ty>> {
+                let signature = scope.function_signature(function)?;
+                let TyKind::FnPtr(sig) = &signature.kind else {
+                    return Ok(None);
+                };
+                let Some(self_input) = sig.binder.value.inputs.first() else {
+                    return Ok(None);
+                };
+                // `Self`'s position, substituted from the *actual*
+                // receiver — everything else in the signature stays
+                // in terms of the method's own generics for now.
+                let mut substitutions = HashMap::new();
+                if scope.unify_call_types(self_input, receiver_ty, &mut substitutions).is_err() {
+                    return Ok(None);
+                }
+                let substituted = scope.substitute_param_map_fn_sig(&sig.binder.value, &substitutions);
+                Ok(Some(Ty {
+                    kind: TyKind::FnPtr(ty::PolyFnSig {
+                        binder: ty::Binder {
+                            value: substituted,
+                            bound_vars: sig.binder.bound_vars.clone(),
+                        },
+                    }),
+                }))
+            };
             for impl_item in &impl_item.items {
                 let hir::ImplItemKind::Method(function) = &impl_item.kind else {
                     continue;
                 };
                 if impl_item.name == *method {
-                    let signature = scope.function_signature(function)?;
-                    let TyKind::FnPtr(sig) = &signature.kind else {
-                        return Ok(None);
-                    };
-                    let Some(self_input) = sig.binder.value.inputs.first() else {
-                        return Ok(None);
-                    };
-                    // `Self`'s position, substituted from the *actual*
-                    // receiver — everything else in the signature stays
-                    // in terms of the method's own generics for now.
-                    let mut substitutions = HashMap::new();
-                    if scope.unify_call_types(self_input, receiver_ty, &mut substitutions).is_err() {
-                        return Ok(None);
+                    return find_signature(&mut scope, function);
+                }
+            }
+            // Not redeclared in this impl's own items — same
+            // trait-default-method fallback as `method_output` (kept in
+            // sync deliberately; see that function's matching block for
+            // why). `Self::AssocType`-shaped types in a default method's
+            // signature (e.g. `Iterator::map`'s `F: FnMut(Self::Item) ->
+            // B`) only resolve if `scope.self_types`/`scope.assoc_types`
+            // are populated first — this function doesn't need that for
+            // the inherent-method case above (no associated types
+            // involved there), but does here.
+            if let Some(trait_ty) = &impl_item.trait_ty {
+                if let Some(trait_def) = scope.resolve_trait_def(trait_ty) {
+                    for trait_item in &trait_def.items {
+                        let hir::TraitItemKind::Method(function) = &trait_item.kind else {
+                            continue;
+                        };
+                        if trait_item.name == *method && function.body.is_some() {
+                            scope.self_types.push(checked_self_ty.clone());
+                            let assoc_types = scope.impl_assoc_types(&impl_item.items)?;
+                            scope.assoc_types.push(assoc_types);
+                            let result = find_signature(&mut scope, function);
+                            scope.assoc_types.pop();
+                            scope.self_types.pop();
+                            return result;
+                        }
                     }
-                    let substituted = scope.substitute_param_map_fn_sig(&sig.binder.value, &substitutions);
-                    return Ok(Some(Ty {
-                        kind: TyKind::FnPtr(ty::PolyFnSig {
-                            binder: ty::Binder {
-                                value: substituted,
-                                bound_vars: sig.binder.bound_vars.clone(),
-                            },
-                        }),
-                    }));
                 }
             }
         }
@@ -2409,12 +2510,40 @@ impl HirTypeChecker {
         }
     }
 
+    /// Real rustc method resolution builds an "autoderef chain" — the
+    /// receiver, then `*receiver`, `**receiver`, ... via the `Deref` trait
+    /// — and looks for the method at each step, stopping at the first
+    /// match. `&`/`&mut` referencing is already peeled at every call site
+    /// via the `Ref`-stripping in `method_output_at`; this loop handles
+    /// the *trait* (`Vec<T>` -> `[T]`, `Box<T>`/`Rc<T>`/`Arc<T>` -> `T`,
+    /// ...) via `deref_target`. Bounded the same conservative way rustc
+    /// bounds its own autoderef chain (a fixed small limit, not truly
+    /// unbounded) — a real `Deref` chain this deep would be pathological.
     fn method_output(
         &mut self,
         receiver_ty: &Ty,
         method: &hir::Symbol,
         actuals: &[Ty],
     ) -> Result<(hir::DefId, Option<Vec<Ty>>, Ty)> {
+        let mut current = receiver_ty.clone();
+        for _ in 0..8 {
+            if let Some(result) = self.method_output_at(&current, method, actuals)? {
+                return Ok(result);
+            }
+            match self.deref_target(&current) {
+                Some(target) => current = target,
+                None => break,
+            }
+        }
+        Err(Error::from(format!("method `{method}` was not found")))
+    }
+
+    fn method_output_at(
+        &mut self,
+        receiver_ty: &Ty,
+        method: &hir::Symbol,
+        actuals: &[Ty],
+    ) -> Result<Option<(hir::DefId, Option<Vec<Ty>>, Ty)>> {
         let receiver_ty = match &receiver_ty.kind {
             TyKind::Ref(_, inner, _) => inner.as_ref(),
             _ => receiver_ty,
@@ -2463,7 +2592,15 @@ impl HirTypeChecker {
                         && scope.generic_args_compatible(impl_args, receiver_args)
                 }
                 (None, TyKind::Adt(_, _), _) => false,
-                (None, _, _) => self_ty == receiver_ty,
+                // General unification instead of strict structural
+                // equality — a generic non-ADT impl (`impl<T> [T] { .. }`,
+                // matched against a concrete `[(String, PathBuf, String)]`
+                // receiver) needs its own `Param`s substituted the same
+                // way a call argument would, not an exact-shape match
+                // (which a still-generic impl could never satisfy).
+                (None, _, _) => scope
+                    .unify_call_types(self_ty, receiver_ty, &mut HashMap::new())
+                    .is_ok(),
                 (Some(_), _, _) => false,
             };
             if !matches_receiver {
@@ -2491,13 +2628,130 @@ impl HirTypeChecker {
                     )?;
                     scope.assoc_types.pop();
                     scope.self_types.pop();
-                    return Ok((impl_item.def_id, args, result));
+                    return Ok(Some((impl_item.def_id, args, result)));
+                }
+            }
+            // Not redeclared in this impl's own items — if this is a
+            // trait impl, the trait itself may provide a default-bodied
+            // method by this name (`Iterator::map`/`filter_map`/etc. are
+            // never redeclared per adaptor struct; only `next` typically
+            // is). `scope.self_types`/`scope.assoc_types` are still the
+            // ones pushed for *this* impl candidate above, so a default
+            // method's `Self`/`Self::Item`-shaped signature substitutes
+            // through exactly the same generic-instantiation machinery as
+            // an inherent method's, with no separate mechanism needed.
+            if let Some(trait_ty) = &impl_item.trait_ty {
+                if let Some(trait_def) = scope.resolve_trait_def(trait_ty) {
+                    for trait_item in &trait_def.items {
+                        let hir::TraitItemKind::Method(function) = &trait_item.kind else {
+                            continue;
+                        };
+                        // An abstract (no-body) trait method can never be
+                        // a fallback signature source — if the impl
+                        // doesn't redeclare it, that's a genuine "method
+                        // not found" case, not something to paper over.
+                        if trait_item.name == *method && function.body.is_some() {
+                            let signature = scope.function_signature(function)?;
+                            let Some((substitutions, result)) =
+                                scope.instantiate_call(&signature, actuals)?
+                            else {
+                                return Err(Error::from("method arguments do not match its signature"));
+                            };
+                            let args = scope.method_generic_args(
+                                &impl_generics,
+                                &function.sig.generics,
+                                &substitutions,
+                            )?;
+                            scope.assoc_types.pop();
+                            scope.self_types.pop();
+                            return Ok(Some((trait_item.def_id, args, result)));
+                        }
+                    }
                 }
             }
             scope.assoc_types.pop();
             scope.self_types.pop();
         }
-        Err(Error::from(format!("method `{method}` was not found")))
+        Ok(None)
+    }
+
+    /// Resolves a trait impl's `trait_ty` (`impl Trait for X`'s `Trait`
+    /// path) to its real `hir::Trait` definition — `None` if unresolved
+    /// (an unknown/erroring path) or if the resolved item isn't actually a
+    /// trait (shouldn't happen for a well-formed `trait_ty`, but this is a
+    /// read path, not a validator — fail open rather than panic).
+    fn resolve_trait_def(&self, trait_ty: &hir::TypeExpr) -> Option<hir::Trait> {
+        let hir::TypeExprKind::Path(path) = &trait_ty.kind else {
+            return None;
+        };
+        let hir::Res::Def(def_id) = path.res.clone()? else {
+            return None;
+        };
+        let item = self.shared.program.def_map.get(&def_id)?;
+        match &item.kind {
+            hir::ItemKind::Trait(tr) => Some(tr.clone()),
+            _ => None,
+        }
+    }
+
+    /// The real `Deref` *trait*'s effect on method resolution (distinct
+    /// from the `&`/`&mut` reference-peeling every caller already does
+    /// inline) — `Vec<T>` has no `iter`/`push`/etc. of its own; it only
+    /// has these because `impl Deref for Vec<T> { type Target = [T]; }`
+    /// lets `[T]`'s own inherent methods be called directly on a `Vec<T>`
+    /// receiver. Returns that impl's `Target`, substituted with this
+    /// receiver's own concrete generic arguments — `None` if no such impl
+    /// exists (a non-ADT receiver, or an ADT with no `Deref` impl), which
+    /// is exactly where real dereferencing stops too.
+    fn deref_target(&mut self, receiver_ty: &Ty) -> Option<Ty> {
+        let receiver_def = match &receiver_ty.kind {
+            TyKind::Adt(receiver, _) => receiver.did,
+            _ => return None,
+        };
+        let impl_items = self.impl_lookup_items();
+        let candidate_indices = self
+            .impl_items_by_receiver_def()
+            .get(&receiver_def)
+            .cloned()
+            .unwrap_or_default();
+        for item_index in candidate_indices {
+            let item = &impl_items[item_index];
+            let hir::ItemKind::Impl(impl_item) = &item.kind else {
+                continue;
+            };
+            let Some(trait_ty) = &impl_item.trait_ty else {
+                continue;
+            };
+            let hir::TypeExprKind::Path(path) = &trait_ty.kind else {
+                continue;
+            };
+            if path.segments.last().map(|seg| seg.name.as_str()) != Some("Deref") {
+                continue;
+            }
+            let mut scope = self.generic_scope(&impl_item.generics);
+            let Ok(checked_self_ty) = scope.check_type_expr(&impl_item.self_ty) else {
+                continue;
+            };
+            let self_ty = match &checked_self_ty.kind {
+                TyKind::Ref(_, inner, _) => inner.as_ref(),
+                _ => &checked_self_ty,
+            };
+            let mut substitutions = HashMap::new();
+            if scope
+                .unify_call_types(self_ty, receiver_ty, &mut substitutions)
+                .is_err()
+            {
+                continue;
+            }
+            let Ok(assoc_types) = scope.impl_assoc_types(&impl_item.items) else {
+                continue;
+            };
+            let Some(target) = assoc_types.get(&hir::Symbol::new("Target")) else {
+                continue;
+            };
+            return Some(scope.substitute_param_map(target, &substitutions));
+        }
+        None
     }
 
     /// Lazily builds and memoizes `TypingShared::impl_lookup_items` (see its

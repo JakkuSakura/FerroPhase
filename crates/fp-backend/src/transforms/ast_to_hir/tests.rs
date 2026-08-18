@@ -1037,7 +1037,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
             }
             hir::ItemKind::Query(_) => {}
             hir::ItemKind::Expr(expr) => collect_paths(expr, out),
-            hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) => {}
+            hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) | hir::ItemKind::Trait(_) => {}
         }
     }
 

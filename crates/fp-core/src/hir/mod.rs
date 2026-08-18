@@ -144,6 +144,7 @@ pub enum ItemKind {
     Enum(Enum),
     Const(Const),
     Impl(Impl),
+    Trait(Trait),
     Query(Query),
     Expr(Expr),
 }
@@ -244,6 +245,47 @@ pub enum ImplItemKind {
     Method(Function),
     AssocConst(Const),
     AssocType(AssocType),
+}
+
+/// A trait definition — declares the methods/associated types every `impl
+/// Trait for X` is expected to provide (or inherit from a default). Unlike
+/// `Impl`, this is never `Self`-specific: it's the shared declaration every
+/// concrete impl is checked/resolved against (see `HirTypeChecker::
+/// method_output`'s trait-default-method fallback, which searches here when
+/// a concrete impl doesn't redeclare a requested method itself).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Trait {
+    pub generics: Generics,
+    pub items: Vec<TraitItem>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitItem {
+    pub def_id: DefId,
+    pub hir_id: HirId,
+    pub name: Symbol,
+    pub kind: TraitItemKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TraitItemKind {
+    /// A trait method — `Function.body` is `Some` for a default-provided
+    /// method (e.g. `Iterator::map`) and `None` for one every impl must
+    /// supply itself (e.g. `Iterator::next`). Only the `Some` case is ever
+    /// used as a fallback signature source; an impl that doesn't redeclare
+    /// an abstract (`None`-bodied) method is a genuine error, not something
+    /// to fall back on.
+    Method(Function),
+    /// A bare `type Item;` declaration — no bound type (that binding is
+    /// always on the impl side, `ImplItemKind::AssocType`); this only
+    /// records that the name exists so a trait method's signature can
+    /// reference `Self::Item` and have somewhere to resolve it from.
+    AssocType(TraitAssocType),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitAssocType {
+    pub name: Symbol,
 }
 
 /// An impl block's own `type Target = Y;` binding for one of its trait's
@@ -781,6 +823,7 @@ impl ItemKind {
             ItemKind::Enum(enm) => enm.span(),
             ItemKind::Const(cons) => cons.span(),
             ItemKind::Impl(imp) => imp.span(),
+            ItemKind::Trait(tr) => tr.span(),
             ItemKind::Query(query) => query.span(),
             ItemKind::Expr(expr) => expr.span(),
         }
@@ -880,6 +923,27 @@ impl Impl {
 impl Query {
     pub fn span(&self) -> Span {
         self.span
+    }
+}
+
+impl Trait {
+    pub fn span(&self) -> Span {
+        Span::union(self.items.iter().map(TraitItem::span))
+    }
+}
+
+impl TraitItem {
+    pub fn span(&self) -> Span {
+        self.kind.span()
+    }
+}
+
+impl TraitItemKind {
+    pub fn span(&self) -> Span {
+        match self {
+            TraitItemKind::Method(func) => func.span(),
+            TraitItemKind::AssocType(_) => Span::default(),
+        }
     }
 }
 

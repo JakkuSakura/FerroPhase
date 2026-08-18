@@ -102,6 +102,7 @@ fn item_has_unresolved_paths(item: &hir::Item) -> bool {
                     .is_some_and(expr_has_unresolved_paths)
         }),
         hir::ItemKind::Impl(_) => true,
+        hir::ItemKind::Trait(_) => true,
         hir::ItemKind::Query(_) => false,
         hir::ItemKind::Expr(expr) => expr_has_unresolved_paths(expr),
     }
@@ -297,6 +298,7 @@ fn item_name(item: &hir::Item) -> Option<&str> {
         hir::ItemKind::Enum(def) => Some(def.name.as_str()),
         hir::ItemKind::Const(def) => Some(def.name.as_str()),
         hir::ItemKind::Impl(_) => None,
+        hir::ItemKind::Trait(_) => None,
         hir::ItemKind::Query(_) => None,
         hir::ItemKind::Expr(_) => None,
     }
@@ -340,6 +342,7 @@ pub(crate) fn collect_item_refs(
             }
         }
         hir::ItemKind::Impl(_) => {}
+        hir::ItemKind::Trait(_) => {}
         hir::ItemKind::Query(_) => {}
         hir::ItemKind::Expr(expr) => collect_expr_refs(expr, tail_map, work),
     }

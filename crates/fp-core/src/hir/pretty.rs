@@ -5,7 +5,8 @@ use std::fmt::{self, Formatter};
 use super::{
     AssocType, BinOp, Block, Body, Const, Enum, Expr, ExprKind, FormatArgRef, FormatTemplatePart,
     Function, GenericArg, GenericParamKind, Generics, Impl, ImplItemKind, Item, ItemKind, Lit, Pat,
-    PatKind, Path, Program, Query, Stmt, StmtKind, Struct, TypeExpr, TypeExprKind, UnOp, Visibility,
+    PatKind, Path, Program, Query, Stmt, StmtKind, Struct, Trait, TraitItemKind, TypeExpr,
+    TypeExprKind, UnOp, Visibility,
 };
 
 fn query_statement_lines(ir: &crate::query::QueryIrDocument) -> Vec<String> {
@@ -42,6 +43,7 @@ fn write_item(item: &Item, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fm
         ItemKind::Enum(enm) => write_enum(item, enm, f, ctx),
         ItemKind::Const(konst) => write_const(item, konst, f, ctx),
         ItemKind::Impl(imp) => write_impl(item, imp, f, ctx),
+        ItemKind::Trait(tr) => write_trait(item, tr, f, ctx),
         ItemKind::Query(query) => write_query(item, query, f, ctx),
         ItemKind::Expr(expr) => {
             ctx.writeln(f, format!("expr#{} @ {:?}", item.hir_id, item.span))?;
@@ -341,6 +343,30 @@ fn write_impl_assoc_type(
         f,
         format!("type {} = {};", assoc.name, fmt_type_expr(&assoc.ty, ctx)),
     )
+}
+
+fn write_trait(item: &Item, tr: &Trait, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+    let vis = fmt_visibility(&item.visibility);
+    let generics = fmt_generics(&tr.generics, ctx);
+    let span_suffix = if ctx.options.show_spans {
+        format!(" // span: {:?}", item.span)
+    } else {
+        String::new()
+    };
+    ctx.writeln(f, format!("{}trait{} {{", vis, generics) + &span_suffix)?;
+    ctx.with_indent(|ctx| {
+        for (idx, trait_item) in tr.items.iter().enumerate() {
+            match &trait_item.kind {
+                TraitItemKind::Method(func) => write_impl_method(func, f, ctx)?,
+                TraitItemKind::AssocType(assoc) => ctx.writeln(f, format!("type {};", assoc.name))?,
+            }
+            if idx + 1 < tr.items.len() {
+                ctx.writeln(f, "")?;
+            }
+        }
+        Ok(())
+    })?;
+    ctx.writeln(f, "}")
 }
 
 fn write_block(block: &Block, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {

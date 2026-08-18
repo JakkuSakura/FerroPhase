@@ -2400,34 +2400,24 @@ impl HirGenerator {
                 (hir::ItemKind::Const(konst), hir::Visibility::Private)
             }
             ItemKind::DefTrait(def_trait) => {
-                let unit_expr = hir::Expr {
-                    hir_id: self.next_id(),
-                    kind: hir::ExprKind::Literal(hir::Lit::Bool(false)),
-                    span: self.create_span(1),
-                };
-                let body = hir::Body {
-                    hir_id: self.next_id(),
-                    params: Vec::new(),
-                    value: unit_expr,
-                };
-                // HIR has no first-class trait item — this placeholder only
-                // exists so the item has *some* HIR shape to type-check.
                 // Backends that model traits as real interfaces (e.g.
-                // fp-kotlin) work off the original, pristine `ast::Item`
-                // instead — recording `def_id` in `placeholder_defs` (mirrored
-                // into `hir::Program::placeholder_defs`) lets
+                // fp-kotlin) still work off the original, pristine
+                // `ast::Item` instead of anything lifted from this HIR
+                // shape — recording `def_id` in `placeholder_defs`
+                // (mirrored into `hir::Program::placeholder_defs`) lets
                 // `HirToAstLifter::lift_items_by_path` skip lifting this
-                // stand-in, so typed-splice (`typecheck_package`) falls back
-                // to the real trait declaration instead of overwriting it
-                // with this bogus `const NAME = false`.
+                // item, so typed-splice (`typecheck_package`) falls back to
+                // the real trait declaration for codegen. This real
+                // `hir::ItemKind::Trait` shape exists purely so HIR
+                // typechecking's method resolution (`HirTypeChecker::
+                // method_output`'s trait-default-method fallback) has
+                // somewhere to find a trait's default-method signatures
+                // and associated-type declarations — see that function's
+                // doc comment.
                 self.placeholder_defs.insert(def_id);
-                let konst = hir::Const {
-                    name: hir::Symbol::new(def_trait.name.name.clone()),
-                    ty: self.create_simple_type("bool"),
-                    body,
-                };
+                let hir_trait = self.transform_trait(def_trait)?;
                 (
-                    hir::ItemKind::Const(konst),
+                    hir::ItemKind::Trait(hir_trait),
                     self.map_visibility(&def_trait.visibility),
                 )
             }

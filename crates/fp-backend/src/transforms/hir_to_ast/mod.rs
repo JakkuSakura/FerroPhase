@@ -318,6 +318,12 @@ impl<'a> HirToAstLifter<'a> {
                 value: Box::new(self.lift_body_value(&def.body.value)?),
             })),
             hir::ItemKind::Impl(_) => Item::from(ItemKind::Expr(ast::Expr::unit())),
+            // Same placeholder treatment as `Impl` — `Trait` items are
+            // always in `program.placeholder_defs` (see `ast_to_hir`'s
+            // `ItemKind::DefTrait` lowering), so `lift_items_by_path`'s own
+            // placeholder check already skips ever lifting one for real;
+            // this arm only exists to keep this match exhaustive.
+            hir::ItemKind::Trait(_) => Item::from(ItemKind::Expr(ast::Expr::unit())),
             hir::ItemKind::Query(query) => {
                 return Err(fp_core::error::Error::Generic(eyre::eyre!(
                     "HIR->AST lifting for query item '{}' requires lift_program root handling",
@@ -709,20 +715,34 @@ impl<'a> HirToAstLifter<'a> {
                 }))
             }
             hir::ExprKind::Closure(closure) => {
-                // No per-parameter type slot to lift here — `ast::
-                // ExprClosure` (like real Rust closure syntax) carries bare
-                // patterns; the closure's own resolved `Ty::Function` type
-                // (params + return) is attached below via the same
-                // `ty_slot`/`hir_ty_to_ast` machinery every other arm gets,
-                // which is what backends needing per-parameter types (e.g.
-                // fp-kotlin's lambda renderer) actually read.
+                // Each param's own resolved type (if the typechecker
+                // recorded one — `TypeckResults::pat_types`, keyed by the
+                // pattern's own `HirId`) gets attached directly to the
+                // lifted `Pattern.ty` slot here, since `lift_pat` itself
+                // has no typeck access. This is what backends needing
+                // per-parameter types (e.g. fp-kotlin's lambda renderer,
+                // `kotlin_type_from_ty_slot(&p.ty)`) actually read — an
+                // unresolved/never-recorded param (no hint reached the
+                // closure at typecheck time) simply keeps a bare pattern
+                // with no `.ty`, same as before this existed.
+                let params = closure
+                    .params
+                    .iter()
+                    .map(|param| {
+                        let mut pattern = self.lift_pat(&param.pat)?;
+                        if let Some(ty) = self
+                            .typeck
+                            .and_then(|t| t.pat_types.get(&param.pat.hir_id))
+                            .and_then(|ty| self.hir_ty_to_ast(ty))
+                        {
+                            pattern.ty = Some(ty);
+                        }
+                        Ok(pattern)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
                 Expr::new(ast::ExprKind::Closure(ExprClosure {
                     span: expr.span,
-                    params: closure
-                        .params
-                        .iter()
-                        .map(|param| self.lift_pat(&param.pat))
-                        .collect::<Result<Vec<_>>>()?,
+                    params,
                     ret_ty: None,
                     movability: None,
                     body: Box::new(self.lift_expr(&closure.body)?),

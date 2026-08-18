@@ -1286,6 +1286,12 @@ impl MirLowering {
                 hir::ItemKind::Query(query) => {
                     mir_program.items.push(self.lower_query(item, query));
                 }
+                // Trait definitions are only a fallback signature source
+                // for HIR typechecking's method resolution — never lowered
+                // to MIR/emitted to any backend directly (a concrete `impl
+                // Trait for X` is what actually gets lowered, via the
+                // `Impl` arm above).
+                hir::ItemKind::Trait(_) => {}
                 hir::ItemKind::Expr(_) => {}
             }
         }
@@ -11691,6 +11697,7 @@ impl<'a> BodyBuilder<'a> {
                 self.lowering.extra_bodies.push((body_id, body));
             }
             hir::ItemKind::Query(_) => {}
+            hir::ItemKind::Trait(_) => {}
             hir::ItemKind::Expr(expr) => {
                 self.lower_expr_statement(expr)?;
             }
