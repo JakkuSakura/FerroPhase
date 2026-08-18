@@ -4073,6 +4073,16 @@ impl LirGenerator {
                 offset = offset.saturating_add(self.size_of_lir_type(&elem_lir_ty));
             }
             offset
+        } else if field_index == 0 {
+            // No real struct/tuple layout to consult — this is expected
+            // for an enum's opaque, byte-blob-shaped shared payload slot
+            // (heterogeneous per-variant types collapse to a plain
+            // `Array(I8, N)` at the LIR level, with no field structure of
+            // its own). Field 0 of *anything* starts at offset 0
+            // regardless of the base's shape, so this needs no layout
+            // lookup at all — only a non-zero index on a genuinely
+            // unstructured base is a real error (below).
+            0
         } else {
             return Err(crate::error::optimization_error(
                 "MIR→LIR: field projection requires a struct/tuple layout",

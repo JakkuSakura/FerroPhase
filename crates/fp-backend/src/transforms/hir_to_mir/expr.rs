@@ -12152,7 +12152,36 @@ impl<'a> BodyBuilder<'a> {
                     ))
                 })?;
                 let operand = self.lower_operand(&arg.value, Some(expected_ty))?;
-                operands.push(operand.operand);
+                if self.lowering.is_opaque_ty(slot_ty) && slot_ty != expected_ty {
+                    // This slot is shared with sibling variants whose own
+                    // payload types disagree (`enum_layout_for_instance`
+                    // already opaqued it out to a byte blob sized to fit
+                    // all of them) — this variant's own value is narrower
+                    // than that shared slot. Write it through a
+                    // `PlaceElem::Field` projection at this variant's own
+                    // (narrower) type, exactly mirroring how *reading* a
+                    // payload back out of an opaque slot already works
+                    // (`apply_field_projection` in mir_to_lir resolves a
+                    // field projection via an address + pointer-cast to
+                    // the caller-chosen type, independent of the slot's
+                    // own declared type) — never construct the aggregate
+                    // from a bare, mismatched-width operand directly.
+                    let opaque_local = self.allocate_temp(slot_ty.clone(), span);
+                    let mut opaque_field_place = mir::Place::from_local(opaque_local);
+                    opaque_field_place
+                        .projection
+                        .push(mir::PlaceElem::Field(0, expected_ty.clone()));
+                    self.push_statement(mir::Statement {
+                        source_info: span,
+                        kind: mir::StatementKind::Assign(
+                            opaque_field_place,
+                            mir::Rvalue::Use(operand.operand),
+                        ),
+                    });
+                    operands.push(mir::Operand::Copy(mir::Place::from_local(opaque_local)));
+                } else {
+                    operands.push(operand.operand);
+                }
             } else {
                 operands.push(mir::Operand::Constant(mir::Constant {
                     span,
@@ -12572,7 +12601,36 @@ impl<'a> BodyBuilder<'a> {
                 user_ty: None,
                 literal: mir::ConstantKind::Int(variant.discriminant),
             })];
-            operands.push(mir::Operand::Copy(mir::Place::from_local(payload_local)));
+            let slot_ty = layout.payload_tys.first();
+            if let Some(slot_ty) = slot_ty {
+                if self.lowering.is_opaque_ty(slot_ty) && *slot_ty != payload_ty {
+                    // Same reasoning as `assign_enum_variant`: this
+                    // struct-like variant's own payload shape is narrower
+                    // than the slot shared with sibling variants whose
+                    // payload types disagree — write it through a field
+                    // projection at its own type rather than constructing
+                    // the aggregate from a mismatched-width operand.
+                    let opaque_local = self.allocate_temp(slot_ty.clone(), span);
+                    let mut opaque_field_place = mir::Place::from_local(opaque_local);
+                    opaque_field_place
+                        .projection
+                        .push(mir::PlaceElem::Field(0, payload_ty.clone()));
+                    self.push_statement(mir::Statement {
+                        source_info: span,
+                        kind: mir::StatementKind::Assign(
+                            opaque_field_place,
+                            mir::Rvalue::Use(mir::Operand::Copy(mir::Place::from_local(
+                                payload_local,
+                            ))),
+                        ),
+                    });
+                    operands.push(mir::Operand::Copy(mir::Place::from_local(opaque_local)));
+                } else {
+                    operands.push(mir::Operand::Copy(mir::Place::from_local(payload_local)));
+                }
+            } else {
+                operands.push(mir::Operand::Copy(mir::Place::from_local(payload_local)));
+            }
             for slot_ty in layout.payload_tys.iter().skip(1) {
                 operands.push(mir::Operand::Constant(mir::Constant {
                     span,
