@@ -3692,8 +3692,19 @@ fn map_name_to_kt(name: &str) -> String {
         _ => {}
     }
 
-    // Preserve path structure for workspace packages and unresolved names
-    name.to_string()
+    // A module-qualified name with no other match (a workspace-local
+    // struct/enum reference, e.g. `crate::config::GlobalConfig`) — Kotlin
+    // has no nested package hierarchy mirroring Rust's module tree (every
+    // struct/enum is emitted as a flat top-level class/companion object
+    // per generated file), so only the type's own last segment is ever a
+    // real Kotlin identifier; earlier module segments would render as
+    // literal `::`/`.`-joined garbage (`crate.config.GlobalConfig`, not a
+    // resolvable reference) rather than the intended type name. Falls
+    // back to the last segment alone for exactly the same reason
+    // `is_local_type` in `map_kt_path` already special-cases a
+    // *single*-segment PascalCase prefix — this is that same rule
+    // extended to a prefix that still carries its module qualification.
+    last_seg.to_string()
 }
 
 /// Map a KnownClass descriptor to its Kotlin type representation.

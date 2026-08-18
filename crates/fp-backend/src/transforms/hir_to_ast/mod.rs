@@ -156,6 +156,76 @@ impl<'a> HirToAstLifter<'a> {
         paths.into_iter().zip(items).collect()
     }
 
+    /// `lift_items_by_path` treats an `hir::ItemKind::Impl` as an opaque,
+    /// un-lifted placeholder (real per-target impl-block emission happens
+    /// downstream, per-backend) — so a typed-splice consumer keyed only by
+    /// `lift_items_by_path`'s map never sees any impl *method*'s typed,
+    /// `hir_normalization`-promoted body at all, and permanently falls
+    /// back to that method's original, untyped, pre-typecheck source
+    /// form (confirmed: this is why `hir_normalization`'s correctly
+    /// promoted `Ok(...)`/`Some(...)` calls inside impl methods never
+    /// reached `KotlinMaterializer` — the promoted HIR was real, but
+    /// nothing ever spliced it back in). This method fills that gap:
+    /// each `Method` inside every `impl` block, keyed by its own
+    /// `DefId`'s qualified path (already recorded — see
+    /// `ast_to_hir::transform_package`'s predeclare pass, which calls
+    /// `record_value_path` for every impl method using `canonical_type_path`
+    /// + the method's own name — the same path shape a splice consumer can
+    /// reconstruct from the untyped source: the self-type's own module +
+    /// name + method name).
+    ///
+    /// Per-method visibility isn't tracked on `hir::ImplItem` today (only
+    /// the enclosing `hir::Item`/impl block carries a `Visibility`, and
+    /// that's for the *impl*, not each method) — lifted methods are
+    /// conservatively marked `Public`, matching how they're already
+    /// reachable in practice (an impl method callable from outside its
+    /// own module needs to already be public; a method that unexpectedly
+    /// becomes visible here doesn't break anything Kotlin-side the way an
+    /// incorrectly-hidden one would).
+    pub fn lift_impl_methods_by_path(&self) -> HashMap<hir::DefPath, Item> {
+        let mut lifted = Vec::new();
+        for item in &self.program.items {
+            let hir::ItemKind::Impl(imp) = &item.kind else {
+                continue;
+            };
+            // Trait impls (`impl Trait for Type`) need their own, more
+            // careful handling — `self`-parameter stripping and receiver
+            // binding for these methods isn't wired through this generic
+            // `lift_function_item` path yet (confirmed: it renders
+            // `self` as a bare explicit parameter here, unlike the
+            // per-backend inherent-impl emission path), so scope this to
+            // inherent impls only for now rather than splicing in a
+            // typed body that's structurally wrong for a trait method.
+            if imp.trait_ty.is_some() {
+                continue;
+            }
+            for impl_item in &imp.items {
+                let hir::ImplItemKind::Method(function) = &impl_item.kind else {
+                    continue;
+                };
+                let Some(path) = self.program.def_paths.get(&impl_item.def_id) else {
+                    continue;
+                };
+                let synthetic_item = hir::Item {
+                    hir_id: impl_item.hir_id,
+                    def_id: impl_item.def_id,
+                    visibility: hir::Visibility::Public,
+                    kind: hir::ItemKind::Function(function.clone()),
+                    span: item.span,
+                };
+                let Ok(ast_item) = self.lift_function_item(&synthetic_item, function) else {
+                    continue;
+                };
+                lifted.push((path.clone(), ast_item));
+            }
+        }
+        let (paths, items): (Vec<_>, Vec<_>) = lifted.into_iter().unzip();
+        let items = self
+            .reconstruct_closures(items.clone())
+            .unwrap_or(items);
+        paths.into_iter().zip(items).collect()
+    }
+
     /// For each item (keyed by its own qualified path, same key shape as
     /// [`lift_items_by_path`](Self::lift_items_by_path)), the qualified
     /// paths of every OTHER definition it references — used to compute
@@ -1026,6 +1096,16 @@ impl<'a> HirToAstLifter<'a> {
                 None => path.segments.last().map(|s| s.name.as_str().to_string()),
             },
             hir::TypeExprKind::Primitive(primitive) => Some(rust_primitive_source_name(primitive)),
+            // A reference generic argument (`Vec<&'a str>`, `Vec<&Hunk>`)
+            // — Kotlin has no borrow-checked reference type to preserve,
+            // so unwrap to the referent's own name, same as every other
+            // by-value argument. Without this, `&str`/`&T` here fell
+            // through to `None`, making the whole arg list empty and
+            // collapsing the wrapper to a bare, ungenericized `Vec`/
+            // `Option` (the same "arg silently drops out" failure mode
+            // already guarded against on the resolved-`Ty` side, in
+            // `resolved_ty_source_name`).
+            hir::TypeExprKind::Ref(inner) => self.type_expr_source_name(inner),
             _ => None,
         }
     }
@@ -1197,6 +1277,21 @@ impl<'a> HirToAstLifter<'a> {
                 }
             }
             TyKind::Ref(_, inner, _) => self.resolved_ty_source_name(inner),
+            // `str` has no dedicated `TyKind` of its own — it's modeled as
+            // `Slice(Int(I8))` (see `hir_typeck.rs`'s primitive-name table),
+            // so recognize that specific shape and render it as `"str"`
+            // (`map_name_to_kt` already maps `str`/`String` -> `String`).
+            // Without this, a generic argument like `Vec<&str>`'s `&str`
+            // silently resolved to `None` here, making the whole arg list
+            // empty and collapsing the wrapper to a bare, ungenericized
+            // `Vec` — exactly the same "arg drops out entirely" failure
+            // mode already guarded against for the `Adt` case above.
+            TyKind::Slice(elem) if matches!(elem.kind, TyKind::Int(hir::ty::IntTy::I8)) => {
+                Some("str".to_string())
+            }
+            TyKind::Slice(elem) => self
+                .resolved_ty_source_name(elem)
+                .map(|inner| format!("[{}]", inner)),
             TyKind::Bool => Some("bool".to_string()),
             TyKind::Char => Some("char".to_string()),
             TyKind::Int(_) | TyKind::Uint(_) => Some("i64".to_string()),

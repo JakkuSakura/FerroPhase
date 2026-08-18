@@ -297,20 +297,15 @@ pub struct CompiledPackage {
     /// members every time.
     pub hir_impl_method_item_index: HashMap<crate::hir::DefId, usize>,
 
-    /// Typed HIR lifted back to AST, keyed by each item's own qualified
-    /// name (`HirToAstLifter::lift_items_by_path`) rather than by list
-    /// position — lets a source item be spliced with its typed
-    /// counterpart by identity, tolerating extra (synthetic) or missing
-    /// (e.g. per-item lift failures) entries on either side instead of
-    /// requiring the two lists to match 1:1 in the same order.
-    pub lifted_items_by_path: Option<HashMap<crate::hir::DefPath, Item>>,
-
-    /// For each item in `lifted_items_by_path` (same key), the qualified
-    /// paths of every other definition it references
+    /// For each item in `items` (keyed by its own qualified path), the
+    /// qualified paths of every other definition it references
     /// (`HirToAstLifter::referenced_paths_by_path`) — raw facts a target
     /// backend can use to compute which imports it actually needs for
-    /// spliced-in content, rather than only echoing the source file's
-    /// pre-existing `use` items.
+    /// typed/normalized content, rather than only echoing the source
+    /// file's pre-existing `use` items. `CompilerDriver::compile_package`
+    /// already splices typed HIR back onto `items` itself (by the same
+    /// qualified-path identity), so nothing outside `fp-compiler` needs
+    /// the raw lifted map.
     pub referenced_paths_by_path: Option<HashMap<crate::hir::DefPath, Vec<crate::hir::DefPath>>>,
 
     /// MIR produced for this package.
@@ -373,7 +368,6 @@ impl CompiledPackage {
             hir_program: None,
             hir_struct_defs_by_name: HashMap::new(),
             hir_impl_method_item_index: HashMap::new(),
-            lifted_items_by_path: None,
             referenced_paths_by_path: None,
             mir_program: None,
             hir_exports: HashMap::new(),

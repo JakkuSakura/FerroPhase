@@ -1162,37 +1162,6 @@ pub fn parse_file_with_mode(
     parse_file_with_context(path, source_language, parse_mode, lossy)
 }
 
-/// The name an `ast::Item` is registered under during AST→HIR lowering
-/// (`HirGenerator::predeclare_items`'s `register_type_def`/
-/// `register_value_def` calls, `fp-backend/src/transforms/ast_to_hir/
-/// mod.rs:788+`) — `None` for item kinds with no name of their own
-/// (`Impl`, `Import`, bare `Expr`, ...), which therefore can never be
-/// looked up in a qualified-path-keyed map.
-fn item_own_name(item: &Item) -> Option<&str> {
-    match item.kind() {
-        ItemKind::Module(module) => Some(module.name.name.as_str()),
-        ItemKind::DefStruct(def) => Some(def.name.name.as_str()),
-        ItemKind::DefStructural(def) => Some(def.name.name.as_str()),
-        ItemKind::DefEnum(def) => Some(def.name.name.as_str()),
-        ItemKind::DefType(def) => Some(def.name.name.as_str()),
-        ItemKind::OpaqueType(def) => Some(def.name.name.as_str()),
-        ItemKind::DefConst(def) => Some(def.name.name.as_str()),
-        ItemKind::DefStatic(def) => Some(def.name.name.as_str()),
-        ItemKind::DefFunction(def) => Some(def.name.name.as_str()),
-        ItemKind::DefTrait(def) => Some(def.name.name.as_str()),
-        ItemKind::DeclType(def) => Some(def.name.name.as_str()),
-        ItemKind::DeclConst(def) => Some(def.name.name.as_str()),
-        ItemKind::DeclStatic(def) => Some(def.name.name.as_str()),
-        ItemKind::DeclFunction(def) => Some(def.name.name.as_str()),
-        ItemKind::Macro(item_macro) => item_macro.declared_name.as_ref().map(|ident| ident.name.as_str()),
-        ItemKind::Impl(_)
-        | ItemKind::Import(_)
-        | ItemKind::Expr(_)
-        | ItemKind::ConstBlock(_)
-        | ItemKind::Any(_) => None,
-    }
-}
-
 /// Typecheck a whole package by registering its real `PackageProvider` with
 /// a fresh `CompilerDriver` under `PipelineMode::TypecheckedTranspile`,
 /// instead of flattening the package's items into a single tag-less `File`
@@ -1239,29 +1208,10 @@ pub fn typecheck_package(
     drain_driver(session.driver(), lossy)?;
 
     let package = package.borrow();
-    let mut items = package.items.clone();
-    if let Some(lifted_by_path) = &package.lifted_items_by_path {
-        for pkg_item in &mut items {
-            let Some(name) = item_own_name(&pkg_item.item) else {
-                // No natural qualified name (`Impl`, `Import`, a bare
-                // `Module` declaration, ...) — never a key in
-                // `lifted_by_path`, so it keeps its original source form.
-                continue;
-            };
-            let mut path = pkg_item.path.segments.clone();
-            path.push(name.to_string());
-            let key = fp_core::hir::DefPath::new(
-                path.into_iter().map(fp_core::hir::Symbol::new).collect(),
-            );
-            if let Some(typed) = lifted_by_path.get(&key) {
-                pkg_item.item = typed.clone();
-            }
-            // Else: this item's typed form wasn't produced — e.g. a
-            // per-item lift failure (a nested `hir::ExprKind::Query`) —
-            // keep the original, untyped item rather than failing
-            // typed-splice for the whole package.
-        }
-    }
+    // Typed/normalized content is already spliced onto `package.items` by
+    // `CompilerDriver::compile_package` (qualified-path-keyed, including
+    // impl methods) — nothing left to reconcile here.
+    let items = package.items.clone();
 
     let referenced_paths = package
         .referenced_paths_by_path

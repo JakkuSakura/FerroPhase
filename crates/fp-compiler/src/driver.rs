@@ -1,5 +1,5 @@
 use fp_backend::transformations::{HirGenerator, HirLoweringConfig, LirGenerator, MirLowering};
-use fp_core::ast::{Ty, TypeStruct, TypeType, Value};
+use fp_core::ast::{Expr, ExprKind, Item, ItemKind, Ty, TypeStruct, TypeType, Value};
 use fp_core::hir;
 use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
@@ -585,22 +585,25 @@ impl CompilerDriver {
                 // to attach real resolved types onto the lifted AST's
                 // `Expr.ty()` slots.
                 let typeck = state.hir_typeck(&hir_id).ok();
-                // Keyed by qualified name instead of list position, so
-                // `typecheck_package` (fp-cli) can splice typed content back
-                // onto the original source items by identity even when the two
-                // lists don't match 1:1 (synthetic items with no source
-                // counterpart, `use` items with no HIR counterpart, or an
-                // individual item that fails to lift without poisoning the
-                // rest of the package).
+                // Keyed by qualified name so the merge below can splice typed
+                // content back onto the original source items by identity
+                // even when the two lists don't match 1:1 (synthetic items
+                // with no source counterpart, `use` items with no HIR
+                // counterpart, or an individual item that fails to lift
+                // without poisoning the rest of the package).
                 let lifter = fp_backend::transforms::HirToAstLifter::new(
                     hir,
                     typeck,
                     Some(state.typing_ctx.env_ctx.as_ref()),
                 );
-                (
-                    lifter.lift_items_by_path(),
-                    lifter.referenced_paths_by_path(),
-                )
+                // `lift_items_by_path` treats an `impl` block as an opaque
+                // placeholder — merge in each impl *method*'s own lifted
+                // body too (keyed by its own qualified path, disjoint from
+                // any top-level item's), or typed/normalized impl method
+                // bodies never get spliced back in at all.
+                let mut lifted_items_by_path = lifter.lift_items_by_path();
+                lifted_items_by_path.extend(lifter.lift_impl_methods_by_path());
+                (lifted_items_by_path, lifter.referenced_paths_by_path())
             };
             if let Some(pkg) = self
                 .state.borrow()
@@ -608,8 +611,64 @@ impl CompilerDriver {
                 .env_ctx
                 .compiled_package(&current_package_id)
             {
-                pkg.borrow_mut().lifted_items_by_path = Some(lifted_items_by_path);
-                pkg.borrow_mut().referenced_paths_by_path = Some(referenced_paths_by_path);
+                let mut pkg = pkg.borrow_mut();
+                // Splice typed/normalized content back onto the original
+                // untyped source items by qualified-path identity — the
+                // single, canonical reconciliation point (this used to live
+                // in `fp-cli`'s `typecheck_package`, re-deriving the same
+                // keys `HirToAstLifter` already computes here; two
+                // independent implementations of "this item's qualified
+                // path" is exactly what let them silently disagree).
+                for pkg_item in &mut pkg.items {
+                    if let ItemKind::Impl(imp) = pkg_item.item.kind_mut() {
+                        // Trait impls aren't in `lifted_items_by_path` at
+                        // all (`lift_impl_methods_by_path` skips them —
+                        // see its doc comment) — only attempt this for
+                        // inherent impls, matching what was actually lifted.
+                        if imp.trait_ty.is_some() {
+                            continue;
+                        }
+                        let mut base_path = pkg_item.path.segments.clone();
+                        let Some(self_ty_name) = impl_self_type_name(&imp.self_ty) else {
+                            continue;
+                        };
+                        base_path.push(self_ty_name.to_string());
+                        for method_item in imp.items.iter_mut() {
+                            let ItemKind::DefFunction(function) = method_item.kind() else {
+                                continue;
+                            };
+                            let mut path = base_path.clone();
+                            path.push(function.name.name.clone());
+                            let key = fp_core::hir::DefPath::new(
+                                path.into_iter().map(fp_core::hir::Symbol::new).collect(),
+                            );
+                            if let Some(typed) = lifted_items_by_path.get(&key) {
+                                *method_item = typed.clone();
+                            }
+                        }
+                        continue;
+                    }
+                    let Some(name) = item_own_name(&pkg_item.item) else {
+                        // No natural qualified name (`Import`, a bare
+                        // `Module` declaration, ...) — never a key in
+                        // `lifted_items_by_path`, so it keeps its original
+                        // source form.
+                        continue;
+                    };
+                    let mut path = pkg_item.path.segments.clone();
+                    path.push(name.to_string());
+                    let key = fp_core::hir::DefPath::new(
+                        path.into_iter().map(fp_core::hir::Symbol::new).collect(),
+                    );
+                    if let Some(typed) = lifted_items_by_path.get(&key) {
+                        pkg_item.item = typed.clone();
+                    }
+                    // Else: this item's typed form wasn't produced — e.g. a
+                    // per-item lift failure — keep the original, untyped
+                    // item rather than failing typed-splice for the whole
+                    // package.
+                }
+                pkg.referenced_paths_by_path = Some(referenced_paths_by_path);
             }
             // Best-effort HIR->MIR->LIR lowering, purely so any
             // `const { .. }` blocks (see `register_const_block_comptime_entry`)
@@ -1795,4 +1854,58 @@ impl CompilerDriver {
         }
     }
 
+}
+
+/// The name an `ast::Item` is registered under during AST→HIR lowering
+/// (`HirGenerator::predeclare_items`'s `register_type_def`/
+/// `register_value_def` calls) — `None` for item kinds with no name of
+/// their own (`Impl`, `Import`, bare `Expr`, ...), which therefore can
+/// never be looked up in a qualified-path-keyed map.
+fn item_own_name(item: &Item) -> Option<&str> {
+    match item.kind() {
+        ItemKind::Module(module) => Some(module.name.name.as_str()),
+        ItemKind::DefStruct(def) => Some(def.name.name.as_str()),
+        ItemKind::DefStructural(def) => Some(def.name.name.as_str()),
+        ItemKind::DefEnum(def) => Some(def.name.name.as_str()),
+        ItemKind::DefType(def) => Some(def.name.name.as_str()),
+        ItemKind::OpaqueType(def) => Some(def.name.name.as_str()),
+        ItemKind::DefConst(def) => Some(def.name.name.as_str()),
+        ItemKind::DefStatic(def) => Some(def.name.name.as_str()),
+        ItemKind::DefFunction(def) => Some(def.name.name.as_str()),
+        ItemKind::DefTrait(def) => Some(def.name.name.as_str()),
+        ItemKind::DeclType(def) => Some(def.name.name.as_str()),
+        ItemKind::DeclConst(def) => Some(def.name.name.as_str()),
+        ItemKind::DeclStatic(def) => Some(def.name.name.as_str()),
+        ItemKind::DeclFunction(def) => Some(def.name.name.as_str()),
+        ItemKind::Macro(item_macro) => item_macro.declared_name.as_ref().map(|ident| ident.name.as_str()),
+        ItemKind::Impl(_)
+        | ItemKind::Import(_)
+        | ItemKind::Expr(_)
+        | ItemKind::ConstBlock(_)
+        | ItemKind::Any(_) => None,
+    }
+}
+
+/// An `impl` block's own qualified name is its self-type's name (mirrors
+/// `ast_to_hir::self_type_first_segment_name`, which resolves the same
+/// question at HIR-lowering time) — used to reconstruct the same
+/// `DefPath` shape `HirToAstLifter::lift_impl_methods_by_path` records
+/// each method's typed body under, from the untyped source alone. Only
+/// handles the common bare-ident/simple-path shape (`impl Foo { .. }`/
+/// `impl foo::Bar { .. }`) — a self-type written as something
+/// structurally different (`&T`, `[T]`, a generic instantiation, ...)
+/// returns `None`, and that impl's methods simply keep their original,
+/// untyped source form, the same fallback every other unmatched case
+/// already gets.
+fn impl_self_type_name(self_ty: &Expr) -> Option<&str> {
+    let ExprKind::Name(name) = self_ty.kind() else {
+        return None;
+    };
+    match name {
+        fp_core::ast::Name::Ident(ident) => Some(ident.name.as_str()),
+        fp_core::ast::Name::Path(path) => path.segments.last().map(|seg| seg.name.as_str()),
+        fp_core::ast::Name::ParameterPath(param_path) => {
+            param_path.segments.last().map(|seg| seg.ident.name.as_str())
+        }
+    }
 }
