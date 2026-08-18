@@ -12311,9 +12311,31 @@ impl<'a> BodyBuilder<'a> {
             annotated_ty,
             self.enum_variant_info_from_path(&resolved_path),
         ) {
-            if let Some(layout) = self
-                .enum_layout_for_variant(&variant, Some(expected_ty), span)
-                .or_else(|| self.lowering.enum_layout_for_def(variant.enum_def, span))
+            let context_layout = self.enum_layout_for_variant(&variant, Some(expected_ty), span);
+            if context_layout.is_none()
+                && !self.lowering.has_unresolved_ty(expected_ty)
+                && self.enum_def_from_ty(expected_ty) == Some(variant.enum_def)
+            {
+                // `expected_ty` is concrete and already names this exact
+                // enum, yet the context-aware attempt still failed (e.g. a
+                // substitution/arity mismatch somewhere upstream) —
+                // falling through to `enum_layout_for_def`'s no-context
+                // placeholder path here would silently substitute
+                // `Infer`-tainted layout data for a case that had a real,
+                // concrete instantiation available. That fallback is only
+                // legitimate for genuinely context-free situations (see
+                // its own doc comment) — surface a real diagnostic
+                // instead, matching the sibling `emit_error` a few lines
+                // below for the analogous "still unresolved after every
+                // attempt" case.
+                self.lowering.emit_error(
+                    span,
+                    "unable to resolve enum layout for variant construction despite a concrete declared type",
+                );
+                return Ok(());
+            }
+            if let Some(layout) =
+                context_layout.or_else(|| self.lowering.enum_layout_for_def(variant.enum_def, span))
             {
                 if self.enum_def_from_ty(expected_ty) == Some(layout.def_id) {
                     self.assign_enum_variant_from_struct_fields(
@@ -13025,40 +13047,6 @@ impl<'a> BodyBuilder<'a> {
         let arg_values = call_arg_values(args);
         if let hir::ExprKind::Path(path) = &callee.kind {
             let segments = &path.segments;
-            if segments.len() >= 2
-                && matches!(segments[segments.len() - 2].name.as_str(), "Vec" | "List")
-                && segments[segments.len() - 1].name.as_str() == "from"
-            {
-                // `vec![...]` desugars to `Vec::from([...])`
-                // (`fp-lang/src/normalization.rs`) — `Vec`/`List` have no
-                // real backing `from` function (see
-                // `collection_constructor_signature` in
-                // `fp-typing/src/hir_typeck.rs`, which keeps hir_typeck
-                // happy about this same call). Unwrap the call back down to
-                // its array-literal argument and lower that directly into
-                // the destination place, reusing the array-literal
-                // `ContainerKind::List` handling in
-                // `lower_expr_into_place` (the same path a bare `let x:
-                // Vec<T> = [1, 2, 3];` without the `Vec::from` wrapper
-                // already goes through) rather than duplicating it here.
-                if let Some((place, expected_ty)) = destination {
-                    if arg_values.len() != 1 {
-                        self.lowering
-                            .emit_error(expr.span, "Vec::from expects a single array argument");
-                        return Ok(Some(PlaceInfo {
-                            place,
-                            ty: expected_ty,
-                            struct_def: None,
-                        }));
-                    }
-                    self.lower_expr_into_place(arg_values[0], place.clone(), &expected_ty)?;
-                    return Ok(Some(PlaceInfo {
-                        place,
-                        ty: expected_ty,
-                        struct_def: None,
-                    }));
-                }
-            }
             if segments.len() >= 2
                 && segments[segments.len() - 2].name.as_str() == "HashMap"
                 && segments[segments.len() - 1].name.as_str() == "from"
@@ -16198,13 +16186,13 @@ impl<'a> BodyBuilder<'a> {
                             operand: mir::Operand::Constant(mir::Constant {
                                 span: expr.span,
                                 ty: Ty {
-                                    kind: TyKind::Uint(UintTy::U64),
+                                    kind: TyKind::Uint(UintTy::Usize),
                                 },
                                 user_ty: None,
                                 literal: mir::ConstantKind::UInt(0),
                             }),
                             ty: Ty {
-                                kind: TyKind::Uint(UintTy::U64),
+                                kind: TyKind::Uint(UintTy::Usize),
                             },
                         });
                     };
@@ -16212,7 +16200,7 @@ impl<'a> BodyBuilder<'a> {
                     if let Some(local_id) = self.local_id_from_expr(arg) {
                         if let Some(kind) = self.container_locals.get(&local_id).cloned() {
                             let len_ty = Ty {
-                                kind: TyKind::Uint(UintTy::U64),
+                                kind: TyKind::Uint(UintTy::Usize),
                             };
                             let local_id_out = self.allocate_temp(len_ty.clone(), expr.span);
                             let local_place = mir::Place::from_local(local_id_out);
@@ -16249,7 +16237,7 @@ impl<'a> BodyBuilder<'a> {
                     };
 
                     let len_ty = Ty {
-                        kind: TyKind::Uint(UintTy::U64),
+                        kind: TyKind::Uint(UintTy::Usize),
                     };
                     let local_id = self.allocate_temp(len_ty.clone(), expr.span);
                     let local_place = mir::Place::from_local(local_id);
@@ -16537,10 +16525,11 @@ impl<'a> BodyBuilder<'a> {
                     );
                     OperandInfo::constant(span, index_ty.clone(), mir::ConstantKind::UInt(0))
                 } else {
-                    let len_u64_ty = Ty {
-                        kind: TyKind::Uint(UintTy::U64),
-                    };
-                    let len_local = self.allocate_temp(len_u64_ty.clone(), span);
+                    // `.len()`'s result type is `usize` (see `IntrinsicKind::Len`'s
+                    // typing) and `index_ty` (above) is also `usize` — no
+                    // cast needed between them anymore, unlike when `Len`
+                    // used to type as `u64`.
+                    let len_local = self.allocate_temp(index_ty.clone(), span);
                     let len_local_place = mir::Place::from_local(len_local);
                     self.push_statement(mir::Statement {
                         source_info: span,
@@ -16549,22 +16538,8 @@ impl<'a> BodyBuilder<'a> {
                             mir::Rvalue::Len(len_place),
                         ),
                     });
-
-                    let cast_local = self.allocate_temp(index_ty.clone(), span);
-                    let cast_place = mir::Place::from_local(cast_local);
-                    self.push_statement(mir::Statement {
-                        source_info: span,
-                        kind: mir::StatementKind::Assign(
-                            cast_place.clone(),
-                            mir::Rvalue::Cast(
-                                mir::CastKind::Misc,
-                                mir::Operand::copy(len_local_place),
-                                index_ty.clone(),
-                            ),
-                        ),
-                    });
                     OperandInfo {
-                        operand: mir::Operand::copy(cast_place),
+                        operand: mir::Operand::copy(len_local_place),
                         ty: index_ty.clone(),
                     }
                 }
@@ -20707,10 +20682,16 @@ impl<'a> BodyBuilder<'a> {
                 }
 
                 if self.is_list_container(expected_ty) {
+                    // Derive the element type from the annotated destination
+                    // type up front (mirroring the fixed-size-array fallback
+                    // below), instead of letting every element default to
+                    // whatever type its own literal infers to regardless of
+                    // what `expected_ty`'s element type actually is.
+                    let declared_elem_ty = self.expect_array_element_ty(expected_ty);
                     let mut operands = Vec::with_capacity(elements.len());
-                    let mut elem_ty: Option<Ty> = None;
+                    let mut elem_ty: Option<Ty> = declared_elem_ty.clone();
                     for element in elements {
-                        let lowered = self.lower_operand(element, None)?;
+                        let lowered = self.lower_operand(element, declared_elem_ty.as_ref())?;
                         if elem_ty.is_none() {
                             elem_ty = Some(lowered.ty.clone());
                         }

@@ -1,7 +1,7 @@
 
 pub struct BinaryHeap<T> {
     values: ::std::alloc::Vec<T>,
-    len: i64,
+    len: usize,
 }
 
 impl<T> BinaryHeap<T> {
@@ -15,7 +15,7 @@ impl<T> BinaryHeap<T> {
     fn from(items: ::std::alloc::Vec<T>) -> BinaryHeap<T> {
         let mut heap: BinaryHeap<T> = BinaryHeap::new();
         let mut idx = 0;
-        let items_len = items.len() as i64;
+        let items_len = items.len();
         while idx < items_len {
             heap.insert(items[idx]);
             idx = idx + 1;
@@ -23,7 +23,7 @@ impl<T> BinaryHeap<T> {
         heap
     }
 
-    fn len(&self) -> i64 {
+    fn len(&self) -> usize {
         self.len
     }
 
@@ -39,7 +39,7 @@ impl<T> BinaryHeap<T> {
     fn insert(&mut self, value: T) {
         let mut values = self.values;
 
-        if self.len < values.len() as i64 {
+        if self.len < values.len() {
             values[self.len] = value;
         } else {
             values.push(value);

@@ -31,13 +31,13 @@ impl IoError {
 }
 
 pub struct Metadata {
-    len: i64,
+    len: usize,
     is_dir: bool,
     is_file: bool,
 }
 
 impl Metadata {
-    pub fn len(&self) -> i64 {
+    pub fn len(&self) -> usize {
         self.len
     }
 

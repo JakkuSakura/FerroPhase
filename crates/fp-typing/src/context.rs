@@ -71,9 +71,23 @@ pub struct TypingContext {
     /// The typer queries this for fully-qualified symbol lookups.
     pub env_ctx: std::rc::Rc<WorkspaceContext>,
 
-    /// Accumulated typing diagnostics (warnings + errors).
-    /// Typer appends during inference; driver reads after each pass.
+    /// Accumulated typing diagnostics (warnings + errors) — includes both
+    /// genuinely fatal item-check aborts and deliberately non-fatal,
+    /// recovered mismatches (e.g. `require_same`'s isolated type
+    /// mismatches, recorded via plain `record_error` specifically so one
+    /// bad expression doesn't abort the whole item's check). Typer appends
+    /// during inference; driver reads after each pass.
     pub diagnostics: RefCell<Vec<TypingDiagnostic>>,
+
+    /// Subset of `diagnostics`: only the ones from `typecheck_item`'s own
+    /// catch (`record_item_check_failure`) — i.e. an item's `check_item`
+    /// returned a hard `Err` and the item's check aborted outright, which
+    /// leaves a real gap in `TypeckResults` for whatever that item didn't
+    /// finish recording. Unlike the rest of `diagnostics`, this is safe to
+    /// gate HIR->MIR lowering on (`TypingContext::has_typing_errors`) —
+    /// gating on all of `diagnostics` would also trip on every isolated,
+    /// already-recovered mismatch that never actually left a gap.
+    pub item_check_failures: RefCell<Vec<TypingDiagnostic>>,
 
     /// Wakers of typing tasks currently suspended on a comptime value (keyed
     /// by const/type-alias name) not yet resolved — see
@@ -122,6 +136,7 @@ impl TypingContext {
             resolved_types: RefCell::new(HashMap::new()),
             env_ctx,
             diagnostics: RefCell::new(Vec::new()),
+            item_check_failures: RefCell::new(Vec::new()),
             comptime_wakers: RefCell::new(HashMap::new()),
             ready_generics: RefCell::new(HashMap::new()),
             comptime_requests: RefCell::new(VecDeque::new()),
@@ -181,6 +196,14 @@ impl TypingContext {
 
     pub fn has_comptime_requests(&self) -> bool {
         !self.comptime_requests.borrow().is_empty()
+    }
+
+    /// `tcx.sess.has_errors()`-style query: true once any item's check has
+    /// hard-aborted (see `item_check_failures`'s doc comment) — the only
+    /// category that leaves a real `TypeckResults` gap, and thus the only
+    /// category safe to gate later stages on.
+    pub fn has_typing_errors(&self) -> bool {
+        !self.item_check_failures.borrow().is_empty()
     }
 }
 

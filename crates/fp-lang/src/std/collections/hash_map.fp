@@ -5,7 +5,7 @@ pub struct HashMapEntry<K, V> {
 
 
 pub struct HashMap<K, V> {
-    len: i64,
+    len: usize,
     keys: ::std::alloc::Vec<K>,
     values: ::std::alloc::Vec<V>,
 }
@@ -43,7 +43,7 @@ impl<K, V> HashMap<K, V> {
         map
     }
 
-    fn len(&self) -> i64 {
+    fn len(&self) -> usize {
         self.len
     }
 

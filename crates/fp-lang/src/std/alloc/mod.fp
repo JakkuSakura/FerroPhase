@@ -6,8 +6,8 @@ pub trait Index<Idx> {
 
 pub struct Vec<T> {
     ptr: *mut T,
-    len: i64,
-    capacity: i64,
+    len: usize,
+    capacity: usize,
 }
 
 impl<T> Vec<T> {
@@ -16,13 +16,26 @@ impl<T> Vec<T> {
     }
 
     pub fn len(&self) -> usize {
-        self.len as usize
+        self.len
+    }
+
+    pub fn from(arr: [T]) -> Vec<T> {
+        let len = arr.len();
+        let elem_size = sizeof!(T) as usize;
+        let new_ptr = ::libc::malloc((len * elem_size) as u64) as *mut T;
+        let mut idx: usize = 0;
+        while idx < len {
+            let dest = (new_ptr as usize + idx * elem_size) as *mut T;
+            *dest = arr[idx];
+            idx = idx + 1;
+        }
+        Vec { ptr: new_ptr, len, capacity: len }
     }
 
     pub fn push(&mut self, value: T) {
         if self.len == self.capacity {
             let new_capacity = if self.capacity == 0 { 4 } else { self.capacity * 2 };
-            let elem_size = sizeof!(T) as i64;
+            let elem_size = sizeof!(T) as usize;
             let new_ptr = if self.capacity == 0 {
                 ::libc::malloc((new_capacity * elem_size) as u64) as *mut T
             } else {
@@ -31,7 +44,7 @@ impl<T> Vec<T> {
             self.ptr = new_ptr;
             self.capacity = new_capacity;
         }
-        let dest = (self.ptr as i64 + self.len * (sizeof!(T) as i64)) as *mut T;
+        let dest = (self.ptr as usize + self.len * (sizeof!(T) as usize)) as *mut T;
         *dest = value;
         self.len = self.len + 1;
     }
@@ -41,19 +54,19 @@ impl<T> Index<usize> for Vec<T> {
     type Output = T;
 
     fn index(&self, idx: usize) -> Self::Output {
-        let addr = (self.ptr as i64 + (idx as i64) * (sizeof!(T) as i64)) as *mut T;
+        let addr = (self.ptr as usize + idx * (sizeof!(T) as usize)) as *mut T;
         *addr
     }
 
     fn index_set(&mut self, idx: usize, value: Self::Output) {
-        let addr = (self.ptr as i64 + (idx as i64) * (sizeof!(T) as i64)) as *mut T;
+        let addr = (self.ptr as usize + idx * (sizeof!(T) as usize)) as *mut T;
         *addr = value;
     }
 }
 
 impl Vec<&str> {
     pub fn join(&self, sep: &str) -> ::std::string::String {
-        let len = self.len() as i64;
+        let len = self.len();
         let mut result: ::std::string::String = ::std::string::String::new();
         let mut idx = 0;
         while idx < len {
@@ -69,7 +82,7 @@ impl Vec<&str> {
 
 impl Vec<::std::string::String> {
     pub fn join(&self, sep: &str) -> ::std::string::String {
-        let len = self.len() as i64;
+        let len = self.len();
         let mut result: ::std::string::String = ::std::string::String::new();
         let mut idx = 0;
         while idx < len {

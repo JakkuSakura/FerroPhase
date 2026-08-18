@@ -1421,17 +1421,7 @@ fn emit_typing_diagnostics(
 }
 
 fn as_core_diagnostic(diagnostic: &TypingDiagnostic) -> Diagnostic<String> {
-    let mut rendered = match diagnostic.level {
-        TypingDiagnosticLevel::Error => Diagnostic::error(diagnostic.message.clone()),
-        TypingDiagnosticLevel::Warning => Diagnostic::warning(diagnostic.message.clone()),
-    }
-    .with_source_context("typing".to_string());
-
-    if let Some(span) = diagnostic.span {
-        rendered = rendered.with_span(span);
-    }
-
-    rendered
+    diagnostic.as_core_diagnostic()
 }
 
 struct CompilerIdentity {

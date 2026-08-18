@@ -169,6 +169,28 @@ impl HirTypeChecker {
         self.record_error_with_span(message, span);
         Ty::error()
     }
+
+    /// Like `record_error`, but specifically for `typecheck_item`'s own
+    /// catch — an item's `check_item` returned a hard `Err` and its check
+    /// aborted outright, leaving a real gap in `TypeckResults` for
+    /// whatever that item didn't finish recording (unlike the pervasive,
+    /// deliberately non-fatal `record_error`/`error_ty` calls sprinkled
+    /// through `check_expr`/`check_block`, e.g. `require_same`'s isolated
+    /// mismatches, which recover and leave no gap). Also pushed onto
+    /// `item_check_failures`, a second channel `TypingContext::
+    /// has_typing_errors` keys off of specifically so it can gate later
+    /// stages on real gaps without also tripping on every recovered,
+    /// harmless mismatch.
+    fn record_item_check_failure(&self, message: impl Into<String>) {
+        let message = message.into();
+        self.record_error(message.clone());
+        if let Some(context) = &self.shared.typing_context {
+            context
+                .item_check_failures
+                .borrow_mut()
+                .push(crate::types::TypingDiagnostic::error(message));
+        }
+    }
 }
 
 impl Drop for GenericScope<'_> {
@@ -284,11 +306,11 @@ pub async fn typecheck_item(shared: Rc<TypingShared>, def_id: hir::DefId) {
         pending_type_const_blocks: Vec::new(),
     };
     if let Err(error) = checker.check_item(&item).await {
-        checker.record_error(format!("{error}"));
+        checker.record_item_check_failure(format!("{error}"));
         return;
     }
     if let Err(error) = checker.resolve_pending_type_const_blocks().await {
-        checker.record_error(format!("{error}"));
+        checker.record_item_check_failure(format!("{error}"));
     }
 }
 
@@ -792,7 +814,7 @@ impl HirTypeChecker {
                     };
                     match &receiver_ty.kind {
                         TyKind::Array(inner, _) | TyKind::Slice(inner) => {
-                            self.require_same(&index_ty, &Ty::int(ty::IntTy::I64))?;
+                            self.require_same(&index_ty, &Ty::uint(ty::UintTy::Usize))?;
                             (**inner).clone()
                         }
                         // `HashMap<K, V>` is a real struct (see
@@ -1230,8 +1252,40 @@ impl HirTypeChecker {
                 hir::StmtKind::Local(local) => {
                     let ty = match (&local.ty, &local.init) {
                         (Some(annotation), Some(init)) => {
-                            let ty = self.check_type_expr(annotation)?;
+                            let mut ty = self.check_type_expr(annotation)?;
                             let init_ty = self.check_expr(init).await?;
+
+                            // `[T; _]`: resolve this binding's own declared-
+                            // type hole from its own initializer — ordinary
+                            // hole-inference for the annotation itself
+                            // (mirroring Rust's stable `let x: [i32; _] =
+                            // [1,2,3];`), not a call-argument-style
+                            // coercion, so it belongs here regardless of
+                            // anything else. Every other combination
+                            // (including a genuinely mismatched slice/array
+                            // annotation) is left to the ordinary, now-
+                            // strict equality check below — an array
+                            // literal's type is always `[T; N]`, so e.g.
+                            // `let x: [i32] = [1,2,3,4];` is simply an
+                            // ordinary `[i32]` vs `[i32; 4]` type mismatch,
+                            // not a case needing special detection here.
+                            if let TyKind::Array(elem, ty::ConstKind::Infer(_)) = &ty.kind {
+                                let literal_len = match &init.kind {
+                                    hir::ExprKind::Array(_) | hir::ExprKind::ArrayRepeat { .. } => {
+                                        match &init_ty.kind {
+                                            TyKind::Array(_, len) => const_kind_to_u64(len),
+                                            _ => None,
+                                        }
+                                    }
+                                    _ => None,
+                                };
+                                if let Some(literal_len) = literal_len {
+                                    ty = Ty {
+                                        kind: TyKind::Array(elem.clone(), u64_to_const_kind(literal_len)),
+                                    };
+                                }
+                            }
+
                             let resolved_init = if matches!(
                                 init.kind,
                                 hir::ExprKind::Literal(hir::Lit::Integer(_))
@@ -1245,13 +1299,37 @@ impl HirTypeChecker {
                                 hir::ExprKind::Array(_) | hir::ExprKind::ArrayRepeat { .. }
                             ) && matches!(ty.kind, TyKind::Array(_, _))
                             {
-                                ty.clone()
+                                // Trust the annotation's element type over
+                                // the literal's own inferred one (matches
+                                // the integer-literal shortcut above —
+                                // element types are otherwise flexible/
+                                // untyped literals) *only* when the
+                                // lengths genuinely agree; a real,
+                                // concretely-known mismatch must surface
+                                // via `init_ty` instead, so the strict
+                                // check below actually catches it rather
+                                // than tautologically comparing `ty`
+                                // against a clone of itself.
+                                let lengths_match = match (&ty.kind, &init_ty.kind) {
+                                    (TyKind::Array(_, ty_len), TyKind::Array(_, init_len)) => {
+                                        match (const_kind_to_u64(ty_len), const_kind_to_u64(init_len)) {
+                                            (Some(a), Some(b)) => a == b,
+                                            _ => true,
+                                        }
+                                    }
+                                    _ => true,
+                                };
+                                if lengths_match {
+                                    ty.clone()
+                                } else {
+                                    init_ty.clone()
+                                }
                             } else {
                                 let mut substitutions = HashMap::new();
                                 self.unify_call_types(&init_ty, &ty, &mut substitutions)?;
                                 self.substitute_param_map(&init_ty, &substitutions)
                             };
-                            self.require_same(&ty, &resolved_init)?;
+                            self.require_same_hard(&ty, &resolved_init)?;
                             self.shared.results.borrow_mut().record_expr_type(init.hir_id, resolved_init);
                             ty
                         }
@@ -1588,22 +1666,6 @@ impl HirTypeChecker {
             }),
         };
         match second_last {
-            Some("Vec") | Some("List") => {
-                let t = Ty {
-                    kind: TyKind::Param(ty::ParamTy {
-                        index: 0,
-                        name: hir::Symbol::new("T"),
-                    }),
-                };
-                let output = match self.well_known_struct_ty("Vec", vec![GenericArg::Type(t.clone())]) {
-                    Some(ty) => ty,
-                    None => return Some(Ok(self.error_ty("`Vec` struct definition was not found"))),
-                };
-                let input = Ty {
-                    kind: TyKind::Slice(Box::new(t)),
-                };
-                Some(Ok(make_sig(vec![input], output)))
-            }
             Some("HashMap") => {
                 let k = Ty {
                     kind: TyKind::Param(ty::ParamTy {
@@ -2857,7 +2919,7 @@ impl HirTypeChecker {
             IntrinsicKind::Format => Ty {
                 kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
             },
-            IntrinsicKind::Len => Ty::uint(ty::UintTy::U64),
+            IntrinsicKind::Len => Ty::uint(ty::UintTy::Usize),
             IntrinsicKind::Slice => match arg_types.first() {
                 None => self.error_ty("slice intrinsic requires a base expression"),
                 Some(base) => match &base.kind {
@@ -3064,6 +3126,23 @@ impl HirTypeChecker {
         }
     }
 
+    /// Like `require_same`, but a real hard error on mismatch instead of a
+    /// recorded, non-fatal diagnostic — for the few call sites (a `let`
+    /// binding's own declared type vs. its resolved initializer type,
+    /// specifically) where Rust itself never tolerates a mismatch: a
+    /// binding's annotation must describe its initializer exactly (a
+    /// coercion like array-to-slice only applies at genuine coercion
+    /// sites, e.g. call arguments, never to a plain `let`'s own type).
+    fn require_same_hard(&self, lhs: &Ty, rhs: &Ty) -> Result<()> {
+        if lhs == rhs || matches!(lhs.kind, TyKind::Never) || matches!(rhs.kind, TyKind::Never) {
+            Ok(())
+        } else {
+            Err(fp_core::error::Error::from(format!(
+                "type mismatch: expected `{lhs}`, found `{rhs}`"
+            )))
+        }
+    }
+
     fn require_same_adt(&self, actual: &Ty, expected: &Ty, context: &str) -> Result<()> {
         let (TyKind::Adt(actual_def, actual_args), TyKind::Adt(expected_def, expected_args)) =
             (&actual.kind, &expected.kind)
@@ -3138,6 +3217,31 @@ impl HirTypeChecker {
                 .unwrap_or_else(Ty::never),
         }
     }
+}
+
+/// Extracts a resolved array/array-repeat length's real count, when known
+/// (mirrors the exact `ConstValue::Scalar(Scalar::Int(ScalarInt{..}))`
+/// shape the `Array`/`ArrayRepeat` expression-checking arms above already
+/// construct for a literal's own statically-known length) — `None` for
+/// any other `ConstKind` (`Infer`, `Param`, etc.), which have no concrete
+/// count to extract.
+fn const_kind_to_u64(kind: &ty::ConstKind) -> Option<u64> {
+    match kind {
+        ty::ConstKind::Value(ty::ConstValue::Scalar(ty::Scalar::Int(scalar))) => {
+            Some(scalar.data as u64)
+        }
+        _ => None,
+    }
+}
+
+/// Inverse of `const_kind_to_u64` — builds a resolved array-length
+/// `ConstKind` from a real count, matching the exact construction the
+/// `Array`/`ArrayRepeat` expression-checking arms above already use.
+fn u64_to_const_kind(value: u64) -> ty::ConstKind {
+    ty::ConstKind::Value(ty::ConstValue::Scalar(ty::Scalar::Int(ty::ScalarInt {
+        data: value as u128,
+        size: 8,
+    })))
 }
 
 /// Whether `ty` still has an uninstantiated generic parameter anywhere in

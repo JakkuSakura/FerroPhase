@@ -1,7 +1,7 @@
 
 pub struct VecDeque<T> {
     values: ::std::alloc::Vec<T>,
-    len: i64,
+    len: usize,
 }
 
 impl<T> VecDeque<T> {
@@ -15,7 +15,7 @@ impl<T> VecDeque<T> {
     fn from(items: ::std::alloc::Vec<T>) -> VecDeque<T> {
         let mut deque: VecDeque<T> = VecDeque::new();
         let mut idx = 0;
-        let items_len = items.len() as i64;
+        let items_len = items.len();
         while idx < items_len {
             deque.push_back(items[idx]);
             idx = idx + 1;
@@ -23,7 +23,7 @@ impl<T> VecDeque<T> {
         deque
     }
 
-    fn len(&self) -> i64 {
+    fn len(&self) -> usize {
         self.len
     }
 
@@ -38,7 +38,7 @@ impl<T> VecDeque<T> {
 
     fn push_back(&mut self, value: T) {
         let mut values = self.values;
-        if self.len < values.len() as i64 {
+        if self.len < values.len() {
             values[self.len] = value;
         } else {
             values.push(value);
@@ -49,7 +49,7 @@ impl<T> VecDeque<T> {
 
     fn push_front(&mut self, value: T) {
         let mut values = self.values;
-        if self.len < values.len() as i64 {
+        if self.len < values.len() {
             let mut idx = self.len;
             while idx > 0 {
                 values[idx] = values[(idx - 1)];

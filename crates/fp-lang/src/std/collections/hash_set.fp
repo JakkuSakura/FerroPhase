@@ -1,6 +1,6 @@
 
 pub struct HashSet<T> {
-    len: i64,
+    len: usize,
     values: ::std::alloc::Vec<T>,
 }
 
@@ -23,7 +23,7 @@ impl<T> HashSet<T> {
         set
     }
 
-    fn len(&self) -> i64 {
+    fn len(&self) -> usize {
         self.len
     }
 

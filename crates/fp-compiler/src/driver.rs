@@ -842,6 +842,28 @@ impl CompilerDriver {
             match poll {
                 Poll::Ready(result) => {
                     result?;
+                    // rustc-style `tcx.sess.has_errors()` gate: a per-item
+                    // task that hit a real typecheck error still resolves
+                    // the joined future `Ok(())` (see `typecheck_item`'s
+                    // deliberate per-item isolation in `fp-typing`), so
+                    // without this check the resulting, incomplete
+                    // `TypeckResults` would be handed straight to
+                    // HIR->MIR lowering — whose own, unrelated failure
+                    // (triggered by the exact gap this item's aborted
+                    // check left behind) would then mask the real,
+                    // specific diagnostic recorded here.
+                    if context.has_typing_errors() {
+                        let combined = context
+                            .item_check_failures
+                            .borrow()
+                            .iter()
+                            .map(|diagnostic| diagnostic.as_core_diagnostic().to_string())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        return Err(fp_core::error::Error::diagnostic(
+                            fp_core::diagnostics::Diagnostic::error(combined),
+                        ));
+                    }
                     return Ok(fp_typing::finish_package_typecheck(&shared));
                 }
                 Poll::Pending => {

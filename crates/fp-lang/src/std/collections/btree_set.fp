@@ -1,6 +1,6 @@
 
 pub struct BTreeSet<T> {
-    len: i64,
+    len: usize,
     values: ::std::alloc::Vec<T>,
 }
 
@@ -23,7 +23,7 @@ impl<T> BTreeSet<T> {
         set
     }
 
-    fn len(&self) -> i64 {
+    fn len(&self) -> usize {
         self.len
     }
 

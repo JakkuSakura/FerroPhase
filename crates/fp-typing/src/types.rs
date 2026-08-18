@@ -89,6 +89,30 @@ impl TypingDiagnostic {
             span: Some(span),
         }
     }
+
+    pub fn is_error(&self) -> bool {
+        matches!(self.level, TypingDiagnosticLevel::Error)
+    }
+
+    /// Renders through the shared `fp_core::diagnostics::Diagnostic` type —
+    /// the same conversion `fp-cli`'s post-success diagnostic reporting
+    /// already performs, reused here so a pre-empted compile's error
+    /// message is built from identical formatting.
+    pub fn as_core_diagnostic(&self) -> fp_core::diagnostics::Diagnostic<String> {
+        let mut rendered = match self.level {
+            TypingDiagnosticLevel::Error => {
+                fp_core::diagnostics::Diagnostic::error(self.message.clone())
+            }
+            TypingDiagnosticLevel::Warning => {
+                fp_core::diagnostics::Diagnostic::warning(self.message.clone())
+            }
+        }
+        .with_source_context("typing".to_string());
+        if let Some(span) = self.span {
+            rendered = rendered.with_span(span);
+        }
+        rendered
+    }
 }
 
 pub struct TypingOutcome {

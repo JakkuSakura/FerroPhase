@@ -5,7 +5,7 @@ pub struct BTreeMapEntry<K, V> {
 
 
 pub struct BTreeMap<K, V> {
-    len: i64,
+    len: usize,
     keys: ::std::alloc::Vec<K>,
     values: ::std::alloc::Vec<V>,
 }
@@ -34,7 +34,7 @@ impl<K, V> BTreeMap<K, V> {
         map
     }
 
-    fn len(&self) -> i64 {
+    fn len(&self) -> usize {
         self.len
     }
 

@@ -6435,6 +6435,28 @@ impl LirGenerator {
                 // this exact instantiation has already been computed
                 // elsewhere, reuse it directly.
                 if let Some(field_tys) = self.full_layouts.get(&key) {
+                    // Mirror the cache-miss guard below: a cached entry can
+                    // only be poisoned this way if it was produced by a
+                    // no-context fallback that deliberately manufactures
+                    // placeholders (e.g. a layout-for-display helper with
+                    // no real instantiation to substitute) rather than a
+                    // genuine instantiation. Reusing it here would
+                    // otherwise recurse into `lir_type_from_ty` on the
+                    // unresolved field and panic several frames deeper
+                    // with only the bare field `Ty` to go on — fail right
+                    // here instead, attributing it to the exact ADT/substs
+                    // this cache entry came from.
+                    if field_tys.iter().any(|ty| {
+                        matches!(
+                            ty.kind,
+                            TyKind::Infer(_) | TyKind::Error(_) | TyKind::Param(_)
+                        )
+                    }) {
+                        panic!(
+                            "MIR-to-LIR ICE: cached layout for {} (substs {:?}) contains an unresolved field type: {:?}",
+                            adt.did, substs, field_tys
+                        );
+                    }
                     let fields: Vec<Option<lir::LirType>> = field_tys
                         .iter()
                         .map(|ty| Some(self.lir_type_from_ty(ty)))

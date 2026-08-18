@@ -1,7 +1,7 @@
 pub struct String {
     ptr: *mut u8,
-    len: i64,
-    capacity: i64,
+    len: usize,
+    capacity: usize,
 }
 
 pub struct Utf8Error {}
@@ -11,8 +11,8 @@ impl String {
         String { ptr: 0 as *mut u8, len: 0, capacity: 0 }
     }
 
-    pub fn with_capacity(capacity: i64) -> String {
-        if capacity <= 0 {
+    pub fn with_capacity(capacity: usize) -> String {
+        if capacity == 0 {
             String::new()
         } else {
             let buf = ::libc::malloc(capacity as u64) as *mut u8;
@@ -20,12 +20,12 @@ impl String {
         }
     }
 
-    pub fn capacity(&self) -> i64 {
+    pub fn capacity(&self) -> usize {
         self.capacity
     }
 
     pub fn extend(&mut self, s: &str) {
-        let add_len = s.len() as i64;
+        let add_len = s.len();
         let new_len = self.len + add_len;
         if new_len > self.capacity {
             let doubled = self.capacity * 2;
@@ -35,7 +35,7 @@ impl String {
             self.ptr = new_buf;
             self.capacity = new_capacity;
         }
-        let dest = (self.ptr as i64 + self.len) as *mut u8;
+        let dest = (self.ptr as usize + self.len) as *mut u8;
         ::libc::memcpy(dest as *mut void, s.as_ptr() as *const void, add_len as u64);
         self.len = new_len;
     }
@@ -44,7 +44,7 @@ impl String {
         ::std::ffi::raw_parts_to_str(self.ptr, self.len)
     }
 
-    pub fn len(&self) -> i64 {
+    pub fn len(&self) -> usize {
         self.len
     }
 
@@ -58,7 +58,7 @@ impl String {
             self.ptr = new_buf;
             self.capacity = new_capacity;
         }
-        let dest = (self.ptr as i64 + self.len) as *mut u8;
+        let dest = (self.ptr as usize + self.len) as *mut u8;
         *dest = byte;
         self.len = new_len;
     }
@@ -90,8 +90,8 @@ impl str {
 
     pub fn replace(&self, pattern: &str, replacement: &str) -> ::std::string::String {
         let mut result: ::std::string::String = ::std::string::String::new();
-        let self_len = self.len() as i64;
-        let pattern_len = pattern.len() as i64;
+        let self_len = self.len();
+        let pattern_len = pattern.len();
         let mut idx = 0;
         while idx < self_len {
             let mut matched = false;
