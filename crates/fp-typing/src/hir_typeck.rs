@@ -2123,6 +2123,42 @@ impl HirTypeChecker {
         Ok(Some(args))
     }
 
+    /// A strict, top-level structural compatibility check — deliberately
+    /// narrower than `unify_call_types`, which is a lenient *substitution*
+    /// helper whose catch-all (`require_same`) always returns `Ok(())`
+    /// even on a genuine mismatch (it only records a diagnostic; several
+    /// callers rely on that non-failing behavior). Using
+    /// `unify_call_types(..).is_ok()` alone as a receiver-matching gate is
+    /// therefore unsound: an unrelated pairing like `Adt(Option, [T])` vs
+    /// `Array(i64, 3)` falls through every real structural arm to
+    /// `require_same` and reports a false match. This function is only
+    /// used to gate *which* impl candidate's self-type is even eligible to
+    /// unify against a receiver in the first place — real substitution
+    /// still happens via `unify_call_types` afterward, once this confirms
+    /// the two are the same kind of type.
+    fn ty_shapes_compatible(a: &TyKind, b: &TyKind) -> bool {
+        match (a, b) {
+            (TyKind::Param(_), _) | (_, TyKind::Param(_)) => true,
+            (TyKind::Ref(_, a, _), TyKind::Ref(_, b, _)) => Self::ty_shapes_compatible(&a.kind, &b.kind),
+            (TyKind::Ref(_, a, _), b) => Self::ty_shapes_compatible(&a.kind, b),
+            (a, TyKind::Ref(_, b, _)) => Self::ty_shapes_compatible(a, &b.kind),
+            (TyKind::Slice(_) | TyKind::Array(_, _), TyKind::Slice(_) | TyKind::Array(_, _)) => true,
+            (TyKind::Tuple(a), TyKind::Tuple(b)) => a.len() == b.len(),
+            (TyKind::RawPtr(_), TyKind::RawPtr(_)) => true,
+            (TyKind::FnPtr(_), TyKind::FnPtr(_)) => true,
+            (TyKind::Adt(a, _), TyKind::Adt(b, _)) => a.did == b.did,
+            (TyKind::Bool, TyKind::Bool)
+            | (TyKind::Char, TyKind::Char)
+            | (TyKind::Int(_), TyKind::Int(_))
+            | (TyKind::Uint(_), TyKind::Uint(_))
+            | (TyKind::Float(_), TyKind::Float(_))
+            | (TyKind::Never, TyKind::Never)
+            | (TyKind::Any, TyKind::Any)
+            | (TyKind::Type, TyKind::Type) => true,
+            _ => a == b,
+        }
+    }
+
     fn unify_call_types(
         &self,
         expected: &Ty,
@@ -2414,9 +2450,10 @@ impl HirTypeChecker {
                         && scope.generic_args_compatible(impl_args, receiver_args)
                 }
                 (None, TyKind::Adt(_, _), _) => false,
-                (None, _, _) => scope
-                    .unify_call_types(self_ty, receiver_ty, &mut HashMap::new())
-                    .is_ok(),
+                (None, _, _) => Self::ty_shapes_compatible(&self_ty.kind, &receiver_ty.kind)
+                    && scope
+                        .unify_call_types(self_ty, receiver_ty, &mut HashMap::new())
+                        .is_ok(),
                 (Some(_), _, _) => false,
             };
             if !matches_receiver {
@@ -2598,9 +2635,10 @@ impl HirTypeChecker {
                 // receiver) needs its own `Param`s substituted the same
                 // way a call argument would, not an exact-shape match
                 // (which a still-generic impl could never satisfy).
-                (None, _, _) => scope
-                    .unify_call_types(self_ty, receiver_ty, &mut HashMap::new())
-                    .is_ok(),
+                (None, _, _) => Self::ty_shapes_compatible(&self_ty.kind, &receiver_ty.kind)
+                    && scope
+                        .unify_call_types(self_ty, receiver_ty, &mut HashMap::new())
+                        .is_ok(),
                 (Some(_), _, _) => false,
             };
             if !matches_receiver {
