@@ -593,8 +593,18 @@ fn load_embedded_fp_package(
 fn rs_relative_to_module_segments(relative: &str) -> Vec<String> {
     let mut segments: Vec<String> = vec![STD_PACKAGE_NAME.to_string()];
     let stem = relative.trim_end_matches(".rs");
-    for part in stem.split('/') {
-        if part == "mod" || part.is_empty() {
+    let parts: Vec<&str> = stem.split('/').collect();
+    // `<crate>/lib.rs` is the crate root, exactly like `<module>/mod.rs`
+    // collapses to that module's own path — real Cargo semantics, and
+    // the only place `lib.rs` legitimately appears in a crate at all.
+    // Left uncollapsed, a top-level `pub use core::result;` in
+    // `std/std/lib.rs` registers under `std::std::lib::result` instead
+    // of `std::std::result`, making it unreachable by anything resolving
+    // `crate::result` from that crate (the exact gap that broke
+    // `Ok`/`Err`/`Some`/`None` resolution for every consumer of `std`).
+    let last_index = parts.len().saturating_sub(1);
+    for (i, part) in parts.into_iter().enumerate() {
+        if part.is_empty() || part == "mod" || (part == "lib" && i == last_index) {
             continue;
         }
         segments.push(part.to_string());

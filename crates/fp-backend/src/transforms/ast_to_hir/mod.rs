@@ -408,47 +408,54 @@ impl HirGenerator {
         if self.resolved_import_aliases.contains(&resolved_key) {
             return true;
         }
-        let target_path = fp_core::ast::path::QualifiedPath::new(binding.target.clone());
-        let mut candidates = vec![target_path.clone()];
+        let Some((last, prefix)) = binding.target.split_last() else {
+            return false;
+        };
+
+        // Candidate starting points for the segment walk below, in
+        // priority order (first match wins) — same crate-root reasoning
+        // this always had: `use crate::X`/`use ::X` (an absolute import)
+        // reaches here with its "crate::"/root prefix already stripped
+        // by `collect_imports_from_path`, which doesn't know the current
+        // crate's own root depth. For an ordinary single-crate package
+        // the crate root is just the package name (`module_path`'s first
+        // segment); the vendored real Rust `std` library is the one
+        // exception, bundling three real crates (`core`/`alloc`/`std`)
+        // under one FerroPhase package, so a file belonging to one of
+        // those needs its sub-crate name kept too (`module_path`'s first
+        // two segments — see `rs_relative_to_module_segments` in
+        // fp-rust's provider). Trying each possible root is harmless for
+        // ordinary packages, where they either coincide or a root simply
+        // never resolves anything.
+        let mut roots = vec![fp_core::ast::path::QualifiedPath::new(Vec::new())];
         if !self.module_path.is_empty() {
-            let relative = self.module_path.join(&target_path.segments);
-            if relative != target_path {
-                candidates.push(relative);
-            }
+            roots.push(self.module_path.clone());
         }
-        // `use crate::X`/`use ::X` (an absolute import) reaches here with
-        // its "crate::"/root prefix already stripped by
-        // `collect_imports_from_path` — which, not knowing the current
-        // crate's own root depth, always strips to nothing. For an
-        // ordinary single-crate package the crate root is just the
-        // package name (module_path's first segment); the vendored real
-        // Rust `std` library is the one exception, bundling three real
-        // crates (`core`/`alloc`/`std`) under one FerroPhase package, so a
-        // file belonging to one of those needs its sub-crate name kept
-        // too (module_path's first two segments — see
-        // `rs_relative_to_module_segments` in fp-rust's provider). Try
-        // both possible crate roots as additional candidates; harmless
-        // for ordinary packages, where the two either coincide or the
-        // second candidate simply never matches anything.
-        let root = &self.module_path.segments;
-        if !root.is_empty() {
-            let mut with_root = root[..1].to_vec();
-            with_root.extend(target_path.segments.iter().cloned());
-            let with_root = fp_core::ast::path::QualifiedPath::new(with_root);
-            if !candidates.contains(&with_root) {
-                candidates.push(with_root);
-            }
+        let root_segs = self.module_path.segments.clone();
+        if !root_segs.is_empty() {
+            roots.push(fp_core::ast::path::QualifiedPath::new(root_segs[..1].to_vec()));
         }
-        if root.len() >= 2 {
-            let mut with_root = root[..2].to_vec();
-            with_root.extend(target_path.segments.iter().cloned());
-            let with_root = fp_core::ast::path::QualifiedPath::new(with_root);
-            if !candidates.contains(&with_root) {
-                candidates.push(with_root);
-            }
+        if root_segs.len() >= 2 {
+            roots.push(fp_core::ast::path::QualifiedPath::new(root_segs[..2].to_vec()));
         }
 
-        for candidate in candidates {
+        for start in roots {
+            // Phase 1, mirrors rustc's `resolve_import`/`maybe_resolve_path`
+            // (`compiler/rustc_resolve/src/imports.rs`): walk every segment
+            // except the last one at a time, looking each up in the
+            // *current* module's own binding table and continuing from
+            // whatever module that binding actually resolves to — so a
+            // re-exported/aliased module (`pub use core::option;`) is
+            // followed transparently, the same way rustc's resolver does,
+            // rather than re-deriving one flat guessed string key from the
+            // literal path text.
+            let Some(module_path) = self.resolve_module_path_through_aliases(&start, prefix) else {
+                continue;
+            };
+            let candidate = module_path.with_segment(last.clone());
+
+            // Whole-module import (`use std::json;`) — the last segment
+            // itself names a module, not an item within one.
             if self.module_defs.contains(&candidate) {
                 let res = hir::Res::Module(candidate.segments.clone());
                 self.current_value_scope().insert(alias.clone(), res.clone());
@@ -468,6 +475,9 @@ impl HirGenerator {
                 return true;
             }
 
+            // Phase 2, mirrors rustc's `maybe_resolve_ident_in_module`:
+            // resolve the final identifier against the walked module's
+            // own bindings.
             let key = candidate.to_key();
             let value = self.lookup_symbol(&key, &self.global_value_defs);
             let ty = self.lookup_symbol(&key, &self.global_type_defs);
@@ -499,6 +509,54 @@ impl HirGenerator {
             return true;
         }
         false
+    }
+
+    /// Walks `segments` one at a time starting from `start`, looking up
+    /// each name against the *current* module's own binding table and
+    /// following any resolved module alias's real canonical path as the
+    /// scope for the next segment — mirrors rustc's `resolve_import`/
+    /// `maybe_resolve_path` (`compiler/rustc_resolve/src/imports.rs`):
+    /// resolution walks forward from whatever a segment's binding
+    /// actually points at, never re-deriving a flat string key from the
+    /// literal path text. Returns the final resolved module path once
+    /// every segment has been consumed as a module hop, or `None` if a
+    /// step doesn't resolve to a module at all. Terminates naturally —
+    /// each step consumes exactly one segment of a finite input path, so
+    /// (unlike following an *alias* recursively) this walk can't loop.
+    fn resolve_module_path_through_aliases(
+        &self,
+        start: &fp_core::ast::path::QualifiedPath,
+        segments: &[String],
+    ) -> Option<fp_core::ast::path::QualifiedPath> {
+        let mut current = start.clone();
+        for segment in segments {
+            let candidate = current.with_segment(segment.clone());
+            if self.module_defs.contains(&candidate) {
+                current = candidate;
+                continue;
+            }
+            let key = candidate.to_key();
+            let module_alias = self
+                .lookup_symbol(&key, &self.global_value_defs)
+                .or_else(|| self.lookup_symbol(&key, &self.global_type_defs));
+            match module_alias {
+                Some(hir::Res::Module(real_path)) => {
+                    current = fp_core::ast::path::QualifiedPath::new(real_path);
+                }
+                // Not a module alias — could still be a legitimate
+                // non-module path component (e.g. an enum type name in
+                // `result::Result::Ok`, where `Result` is a type, not a
+                // module, but its variants are still addressed through
+                // it). Rustc's resolver treats a type's own namespace as
+                // a valid intermediate hop for exactly this shape; here,
+                // simply keep walking literally — the final identifier
+                // lookup still gets a fair chance either way, and this
+                // never regresses a path that previously only worked via
+                // pure literal splicing.
+                _ => current = candidate,
+            }
+        }
+        Some(current)
     }
 
     pub fn with_file<P: AsRef<Path>>(path: P) -> Self {
@@ -913,32 +971,41 @@ impl HirGenerator {
     }
 
     fn load_default_prelude_defs(&mut self) {
-        let prelude_prefix = "std::prelude::";
-        // Real std nests prelude re-exports one level deeper than this
-        // prefix — `std::prelude::v1::Some`/`std::prelude::rust_2021::Vec`,
-        // not `std::prelude::Some` directly (`std::prelude::mod.rs` is
-        // itself just `pub mod v1; pub mod rust_2015 { pub use v1::*; }`
-        // ...). Take the *last* path segment under the prefix as the
-        // prelude-visible bare name, rather than requiring an exact
-        // one-level match — otherwise every real prelude item (`Some`,
-        // `None`, `Vec`, `String`, ...) is silently dropped, and any code
-        // using them unqualified fails to resolve at all.
+        // Real std nests prelude re-exports one level deeper than a bare
+        // `"std::prelude::"` prefix — `std::prelude::v1::Some`/
+        // `std::prelude::rust_2021::Vec`, not `std::prelude::Some`
+        // directly (`std::prelude::mod.rs` is itself just `pub mod v1;
+        // pub mod rust_2015 { pub use v1::*; }` ...). The vendored real
+        // `std` additionally bundles three real crates (`core`/`alloc`/
+        // `std`) under one FerroPhase package, so a genuine key looks
+        // like `std::core::prelude::v1::Ok` or `std::std::prelude::v1::Ok`
+        // — a literal `"std::prelude::"` prefix check matches neither
+        // (the segment right after the leading `"std::"` is `"core"`/
+        // `"std"`, not `"prelude"`). Look for a `prelude` path *segment*
+        // anywhere instead of a fixed-depth prefix, and take the last
+        // segment as the prelude-visible bare name — otherwise every real
+        // prelude item (`Ok`, `Err`, `Some`, `None`, `Vec`, ...) is
+        // silently dropped, and any code using them unqualified fails to
+        // resolve at all.
+        fn prelude_bare_name(key: &str) -> Option<&str> {
+            if key.split("::").any(|segment| segment == "prelude") {
+                key.rsplit("::").next()
+            } else {
+                None
+            }
+        }
         let type_aliases: Vec<_> = self
             .global_type_defs
             .iter()
             .filter_map(|(key, entry)| {
-                key.strip_prefix(prelude_prefix)
-                    .and_then(|rest| rest.rsplit("::").next())
-                    .map(|name| (name.to_owned(), entry.res.clone()))
+                prelude_bare_name(key).map(|name| (name.to_owned(), entry.res.clone()))
             })
             .collect();
         let value_aliases: Vec<_> = self
             .global_value_defs
             .iter()
             .filter_map(|(key, entry)| {
-                key.strip_prefix(prelude_prefix)
-                    .and_then(|rest| rest.rsplit("::").next())
-                    .map(|name| (name.to_owned(), entry.res.clone()))
+                prelude_bare_name(key).map(|name| (name.to_owned(), entry.res.clone()))
             })
             .collect();
         self.prelude_type_defs = type_aliases.into_iter().collect();
@@ -955,10 +1022,7 @@ impl HirGenerator {
         if let Some(ref workspace) = self.workspace {
             for (_module_path, _hir_program, exports) in workspace.hir_definitions() {
                 for (key, res) in &exports {
-                    let Some(rest) = key.strip_prefix(prelude_prefix) else {
-                        continue;
-                    };
-                    let Some(name) = rest.rsplit("::").next() else {
+                    let Some(name) = prelude_bare_name(key) else {
                         continue;
                     };
                     // A prelude export could be looked up in either

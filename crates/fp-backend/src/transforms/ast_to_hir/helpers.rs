@@ -419,6 +419,24 @@ impl HirGenerator {
                 item_exists,
                 scope_contains,
             ) {
+                // `resolve_item_path` returns the path *unexpanded* when it
+                // already resolved via `scope_contains` (the same tiered
+                // `resolve_value_symbol`/`resolve_type_symbol` call that
+                // already produced `resolved`) rather than by discovering
+                // a genuinely longer canonical form. In that case there is
+                // nothing new to look up — re-deriving via
+                // `lookup_global_res` here is actively wrong, not just
+                // redundant: `lookup_global_res` has no prelude-tier
+                // awareness and can find a completely different,
+                // same-named declaration elsewhere in the workspace (this
+                // is exactly what broke bare `Ok`/`Err`/`Some`/`None`
+                // resolving to their real, tagged declarations — a
+                // same-named but unrelated item elsewhere in `std` won
+                // instead). Trust `resolved` directly whenever the
+                // "canonical" path is just the original path echoed back.
+                if canonical.segments == segments.iter().map(|s| s.name.as_str().to_string()).collect::<Vec<_>>() {
+                    return Ok(hir::Path { segments, res: resolved });
+                }
                 let mut canonical_segments = Vec::with_capacity(canonical.segments.len());
                 let offset = canonical.segments.len().saturating_sub(segments.len());
                 for (idx, seg) in canonical.segments.iter().enumerate() {
@@ -433,14 +451,7 @@ impl HirGenerator {
                 if canonical_res.is_none() && self.module_defs.contains(&canonical) {
                     canonical_res = Some(hir::Res::Module(canonical.segments.clone()));
                 }
-                // `resolve_item_path` returns the path unexpanded when it
-                // already resolved via `scope_contains` (lexical, module- or
-                // prelude-qualified, or plain global tiers) rather than by
-                // discovering a longer canonical form — `lookup_global_res`
-                // only sees the plain global tier, so fall back to the
-                // already-resolved value for tiers it can't see (notably
-                // `prelude_type_defs`/`prelude_value_defs`).
-                if canonical_res.is_none() && canonical.segments.len() == segments.len() {
+                if canonical_res.is_none() {
                     canonical_res = resolved.clone();
                 }
                 return Ok(hir::Path {
