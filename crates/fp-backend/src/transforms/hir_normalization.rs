@@ -136,13 +136,47 @@ fn normalize_stmt(
 }
 
 /// Recurses into `expr`'s children first (in place), then — only if
-/// `promote_op_only` is true — attempts to rewrite the current node if it
-/// matches one of the recognized `#[op(...)]` shapes.
+/// `promote_op_only` is true — attempts to rewrite `expr` itself if it
+/// matches one of the recognized `#[op(...)]` shapes. Thin wrapper over
+/// `normalize_expr_inner` that always allows self-promotion — see that
+/// function's doc for the one case that deliberately doesn't.
 fn normalize_expr(
     expr: &mut hir::Expr,
     op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::OpKind>,
     typeck: Option<&TypeckResults>,
     promote_op_only: bool,
+) {
+    normalize_expr_inner(expr, op_defs, typeck, promote_op_only, true);
+}
+
+/// Same as `normalize_expr`, but `promote_self` controls whether `expr`
+/// itself is eligible for the trailing `try_promote_op` attempt (children
+/// are always recursed into and always eligible via `normalize_expr`).
+///
+/// This distinction exists for exactly one case: a `Call`'s own callee.
+/// `try_promote_op`'s `Path` arm recognizes *any* bare path resolving to
+/// an `#[op(...)]`-tagged declaration and promotes it — correct for a
+/// path used as a plain value (e.g. a unit-variant reference like
+/// `None`), but wrong for a path that's specifically a `Call`'s callee
+/// (e.g. `Ok` in `Ok(default())`): recursing into it with self-promotion
+/// allowed would rewrite the *callee alone* into
+/// `IntrinsicCall(Op(ResultOk), [])` (zero args, since the callee node
+/// has none of its own) before the enclosing `Call` node's own
+/// `try_promote_op` (which correctly carries the real arguments) ever
+/// runs — and once the callee is no longer `ExprKind::Path`, the
+/// enclosing `Call` arm's `let ExprKind::Path(path) = &callee.kind else
+/// { return None }` guard silently fails, permanently losing the
+/// promotion. Confirmed via targeted tracing to be the exact mechanism
+/// behind `Ok`/`Some`/`Err` never reaching `KotlinMaterializer` despite
+/// correct name resolution. So: recurse into a callee's own children as
+/// normal, but never let the callee node itself self-promote — only the
+/// enclosing `Call` may promote using the real argument list.
+fn normalize_expr_inner(
+    expr: &mut hir::Expr,
+    op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::OpKind>,
+    typeck: Option<&TypeckResults>,
+    promote_op_only: bool,
+    promote_self: bool,
 ) {
     match &mut expr.kind {
         hir::ExprKind::Path(_) => {
@@ -164,7 +198,9 @@ fn normalize_expr(
             normalize_expr(&mut reference.expr, op_defs, typeck, promote_op_only);
         }
         hir::ExprKind::Call(callee, args) => {
-            normalize_expr(callee, op_defs, typeck, promote_op_only);
+            // See this function's doc comment: the callee must not
+            // self-promote independently of this enclosing `Call`.
+            normalize_expr_inner(callee, op_defs, typeck, promote_op_only, false);
             for arg in args.iter_mut() {
                 normalize_expr(&mut arg.value, op_defs, typeck, promote_op_only);
             }
@@ -264,7 +300,7 @@ fn normalize_expr(
         | hir::ExprKind::Break(None) => {}
     }
 
-    if !promote_op_only {
+    if !promote_op_only || !promote_self {
         return;
     }
 
