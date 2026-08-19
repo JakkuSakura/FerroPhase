@@ -418,11 +418,43 @@ impl<'a> HirToAstLifter<'a> {
     }
 
     fn lift_signature(&self, sig: &hir::FunctionSig) -> Result<FunctionSignature> {
+        // A method's `self` parameter has no dedicated HIR representation
+        // of its own (see `make_self_param` on the AST→HIR side, which just
+        // inserts an ordinary `Param` named `self` at index 0) — recover
+        // `ast::FunctionSignature`'s separate `receiver` field from it here,
+        // rather than leaving it `None` unconditionally, since backends
+        // (`fp-kotlin`'s `collect_impl_methods`) key instance-vs-static
+        // method classification directly off `receiver.is_none()`: losing
+        // this turns every instance method into a mis-rendered "static"
+        // one once real typed HIR→AST lifting is reached, rather than the
+        // pre-typecheck AST fallback that never lost it.
+        let is_self_param = |param: &hir::Param| {
+            matches!(&param.pat.kind, hir::PatKind::Binding { name, .. } if name.as_str() == "self")
+        };
+        // HIR's `Param.ty` for a lowered `self` (`make_self_param`, on the
+        // AST→HIR side) carries no `&` vs `&mut` distinction at all — both
+        // wrap in the same `TypeExprKind::Ref`, with the actual mutability
+        // only ever recorded on the pattern binding, which `make_self_param`
+        // itself always hardcodes to `false` regardless of receiver kind.
+        // That distinction is therefore unrecoverable here; every backend
+        // that reads `receiver` today only checks `is_none()`/`is_some()`
+        // (instance-vs-static classification), never Ref-vs-RefMut, so
+        // collapsing to a plain `Ref`/`Value` split loses nothing any
+        // current consumer observes.
+        let (receiver, rest) = match sig.inputs.split_first() {
+            Some((first, rest)) if is_self_param(first) => {
+                let receiver = match &first.ty.kind {
+                    hir::TypeExprKind::Ref(_) => ast::FunctionParamReceiver::Ref,
+                    _ => ast::FunctionParamReceiver::Value,
+                };
+                (Some(receiver), rest)
+            }
+            _ => (None, sig.inputs.as_slice()),
+        };
         Ok(FunctionSignature {
             name: Some(Ident::new(sig.name.as_str())),
-            receiver: None,
-            params: sig
-                .inputs
+            receiver,
+            params: rest
                 .iter()
                 .enumerate()
                 .map(|(index, param)| self.lift_param(param, index))

@@ -13,7 +13,7 @@ struct EnumerateLoopSpec {
 struct IterLoopSpec {
     base_prefix: PathPrefix,
     base_segments: Vec<ast::Ident>,
-    value_ident: ast::Ident,
+    value_pat: ast::Pattern,
 }
 
 impl HirGenerator {
@@ -1492,22 +1492,10 @@ impl HirGenerator {
             return Ok(None);
         }
 
-        let value_ident = match for_expr.pat.as_ident() {
-            Some(ident) => ident.clone(),
-            None => {
-                self.add_error(
-                    Diagnostic::error("iter() loop pattern must be a simple binding".to_string())
-                        .with_source_context(DIAGNOSTIC_CONTEXT)
-                        .with_span(for_expr.span()),
-                );
-                return Ok(None);
-            }
-        };
-
         Ok(Some(IterLoopSpec {
             base_prefix,
             base_segments,
-            value_ident,
+            value_pat: (*for_expr.pat).clone(),
         }))
     }
 
@@ -1770,7 +1758,7 @@ impl HirGenerator {
             }
         };
 
-        self.build_indexed_for_loop(for_expr, Vec::new(), base_expr, len_expr, &spec.value_ident)
+        self.build_indexed_for_loop(for_expr, Vec::new(), base_expr, len_expr, &spec.value_pat)
     }
 
     /// Desugars `for field in <expr>` when `<expr>` isn't a `.iter()`/
@@ -1785,15 +1773,7 @@ impl HirGenerator {
     fn lower_bare_iter_for_loop(&mut self, for_expr: &ast::ExprFor) -> Result<hir::ExprKind> {
         use fp_core::intrinsics::IntrinsicKind;
 
-        let value_ident = match for_expr.pat.as_ident() {
-            Some(ident) => ident.clone(),
-            None => {
-                return Ok(self.error_placeholder_expr_kind(
-                    "`for` loop pattern must be a simple binding".to_string(),
-                    for_expr.span(),
-                ));
-            }
-        };
+        let value_pat = (*for_expr.pat).clone();
 
         let base_lowered = self.transform_expr_to_hir(&for_expr.iter)?;
         let base_hir_id = self.next_id();
@@ -1856,7 +1836,7 @@ impl HirGenerator {
             vec![base_local_stmt],
             base_expr,
             len_expr,
-            &value_ident,
+            &value_pat,
         )
     }
 
@@ -1871,7 +1851,7 @@ impl HirGenerator {
         mut stmts: Vec<hir::Stmt>,
         base_expr: hir::Expr,
         len_expr: hir::Expr,
-        value_ident: &ast::Ident,
+        for_pat: &ast::Pattern,
     ) -> Result<hir::ExprKind> {
         let idx_hir_id = self.next_id();
         let idx_name = hir::Symbol::new(format!("__fp_idx{}", idx_hir_id.index));
@@ -1921,13 +1901,14 @@ impl HirGenerator {
             span: Span::new(self.current_file, 0, 0),
         };
 
-        let value_pat = hir::Pat {
-            hir_id: self.next_id(),
-            kind: hir::PatKind::Binding {
-                name: hir::Symbol::new(value_ident.name.clone()),
-                mutable: false,
-            },
-        };
+        // The loop pattern isn't always a plain identifier (e.g. `for (name,
+        // _n) in list.iter()` destructures the indexed element directly) —
+        // `transform_pattern_with_metadata` already lowers any pattern
+        // shape (tuple, struct, wildcard, ...) the same way a `let`
+        // binding's own pattern would be, so reuse it here instead of only
+        // handling a bare identifier and silently producing an empty,
+        // no-op loop body for anything else.
+        let (value_pat, _ty, _) = self.transform_pattern_with_metadata(for_pat)?;
         let value_init = hir::Expr {
             hir_id: self.next_id(),
             kind: hir::ExprKind::Index(Box::new(base_expr.clone()), Box::new(idx_expr.clone())),

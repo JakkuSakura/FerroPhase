@@ -58,7 +58,20 @@ impl IntrinsicMaterializer for KotlinMaterializer {
             // `Option::None`), which isn't a valid `Unit` in Kotlin —
             // `Unit` is the one real spelling for that.
             CallKind::Op(OpKind::ResultOk) => Ok(Some(match call.args.first() {
-                Some(expr) if matches!(expr.kind(), ExprKind::Value(v) if matches!(**v, Value::Unit(_))) => {
+                // `()` doesn't lower to a `Value::Unit` literal node — HIR
+                // represents it as an empty block (`{ }`, evaluating to
+                // unit), so that's the shape actually reaching here for
+                // `Ok(())`. Recognize both: `Value::Unit` for whichever
+                // callers do construct a literal one directly, and an
+                // empty `ExprKind::Block` for the shape a real `()`
+                // argument actually takes. Missing the latter left `Ok(())`
+                // rendering as its raw (empty) block argument instead of
+                // `Unit`, which the Kotlin serializer's block-hoisting path
+                // then emits as a broken, contentless `run { }`.
+                Some(expr)
+                    if matches!(expr.kind(), ExprKind::Value(v) if matches!(**v, Value::Unit(_)))
+                        || matches!(expr.kind(), ExprKind::Block(b) if b.stmts.is_empty()) =>
+                {
                     Expr::name(Name::ident("Unit"))
                 }
                 Some(expr) => expr.clone(),
