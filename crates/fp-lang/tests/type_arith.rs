@@ -102,6 +102,26 @@ fn bare_structural_literal_missing_colon_errors() {
 }
 
 #[test]
+fn parses_bare_ident_optional_type_sugar() {
+    // `Foo?` where `Foo` is a bare single-segment name: `Name::path()`
+    // canonicalizes such a name into `Name::Ident`, not `Name::Path`, so
+    // this exercises a different parser branch than a multi-segment or
+    // otherwise-`Name::Path` type (see `examples/14_type_arithmetic.fp`'s
+    // `type FooMaybe = Foo?;`).
+    let def = parse_single_type_alias("type FooMaybe = Foo?;");
+    match def.value {
+        Ty::TypeBinaryOp(bin) => {
+            assert!(matches!(bin.kind, TypeBinaryOpKind::Union));
+            match bin.lhs.as_ref() {
+                Ty::Expr(_) => {}
+                other => panic!("expected bare `Foo` on the lhs, found {:?}", other),
+            }
+        }
+        other => panic!("expected optional union type, found {:?}", other),
+    }
+}
+
+#[test]
 fn parses_optional_structural_field_marker() {
     let def = parse_single_type_alias("type A = { email?: string };");
     match def.value {

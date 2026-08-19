@@ -267,17 +267,11 @@ struct MethodLoweringInfo {
     struct_def: Option<hir::DefId>,
 }
 
-// TODO(jakku): The current MIR lowering is missing a real monomorphization pass.
-// We have to create monomorphic method/function bodies when generic impls are
-// invoked with concrete types. The intended flow is:
-// - Cache the generic method definition here (method_defs).
-// - On call, compute concrete type substitutions from the callee path's
-//   generic args and/or the expected return type.
-// - Build a specialized MethodLoweringInfo and emit a cloned MIR body using
-//   lower_function_sig_with_substs + BodyBuilder (type_substs).
-// - Avoid re-emitting by caching `(DefId, SubstsRef)` in method_specializations.
-// This is required to fix generic enum payloads and to eliminate invalid
-// bitcasts (e.g., in examples/17_generics).
+/// Raw HIR for a generic method (`impl<T> Vec<T> { .. }`), cached here by
+/// `register_generic_method_definition` and specialized on demand per call
+/// site by `ensure_method_specialization*`, which build a concrete
+/// `MethodLoweringInfo`/MIR body for the call's own substs and cache the
+/// result in `method_specializations` keyed by `(DefId, SubstsRef)`.
 #[derive(Clone)]
 struct MethodDefinition {
     def_id: hir::DefId,
@@ -2112,81 +2106,7 @@ impl MirLowering {
             .cloned()
             .map(mir::ty::GenericArg::Type)
             .collect::<mir::ty::SubstsRef>();
-        let key = (def.def_id, method_substs.clone());
-
-        if let Some(info) = self.method_specializations.get(&key) {
-            return Ok(info.clone());
-        }
-
-        let mut method_context = if let hir::TypeExprKind::Path(path) = &def.self_ty.kind {
-            let mir_self_ty = self.lower_type_expr_with_substs(&def.self_ty, &substs);
-            Some(MethodContext {
-                def_id: def.self_def,
-                path: path.segments.clone(),
-                mir_self_ty,
-                assoc_types: def.assoc_types.clone(),
-            })
-        } else {
-            None
-        };
-
-        let sig = self.lower_function_sig_with_substs(
-            &def.function.sig,
-            method_context.as_ref(),
-            &substs,
-        );
-        let suffix = self.specialization_suffix(&args_in_order);
-        let name = format!("{}__{}", def.method_name, suffix);
-        let fn_ty = self.function_pointer_ty(&sig);
-
-        let body_id = mir::BodyId::new(self.next_body_id);
-        self.next_body_id += 1;
-
-        let span = def
-            .function
-            .body
-            .as_ref()
-            .map(|body| body.span())
-            .unwrap_or(span);
-        let mir_body = BodyBuilder::new(
-            self,
-            &def.function,
-            &sig,
-            span,
-            method_context.take(),
-            substs,
-        )
-        .lower()?;
-
-        let mir_function = mir::Function {
-            name: mir::Symbol::new(name.clone()),
-            def_id: Some(def.def_id),
-            substs: method_substs.clone(),
-            sig: sig.clone(),
-            body_id,
-            abi: self.map_abi(&def.function.sig.abi),
-            is_extern: false,
-            attrs: Vec::new(),
-        };
-        let mir_item = mir::Item {
-            mir_id: self.next_mir_id,
-            kind: mir::ItemKind::Function(mir_function),
-        };
-        self.next_mir_id += 1;
-
-        self.extra_items.push(mir_item);
-        self.extra_bodies.push((body_id, mir_body));
-
-        let info = MethodLoweringInfo {
-            def_id: Some(def.def_id),
-            substs: method_substs,
-            sig,
-            fn_name: name.clone(),
-            fn_ty,
-            struct_def: def.self_def,
-        };
-        self.method_specializations.insert(key, info.clone());
-        Ok(info)
+        self.finish_method_specialization(def, substs, &args_in_order, method_substs, span, true)
     }
 
     fn ensure_method_specialization_from_explicit_args(
@@ -2219,6 +2139,28 @@ impl MirLowering {
             .cloned()
             .map(mir::ty::GenericArg::Type)
             .collect::<mir::ty::SubstsRef>();
+        self.finish_method_specialization(def, substs, &args_in_order, method_substs, span, false)
+    }
+
+    /// Shared tail of `ensure_method_specialization_uncached`/
+    /// `_from_explicit_args`: once a concrete `substs` map is known —
+    /// however it was derived, from call-site argument/return-type
+    /// inference or from fully-explicit turbofish args — building and
+    /// caching the specialized `MethodLoweringInfo`/MIR body is identical.
+    /// `carries_def_id` is the one real difference between the two
+    /// callers (the explicit-args path's resulting `MethodLoweringInfo`
+    /// omits `def_id`, matching its own prior behavior) — kept as a
+    /// parameter rather than unified further since it's the only place
+    /// that distinction matters.
+    fn finish_method_specialization(
+        &mut self,
+        def: &MethodDefinition,
+        substs: HashMap<String, Ty>,
+        args_in_order: &[Ty],
+        method_substs: mir::ty::SubstsRef,
+        span: Span,
+        carries_def_id: bool,
+    ) -> Result<MethodLoweringInfo> {
         let key = (def.def_id, method_substs.clone());
 
         if let Some(info) = self.method_specializations.get(&key) {
@@ -2242,7 +2184,7 @@ impl MirLowering {
             method_context.as_ref(),
             &substs,
         );
-        let suffix = self.specialization_suffix(&args_in_order);
+        let suffix = self.specialization_suffix(args_in_order);
         let name = format!("{}__{}", def.method_name, suffix);
         let fn_ty = self.function_pointer_ty(&sig);
 
@@ -2285,7 +2227,7 @@ impl MirLowering {
         self.extra_bodies.push((body_id, mir_body));
 
         let info = MethodLoweringInfo {
-            def_id: None,
+            def_id: if carries_def_id { Some(def.def_id) } else { None },
             substs: method_substs,
             sig,
             fn_name: name.clone(),
@@ -6140,6 +6082,23 @@ impl MirLowering {
         }
     }
 
+    /// `HashMap`'s `from`/`len`/`get_unchecked` get a bespoke intrinsic
+    /// lowering elsewhere (see `lower_call`'s `HashMap::from` handling) and
+    /// must not also be registered as ordinary methods — shared by both
+    /// the signature-registration path (`register_impl_signature_for_item`)
+    /// and the real body-lowering path (`lower_impl`) so the two can never
+    /// diverge on which methods this applies to.
+    fn is_hashmap_intrinsic_method(struct_name: Option<&str>, method_name: &str) -> bool {
+        let is_hashmap_impl = struct_name
+            .map(|name| name.ends_with("HashMap"))
+            .unwrap_or(false);
+        let is_hashmap_method = matches!(method_name, "from" | "len" | "get_unchecked")
+            || method_name.ends_with("::from")
+            || method_name.ends_with("::len")
+            || method_name.ends_with("::get_unchecked");
+        is_hashmap_impl && is_hashmap_method
+    }
+
     /// Signature-only pre-pass over every impl in the package, run before
     /// any bodies are lowered (see `lower_program`) — so a call to a
     /// method/associated function resolves regardless of which module
@@ -6193,14 +6152,7 @@ impl MirLowering {
             return;
         };
         let method_name = function.sig.name.as_str();
-        let is_hashmap_impl = struct_name
-            .map(|name| name.ends_with("HashMap"))
-            .unwrap_or(false);
-        let is_hashmap_method = matches!(method_name, "from" | "len" | "get_unchecked")
-            || method_name.ends_with("::from")
-            || method_name.ends_with("::len")
-            || method_name.ends_with("::get_unchecked");
-        if is_hashmap_impl && is_hashmap_method {
+        if Self::is_hashmap_intrinsic_method(struct_name, method_name) {
             return;
         }
         let impl_is_generic = !impl_block.generics.params.is_empty();
@@ -6483,15 +6435,7 @@ impl MirLowering {
             match &impl_item.kind {
                 hir::ImplItemKind::Method(function) => {
                     let method_name = function.sig.name.as_str();
-                    let is_hashmap_impl = struct_name
-                        .as_deref()
-                        .map(|name| name.ends_with("HashMap"))
-                        .unwrap_or(false);
-                    let is_hashmap_method = matches!(method_name, "from" | "len" | "get_unchecked")
-                        || method_name.ends_with("::from")
-                        || method_name.ends_with("::len")
-                        || method_name.ends_with("::get_unchecked");
-                    if is_hashmap_impl && is_hashmap_method {
+                    if Self::is_hashmap_intrinsic_method(struct_name.as_deref(), method_name) {
                         continue;
                     }
                     if impl_is_generic || !function.sig.generics.params.is_empty() {
@@ -7023,12 +6967,28 @@ impl MirLowering {
             hir::ExprKind::Struct(path, fields) => {
                 let def_id = self.resolve_path_def_id(path)?;
                 let struct_def = self.struct_defs.get(&def_id)?.clone();
-                let args = path
+                let mut args = path
                     .segments
                     .last()
                     .and_then(|segment| segment.args.as_ref())
                     .map(|args| self.lower_generic_args(Some(args), expr.span))
                     .unwrap_or_default();
+                if args.is_empty() && !struct_def.generics.is_empty() {
+                    // No explicit turbofish — read `fp-typing`'s own
+                    // already-resolved generic args for this literal
+                    // (`typeck_exprs`) rather than re-deriving them here.
+                    // Top-level `const` items aren't themselves generic, so
+                    // there's no live specialization context to compose in
+                    // (empty substs map); if the cache has no entry, fall
+                    // through to today's behavior unchanged, letting
+                    // `struct_layout_for_instance`'s own arity check
+                    // surface the real diagnostic.
+                    if let Some(cached) =
+                        self.adt_ty_args_from_typeck_cache(expr.hir_id, def_id, &HashMap::new())
+                    {
+                        args = cached;
+                    }
+                }
                 let layout = self.struct_layout_for_instance(def_id, &args, expr.span);
                 let layout = match layout {
                     Some(l) => l,
@@ -8266,6 +8226,51 @@ impl MirLowering {
             },
             _ => ty.clone(),
         }
+    }
+
+    /// Reads this struct-literal expression's generic type args from
+    /// `fp-typing`'s own already-resolved type-check result (`typeck_exprs`)
+    /// instead of re-deriving them independently in `fp-backend` — HIR→MIR
+    /// lowering must only consume typeck's answers, never recompute generic
+    /// substitutions itself (mirrors rustc's `rustc_mir_build`, which never
+    /// re-infers what `rustc_hir_typeck` already resolved). When the cached
+    /// type is itself expressed relative to an *enclosing* still-generic
+    /// item's own params (legitimate, since generic items are type-checked
+    /// once, generically, never per call-site), `type_substs` — the current
+    /// specialization's own concrete substitution map — is composed in via
+    /// `substitute_ty` before the result is trusted. Returns `None` (letting
+    /// the caller hard-error the same way an explicit turbofish mismatch
+    /// would) whenever there's no cached entry, the cached type isn't this
+    /// same struct, or composing `type_substs` still leaves it unresolved.
+    fn adt_ty_args_from_typeck_cache(
+        &self,
+        hir_id: hir::HirId,
+        def_id: hir::DefId,
+        type_substs: &HashMap<String, Ty>,
+    ) -> Option<Vec<Ty>> {
+        let cached = self.typeck_exprs.get(&hir_id)?;
+        let TyKind::Adt(adt, args) = &cached.kind else {
+            return None;
+        };
+        if adt.did != def_id {
+            return None;
+        }
+        let mut resolved = Vec::with_capacity(args.len());
+        for arg in args {
+            let mir::ty::GenericArg::Type(ty) = arg else {
+                return None;
+            };
+            let ty = if type_substs.is_empty() {
+                ty.clone()
+            } else {
+                self.substitute_ty(ty, type_substs)
+            };
+            if self.has_unresolved_ty(&ty) {
+                return None;
+            }
+            resolved.push(ty);
+        }
+        Some(resolved)
     }
 
     fn ensure_runtime_stub(&mut self, name: &str, sig: &mir::FunctionSig) {
@@ -9775,28 +9780,6 @@ impl<'a> BodyBuilder<'a> {
         }
         self.lowering
             .enum_variant_payloads_for_args(variant, &args, span)
-    }
-
-    /// Struct-literal counterpart to `payload_types_from_type_substs`: when
-    /// the current function body is a specific generic specialization
-    /// (`self.type_substs` non-empty), resolve a struct's generic args from
-    /// that specialization's own substitution map — the authoritative
-    /// source for *this* specialization — before falling back to inferring
-    /// them from field literals (which can't work for a field-less generic
-    /// struct like `Vec<T> { }`, whose constructor body has no fields to
-    /// infer `T` from).
-    fn struct_generic_args_from_type_substs(&mut self, info: &StructDefinition) -> Option<Vec<Ty>> {
-        if self.type_substs.is_empty() {
-            return None;
-        }
-        if info.generics.is_empty() {
-            return None;
-        }
-        let mut args = Vec::with_capacity(info.generics.len());
-        for name in &info.generics {
-            args.push(self.type_substs.get(name)?.clone());
-        }
-        Some(args)
     }
 
     fn variant_payloads_from_layout_or_ty(
@@ -11977,7 +11960,7 @@ impl<'a> BodyBuilder<'a> {
             }
         }
         if let hir::ExprKind::Struct(path, fields) = &expr.kind {
-            self.lower_struct_literal(local_id, annotated_ty, path, fields, expr.span)
+            self.lower_struct_literal(local_id, annotated_ty, expr.hir_id, path, fields, expr.span)
         } else if let hir::ExprKind::Call(callee, args) = &expr.kind {
             let place = mir::Place::from_local(local_id);
             let ty = annotated_ty
@@ -12714,6 +12697,7 @@ impl<'a> BodyBuilder<'a> {
         &mut self,
         local_id: mir::LocalId,
         annotated_ty: Option<&Ty>,
+        expr_hir_id: hir::HirId,
         path: &hir::Path,
         fields: &[hir::StructExprField],
         span: Span,
@@ -12776,12 +12760,24 @@ impl<'a> BodyBuilder<'a> {
         if let Some(def_id) = def_id {
             if let Some(info) = self.lowering.struct_defs.get(&def_id).cloned() {
                 if generic_args.is_empty() && !info.generics.is_empty() {
-                    if let Some(from_substs) = self.struct_generic_args_from_type_substs(&info) {
-                        generic_args = from_substs;
-                    } else if let Some(inferred) =
-                        self.infer_struct_generics_from_literals(&info, fields, span)?
-                    {
-                        generic_args = inferred;
+                    // No explicit turbofish — read `fp-typing`'s own
+                    // already-resolved generic args for this literal
+                    // (`typeck_exprs`), composed with this specialization's
+                    // own `type_substs` when the cached result is still
+                    // `Param`-relative to an enclosing generic item. Do not
+                    // fall back to independently re-deriving the args here
+                    // (by name-matching against `type_substs` or
+                    // re-unifying against field literals) — that inference
+                    // belongs in `fp-typing`, not in MIR lowering. A cache
+                    // miss falls through to `struct_layout_for_instance`'s
+                    // own arity check below, which reports a real
+                    // diagnostic instead of guessing.
+                    if let Some(cached) = self.lowering.adt_ty_args_from_typeck_cache(
+                        expr_hir_id,
+                        def_id,
+                        &self.type_substs,
+                    ) {
+                        generic_args = cached;
                     }
                 }
                 if let Some(layout) =
@@ -13193,54 +13189,6 @@ impl<'a> BodyBuilder<'a> {
         }
 
         Ok(())
-    }
-
-    fn infer_struct_generics_from_literals(
-        &mut self,
-        struct_def: &StructDefinition,
-        fields: &[hir::StructExprField],
-        span: Span,
-    ) -> Result<Option<Vec<Ty>>> {
-        let mut substs: HashMap<String, Ty> = HashMap::new();
-        let mut field_map: HashMap<String, &hir::Expr> = HashMap::new();
-        for field in fields {
-            field_map.insert(String::from(field.name.clone()), &field.expr);
-        }
-
-        for field in &struct_def.fields {
-            let Some(expr) = field_map.get(&field.name) else {
-                continue;
-            };
-            let hir::ExprKind::Literal(lit) = &expr.kind else {
-                continue;
-            };
-            let (_literal, actual_ty) = self.lower_literal(lit, None);
-            self.lowering.infer_generic_from_type_expr(
-                &field.ty,
-                &actual_ty,
-                &struct_def.generics,
-                &mut substs,
-                span,
-            )?;
-        }
-
-        if struct_def.generics.is_empty() {
-            return Ok(Some(Vec::new()));
-        }
-
-        for name in &struct_def.generics {
-            if !substs.contains_key(name) {
-                return Ok(None);
-            }
-        }
-
-        Ok(Some(
-            struct_def
-                .generics
-                .iter()
-                .filter_map(|name| substs.get(name).cloned())
-                .collect(),
-        ))
     }
 
     fn lower_unknown_struct_literal(
@@ -14085,18 +14033,33 @@ impl<'a> BodyBuilder<'a> {
             if explicit_args.is_empty() {
                 if let Some(args) = self.lowering.typeck_generic_call_args.get(&expr.hir_id) {
                     // The type checker's own cached inference for this call
-                    // can itself be an unbound placeholder (e.g. a
-                    // generic-impl associated function called with no
-                    // receiver/args to unify against, like `Vec::<T>::new()`
-                    // — typeck has nothing to infer `T` from at that point
-                    // either, and caches the impl's own literal `T`).
-                    // Trusting that blindly would skip the destination-type
-                    // fallback inference below, which *can* resolve it (the
-                    // call's own `let x: Vec<str> = ...` annotation). Only
-                    // trust the cached args when none of them are still
-                    // unresolved.
-                    if !args.iter().any(|ty| self.lowering.has_unresolved_ty(ty)) {
-                        explicit_args = args.clone();
+                    // can itself still be `Param`-relative rather than
+                    // fully concrete: when the call is nested inside
+                    // another still-generic enclosing item's own body
+                    // (e.g. `add(a, b)` inside `pipeline<T>`), typeck
+                    // resolves it once, generically, relative to that
+                    // enclosing item's own params — not per
+                    // monomorphization. Composing the current
+                    // specialization's own concrete bindings
+                    // (`self.type_substs`) in first (a no-op when empty)
+                    // lets a legitimately `Param`-relative cached result
+                    // resolve to something concrete, the same way it can
+                    // also stay an unbound placeholder (e.g. a generic-impl
+                    // associated function called with no receiver/args to
+                    // unify against, like `Vec::<T>::new()`) that composing
+                    // can't fix — only trust the result once composing
+                    // leaves nothing still unresolved, so the
+                    // destination-type fallback inference below still runs
+                    // for the latter case.
+                    let composed: Vec<Ty> = if self.type_substs.is_empty() {
+                        args.clone()
+                    } else {
+                        args.iter()
+                            .map(|ty| self.lowering.substitute_ty(ty, &self.type_substs))
+                            .collect()
+                    };
+                    if !composed.iter().any(|ty| self.lowering.has_unresolved_ty(ty)) {
+                        explicit_args = composed;
                     }
                 }
             }
@@ -19508,7 +19471,14 @@ impl<'a> BodyBuilder<'a> {
             }
             hir::ExprKind::Struct(path, fields) => {
                 let local_id = place.local;
-                self.lower_struct_literal(local_id, Some(expected_ty), path, fields, expr.span)?;
+                self.lower_struct_literal(
+                    local_id,
+                    Some(expected_ty),
+                    expr.hir_id,
+                    path,
+                    fields,
+                    expr.span,
+                )?;
             }
             hir::ExprKind::Binary(op, lhs, rhs) => {
                 let left = self.lower_operand(lhs, None)?;

@@ -392,6 +392,25 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     if matches!(&name, Name::Ident(ident) if ident.as_str() == "any") {
         return Ok(Ty::any());
     }
+    if let Name::Ident(_) = &name {
+        // `Name::path()` canonicalizes any single-segment plain path (a
+        // bare `Foo`) into `Name::Ident`, not `Name::Path` — so the
+        // trailing-`?` handling above (reachable only via `bare_path`,
+        // i.e. `Name::Path`) never sees it. Mirror that same handling here
+        // for the case `Name::path()` actually produces.
+        let mut ty = Ty::name(name.clone());
+        if skip_symbol(input, "?").is_ok() {
+            ty = Ty::TypeBinaryOp(
+                TypeBinaryOp {
+                    kind: TypeBinaryOpKind::Union,
+                    lhs: Box::new(ty),
+                    rhs: Box::new(Ty::value(Value::None(ValueNone))),
+                }
+                .into(),
+            );
+        }
+        return Ok(ty);
+    }
     Ok(Ty::name(name))
 }
 
