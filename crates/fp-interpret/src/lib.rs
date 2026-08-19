@@ -633,6 +633,15 @@ impl LirInterpreter {
                     }));
                     self.write_typed_result(dst, self.result_type(instr)?, wrapped)
                 }
+                ComptimeOp::CompileWarning { message } => {
+                    let text = self.render_str_argument(message)?;
+                    eprintln!("warning: {text}");
+                    self.write_typed_result(dst, self.result_type(instr)?, Value::unit())
+                }
+                ComptimeOp::CompileError { message } => {
+                    let text = self.render_str_argument(message)?;
+                    Err(VmError::Runtime(format!("compile_error!: {text}")))
+                }
             },
             LirInstructionKind::InlineAsm { .. }
             | LirInstructionKind::LandingPad { .. }
@@ -700,6 +709,18 @@ impl LirInterpreter {
         })?;
         String::from_utf8(bytes.to_vec())
             .map_err(|error| VmError::Runtime(format!("invalid UTF-8 string constant: {error}")))
+    }
+
+    /// Renders a `&str`-typed argument to text — unlike `resolve_string_
+    /// value` (which only accepts a bare format-string-constant pointer),
+    /// this also accepts a real `&str` fat pointer (the `__slice`
+    /// `{ptr, len}` pair every ordinary `&str` value/argument uses), the
+    /// same shape `render_intrinsic` already unwraps for `println!`-style
+    /// arguments — reused here via the same `resolve_runtime_value` +
+    /// `render_typed_value` pair, keyed by the argument's own `LirValue::ty`.
+    fn render_str_argument(&self, val: &LirValue) -> LirResult<String> {
+        let value = self.resolve_runtime_value(val, &val.ty)?;
+        self.render_typed_value(&value, &val.ty)
     }
 
     fn object_value_operand(&self, val: &LirValue) -> LirResult<Value> {

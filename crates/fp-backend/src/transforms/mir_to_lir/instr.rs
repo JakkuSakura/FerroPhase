@@ -1792,6 +1792,8 @@ impl LirGenerator {
                     IntrinsicKind::CreateStruct
                         | IntrinsicKind::AddField
                         | IntrinsicKind::BuildType
+                        | IntrinsicKind::CompileWarning
+                        | IntrinsicKind::CompileError
                 ) {
                     let mut lir_args = Vec::with_capacity(args.len());
                     for arg in args {
@@ -1822,6 +1824,18 @@ impl LirGenerator {
                         IntrinsicKind::BuildType => lir::ComptimeOp::IntoType {
                             value: lir_args.into_iter().next().ok_or_else(|| {
                                 fp_core::error::Error::from("BuildType requires one argument")
+                            })?,
+                        },
+                        IntrinsicKind::CompileWarning => lir::ComptimeOp::CompileWarning {
+                            message: lir_args.into_iter().next().ok_or_else(|| {
+                                fp_core::error::Error::from(
+                                    "compile_warning! requires one argument",
+                                )
+                            })?,
+                        },
+                        IntrinsicKind::CompileError => lir::ComptimeOp::CompileError {
+                            message: lir_args.into_iter().next().ok_or_else(|| {
+                                fp_core::error::Error::from("compile_error! requires one argument")
                             })?,
                         },
                         _ => unreachable!(),

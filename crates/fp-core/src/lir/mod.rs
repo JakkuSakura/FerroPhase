@@ -547,8 +547,14 @@ pub enum LirIntrinsicKind {
     ProcMacroTokenStreamToString,
 }
 
-/// Comptime-only operations that build struct metadata.
-/// Only the LIR interpreter handles these; codegen backends skip them.
+/// Comptime-only operations that build struct metadata, or report a
+/// diagnostic from inside a `const { .. }` block. Only the LIR interpreter
+/// handles these; codegen backends skip them — by the time a real compiled
+/// program's MIR/LIR exists, every `const` binding whose initializer
+/// reaches one of these has already been fully evaluated during the
+/// comptime probe (see `hir_to_mir/expr.rs`'s `lower_operand`, the only
+/// place that ever constructs one), so no compiled binary needs to
+/// re-execute it at runtime.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ComptimeOp {
     CreateStruct {
@@ -561,6 +567,16 @@ pub enum ComptimeOp {
     },
     IntoType {
         value: LirValue,
+    },
+    /// `compile_warning!(message)` — reports `message` and evaluates to
+    /// `()`, without aborting comptime evaluation.
+    CompileWarning {
+        message: LirValue,
+    },
+    /// `compile_error!(message)` — aborts comptime evaluation, surfacing
+    /// `message` as a real compilation error.
+    CompileError {
+        message: LirValue,
     },
 }
 

@@ -2100,10 +2100,49 @@ impl HirTypeChecker {
         def_id: hir::DefId,
         substitutions: &HashMap<ty::ParamTy, Ty>,
     ) -> Result<Option<Vec<Ty>>> {
-        let Some(item) = self.shared.program.def_map.get(&def_id) else {
-            return Ok(None);
+        let function = match self.shared.program.def_map.get(&def_id) {
+            Some(item) => match &item.kind {
+                hir::ItemKind::Function(function) => Some(function.clone()),
+                _ => None,
+            },
+            // `def_map` only ever holds *top-level* items (struct/enum/fn/
+            // const/impl) — an `impl` block's own methods are never
+            // flattened into it as their own entries. A UFCS associated-
+            // function call (`HashMap::from(..)`) resolves straight to such
+            // an impl-member `DefId`, so `def_map.get` above always misses
+            // for it. Same two-step fallback `expr_path_ty` already uses to
+            // resolve the very same callee path's own type: this package's
+            // own impl blocks first (`self.shared.program.items`, since
+            // `def_map` never holds *this* package's own items either),
+            // then `find_hir_impl_method` for a dependency's.
+            None => self
+                .shared
+                .program
+                .items
+                .iter()
+                .find_map(|item| {
+                    let hir::ItemKind::Impl(impl_item) = &item.kind else {
+                        return None;
+                    };
+                    impl_item.items.iter().find_map(|impl_member| {
+                        if impl_member.def_id != def_id {
+                            return None;
+                        }
+                        let hir::ImplItemKind::Method(function) = &impl_member.kind else {
+                            return None;
+                        };
+                        Some(function.clone())
+                    })
+                })
+                .or_else(|| {
+                    self.shared
+                        .typing_context
+                        .as_ref()
+                        .and_then(|context| context.env_ctx.find_hir_impl_method(def_id))
+                        .map(|(_, _, _, function)| function)
+                }),
         };
-        let hir::ItemKind::Function(function) = &item.kind else {
+        let Some(function) = function else {
             return Ok(None);
         };
         if function.sig.generics.params.is_empty() {

@@ -721,10 +721,24 @@ impl MirLowering {
         self.hir_def_map = hir_program.def_map.clone();
         self.hir_def_paths = hir_program.def_paths.clone();
         self.current_package_id = hir_program.items.first().map(|item| item.def_id.package_id);
+        // `hir_program.items` only lists *top-level* items — a local
+        // `const` binding inside a function body (or any other nested
+        // item) gets a real `DefId` from the same monotonic counter but is
+        // only recorded in `def_map`, never in `.items`. Seeding from
+        // `.items` alone can collide with such a DefId (confirmed via
+        // lldb: for a single-function file, `.items.max()` lands exactly
+        // on the enclosing function's own id, one below a local const's).
+        // `def_map` also carries every dependency package's own merged
+        // definitions (`seed_workspace_definitions`), so restrict the max
+        // to this request's own package — a synthetic id must stay within
+        // the current package's id space, the same invariant
+        // `saturating_add` below (which only bumps `index`, keeping
+        // `package_id`) already assumes.
         self.next_synthetic_hir_def_id = hir_program
-            .items
-            .iter()
-            .map(|item| item.def_id)
+            .def_map
+            .keys()
+            .filter(|def_id| Some(def_id.package_id) == self.current_package_id)
+            .copied()
             .max()
             .unwrap_or(hir::DefId::local(0))
             .saturating_add(1);
@@ -1196,10 +1210,14 @@ impl MirLowering {
         self.hir_def_paths = program.def_paths.clone();
         self.current_package_id = program.items.first().map(|item| item.def_id.package_id);
         let mut mir_program = mir::Program::new();
+        // Same "seed from `.items` alone can collide with a local const's
+        // own real DefId" fix as `transform_comptime_request` — see that
+        // function's own comment for the full rationale.
         self.next_synthetic_hir_def_id = program
-            .items
-            .iter()
-            .map(|item| item.def_id)
+            .def_map
+            .keys()
+            .filter(|def_id| Some(def_id.package_id) == self.current_package_id)
+            .copied()
             .max()
             .unwrap_or(hir::DefId::local(0))
             .saturating_add(1);
@@ -16796,6 +16814,44 @@ impl<'a> BodyBuilder<'a> {
                     let operands: Vec<mir::Operand> =
                         lowered_args.iter().map(|a| a.operand.clone()).collect();
                     let ty = MirLowering::type_ty();
+                    let local_id = self.allocate_temp(ty.clone(), expr.span);
+                    let local_place = mir::Place::from_local(local_id);
+                    self.push_statement(mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            local_place.clone(),
+                            mir::Rvalue::IntrinsicCall {
+                                kind: kind,
+                                format: String::new(),
+                                args: operands,
+                            },
+                        ),
+                    });
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::copy(local_place),
+                        ty,
+                    });
+                }
+                // `compile_warning!`/`compile_error!` — evaluated for real
+                // by the LIR interpreter (`lir::ComptimeOp::CompileWarning`/
+                // `CompileError`) when this comptime block's MIR/LIR is
+                // actually executed, exactly like the comptime
+                // struct-building intrinsics just above. Neither ever
+                // folds to a constant (they're diagnostics, not values),
+                // so this must run before `lower_intrinsic_constant` below,
+                // which would otherwise just report them as unsupported.
+                if matches!(
+                    kind,
+                    IntrinsicKind::CompileWarning | IntrinsicKind::CompileError
+                ) {
+                    let lowered_args: Vec<OperandInfo> = call
+                        .callargs
+                        .iter()
+                        .map(|arg| self.lower_operand(&arg.value, None))
+                        .collect::<Result<Vec<_>>>()?;
+                    let operands: Vec<mir::Operand> =
+                        lowered_args.iter().map(|a| a.operand.clone()).collect();
+                    let ty = MirLowering::unit_ty();
                     let local_id = self.allocate_temp(ty.clone(), expr.span);
                     let local_place = mir::Place::from_local(local_id);
                     self.push_statement(mir::Statement {

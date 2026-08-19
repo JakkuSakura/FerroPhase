@@ -786,6 +786,30 @@ impl HirGenerator {
                             invoke.span(),
                         ));
                     }
+                    // `type(X)` — the reflection query producing `std::meta::
+                    // TypeDescriptor`. Unlike ordinary calls (see the comment
+                    // below), this can *never* be resolved by a real
+                    // declaration's `DefId`: `type` is a reserved keyword, so
+                    // no user or stdlib function can ever exist for it to
+                    // resolve to. This used to be recognized post-parse by
+                    // `fp-lang`'s own `resolve_lang_intrinsic` (`["type"] => ...
+                    // CallKind::TypeOf`), but that whole pass only ever ran
+                    // during AST normalization, which `needs_normalization`
+                    // (this file) deliberately stopped running for `Invoke`
+                    // expressions — leaving `type(X)` an unresolved plain call
+                    // with no path forward. Recognize it here instead, the
+                    // same structural way `import` just above is.
+                    if ident.as_str() == "type" && invoke.args.len() == 1 && invoke.kwargs.is_empty()
+                    {
+                        let value = self.transform_expr_to_hir(&invoke.args[0])?;
+                        return Ok(hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
+                            kind: CallKind::TypeOf,
+                            callargs: vec![hir::CallArg {
+                                name: hir::Symbol::new("arg0"),
+                                value,
+                            }],
+                        }));
+                    }
                 }
 
                 let path = self.name_to_hir_path_with_scope(name, PathResolutionScope::Value)?;

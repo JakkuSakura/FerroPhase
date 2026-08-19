@@ -2855,6 +2855,38 @@ impl HirGenerator {
             }
             ast::Ty::ImplTraits(impl_traits) => {
                 if let Some(bound) = impl_traits.bounds.bounds.first() {
+                    // `impl Fn(..) -> ..`/`FnMut`/`FnOnce` bounds parse the
+                    // same way a bare `fn(..) -> ..` type does (`ast::
+                    // Value::Type(ast::Ty::Function(fn_ty))`, per `fp_lang::
+                    // ast::type_to_expr`) — but routing that through
+                    // `ast_expr_to_hir_path` (the generic path below, for
+                    // ordinary trait bounds like `impl Display`) only ever
+                    // produces a placeholder `Res::Builtin(BuiltinSelfType::
+                    // Function)` path with the param/return types discarded
+                    // (see that function's own `Value::Type(Ty::Function)`
+                    // arm). Build the same real `FnPtr` HIR type the plain
+                    // `ast::Ty::Function(fn_ty)` arm below constructs,
+                    // instead, so the closure-hint machinery downstream
+                    // (`fp-typing`) has an actual signature to match against.
+                    if let ast::ExprKind::Value(value) = bound.kind() {
+                        if let ast::Value::Type(ast::Ty::Function(fn_ty)) = value.as_ref() {
+                            let inputs = fn_ty
+                                .params
+                                .iter()
+                                .map(|ty| self.transform_type_to_hir(ty).map(Box::new))
+                                .collect::<Result<Vec<_>>>()?;
+                            let output = if let Some(ret_ty) = &fn_ty.ret_ty {
+                                Box::new(self.transform_type_to_hir(ret_ty)?)
+                            } else {
+                                Box::new(self.create_unit_type())
+                            };
+                            return Ok(hir::TypeExpr::new(
+                                self.next_id(),
+                                hir::TypeExprKind::FnPtr(hir::FnPtrType { inputs, output }),
+                                self.normalize_span(ty.span()),
+                            ));
+                        }
+                    }
                     if let Ok(path) = self.ast_expr_to_hir_path(bound, PathResolutionScope::Type) {
                         return Ok(hir::TypeExpr::new(
                             self.next_id(),
