@@ -1,4 +1,4 @@
-use crate::ast::{Expr, Ident, Name, QuoteFragmentKind, QuoteItemKind, Ty, TySlot};
+use crate::ast::{Expr, Ident, Name, QuoteFragmentKind, QuoteItemKind, Ty};
 use crate::span::Span;
 use crate::{common_enum, common_struct};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -48,8 +48,6 @@ common_struct! {
     pub struct Pattern {
         #[serde(default)]
         pub id: PatternId,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub ty: TySlot,
         #[serde(flatten)]
         pub kind: PatternKind,
     }
@@ -59,15 +57,6 @@ impl Pattern {
     pub fn new(kind: PatternKind) -> Self {
         Self {
             id: fresh_pattern_id(),
-            ty: None,
-            kind,
-        }
-    }
-
-    pub fn with_ty(kind: PatternKind, ty: TySlot) -> Self {
-        Self {
-            id: fresh_pattern_id(),
-            ty,
             kind,
         }
     }
@@ -80,18 +69,6 @@ impl Pattern {
         self.id = id;
     }
 
-    pub fn ty(&self) -> Option<&Ty> {
-        self.ty.as_ref()
-    }
-
-    pub fn ty_mut(&mut self) -> &mut TySlot {
-        &mut self.ty
-    }
-
-    pub fn set_ty(&mut self, ty: Ty) {
-        self.ty = Some(ty);
-    }
-
     pub fn kind(&self) -> &PatternKind {
         &self.kind
     }
@@ -100,12 +77,12 @@ impl Pattern {
         &mut self.kind
     }
 
-    pub fn into_parts(self) -> (PatternId, TySlot, PatternKind) {
-        (self.id, self.ty, self.kind)
+    pub fn into_parts(self) -> (PatternId, PatternKind) {
+        (self.id, self.kind)
     }
 
-    pub fn from_parts(id: PatternId, ty: TySlot, kind: PatternKind) -> Self {
-        Self { id, ty, kind }
+    pub fn from_parts(id: PatternId, kind: PatternKind) -> Self {
+        Self { id, kind }
     }
 
     pub fn as_ident(&self) -> Option<&Ident> {

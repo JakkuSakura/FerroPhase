@@ -434,6 +434,23 @@ fn load_real_std_package() -> ProviderResult<PackageSource> {
     let mut fresh_cache: HashMap<String, Vec<Item>> = HashMap::new();
 
     for relative_str in crate::embedded_std::module_paths() {
+        // A file named `tests.rs`/`test.rs` is only ever reachable through
+        // its parent's `#[cfg(test)] mod tests;` declaration — real std
+        // doesn't restate `#[cfg(test)]` on every item inside such a file,
+        // since inclusion is already gated at the `mod` declaration site in
+        // a *different* file. `flatten_items`/`is_cfg_test` below only see
+        // this file's own item attributes, so a whole file like this slips
+        // through as if it were ordinary production code, and its test-only
+        // helpers (e.g. `alloc/collections/btree/map/tests.rs`'s
+        // `test_all_refs`, built on constructs real rustc accepts but this
+        // typechecker doesn't) can poison an entire package's typecheck
+        // under lossy mode. Skip by filename convention instead.
+        if matches!(
+            std::path::Path::new(relative_str).file_stem().and_then(|s| s.to_str()),
+            Some("tests") | Some("test")
+        ) {
+            continue;
+        }
         let path = root.join(relative_str);
         let Some(source) = crate::embedded_std::read(&path) else {
             continue;

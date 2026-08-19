@@ -1,5 +1,5 @@
 use crate::ast::{
-    BItem, BValue, ExprMacro, Ident, MacroInvocation, Name, Path, Ty, TySlot, Value, ValueUnit,
+    BItem, BValue, ExprMacro, Ident, MacroInvocation, Name, Path, Ty, Value, ValueUnit,
     get_threadlocal_serializer,
 };
 use crate::span::Span;
@@ -95,8 +95,6 @@ common_struct! {
         #[serde(default)]
         pub id: ExprId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub ty: TySlot,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
         pub span: Option<Span>,
         #[serde(flatten)]
         pub kind: ExprKind,
@@ -107,16 +105,6 @@ impl Expr {
     pub fn new(kind: ExprKind) -> Self {
         Self {
             id: fresh_expr_id(),
-            ty: None,
-            span: None,
-            kind,
-        }
-    }
-
-    pub fn with_ty(kind: ExprKind, ty: TySlot) -> Self {
-        Self {
-            id: fresh_expr_id(),
-            ty,
             span: None,
             kind,
         }
@@ -128,18 +116,6 @@ impl Expr {
 
     pub fn set_id(&mut self, id: ExprId) {
         self.id = id;
-    }
-
-    pub fn ty(&self) -> Option<&Ty> {
-        self.ty.as_ref()
-    }
-
-    pub fn ty_mut(&mut self) -> &mut TySlot {
-        &mut self.ty
-    }
-
-    pub fn set_ty(&mut self, ty: Ty) {
-        self.ty = Some(ty);
     }
 
     pub fn span(&self) -> Span {
@@ -159,17 +135,12 @@ impl Expr {
         &mut self.kind
     }
 
-    pub fn into_parts(self) -> (ExprId, TySlot, Option<Span>, ExprKind) {
-        (self.id, self.ty, self.span, self.kind)
+    pub fn into_parts(self) -> (ExprId, Option<Span>, ExprKind) {
+        (self.id, self.span, self.kind)
     }
 
-    pub fn from_parts(id: ExprId, ty: TySlot, span: Option<Span>, kind: ExprKind) -> Self {
-        Self { id, ty, span, kind }
-    }
-
-    pub fn with_ty_slot(mut self, ty: TySlot) -> Self {
-        self.ty = ty;
-        self
+    pub fn from_parts(id: ExprId, span: Option<Span>, kind: ExprKind) -> Self {
+        Self { id, span, kind }
     }
 
     pub fn get(&self) -> Self {
@@ -205,10 +176,10 @@ impl Expr {
         block.into_expr()
     }
     pub fn into_block(self) -> ExprBlock {
-        let (id, ty, span, kind) = self.into_parts();
+        let (id, span, kind) = self.into_parts();
         match kind {
             ExprKind::Block(block) => block,
-            other => ExprBlock::new_expr(Expr::from_parts(id, ty, span, other)),
+            other => ExprBlock::new_expr(Expr::from_parts(id, span, other)),
         }
     }
     pub fn any<T: AnyBoxable>(any: T) -> Self {
@@ -299,16 +270,15 @@ impl From<BExpr> for Expr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{Ident, Name, Ty};
+    use crate::ast::{Ident, Name};
 
     #[test]
-    fn expr_parts_preserve_type_metadata() {
-        let mut expr = Expr::name(Name::from_ident(Ident::new("value")));
-        expr.set_ty(Ty::bool());
+    fn expr_parts_preserve_span_metadata() {
+        let expr = Expr::name(Name::from_ident(Ident::new("value"))).with_span(Span::null());
 
-        let (id, ty, span, kind) = expr.into_parts();
-        let rebuilt = Expr::from_parts(id, ty, span, kind);
+        let (id, span, kind) = expr.into_parts();
+        let rebuilt = Expr::from_parts(id, span, kind);
 
-        assert_eq!(rebuilt.ty(), Some(&Ty::bool()));
+        assert_eq!(rebuilt.span(), Span::null());
     }
 }

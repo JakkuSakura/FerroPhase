@@ -603,6 +603,13 @@ impl CompilerDriver {
                 // bodies never get spliced back in at all.
                 let mut lifted_items_by_path = lifter.lift_items_by_path();
                 lifted_items_by_path.extend(lifter.lift_impl_methods_by_path());
+                // Publish this lift's `ExprId -> resolved Ty` side-table so
+                // downstream backend serializers / AST materializer passes
+                // (Kotlin's Vec/String/enum receiver checks, the intrinsic
+                // materializer's HashMap detection, ...) can look resolved
+                // types up via `fp_core::ast::resolved_expr_type` — see
+                // `HirToAstLifter::publish_resolved_expr_types`'s doc comment.
+                lifter.publish_resolved_expr_types();
                 (lifted_items_by_path, lifter.referenced_paths_by_path())
             };
             if let Some(pkg) = self

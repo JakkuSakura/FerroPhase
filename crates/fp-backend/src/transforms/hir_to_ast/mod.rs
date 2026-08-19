@@ -55,6 +55,17 @@ pub struct HirToAstLifter<'a> {
     /// Consulted by `lift_path` so later references to a renamed binding
     /// (resolved via `hir::Res::Local`) use the new name too.
     renamed_locals: RefCell<HashMap<hir::HirId, String>>,
+    /// `ExprId` -> resolved `Ty` for every lifted expr the typer resolved a
+    /// type for. Populated during lifting (`lift_expr`), then published into
+    /// `fp_core::ast`'s thread-local resolved-type table (see
+    /// `ast::set_resolved_expr_types`) by `finish()`/the top-level lift
+    /// entry points, for the few backend/AST-materializer reads that are
+    /// genuine subexpression-level type queries with no annotation-shaped
+    /// AST position to promote the type into instead (e.g. fp-kotlin's
+    /// Vec/String/enum-receiver checks). Real annotation positions (a `let`
+    /// binding, a closure param) get the resolved type promoted directly
+    /// into a `PatternKind::Type` instead of recorded here.
+    resolved_expr_types: RefCell<HashMap<ast::ExprId, Ty>>,
 }
 
 impl<'a> HirToAstLifter<'a> {
@@ -69,7 +80,17 @@ impl<'a> HirToAstLifter<'a> {
             workspace,
             scope_names: RefCell::new(Vec::new()),
             renamed_locals: RefCell::new(HashMap::new()),
+            resolved_expr_types: RefCell::new(HashMap::new()),
         }
+    }
+
+    /// Publishes every `ExprId` -> resolved `Ty` pair collected while
+    /// lifting into `fp_core::ast`'s thread-local resolved-type table, for
+    /// backend serializers / AST materializer passes running afterward on
+    /// the same thread to read via `ast::resolved_expr_type`. Called once
+    /// lifting a file/package is complete.
+    pub fn publish_resolved_expr_types(&self) {
+        ast::extend_resolved_expr_types(self.resolved_expr_types.borrow().clone());
     }
 
     /// Declares `name` (for the binding identified by `hir_id`) in the
@@ -717,27 +738,34 @@ impl<'a> HirToAstLifter<'a> {
             hir::ExprKind::Closure(closure) => {
                 // Each param's own resolved type (if the typechecker
                 // recorded one — `TypeckResults::pat_types`, keyed by the
-                // pattern's own `HirId`) gets attached directly to the
-                // lifted `Pattern.ty` slot here, since `lift_pat` itself
-                // has no typeck access. This is what backends needing
-                // per-parameter types (e.g. fp-kotlin's lambda renderer,
-                // `kotlin_type_from_ty_slot(&p.ty)`) actually read — an
-                // unresolved/never-recorded param (no hint reached the
-                // closure at typecheck time) simply keeps a bare pattern
-                // with no `.ty`, same as before this existed.
+                // pattern's own `HirId`) gets promoted into a real
+                // `PatternKind::Type` annotation here, since `lift_pat`
+                // itself has no typeck access and a closure param is a
+                // genuine annotation-shaped position (mirrors the `Local`
+                // lifting fix for `let` bindings). This is what backends
+                // needing per-parameter types (e.g. fp-kotlin's lambda
+                // renderer) read via the ordinary `PatternKind::Type` case —
+                // an unresolved/never-recorded param (no hint reached the
+                // closure at typecheck time) simply keeps a bare pattern.
                 let params = closure
                     .params
                     .iter()
                     .map(|param| {
-                        let mut pattern = self.lift_pat(&param.pat)?;
+                        let pattern = self.lift_pat(&param.pat)?;
+                        if matches!(pattern.kind(), PatternKind::Type(_)) {
+                            return Ok(pattern);
+                        }
                         if let Some(ty) = self
                             .typeck
                             .and_then(|t| t.pat_types.get(&param.pat.hir_id))
                             .and_then(|ty| self.hir_ty_to_ast(ty))
                         {
-                            pattern.ty = Some(ty);
+                            Ok(Pattern::from(PatternKind::Type(ast::PatternType::new(
+                                pattern, ty,
+                            ))))
+                        } else {
+                            Ok(pattern)
                         }
-                        Ok(pattern)
                     })
                     .collect::<Result<Vec<_>>>()?;
                 Expr::new(ast::ExprKind::Closure(ExprClosure {
@@ -749,15 +777,23 @@ impl<'a> HirToAstLifter<'a> {
                 }))
             }
         };
-        // Attach the typer's resolved type for this HIR node, if we have
+        // Record the typer's resolved type for this HIR node, if we have
         // typeck results and it resolved to something representable as an
-        // `ast::Ty` — see `hir_ty_to_ast`. `None` either way just means the
-        // lifted expr's `.ty()` stays `None`, same as before this existed.
-        let ty_slot = self
+        // `ast::Ty` — see `hir_ty_to_ast`. Recorded into this lifter's own
+        // `resolved_expr_types` side-table (published into
+        // `fp_core::ast`'s thread-local table by `publish_resolved_expr_types`)
+        // rather than stamped onto the node itself, since an arbitrary
+        // subexpression has no annotation-shaped AST position to promote
+        // the type into. `None` just means nothing gets recorded for this
+        // expr id, same net effect as before this existed.
+        if let Some(ty) = self
             .typeck
             .and_then(|t| t.expr_types.get(&expr.hir_id))
-            .and_then(|ty| self.hir_ty_to_ast(ty));
-        Ok(lifted.with_ty_slot(ty_slot).with_span(expr.span))
+            .and_then(|ty| self.hir_ty_to_ast(ty))
+        {
+            self.resolved_expr_types.borrow_mut().insert(lifted.id(), ty);
+        }
+        Ok(lifted.with_span(expr.span))
     }
 
     fn lift_block(&self, block: &hir::Block) -> Result<ExprBlock> {
@@ -860,17 +896,23 @@ impl<'a> HirToAstLifter<'a> {
                     }
                     _ => pat,
                 };
-                // Prefer an explicit source-level annotation (`let x: T = ...`);
-                // otherwise fall back to the typer's own resolved binding type
-                // (`TypeckResults::pat_types`, keyed by the pattern's `HirId`) —
-                // needed for bindings like `let mut x = None;` whose real type
-                // is only known once later reassignments/usage are unified,
-                // not from the initializer expression alone. Without this,
+                // Prefer an explicit, fully-written source-level annotation
+                // (`let x: T = ...`); otherwise fall back to the typer's own
+                // resolved binding type (`TypeckResults::pat_types`, keyed by
+                // the pattern's `HirId`) — needed both for bindings like
+                // `let mut x = None;` whose real type is only known once
+                // later reassignments/usage are unified, not from the
+                // initializer expression alone, and for an annotation that
+                // itself elides part of its shape (`let x: Vec<_> = ...;`) —
+                // re-emitting a literal `_` as a backend type (e.g. Kotlin's
+                // `MutableList<_>`) isn't valid target-language syntax, so an
+                // annotation containing a hole must defer to the resolved
+                // type the same way a missing annotation does. Without this,
                 // backends (`fp-kotlin`) have to *guess* a var's type from the
                 // literal `null` initializer alone and can't.
                 let ty_ann = match &local.ty {
-                    Some(ty) => Some(self.lift_type(ty)?),
-                    None => self
+                    Some(ty) if !type_expr_contains_infer(ty) => Some(self.lift_type(ty)?),
+                    _ => self
                         .typeck
                         .and_then(|t| t.pat_types.get(&local.pat.hir_id))
                         .and_then(|ty| self.hir_ty_to_ast(ty)),
@@ -1454,6 +1496,33 @@ impl<'a> HirToAstLifter<'a> {
     }
 }
 
+/// True if `ty` elides part of its shape with `_` anywhere in its structure
+/// (e.g. `Vec<_>`, `(i32, _)`) — such a hole is only ever meaningful to the
+/// type *checker*; it isn't valid syntax to hand a backend serializer
+/// verbatim, so a `Local`'s declared annotation containing one must defer to
+/// the resolved type instead (see `lift_stmt`'s `hir::StmtKind::Local` arm).
+fn type_expr_contains_infer(ty: &hir::TypeExpr) -> bool {
+    match &ty.kind {
+        hir::TypeExprKind::Infer => true,
+        hir::TypeExprKind::Tuple(elems) => elems.iter().any(|e| type_expr_contains_infer(e)),
+        hir::TypeExprKind::Array(elem, _) | hir::TypeExprKind::Slice(elem) => {
+            type_expr_contains_infer(elem)
+        }
+        hir::TypeExprKind::Ptr(inner) | hir::TypeExprKind::Ref(inner) => {
+            type_expr_contains_infer(inner)
+        }
+        hir::TypeExprKind::Path(path) => path.segments.iter().any(|seg| {
+            seg.args.as_ref().is_some_and(|args| {
+                args.args.iter().any(|arg| match arg {
+                    hir::GenericArg::Type(t) => type_expr_contains_infer(t),
+                    hir::GenericArg::Const(_) => false,
+                })
+            })
+        }),
+        _ => false,
+    }
+}
+
 /// True if `target` (some binding's pattern `HirId`) is ever the direct LHS
 /// of an assignment anywhere within `block` — see `lift_function_body`.
 /// Exhaustive over `hir::ExprKind` on purpose: HIR (unlike the full surface
@@ -1715,15 +1784,17 @@ fn recon_closures_in_expr(expr: &mut Expr, types: &HashMap<String, Vec<Ty>>) {
             let last_seg = struct_name.rsplit("::").next().unwrap_or(&struct_name);
             if let Some(param_types) = types.get(last_seg) {
                 if !param_types.is_empty() {
+                    // Each synthesized param's type is a genuine annotation
+                    // position (same as any other closure param — see the
+                    // `hir::ExprKind::Closure` lifting arm above), so it's
+                    // promoted into `PatternKind::Type` directly rather than
+                    // stamped onto a since-removed `Pattern.ty` cache field.
                     let params: Vec<Pattern> = param_types.iter().enumerate().map(|(i, ty)| {
-                        Pattern {
-                            id: ast::fresh_pattern_id(),
-                            ty: Some(ty.clone()),
-                            kind: PatternKind::Ident(PatternIdent {
-                                ident: Ident::new(format!("__p{}", i)),
-                                mutability: None,
-                            }),
-                        }
+                        let ident_pat = Pattern::from(PatternKind::Ident(PatternIdent {
+                            ident: Ident::new(format!("__p{}", i)),
+                            mutability: None,
+                        }));
+                        Pattern::from(PatternKind::Type(ast::PatternType::new(ident_pat, ty.clone())))
                     }).collect();
                     let span = expr.span;
                     // Replace this struct with a closure — the body is a placeholder
@@ -1734,7 +1805,6 @@ fn recon_closures_in_expr(expr: &mut Expr, types: &HashMap<String, Vec<Ty>>) {
                         movability: None,
                         body: Box::new(Expr::unit()),
                     });
-                    expr.ty = Some(Ty::unknown());
                     return;
                 }
             }

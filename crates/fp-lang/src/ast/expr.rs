@@ -768,9 +768,17 @@ fn parse_number(input: &mut &[Token]) -> ModalResult<Expr> {
     let token = token_kind(input, TokenKind::Number)?;
     let (value, ty) = parse_numeric_literal_local(&token.lexeme)
         .map_err(|_| ErrMode::Cut(ContextError::new()))?;
-    Ok(Expr::value(value)
-        .with_ty_slot(ty)
-        .with_span(token_span_to_span(&token)))
+    // TODO(ty-removal): parse-time numeric-suffix type (`ty`) no longer
+    // has anywhere to attach to on `Expr` directly — the removed
+    // `Expr.ty` cache field. The real typechecker (`fp-typing`) re-derives
+    // this literal's type independently during HIR typecheck, and that
+    // resolved type is what `HirToAstLifter` records into the
+    // `resolved_expr_types` side-table backends actually read from, so
+    // dropping this parse-time attachment should be behavior-preserving
+    // for every typechecked pipeline. Left as a TODO in case some
+    // never-typechecked path (e.g. a raw-AST-only tool) relied on it.
+    let _ = ty;
+    Ok(Expr::value(value).with_span(token_span_to_span(&token)))
 }
 
 fn parse_string(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
@@ -790,8 +798,9 @@ fn parse_string(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
         if let Some(ch) = decode_single_char_literal(inner) {
             let byte = u32::from(ch).min(u8::MAX as u32) as u64;
             let ty = Ty::Primitive(TypePrimitive::Int(TypeInt::U8));
+            // TODO(ty-removal): see `parse_number`'s matching TODO.
+            let _ = ty;
             return Ok(Expr::value(Value::UInt(ValueUInt::new(byte)))
-                .with_ty_slot(Some(ty))
                 .with_span(token_span_to_span(&token)));
         }
     }
@@ -802,8 +811,9 @@ fn parse_string(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     {
         if let Some(ch) = decode_single_char_literal(inner) {
             let ty = Ty::Primitive(TypePrimitive::Char);
+            // TODO(ty-removal): see `parse_number`'s matching TODO.
+            let _ = ty;
             return Ok(Expr::value(Value::Char(ValueChar::new(ch)))
-                .with_ty_slot(Some(ty))
                 .with_span(token_span_to_span(&token)));
         }
     }
@@ -841,9 +851,18 @@ fn parse_string(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
                 lifetime: None,
             })
         };
-        return Ok(Expr::value(Value::Bytes(ValueBytes::from(bytes.as_slice())))
-            .with_ty_slot(Some(ty))
-            .with_span(token_span_to_span(&token)));
+        // Unlike the other literal kinds in this function, this parse-time
+        // type genuinely needs to survive to AST->HIR lowering
+        // (`ast_to_hir::exprs::transform_bytes_value_to_hir`, which reads it
+        // back to distinguish `b"..."` from `c"..."` — `ValueBytes` itself
+        // carries no such flag) with no annotation-shaped AST position to
+        // hold it, so it's recorded in the resolved-expr-type side-table
+        // (`fp_core::ast::set_resolved_expr_type`) keyed by this node's own
+        // freshly-assigned id.
+        let node = Expr::value(Value::Bytes(ValueBytes::from(bytes.as_slice())))
+            .with_span(token_span_to_span(&token));
+        fp_core::ast::set_resolved_expr_type(node.id(), ty);
+        return Ok(node);
     }
     let value =
         decode_string_literal(&token.lexeme).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
@@ -852,8 +871,9 @@ fn parse_string(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
         mutability: None,
         lifetime: None,
     });
+    // TODO(ty-removal): see `parse_number`'s matching TODO.
+    let _ = ty;
     Ok(Expr::value(Value::string(value))
-        .with_ty_slot(Some(ty))
         .with_span(token_span_to_span(&token)))
 }
 
@@ -864,12 +884,9 @@ fn parse_name_expr(input: &mut &[Token]) -> ModalResult<Expr> {
         .unwrap_or_else(Span::null);
     let name = parse_name(input)?;
     match name.as_ident().map(Ident::as_str) {
-        Some("true") => Ok(Expr::value(Value::bool(true))
-            .with_ty_slot(Some(Ty::Primitive(TypePrimitive::Bool)))
-            .with_span(span)),
-        Some("false") => Ok(Expr::value(Value::bool(false))
-            .with_ty_slot(Some(Ty::Primitive(TypePrimitive::Bool)))
-            .with_span(span)),
+        // TODO(ty-removal): see `parse_number`'s matching TODO.
+        Some("true") => Ok(Expr::value(Value::bool(true)).with_span(span)),
+        Some("false") => Ok(Expr::value(Value::bool(false)).with_span(span)),
         Some("null") => Ok(Expr::value(Value::null()).with_span(span)),
         _ => Ok(Expr::name(name).with_span(span)),
     }

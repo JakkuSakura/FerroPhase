@@ -394,13 +394,17 @@ impl<'a> MethodEmitter<'a> {
             ExprKind::If(expr_if) => self.emit_if(expr_if, mode)?,
             ExprKind::Invoke(invoke) => {
                 self.emit_invoke(invoke)?;
-                if mode == EmitMode::Statement && !is_void(expr.ty()) {
+                if mode == EmitMode::Statement
+                    && !is_void(fp_core::ast::resolved_expr_type(expr.id()).as_ref())
+                {
                     self.push("pop");
                 }
             }
             ExprKind::IntrinsicCall(call) => {
                 self.emit_intrinsic_call(call)?;
-                if mode == EmitMode::Statement && !is_void(expr.ty()) {
+                if mode == EmitMode::Statement
+                    && !is_void(fp_core::ast::resolved_expr_type(expr.id()).as_ref())
+                {
                     self.push("pop");
                 }
             }
@@ -639,7 +643,7 @@ impl<'a> MethodEmitter<'a> {
                 } else {
                     "Write"
                 };
-                let arg_ty = cil_type(call.args[0].ty())?;
+                let arg_ty = cil_type(fp_core::ast::resolved_expr_type(call.args[0].id()).as_ref())?;
                 self.push(format!(
                     "call void [mscorlib]System.Console::{}({})",
                     console_method, arg_ty
@@ -893,7 +897,7 @@ fn pattern_ty(pattern: &Pattern, init: Option<&Expr>) -> Ty {
     match pattern.kind() {
         PatternKind::Type(pattern_type) => pattern_type.ty.clone(),
         _ => init
-            .and_then(|expr| expr.ty().cloned())
+            .and_then(|expr| fp_core::ast::resolved_expr_type(expr.id()))
             .unwrap_or(Ty::Primitive(TypePrimitive::Int(TypeInt::I64))),
     }
 }

@@ -38,7 +38,10 @@ impl IntrinsicMaterializer for LlvmRuntimeIntrinsicMaterializer {
             if !kwargs.is_empty() {
                 return Ok(None);
             }
-            if args.iter().any(|arg| arg.ty().is_none()) {
+            if args
+                .iter()
+                .any(|arg| fp_core::ast::resolved_expr_type(arg.id()).is_none())
+            {
                 return Ok(None);
             }
             if args.iter().any(|arg| is_missing_printf_type_info(arg)) {
@@ -82,7 +85,11 @@ fn build_printf_invoke(expr_ty: TySlot, call: ExprIntrinsicCall) -> Result<Expr>
         span: Span::null(),
     });
 
-    Ok(Expr::with_ty(invoke, expr_ty))
+    let expr = Expr::new(invoke);
+    if let Some(ty) = expr_ty {
+        fp_core::ast::set_resolved_expr_type(expr.id(), ty);
+    }
+    Ok(expr)
 }
 
 fn extract_format_call(
@@ -97,14 +104,14 @@ fn extract_format_call(
 }
 
 fn make_string_literal_expr(literal: String) -> Expr {
-    let mut expr = Expr::value(Value::string(literal));
-    expr.set_ty(Ty::Primitive(TypePrimitive::String));
+    let expr = Expr::value(Value::string(literal));
+    fp_core::ast::set_resolved_expr_type(expr.id(), Ty::Primitive(TypePrimitive::String));
     expr
 }
 
 fn is_missing_printf_type_info(expr: &Expr) -> bool {
-    if let Some(ty) = expr.ty() {
-        match ty {
+    if let Some(ty) = fp_core::ast::resolved_expr_type(expr.id()) {
+        match &ty {
             Ty::Primitive(_) | Ty::Value(_) => return false,
             Ty::Reference(reference) => {
                 return !is_string_like_ty(reference.ty.as_ref());
@@ -130,13 +137,9 @@ fn is_missing_printf_type_info(expr: &Expr) -> bool {
             Value::Int(_) | Value::Decimal(_) | Value::Bool(_) | Value::Char(_) | Value::String(_)
         ),
         ExprKind::Cast(_) => false,
-        ExprKind::Select(select) => select
-            .obj
-            .ty()
+        ExprKind::Select(select) => fp_core::ast::resolved_expr_type(select.obj.id())
             .map_or(true, |ty| matches!(ty, Ty::Any(_) | Ty::Unknown(_))),
-        ExprKind::Reference(reference) => reference
-            .referee
-            .ty()
+        ExprKind::Reference(reference) => fp_core::ast::resolved_expr_type(reference.referee.id())
             .map_or(true, |ty| matches!(ty, Ty::Any(_) | Ty::Unknown(_))),
         _ => true,
     }
@@ -207,32 +210,31 @@ fn build_printf_format(
 }
 
 fn infer_printf_spec_with_replacement_from_expr(expr: &Expr) -> Result<(String, Option<Expr>)> {
-    let ty = expr
-        .ty()
+    let ty = fp_core::ast::resolved_expr_type(expr.id())
         .filter(|ty| !matches!(ty, Ty::Any(_) | Ty::Unknown(_)));
     if let Some(ty) = ty {
-        if let Ty::Reference(reference) = ty {
+        if let Ty::Reference(reference) = &ty {
             let inner = reference.ty.as_ref();
             if is_string_like_ty(inner) {
                 return Ok(("%s".to_string(), None));
             }
             let (spec, _) = infer_printf_spec_with_replacement(Some(inner))?;
-            let mut deref = Expr::new(ExprKind::Dereference(ExprDereference {
+            let deref = Expr::new(ExprKind::Dereference(ExprDereference {
                 referee: Box::new(expr.clone()),
                 span: Span::null(),
             }));
-            deref.set_ty((*reference.ty).clone());
+            fp_core::ast::set_resolved_expr_type(deref.id(), (*reference.ty).clone());
             return Ok((spec, Some(deref)));
         }
-        return infer_printf_spec_with_replacement(Some(ty));
+        return infer_printf_spec_with_replacement(Some(&ty));
     }
 
     match expr.kind() {
         ExprKind::Value(value) => infer_printf_spec_for_value(value.as_ref()),
         ExprKind::Select(select) => infer_printf_spec_for_select(select),
         ExprKind::Cast(cast) => infer_printf_spec_with_replacement(Some(&cast.ty)),
-        ExprKind::Reference(reference) => match reference.referee.ty() {
-            Some(ty) => infer_printf_spec_with_replacement(Some(ty)),
+        ExprKind::Reference(reference) => match fp_core::ast::resolved_expr_type(reference.referee.id()) {
+            Some(ty) => infer_printf_spec_with_replacement(Some(&ty)),
             None => Err(fp_core::error::Error::from(
                 "missing type information for printf argument".to_string(),
             )),
@@ -244,12 +246,12 @@ fn infer_printf_spec_with_replacement_from_expr(expr: &Expr) -> Result<(String, 
 }
 
 fn infer_printf_spec_for_select(select: &ExprSelect) -> Result<(String, Option<Expr>)> {
-    let Some(obj_ty) = select.obj.ty() else {
+    let Some(obj_ty) = fp_core::ast::resolved_expr_type(select.obj.id()) else {
         return Err(fp_core::error::Error::from(
             "missing type information for printf argument".to_string(),
         ));
     };
-    match obj_ty {
+    match &obj_ty {
         Ty::Struct(struct_ty) => {
             let field = struct_ty
                 .fields
@@ -282,11 +284,11 @@ fn infer_printf_spec_for_select(select: &ExprSelect) -> Result<(String, Option<E
                 return Ok(("%s".to_string(), None));
             }
             let (spec, _) = infer_printf_spec_with_replacement(Some(inner))?;
-            let mut deref = Expr::new(ExprKind::Dereference(ExprDereference {
+            let deref = Expr::new(ExprKind::Dereference(ExprDereference {
                 referee: Box::new(Expr::new(ExprKind::Select(select.clone()))),
                 span: Span::null(),
             }));
-            deref.set_ty((*reference.ty).clone());
+            fp_core::ast::set_resolved_expr_type(deref.id(), (*reference.ty).clone());
             Ok((spec, Some(deref)))
         }
         _ => Err(fp_core::error::Error::from(

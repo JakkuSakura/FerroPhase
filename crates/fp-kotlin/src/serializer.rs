@@ -2082,7 +2082,10 @@ fn is_byte_array_index(expr: &Expr) -> bool {
 /// (`.len()` → `.size` not `.length`; range-indexing → `.subList(...)` not
 /// `.substring(...)`).
 fn is_known_list_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
-    if matches!(expr.ty(), Some(Ty::Vec(_)) | Some(Ty::Slice(_))) {
+    if matches!(
+        fp_core::ast::resolved_expr_type(expr.id()),
+        Some(Ty::Vec(_)) | Some(Ty::Slice(_))
+    ) {
         return true;
     }
     expr_receiver_name(expr).is_some_and(|n| e.field_element_types.contains_key(&n))
@@ -2095,7 +2098,7 @@ fn is_known_list_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
 /// immutable, no `.copy()` method) rather than map to Kotlin's data-class
 /// `.copy()` convention.
 fn is_known_string_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
-    if is_string_like_ty(expr.ty()) {
+    if is_string_like_ty(fp_core::ast::resolved_expr_type(expr.id()).as_ref()) {
         return true;
     }
     expr_receiver_name(expr).is_some_and(|n| e.string_field_names.contains(&n))
@@ -2124,7 +2127,7 @@ fn is_string_like_ty(ty: Option<&Ty>) -> bool {
 /// `enum class` has no synthesized `.copy()` either — the call should drop
 /// entirely rather than map to Kotlin's data-class `.copy()` convention.
 fn is_known_enum_receiver(expr: &Expr, e: &KotlinEmitter) -> bool {
-    if matches!(expr.ty(), Some(Ty::Enum(_))) {
+    if matches!(fp_core::ast::resolved_expr_type(expr.id()), Some(Ty::Enum(_))) {
         return true;
     }
     expr_receiver_name(expr).is_some_and(|n| e.enum_field_names.contains(&n))
@@ -2162,7 +2165,7 @@ impl KotlinEmitter {
                 // byte literal `b':'`) needs an explicit `.toByte()` conversion to be
                 // usable where an actual `Byte` (not `Int`) is expected.
                 let is_u8 = matches!(
-                    expr.ty(),
+                    fp_core::ast::resolved_expr_type(expr.id()),
                     Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U8)))
                 );
                 if is_u8 && matches!(val.as_ref(), Value::Int(_) | Value::UInt(_)) {
@@ -2203,7 +2206,7 @@ impl KotlinEmitter {
                 // precede it. Look the exact Kotlin spelling up in the same
                 // `enum_variant_names` registry `render_match_pat` already
                 // uses for the pattern case.
-                if let Some(enum_name) = enum_name_from_ty(expr.ty()) {
+                if let Some(enum_name) = enum_name_from_ty(fp_core::ast::resolved_expr_type(expr.id()).as_ref()) {
                     let variant_name = match name {
                         fp_core::ast::Name::Path(p) => {
                             p.segments.last().map(|s| s.name.clone())
@@ -2620,13 +2623,15 @@ impl KotlinEmitter {
             ExprKind::Closure(cl) => {
                 let params: Vec<String> = cl.params.iter().map(|p| {
                     let n = ident_from_pattern(p);
-                    // An explicit `|c: char| ...` annotation parses as `PatternKind::Type`
-                    // wrapping the ident pattern, not `Pattern.ty` (that slot is populated
-                    // by type inference/checking, which this untyped pipeline never runs).
+                    // An explicit `|c: char| ...` annotation, or a typechecker-resolved
+                    // parameter type promoted by `HirToAstLifter`'s closure-lifting arm,
+                    // both parse/lift as `PatternKind::Type` wrapping the ident pattern —
+                    // there's no other `Pattern`-level type slot to fall back to anymore
+                    // (the old ad hoc `Pattern.ty` cache field has been removed).
                     let ty_str = if let PatternKind::Type(pt) = &p.kind {
                         Some(self.kotlin_type_from_ty(&pt.ty))
                     } else {
-                        self.kotlin_type_from_ty_slot(&p.ty)
+                        None
                     };
                     if n.starts_with('(') {
                         // Destructuring lambda param (`{ (a, b) -> ... }`) — Kotlin doesn't
@@ -2640,7 +2645,33 @@ impl KotlinEmitter {
                         format!("{}: Any?", n)
                     }
                 }).collect();
-                Ok(format!("{{ {} -> {} }}", params.join(", "), render_expr_single(&cl.body, self)?))
+                // `render_expr_single` on a `Block`/`Match` body has a side
+                // effect: it writes hoisted `var __bN = ...` statements
+                // straight to `self.writer`, the single shared output
+                // stream, at whatever statement position is currently
+                // open — normally correct for a body rendered directly
+                // into the enclosing statement list, but wrong here, since
+                // this closure's `{ params -> ... }` is built as an
+                // in-memory string and spliced in later. Left alone, a
+                // nested closure's own hoisted statements leak out into
+                // the *enclosing* function/closure's statement stream,
+                // landing outside this closure's braces entirely (and
+                // ahead of the closure literal itself), rather than
+                // inside them. Redirect the writer into a scratch buffer
+                // for the duration of this one body's render so anything
+                // hoisted stays scoped to this closure.
+                self.writer.increase_indent();
+                let saved = self.writer.swap_buffer(String::new());
+                let value = render_expr_single(&cl.body, self);
+                let hoisted = self.writer.swap_buffer(saved);
+                self.writer.decrease_indent();
+                let value = value?;
+                let params = params.join(", ");
+                if hoisted.trim().is_empty() {
+                    Ok(format!("{{ {} -> {} }}", params, value))
+                } else {
+                    Ok(format!("{{ {} ->\n{}\n{} }}", params, hoisted.trim_end_matches('\n'), value))
+                }
             }
 
             ExprKind::Let(l) => {
@@ -3518,18 +3549,6 @@ fn name_to_string(name: &fp_core::ast::Name) -> String {
                 .collect::<Vec<_>>().join(".");
             base
         },
-    }
-}
-
-impl KotlinEmitter {
-    fn kotlin_type_from_ty_slot(&self, ty: &TySlot) -> Option<String> {
-        match ty {
-            Some(t) => {
-                let raw = self.kotlin_type_from_ty(t);
-                if raw == "Any" || raw == "Nothing" || raw == "Unit" { None } else { Some(raw) }
-            }
-            None => None,
-        }
     }
 }
 

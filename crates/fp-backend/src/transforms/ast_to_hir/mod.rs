@@ -1560,8 +1560,8 @@ impl HirGenerator {
         // the declared output type matching the body, which HIR→MIR lowering
         // checks; a hardcoded `()` output would then be a mismatch for any
         // non-unit expression.
-        let output = match ast_expr.ty() {
-            Some(ty) => self.transform_type_to_hir(ty)?,
+        let output = match fp_core::ast::resolved_expr_type(ast_expr.id()) {
+            Some(ty) => self.transform_type_to_hir(&ty)?,
             None => self.create_unit_type(),
         };
         let main_body_expr = self.transform_expr_to_hir(&lowered_expr)?;
@@ -3952,7 +3952,7 @@ fn expr_contains_quote_value(expr: &ast::Expr) -> bool {
 
 #[allow(dead_code)]
 fn expr_contains_type_type(expr: &ast::Expr) -> bool {
-    expr.ty()
+    fp_core::ast::resolved_expr_type(expr.id())
         .as_ref()
         .is_some_and(|ty| ty_contains_type_type(ty))
 }
@@ -4384,7 +4384,10 @@ impl ClosureLowering {
         let ast::ExprKind::Closure(closure) = expr.kind() else {
             return;
         };
-        if matches!(expr.ty(), Some(ast::Ty::Function(_))) {
+        if matches!(
+            fp_core::ast::resolved_expr_type(expr.id()),
+            Some(ast::Ty::Function(_))
+        ) {
             return;
         }
         // Prefer the real, structurally-derived parameter type
@@ -4406,15 +4409,18 @@ impl ClosureLowering {
         // placeholder" failure one step later, now at the synthetic
         // `__closureN_call` function's return position.
         let ret_ty = ret_ty.cloned().unwrap_or(ast::Ty::Unknown(ast::TypeUnknown));
-        expr.set_ty(ast::Ty::Function(ast::TypeFunction {
-            params,
-            generics_params: Vec::new(),
-            ret_ty: Some(Box::new(ret_ty)),
-        }));
+        fp_core::ast::set_resolved_expr_type(
+            expr.id(),
+            ast::Ty::Function(ast::TypeFunction {
+                params,
+                generics_params: Vec::new(),
+                ret_ty: Some(Box::new(ret_ty)),
+            }),
+        );
     }
 
     fn transform_closure_expr(&mut self, expr: &mut ast::Expr) -> Result<Option<ClosureInfo>> {
-        let Some(expr_ty) = expr.ty().cloned() else {
+        let Some(expr_ty) = fp_core::ast::resolved_expr_type(expr.id()) else {
             return Ok(None);
         };
         let ast::Ty::Function(fn_ty) = expr_ty.clone() else {
@@ -4474,7 +4480,7 @@ impl ClosureLowering {
             name: struct_ident.clone(),
             value: struct_decl.clone(),
         }));
-        struct_item.set_ty(ast::Ty::Struct(struct_decl.clone()));
+        fp_core::ast::set_resolved_item_type(struct_item.id(), ast::Ty::Struct(struct_decl.clone()));
         let env_param_ident = ast::Ident::new("__env");
         let mut fn_params = Vec::new();
         let mut fn_param_tys = Vec::new();
@@ -4508,11 +4514,8 @@ impl ClosureLowering {
                 }
             })
             .or_else(|| {
-                closure
-                    .body
-                    .ty()
-                    .cloned()
-                    .or_else(|| rewritten_body.ty().cloned())
+                fp_core::ast::resolved_expr_type(closure.body.id())
+                    .or_else(|| fp_core::ast::resolved_expr_type(rewritten_body.id()))
                     .and_then(|ty| {
                         if matches!(ty, ast::Ty::Unknown(_)) {
                             None
@@ -4556,15 +4559,16 @@ impl ClosureLowering {
 
         let mut fields = Vec::new();
         for capture in &captures {
-            let mut value_expr = ast::Expr::ident(capture.name.clone());
-            value_expr.set_ty(capture.ty.clone());
+            let value_expr = ast::Expr::ident(capture.name.clone());
+            fp_core::ast::set_resolved_expr_type(value_expr.id(), capture.ty.clone());
             fields.push(ast::ExprField::new(capture.name.clone(), value_expr));
         }
         if fields.is_empty() {
-            let mut value_expr = ast::Expr::value(ast::Value::int(0));
-            value_expr.set_ty(ast::Ty::Primitive(ast::TypePrimitive::Int(
-                ast::TypeInt::I8,
-            )));
+            let value_expr = ast::Expr::value(ast::Value::int(0));
+            fp_core::ast::set_resolved_expr_type(
+                value_expr.id(),
+                ast::Ty::Primitive(ast::TypePrimitive::Int(ast::TypeInt::I8)),
+            );
             fields.push(ast::ExprField::new(
                 ast::Ident::new(DUMMY_CAPTURE_NAME),
                 value_expr,
@@ -4579,8 +4583,8 @@ impl ClosureLowering {
             fields,
             update: None,
         }));
-        struct_expr.set_ty(env_struct_ty.clone());
         struct_expr.id = expr.id();
+        fp_core::ast::set_resolved_expr_type(struct_expr.id(), env_struct_ty.clone());
 
         *expr = struct_expr;
 
@@ -4736,7 +4740,6 @@ impl ClosureLowering {
                             new_args.extend(invoke.args.iter().cloned());
                             invoke.target = ast::ExprInvokeTarget::Function(call_name);
                             invoke.args = new_args;
-                            expr.set_ty(info.call_ret_ty.clone());
                         }
                     }
                     ast::ExprInvokeTarget::Function(name) => {
@@ -4747,16 +4750,14 @@ impl ClosureLowering {
                                 .cloned()
                                 .or_else(|| self.struct_infos.get(ident.as_str()).cloned());
                             if let Some(info) = info {
-                                let mut env_expr =
+                                let env_expr =
                                     ast::Expr::new(ast::ExprKind::Name(name.clone()));
-                                env_expr.set_ty(info.env_struct_ty.clone());
                                 let call_name = ast::Name::ident(info.call_fn_ident.clone());
                                 let mut new_args = Vec::with_capacity(invoke.args.len() + 1);
                                 new_args.push(env_expr);
                                 new_args.extend(invoke.args.iter().cloned());
                                 invoke.target = ast::ExprInvokeTarget::Function(call_name);
                                 invoke.args = new_args;
-                                expr.set_ty(info.call_ret_ty.clone());
                             }
                         }
                     }
@@ -4896,8 +4897,6 @@ impl ClosureLowering {
                         for name in names {
                             self.variable_infos.insert(name, info.clone());
                         }
-                        stmt_let.pat.set_ty(info.env_struct_ty.clone());
-                        init.set_ty(info.env_struct_ty.clone());
                     }
                 }
                 if let Some(diverge) = stmt_let.diverge.as_mut() {
@@ -4920,7 +4919,6 @@ impl ClosureLowering {
                         .insert(def.name.as_str().to_string(), info.clone());
                     def.ty = Some(info.env_struct_ty.clone());
                     def.ty_annotation = Some(info.env_struct_ty.clone());
-                    def.value.set_ty(info.env_struct_ty.clone());
                 }
             }
             ast::ItemKind::DefStatic(def) => {
@@ -4930,7 +4928,6 @@ impl ClosureLowering {
                         .insert(def.name.as_str().to_string(), info.clone());
                     def.ty = info.env_struct_ty.clone();
                     def.ty_annotation = Some(info.env_struct_ty.clone());
-                    def.value.set_ty(info.env_struct_ty.clone());
                 }
             }
             ast::ItemKind::DefFunction(func) => self.rewrite_in_block(&mut func.body)?,
@@ -5174,9 +5171,7 @@ impl CaptureCollector {
                 if let Some(ident) = name.as_ident() {
                     let name = ident.as_str();
                     if !self.is_in_scope(name) && !self.seen.contains(name) {
-                        let ty = expr
-                            .ty()
-                            .cloned()
+                        let ty = fp_core::ast::resolved_expr_type(expr.id())
                             .unwrap_or_else(|| ast::Ty::Any(ast::TypeAny));
                         self.seen.insert(name.to_string());
                         self.captures.push((name.to_string(), ty));
@@ -5317,8 +5312,8 @@ impl CaptureReplacer {
                                 field: ident.clone(),
                                 select: ast::ExprSelectType::Field,
                             }));
-                        expr_struct.set_ty(capture_ty.clone());
                         expr_struct.id = expr.id();
+                        fp_core::ast::set_resolved_expr_type(expr_struct.id(), capture_ty.clone());
                         *expr = expr_struct;
                     }
                 }
@@ -5391,7 +5386,10 @@ impl CaptureReplacer {
                                         field: ident.clone(),
                                         select: ast::ExprSelectType::Field,
                                     }));
-                                expr_struct.set_ty(capture_ty.clone());
+                                fp_core::ast::set_resolved_expr_type(
+                                    expr_struct.id(),
+                                    capture_ty.clone(),
+                                );
                                 invoke.target = ast::ExprInvokeTarget::Expr(expr_struct.into());
                             }
                         }

@@ -101,7 +101,7 @@ impl IntrinsicMaterializer for ShellMaterializer<'_> {
 
         // Rewrite known shell calls to intrinsic calls (before mangling)
         if let Some(expr) = try_rewrite_to_intrinsic(invoke) {
-            if let ExprKind::IntrinsicCall(mut call) = expr.into_parts().3 {
+            if let ExprKind::IntrinsicCall(mut call) = expr.into_parts().2 {
                 // Convert intrinsic call to final mangled invoke
                 return self.materialize_call(&mut call, &None);
             }

@@ -2,7 +2,7 @@ use std::fmt::Formatter;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::ast::{TySlot, *};
+use crate::ast::*;
 use crate::span::Span;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
@@ -73,8 +73,6 @@ common_struct! {
         #[serde(default)]
         pub id: ItemId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub ty: TySlot,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
         pub span: Option<Span>,
         #[serde(flatten)]
         pub kind: ItemKind,
@@ -100,16 +98,6 @@ impl Item {
     pub fn new(kind: ItemKind) -> Self {
         Self {
             id: fresh_item_id(),
-            ty: None,
-            span: None,
-            kind,
-        }
-    }
-
-    pub fn with_ty(kind: ItemKind, ty: TySlot) -> Self {
-        Self {
-            id: fresh_item_id(),
-            ty,
             span: None,
             kind,
         }
@@ -117,18 +105,6 @@ impl Item {
 
     pub fn id(&self) -> ItemId {
         self.id
-    }
-
-    pub fn ty(&self) -> Option<&Ty> {
-        self.ty.as_ref()
-    }
-
-    pub fn ty_mut(&mut self) -> &mut TySlot {
-        &mut self.ty
-    }
-
-    pub fn set_ty(&mut self, ty: Ty) {
-        self.ty = Some(ty);
     }
 
     pub fn span(&self) -> Span {
@@ -146,11 +122,6 @@ impl Item {
 
     pub fn kind_mut(&mut self) -> &mut ItemKind {
         &mut self.kind
-    }
-
-    pub fn with_ty_slot(mut self, ty: TySlot) -> Self {
-        self.ty = ty;
-        self
     }
 
     pub fn any<T: AnyBoxable>(any: T) -> Self {

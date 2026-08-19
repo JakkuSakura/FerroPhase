@@ -20,7 +20,7 @@ pub fn materialize_item(
     item: ast::Item,
     strategy: &dyn IntrinsicMaterializer,
 ) -> CoreResult<ast::Item> {
-    let ast::Item { id, ty, span, kind } = item;
+    let ast::Item { id, span, kind } = item;
     let new_kind = match kind {
         ast::ItemKind::Macro(item) => ast::ItemKind::Macro(item),
         ast::ItemKind::Module(mut module) => {
@@ -68,7 +68,6 @@ pub fn materialize_item(
     };
     Ok(ast::Item {
         id,
-        ty,
         span,
         kind: new_kind,
     })
@@ -123,29 +122,34 @@ pub fn materialize_expr(
     expr: ast::Expr,
     strategy: &dyn IntrinsicMaterializer,
 ) -> CoreResult<ast::Expr> {
-    let ast::Expr { id, ty, span, kind } = expr;
-    let expr_ty = ty.clone();
+    let ast::Expr { id, span, kind } = expr;
+    // Looking this expr's resolved type up by its own (preserved-through-
+    // materialization — see `new_expr.id = id;` below) id, rather than an
+    // `Expr.ty` cache field carried on the node itself (removed): every
+    // constructed replacement expr keeps the original id, so a lookup here
+    // finds whatever `HirToAstLifter` recorded for this exact node, same as
+    // reading `.ty()` used to.
+    let expr_ty = fp_core::ast::resolved_expr_type(id);
     let mut new_expr = match kind {
-        ast::ExprKind::Block(block) => ast::Expr::with_ty(
-            ast::ExprKind::Block(materialize_block(block, strategy)?),
-            ty,
-        ),
+        ast::ExprKind::Block(block) => {
+            ast::Expr::new(ast::ExprKind::Block(materialize_block(block, strategy)?))
+        }
         ast::ExprKind::If(mut expr_if) => {
             expr_if.cond = Box::new(materialize_expr(*expr_if.cond, strategy)?);
             expr_if.then = Box::new(materialize_expr(*expr_if.then, strategy)?);
             if let Some(elze) = expr_if.elze {
                 expr_if.elze = Some(Box::new(materialize_expr(*elze, strategy)?));
             }
-            ast::Expr::with_ty(ast::ExprKind::If(expr_if), ty)
+            ast::Expr::new(ast::ExprKind::If(expr_if))
         }
         ast::ExprKind::Loop(mut expr_loop) => {
             expr_loop.body = Box::new(materialize_expr(*expr_loop.body, strategy)?);
-            ast::Expr::with_ty(ast::ExprKind::Loop(expr_loop), ty)
+            ast::Expr::new(ast::ExprKind::Loop(expr_loop))
         }
         ast::ExprKind::While(mut expr_while) => {
             expr_while.cond = Box::new(materialize_expr(*expr_while.cond, strategy)?);
             expr_while.body = Box::new(materialize_expr(*expr_while.body, strategy)?);
-            ast::Expr::with_ty(ast::ExprKind::While(expr_while), ty)
+            ast::Expr::new(ast::ExprKind::While(expr_while))
         }
         ast::ExprKind::Match(mut match_expr) => {
             if let Some(scrutinee) = match_expr.scrutinee {
@@ -161,16 +165,16 @@ pub fn materialize_expr(
                 cases.push(case);
             }
             match_expr.cases = cases;
-            ast::Expr::with_ty(ast::ExprKind::Match(match_expr), ty)
+            ast::Expr::new(ast::ExprKind::Match(match_expr))
         }
         ast::ExprKind::Let(mut expr_let) => {
             expr_let.expr = Box::new(materialize_expr(*expr_let.expr, strategy)?);
-            ast::Expr::with_ty(ast::ExprKind::Let(expr_let), ty)
+            ast::Expr::new(ast::ExprKind::Let(expr_let))
         }
         ast::ExprKind::Assign(mut expr_assign) => {
             expr_assign.target = Box::new(materialize_expr(*expr_assign.target, strategy)?);
             expr_assign.value = Box::new(materialize_expr(*expr_assign.value, strategy)?);
-            ast::Expr::with_ty(ast::ExprKind::Assign(expr_assign), ty)
+            ast::Expr::new(ast::ExprKind::Assign(expr_assign))
         }
         ast::ExprKind::Invoke(mut invoke) => {
             invoke.target = materialize_invoke_target(invoke.target, strategy)?;
@@ -187,12 +191,12 @@ pub fn materialize_expr(
             if let Some(expr) = strategy.materialize_invoke(&mut invoke, &expr_ty)? {
                 expr
             } else {
-                ast::Expr::with_ty(ast::ExprKind::Invoke(invoke), ty)
+                ast::Expr::new(ast::ExprKind::Invoke(invoke))
             }
         }
         ast::ExprKind::Select(mut select) => {
             select.obj = Box::new(materialize_expr(*select.obj, strategy)?);
-            ast::Expr::with_ty(ast::ExprKind::Select(select), ty)
+            ast::Expr::new(ast::ExprKind::Select(select))
         }
         ast::ExprKind::Struct(mut struct_expr) => {
             for field in &mut struct_expr.fields {
@@ -203,7 +207,7 @@ pub fn materialize_expr(
             if let Some(new_expr) = strategy.materialize_struct(&mut struct_expr, &expr_ty)? {
                 new_expr
             } else {
-                ast::Expr::with_ty(ast::ExprKind::Struct(struct_expr), ty)
+                ast::Expr::new(ast::ExprKind::Struct(struct_expr))
             }
         }
         ast::ExprKind::Structural(mut struct_expr) => {
@@ -215,7 +219,7 @@ pub fn materialize_expr(
             if let Some(new_expr) = strategy.materialize_structural(&mut struct_expr, &expr_ty)? {
                 new_expr
             } else {
-                ast::Expr::with_ty(ast::ExprKind::Structural(struct_expr), ty)
+                ast::Expr::new(ast::ExprKind::Structural(struct_expr))
             }
         }
         ast::ExprKind::Array(mut array_expr) => {
@@ -224,12 +228,12 @@ pub fn materialize_expr(
                 values.push(materialize_expr(value, strategy)?);
             }
             array_expr.values = values;
-            ast::Expr::with_ty(ast::ExprKind::Array(array_expr), ty)
+            ast::Expr::new(ast::ExprKind::Array(array_expr))
         }
         ast::ExprKind::ArrayRepeat(mut array_repeat) => {
             array_repeat.elem = Box::new(materialize_expr(*array_repeat.elem, strategy)?);
             array_repeat.len = Box::new(materialize_expr(*array_repeat.len, strategy)?);
-            ast::Expr::with_ty(ast::ExprKind::ArrayRepeat(array_repeat), ty)
+            ast::Expr::new(ast::ExprKind::ArrayRepeat(array_repeat))
         }
         ast::ExprKind::Tuple(mut tuple_expr) => {
             let mut values = Vec::with_capacity(tuple_expr.values.len());
@@ -237,24 +241,24 @@ pub fn materialize_expr(
                 values.push(materialize_expr(value, strategy)?);
             }
             tuple_expr.values = values;
-            ast::Expr::with_ty(ast::ExprKind::Tuple(tuple_expr), ty)
+            ast::Expr::new(ast::ExprKind::Tuple(tuple_expr))
         }
         ast::ExprKind::BinOp(mut binop) => {
             binop.lhs = Box::new(materialize_expr(*binop.lhs, strategy)?);
             binop.rhs = Box::new(materialize_expr(*binop.rhs, strategy)?);
-            ast::Expr::with_ty(ast::ExprKind::BinOp(binop), ty)
+            ast::Expr::new(ast::ExprKind::BinOp(binop))
         }
         ast::ExprKind::UnOp(mut unop) => {
             unop.val = Box::new(materialize_expr(*unop.val, strategy)?);
-            ast::Expr::with_ty(ast::ExprKind::UnOp(unop), ty)
+            ast::Expr::new(ast::ExprKind::UnOp(unop))
         }
         ast::ExprKind::Reference(mut reference) => {
             reference.referee = Box::new(materialize_expr(*reference.referee, strategy)?);
-            ast::Expr::with_ty(ast::ExprKind::Reference(reference), ty)
+            ast::Expr::new(ast::ExprKind::Reference(reference))
         }
         ast::ExprKind::Dereference(mut expr_deref) => {
             expr_deref.referee = Box::new(materialize_expr(*expr_deref.referee, strategy)?);
-            ast::Expr::with_ty(ast::ExprKind::Dereference(expr_deref), ty)
+            ast::Expr::new(ast::ExprKind::Dereference(expr_deref))
         }
         ast::ExprKind::Index(mut expr_index) => {
             expr_index.obj = Box::new(materialize_expr(*expr_index.obj, strategy)?);
@@ -262,20 +266,20 @@ pub fn materialize_expr(
             if is_hashmap_expr(expr_index.obj.as_ref()) {
                 build_hashmap_get_expr(expr_index, expr_ty)
             } else {
-                ast::Expr::with_ty(ast::ExprKind::Index(expr_index), ty)
+                ast::Expr::new(ast::ExprKind::Index(expr_index))
             }
         }
         ast::ExprKind::Splat(mut expr_splat) => {
             expr_splat.iter = Box::new(materialize_expr(*expr_splat.iter, strategy)?);
-            ast::Expr::with_ty(ast::ExprKind::Splat(expr_splat), ty)
+            ast::Expr::new(ast::ExprKind::Splat(expr_splat))
         }
         ast::ExprKind::SplatDict(mut expr_splat) => {
             expr_splat.dict = Box::new(materialize_expr(*expr_splat.dict, strategy)?);
-            ast::Expr::with_ty(ast::ExprKind::SplatDict(expr_splat), ty)
+            ast::Expr::new(ast::ExprKind::SplatDict(expr_splat))
         }
         ast::ExprKind::Try(mut expr_try) => {
             expr_try.expr = Box::new(materialize_expr(*expr_try.expr, strategy)?);
-            ast::Expr::with_ty(ast::ExprKind::Try(expr_try), ty)
+            ast::Expr::new(ast::ExprKind::Try(expr_try))
         }
         // `return Ok(x);`/`break Some(x);` — omitted from this walker
         // before, so a portable op used directly as a `return`/`break`
@@ -287,36 +291,35 @@ pub fn materialize_expr(
             if let Some(value) = expr_return.value.take() {
                 expr_return.value = Some(Box::new(materialize_expr(*value, strategy)?));
             }
-            ast::Expr::with_ty(ast::ExprKind::Return(expr_return), ty)
+            ast::Expr::new(ast::ExprKind::Return(expr_return))
         }
         ast::ExprKind::Break(mut expr_break) => {
             if let Some(value) = expr_break.value.take() {
                 expr_break.value = Some(Box::new(materialize_expr(*value, strategy)?));
             }
-            ast::Expr::with_ty(ast::ExprKind::Break(expr_break), ty)
+            ast::Expr::new(ast::ExprKind::Break(expr_break))
         }
         ast::ExprKind::Closure(mut closure) => {
             closure.body = Box::new(materialize_expr(*closure.body, strategy)?);
-            ast::Expr::with_ty(ast::ExprKind::Closure(closure), ty)
+            ast::Expr::new(ast::ExprKind::Closure(closure))
         }
         ast::ExprKind::Closured(mut closured) => {
             closured.expr = Box::new(materialize_expr(*closured.expr, strategy)?);
-            ast::Expr::with_ty(ast::ExprKind::Closured(closured), ty)
+            ast::Expr::new(ast::ExprKind::Closured(closured))
         }
         ast::ExprKind::Paren(mut paren) => {
             paren.expr = Box::new(materialize_expr(*paren.expr, strategy)?);
-            ast::Expr::with_ty(ast::ExprKind::Paren(paren), ty)
+            ast::Expr::new(ast::ExprKind::Paren(paren))
         }
         ast::ExprKind::FormatString(format) => {
-            ast::Expr::with_ty(ast::ExprKind::FormatString(format), ty)
+            ast::Expr::new(ast::ExprKind::FormatString(format))
         }
-        ast::ExprKind::Item(item) => ast::Expr::with_ty(
-            ast::ExprKind::Item(Box::new(materialize_item(*item, strategy)?)),
-            ty,
-        ),
+        ast::ExprKind::Item(item) => {
+            ast::Expr::new(ast::ExprKind::Item(Box::new(materialize_item(*item, strategy)?)))
+        }
         ast::ExprKind::Value(value) => {
             let value = materialize_value(*value, strategy)?;
-            ast::Expr::with_ty(ast::ExprKind::Value(Box::new(value)), ty)
+            ast::Expr::new(ast::ExprKind::Value(Box::new(value)))
         }
         ast::ExprKind::IntrinsicCall(mut call) => {
             let mut args = Vec::with_capacity(call.args.len());
@@ -333,7 +336,7 @@ pub fn materialize_expr(
             if let Some(expr) = strategy.materialize_call(&mut call, &expr_ty)? {
                 expr
             } else {
-                ast::Expr::with_ty(ast::ExprKind::IntrinsicCall(call), ty)
+                ast::Expr::new(ast::ExprKind::IntrinsicCall(call))
             }
         }
         ast::ExprKind::IntrinsicContainer(mut collection) => {
@@ -375,10 +378,10 @@ pub fn materialize_expr(
             if let Some(new_expr) = strategy.materialize_container(&mut collection, &expr_ty)? {
                 new_expr
             } else {
-                ast::Expr::with_ty(ast::ExprKind::IntrinsicContainer(collection), ty)
+                ast::Expr::new(ast::ExprKind::IntrinsicContainer(collection))
             }
         }
-        other => ast::Expr::with_ty(other, ty),
+        other => ast::Expr::new(other),
     };
     new_expr.id = id;
     new_expr.span = span;
@@ -386,7 +389,10 @@ pub fn materialize_expr(
 }
 
 fn is_hashmap_expr(expr: &ast::Expr) -> bool {
-    expr.ty().map(is_hashmap_ty).unwrap_or(false)
+    fp_core::ast::resolved_expr_type(expr.id())
+        .as_ref()
+        .map(is_hashmap_ty)
+        .unwrap_or(false)
 }
 
 fn is_hashmap_ty_slot(ty: &ast::TySlot) -> bool {
@@ -429,7 +435,11 @@ fn build_hashmap_get_expr(expr_index: ast::ExprIndex, expr_ty: ast::TySlot) -> a
         kwargs: Vec::new(),
         span: Span::null(),
     };
-    ast::Expr::with_ty(ast::ExprKind::Invoke(invoke), expr_ty)
+    let node = ast::Expr::new(ast::ExprKind::Invoke(invoke));
+    if let Some(ty) = expr_ty {
+        fp_core::ast::set_resolved_expr_type(node.id(), ty);
+    }
+    node
 }
 
 fn build_hashmap_from_entries(
@@ -468,7 +478,11 @@ fn build_hashmap_from_entries(
         span: Span::null(),
     };
 
-    ast::Expr::with_ty(ast::ExprKind::Invoke(invoke), expr_ty)
+    let node = ast::Expr::new(ast::ExprKind::Invoke(invoke));
+    if let Some(ty) = expr_ty {
+        fp_core::ast::set_resolved_expr_type(node.id(), ty);
+    }
+    node
 }
 
 pub fn materialize_value(

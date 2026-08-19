@@ -1342,9 +1342,13 @@ impl HirTypeChecker {
                                 self.unify_call_types(&init_ty, &ty, &mut substitutions)?;
                                 self.substitute_param_map(&init_ty, &substitutions)
                             };
-                            self.require_same_hard(&ty, &resolved_init)?;
-                            self.shared.results.borrow_mut().record_expr_type(init.hir_id, resolved_init);
-                            ty
+                            if !Self::ty_matches_with_infer_holes(&ty, &resolved_init) {
+                                return Err(Error::from(format!(
+                                    "type mismatch: expected `{ty}`, found `{resolved_init}`"
+                                )));
+                            }
+                            self.shared.results.borrow_mut().record_expr_type(init.hir_id, resolved_init.clone());
+                            resolved_init
                         }
                         (Some(annotation), None) => self.check_type_expr(annotation)?,
                         (None, Some(init)) => self.check_expr(init).await?,
@@ -2121,6 +2125,45 @@ impl HirTypeChecker {
             args.push(argument.clone());
         }
         Ok(Some(args))
+    }
+
+    /// Like `require_same_hard`, but tolerates `TyKind::Infer` holes on the
+    /// `annotation` side (e.g. a `let x: Vec<_> = ...;`'s elided `_`) by
+    /// treating them as matching whatever `concrete` has in that position —
+    /// an elided `_` never contradicts the resolved type, unlike an
+    /// explicitly-written, disagreeing one. Recurses structurally so a hole
+    /// nested inside a generic argument (`Vec<_>`, `Option<_>`, ...) is
+    /// tolerated the same way a top-level one is; any position where
+    /// `annotation` wrote something concrete still has to agree with
+    /// `concrete` exactly.
+    fn ty_matches_with_infer_holes(annotation: &Ty, concrete: &Ty) -> bool {
+        match (&annotation.kind, &concrete.kind) {
+            (TyKind::Infer(_), _) => true,
+            (TyKind::Ref(_, a, _), TyKind::Ref(_, c, _)) => {
+                Self::ty_matches_with_infer_holes(a, c)
+            }
+            (TyKind::Tuple(a), TyKind::Tuple(c)) if a.len() == c.len() => a
+                .iter()
+                .zip(c)
+                .all(|(a, c)| Self::ty_matches_with_infer_holes(a, c)),
+            (TyKind::Array(a, a_len), TyKind::Array(c, c_len)) => {
+                Self::ty_matches_with_infer_holes(a, c) && a_len == c_len
+            }
+            (TyKind::Slice(a), TyKind::Slice(c)) | (TyKind::Array(a, _), TyKind::Slice(c)) => {
+                Self::ty_matches_with_infer_holes(a, c)
+            }
+            (TyKind::Adt(a_def, a_args), TyKind::Adt(c_def, c_args))
+                if a_def.did == c_def.did && a_args.len() == c_args.len() =>
+            {
+                a_args.iter().zip(c_args).all(|(a, c)| match (a, c) {
+                    (GenericArg::Type(a), GenericArg::Type(c)) => {
+                        Self::ty_matches_with_infer_holes(a, c)
+                    }
+                    _ => a == c,
+                })
+            }
+            _ => annotation == concrete,
+        }
     }
 
     /// A strict, top-level structural compatibility check — deliberately
@@ -3453,23 +3496,6 @@ impl HirTypeChecker {
         } else {
             self.record_error(format!("HIR type mismatch: {lhs} and {rhs}"));
             Ok(())
-        }
-    }
-
-    /// Like `require_same`, but a real hard error on mismatch instead of a
-    /// recorded, non-fatal diagnostic — for the few call sites (a `let`
-    /// binding's own declared type vs. its resolved initializer type,
-    /// specifically) where Rust itself never tolerates a mismatch: a
-    /// binding's annotation must describe its initializer exactly (a
-    /// coercion like array-to-slice only applies at genuine coercion
-    /// sites, e.g. call arguments, never to a plain `let`'s own type).
-    fn require_same_hard(&self, lhs: &Ty, rhs: &Ty) -> Result<()> {
-        if lhs == rhs || matches!(lhs.kind, TyKind::Never) || matches!(rhs.kind, TyKind::Never) {
-            Ok(())
-        } else {
-            Err(fp_core::error::Error::from(format!(
-                "type mismatch: expected `{lhs}`, found `{rhs}`"
-            )))
         }
     }
 

@@ -16,7 +16,7 @@ use crate::query;
 
 impl PrettyPrintable for ast::Expr {
     fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
-        let suffix = ty_suffix(self.ty.as_ref(), ctx);
+        let suffix = ty_suffix(None, ctx);
 
         match &self.kind {
             ast::ExprKind::Id(id) => ctx.write_line(format!("id({}){}", id, suffix)),
@@ -427,7 +427,7 @@ impl PrettyPrintable for ast::Expr {
 
 impl PrettyPrintable for ast::Item {
     fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
-        let suffix = ty_suffix(self.ty.as_ref(), ctx);
+        let suffix = ty_suffix(None, ctx);
 
         match &self.kind {
             ast::ItemKind::Module(module) => {
@@ -1527,10 +1527,6 @@ fn render_pattern(pattern: &Pattern) -> String {
             .collect::<Vec<_>>()
             .join(" | "),
     };
-    if let Some(ty) = pattern.ty() {
-        base.push_str(" : ");
-        base.push_str(&render_ty_brief(ty));
-    }
     base
 }
 

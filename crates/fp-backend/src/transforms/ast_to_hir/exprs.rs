@@ -152,7 +152,8 @@ impl HirGenerator {
         let kind = match ast_expr.kind() {
             ExprKind::Value(value) => match value.as_ref() {
                 ast::Value::Bytes(bytes) => {
-                    Self::transform_bytes_value_to_hir(bytes, ast_expr.ty())
+                    let ty = fp_core::ast::resolved_expr_type(ast_expr.id());
+                    Self::transform_bytes_value_to_hir(bytes, ty.as_ref())
                 }
                 _ => self.transform_value_to_hir(value)?,
             },
@@ -481,9 +482,8 @@ impl HirGenerator {
         const_block: &ast::ExprConstBlock,
     ) -> Result<hir::ExprKind> {
         let body = Box::new(self.transform_expr_to_hir(const_block.expr.as_ref())?);
-        let ty = ast_expr
-            .ty()
-            .map(|ty| self.transform_type_to_hir(ty))
+        let ty = fp_core::ast::resolved_expr_type(ast_expr.id())
+            .map(|ty| self.transform_type_to_hir(&ty))
             .transpose()?
             .unwrap_or_else(|| self.create_unit_type());
         Ok(hir::ExprKind::ConstBlock(hir::ExprConstBlock {
