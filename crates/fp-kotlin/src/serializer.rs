@@ -2418,7 +2418,7 @@ impl KotlinEmitter {
                         }
                     }
                     _ => {
-                        let name = invoke_name(&inv.target);
+                        let name = invoke_name(&inv.target)?;
                         // `Self::other_fn(...)` — Kotlin has no `Self` expression-
                         // position equivalent; swap in the real class/enum name
                         // (see `current_self_name`'s doc comment).
@@ -2869,30 +2869,19 @@ fn substitute_self_prefix(raw: &str, self_name: &str) -> String {
     }
 }
 
-fn render_invoke_target(target: &ExprInvokeTarget, e: &mut KotlinEmitter) -> Result<String> {
+/// The `name` extracted here is used purely to match against known
+/// path-shaped special cases (e.g. `std::env::current_dir`, crate-prefix
+/// stripping via `map_kt_path`) before falling through to a generic
+/// `{name}({args})` call rendering — so a target this can't name has no
+/// honest generic rendering either; erroring here is what stops that
+/// fallthrough from silently emitting a callee-less `(args)`.
+fn invoke_name(target: &ExprInvokeTarget) -> Result<String> {
     match target {
-        ExprInvokeTarget::Function(name) => {
-            let raw = name.to_string();
-            let raw = if let Some(self_name) = &e.current_self_name {
-                substitute_self_prefix(&raw, self_name)
-            } else {
-                raw
-            };
-            Ok(raw.replace("::", "."))
-        }
-        ExprInvokeTarget::Method(sel) => Ok(format!("{}.{}", e.render_expr(&sel.obj)?, sel.field.name)),
-        ExprInvokeTarget::Expr(bexpr) => e.render_expr(bexpr),
-        _ => Ok("call".to_string()),
-    }
-}
-
-fn invoke_name(target: &ExprInvokeTarget) -> String {
-    match target {
-        ExprInvokeTarget::Function(name) => name.to_string(),
-        ExprInvokeTarget::Method(sel) => {
-            format!(".{}", sel.field.name)
-        }
-        _ => String::new(),
+        ExprInvokeTarget::Function(name) => Ok(name.to_string()),
+        ExprInvokeTarget::Method(sel) => Ok(format!(".{}", sel.field.name)),
+        other => Err(eyre::eyre!(
+            "call target {other:?} is not yet supported in Kotlin output"
+        )),
     }
 }
 
@@ -3744,5 +3733,48 @@ fn kt_type_for_class(kc: KnownClass) -> String {
         IoStream => "java.io.InputStream".into(),
         ChildProcess => "java.lang.Process".into(),
         ExitCode => "Int".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use fp_core::ast::{ExprBlock, ExprInvoke, Ident};
+
+    use super::*;
+
+    #[test]
+    fn unsupported_invoke_target_errors_instead_of_producing_a_callee_less_call() {
+        // `ExprInvokeTarget::Type` (calling a type value directly, e.g. a
+        // reflection-driven `SomeType(args)`-shaped construction) has no
+        // Kotlin rendering yet. Before this fix, `invoke_name`'s silent
+        // empty-string fallback let this flow all the way to
+        // `format!("{}({})", mapped, args)`, emitting bare `(args)` with no
+        // callee at all — a real, silently-wrong-Kotlin bug, not just an
+        // unreachable one (unlike the dead `render_invoke_target`, which
+        // this cleanup deleted instead of "fixing").
+        let invoke = ExprInvoke {
+            span: fp_core::span::Span::null(),
+            target: ExprInvokeTarget::Type(Ty::unit()),
+            args: Vec::new(),
+            kwargs: Vec::new(),
+        };
+        let body = ExprBlock::new_stmts(vec![BlockStmt::Expr(
+            fp_core::ast::BlockStmtExpr::new(Expr::new(ExprKind::Invoke(invoke))),
+        )]);
+        let main_fn = ItemDefFunction::new_simple(Ident::new("main"), body);
+        let file = File {
+            path: Default::default(),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![Item::new(ItemKind::DefFunction(main_fn))],
+        };
+
+        let serializer = KotlinSerializer;
+        let result = serializer.serialize_file(&file);
+        assert!(
+            result.is_err(),
+            "an invoke target with no Kotlin rendering must be a real error, not a \
+             silent callee-less `(args)` call"
+        );
     }
 }

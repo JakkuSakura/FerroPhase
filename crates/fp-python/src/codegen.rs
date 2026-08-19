@@ -109,6 +109,18 @@ impl PythonEmitter {
             ItemKind::Import(import) => {
                 self.emit_import(import)?;
             }
+            ItemKind::DefTrait(_) | ItemKind::Impl(_) => {
+                // Unlike the other unsupported kinds below, silently
+                // dropping these loses real, user-visible behavior — every
+                // method the impl/trait declares vanishes from the
+                // generated Python with no signal at all. Emit a real
+                // diagnostic instead of a silent no-op.
+                return Err(eyre!(
+                    "impl/trait blocks are not yet supported in Python output: {:?}",
+                    item.kind()
+                )
+                .into());
+            }
             ItemKind::OpaqueType(_)
             | ItemKind::DefType(_)
             | ItemKind::DefStatic(_)
@@ -116,8 +128,6 @@ impl PythonEmitter {
             | ItemKind::DeclStatic(_)
             | ItemKind::DeclFunction(_)
             | ItemKind::DeclType(_)
-            | ItemKind::DefTrait(_)
-            | ItemKind::Impl(_)
             | ItemKind::DefStructural(_)
             | ItemKind::Macro(_)
             | ItemKind::ConstBlock(_)
@@ -1119,5 +1129,31 @@ def pick(flag, left, right):
 ";
         let rendered = round_trip(source);
         assert!(rendered.contains("return (left if flag else right)"));
+    }
+
+    #[test]
+    fn impl_block_errors_instead_of_silently_vanishing() {
+        use fp_core::ast::{
+            ExprBlock, File, Ident, Item, ItemDefFunction, ItemImpl, ItemKind,
+        };
+
+        let method = ItemDefFunction::new_simple(Ident::new("greet"), ExprBlock::new());
+        let impl_block = ItemImpl::new_ident(Ident::new("Greeter"), vec![Item::new(
+            ItemKind::DefFunction(method),
+        )]);
+        let file = File {
+            path: Default::default(),
+            attrs: Vec::new(),
+            collected_items: Vec::new(),
+            items: vec![Item::new(ItemKind::Impl(impl_block))],
+        };
+
+        let serializer = PythonSerializer;
+        let result = serializer.serialize_file(&file);
+        assert!(
+            result.is_err(),
+            "impl blocks have no Python output support yet — this must be a real \
+             error, not a silent no-op that drops the method(s) with no signal"
+        );
     }
 }

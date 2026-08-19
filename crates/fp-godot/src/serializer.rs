@@ -927,9 +927,16 @@ impl GdscriptEmitter {
         };
 
         if !block.first_stmts().is_empty() {
-            // GDScript does not have general-purpose block expressions.
-            // For now, degrade to a null expression rather than failing emission.
-            return Ok("null".to_string());
+            // GDScript has no general-purpose block expression — a block
+            // with leading statements used as a value has no honest
+            // single-expression rendering. Silently discarding those
+            // statements (as this used to do, degrading to a bare `null`)
+            // loses real, user-visible side effects with no signal at all.
+            return Err(eyre!(
+                "block expressions with leading statements are not supported in \
+                 GDScript output (GDScript has no general-purpose block expression)"
+            )
+            .into());
         }
 
         self.render_expr(last)
@@ -1221,9 +1228,15 @@ impl GdscriptEmitter {
                     return Ok(format!("{scrutinee}.data[\"0\"]"));
                 }
             }
-            // Binding-aware lowering would require introducing a temporary variable.
-            // For now, degrade rather than failing emission.
-            return Ok("null".to_string());
+            // Binding-aware lowering would require introducing a temporary
+            // variable — not yet implemented. Silently degrading to a bare
+            // `null` would render match arms that reference their binding
+            // as always-null with no signal, instead of an honest error.
+            return Err(eyre!(
+                "binding-aware match arms are not yet supported in GDScript output \
+                 for this pattern shape (would require a temporary variable)"
+            )
+            .into());
         }
         self.render_expr(body)
     }

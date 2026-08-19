@@ -349,8 +349,16 @@ impl WorkspaceContext {
         self.prelude.borrow().clone()
     }
 
-    /// Return immutable HIR definitions published by imported packages.
-    #[deprecated = "Copying things around is a severe code smell"]
+    /// Return immutable HIR definitions published by imported packages —
+    /// the current, real mechanism `ast_to_hir::seed_workspace_definitions`
+    /// (`fp-backend`) merges into a package's own `hir::Program`, and that
+    /// `fp-typing::hir_typeck` still calls directly at a few sites (see its
+    /// own comments there for the narrower, targeted lookups it prefers
+    /// elsewhere). Not legacy code awaiting deletion — copying each
+    /// dependency's definitions per consuming package is real, current
+    /// behavior; a future single-shared-program redesign remains a real
+    /// architectural option, but until that lands this is the only
+    /// mechanism that makes cross-package references work at all.
     pub fn hir_definitions(
         &self,
     ) -> Vec<(

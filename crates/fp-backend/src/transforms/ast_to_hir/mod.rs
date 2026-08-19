@@ -1040,7 +1040,16 @@ impl HirGenerator {
             }
         }
     }
-    #[deprecated = "there should be only one, shared program. not to copy things around"]
+    /// The current, real mechanism for merging every workspace dependency's
+    /// own `def_map`/`def_paths`/`op_defs`/`intrinsic_defs` into this
+    /// package's own `program` — called at `:1726`/`:1877`, and depended on
+    /// by `hir_to_mir::MirLowering`'s cross-package lookups (`hir_def_map`,
+    /// documented at `hir_to_mir/expr.rs`) as well as `fp-typing`'s own
+    /// same-package/cross-package resolution. Not legacy code awaiting
+    /// deletion — a future "one shared program, not copied per package"
+    /// redesign remains a real architectural option, but until that lands
+    /// this is the only mechanism that makes cross-package references work
+    /// at all.
     fn seed_workspace_definitions(&mut self, program: &mut hir::Program) {
         let Some(ref workspace) = self.workspace else {
             return;
