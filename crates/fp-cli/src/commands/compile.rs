@@ -191,7 +191,7 @@ fn target_triple_matches_host(target_triple: &str) -> bool {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum CompileTarget {
     Backend(BackendKind),
     Ast(crate::languages::backend::BuiltinLanguageTarget),
@@ -891,7 +891,7 @@ async fn compile_emit_target(
             .into_iter()
             .filter(|pkg_item| pkg_item.path == tag)
             .map(|pkg_item| match &materializer {
-                Some(mat) => crate::materialize::materialize_item(pkg_item.item, mat.as_ref())
+                Some(mat) => fp_core::intrinsics::materialize_item(pkg_item.item, mat.as_ref())
                     .map_err(|e| CliError::Compilation(e.to_string())),
                 None => Ok(pkg_item.item),
             })
@@ -1136,7 +1136,7 @@ async fn compile_project(
         if let Some(mat) = &materializer {
             for pkg_item in &mut source.items {
                 pkg_item.item =
-                    crate::materialize::materialize_item(pkg_item.item.clone(), mat.as_ref())
+                    fp_core::intrinsics::materialize_item(pkg_item.item.clone(), mat.as_ref())
                         .map_err(|e| CliError::Compilation(e.to_string()))?;
             }
         }
@@ -1394,6 +1394,15 @@ async fn compile_project_external(
         output.display()
     );
     Ok(())
+}
+
+/// Error returned by an AST-target arm whose crate is gated behind a
+/// disabled optional `lang-*` feature (see e.g. `lang-typescript` in this
+/// crate's `Cargo.toml`).
+fn disabled_feature_error(feature: &str, what: &str) -> CliError {
+    CliError::InvalidInput(format!(
+        "{what} requires the \"{feature}\" feature, which is disabled in this build"
+    ))
 }
 
 /// Serializes a whole package via a target's own `serialize_package`,
@@ -2378,7 +2387,7 @@ impl fp_core::package::provider::PackageProvider for TranspileMaterializingPacka
                     collected_items: vec![],
                     items: vec![pkg_item.item.clone()],
                 };
-                let file = crate::materialize::materialize_file(file, mat.as_ref())
+                let file = fp_core::intrinsics::materialize_file(file, mat.as_ref())
                     .map_err(|e| fp_core::package::provider::ProviderError::other(e.to_string()))?;
                 if let Some(item) = file.items.into_iter().next() {
                     pkg_item.item = item;

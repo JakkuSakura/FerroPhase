@@ -113,7 +113,7 @@ pub fn compile_source_with_options(
         items: lowered_items,
     };
     let materializer = shell_materializer::ShellMaterializer::new(options.inventory.as_ref());
-    let mut lowered = fp_cli::materialize::materialize_file(lowered_file, &materializer)
+    let mut lowered = fp_core::intrinsics::materialize_file(lowered_file, &materializer)
         .map_err(|err| ShellError::Lower(err.to_string()))?;
 
     // Re-insert pre-HIR items (HIR strips #[command] attrs, const-evaluates fn bodies)

@@ -1,7 +1,7 @@
-use fp_core::ast::{self};
-use fp_core::error::Result as CoreResult;
-use fp_core::intrinsics::IntrinsicMaterializer;
-use fp_core::span::Span;
+use crate::ast::{self};
+use crate::error::Result as CoreResult;
+use crate::intrinsics::IntrinsicMaterializer;
+use crate::span::Span;
 
 pub fn materialize_file(
     mut file: ast::File,
@@ -129,7 +129,7 @@ pub fn materialize_expr(
     // constructed replacement expr keeps the original id, so a lookup here
     // finds whatever `HirToAstLifter` recorded for this exact node, same as
     // reading `.ty()` used to.
-    let expr_ty = fp_core::ast::resolved_expr_type(id);
+    let expr_ty = crate::ast::resolved_expr_type(id);
     let mut new_expr = match kind {
         ast::ExprKind::Block(block) => {
             ast::Expr::new(ast::ExprKind::Block(materialize_block(block, strategy)?))
@@ -150,6 +150,18 @@ pub fn materialize_expr(
             expr_while.cond = Box::new(materialize_expr(*expr_while.cond, strategy)?);
             expr_while.body = Box::new(materialize_expr(*expr_while.body, strategy)?);
             ast::Expr::new(ast::ExprKind::While(expr_while))
+        }
+        // Was previously caught by the blanket fallback below (see its
+        // removal comment) with zero recursion, meaning e.g. a `Some(x)`/
+        // `None` call promoted to `IntrinsicCall(Op(OptionSome/OptionNone))`
+        // anywhere inside a `for` loop body never reached
+        // `strategy.materialize_call`, and was rendered verbatim by the
+        // Kotlin serializer's `op_optionsome`/`op_optionnone`-shaped
+        // fallback instead of real Kotlin syntax.
+        ast::ExprKind::For(mut expr_for) => {
+            expr_for.iter = Box::new(materialize_expr(*expr_for.iter, strategy)?);
+            expr_for.body = Box::new(materialize_expr(*expr_for.body, strategy)?);
+            ast::Expr::new(ast::ExprKind::For(expr_for))
         }
         ast::ExprKind::Match(mut match_expr) => {
             if let Some(scrutinee) = match_expr.scrutinee {
@@ -381,7 +393,76 @@ pub fn materialize_expr(
                 ast::Expr::new(ast::ExprKind::IntrinsicContainer(collection))
             }
         }
-        other => ast::Expr::new(other),
+        // Exhaustive from here down instead of a blanket `other => ..`
+        // catch-all: that fallback is exactly what let the `For` bug above
+        // (and, per its own comment, an earlier `Return`/`Break` bug)
+        // silently skip materialization for a whole node's contents rather
+        // than failing to compile — the next variant added to `ExprKind`
+        // that actually needs recursion will now be a compile error here
+        // instead of a silent runtime bug.
+        ast::ExprKind::With(mut expr_with) => {
+            expr_with.context = Box::new(materialize_expr(*expr_with.context, strategy)?);
+            expr_with.body = Box::new(materialize_expr(*expr_with.body, strategy)?);
+            ast::Expr::new(ast::ExprKind::With(expr_with))
+        }
+        ast::ExprKind::Cast(mut expr_cast) => {
+            expr_cast.expr = Box::new(materialize_expr(*expr_cast.expr, strategy)?);
+            ast::Expr::new(ast::ExprKind::Cast(expr_cast))
+        }
+        ast::ExprKind::Async(mut expr_async) => {
+            expr_async.expr = Box::new(materialize_expr(*expr_async.expr, strategy)?);
+            ast::Expr::new(ast::ExprKind::Async(expr_async))
+        }
+        ast::ExprKind::ConstBlock(mut const_block) => {
+            const_block.expr = Box::new(materialize_expr(*const_block.expr, strategy)?);
+            let mut collected_items = Vec::with_capacity(const_block.collected_items.len());
+            for item in const_block.collected_items {
+                collected_items.push(materialize_item(item, strategy)?);
+            }
+            const_block.collected_items = collected_items;
+            ast::Expr::new(ast::ExprKind::ConstBlock(const_block))
+        }
+        ast::ExprKind::Quote(mut quote) => {
+            quote.block = materialize_block(quote.block, strategy)?;
+            ast::Expr::new(ast::ExprKind::Quote(quote))
+        }
+        ast::ExprKind::Splice(mut splice) => {
+            splice.token = Box::new(materialize_expr(*splice.token, strategy)?);
+            ast::Expr::new(ast::ExprKind::Splice(splice))
+        }
+        ast::ExprKind::SplicePending(mut pending) => {
+            pending.token = Box::new(materialize_expr(*pending.token, strategy)?);
+            ast::Expr::new(ast::ExprKind::SplicePending(pending))
+        }
+        ast::ExprKind::Await(mut expr_await) => {
+            expr_await.base = Box::new(materialize_expr(*expr_await.base, strategy)?);
+            ast::Expr::new(ast::ExprKind::Await(expr_await))
+        }
+        ast::ExprKind::Range(mut expr_range) => {
+            if let Some(start) = expr_range.start.take() {
+                expr_range.start = Some(Box::new(materialize_expr(*start, strategy)?));
+            }
+            if let Some(end) = expr_range.end.take() {
+                expr_range.end = Some(Box::new(materialize_expr(*end, strategy)?));
+            }
+            if let Some(step) = expr_range.step.take() {
+                expr_range.step = Some(Box::new(materialize_expr(*step, strategy)?));
+            }
+            ast::Expr::new(ast::ExprKind::Range(expr_range))
+        }
+        // Leaves — no nested `Expr`/`Item` to recurse into.
+        ast::ExprKind::Id(id) => ast::Expr::new(ast::ExprKind::Id(id)),
+        ast::ExprKind::Name(name) => ast::Expr::new(ast::ExprKind::Name(name)),
+        ast::ExprKind::Continue(expr_continue) => {
+            ast::Expr::new(ast::ExprKind::Continue(expr_continue))
+        }
+        // Already fully expanded by fp-lang's macro engine before this pass
+        // ever runs (mirrors `materialize_item`'s identical treatment of
+        // `ItemKind::Macro`) — nothing left inside to materialize.
+        ast::ExprKind::Macro(macro_expr) => ast::Expr::new(ast::ExprKind::Macro(macro_expr)),
+        // Opaque, dynamically-typed escape hatch — no known structure to
+        // recurse into.
+        ast::ExprKind::Any(any) => ast::Expr::new(ast::ExprKind::Any(any)),
     };
     new_expr.id = id;
     new_expr.span = span;
@@ -389,7 +470,7 @@ pub fn materialize_expr(
 }
 
 fn is_hashmap_expr(expr: &ast::Expr) -> bool {
-    fp_core::ast::resolved_expr_type(expr.id())
+    crate::ast::resolved_expr_type(expr.id())
         .as_ref()
         .map(is_hashmap_ty)
         .unwrap_or(false)
@@ -437,7 +518,7 @@ fn build_hashmap_get_expr(expr_index: ast::ExprIndex, expr_ty: ast::TySlot) -> a
     };
     let node = ast::Expr::new(ast::ExprKind::Invoke(invoke));
     if let Some(ty) = expr_ty {
-        fp_core::ast::set_resolved_expr_type(node.id(), ty);
+        crate::ast::set_resolved_expr_type(node.id(), ty);
     }
     node
 }
@@ -480,7 +561,7 @@ fn build_hashmap_from_entries(
 
     let node = ast::Expr::new(ast::ExprKind::Invoke(invoke));
     if let Some(ty) = expr_ty {
-        fp_core::ast::set_resolved_expr_type(node.id(), ty);
+        crate::ast::set_resolved_expr_type(node.id(), ty);
     }
     node
 }

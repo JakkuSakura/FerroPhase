@@ -11,7 +11,6 @@ pub mod compiler;
 pub mod container;
 pub mod diagnostics;
 pub mod languages;
-pub mod materialize;
 pub mod utils;
 
 // Re-export core types for convenience, avoiding conflicts
