@@ -1,7 +1,6 @@
 //! Compilation command implementation
 
 use crate::commands::{setup_progress_bar, validate_paths_exist};
-use crate::compile_options::BackendKind;
 use crate::container::NativeAsmSource;
 use crate::compiler;
 use crate::{CliError, Result, cli::CliConfig};
@@ -17,7 +16,7 @@ use std::path::{Path, PathBuf};
 use tokio::{fs as async_fs, process::Command};
 use tracing::{info, warn};
 
-use clap::{ArgAction, Args, ValueEnum};
+use clap::{ArgAction, Args};
 /// Arguments for the compile command (also used by Clap)
 #[derive(Debug, Clone, Args)]
 pub struct CompileArgs {
@@ -28,20 +27,14 @@ pub struct CompileArgs {
     #[arg(long = "package")]
     pub package: Option<String>,
 
-    /// Output backend (binary, ebpf, cil, dotnet, rust, llvm, wasm, bytecode, text-bytecode, jvm-bytecode, interpret)
-    #[arg(short = 'b', long = "backend", default_value = "binary")]
-    pub backend: BackendKind,
-
-    /// Explicit output target (fp, typescript, javascript, python, go, gdscript, zig, sycl, rust, wit)
-    #[arg(short = 't', long = "target")]
-    pub target: Option<String>,
-
-    /// Codegen emitter engine (e.g. "llvm", "native", "cranelift").
-    ///
-    /// This is only used for native codegen targets (like `--backend binary`).
-    /// Default is `native`.
-    #[arg(long = "emitter", default_value = "native")]
-    pub emitter: EmitterKind,
+    /// Output target: a codegen backend (native, goasm, urcl, llvm-binary,
+    /// llvm-text, cranelift, ebpf, cil, dotnet, bytecode, text-bytecode,
+    /// jvm-bytecode, wasm, interpret) or a language target (fp, typescript,
+    /// javascript, python, go, gdscript, zig, sycl, rust, wit, ...) or a
+    /// runtime-registered target — all just `TargetBackend` impls looked up
+    /// by name, no separate protocol.
+    #[arg(short = 't', long = "target", default_value = "native")]
+    pub target: String,
 
     /// Target triple for codegen (defaults to host if omitted)
     #[arg(long = "target-triple")]
@@ -51,7 +44,7 @@ pub struct CompileArgs {
     #[arg(long = "target-cpu")]
     pub target_cpu: Option<String>,
 
-    /// Native target ISA/dialect override (for `--emitter native`).
+    /// Native target ISA/dialect override (for `--target native`).
     #[arg(long = "native-target")]
     pub native_target: Option<String>,
 
@@ -149,43 +142,11 @@ fn target_triple_matches_host(target_triple: &str) -> bool {
     }
 }
 
-/// `Some(name)` for a `--target <name>` compile (built-in or registered at
-/// runtime via `crate::languages::registry`, e.g. `skln-fp-graph`'s
-/// `fp-graph` binary — both are just `TargetBackend` impls looked up by
-/// name, no separate protocol). `None` means "no `--target` given, use
-/// `args.backend` instead" — `args.backend` is a plain `CompileArgs` field
-/// already, so there's nothing else to wrap.
-type CompileTarget = Option<String>;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum EmitterKind {
-    Native,
-    Goasm,
-    Urcl,
-    Llvm,
-    Cranelift,
-}
-
-impl EmitterKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            EmitterKind::Native => "native",
-            EmitterKind::Goasm => "goasm",
-            EmitterKind::Urcl => "urcl",
-            EmitterKind::Llvm => "llvm",
-            EmitterKind::Cranelift => "cranelift",
-        }
-    }
-}
 
 /// Execute the compile command
 pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()> {
-    let target = resolve_compile_target(&args)?;
-    let target_label = match &target {
-        None => args.backend.as_str().to_string(),
-        Some(name) => format!("target:{name}"),
-    };
-    info!("Starting compilation with target: {}", target_label);
+    validate_compile_target(&args.target)?;
+    info!("Starting compilation with target: {}", args.target);
 
     // Validate inputs
     validate_inputs(&args)?;
@@ -196,25 +157,26 @@ pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()
 async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let progress = setup_progress_bar(args.input.len());
 
-    let mut compiled_files = Vec::new();
-    let target = resolve_compile_target(&args)?;
-    let goasm_text_target =
-        target.is_none() && args.backend == BackendKind::Binary && args.emitter == EmitterKind::Goasm;
-    let urcl_text_target =
-        target.is_none() && args.backend == BackendKind::Binary && args.emitter == EmitterKind::Urcl;
+    let target = args.target.as_str();
+    let emit_text_bytecode = target == "text-bytecode";
 
-    let is_text_backend = target.is_none() && args.backend == BackendKind::TextBytecode;
-    let target_backend = match &target {
-        None => {
-            if is_text_backend {
-                BackendKind::Bytecode
-            } else {
-                args.backend
+    // A target-triple/host mismatch silently drops `--exec` (with a
+    // warning) rather than failing the whole compile — the compile itself
+    // is still valid cross-compile output, just not runnable here.
+    let exec = args.exec
+        && match args.target_triple.as_deref() {
+            None => true,
+            Some(triple) => {
+                let matches = target_triple_matches_host(triple);
+                if !matches {
+                    warn!(
+                        "Skipping `--exec`: target triple `{}` does not match host",
+                        triple
+                    );
+                }
+                matches
             }
-        }
-        Some(_) => BackendKind::Interpret,
-    };
-    let emit_text_bytecode = is_text_backend;
+        };
 
     let container_registry = crate::container::ContainerRegistry::new();
     let output_is_dir = args
@@ -222,7 +184,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         .as_ref()
         .is_some_and(|path| args.input.len() > 1 || path.is_dir());
 
-    for (_i, input_file) in args.input.iter().enumerate() {
+    for input_file in &args.input {
         progress.set_message(format!("Compiling {}", input_file.display()));
 
         // Classified exactly once per input, then threaded through both
@@ -235,24 +197,16 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         let output_file = determine_output_path(
             input_file,
             args.output.as_ref(),
-            target.clone(),
-            args.backend,
-            args.emitter,
+            target,
             args.target_triple.as_deref(),
             input_class,
             emit_text_bytecode,
             output_is_dir,
-            args.link || args.exec,
-            args.exec,
+            args.link || exec,
+            exec,
         )?;
 
-        // Compile single file
-        if let Some(artifact_path) =
-            compile_file(input_file, &output_file, &args, target.clone(), config, input_class)
-                .await?
-        {
-            compiled_files.push(artifact_path);
-        }
+        compile_file(input_file, &output_file, &args, config, input_class, exec).await?;
         progress.inc(1);
     }
 
@@ -261,97 +215,6 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         style("✓").green(),
         args.input.len()
     ));
-
-    // Execute if requested
-    if args.exec {
-        if let Some(target_triple) = args.target_triple.as_deref() {
-            if !target_triple_matches_host(target_triple) {
-                warn!(
-                    "Skipping `--exec`: target triple `{}` does not match host",
-                    target_triple
-                );
-                return Ok(());
-            }
-        }
-        if target.is_some() {
-            return Err(CliError::InvalidInput(
-                "--exec is not supported for named (--target) compiles".to_string(),
-            ));
-        }
-        match target_backend {
-            BackendKind::Binary => match compiled_files.as_slice() {
-                [] => {
-                    warn!("No compiled binaries available to execute");
-                }
-                [path] => {
-                    if goasm_text_target || urcl_text_target {
-                        return Err(CliError::InvalidInput(
-                            "--exec is not supported for text assembly emitters; choose a native binary emitter instead"
-                                .to_string(),
-                        ));
-                    }
-                    exec_compiled_binary(path).await?;
-                }
-                _ => {
-                    return Err(CliError::Compilation(
-                        "--exec currently supports compiling a single binary at a time".to_string(),
-                    ));
-                }
-            },
-            BackendKind::Bytecode => match compiled_files.as_slice() {
-                [] => {
-                    warn!("No compiled bytecode available to execute");
-                }
-                [path] => {
-                    if emit_text_bytecode {
-                        warn!("--exec is not supported for text-bytecode output");
-                    } else {
-                        exec_compiled_bytecode(path)?;
-                    }
-                }
-                _ => {
-                    return Err(CliError::Compilation(
-                        "--exec currently supports compiling a single bytecode file at a time"
-                            .to_string(),
-                    ));
-                }
-            },
-            BackendKind::Ebpf => match compiled_files.as_slice() {
-                [] => {
-                    warn!("No compiled eBPF artifacts available to execute");
-                }
-                [path] => {
-                    exec_ebpf_artifact(path).await?;
-                }
-                _ => {
-                    return Err(CliError::Compilation(
-                        "--exec currently supports compiling a single eBPF artifact at a time"
-                            .to_string(),
-                    ));
-                }
-            },
-            BackendKind::Cil => {
-                warn!("--exec is not supported for CIL artifacts");
-            }
-            BackendKind::Dotnet => match compiled_files.as_slice() {
-                [] => {
-                    warn!("No compiled .NET assembly available to execute");
-                }
-                [path] => {
-                    exec_dotnet_assembly(path).await?;
-                }
-                _ => {
-                    return Err(CliError::Compilation(
-                        "--exec currently supports compiling a single .NET assembly at a time"
-                            .to_string(),
-                    ));
-                }
-            },
-            _ => {
-                warn!("--exec is only supported for binary or bytecode targets");
-            }
-        }
-    }
 
     Ok(())
 }
@@ -362,23 +225,15 @@ async fn compile_file(
     input: &Path,
     output: &Path,
     args: &CompileArgs,
-    target: CompileTarget,
     _config: &CliConfig,
     input_class: crate::container::InputClass,
+    exec: bool,
 ) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
 
     if input.is_dir() {
-        return match &target {
-            Some(name) => {
-                run_named_target(input, output, args, name).await?;
-                Ok(Some(output.to_path_buf()))
-            }
-            None => Err(CliError::InvalidInput(
-                "directory input requires a named target (--target kotlin, typescript, etc.)"
-                    .to_string(),
-            )),
-        };
+        run_named_target(input, output, args, &args.target, exec).await?;
+        return Ok(Some(output.to_path_buf()));
     }
 
     let native_asm_kind = match input_class {
@@ -390,24 +245,23 @@ async fn compile_file(
         _ => None,
     };
 
-    if let Some(artifact) = maybe_transpile_native_asm(input, output, args, native_asm_kind).await?
-    {
-        return Ok(Some(artifact));
-    }
-
     if let Some(artifact) =
-        crate::container::maybe_transpile_container(input, output, args, _config, container_kind)
-            .await?
+        maybe_transpile_native_asm(input, output, args, native_asm_kind, exec).await?
     {
         return Ok(Some(artifact));
     }
 
-    // A lone source file is just the trivial one-package case of the same
-    // package/workspace discovery a directory input goes through above —
-    // not a separate code path (see `run_named_target`'s doc comment).
-    if let Some(name) = target {
-        run_named_target(input, output, args, &name).await?;
-        return Ok(Some(output.to_path_buf()));
+    if let Some(artifact) = crate::container::maybe_transpile_container(
+        input,
+        output,
+        args,
+        _config,
+        container_kind,
+        exec,
+    )
+    .await?
+    {
+        return Ok(Some(artifact));
     }
 
     if !args.disable_stage.is_empty() {
@@ -417,7 +271,7 @@ async fn compile_file(
         );
     }
 
-    run_named_target(input, output, args, args.backend.as_str()).await?;
+    run_named_target(input, output, args, &args.target, exec).await?;
     Ok(Some(output.to_path_buf()))
 }
 
@@ -426,22 +280,18 @@ async fn maybe_transpile_native_asm(
     output: &Path,
     args: &CompileArgs,
     source_kind: Option<crate::container::NativeAsmSource>,
+    exec: bool,
 ) -> Result<Option<PathBuf>> {
     let Some(source_kind) = source_kind else {
         return Ok(None);
     };
 
-    if args.emitter != EmitterKind::Native {
+    if args.target != "native" {
         return Err(CliError::InvalidInput(
-            "native asm input currently requires `--emitter native`".to_string(),
+            "native asm input currently requires `--target native`".to_string(),
         ));
     }
-    if args.backend != BackendKind::Binary {
-        return Err(CliError::InvalidInput(
-            "native asm input currently only supports `--backend binary` transpilation".to_string(),
-        ));
-    }
-    if args.exec {
+    if exec {
         return Err(CliError::InvalidInput(
             "`--exec` is not supported for native asm transpilation".to_string(),
         ));
@@ -543,7 +393,13 @@ fn provider_and_package_for_input(
 /// `write_workspace_files` pipeline either way. A single file is just the
 /// trivial one-package case of the same discovery a directory input goes
 /// through, not a separate code path.
-async fn run_named_target(input: &Path, output: &Path, args: &CompileArgs, target_name: &str) -> Result<()> {
+async fn run_named_target(
+    input: &Path,
+    output: &Path,
+    args: &CompileArgs,
+    target_name: &str,
+    exec: bool,
+) -> Result<()> {
     if is_tsconfig(input) {
         return Err(CliError::Compilation(
             "fp compile --target requires source files, not tsconfig".to_string(),
@@ -724,6 +580,12 @@ async fn run_named_target(input: &Path, output: &Path, args: &CompileArgs, targe
         .write_workspace_files(&workspace)
         .map_err(|e| CliError::Compilation(e.to_string()))?;
 
+    if exec {
+        backend
+            .exec()
+            .map_err(|e| CliError::Compilation(e.to_string()))?;
+    }
+
     let codegen_diagnostics =
         fp_core::diagnostics::diagnostic_manager().diagnostics_since(diagnostics_snapshot);
     fp_core::diagnostics::DiagnosticManager::emit(
@@ -827,11 +689,63 @@ fn backend_for_target(
         .unwrap_or("main")
         .to_string();
     Some(match name.to_lowercase().as_str() {
-        "binary" => native_binary_backend(&output, args, module_path.clone(), module_name.clone()),
-        "llvm" => {
+        "native" => {
+            let native_target = match args.native_target.as_deref() {
+                Some(value) => Some(
+                    fp_native::config::NativeTarget::resolve(value, args.target_triple.as_deref())
+                        .ok_or_else(|| {
+                            CliError::Compilation(format!("Unsupported fp-native target: {value}"))
+                        }),
+                ),
+                None => None,
+            };
+            match native_target.transpose() {
+                Ok(native_target) => {
+                    let mut cfg = fp_native::config::NativeConfig::executable(&output)
+                        .with_target_triple(args.target_triple.clone())
+                        .with_target_cpu(args.target_cpu.clone())
+                        .with_native_target(native_target)
+                        .with_target_features(args.target_features.clone())
+                        .with_sysroot(args.target_sysroot.clone())
+                        .with_fuse_ld(args.target_linker.clone())
+                        .with_linker_driver(Some(args.linker.clone()))
+                        .with_release(args.release);
+                    if args.save_intermediates {
+                        cfg = cfg.with_asm_dump(Some(output.with_extension("asm")));
+                    }
+                    let mut emitter = fp_native::NativeEmitter::new(cfg);
+                    if let Some(module_path) = module_path.clone() {
+                        emitter = emitter.with_module_path(module_path);
+                    }
+                    Ok(Box::new(emitter) as Box<dyn fp_core::backend::TargetBackend>)
+                }
+                Err(e) => Err(e),
+            }
+        }
+        "goasm" => {
+            let target = Some(fp_goasm::config::GoAsmTarget::resolve(
+                args.target_triple.as_deref(),
+            ));
+            let cfg = fp_goasm::config::GoAsmConfig::new(&output)
+                .with_target(target)
+                .with_target_triple(args.target_triple.clone());
+            let mut emitter = fp_goasm::GoAsmEmitter::new(cfg);
+            if let Some(module_path) = module_path.clone() {
+                emitter = emitter.with_module_path(module_path);
+            }
+            Ok(Box::new(emitter))
+        }
+        "urcl" => {
+            let mut emitter = fp_urcl::UrclEmitter::new(fp_urcl::UrclConfig::new(&output));
+            if let Some(module_path) = module_path.clone() {
+                emitter = emitter.with_module_path(module_path);
+            }
+            Ok(Box::new(emitter))
+        }
+        "llvm-binary" | "llvm-text" => {
             #[cfg(feature = "llvm")]
             {
-                Ok(Box::new(crate::languages::native_toolchain_backends::LlvmBackend {
+                Ok(Box::new(fp_llvm::LlvmBackend {
                     module_path: module_path.clone(),
                     output: output.clone(),
                     target_triple: args.target_triple.clone(),
@@ -843,13 +757,38 @@ fn backend_for_target(
                     release: args.release,
                     debug_info: args.debug,
                     module_name: module_name.clone(),
-                    save_intermediates: true,
+                    save_intermediates: args.save_intermediates,
+                    text_only: name.eq_ignore_ascii_case("llvm-text"),
                 }))
             }
             #[cfg(not(feature = "llvm"))]
             {
                 Err(CliError::MissingDependency(
-                    "Feature 'llvm' is disabled; enable it to use the LLVM emitter.".to_string(),
+                    "Feature 'llvm' is disabled; enable it to use the LLVM backend.".to_string(),
+                ))
+            }
+        }
+        "cranelift" => {
+            #[cfg(feature = "cranelift")]
+            {
+                Ok(Box::new(fp_cranelift::CraneliftBackend {
+                    module_path: module_path.clone(),
+                    output: output.clone(),
+                    target_triple: args.target_triple.clone(),
+                    target_cpu: args.target_cpu.clone(),
+                    target_features: args.target_features.clone(),
+                    target_sysroot: args.target_sysroot.clone(),
+                    linker: Some(args.linker.clone()),
+                    target_linker: args.target_linker.clone(),
+                    release: args.release,
+                    save_intermediates: args.save_intermediates,
+                }))
+            }
+            #[cfg(not(feature = "cranelift"))]
+            {
+                Err(CliError::MissingDependency(
+                    "Feature 'cranelift' is disabled; enable it to use the Cranelift backend."
+                        .to_string(),
                 ))
             }
         }
@@ -1009,130 +948,6 @@ fn backend_for_target(
     })
 }
 
-/// Constructs the `TargetBackend` for `--backend binary`, dispatching on
-/// `--emitter` — a native/GoAsm/URCL emitter directly, or the LLVM/Cranelift
-/// codegen backends (see `native_toolchain_backends`).
-fn native_binary_backend(
-    output: &Path,
-    args: &CompileArgs,
-    module_path: Option<fp_core::ast::path::QualifiedPath>,
-    module_name: String,
-) -> Result<Box<dyn fp_core::backend::TargetBackend>> {
-    match args.emitter {
-        EmitterKind::Native => {
-            let native_target = match args.native_target.as_deref() {
-                Some(value) => Some(
-                    fp_native::config::NativeTarget::resolve(value, args.target_triple.as_deref())
-                        .ok_or_else(|| {
-                            CliError::Compilation(format!("Unsupported fp-native target: {value}"))
-                        })?,
-                ),
-                None => None,
-            };
-            let mut cfg = fp_native::config::NativeConfig::executable(output)
-                .with_target_triple(args.target_triple.clone())
-                .with_target_cpu(args.target_cpu.clone())
-                .with_native_target(native_target)
-                .with_target_features(args.target_features.clone())
-                .with_sysroot(args.target_sysroot.clone())
-                .with_fuse_ld(args.target_linker.clone())
-                .with_linker_driver(Some(args.linker.clone()))
-                .with_release(args.release);
-            if args.save_intermediates {
-                cfg = cfg.with_asm_dump(Some(output.with_extension("asm")));
-            }
-            let mut emitter = fp_native::NativeEmitter::new(cfg);
-            if let Some(module_path) = module_path {
-                emitter = emitter.with_module_path(module_path);
-            }
-            Ok(Box::new(emitter))
-        }
-        EmitterKind::Goasm => {
-            let target = Some(fp_goasm::config::GoAsmTarget::resolve(
-                args.target_triple.as_deref(),
-            ));
-            let cfg = fp_goasm::config::GoAsmConfig::new(output)
-                .with_target(target)
-                .with_target_triple(args.target_triple.clone());
-            let mut emitter = fp_goasm::GoAsmEmitter::new(cfg);
-            if let Some(module_path) = module_path {
-                emitter = emitter.with_module_path(module_path);
-            }
-            Ok(Box::new(emitter))
-        }
-        EmitterKind::Urcl => {
-            let mut emitter = fp_urcl::UrclEmitter::new(fp_urcl::UrclConfig::new(output));
-            if let Some(module_path) = module_path {
-                emitter = emitter.with_module_path(module_path);
-            }
-            Ok(Box::new(emitter))
-        }
-        EmitterKind::Llvm => {
-            #[cfg(feature = "llvm")]
-            {
-                Ok(Box::new(crate::languages::native_toolchain_backends::LlvmBackend {
-                    module_path,
-                    output: output.to_path_buf(),
-                    target_triple: args.target_triple.clone(),
-                    target_cpu: args.target_cpu.clone(),
-                    target_features: args.target_features.clone(),
-                    target_sysroot: args.target_sysroot.clone(),
-                    linker: Some(args.linker.clone()),
-                    target_linker: args.target_linker.clone(),
-                    release: args.release,
-                    debug_info: args.debug,
-                    module_name,
-                    save_intermediates: args.save_intermediates,
-                }))
-            }
-            #[cfg(not(feature = "llvm"))]
-            {
-                Err(CliError::MissingDependency(
-                    "Feature 'llvm' is disabled; enable it to use the LLVM emitter.".to_string(),
-                ))
-            }
-        }
-        EmitterKind::Cranelift => {
-            #[cfg(feature = "cranelift")]
-            {
-                Ok(Box::new(crate::languages::native_toolchain_backends::CraneliftBackend {
-                    module_path,
-                    output: output.to_path_buf(),
-                    target_triple: args.target_triple.clone(),
-                    target_cpu: args.target_cpu.clone(),
-                    target_features: args.target_features.clone(),
-                    target_sysroot: args.target_sysroot.clone(),
-                    linker: Some(args.linker.clone()),
-                    target_linker: args.target_linker.clone(),
-                    release: args.release,
-                    save_intermediates: args.save_intermediates,
-                }))
-            }
-            #[cfg(not(feature = "cranelift"))]
-            {
-                Err(CliError::MissingDependency(
-                    "Feature 'cranelift' is disabled; enable it to use the Cranelift emitter."
-                        .to_string(),
-                ))
-            }
-        }
-    }
-}
-
-#[allow(dead_code)]
-fn is_package_manifest(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| {
-            let lower = name.to_ascii_lowercase();
-            matches!(
-                lower.as_str(),
-                "cargo.toml" | "package.json" | "magnet.toml"
-            )
-        })
-        .unwrap_or(false)
-}
-
 fn is_tsconfig(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -1143,27 +958,28 @@ fn is_tsconfig(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn resolve_compile_target(args: &CompileArgs) -> Result<CompileTarget> {
-    let Some(target) = args.target.as_deref() else {
-        return Ok(None);
-    };
+/// Validates `--target <name>` up front, before the actual package
+/// discovery/typecheck/backend-construction pipeline runs.
+fn validate_compile_target(target: &str) -> Result<()> {
     if is_known_builtin_target(target)
         || crate::languages::registry::find_registered_target_backend(target).is_some()
     {
-        Ok(Some(target.to_string()))
+        Ok(())
     } else {
         Err(CliError::InvalidInput(format!("Unsupported target: {target}")))
     }
 }
 
 /// Whether `name` is one of `backend_for_target`'s recognized target names
-/// (regardless of whether its crate is compiled into this build) — used
-/// only to validate `--target <name>` up front, before the actual package
-/// discovery/typecheck/backend-construction pipeline runs.
+/// (regardless of whether its crate is compiled into this build).
 fn is_known_builtin_target(name: &str) -> bool {
     matches!(
         name.to_lowercase().as_str(),
-        "fp" | "ferro" | "ferrophase"
+        "native" | "goasm" | "urcl" | "llvm-binary" | "llvm-text" | "cranelift"
+            | "ebpf" | "cil" | "dotnet"
+            | "bytecode" | "text-bytecode" | "jvm-bytecode"
+            | "wasm" | "interpret"
+            | "fp" | "ferro" | "ferrophase"
             | "typescript" | "ts"
             | "javascript" | "js"
             | "csharp" | "cs" | "c#"
@@ -1179,7 +995,7 @@ fn is_known_builtin_target(name: &str) -> bool {
     )
 }
 
-async fn exec_compiled_binary(path: &Path) -> Result<()> {
+pub(crate) async fn exec_compiled_binary(path: &Path) -> Result<()> {
     let extension_allows_exec = path
         .extension()
         .map_or(false, |ext| ext == "out" || ext == "exe")
@@ -1235,157 +1051,6 @@ async fn exec_compiled_binary(path: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn exec_ebpf_artifact(path: &Path) -> Result<()> {
-    let is_object = path.extension().map_or(false, |ext| ext == "o");
-    if !is_object {
-        return Err(CliError::Compilation(format!(
-            "Refusing to execute '{}': eBPF execution requires an ELF object (.o)",
-            path.display()
-        )));
-    }
-
-    let runtime = std::env::var("FP_EBPF_RUNTIME").map_err(|_| {
-        CliError::Compilation(
-            "Missing eBPF user-mode runtime: set FP_EBPF_RUNTIME to an external runner executable such as fp-ebpf-runtime"
-                .to_string(),
-        )
-    })?;
-    let runtime_args = std::env::var("FP_EBPF_RUNTIME_ARGS").unwrap_or_default();
-
-    info!(
-        "🚀 Executing eBPF artifact via external runtime: {} {}",
-        runtime,
-        path.display()
-    );
-
-    let mut command = Command::new(&runtime);
-    for arg in split_runtime_args(&runtime_args) {
-        command.arg(arg);
-    }
-    command.arg(path);
-
-    let output = command.output().await.map_err(|e| {
-        CliError::Compilation(format!(
-            "Failed to execute eBPF runtime '{}' for '{}': {}",
-            runtime,
-            path.display(),
-            e
-        ))
-    })?;
-
-    if !output.stdout.is_empty() {
-        print!("{}", String::from_utf8_lossy(&output.stdout));
-    }
-    if !output.stderr.is_empty() {
-        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-    }
-
-    if !output.status.success() {
-        let code = output.status.code().unwrap_or(-1);
-        return Err(CliError::Compilation(format!(
-            "eBPF runtime exited with status {}",
-            code
-        )));
-    }
-
-    Ok(())
-}
-
-fn split_runtime_args(raw: &str) -> Vec<String> {
-    raw.split_whitespace()
-        .map(|part| part.to_string())
-        .collect()
-}
-
-async fn exec_dotnet_assembly(path: &Path) -> Result<()> {
-    let extension = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_ascii_lowercase())
-        .ok_or_else(|| {
-            CliError::Compilation(format!(
-                "Refusing to execute '{}': unsupported .NET assembly extension",
-                path.display()
-            ))
-        })?;
-
-    let mut command = if cfg!(windows) && extension == "exe" {
-        Command::new(path)
-    } else if command_available("mono") {
-        ensure_command_available("mono", path)?;
-        let mut command = Command::new("mono");
-        command.arg(path);
-        command
-    } else if extension == "dll" {
-        ensure_command_available("dotnet", path)?;
-        let mut command = Command::new("dotnet");
-        command.arg(path);
-        command
-    } else {
-        return Err(CliError::Compilation(format!(
-            "Refusing to execute '{}': unsupported .NET assembly extension",
-            path.display()
-        )));
-    };
-
-    info!("🚀 Executing .NET assembly: {}", path.display());
-
-    let output = command.output().await.map_err(|e| {
-        CliError::Compilation(format!("Failed to execute '{}': {}", path.display(), e))
-    })?;
-
-    if !output.stdout.is_empty() {
-        print!("{}", String::from_utf8_lossy(&output.stdout));
-    }
-    if !output.stderr.is_empty() {
-        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-    }
-
-    if !output.status.success() {
-        let code = output.status.code().unwrap_or(-1);
-        if std::env::var("FP_ALLOW_EXEC_FAILURE").as_deref() == Ok("1") {
-            warn!("Process exited with status {}", code);
-        } else {
-            return Err(CliError::Compilation(format!(
-                ".NET process exited with status {}",
-                code
-            )));
-        }
-    }
-
-    Ok(())
-}
-
-fn ensure_command_available(command: &str, path: &Path) -> Result<()> {
-    let found = command_available(command);
-    if found {
-        Ok(())
-    } else {
-        Err(CliError::Compilation(format!(
-            "Cannot execute '{}': required command '{}' is not available on PATH",
-            path.display(),
-            command
-        )))
-    }
-}
-
-fn command_available(command: &str) -> bool {
-    let path_var = std::env::var_os("PATH").unwrap_or_default();
-    std::env::split_paths(&path_var)
-        .map(|entry| entry.join(command))
-        .any(|candidate| candidate.is_file())
-}
-
-fn exec_compiled_bytecode(path: &Path) -> Result<()> {
-    let bytes = std::fs::read(path).map_err(CliError::Io)?;
-    let file = fp_bytecode::decode_file(&bytes)
-        .map_err(|err| CliError::Compilation(format!("Failed to decode bytecode: {}", err)))?;
-    let vm = fp_stackvm::Vm::new(file.program);
-    vm.run_main()
-        .map_err(|err| CliError::Compilation(format!("Bytecode execution failed: {}", err)))?;
-    Ok(())
-}
-
 fn validate_inputs(args: &CompileArgs) -> Result<()> {
     let has_dir = args.input.iter().any(|p| p.is_dir());
     validate_paths_exist(&args.input, !has_dir, "compile")?;
@@ -1400,65 +1065,81 @@ fn validate_inputs(args: &CompileArgs) -> Result<()> {
     Ok(())
 }
 
-/// The default filename extension for `--backend binary` output, given
-/// which raw/foreign artifact `input` classified as (if any). `link_requested`
-/// only matters for object/archive container inputs re-emitted as native —
-/// deriving a bare `input.<ext>` path (no `--output` given) always uses the
-/// unlinked extension regardless of `--link`/`--exec` (pass `false`), while
-/// writing under an explicit output *directory* respects it.
-fn native_binary_extension(
+/// True when `target` should write to (or derive a name from) `output`/
+/// `input` as-is, rather than applying the normal extension defaulting
+/// below — i.e. every raw/foreign-artifact re-emission case a codegen
+/// target must preserve verbatim (goasm/urcl always; `native` only when
+/// re-emitting a foreign container input, since a fresh source compile
+/// still wants the normal `.out`/`.exe` default).
+fn is_raw_binary_passthrough(target: &str, input_class: crate::container::InputClass) -> bool {
+    match target {
+        "goasm" | "urcl" => true,
+        "native" => !matches!(input_class, crate::container::InputClass::Source),
+        _ => false,
+    }
+}
+
+/// The default filename extension for `target`'s output, given which
+/// raw/foreign artifact `input` classified as (if any, `native` only).
+/// `native_link_requested` only matters for object/archive container
+/// inputs re-emitted as native — deriving a bare `input.<ext>` path (no
+/// `--output` given) always uses the unlinked extension regardless of
+/// `--link`/`--exec` (pass `false`), while writing under an explicit
+/// output *directory* respects it.
+fn output_extension_for(
+    target: &str,
     input_class: crate::container::InputClass,
-    emitter: EmitterKind,
-    link_requested: bool,
     target_triple: Option<&str>,
+    emit_text_bytecode: bool,
+    native_link_requested: bool,
+    exec_requested: bool,
 ) -> &'static str {
     use crate::container::{ContainerInputKind, InputClass};
-    match emitter {
-        EmitterKind::Goasm => return "s",
-        EmitterKind::Urcl => return "urcl",
-        EmitterKind::Native => match input_class {
-            InputClass::NativeAsm(_) => return "s",
+    match target {
+        "goasm" => "s",
+        "urcl" => "urcl",
+        "native" => match input_class {
+            InputClass::NativeAsm(_) => "s",
             InputClass::Container(ContainerInputKind::NativeObject) => {
-                return if link_requested { "out" } else { "o" };
+                if native_link_requested { "out" } else { "o" }
             }
             InputClass::Container(ContainerInputKind::NativeArchive) => {
-                return if link_requested { "out" } else { "a" };
+                if native_link_requested { "out" } else { "a" }
             }
             InputClass::Container(
                 ContainerInputKind::Urcl
                 | ContainerInputKind::GoAsm
                 | ContainerInputKind::Cil
                 | ContainerInputKind::JvmBytecode,
-            ) => return "o",
-            InputClass::Source => {}
+            ) => "o",
+            InputClass::Source => {
+                if is_windows_target(target_triple) { "exe" } else { "out" }
+            }
         },
-        EmitterKind::Llvm | EmitterKind::Cranelift => {}
-    }
-    if is_windows_target(target_triple) {
-        "exe"
-    } else {
-        "out"
-    }
-}
-
-/// True when `--backend binary` should write to (or derive a name from)
-/// `output`/`input` as-is, rather than applying the normal linked-binary
-/// extension defaulting below — i.e. every raw/foreign-artifact re-emission
-/// case `native_binary_extension` above also special-cases.
-fn is_raw_binary_passthrough(input_class: crate::container::InputClass, emitter: EmitterKind) -> bool {
-    match emitter {
-        EmitterKind::Goasm | EmitterKind::Urcl => true,
-        EmitterKind::Native => !matches!(input_class, crate::container::InputClass::Source),
-        EmitterKind::Llvm | EmitterKind::Cranelift => false,
+        "llvm-binary" | "cranelift" => {
+            if is_windows_target(target_triple) { "exe" } else { "out" }
+        }
+        "llvm-text" => "ll",
+        "ebpf" => {
+            if exec_requested { "o" } else { "ebpf" }
+        }
+        "cil" => "il",
+        "dotnet" => "exe",
+        "rust" | "rs" => "rs",
+        "wasm" => "wasm",
+        "bytecode" | "text-bytecode" => {
+            if emit_text_bytecode { "ftbc" } else { "fbc" }
+        }
+        "jvm-bytecode" => "class",
+        "interpret" => "out",
+        _ => crate::languages::backend::DEFAULT_TARGET_OUTPUT_EXTENSION,
     }
 }
 
 fn determine_output_path(
     input: &Path,
     output: Option<&PathBuf>,
-    target: CompileTarget,
-    backend: BackendKind,
-    emitter: EmitterKind,
+    target: &str,
     target_triple: Option<&str>,
     input_class: crate::container::InputClass,
     emit_text_bytecode: bool,
@@ -1466,65 +1147,16 @@ fn determine_output_path(
     native_link_requested: bool,
     exec_requested: bool,
 ) -> Result<PathBuf> {
-    let backend = match target {
-        None => backend,
-        Some(_name) => {
-            // Every `--target` compile is opaque to fp-cli now (see
-            // `fp_core::backend::TargetBackend`) — there's no per-target
-            // extension to guess, so this always falls back to a generic
-            // default rather than trying to derive one from the target name.
-            let extension = crate::languages::backend::DEFAULT_TARGET_OUTPUT_EXTENSION;
-            if let Some(output) = output {
-                // A directory input (a whole project/package) always compiles into
-                // `output` as a directory root — never derive a single filename+
-                // extension from it. `output_is_dir` only reflects whether the
-                // *output* path happens to already exist as a directory (e.g. from
-                // a prior run), which is unrelated and previously caused a second
-                // transpile into an existing output dir to nest everything under a
-                // spurious `<input-dir-name>.<ext>` subdirectory instead of
-                // overwriting in place.
-                if output_is_dir && !input.is_dir() {
-                    let stem = input.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
-                        CliError::InvalidInput("Invalid input filename".to_string())
-                    })?;
-                    let mut path = output.join(stem);
-                    path.set_extension(extension);
-                    return Ok(path);
-                }
-                return Ok(output.clone());
-            }
-            return Ok(input.with_extension(extension));
-        }
-    };
-
     if let Some(output) = output {
         if output_is_dir {
-            let extension = match backend {
-                BackendKind::Binary => {
-                    native_binary_extension(input_class, emitter, native_link_requested, target_triple)
-                }
-                BackendKind::Ebpf => {
-                    if exec_requested {
-                        "o"
-                    } else {
-                        "ebpf"
-                    }
-                }
-                BackendKind::Cil => "il",
-                BackendKind::Dotnet => "exe",
-                BackendKind::Rust => "rs",
-                BackendKind::Llvm => "ll",
-                BackendKind::Wasm => "wasm",
-                BackendKind::Bytecode | BackendKind::TextBytecode => {
-                    if emit_text_bytecode {
-                        "ftbc"
-                    } else {
-                        "fbc"
-                    }
-                }
-                BackendKind::JvmBytecode => "class",
-                BackendKind::Interpret => "out",
-            };
+            let extension = output_extension_for(
+                target,
+                input_class,
+                target_triple,
+                emit_text_bytecode,
+                native_link_requested,
+                exec_requested,
+            );
             let stem = input
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -1534,83 +1166,43 @@ fn determine_output_path(
             return Ok(path);
         }
 
-        if matches!(backend, BackendKind::Binary) {
-            if is_raw_binary_passthrough(input_class, emitter) {
-                return Ok(output.clone());
-            }
-
-            let mut path = output.clone();
-            let desired_ext = if is_windows_target(target_triple) {
-                "exe"
-            } else {
-                "out"
-            };
-
-            // Respect explicit `-o <path>.<ext>` even when the extension differs
-            // from the default (`.out`/`.exe`). Only fill the extension when the
-            // user did not provide one.
-            if path.extension().is_none() {
-                path.set_extension(desired_ext);
-            }
-
-            return Ok(path);
+        if is_raw_binary_passthrough(target, input_class) {
+            return Ok(output.clone());
         }
 
-        if matches!(backend, BackendKind::Bytecode) && emit_text_bytecode {
-            let mut path = output.clone();
-            if path.extension().is_none() {
-                path.set_extension("ftbc");
-            }
-            return Ok(path);
+        // Respect explicit `-o <path>.<ext>` even when the extension differs
+        // from the target's default. Only fill the extension when the user
+        // did not provide one.
+        let mut path = output.clone();
+        if path.extension().is_none() {
+            let extension = output_extension_for(
+                target,
+                input_class,
+                target_triple,
+                emit_text_bytecode,
+                native_link_requested,
+                exec_requested,
+            );
+            path.set_extension(extension);
         }
-
-        if matches!(backend, BackendKind::Dotnet) {
-            let mut path = output.clone();
-            let desired_ext = match path.extension().and_then(|ext| ext.to_str()) {
-                Some(ext) if ext.eq_ignore_ascii_case("dll") => "dll",
-                Some(ext) if ext.eq_ignore_ascii_case("exe") => "exe",
-                _ => "exe",
-            };
-            if path.extension().is_none() {
-                path.set_extension(desired_ext);
-            }
-            return Ok(path);
-        }
-
-        Ok(output.clone())
-    } else {
-        let extension = match backend {
-            BackendKind::Binary => native_binary_extension(input_class, emitter, false, target_triple),
-            BackendKind::Ebpf => {
-                if exec_requested {
-                    "o"
-                } else {
-                    "ebpf"
-                }
-            }
-            BackendKind::Cil => "il",
-            BackendKind::Dotnet => "exe",
-            BackendKind::Rust => "rs",
-            BackendKind::Llvm => "ll",
-            BackendKind::JvmBytecode => "class",
-            BackendKind::Wasm => "wasm",
-            BackendKind::Bytecode | BackendKind::TextBytecode => {
-                if emit_text_bytecode {
-                    "ftbc"
-                } else {
-                    "fbc"
-                }
-            }
-            BackendKind::Interpret => {
-                return Err(CliError::InvalidInput(format!(
-                    "Unknown backend for output extension: {}",
-                    backend.as_str()
-                )));
-            }
-        };
-
-        Ok(input.with_extension(extension))
+        return Ok(path);
     }
+
+    if target == "interpret" {
+        return Err(CliError::InvalidInput(
+            "Unknown target for output extension: interpret".to_string(),
+        ));
+    }
+
+    let extension = output_extension_for(
+        target,
+        input_class,
+        target_triple,
+        emit_text_bytecode,
+        native_link_requested,
+        exec_requested,
+    );
+    Ok(input.with_extension(extension))
 }
 
 /// Wraps a real, already-discovered `PackageProvider` (e.g. `RustPackageProvider`,

@@ -7,10 +7,10 @@
 //!
 //! ```bash
 //! # Compile a FerroPhase file to Rust
-//! fp compile hello.fp --emitter rust --output hello.rs
+//! fp compile hello.fp --target rust --output hello.rs
 //!
 //! # Cross-compile a binary for a target triple
-//! fp compile hello.fp --emitter binary --target x86_64-unknown-linux-gnu
+//! fp compile hello.fp --target native --target-triple x86_64-unknown-linux-gnu
 //!
 //! # Run const evaluation with interpretation
 //! fp eval "1 + 2 * 3"
@@ -50,7 +50,7 @@ while supporting multi-language interoperability and advanced compile-time compu
 EXAMPLES:
     fp interpret hello.fp                 # Interpret a FerroPhase file
     fp eval "1 + 2 * 3"                  # Evaluate a ScriptBlock
-    fp compile hello.fp --emitter rust    # Compile to Rust
+    fp compile hello.fp --target rust     # Compile to Rust
     magnet init my-project                # Create new project
     "#
 )]
@@ -109,7 +109,7 @@ enum Commands {
     /// Parse and display AST for FerroPhase code
     Parse(ParseArgs),
 
-    /// Interpret bytecode produced by `compile --emitter bytecode`
+    /// Interpret bytecode produced by `compile --target bytecode`
     Interpret(InterpretArgs),
 
     /// Inspect binary, bytecode, and object artifacts

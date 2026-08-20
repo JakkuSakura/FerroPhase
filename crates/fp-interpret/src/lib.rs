@@ -2684,7 +2684,7 @@ fn lir_ty_to_ffi(ty: &LirType) -> FfiType {
     }
 }
 
-/// `TargetBackend` for the `--backend interpret` target — merges the
+/// `TargetBackend` for the `--target interpret` target — merges the
 /// package's LIR off the shared workspace exactly like `NativeEmitter`
 /// does, then runs it directly instead of emitting an artifact.
 /// `compile_package`'s `Result<()>` has no channel for the interpreted

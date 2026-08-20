@@ -174,8 +174,8 @@ fn compile_only(
     // not need to pass every source file as a separate input (fp-cli would treat them as separate
     // compilation units and also force `--output` to be interpreted as a directory).
     args.push(entry.display().to_string());
-    args.push("--backend".to_string());
-    args.push("binary".to_string());
+    args.push("--target".to_string());
+    args.push("native".to_string());
     args.push("--output".to_string());
     args.push(output_path.display().to_string());
     args.push("--graph".to_string());

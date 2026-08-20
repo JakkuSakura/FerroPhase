@@ -1,6 +1,5 @@
 use crate::cli::CliConfig;
-use crate::commands::compile::{CompileArgs, EmitterKind};
-use crate::compile_options::BackendKind;
+use crate::commands::compile::CompileArgs;
 use crate::error::{CliError, Result};
 use fp_core::container::ContainerReader as _;
 use std::collections::HashSet;
@@ -10,6 +9,16 @@ use fp_native::emit;
 use tokio::process::Command;
 
 use super::registry::{ContainerInputKind, ContainerRegistry};
+
+/// Whether `target` is one of the codegen targets that reads (merged) LIR
+/// and can plausibly emit a native-binary-shaped artifact — used to decide
+/// which container inputs a given `--target` is allowed to re-emit.
+fn is_binary_producing_target(target: &str) -> bool {
+    matches!(
+        target,
+        "native" | "goasm" | "urcl" | "llvm-binary" | "llvm-text" | "cranelift"
+    )
+}
 
 /// `kind` is the classification `compile_once` already computed once for
 /// this input via `ContainerRegistry::classify_input` — not re-detected
@@ -21,10 +30,16 @@ pub(crate) async fn maybe_transpile_container(
     args: &CompileArgs,
     _config: &CliConfig,
     kind: Option<ContainerInputKind>,
+    exec: bool,
 ) -> Result<Option<PathBuf>> {
     let Some(kind) = kind else {
         return Ok(None);
     };
+    if exec && kind != ContainerInputKind::NativeObject {
+        return Err(CliError::InvalidInput(
+            "--exec is only supported for native object container inputs".to_string(),
+        ));
+    }
     let registry = ContainerRegistry::new();
 
     let payload = tokio::fs::read(input).await.map_err(|err| {
@@ -36,7 +51,7 @@ pub(crate) async fn maybe_transpile_container(
 
     match read.kind {
         ContainerInputKind::NativeObject => {
-            transpile_native_object(input, output, args, &read.payload).await
+            transpile_native_object(input, output, args, &read.payload, exec).await
         }
         ContainerInputKind::NativeArchive => {
             transpile_native_archive(input, output, args, &read.payload).await
@@ -55,16 +70,11 @@ async fn transpile_native_object(
     output: &Path,
     args: &CompileArgs,
     bytes: &[u8],
+    exec: bool,
 ) -> Result<Option<PathBuf>> {
-    if args.emitter != EmitterKind::Native {
+    if args.target != "native" {
         return Err(CliError::InvalidInput(
-            "native object input currently requires `--emitter native`".to_string(),
-        ));
-    }
-    if args.backend != BackendKind::Binary {
-        return Err(CliError::InvalidInput(
-            "native object input currently only supports `--backend binary` transpilation"
-                .to_string(),
+            "native object input currently requires `--target native`".to_string(),
         ));
     }
 
@@ -75,7 +85,7 @@ async fn transpile_native_object(
     let plan = fp_native::emit::emit_plan_from_asmir(asmir, format, arch)
         .map_err(|err| CliError::Compilation(format!("Failed to emit target object: {err}")))?;
 
-    let link_requested = args.exec || args.link;
+    let link_requested = exec || args.link;
 
     let output_path = if args.output.is_none() {
         if link_requested {
@@ -118,6 +128,10 @@ async fn transpile_native_object(
         fp_native::emit::write_object(&output_path, &plan).map_err(|err| {
             CliError::Compilation(format!("Failed to write object output: {err}"))
         })?;
+    }
+
+    if exec {
+        crate::commands::compile::exec_compiled_binary(&output_path).await?;
     }
 
     Ok(Some(output_path))
@@ -280,15 +294,9 @@ async fn transpile_native_archive(
     args: &CompileArgs,
     bytes: &[u8],
 ) -> Result<Option<PathBuf>> {
-    if args.emitter != EmitterKind::Native {
+    if args.target != "native" {
         return Err(CliError::InvalidInput(
-            "native archive input currently requires `--emitter native`".to_string(),
-        ));
-    }
-    if args.backend != BackendKind::Binary {
-        return Err(CliError::InvalidInput(
-            "native archive input currently only supports `--backend binary` transpilation"
-                .to_string(),
+            "native archive input currently requires `--target native`".to_string(),
         ));
     }
 
@@ -363,8 +371,8 @@ async fn transpile_jvm_bytecode(
         std::fs::create_dir_all(parent).map_err(CliError::Io)?;
     }
 
-    match args.backend {
-        BackendKind::JvmBytecode => {
+    match args.target.as_str() {
+        "jvm-bytecode" => {
             let out_ext = output_path
                 .extension()
                 .and_then(|ext| ext.to_str())
@@ -401,7 +409,7 @@ async fn transpile_jvm_bytecode(
                 _ => {
                     if is_jar {
                         return Err(CliError::InvalidInput(
-                            "JAR input requires output extension `.jar` when using `--backend jvm-bytecode`"
+                            "JAR input requires output extension `.jar` when using `--target jvm-bytecode`"
                                 .to_string(),
                         ));
                     }
@@ -413,7 +421,7 @@ async fn transpile_jvm_bytecode(
                 }
             }
         }
-        BackendKind::Binary => {
+        target if is_binary_producing_target(target) => {
             let lir_program = if is_jar {
                 let classes = fp_jvm::extract_class_files_from_jar(bytes)
                     .map_err(|err| CliError::Compilation(format!("Failed to parse jar: {err}")))?;
@@ -448,8 +456,7 @@ async fn transpile_jvm_bytecode(
         }
         other => {
             return Err(CliError::InvalidInput(format!(
-                "JVM bytecode input currently supports only `--backend jvm-bytecode` or `--backend binary` (got {})",
-                other.as_str()
+                "JVM bytecode input currently supports only `--target jvm-bytecode` or a native codegen target (got {other})"
             )));
         }
     }
@@ -477,11 +484,11 @@ async fn transpile_cil(
             .map_err(|_| CliError::InvalidInput("CIL input must be valid UTF-8".to_string()))?
     };
 
-    match args.backend {
-        BackendKind::Cil => {
+    match args.target.as_str() {
+        "cil" => {
             if is_binary_pe {
                 return Err(CliError::InvalidInput(
-                    "`--backend cil` currently expects textual `.il` input".to_string(),
+                    "`--target cil` currently expects textual `.il` input".to_string(),
                 ));
             }
             let output_path = if args.output.is_none() {
@@ -499,7 +506,7 @@ async fn transpile_cil(
             })?;
             Ok(Some(output_path))
         }
-        BackendKind::Dotnet => {
+        "dotnet" => {
             let output_path = if args.output.is_none() {
                 input.with_extension("exe")
             } else {
@@ -521,7 +528,7 @@ async fn transpile_cil(
             }
             Ok(Some(output_path))
         }
-        BackendKind::Binary => {
+        target if is_binary_producing_target(target) => {
             if is_binary_pe {
                 return Err(CliError::InvalidInput(
                     "binary .dll/.exe -> native transpilation is not implemented yet".to_string(),
@@ -531,9 +538,9 @@ async fn transpile_cil(
                 .map_err(|err| CliError::Compilation(format!("Failed to parse CIL: {err}")))?;
 
             let output_path = if args.output.is_none() {
-                match args.emitter {
-                    EmitterKind::Goasm => input.with_extension("s"),
-                    EmitterKind::Urcl => input.with_extension("urcl"),
+                match target {
+                    "goasm" => input.with_extension("s"),
+                    "urcl" => input.with_extension("urcl"),
                     _ => input.with_extension("o"),
                 }
             } else {
@@ -546,8 +553,7 @@ async fn transpile_cil(
             Ok(Some(output_path))
         }
         other => Err(CliError::InvalidInput(format!(
-            "CIL input currently supports only `--backend cil` or `--backend dotnet` (got {})",
-            other.as_str()
+            "CIL input currently supports only `--target cil` or `--target dotnet` (got {other})"
         ))),
     }
 }
@@ -570,9 +576,9 @@ async fn transpile_goasm(
     args: &CompileArgs,
     bytes: &[u8],
 ) -> Result<Option<PathBuf>> {
-    if args.backend != BackendKind::Binary {
+    if !is_binary_producing_target(&args.target) {
         return Err(CliError::InvalidInput(
-            "Go asm input currently supports only `--backend binary`".to_string(),
+            "Go asm input currently supports only a native codegen `--target`".to_string(),
         ));
     }
 
@@ -582,9 +588,9 @@ async fn transpile_goasm(
         .map_err(|err| CliError::Compilation(format!("Failed to parse goasm: {err}")))?;
 
     let output_path = if args.output.is_none() {
-        match args.emitter {
-            EmitterKind::Goasm => input.with_extension("s"),
-            EmitterKind::Urcl => input.with_extension("urcl"),
+        match args.target.as_str() {
+            "goasm" => input.with_extension("s"),
+            "urcl" => input.with_extension("urcl"),
             _ => input.with_extension("o"),
         }
     } else {
@@ -603,9 +609,9 @@ async fn transpile_urcl(
     args: &CompileArgs,
     bytes: &[u8],
 ) -> Result<Option<PathBuf>> {
-    if args.backend != BackendKind::Binary {
+    if !is_binary_producing_target(&args.target) {
         return Err(CliError::InvalidInput(
-            "URCL input currently supports only `--backend binary`".to_string(),
+            "URCL input currently supports only a native codegen `--target`".to_string(),
         ));
     }
     let text = String::from_utf8(bytes.to_vec())
@@ -614,9 +620,9 @@ async fn transpile_urcl(
         .map_err(|err| CliError::Compilation(format!("Failed to parse URCL: {err}")))?;
 
     let output_path = if args.output.is_none() {
-        match args.emitter {
-            EmitterKind::Goasm => input.with_extension("s"),
-            EmitterKind::Urcl => input.with_extension("urcl"),
+        match args.target.as_str() {
+            "goasm" => input.with_extension("s"),
+            "urcl" => input.with_extension("urcl"),
             _ => input.with_extension("o"),
         }
     } else {
@@ -635,8 +641,8 @@ fn emit_lir_program(
     output_path: &Path,
     args: &CompileArgs,
 ) -> Result<()> {
-    match args.emitter {
-        EmitterKind::Native => {
+    match args.target.as_str() {
+        "native" => {
             let (format, arch) = emit::detect_target(args.target_triple.as_deref())
                 .map_err(|err| CliError::Compilation(err.to_string()))?;
             let plan = fp_native::emit::emit_plan(lir_program, format, arch).map_err(|err| {
@@ -646,7 +652,7 @@ fn emit_lir_program(
                 CliError::Compilation(format!("Failed to write object output: {err}"))
             })?;
         }
-        EmitterKind::Goasm => {
+        "goasm" => {
             let config = fp_goasm::config::GoAsmConfig::new(output_path)
                 .with_target_triple(args.target_triple.clone());
             let emitter = fp_goasm::GoAsmEmitter::new(config);
@@ -654,7 +660,7 @@ fn emit_lir_program(
                 .emit(lir_program.clone(), Some(input))
                 .map_err(|err| CliError::Compilation(format!("Failed to emit Go asm: {err}")))?;
         }
-        EmitterKind::Urcl => {
+        "urcl" => {
             let emitter = fp_urcl::UrclEmitter::new(fp_urcl::UrclConfig::new(output_path));
             emitter
                 .emit(lir_program.clone(), Some(input))
@@ -662,8 +668,7 @@ fn emit_lir_program(
         }
         other => {
             return Err(CliError::InvalidInput(format!(
-                "container transpilation does not support `--emitter {}` yet",
-                other.as_str()
+                "container transpilation does not support `--target {other}` yet"
             )));
         }
     }

@@ -2178,7 +2178,7 @@ fn ensure_section_consumed(data: &[u8], section: &str) -> Result<()> {
     }
 }
 
-/// `TargetBackend` for the `--backend ebpf` target — merges the package's
+/// `TargetBackend` for the `--target ebpf` target — merges the package's
 /// LIR off the shared workspace exactly like `NativeEmitter` does, instead
 /// of re-driving a second, independent compile from source.
 pub struct EbpfBackend {
@@ -2209,6 +2209,36 @@ impl fp_core::backend::TargetBackend for EbpfBackend {
                 fp_core::error::Error::from(format!("eBPF assembly emission failed: {e}"))
             })?;
             std::fs::write(&self.output, text)?;
+        }
+        Ok(())
+    }
+
+    fn exec(&self) -> fp_core::error::Result<()> {
+        let runtime = std::env::var("FP_EBPF_RUNTIME").map_err(|_| {
+            fp_core::error::Error::from(
+                "Missing eBPF user-mode runtime: set FP_EBPF_RUNTIME to an external runner executable such as fp-ebpf-runtime"
+                    .to_string(),
+            )
+        })?;
+        let runtime_args = std::env::var("FP_EBPF_RUNTIME_ARGS").unwrap_or_default();
+
+        let mut command = std::process::Command::new(&runtime);
+        for arg in runtime_args.split_whitespace() {
+            command.arg(arg);
+        }
+        command.arg(&self.output);
+
+        let output = command.output().map_err(|e| {
+            fp_core::error::Error::from(format!(
+                "failed to execute eBPF runtime '{runtime}' for '{}': {e}",
+                self.output.display()
+            ))
+        })?;
+        if !output.status.success() {
+            let code = output.status.code().unwrap_or(-1);
+            return Err(fp_core::error::Error::from(format!(
+                "eBPF runtime exited with status {code}"
+            )));
         }
         Ok(())
     }

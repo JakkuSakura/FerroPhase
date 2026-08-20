@@ -53,6 +53,18 @@ pub trait TargetBackend: Send + Sync {
         let _ = workspace;
         Ok(())
     }
+
+    /// Runs whatever `compile_package`/`write_workspace_files` just
+    /// produced (`--exec`) — a backend that writes a native executable
+    /// spawns it, one that writes bytecode drives its own VM, and so on.
+    /// Each backend already knows its own output shape, so this stays
+    /// colocated with the backend rather than fp-cli sniffing the output
+    /// path's extension/header to guess how to run it. Default: unsupported.
+    fn exec(&self) -> Result<()> {
+        Err(crate::error::Error::from(
+            "--exec is not supported for this target".to_string(),
+        ))
+    }
 }
 
 /// Plain helper — not part of the trait. A backend constructs one

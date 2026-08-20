@@ -2180,7 +2180,7 @@ fn value_type_for(
     value.ty.clone()
 }
 
-/// `TargetBackend` for the `--backend wasm` target — merges the package's
+/// `TargetBackend` for the `--target wasm` target — merges the package's
 /// LIR off the shared workspace exactly like `NativeEmitter` does, instead
 /// of re-driving a second, independent compile from source.
 pub struct WasmBackend {

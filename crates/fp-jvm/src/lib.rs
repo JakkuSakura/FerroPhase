@@ -12,7 +12,7 @@ pub use jir::{JvmClass, JvmCode, JvmInstr, JvmMethod, JvmProgram};
 pub use lower::{JvmBackendOptions, derive_class_name, lower_program};
 pub use parse::parse_class_to_lir;
 
-/// `TargetBackend` for the `--backend jvm-bytecode` target — reads a
+/// `TargetBackend` for the `--target jvm-bytecode` target — reads a
 /// package's already-compiled MIR straight off the shared workspace's
 /// `CompiledPackage`, same source `CompilerDriver::compile_bytecode`-style
 /// helpers used, just without re-driving a second compile.

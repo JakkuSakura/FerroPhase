@@ -284,3 +284,189 @@ pub fn is_available() -> bool {
     // For now, always return true since inkwell is configured in Cargo.
     true
 }
+
+/// `TargetBackend` for the `llvm-binary`/`llvm-text` targets. Reads a
+/// package's merged LIR straight off the shared `WorkspaceContext`
+/// (mirroring `fp_native::NativeEmitter`) rather than re-driving an
+/// independent compile from source, then — unless `text_only` — shells out
+/// to `clang`/`clang++` to link the final binary. That final linking step
+/// lives here (an OS-toolchain concern) rather than in `fp-cli`, so
+/// `fp-cli` has zero knowledge of how this target turns LIR into output.
+pub struct LlvmBackend {
+    pub module_path: Option<fp_core::ast::path::QualifiedPath>,
+    pub output: PathBuf,
+    pub target_triple: Option<String>,
+    pub target_cpu: Option<String>,
+    pub target_features: Option<String>,
+    pub target_sysroot: Option<PathBuf>,
+    pub linker: Option<String>,
+    pub target_linker: Option<PathBuf>,
+    pub release: bool,
+    pub debug_info: bool,
+    pub module_name: String,
+    pub save_intermediates: bool,
+    /// `llvm-text`: always stop after writing the `.ll` file, never link.
+    pub text_only: bool,
+}
+
+impl fp_core::backend::TargetBackend for LlvmBackend {
+    fn compile_package(
+        &self,
+        workspace: &fp_core::workspace::WorkspaceContext,
+        package_id: &fp_core::package::PackageId,
+    ) -> Result<()> {
+        let entrypoint = self
+            .module_path
+            .as_ref()
+            .map(|module_path| (module_path, "main", "main"));
+        let lir = workspace.merged_lir_program(package_id, entrypoint)?;
+
+        let llvm_output = if self.text_only || self.output.extension().and_then(|ext| ext.to_str()) == Some("ll") {
+            self.output.clone()
+        } else {
+            self.output.with_extension("ll")
+        };
+        if let Some(parent) = llvm_output.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let mut target = if let Some(triple) = self.target_triple.as_deref() {
+            target::TargetConfig::for_triple(triple)
+        } else {
+            target::TargetConfig::default()
+        };
+        if let Some(cpu) = self.target_cpu.as_deref() {
+            target = target.with_cpu(cpu);
+        }
+        if let Some(features) = self.target_features.as_deref() {
+            target = target.with_features(features);
+        }
+
+        let mut linker = linking::LinkerConfig::executable(&llvm_output);
+        if self.release {
+            linker = linker.with_size_optimization();
+        }
+
+        let config = LlvmConfig::new()
+            .with_target(target)
+            .with_linker(linker)
+            .with_debug_info(self.debug_info)
+            .with_module_name(self.module_name.clone());
+
+        let compiler = LlvmCompiler::new(config);
+        let (_ir_path, ir_text) = compiler
+            .compile_to_string(lir, None)
+            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+
+        if self.text_only || self.output.extension().and_then(|ext| ext.to_str()) == Some("ll") {
+            return Ok(());
+        }
+
+        link_llvm_ir_with_clang(
+            &llvm_output,
+            &self.output,
+            &ir_text,
+            self.target_triple.as_deref(),
+            self.target_sysroot.as_deref(),
+            self.linker.as_deref(),
+            self.target_linker.as_deref(),
+            self.release,
+        )?;
+
+        if !self.save_intermediates {
+            let _ = std::fs::remove_file(&llvm_output);
+        }
+        Ok(())
+    }
+
+    fn exec(&self) -> Result<()> {
+        if self.text_only {
+            return Err(fp_core::error::Error::from(
+                "--exec is not supported for `llvm-text` output".to_string(),
+            ));
+        }
+        let status = std::process::Command::new(&self.output).status().map_err(|e| {
+            fp_core::error::Error::from(format!("failed to execute '{}': {e}", self.output.display()))
+        })?;
+        if !status.success() {
+            let code = status.code().unwrap_or(-1);
+            return Err(fp_core::error::Error::from(format!(
+                "process exited with status {code}"
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn link_llvm_ir_with_clang(
+    llvm_ir_path: &Path,
+    binary_path: &Path,
+    llvm_ir_text: &str,
+    target_triple: Option<&str>,
+    sysroot: Option<&Path>,
+    linker: Option<&str>,
+    target_linker: Option<&Path>,
+    release: bool,
+) -> Result<()> {
+    use std::process::Command;
+
+    if let Some(parent) = binary_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let requires_eh = llvm_ir_text.contains("landingpad") || llvm_ir_text.contains("invoke");
+    let default_linker = if requires_eh { "clang++" } else { "clang" };
+    let linker = match linker {
+        Some("clang") if requires_eh => "clang++",
+        Some(other) => other,
+        None => default_linker,
+    };
+
+    let mut cmd = Command::new(linker);
+    cmd.arg(llvm_ir_path);
+    if requires_eh {
+        let runtime_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("runtime/fp_unwind.cc");
+        cmd.arg(runtime_path);
+        cmd.arg("-fexceptions");
+        if is_apple_target(target_triple) {
+            cmd.arg("-lc++");
+            cmd.arg("-lc++abi");
+        }
+    }
+    if let Some(target_triple) = target_triple {
+        cmd.arg("--target").arg(target_triple);
+    }
+    if let Some(sysroot) = sysroot {
+        cmd.arg("--sysroot").arg(sysroot);
+    }
+    if let Some(linker_path) = target_linker {
+        cmd.arg(format!("-fuse-ld={}", linker_path.display()));
+    }
+    cmd.arg("-o").arg(binary_path);
+    if release {
+        cmd.arg("-O2");
+    }
+
+    let output = cmd.output().map_err(fp_core::error::Error::from)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut message = stderr.trim().to_string();
+        if message.is_empty() {
+            message = stdout.trim().to_string();
+        }
+        if message.is_empty() {
+            message = "clang failed without diagnostics".to_string();
+        }
+        return Err(fp_core::error::Error::from(format!("clang failed: {message}")));
+    }
+    Ok(())
+}
+
+fn is_apple_target(target_triple: Option<&str>) -> bool {
+    let triple = match target_triple {
+        Some(triple) => triple,
+        None => return cfg!(any(target_os = "macos", target_os = "ios")),
+    };
+    triple.contains("apple") || triple.contains("darwin") || triple.contains("macos")
+}

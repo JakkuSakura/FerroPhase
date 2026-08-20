@@ -92,6 +92,20 @@ impl fp_core::backend::TargetBackend for NativeEmitter {
         self.emit(lir, None)?;
         Ok(())
     }
+
+    fn exec(&self) -> Result<()> {
+        let path = &self.config.output_path;
+        let status = std::process::Command::new(path)
+            .status()
+            .map_err(|e| fp_core::error::Error::from(format!("failed to execute '{}': {e}", path.display())))?;
+        if !status.success() {
+            let code = status.code().unwrap_or(-1);
+            return Err(fp_core::error::Error::from(format!(
+                "process exited with status {code}"
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl NativeEmitter {
