@@ -3,7 +3,7 @@ use fp_core::ast::{
     ExprKind, ExprSelect, ExprSelectType, Ident, Name, TySlot, Value,
 };
 use fp_core::error::Result;
-use fp_core::intrinsics::{IntrinsicMaterializer, OpKind, CallKind};
+use fp_core::intrinsics::{CallKind, IntrinsicMaterializer};
 use fp_core::ops::BinOpKind;
 
 /// Kotlin-specific materializer: converts portable ops to Kotlin idioms.
@@ -32,20 +32,23 @@ impl IntrinsicMaterializer for KotlinMaterializer {
         call: &mut ExprIntrinsicCall,
         _ty: &TySlot,
     ) -> Result<Option<Expr>> {
-        match call.kind {
+        let CallKind::Op(op) = &call.kind else {
+            return Ok(None);
+        };
+        match op.name() {
             // `Some(x)`/`x.clone()`/`x.unwrap()` — Kotlin's `T?` needs no
             // wrapper for a present value, `.copy()`-vs-share is handled
             // elsewhere by the serializer's own type-driven heuristic, and
             // `!!` is only needed at the *use* site, not construction —
             // all three just become the inner value itself.
-            CallKind::Op(OpKind::OptionSome | OpKind::OptionUnwrap | OpKind::Clone) => {
+            "option_some" | "option_unwrap" | "clone" => {
                 Ok(Some(match call.args.first() {
                     Some(expr) => expr.clone(),
                     None => Expr::value(Value::Null(Default::default())),
                 }))
             }
             // `None` — Kotlin's absent value is simply `null`.
-            CallKind::Op(OpKind::OptionNone) => {
+            "option_none" => {
                 Ok(Some(Expr::value(Value::Null(Default::default()))))
             }
             // `Ok(x)` — same "unwrap the payload" treatment as `Some(x)`.
@@ -58,7 +61,7 @@ impl IntrinsicMaterializer for KotlinMaterializer {
             // general-purpose "no value" rendering, shared with
             // `Option::None`), which isn't a valid `Unit` in Kotlin —
             // `Unit` is the one real spelling for that.
-            CallKind::Op(OpKind::ResultOk) => Ok(Some(match call.args.first() {
+            "result_ok" => Ok(Some(match call.args.first() {
                 // `()` doesn't lower to a `Value::Unit` literal node — HIR
                 // represents it as an empty block (`{ }`, evaluating to
                 // unit), so that's the shape actually reaching here for
@@ -86,7 +89,7 @@ impl IntrinsicMaterializer for KotlinMaterializer {
             // returns normally on this path, and the exception propagates
             // up through every caller exactly like `?` already does
             // (`ExprKind::Try` renders as its inner expression only).
-            CallKind::Op(OpKind::ResultErr) => {
+            "result_err" => {
                 let arg = call.args.first().cloned().unwrap_or_else(|| {
                     Expr::value(Value::string(String::new()))
                 });
@@ -98,24 +101,24 @@ impl IntrinsicMaterializer for KotlinMaterializer {
                 }))))
             }
             // `Vec::new()` — an empty `MutableList` literal.
-            CallKind::Op(OpKind::VecNew) => Ok(Some(Expr::new(ExprKind::IntrinsicContainer(
+            "vec_new" => Ok(Some(Expr::new(ExprKind::IntrinsicContainer(
                 ExprIntrinsicContainer::VecElements { elements: vec![] },
             )))),
             // `x.as_ref()`/`x.iter()`/`x.to_owned()`/`x.as_str()` — Kotlin
             // collections/strings are already shared references with no
             // borrow-checker distinction, so the receiver alone is correct.
-            CallKind::Op(OpKind::AsRef | OpKind::Iter | OpKind::ToOwned | OpKind::AsStr) => {
+            "as_ref" | "iter" | "to_owned" | "as_str" => {
                 Ok(Some(match call.args.first() {
                     Some(expr) => expr.clone(),
                     None => Expr::value(Value::Null(Default::default())),
                 }))
             }
             // `x.trim_end()`/`x.trim_start()` — Kotlin's `trimEnd()`/`trimStart()`.
-            CallKind::Op(OpKind::TrimEnd | OpKind::TrimStart) => {
+            "trim_end" | "trim_start" => {
                 let Some(receiver) = call.args.first().cloned() else {
                     return Ok(Some(Expr::value(Value::Null(Default::default()))));
                 };
-                let method = if matches!(call.kind, CallKind::Op(OpKind::TrimEnd)) {
+                let method = if op.name() == "trim_end" {
                     "trimEnd"
                 } else {
                     "trimStart"
@@ -134,12 +137,12 @@ impl IntrinsicMaterializer for KotlinMaterializer {
             }
             // `Option<T>::as_deref()` — same "no borrow-checker distinction
             // in Kotlin" treatment as `as_ref`.
-            CallKind::Op(OpKind::AsDeref) => Ok(Some(match call.args.first() {
+            "as_deref" => Ok(Some(match call.args.first() {
                 Some(expr) => expr.clone(),
                 None => Expr::value(Value::Null(Default::default())),
             })),
             // `x.is_none()` — Kotlin's nullable-equality check.
-            CallKind::Op(OpKind::IsNone) => {
+            "is_none" => {
                 let Some(receiver) = call.args.first().cloned() else {
                     return Ok(Some(Expr::value(Value::bool(true))));
                 };
@@ -156,7 +159,7 @@ impl IntrinsicMaterializer for KotlinMaterializer {
             // translation would need to wrap the result in a null check,
             // which needs the call's own result type (not available here);
             // left as the direct `Int` value for now.
-            CallKind::Op(OpKind::Position) => {
+            "position" => {
                 let mut args = call.args.drain(..);
                 let Some(receiver) = args.next() else {
                     return Ok(Some(Expr::value(Value::Null(Default::default()))));
@@ -179,7 +182,7 @@ impl IntrinsicMaterializer for KotlinMaterializer {
             // filtered out, unlike Rust's version, since that needs a
             // trailing-lambda `.filter { }` this AST shape can't build
             // without a closure to splice in).
-            CallKind::Op(OpKind::SplitWhitespace) => {
+            "split_whitespace" => {
                 let Some(receiver) = call.args.first().cloned() else {
                     return Ok(Some(Expr::value(Value::Null(Default::default()))));
                 };
@@ -203,7 +206,7 @@ impl IntrinsicMaterializer for KotlinMaterializer {
             }
             // `String::from_utf8_lossy(bytes)`/`String::from_utf8(bytes)` —
             // Kotlin's `String(bytes, Charsets.UTF_8)` constructor.
-            CallKind::Op(OpKind::StringFromUtf8Lossy | OpKind::StringFromUtf8) => {
+            "string_from_utf8_lossy" | "string_from_utf8" => {
                 let arg = call.args.first().cloned().unwrap_or_else(|| {
                     Expr::value(Value::Null(Default::default()))
                 });

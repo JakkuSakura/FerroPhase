@@ -1,5 +1,5 @@
 use crate::ast::{TypeBinaryOpKind, TypePrimitive};
-use crate::intrinsics::{CallKind, IntrinsicKind, OpKind};
+use crate::intrinsics::{CallKind, IntrinsicKind};
 use crate::query::{QueryIrDocument, QueryOrigin};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -115,7 +115,7 @@ pub struct Program {
     /// which is both redundant (the compiler already resolved this) and
     /// where the earlier, retired `compile_mode_std_path`/path-based
     /// registry design went wrong.
-    pub op_defs: HashMap<DefId, OpKind>,
+    pub op_defs: HashMap<DefId, crate::intrinsics::PortableOp>,
     /// A free function's compiler intrinsic, when its source declaration was
     /// tagged `#[intrinsic = "..."]` — populated the same way and at the
     /// same site as `op_defs`, and consulted the same way: keyed by the

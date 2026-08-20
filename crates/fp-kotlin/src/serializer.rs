@@ -12,7 +12,7 @@ use fp_core::ast::{
     StmtLet, BExpr, Pattern, PatternKind,
 };
 use fp_core::ops::{BinOpKind, UnOpKind};
-use fp_core::intrinsics::calls::{CallKind, KnownClass, KnownPackage, OpKind};
+use fp_core::intrinsics::calls::{CallKind, KnownClass, KnownPackage};
 use fp_core::package::{PackageItem, PackageSource};
 use fp_core::diagnostics::report_warning_with_context;
 use fp_core::writer::{IndentStyle, StyledWriter, WriterConfig};
@@ -526,7 +526,7 @@ fn collect_enum_fields_in_item(item: &Item, enum_type_names: &HashSet<String>, o
 /// instead of re-deriving the name by string-manipulating its own
 /// (source-side, possibly differently-qualified) pattern text — the same
 /// "provider registers once, consumer looks up by identity" shape used
-/// for portable ops (`OpKind::from_class_and_member`), just keyed by this
+/// for portable ops (`fp_core::lang::class_and_member_to_portable_op`), just keyed by this
 /// compile's own enum/variant *names* (unambiguous within one compile)
 /// rather than a cross-package `DefId` (which nothing on the `Pattern`/
 /// `Item` AST types carries — see `HirToAstLifter::lift_path`, which
@@ -2728,7 +2728,6 @@ impl KotlinEmitter {
             }
 
             ExprKind::IntrinsicCall(ic) => {
-                use fp_core::intrinsics::calls::OpKind;
                 use fp_core::intrinsics::calls::IntrinsicKind;
                 // Render all args first to avoid borrow conflicts
                 let args: Vec<String> = ic.args.iter()
@@ -2746,16 +2745,16 @@ impl KotlinEmitter {
                         let receiver = args.first().cloned().unwrap_or_default();
                         Ok(format!("{}.count()", receiver))
                     }
-                    CallKind::Op(OpKind::MapOr) => {
+                    CallKind::Op(op) if op.name() == "map_or" => {
                         let receiver = args.first().cloned().unwrap_or_default();
                         let default = args.get(1).cloned().unwrap_or_default();
                         Ok(format!("{} ?: {}", receiver, default))
                     }
-                    CallKind::Op(OpKind::Collect) => {
+                    CallKind::Op(op) if op.name() == "collect" => {
                         let receiver = args.first().cloned().unwrap_or_default();
                         Ok(format!("{}.toList()", receiver))
                     }
-                    CallKind::Op(OpKind::Find) => {
+                    CallKind::Op(op) if op.name() == "find" => {
                         let receiver = args.first().cloned().unwrap_or_default();
                         let pred = args.get(1).cloned();
                         if let Some(p) = pred {
@@ -2764,16 +2763,16 @@ impl KotlinEmitter {
                             Ok(format!("{}.firstOrNull()", receiver))
                         }
                     }
-                    CallKind::Op(OpKind::UnwrapOr) => {
+                    CallKind::Op(op) if op.name() == "unwrap_or" => {
                         let receiver = args.first().cloned().unwrap_or_default();
                         let default = args.get(1).cloned().unwrap_or_default();
                         Ok(format!("{} ?: {}", receiver, default))
                     }
-                    CallKind::Op(OpKind::ToString) => {
+                    CallKind::Op(op) if op.name() == "to_string" => {
                         let receiver = args.first().cloned().unwrap_or_default();
                         Ok(format!("{}.toString()", receiver))
                     }
-                    CallKind::Op(OpKind::AndThen) => {
+                    CallKind::Op(op) if op.name() == "and_then" => {
                         let receiver = args.first().cloned().unwrap_or_default();
                         Ok(format!("{}.let {{ it }}", receiver))
                     }
@@ -2787,7 +2786,9 @@ impl KotlinEmitter {
                     // straight to a Kotlin-specific string form
                     // (`?:`/`.toList()`/a string-template literal) that has no
                     // generic `ast::Expr` equivalent to return instead.
-                    CallKind::Op(op @ (OpKind::Format | OpKind::Print | OpKind::Println)) => {
+                    CallKind::Intrinsic(
+                        kind @ (IntrinsicKind::Format | IntrinsicKind::Print | IntrinsicKind::Println),
+                    ) => {
                         // Resolve each placeholder against its real argument and emit a
                         // genuine Kotlin string template, instead of a fake "arg" literal
                         // fed to `String.format(...)`.
@@ -2830,10 +2831,10 @@ impl KotlinEmitter {
                             }
                             _ => args.first().cloned().unwrap_or_default(),
                         };
-                        match op {
-                            OpKind::Format => Ok(template),
-                            OpKind::Print => Ok(format!("print({})", template)),
-                            OpKind::Println => Ok(format!("println({})", template)),
+                        match kind {
+                            IntrinsicKind::Format => Ok(template),
+                            IntrinsicKind::Print => Ok(format!("print({})", template)),
+                            IntrinsicKind::Println => Ok(format!("println({})", template)),
                             _ => unreachable!(),
                         }
                     }
@@ -3489,16 +3490,13 @@ fn kotlin_un_op(kind: &UnOpKind) -> &str {
 }
 
 fn intrinsic_name(kind: &fp_core::intrinsics::calls::CallKind) -> String {
-    use fp_core::intrinsics::calls::OpKind;
     use fp_core::intrinsics::calls::IntrinsicKind;
     match kind {
-        fp_core::intrinsics::calls::CallKind::Op(op) => match op {
-            OpKind::Print => "print".into(),
-            OpKind::Println => "println".into(),
-            OpKind::Format => "String.format".into(),
-            _ => format!("op_{:?}", op).to_lowercase(),
-        },
+        fp_core::intrinsics::calls::CallKind::Op(op) => format!("op_{}", op.name()),
         fp_core::intrinsics::calls::CallKind::Intrinsic(i) => match i {
+            IntrinsicKind::Print => "print".into(),
+            IntrinsicKind::Println => "println".into(),
+            IntrinsicKind::Format => "String.format".into(),
             IntrinsicKind::Len => "count()".into(),
             IntrinsicKind::Panic => "error".into(),
             _ => format!("intr_{:?}", i).to_lowercase(),

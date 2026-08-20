@@ -60,7 +60,7 @@ pub enum LangIntrinsic {
     FieldType,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LangIntrinsicSpec {
     pub intrinsic: LangIntrinsic,
     pub lang_item: &'static str,
@@ -368,7 +368,7 @@ pub fn lang_intrinsic_for_lang_item(name: &str) -> Option<LangIntrinsic> {
 }
 
 pub fn lang_intrinsic_call_kind(intrinsic: LangIntrinsic) -> Option<CallKind> {
-    lang_intrinsic_spec(intrinsic).call_kind
+    lang_intrinsic_spec(intrinsic).call_kind.clone()
 }
 
 pub fn lang_intrinsic_capability(intrinsic: LangIntrinsic) -> LangIntrinsicCapability {

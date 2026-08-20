@@ -320,7 +320,7 @@ impl PrettyPrintable for ast::Expr {
                 ctx.with_indent(|ctx| block.expr.fmt_pretty(f, ctx))
             }
             ast::ExprKind::IntrinsicCall(call) => {
-                ctx.write_line(format!("intrinsic {}{}", render_intrinsic_kind(call.kind), suffix),
+                ctx.write_line(format!("intrinsic {}{}", render_intrinsic_kind(&call.kind), suffix),
                 )?;
                 ctx.with_indent(|ctx| {
                     if call.args.is_empty() {
@@ -1583,7 +1583,7 @@ fn render_select_kind(kind: &ast::ExprSelectType) -> &'static str {
     }
 }
 
-fn render_intrinsic_kind(kind: CallKind) -> &'static str {
+fn render_intrinsic_kind(kind: &CallKind) -> String {
     kind.name()
 }
 

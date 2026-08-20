@@ -301,7 +301,7 @@ impl HirGenerator {
                         if let Some(tag) = fp_core::intrinsics::extract_op_attr(&func.attrs, "method") {
                             let op = impl_op_class
                                 .as_deref()
-                                .and_then(|class| fp_core::intrinsics::OpKind::from_class_and_member(class, &tag));
+                                .and_then(|class| fp_core::lang::class_and_member_to_portable_op(class, &tag));
                             if let Some(op) = op {
                                 self.op_defs.insert(method_def_id, op);
                             }
@@ -454,7 +454,7 @@ impl HirGenerator {
                         if let Some(tag) = fp_core::intrinsics::extract_op_attr(&func.attrs, "method") {
                             let op = trait_op_class
                                 .as_deref()
-                                .and_then(|class| fp_core::intrinsics::OpKind::from_class_and_member(class, &tag));
+                                .and_then(|class| fp_core::lang::class_and_member_to_portable_op(class, &tag));
                             if let Some(op) = op {
                                 self.op_defs.insert(method_def_id, op);
                             }

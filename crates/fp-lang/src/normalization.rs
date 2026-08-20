@@ -9,7 +9,6 @@ use fp_core::ast::{
 use fp_core::error::Result;
 use fp_core::intrinsics::{
     CallKind, IntrinsicKind, IntrinsicNormalizationMode, IntrinsicNormalizer, NormalizeOutcome,
-    OpKind,
 };
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
@@ -100,7 +99,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span, kind,
             )));
         };
-        let CallKind::Op(op) = call.kind else {
+        let CallKind::Op(ref op) = call.kind else {
             return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
                 ExprKind::IntrinsicCall(call),
             )));
@@ -412,7 +411,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     id,
                     span,
                     ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                        CallKind::Op(OpKind::Format),
+                        CallKind::Intrinsic(IntrinsicKind::Format),
                         call_args,
                         Vec::new(),
                     )),
@@ -450,7 +449,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 call_args.push(Expr::new(ExprKind::FormatString(template)));
                 call_args.extend(args[1 + skip..].iter().cloned());
                 let formatted = Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                    CallKind::Op(OpKind::Format),
+                    CallKind::Intrinsic(IntrinsicKind::Format),
                     call_args,
                     Vec::new(),
                 )));
@@ -492,9 +491,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             if macro_name == "print" || macro_name == "println" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 let kind = if macro_name == "println" {
-                    CallKind::Op(OpKind::Println)
+                    CallKind::Intrinsic(IntrinsicKind::Println)
                 } else {
-                    CallKind::Op(OpKind::Print)
+                    CallKind::Intrinsic(IntrinsicKind::Print)
                 };
                 let (template, skip) = build_print_template_from_args(&args)?;
                 let mut call_args = Vec::with_capacity(1 + args.len().saturating_sub(skip));
@@ -575,62 +574,42 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
         // intrinsic_call_from_invoke → normalize_call which returns Ignored.
         if self.mode == IntrinsicNormalizationMode::Transpile {
             if let Some(kind) = resolve_lang_intrinsic(&invoke) {
-                match kind {
-                    CallKind::Op(OpKind::OptionSome) => {
-                        return Ok(NormalizeOutcome::Normalized(
-                            invoke.args.first().cloned().unwrap_or_else(|| {
-                                Expr::from_parts(0, Some(Span::default()),
-                                    ExprKind::Value(Box::new(Value::Null(Default::default()))))
-                            })
-                        ));
+                if let CallKind::Op(ref op) = kind {
+                    match op.name() {
+                        "option_some" | "option_unwrap" | "clone" | "as_ref" | "iter"
+                        | "to_owned" | "as_str" => {
+                            // Portable passthroughs (`Some(x)`/`x.unwrap()`/
+                            // `x.clone()`/method-like ops that just drop) —
+                            // keep the receiver/sole argument as-is.
+                            return Ok(NormalizeOutcome::Normalized(
+                                invoke.args.first().cloned().unwrap_or_else(|| {
+                                    Expr::from_parts(0, Some(Span::default()),
+                                        ExprKind::Value(Box::new(Value::Null(Default::default()))))
+                                })
+                            ));
+                        }
+                        "option_none" => {
+                            return Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
+                                ExprKind::Value(Box::new(Value::Null(Default::default()))),
+                            )));
+                        }
+                        "vec_new" => {
+                            return Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
+                                ExprKind::IntrinsicContainer(
+                                    ExprIntrinsicContainer::VecElements { elements: vec![] }
+                                ),
+                            )));
+                        }
+                        // Wrapped as IntrinsicCall for serializer handling
+                        "map_or" | "collect" | "find" | "unwrap_or" | "to_string" | "and_then" => {
+                            return Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
+                                ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                                    kind, invoke.args, invoke.kwargs,
+                                )),
+                            )));
+                        }
+                        _ => {} // fall through to existing native path
                     }
-                    CallKind::Op(OpKind::OptionNone) => {
-                        return Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
-                            ExprKind::Value(Box::new(Value::Null(Default::default()))),
-                        )));
-                    }
-                    CallKind::Op(OpKind::OptionUnwrap) => {
-                        return Ok(NormalizeOutcome::Normalized(
-                            invoke.args.first().cloned().unwrap_or_else(|| {
-                                Expr::from_parts(0, Some(Span::default()),
-                                    ExprKind::Value(Box::new(Value::Null(Default::default()))))
-                            })
-                        ));
-                    }
-                    CallKind::Op(OpKind::VecNew) => {
-                        return Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
-                            ExprKind::IntrinsicContainer(
-                                ExprIntrinsicContainer::VecElements { elements: vec![] }
-                            ),
-                        )));
-                    }
-                    CallKind::Op(OpKind::Clone) => {
-                        return Ok(NormalizeOutcome::Normalized(
-                            invoke.args.first().cloned().unwrap_or_else(|| {
-                                Expr::from_parts(0, Some(Span::default()),
-                                    ExprKind::Value(Box::new(Value::Null(Default::default()))))
-                            })
-                        ));
-                    }
-                    // Method-like ops → drop method, keep receiver
-                    CallKind::Op(OpKind::AsRef | OpKind::Iter | OpKind::ToOwned | OpKind::AsStr) => {
-                        // These are method calls on the receiver — just keep args[0] (the receiver)
-                        return Ok(NormalizeOutcome::Normalized(
-                            invoke.args.first().cloned().unwrap_or_else(|| {
-                                Expr::from_parts(0, Some(Span::default()),
-                                    ExprKind::Value(Box::new(Value::Null(Default::default()))))
-                            })
-                        ));
-                    }
-                    // Wrapped as IntrinsicCall for serializer handling
-                    CallKind::Op(OpKind::MapOr | OpKind::Collect | OpKind::Find | OpKind::UnwrapOr | OpKind::ToString | OpKind::AndThen) => {
-                        return Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
-                            ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                                kind, invoke.args, invoke.kwargs,
-                            )),
-                        )));
-                    }
-                    _ => {} // fall through to existing native path
                 }
             }
         }
@@ -657,21 +636,16 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             //
             // No path reconstruction (the retired `compile_mode_std_path`'s
             // design flaw): the resolved call target is discarded on
-            // purpose here, and only the `OpKind` survives, for a
-            // backend-specific materializer to consume later.
+            // purpose here, and only the `PortableOp`/`IntrinsicKind`
+            // survives, for a backend-specific materializer to consume
+            // later. A portable `Op` never has an `IntrinsicKind`
+            // equivalent (see `CallKind::intrinsic_kind`'s doc comment),
+            // so it's simply ignored here — `Compile`/`TypedTranspile`
+            // only materialize genuine intrinsics this way.
             IntrinsicNormalizationMode::Compile | IntrinsicNormalizationMode::TypedTranspile => match intrinsic_kind {
-                CallKind::Op(op) => match CallKind::Op(op).intrinsic_kind() {
-                        Some(kind) => Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
-                            ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                                CallKind::Intrinsic(kind),
-                                invoke.args,
-                                invoke.kwargs,
-                            )),
-                        ))),
-                        None => Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
-                            ExprKind::Invoke(invoke),
-                        ))),
-                },
+                CallKind::Op(_) => Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
+                    ExprKind::Invoke(invoke),
+                ))),
                 CallKind::Intrinsic(kind) => Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
                     ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
                         CallKind::Intrinsic(kind),
@@ -680,8 +654,8 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     )),
                 ))),
             },
-            IntrinsicNormalizationMode::Transpile => match intrinsic_kind {
-                CallKind::Op(OpKind::OptionSome) => {
+            IntrinsicNormalizationMode::Transpile => match &intrinsic_kind {
+                CallKind::Op(op) if op.name() == "option_some" || op.name() == "option_unwrap" || op.name() == "clone" => {
                     Ok(NormalizeOutcome::Normalized(
                         invoke.args.first().cloned().unwrap_or_else(|| {
                             Expr::from_parts(0, Some(Span::default()),
@@ -689,33 +663,17 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                         })
                     ))
                 }
-                CallKind::Op(OpKind::OptionNone) => {
+                CallKind::Op(op) if op.name() == "option_none" => {
                     Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
                         ExprKind::Value(Box::new(Value::Null(Default::default()))),
                     )))
                 }
-                CallKind::Op(OpKind::OptionUnwrap) => {
-                    Ok(NormalizeOutcome::Normalized(
-                        invoke.args.first().cloned().unwrap_or_else(|| {
-                            Expr::from_parts(0, Some(Span::default()),
-                                ExprKind::Value(Box::new(Value::Null(Default::default()))))
-                        })
-                    ))
-                }
-                CallKind::Op(OpKind::VecNew) => {
+                CallKind::Op(op) if op.name() == "vec_new" => {
                     Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
                         ExprKind::IntrinsicContainer(
                             ExprIntrinsicContainer::VecElements { elements: vec![] }
                         ),
                     )))
-                }
-                CallKind::Op(OpKind::Clone) => {
-                    Ok(NormalizeOutcome::Normalized(
-                        invoke.args.first().cloned().unwrap_or_else(|| {
-                            Expr::from_parts(0, Some(Span::default()),
-                                ExprKind::Value(Box::new(Value::Null(Default::default()))))
-                        })
-                    ))
                 }
                 _ => {
                     Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
@@ -934,64 +892,78 @@ fn resolve_lang_intrinsic(invoke: &ExprInvoke) -> Option<CallKind> {
     }
 }
 
-fn operation_kind(name: &str) -> Option<OpKind> {
-    match name {
-        "format" => Some(OpKind::Format),
-        "print" => Some(OpKind::Print),
-        "println" => Some(OpKind::Println),
-        "input" => Some(OpKind::Input),
-        "now" => Some(OpKind::TimeNow),
-        "sleep" => Some(OpKind::Sleep),
-        "spawn" => Some(OpKind::Spawn),
-        "join" => Some(OpKind::Join),
-        "select" => Some(OpKind::Select),
-        "read_dir" => Some(OpKind::FsReadDir),
-        "walk_dir" => Some(OpKind::FsWalkDir),
-        "read_to_string" => Some(OpKind::FsReadToString),
-        "write_string" => Some(OpKind::FsWriteString),
-        "append_string" => Some(OpKind::FsAppendString),
-        "exists" => Some(OpKind::FsExists),
-        "is_dir" => Some(OpKind::FsIsDir),
-        "is_file" => Some(OpKind::FsIsFile),
-        "create_dir_all" => Some(OpKind::FsCreateDirAll),
-        "remove_file" => Some(OpKind::FsRemoveFile),
-        "remove_dir_all" => Some(OpKind::FsRemoveDirAll),
-        "glob" => Some(OpKind::FsGlob),
-        "current_dir" => Some(OpKind::EnvCurrentDir),
-        "temp_dir" => Some(OpKind::EnvTempDir),
-        "home_dir" => Some(OpKind::EnvHomeDir),
-        "var" => Some(OpKind::EnvVar),
-        "read_stdin_to_string" => Some(OpKind::IoReadStdinToString),
-        "write_stdout" => Some(OpKind::IoWriteStdout),
-        "write_stderr" => Some(OpKind::IoWriteStderr),
-        "to_json" => Some(OpKind::YamlToJson),
-        "parse" => Some(OpKind::JsonParse),
-        "exec" => Some(OpKind::ShellExec),
-        "file_copy" => Some(OpKind::ShellFileCopy),
-        "file_template" => Some(OpKind::ShellFileTemplate),
-        "file_rsync" => Some(OpKind::ShellFileRsync),
-        "some" | "Some" => Some(OpKind::OptionSome),
-        "none" | "None" => Some(OpKind::OptionNone),
-        "unwrap" | "Unwrap" => Some(OpKind::OptionUnwrap),
-        "vec_new" | "Vec::new" | "Vec" | "vec" => Some(OpKind::VecNew),
-        "clone" | "Clone" => Some(OpKind::Clone),
-        "as_ref" => Some(OpKind::AsRef),
-        "map_or" => Some(OpKind::MapOr),
-        "iter" => Some(OpKind::Iter),
-        "collect" => Some(OpKind::Collect),
-        "find" => Some(OpKind::Find),
-        "unwrap_or" => Some(OpKind::UnwrapOr),
-        "to_owned" => Some(OpKind::ToOwned),
-        "as_str" => Some(OpKind::AsStr),
-        "to_string" => Some(OpKind::ToString),
-        "and_then" => Some(OpKind::AndThen),
-        _ => None,
-    }
+/// The central portable-op registry, resolved once — see
+/// `fp_core::intrinsics::PortableOpRegistry::builtin`'s doc comment for the
+/// canonicalization convention every language's own tags must follow.
+fn portable_op_registry() -> &'static fp_core::intrinsics::PortableOpRegistry {
+    static REGISTRY: std::sync::OnceLock<fp_core::intrinsics::PortableOpRegistry> =
+        std::sync::OnceLock::new();
+    REGISTRY.get_or_init(fp_core::intrinsics::PortableOpRegistry::builtin)
+}
+
+/// Maps a bare macro/plain-call name to its canonical portable-op name
+/// (only for the ops that are genuinely a `PortableOp`, i.e. have no
+/// `IntrinsicKind` equivalent — see `intrinsic_macro_kind` for the
+/// `IntrinsicKind`-mapped names, which construct `CallKind::Intrinsic`
+/// directly instead of going through this resolution step at all).
+fn operation_kind(name: &str) -> Option<fp_core::intrinsics::PortableOp> {
+    let canonical = match name {
+        "some" | "Some" => "option_some",
+        "none" | "None" => "option_none",
+        "unwrap" | "Unwrap" => "option_unwrap",
+        "vec_new" | "Vec::new" | "Vec" | "vec" => "vec_new",
+        "clone" | "Clone" => "clone",
+        "as_ref" => "as_ref",
+        "map_or" => "map_or",
+        "iter" => "iter",
+        "collect" => "collect",
+        "find" => "find",
+        "unwrap_or" => "unwrap_or",
+        "to_owned" => "to_owned",
+        "as_str" => "as_str",
+        "to_string" => "to_string",
+        "and_then" => "and_then",
+        _ => return None,
+    };
+    portable_op_registry().resolve(canonical)
 }
 
 fn intrinsic_macro_kind(name: &str) -> Option<CallKind> {
     match name {
+        "format" => Some(CallKind::Intrinsic(IntrinsicKind::Format)),
+        "print" => Some(CallKind::Intrinsic(IntrinsicKind::Print)),
+        "println" => Some(CallKind::Intrinsic(IntrinsicKind::Println)),
+        "input" => Some(CallKind::Intrinsic(IntrinsicKind::Input)),
+        "now" => Some(CallKind::Intrinsic(IntrinsicKind::TimeNow)),
+        "sleep" => Some(CallKind::Intrinsic(IntrinsicKind::Sleep)),
+        "spawn" => Some(CallKind::Intrinsic(IntrinsicKind::Spawn)),
         "join" => Some(CallKind::Intrinsic(IntrinsicKind::Join)),
+        "select" => Some(CallKind::Intrinsic(IntrinsicKind::Select)),
+        "read_dir" => Some(CallKind::Intrinsic(IntrinsicKind::FsReadDir)),
+        "walk_dir" => Some(CallKind::Intrinsic(IntrinsicKind::FsWalkDir)),
+        "read_to_string" => Some(CallKind::Intrinsic(IntrinsicKind::FsReadToString)),
+        "write_string" => Some(CallKind::Intrinsic(IntrinsicKind::FsWriteString)),
+        "append_string" => Some(CallKind::Intrinsic(IntrinsicKind::FsAppendString)),
+        "exists" => Some(CallKind::Intrinsic(IntrinsicKind::FsExists)),
+        "is_dir" => Some(CallKind::Intrinsic(IntrinsicKind::FsIsDir)),
+        "is_file" => Some(CallKind::Intrinsic(IntrinsicKind::FsIsFile)),
+        "create_dir_all" => Some(CallKind::Intrinsic(IntrinsicKind::FsCreateDirAll)),
+        "remove_file" => Some(CallKind::Intrinsic(IntrinsicKind::FsRemoveFile)),
+        "remove_dir_all" => Some(CallKind::Intrinsic(IntrinsicKind::FsRemoveDirAll)),
+        "glob" => Some(CallKind::Intrinsic(IntrinsicKind::FsGlob)),
+        "current_dir" => Some(CallKind::Intrinsic(IntrinsicKind::EnvCurrentDir)),
+        "temp_dir" => Some(CallKind::Intrinsic(IntrinsicKind::EnvTempDir)),
+        "home_dir" => Some(CallKind::Intrinsic(IntrinsicKind::EnvHomeDir)),
+        "var" => Some(CallKind::Intrinsic(IntrinsicKind::EnvVar)),
+        "read_stdin_to_string" => Some(CallKind::Intrinsic(IntrinsicKind::IoReadStdinToString)),
+        "write_stdout" => Some(CallKind::Intrinsic(IntrinsicKind::IoWriteStdout)),
+        "write_stderr" => Some(CallKind::Intrinsic(IntrinsicKind::IoWriteStderr)),
+        "to_json" => Some(CallKind::Intrinsic(IntrinsicKind::YamlToJson)),
+        "parse" => Some(CallKind::Intrinsic(IntrinsicKind::JsonParse)),
+        "exec" => Some(CallKind::Intrinsic(IntrinsicKind::ShellExec)),
+        "file_copy" => Some(CallKind::Intrinsic(IntrinsicKind::ShellFileCopy)),
+        "file_template" => Some(CallKind::Intrinsic(IntrinsicKind::ShellFileTemplate)),
+        "file_rsync" => Some(CallKind::Intrinsic(IntrinsicKind::ShellFileRsync)),
         "sizeof" => Some(CallKind::Intrinsic(IntrinsicKind::SizeOf)),
         "reflect_fields" => Some(CallKind::Intrinsic(IntrinsicKind::ReflectFields)),
         "hasmethod" => Some(CallKind::Intrinsic(IntrinsicKind::HasMethod)),
@@ -1012,21 +984,14 @@ fn intrinsic_macro_kind(name: &str) -> Option<CallKind> {
         "compile_warning" => Some(CallKind::Intrinsic(IntrinsicKind::CompileWarning)),
         "catch_unwind" => Some(CallKind::Intrinsic(IntrinsicKind::CatchUnwind)),
         "catch_unwind_result" => Some(CallKind::Intrinsic(IntrinsicKind::CatchUnwindResult)),
-        "some" | "Some" => Some(CallKind::Op(OpKind::OptionSome)),
-        "none" | "None" => Some(CallKind::Op(OpKind::OptionNone)),
-        "unwrap" | "Unwrap" => Some(CallKind::Op(OpKind::OptionUnwrap)),
-        "vec_new" | "Vec::new" | "Vec" | "vec" => Some(CallKind::Op(OpKind::VecNew)),
-        "clone" | "Clone" => Some(CallKind::Op(OpKind::Clone)),
-        "as_ref" => Some(CallKind::Op(OpKind::AsRef)),
-        "map_or" => Some(CallKind::Op(OpKind::MapOr)),
-        "iter" => Some(CallKind::Op(OpKind::Iter)),
-        "collect" => Some(CallKind::Op(OpKind::Collect)),
-        "find" => Some(CallKind::Op(OpKind::Find)),
-        "unwrap_or" => Some(CallKind::Op(OpKind::UnwrapOr)),
-        "to_owned" => Some(CallKind::Op(OpKind::ToOwned)),
-        "as_str" => Some(CallKind::Op(OpKind::AsStr)),
-        "to_string" => Some(CallKind::Op(OpKind::ToString)),
-        "and_then" => Some(CallKind::Op(OpKind::AndThen)),
+        // Portable ops (no `IntrinsicKind` equivalent) — resolved against
+        // the central registry via `operation_kind`, same as the plain-call
+        // fallback in `resolve_lang_intrinsic`.
+        "some" | "Some" | "none" | "None" | "unwrap" | "Unwrap" | "vec_new" | "Vec::new" | "Vec"
+        | "vec" | "clone" | "Clone" | "as_ref" | "map_or" | "iter" | "collect" | "find"
+        | "unwrap_or" | "to_owned" | "as_str" | "to_string" | "and_then" => {
+            operation_kind(name).map(CallKind::Op)
+        }
         _ => None,
     }
 }
@@ -1626,9 +1591,12 @@ fn build_not_null_check_expr(expr: &Expr) -> Expr {
 }
 
 fn build_force_unwrap_expr(expr: &Expr) -> Expr {
+    let op = portable_op_registry()
+        .resolve("option_unwrap")
+        .expect("option_unwrap is a builtin portable op");
     Expr::from_parts(0, None,
         ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-            fp_core::intrinsics::CallKind::Op(fp_core::intrinsics::calls::OpKind::OptionUnwrap),
+            fp_core::intrinsics::CallKind::Op(op),
             vec![expr.clone()],
             vec![],
         ))
@@ -1646,9 +1614,12 @@ mod tests {
     use super::*;
     use fp_core::frontend::LanguageFrontend;
 
-    fn op_call(kind: OpKind) -> Expr {
+    fn op_call(name: &str) -> Expr {
+        let op = portable_op_registry()
+            .resolve(name)
+            .unwrap_or_else(|| panic!("{name} is not a builtin portable op"));
         Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-            CallKind::Op(kind),
+            CallKind::Op(op),
             Vec::new(),
             Vec::new(),
         )))
@@ -1669,12 +1640,12 @@ mod tests {
         // No path reconstruction: the op stays a bare `IntrinsicCall(Op(_))`
         // node for a backend-specific materializer to consume later.
         let op = normalizer
-            .normalize_call(op_call(OpKind::FsReadToString))
+            .normalize_call(op_call("clone"))
             .expect("normalize op call")
             .into_inner();
         assert!(matches!(
             op.kind(),
-            ExprKind::IntrinsicCall(call) if matches!(call.kind, CallKind::Op(OpKind::FsReadToString))
+            ExprKind::IntrinsicCall(call) if matches!(&call.kind, CallKind::Op(op) if op.name() == "clone")
         ));
 
         let intrinsic = normalizer
@@ -1693,7 +1664,7 @@ mod tests {
         // backend-specific materializer to consume later.
         let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile);
         let call = Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-            CallKind::Op(OpKind::Print),
+            CallKind::Intrinsic(fp_core::intrinsics::IntrinsicKind::Print),
             vec![Expr::value(Value::string("value".to_string()))],
             Vec::new(),
         )));
@@ -1705,7 +1676,7 @@ mod tests {
         let ExprKind::IntrinsicCall(call) = normalized.kind() else {
             panic!("expected intrinsic call to be preserved");
         };
-        assert!(matches!(call.kind, CallKind::Op(OpKind::Print)));
+        assert!(matches!(call.kind, CallKind::Intrinsic(fp_core::intrinsics::IntrinsicKind::Print)));
         assert_eq!(call.args.len(), 1);
     }
 
@@ -1733,7 +1704,7 @@ mod tests {
     fn transpile_mode_keeps_ops_canonical() {
         let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Transpile);
         let normalized = normalizer
-            .normalize_call(op_call(OpKind::FsReadToString))
+            .normalize_call(op_call("clone"))
             .expect("normalize op call")
             .into_inner();
         assert!(matches!(normalized.kind(), ExprKind::IntrinsicCall(_)));
@@ -1748,23 +1719,23 @@ mod tests {
         // materializer to consume later.
         let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile);
         let cases = [
-            OpKind::FsWriteString,
-            OpKind::EnvVar,
-            OpKind::IoWriteStdout,
-            OpKind::TimeNow,
-            OpKind::YamlToJson,
-            OpKind::JsonParse,
+            fp_core::intrinsics::IntrinsicKind::FsWriteString,
+            fp_core::intrinsics::IntrinsicKind::EnvVar,
+            fp_core::intrinsics::IntrinsicKind::IoWriteStdout,
+            fp_core::intrinsics::IntrinsicKind::TimeNow,
+            fp_core::intrinsics::IntrinsicKind::YamlToJson,
+            fp_core::intrinsics::IntrinsicKind::JsonParse,
         ];
 
         for kind in cases {
             let normalized = normalizer
-                .normalize_call(op_call(kind))
+                .normalize_call(intrinsic_call(kind))
                 .expect("normalize lang call")
                 .into_inner();
             let ExprKind::IntrinsicCall(call) = normalized.kind() else {
                 panic!("expected intrinsic call to be preserved for {kind:?}");
             };
-            assert_eq!(call.kind, CallKind::Op(kind));
+            assert_eq!(call.kind, CallKind::Intrinsic(kind));
         }
     }
 
@@ -1773,7 +1744,7 @@ mod tests {
         let frontend = crate::FerroFrontend::new();
         let result = frontend
             .parse(
-                "#[intrinsic = \"test_intrinsic\"] fn public_api() {}\n#[op(func = \"format\")] fn compiler_op() {}",
+                "#[intrinsic = \"test_intrinsic\"] fn public_api() {}\n#[op(func = \"clone\")] fn compiler_op() {}",
                 None,
             )
             .expect("parse marked declarations");
@@ -1788,11 +1759,11 @@ mod tests {
         );
         assert_eq!(
             registry
-                .get_op_path(fp_core::intrinsics::OpKind::Format)
+                .get_op_path("clone")
                 .expect("op declaration")
                 .to_string(),
             "compiler_op"
         );
-        assert!(registry.get_path("format").is_none());
+        assert!(registry.get_path("clone").is_none());
     }
 }

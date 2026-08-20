@@ -685,7 +685,7 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
                 .map(|arg| format!("{} = {}", arg.name, format_expr_inline(&arg.value, ctx)))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("std::{}({})", render_call_kind(call.kind), args)
+            format!("std::{}({})", render_call_kind(&call.kind), args)
         }
         ExprKind::Let(pat, ty, value) => {
             let pat_str = format_pat(pat, ctx);
@@ -791,7 +791,7 @@ fn format_arg_ref(arg_ref: &FormatArgRef) -> String {
     }
 }
 
-fn render_call_kind(kind: CallKind) -> &'static str {
+fn render_call_kind(kind: &CallKind) -> String {
     kind.name()
 }
 

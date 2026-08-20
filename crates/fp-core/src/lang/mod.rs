@@ -2,28 +2,88 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::ast::{AttrMeta, Attribute, ExprKind, File, Ident, Item, ItemKind, Name, Path, Value};
-use crate::intrinsics::{CallKind, OpKind, lang_intrinsic_call_kind, lang_intrinsic_for_lang_item};
+use crate::intrinsics::{CallKind, PortableOp, PortableOpRegistry, lang_intrinsic_call_kind, lang_intrinsic_for_lang_item};
+
+/// The central, canonical portable-op registry (formerly the closed
+/// `OpKind` enum) — every language's own `#[op(...)]`/`@Op(...)` tag
+/// resolves against this by name. See `PortableOpRegistry::builtin`'s doc
+/// comment for the canonicalization convention.
+fn central_registry() -> &'static PortableOpRegistry {
+    static REGISTRY: std::sync::OnceLock<PortableOpRegistry> = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(PortableOpRegistry::builtin)
+}
+
+/// Translates a short, unqualified `#[op(method = "...")]`/
+/// `#[op(variant = "...")]` tag using its enclosing declaration's own
+/// `#[op(class = "...")]` name for context, into the central registry's
+/// canonical flat name — so std source can write natural, short tags
+/// (`#[op(method = "new")]` inside `#[op(class = "Vec")]`) instead of
+/// inventing a globally-unique flat string per op. Checked before falling
+/// back to a direct name match (for ops that are unambiguous without any
+/// class context, and for flat, no-enclosing-declaration free functions).
+fn class_and_member_to_canonical_name(class: &str, member: &str) -> Option<&'static str> {
+    match (class, member) {
+        ("Vec", "new") => Some("vec_new"),
+        ("Option", "some") => Some("option_some"),
+        ("Option", "none") => Some("option_none"),
+        ("Option", "unwrap") => Some("option_unwrap"),
+        ("Result", "ok") => Some("result_ok"),
+        ("Result", "err") => Some("result_err"),
+        ("Option", "as_ref") => Some("as_ref"),
+        ("Option", "unwrap_or") => Some("unwrap_or"),
+        ("Option", "map_or") => Some("map_or"),
+        ("Option", "iter") => Some("iter"),
+        ("Option", "and_then") => Some("and_then"),
+        ("Option", "clone") => Some("clone"),
+        ("Option", "is_none") => Some("is_none"),
+        ("Option", "as_deref") => Some("as_deref"),
+        ("str", "trim_end") => Some("trim_end"),
+        ("str", "trim_start") => Some("trim_start"),
+        ("str", "split_whitespace") => Some("split_whitespace"),
+        ("String", "from_utf8_lossy") => Some("string_from_utf8_lossy"),
+        ("String", "from_utf8") => Some("string_from_utf8"),
+        ("Iterator", "position") => Some("position"),
+        _ => None,
+    }
+}
+
+/// Resolves a bare `#[op(func = "...")]`/`#[op(method = "...")]` tag string
+/// directly against the central registry (no class context) — the public
+/// entry point `ast_to_hir` uses for free-function/enum-variant tags. See
+/// `class_and_member_to_portable_op` for the class-context version (impl
+/// methods, where the tag alone may be ambiguous without knowing the
+/// enclosing `#[op(class = "...")]`).
+pub fn resolve_portable_op_tag(tag: &str) -> Option<PortableOp> {
+    central_registry().resolve(tag)
+}
+
+/// Resolves a `#[op(method = "...")]` tag using its enclosing declaration's
+/// `#[op(class = "...")]` name for context (see
+/// `class_and_member_to_canonical_name`'s doc comment) — falls back to a
+/// direct tag match for ops that are unambiguous without class context.
+pub fn class_and_member_to_portable_op(class: &str, member: &str) -> Option<PortableOp> {
+    let canonical: Option<String> = class_and_member_to_canonical_name(class, member)
+        .map(str::to_string)
+        .or_else(|| central_registry().contains(member).then(|| member.to_string()));
+    canonical.and_then(|name| central_registry().resolve(&name))
+}
 
 #[derive(Clone, Default)]
 pub struct LangItemRegistry {
     items: HashMap<String, Path>,
-    /// Free-function portable ops, keyed by `OpKind` directly (not by the
-    /// raw `#[op(func = "...")]` tag string) — the tag string is converted
-    /// to its `OpKind` exactly once, at scan time
-    /// (`collect_lang_items_from_items`), via `OpKind::from_op_tag`. This is
-    /// the std source's own declared path for that op: no separate
-    /// hardcoded `OpKind -> path` table needed anywhere downstream (see
-    /// `PortableOpResolver::resolve_call_op`, and the retired
-    /// `compile_mode_std_path`), and no reverse `OpKind -> tag` mapping
-    /// needed either — both lookup directions are a single `HashMap` op
-    /// on this one field.
-    ops: HashMap<OpKind, Path>,
+    /// Free-function portable ops, keyed by canonical name (resolved
+    /// against the central registry — see `central_registry`) — the std
+    /// source's own declared path for that op: no separate hardcoded
+    /// name -> path table needed anywhere downstream, and no reverse
+    /// mapping needed either, both lookup directions are a single
+    /// `HashMap` op on this one field.
+    ops: HashMap<String, Path>,
     /// Method-position portable ops, keyed by `"{opclass}.{opmethod}"` (e.g.
     /// `"Option.as_ref"`) — populated by scanning `impl` blocks tagged
     /// `#[op(class = "...")]` for methods tagged `#[op(method = "...")]`.
     /// Kept separate from `ops` (matched by the receiver's resolved type
     /// name, not a static call path).
-    method_ops: HashMap<String, OpKind>,
+    method_ops: HashMap<String, PortableOp>,
 }
 
 impl LangItemRegistry {
@@ -31,29 +91,32 @@ impl LangItemRegistry {
         self.items.insert(name.into(), path);
     }
 
-    /// `tag` is the raw `#[op(func = "...")]` attribute value — converted to
-    /// its `OpKind` here, once, via `OpKind::from_op_tag`. Silently a no-op
-    /// if the tag doesn't name a known op (e.g. a typo, or a tag reserved
-    /// for future use) rather than storing an unusable string key.
+    /// `tag` is the raw `#[op(func = "...")]` attribute value — resolved
+    /// against the central registry here, once. Silently a no-op if the tag
+    /// doesn't name a known op (e.g. a typo, or a tag reserved for future
+    /// use) rather than storing an unusable string key — a real "unknown
+    /// portable op" diagnostic belongs at a build-time self-check over the
+    /// vendored std source, not here (see the central registry's own doc
+    /// comment).
     pub fn insert_op(&mut self, tag: &str, path: Path) {
-        if let Some(kind) = OpKind::from_op_tag(tag) {
-            self.ops.insert(kind, path);
+        if central_registry().contains(tag) {
+            self.ops.insert(tag.to_string(), path);
         }
     }
 
-    pub fn insert_method_op(&mut self, opclass: &str, opmethod: &str, kind: OpKind) {
-        self.method_ops.insert(format!("{opclass}.{opmethod}"), kind);
+    pub fn insert_method_op(&mut self, opclass: &str, opmethod: &str, op: PortableOp) {
+        self.method_ops.insert(format!("{opclass}.{opmethod}"), op);
     }
 
     pub fn extend(&mut self, other: LangItemRegistry) {
         for (name, path) in other.items {
             self.items.insert(name, path);
         }
-        for (kind, path) in other.ops {
-            self.ops.insert(kind, path);
+        for (name, path) in other.ops {
+            self.ops.insert(name, path);
         }
-        for (key, kind) in other.method_ops {
-            self.method_ops.insert(key, kind);
+        for (key, op) in other.method_ops {
+            self.method_ops.insert(key, op);
         }
     }
 
@@ -62,28 +125,30 @@ impl LangItemRegistry {
     }
 
     /// The std source's own declared path for a free-function portable op
-    /// (e.g. `OpKind::FsReadDir` -> `std::fs::read_dir`'s real path) — direct
+    /// (e.g. `"fs_read_dir"` -> `std::fs::read_dir`'s real path) — direct
     /// lookup, no reverse name mapping.
-    pub fn get_op_path(&self, kind: OpKind) -> Option<&Path> {
-        self.ops.get(&kind)
+    pub fn get_op_path(&self, name: &str) -> Option<&Path> {
+        self.ops.get(name)
     }
 
     /// Finds which (if any) registered free-function op's declared path
     /// matches `segments` exactly — the call-site direction (used by
     /// `PortableOpResolver::resolve_call_op`).
-    pub fn find_op_by_call_segments(&self, segments: &[&str]) -> Option<OpKind> {
-        self.ops
+    pub fn find_op_by_call_segments(&self, segments: &[&str]) -> Option<PortableOp> {
+        let name = self
+            .ops
             .iter()
             .find(|(_, path)| {
                 path.segments.iter().map(|seg| seg.name.as_str()).collect::<Vec<_>>() == segments
             })
-            .map(|(kind, _)| *kind)
+            .map(|(name, _)| name.clone())?;
+        central_registry().resolve(&name)
     }
 
     /// Looks up a method-position portable op by the receiver's real type
     /// name and the method name being called — `"{opclass}.{opmethod}"`.
-    pub fn get_method_op(&self, opclass: &str, opmethod: &str) -> Option<OpKind> {
-        self.method_ops.get(&format!("{opclass}.{opmethod}")).copied()
+    pub fn get_method_op(&self, opclass: &str, opmethod: &str) -> Option<PortableOp> {
+        self.method_ops.get(&format!("{opclass}.{opmethod}")).cloned()
     }
 }
 
@@ -204,8 +269,38 @@ fn collect_lang_items_from_items(
                         let Some(opmethod) = extract_opmethod_attribute(&function.attrs) else {
                             continue;
                         };
-                        if let Some(kind) = OpKind::from_op_tag(&opmethod) {
-                            registry.insert_method_op(&opclass, &opmethod, kind);
+                        // The tag might already spell the canonical name
+                        // directly (unambiguous ops, e.g. `as_ref`), or need
+                        // class context to disambiguate (e.g. `new` inside
+                        // `Vec` -> `vec_new`) — try both.
+                        let canonical = class_and_member_to_canonical_name(&opclass, &opmethod)
+                            .or_else(|| {
+                                central_registry().contains(&opmethod).then_some(opmethod.as_str())
+                            });
+                        if let Some(op) = canonical.and_then(|name| central_registry().resolve(name)) {
+                            registry.insert_method_op(&opclass, &opmethod, op);
+                        }
+                    }
+                }
+            }
+            ItemKind::DefTrait(def_trait) => {
+                // Same shape as `Impl` above, but for trait default methods
+                // (e.g. `Iterator::position`) — the trait's own declaration
+                // carries `#[op(class = "...")]`, not an enclosing `impl`.
+                if let Some(opclass) = extract_opclass_attribute(&def_trait.attrs) {
+                    for member in &def_trait.items {
+                        let ItemKind::DefFunction(function) = member.kind() else {
+                            continue;
+                        };
+                        let Some(opmethod) = extract_opmethod_attribute(&function.attrs) else {
+                            continue;
+                        };
+                        let canonical = class_and_member_to_canonical_name(&opclass, &opmethod)
+                            .or_else(|| {
+                                central_registry().contains(&opmethod).then_some(opmethod.as_str())
+                            });
+                        if let Some(op) = canonical.and_then(|name| central_registry().resolve(name)) {
+                            registry.insert_method_op(&opclass, &opmethod, op);
                         }
                     }
                 }

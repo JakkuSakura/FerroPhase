@@ -665,7 +665,7 @@ impl<'a> HirToAstLifter<'a> {
             hir::ExprKind::IntrinsicCall(call) => {
                 Expr::new(ast::ExprKind::IntrinsicCall(ExprIntrinsicCall {
                     span: expr.span,
-                    kind: call.kind,
+                    kind: call.kind.clone(),
                     args: self.lift_positional_args(&call.callargs)?,
                     kwargs: self.lift_keyword_args(&call.callargs)?,
                 }))

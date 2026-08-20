@@ -121,7 +121,7 @@ pub struct HirGenerator {
     /// at the point its `DefId` is assigned (free functions in
     /// `transform_item_to_hir`, impl methods in `items.rs`'s
     /// `transform_impl`).
-    op_defs: HashMap<hir::DefId, fp_core::intrinsics::OpKind>,
+    op_defs: HashMap<hir::DefId, fp_core::intrinsics::PortableOp>,
     /// Mirrored into the final `hir::Program::intrinsic_defs` the same way
     /// `op_defs` is — a free function's compiler intrinsic, keyed by that
     /// definition's own real `DefId`, populated from its own
@@ -1164,7 +1164,7 @@ impl HirGenerator {
                         if let Some(tag) = fp_core::intrinsics::extract_op_attr(&variant.attrs, "variant") {
                             let op = enum_op_class
                                 .as_deref()
-                                .and_then(|class| fp_core::intrinsics::OpKind::from_class_and_member(class, &tag));
+                                .and_then(|class| fp_core::lang::class_and_member_to_portable_op(class, &tag));
                             if let Some(op) = op {
                                 self.op_defs.insert(variant_def_id, op);
                             }
@@ -1485,13 +1485,13 @@ impl HirGenerator {
     /// know whether a cross-package def (e.g. std's `Option::None`) is a
     /// tagged op can't wait for that; it has to check the dependency's own
     /// `hir_program.op_defs` directly.
-    fn op_kind_for_def(&self, def_id: hir::DefId) -> Option<fp_core::intrinsics::OpKind> {
-        if let Some(op) = self.op_defs.get(&def_id).copied() {
+    fn op_kind_for_def(&self, def_id: hir::DefId) -> Option<fp_core::intrinsics::PortableOp> {
+        if let Some(op) = self.op_defs.get(&def_id).cloned() {
             return Some(op);
         }
         let workspace = self.workspace.as_ref()?;
         for (_module_path, hir_program, _exports) in workspace.hir_definitions() {
-            if let Some(op) = hir_program.op_defs.get(&def_id).copied() {
+            if let Some(op) = hir_program.op_defs.get(&def_id).cloned() {
                 return Some(op);
             }
         }
@@ -2359,7 +2359,7 @@ impl HirGenerator {
             ItemKind::DefFunction(func_def) => {
                 self.register_value_def(&func_def.name.name, def_id, &func_def.visibility);
                 if let Some(tag) = fp_core::intrinsics::extract_op_attr(&func_def.attrs, "func") {
-                    if let Some(op) = fp_core::intrinsics::OpKind::from_op_tag(&tag) {
+                    if let Some(op) = fp_core::lang::resolve_portable_op_tag(&tag) {
                         self.op_defs.insert(def_id, op);
                     }
                 }

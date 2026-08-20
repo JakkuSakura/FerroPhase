@@ -3334,7 +3334,7 @@ impl HirTypeChecker {
         let kind = match call.kind.intrinsic_kind() {
             Some(kind) => kind,
             None => {
-                let fp_core::intrinsics::CallKind::Op(op) = call.kind else {
+                let fp_core::intrinsics::CallKind::Op(op) = call.kind.clone() else {
                     unreachable!("intrinsic_kind() only returns None for CallKind::Op")
                 };
                 return self.check_high_level_op(op, call).await;
@@ -3489,91 +3489,47 @@ impl HirTypeChecker {
     }
 
     /// Type-checks a genuine high-level `#[op(...)]` call (`CallKind::Op`)
-    /// that has no low-level `IntrinsicKind` equivalent. Before HIR could
-    /// represent `CallKind` directly, these calls type-checked as ordinary
-    /// `hir::ExprKind::Call`s to their real, stdlib-declared function —
-    /// semantically nothing about the call has changed, only its `ExprKind`
-    /// tag, so wherever the result type is unambiguously derivable from the
-    /// operation's own documented semantics (see `OpKind`'s doc comments in
-    /// `fp-core/src/intrinsics/calls.rs`) we compute it directly. Ops whose
-    /// real type is generic over a stdlib container/enum (`Option::Some`,
-    /// `Option::None`, `Vec::new`, `collect`, `find`, ...) would require
-    /// re-resolving that original function's signature, which this call
-    /// site no longer has a handle on (the callee path was discarded when
-    /// AST-level recognition folded the call into an `IntrinsicCall`) — so
-    /// rather than guess a plausibly-wrong type, those fail loudly here.
+    /// that has no low-level `IntrinsicKind` equivalent. Data-driven off the
+    /// `PortableOp`'s own `result_rule` (resolved once, at promotion time,
+    /// from the central `PortableOpRegistry` — see
+    /// `fp-core/src/intrinsics/calls.rs`) instead of a hand-grouped match:
+    /// adding a new portable op only ever means adding one `PortableOpDef`
+    /// there, never touching this function. `ResultTypeRule::
+    /// NotStaticallyKnowable` covers every op whose real result type depends
+    /// on a stdlib generic parameter this call site can no longer recover
+    /// (the original callee path/DefId was discarded when AST-level
+    /// recognition folded the call into an `IntrinsicCall`) — rather than
+    /// guess a plausibly-wrong type, those fail loudly.
     async fn check_high_level_op(
         &mut self,
-        op: fp_core::intrinsics::OpKind,
+        op: fp_core::intrinsics::PortableOp,
         call: &hir::IntrinsicCallExpr,
     ) -> Result<Ty> {
-        use fp_core::intrinsics::OpKind;
+        use fp_core::intrinsics::ResultTypeRule;
         let mut arg_types = Vec::with_capacity(call.callargs.len());
         for arg in &call.callargs {
             arg_types.push(self.check_expr(&arg.value).await?);
         }
-        Ok(match op {
-            // Portable passthroughs: the op's own doc comment says the
-            // wrapper simply drops away, so the result type is exactly the
-            // (sole) argument's type.
-            OpKind::Clone | OpKind::AsRef | OpKind::Iter | OpKind::ToOwned | OpKind::AsStr
-            | OpKind::TrimEnd | OpKind::TrimStart | OpKind::AsDeref => {
-                match arg_types.first() {
-                    Some(ty) => ty.clone(),
-                    None => self.error_ty(format!("`{}` requires an argument", fp_core::intrinsics::CallKind::Op(op).name())),
-                }
-            }
-            // `.is_none()` always produces a `bool`.
-            OpKind::IsNone => Ty::bool(),
-            // `String::from_utf8_lossy`/`String::from_utf8` always produce a string.
-            OpKind::StringFromUtf8Lossy | OpKind::StringFromUtf8 => Ty {
-                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
-            },
-            // `Ok(x)` unwraps to `x`'s own type (see `OpKind::ResultOk`'s
-            // doc comment: `Result<T, E>` is portably represented as `T`).
-            OpKind::ResultOk => match arg_types.first() {
+        Ok(match op.result_rule {
+            ResultTypeRule::SameAsArg(index) => match arg_types.get(index) {
                 Some(ty) => ty.clone(),
-                None => self.error_ty("`Ok` requires an argument"),
+                None => self.error_ty(format!(
+                    "`{}` requires an argument at position {index}",
+                    op.name()
+                )),
+            },
+            ResultTypeRule::AlwaysBool => Ty::bool(),
+            ResultTypeRule::TargetNativeString => Ty {
+                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
             },
             // `Err(e)` becomes `error(e)`, which — like `panic!` — never
             // produces a value, so it unifies with whatever the surrounding
             // context expects.
-            OpKind::ResultErr => Ty::never(),
-            // `.to_string()` always produces a string.
-            OpKind::ToString => Ty {
-                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
-            },
-            // `x.unwrap_or(default)` / `x.map_or(default, f)` both unify to
-            // `default`'s type (see their doc comments: `x ?: default` /
-            // `x?.let { f } ?: default`).
-            OpKind::UnwrapOr | OpKind::MapOr => match arg_types.get(1) {
-                Some(ty) => ty.clone(),
-                None => self.error_ty(format!("`{}` requires a default argument", fp_core::intrinsics::CallKind::Op(op).name())),
-            },
-            // Generic stdlib constructors/combinators whose real result
-            // type depends on a type parameter this call site can no longer
-            // recover (the original callee path/DefId was discarded by
-            // recognition) — fail loudly rather than fabricate a type.
-            OpKind::OptionSome
-            | OpKind::OptionNone
-            | OpKind::OptionUnwrap
-            | OpKind::VecNew
-            | OpKind::Collect
-            | OpKind::Find
-            | OpKind::AndThen
-            | OpKind::SplitWhitespace
-            | OpKind::Position
-            | OpKind::Import(_) => self.error_ty(format!(
+            ResultTypeRule::Never => Ty::never(),
+            ResultTypeRule::NotStaticallyKnowable => self.error_ty(format!(
                 "portable op `{}` reached a stage that only handles genuine intrinsics or simple passthroughs",
-                fp_core::intrinsics::CallKind::Op(op).name()
+                op.name()
             )),
-            // Every other `OpKind` variant has a direct `IntrinsicKind`
-            // equivalent and is resolved via `intrinsic_kind()` before this
-            // function is ever called (see `check_intrinsic` above).
-            _ => unreachable!(
-                "OpKind::{:?} has an intrinsic_kind() mapping and should never reach check_high_level_op",
-                op
-            ),
         })
     }
 

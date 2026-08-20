@@ -37,8 +37,8 @@ use fp_typing::TypeckResults;
 /// declaration (`hir::Program::op_defs`). `#[intrinsic = "..."]`-tagged
 /// free functions are deliberately NOT resolved here — see the module doc
 /// comment for where that recognition happens instead.
-fn resolve_op_call_kind(op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::OpKind>, def_id: DefId) -> Option<CallKind> {
-    op_defs.get(&def_id).copied().map(CallKind::Op)
+fn resolve_op_call_kind(op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::PortableOp>, def_id: DefId) -> Option<CallKind> {
+    op_defs.get(&def_id).cloned().map(CallKind::Op)
 }
 
 /// Normalizes every item in `program`'s HIR in place.
@@ -64,7 +64,7 @@ pub fn normalize_program(program: &mut hir::Program, typeck: Option<&TypeckResul
 
 fn normalize_item(
     item: &mut hir::Item,
-    op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::OpKind>,
+    op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::PortableOp>,
     typeck: Option<&TypeckResults>,
     promote_op_only: bool,
 ) {
@@ -108,7 +108,7 @@ fn normalize_item(
 
 fn normalize_block(
     block: &mut hir::Block,
-    op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::OpKind>,
+    op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::PortableOp>,
     typeck: Option<&TypeckResults>,
     promote_op_only: bool,
 ) {
@@ -122,7 +122,7 @@ fn normalize_block(
 
 fn normalize_stmt(
     stmt: &mut hir::Stmt,
-    op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::OpKind>,
+    op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::PortableOp>,
     typeck: Option<&TypeckResults>,
     promote_op_only: bool,
 ) {
@@ -146,7 +146,7 @@ fn normalize_stmt(
 /// function's doc for the one case that deliberately doesn't.
 fn normalize_expr(
     expr: &mut hir::Expr,
-    op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::OpKind>,
+    op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::PortableOp>,
     typeck: Option<&TypeckResults>,
     promote_op_only: bool,
 ) {
@@ -177,7 +177,7 @@ fn normalize_expr(
 /// enclosing `Call` may promote using the real argument list.
 fn normalize_expr_inner(
     expr: &mut hir::Expr,
-    op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::OpKind>,
+    op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::PortableOp>,
     typeck: Option<&TypeckResults>,
     promote_op_only: bool,
     promote_self: bool,
@@ -325,7 +325,7 @@ fn normalize_expr_inner(
 /// moves out of `expr.kind`).
 fn try_promote_op(
     expr: &mut hir::Expr,
-    op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::OpKind>,
+    op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::PortableOp>,
     typeck: Option<&TypeckResults>,
 ) -> Option<hir::ExprKind> {
     match &expr.kind {

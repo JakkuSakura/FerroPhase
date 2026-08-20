@@ -632,7 +632,7 @@ impl<'a> MethodEmitter<'a> {
     }
 
     fn emit_intrinsic_call(&mut self, call: &ExprIntrinsicCall) -> EyreResult<()> {
-        match call.kind {
+        match call.kind.clone() {
             CallKind::Print | CallKind::Println => {
                 if call.args.len() != 1 {
                     bail!("print intrinsics require exactly one argument in CIL output");

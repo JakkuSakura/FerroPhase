@@ -5,7 +5,7 @@ use crate::ast::{
     BExpr, BPattern, BType, Expr, ExprBlock, ExprKind, Ident, ItemChunk, Name, Pattern, Ty, Value,
     ValueFunction, get_threadlocal_serializer,
 };
-use crate::intrinsics::{CallKind, OpKind};
+use crate::intrinsics::CallKind;
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::span::Span;
 use crate::{common_enum, common_struct};
@@ -1145,34 +1145,23 @@ pub fn build_intrinsic_call(kind: CallKind, invoke: &ExprInvoke) -> Option<ExprI
         | CallKind::ShellFileCopy
         | CallKind::ShellFileTemplate
         | CallKind::ShellFileRsync => None,
-        CallKind::Op(OpKind::OptionSome)
-        | CallKind::Op(OpKind::OptionNone)
-        | CallKind::Op(OpKind::OptionUnwrap)
-        | CallKind::Op(OpKind::ResultOk)
-        | CallKind::Op(OpKind::ResultErr)
-        | CallKind::Op(OpKind::VecNew)
-        | CallKind::Op(OpKind::Clone) => {
+        // Portable ops: only the constructor-shaped ones (recognized here by
+        // canonical name, since `PortableOp` is no longer a matchable closed
+        // enum) rebuild with their args cloned; every other portable op
+        // needs a real receiver/typed context this pre-typecheck,
+        // name-resolved path doesn't have, so it defers (`None`) to the
+        // typed `DefId`-resolved path instead (see `build_intrinsic_call`'s
+        // doc comment).
+        CallKind::Op(ref op)
+            if matches!(
+                op.name(),
+                "option_some" | "option_none" | "option_unwrap" | "result_ok" | "result_err"
+                    | "vec_new" | "clone"
+            ) =>
+        {
             Some(ExprIntrinsicCall::new(kind, invoke.args.clone(), invoke.kwargs.clone()))
         }
-        CallKind::Op(OpKind::AsRef)
-        | CallKind::Op(OpKind::MapOr)
-        | CallKind::Op(OpKind::Iter)
-        | CallKind::Op(OpKind::Collect)
-        | CallKind::Op(OpKind::Find)
-        | CallKind::Op(OpKind::UnwrapOr)
-        | CallKind::Op(OpKind::ToOwned)
-        | CallKind::Op(OpKind::AsStr)
-        | CallKind::Op(OpKind::ToString)
-        | CallKind::Op(OpKind::AndThen)
-        | CallKind::Op(OpKind::TrimEnd)
-        | CallKind::Op(OpKind::TrimStart)
-        | CallKind::Op(OpKind::SplitWhitespace)
-        | CallKind::Op(OpKind::AsDeref)
-        | CallKind::Op(OpKind::Position)
-        | CallKind::Op(OpKind::IsNone)
-        | CallKind::Op(OpKind::StringFromUtf8Lossy)
-        | CallKind::Op(OpKind::StringFromUtf8)
-        | CallKind::Op(OpKind::Import(_)) => None,
+        CallKind::Op(_) => None,
         CallKind::Intrinsic(_) => None,
     }?;
     Some(call)

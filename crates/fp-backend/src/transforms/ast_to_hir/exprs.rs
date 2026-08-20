@@ -1,5 +1,5 @@
 use super::*;
-use fp_core::intrinsics::{CallKind, OpKind};
+use fp_core::intrinsics::CallKind;
 use fp_core::ast::path::PathPrefix;
 use fp_core::query::lower_fp_expr_to_query;
 
@@ -2274,9 +2274,7 @@ impl HirGenerator {
 
         if matches!(
             call.kind,
-            CallKind::Op(OpKind::Print)
-                | CallKind::Op(OpKind::Println)
-                | CallKind::Op(OpKind::Format)
+            CallKind::Print | CallKind::Println | CallKind::Format
         ) {
             let mut existing = callargs
                 .iter()
@@ -2331,7 +2329,7 @@ impl HirGenerator {
         }
 
         Ok(hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-            kind: call.kind,
+            kind: call.kind.clone(),
             callargs,
         }))
     }

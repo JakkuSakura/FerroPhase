@@ -22,12 +22,12 @@ pub use mir_to_lir::*;
 /// single pass that reclassifies `Call`/`Struct`/`Path`/`MethodCall` nodes
 /// for both pipelines — so the lookup itself lives in exactly one place.
 pub fn resolve_call_kind(
-    op_defs: &std::collections::HashMap<fp_core::hir::DefId, fp_core::intrinsics::OpKind>,
+    op_defs: &std::collections::HashMap<fp_core::hir::DefId, fp_core::intrinsics::PortableOp>,
     intrinsic_defs: &std::collections::HashMap<fp_core::hir::DefId, fp_core::intrinsics::CallKind>,
     def_id: fp_core::hir::DefId,
 ) -> Option<fp_core::intrinsics::CallKind> {
-    if let Some(op) = op_defs.get(&def_id).copied() {
+    if let Some(op) = op_defs.get(&def_id).cloned() {
         return Some(fp_core::intrinsics::CallKind::Op(op));
     }
-    intrinsic_defs.get(&def_id).copied()
+    intrinsic_defs.get(&def_id).cloned()
 }

@@ -1,212 +1,205 @@
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+
+/// How a portable op's result type relates to its call arguments — the
+/// data-driven replacement for what used to be a hand-grouped `match` over
+/// `OpKind` in `fp-typing::hir_typeck::check_high_level_op`. Adding a new
+/// portable op only ever means adding one `PortableOpDef` (see
+/// `PortableOpRegistry::builtin`) with the right rule here — no match arms
+/// to touch in `fp-typing`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum OpKind {
-    Println,
-    Print,
-    Format,
-    Input,
-    TimeNow,
-    FsReadToString,
-    FsWriteString,
-    FsAppendString,
-    FsExists,
-    FsIsDir,
-    FsIsFile,
-    FsReadDir,
-    FsWalkDir,
-    FsCreateDirAll,
-    FsRemoveFile,
-    FsRemoveDirAll,
-    FsGlob,
-    EnvCurrentDir,
-    EnvTempDir,
-    EnvHomeDir,
-    EnvVar,
-    EnvVarExists,
-    IoReadStdinToString,
-    IoWriteStdout,
-    IoWriteStderr,
-    YamlToJson,
-    JsonParse,
-    Sleep,
-    Spawn,
-    Join,
-    Select,
-    ShellExec,
-    ShellFileCopy,
-    ShellFileTemplate,
-    ShellFileRsync,
-    OptionSome,
-    OptionNone,
-    OptionUnwrap,
-    /// Portable: `Ok(x)` → `x` (Kotlin has no `Result<T, E>` with an
-    /// arbitrary error type; the function's own return type is unwrapped
-    /// the same way, `Result<T, E>` → `T` — see `kotlin_type_from_ty`).
-    ResultOk,
-    /// Portable: `Err(e)` → `error(e)` — Kotlin's `error(message: Any):
-    /// Nothing` throws `IllegalStateException` and is usable as an
-    /// expression of any type (`Nothing` is Kotlin's bottom type), the
-    /// same role `Err` plays as a `Result`-typed expression in Rust.
-    ResultErr,
-    VecNew,
-    Clone,
-    /// Portable: x.as_ref() → drop (Kotlin nullable)
-    AsRef,
-    /// Portable: x.map_or(default, f) → x?.let { f } ?: default
-    MapOr,
-    /// Portable: x.iter() → drop (Kotlin collections auto-iterate)
-    Iter,
-    /// Portable: x.collect::<T>() → toList/toSet
-    Collect,
-    /// Portable: x.find(f) → firstOrNull { f }
-    Find,
-    /// Portable: x.unwrap_or(default) → x ?: default
-    UnwrapOr,
-    /// Portable: x.to_owned() → drop (Kotlin strings owned)
-    ToOwned,
-    /// Portable: x.as_str() → drop
-    AsStr,
-    /// Portable: x.to_string() → toString()
-    ToString,
-    /// Portable: x.and_then(f) → x?.let { f }
-    AndThen,
-    /// Portable: `x.trim_end()` → `x.trimEnd()`
-    TrimEnd,
-    /// Portable: `x.trim_start()` → `x.trimStart()`
-    TrimStart,
-    /// Portable: `x.split_whitespace()` → whitespace-regex split, dropping empty runs
-    SplitWhitespace,
-    /// Portable: `x.as_deref()` → drop (Kotlin nullable)
-    AsDeref,
-    /// Portable: `x.position(f)` → `x.indexOfFirst(f)`
-    Position,
-    /// Portable: `x.is_none()` → `x == null`
-    IsNone,
-    /// Portable: `String::from_utf8_lossy(bytes)` → `String(bytes, Charsets.UTF_8)`
-    StringFromUtf8Lossy,
-    /// Portable: `String::from_utf8(bytes)` → `String(bytes, Charsets.UTF_8)`
-    StringFromUtf8,
-    /// Portable import of a known package
-    Import(KnownPackage),
+pub enum ResultTypeRule {
+    /// Result type is exactly argument `N`'s type (e.g. `x.as_ref()` drops
+    /// to `x`'s own type; `x.unwrap_or(default)` unifies with `default`'s).
+    SameAsArg(usize),
+    /// Result is always `bool` (e.g. `x.is_none()`).
+    AlwaysBool,
+    /// Result is always the target language's native string type (e.g.
+    /// `x.to_string()`, `String::from_utf8(..)`).
+    TargetNativeString,
+    /// Result never produces a value normally (e.g. `Err(e)` → `error(e)`,
+    /// unifies with whatever the caller expects, like `panic!`).
+    Never,
+    /// The real result type depends on a stdlib generic parameter this call
+    /// site can't recover (the original callee path/DefId was discarded by
+    /// portable-op recognition) — fails loudly as a "missing feature"
+    /// rather than fabricating a type.
+    NotStaticallyKnowable,
 }
 
-impl OpKind {
-    /// Resolves an explicit `#[op(method = "...")]` source-attribute value to the
-    /// `OpKind` it names — the tag value IS the canonical name, not a
-    /// guess from the declaration's own identifier (a method can be tagged
-    /// with a different op name than its own, though in practice they
-    /// usually match). Used by `LangItemRegistry`'s impl-method scan
-    /// (`fp-core/src/lang/mod.rs`) so a frontend's stdlib source is the
-    /// single source of truth for which declarations are portable ops,
-    /// instead of a hardcoded name table living in the lowering/lifting
-    /// code that consumes them.
-    pub fn from_op_tag(tag: &str) -> Option<Self> {
-        match tag {
-            // Method-position ops (`#[op(method = "...")]` / `@Op(method = "...")`).
-            "as_ref" => Some(Self::AsRef),
-            "map_or" => Some(Self::MapOr),
-            "iter" => Some(Self::Iter),
-            "collect" => Some(Self::Collect),
-            "find" => Some(Self::Find),
-            "unwrap_or" => Some(Self::UnwrapOr),
-            "to_owned" => Some(Self::ToOwned),
-            "as_str" => Some(Self::AsStr),
-            "to_string" => Some(Self::ToString),
-            "and_then" => Some(Self::AndThen),
-            "trim_end" => Some(Self::TrimEnd),
-            "trim_start" => Some(Self::TrimStart),
-            "split_whitespace" => Some(Self::SplitWhitespace),
-            "as_deref" => Some(Self::AsDeref),
-            "position" => Some(Self::Position),
-            "is_none" => Some(Self::IsNone),
-            "string_from_utf8_lossy" => Some(Self::StringFromUtf8Lossy),
-            "string_from_utf8" => Some(Self::StringFromUtf8),
-            "clone" => Some(Self::Clone),
-            "unwrap" => Some(Self::OptionUnwrap),
-            // Free-function ops (`#[op(func = "...")]`) — named after the
-            // `lang_item` convention already used for `#[intrinsic = "..."]`
-            // (`fp-core/src/intrinsics/lang_intrinsic.rs`), since that's what
-            // the vendored/hand-written std already tags these with.
-            "vec_new" => Some(Self::VecNew),
-            "option_some" => Some(Self::OptionSome),
-            "option_none" => Some(Self::OptionNone),
-            "option_unwrap" => Some(Self::OptionUnwrap),
-            "result_ok" => Some(Self::ResultOk),
-            "result_err" => Some(Self::ResultErr),
-            "format" => Some(Self::Format),
-            "print" => Some(Self::Print),
-            "println" => Some(Self::Println),
-            "input" => Some(Self::Input),
-            "time_now" => Some(Self::TimeNow),
-            "sleep" => Some(Self::Sleep),
-            "spawn" => Some(Self::Spawn),
-            "join" => Some(Self::Join),
-            "select" => Some(Self::Select),
-            "fs_read_dir" => Some(Self::FsReadDir),
-            "fs_walk_dir" => Some(Self::FsWalkDir),
-            "fs_read_to_string" => Some(Self::FsReadToString),
-            "fs_write_string" => Some(Self::FsWriteString),
-            "fs_append_string" => Some(Self::FsAppendString),
-            "fs_exists" => Some(Self::FsExists),
-            "fs_is_dir" => Some(Self::FsIsDir),
-            "fs_is_file" => Some(Self::FsIsFile),
-            "fs_create_dir_all" => Some(Self::FsCreateDirAll),
-            "fs_remove_file" => Some(Self::FsRemoveFile),
-            "fs_remove_dir_all" => Some(Self::FsRemoveDirAll),
-            "fs_glob" => Some(Self::FsGlob),
-            "env_current_dir" => Some(Self::EnvCurrentDir),
-            "env_temp_dir" => Some(Self::EnvTempDir),
-            "env_home_dir" => Some(Self::EnvHomeDir),
-            "env_var" => Some(Self::EnvVar),
-            "env_var_exists" => Some(Self::EnvVarExists),
-            "io_read_stdin_to_string" => Some(Self::IoReadStdinToString),
-            "io_write_stdout" => Some(Self::IoWriteStdout),
-            "io_write_stderr" => Some(Self::IoWriteStderr),
-            "yaml_to_json" => Some(Self::YamlToJson),
-            "json_parse" => Some(Self::JsonParse),
-            "shell_exec" => Some(Self::ShellExec),
-            "shell_file_copy" => Some(Self::ShellFileCopy),
-            "shell_file_template" => Some(Self::ShellFileTemplate),
-            "shell_file_rsync" => Some(Self::ShellFileRsync),
-            _ => None,
+/// Call-shape expectations for a portable op — mirrors what
+/// `try_promote_op`'s callargs construction already assumes implicitly per
+/// call-site syntax (`Path`/`Struct`/`Call`/`MethodCall`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct ArityShape {
+    /// Whether argument 0 is a receiver (i.e. this op is method-call sugar,
+    /// `x.op(..)`, not a free function/constructor call).
+    pub receiver: bool,
+    /// Minimum number of arguments (including the receiver, if any).
+    pub min_args: usize,
+}
+
+/// A portable op's full definition, as stored in a `PortableOpRegistry`.
+#[derive(Debug, Clone)]
+pub struct PortableOpDef {
+    pub name: Arc<str>,
+    pub arity: ArityShape,
+    pub result_rule: ResultTypeRule,
+}
+
+/// A resolved portable-op identity, carried on
+/// `CallKind::Op`/`hir::Program::op_defs`/etc. Deliberately NOT a bare
+/// string: the only way to construct one is `PortableOpRegistry::resolve`,
+/// which looks the name up against the central registry and hands back the
+/// full definition — so every `PortableOp` in flight already carries its
+/// `arity`/`result_rule`, with no separate "look the name up later and hope
+/// someone remembered to check" step for consumers to skip or forget.
+///
+/// Derives structural `PartialEq`/`Eq`/`Hash` over all three fields (not
+/// just `name`) so `CallKind` (which embeds this) can itself derive them —
+/// needed for `CallKind`'s many pattern-position `const` shortcuts
+/// (`matches!(call.kind, CallKind::Println)`) across target-language
+/// backends, which require Rust's structural-match marker traits. This is
+/// equivalent in practice to name-only identity: `arity`/`result_rule` are
+/// always the same for a given `name` (both are resolved from the same
+/// registry entry — see `PortableOpRegistry::resolve`), so two
+/// same-named `PortableOp`s never actually differ in their other fields.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PortableOp {
+    pub name: Arc<str>,
+    pub arity: ArityShape,
+    pub result_rule: ResultTypeRule,
+}
+
+// `Arc<str>` has no `serde` impl (no `rc` feature enabled workspace-wide);
+// (de)serialize `name` via a plain `String` instead.
+impl serde::Serialize for PortableOp {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(serde::Serialize)]
+        struct Repr<'a> {
+            name: &'a str,
+            arity: ArityShape,
+            result_rule: ResultTypeRule,
+        }
+        Repr {
+            name: &self.name,
+            arity: self.arity,
+            result_rule: self.result_rule,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PortableOp {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Repr {
+            name: String,
+            arity: ArityShape,
+            result_rule: ResultTypeRule,
+        }
+        let repr = Repr::deserialize(deserializer)?;
+        Ok(PortableOp {
+            name: Arc::from(repr.name),
+            arity: repr.arity,
+            result_rule: repr.result_rule,
+        })
+    }
+}
+
+impl PortableOp {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// The central, language-agnostic portable-op registry: given a canonical
+/// name, hands back the op's full definition. Every source/target
+/// language's own `#[op(...)]`/`@Op(...)` tag is expected to spell its name
+/// identically to an entry here (no fuzzy/synonym matching) — a mismatch is
+/// a straightforward lookup miss, surfaced by the caller as a "missing
+/// feature"/"unknown portable op" diagnostic, never silently ignored.
+#[derive(Debug, Clone, Default)]
+pub struct PortableOpRegistry {
+    defs: HashMap<Arc<str>, PortableOpDef>,
+}
+
+impl PortableOpRegistry {
+    pub fn from_defs(defs: impl IntoIterator<Item = PortableOpDef>) -> Self {
+        Self {
+            defs: defs.into_iter().map(|d| (d.name.clone(), d)).collect(),
         }
     }
 
-    /// Resolves a short, unqualified `#[op(method = "...")]`/
-    /// `#[op(variant = "...")]` tag using its enclosing declaration's own
-    /// `#[op(class = "...")]` name for context — so the std source can
-    /// write natural, short tags (`#[op(method = "new")]` inside
-    /// `#[op(class = "Vec")]`, `#[op(variant = "some")]` inside
-    /// `#[op(class = "Option")]`) instead of inventing a globally-unique
-    /// flat string per op (`"vec_new"`, `"option_some"`) that duplicates
-    /// information the enclosing `impl`/`enum` already states. Checked
-    /// before falling back to `from_op_tag` (which stays for the ops that
-    /// are unambiguous without any class context — `clone`/`as_ref`/... —
-    /// and for the flat, no-enclosing-declaration free functions).
-    pub fn from_class_and_member(class: &str, member: &str) -> Option<Self> {
-        match (class, member) {
-            ("Vec", "new") => Some(Self::VecNew),
-            ("Option", "some") => Some(Self::OptionSome),
-            ("Option", "none") => Some(Self::OptionNone),
-            ("Option", "unwrap") => Some(Self::OptionUnwrap),
-            ("Option", "as_ref") => Some(Self::AsRef),
-            ("Option", "unwrap_or") => Some(Self::UnwrapOr),
-            ("Option", "map_or") => Some(Self::MapOr),
-            ("Option", "iter") => Some(Self::Iter),
-            ("Option", "and_then") => Some(Self::AndThen),
-            ("Option", "clone") => Some(Self::Clone),
-            ("Result", "ok") => Some(Self::ResultOk),
-            ("Result", "err") => Some(Self::ResultErr),
-            ("Option", "is_none") => Some(Self::IsNone),
-            ("Option", "as_deref") => Some(Self::AsDeref),
-            ("str", "trim_end") => Some(Self::TrimEnd),
-            ("str", "trim_start") => Some(Self::TrimStart),
-            ("str", "split_whitespace") => Some(Self::SplitWhitespace),
-            ("String", "from_utf8_lossy") => Some(Self::StringFromUtf8Lossy),
-            ("String", "from_utf8") => Some(Self::StringFromUtf8),
-            ("Iterator", "position") => Some(Self::Position),
-            _ => None,
-        }
+    pub fn resolve(&self, name: &str) -> Option<PortableOp> {
+        self.defs.get(name).map(|def| PortableOp {
+            name: def.name.clone(),
+            arity: def.arity,
+            result_rule: def.result_rule,
+        })
     }
+
+    pub fn contains(&self, name: &str) -> bool {
+        self.defs.contains_key(name)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &PortableOpDef> {
+        self.defs.values()
+    }
+
+    /// The builtin, canonical registry — formalizes what used to be the
+    /// closed `OpKind` enum's variant list as data instead of code. Names
+    /// are unchanged from the old enum's `CallKind::name()` output (no
+    /// renaming, to avoid conflating a naming migration with this
+    /// representation rewrite).
+    pub fn builtin() -> Self {
+        Self::from_defs(builtin_portable_op_defs())
+    }
+}
+
+fn def(name: &'static str, receiver: bool, min_args: usize, rule: ResultTypeRule) -> PortableOpDef {
+    PortableOpDef {
+        name: Arc::from(name),
+        arity: ArityShape { receiver, min_args },
+        result_rule: rule,
+    }
+}
+
+fn builtin_portable_op_defs() -> Vec<PortableOpDef> {
+    use ResultTypeRule::*;
+    vec![
+        def("option_some", false, 1, NotStaticallyKnowable),
+        def("option_none", false, 0, NotStaticallyKnowable),
+        def("option_unwrap", true, 1, NotStaticallyKnowable),
+        // `Ok(x)` → `x` (Kotlin has no `Result<T, E>` with an arbitrary
+        // error type; the function's own return type is unwrapped the same
+        // way, `Result<T, E>` → `T` — see `kotlin_type_from_ty`).
+        def("result_ok", false, 1, SameAsArg(0)),
+        // `Err(e)` → `error(e)` — never produces a value, unifies with
+        // whatever the surrounding context expects.
+        def("result_err", false, 1, Never),
+        def("vec_new", false, 0, NotStaticallyKnowable),
+        def("clone", true, 1, SameAsArg(0)),
+        def("as_ref", true, 1, SameAsArg(0)),
+        def("map_or", true, 3, SameAsArg(1)),
+        def("iter", true, 1, SameAsArg(0)),
+        def("collect", true, 1, NotStaticallyKnowable),
+        def("find", true, 2, NotStaticallyKnowable),
+        def("unwrap_or", true, 2, SameAsArg(1)),
+        def("to_owned", true, 1, SameAsArg(0)),
+        def("as_str", true, 1, SameAsArg(0)),
+        def("to_string", true, 1, TargetNativeString),
+        def("and_then", true, 2, NotStaticallyKnowable),
+        def("trim_end", true, 1, SameAsArg(0)),
+        def("trim_start", true, 1, SameAsArg(0)),
+        def("split_whitespace", true, 1, NotStaticallyKnowable),
+        def("as_deref", true, 1, SameAsArg(0)),
+        def("position", true, 2, NotStaticallyKnowable),
+        def("is_none", true, 1, AlwaysBool),
+        def("string_from_utf8_lossy", false, 1, TargetNativeString),
+        def("string_from_utf8", false, 1, TargetNativeString),
+    ]
 }
 
 /// Known type descriptors that serializers map to target-ecosystem equivalents.
@@ -392,19 +385,102 @@ pub enum IntrinsicKind {
 
 impl IntrinsicKind {
     pub const fn name(self) -> &'static str {
-        CallKind::Intrinsic(self).name()
+        match self {
+            Self::Println => "println",
+            Self::Print => "print",
+            Self::Format => "format",
+            Self::Len => "len",
+            Self::Slice => "slice",
+            Self::DebugAssertions => "debug_assertions",
+            Self::Input => "input",
+            Self::Panic => "panic",
+            Self::CatchUnwind => "catch_unwind",
+            Self::CatchUnwindResult => "catch_unwind_result",
+            Self::TimeNow => "time_now",
+            Self::FsReadToString => "fs_read_to_string",
+            Self::FsWriteString => "fs_write_string",
+            Self::FsAppendString => "fs_append_string",
+            Self::FsExists => "fs_exists",
+            Self::FsIsDir => "fs_is_dir",
+            Self::FsIsFile => "fs_is_file",
+            Self::FsReadDir => "fs_read_dir",
+            Self::FsWalkDir => "fs_walk_dir",
+            Self::FsCreateDirAll => "fs_create_dir_all",
+            Self::FsRemoveFile => "fs_remove_file",
+            Self::FsRemoveDirAll => "fs_remove_dir_all",
+            Self::FsGlob => "fs_glob",
+            Self::EnvCurrentDir => "env_current_dir",
+            Self::EnvTempDir => "env_temp_dir",
+            Self::EnvHomeDir => "env_home_dir",
+            Self::EnvVar => "env_var",
+            Self::EnvVarExists => "env_var_exists",
+            Self::PathJoin => "path_join",
+            Self::PathParent => "path_parent",
+            Self::PathFileName => "path_file_name",
+            Self::PathExtension => "path_extension",
+            Self::PathStem => "path_stem",
+            Self::PathIsAbsolute => "path_is_absolute",
+            Self::PathNormalize => "path_normalize",
+            Self::IoReadStdinToString => "io_read_stdin_to_string",
+            Self::IoWriteStdout => "io_write_stdout",
+            Self::IoWriteStderr => "io_write_stderr",
+            Self::YamlToJson => "yaml_to_json",
+            Self::JsonParse => "json_parse",
+            Self::TestCommandMockReset => "test_command_mock_reset",
+            Self::TestCommandMockPush => "test_command_mock_push",
+            Self::TestCommandMockTakeCalls => "test_command_mock_take_calls",
+            Self::TestCommandMockApply => "test_command_mock_apply",
+            Self::Sleep => "sleep",
+            Self::Spawn => "spawn",
+            Self::Join => "join",
+            Self::Select => "select",
+            Self::Yield => "yield",
+            Self::SizeOf => "size_of",
+            Self::ReflectFields => "reflect_fields",
+            Self::HasMethod => "has_method",
+            Self::TypeName => "type_name",
+            Self::TypeOf => "type_of",
+            Self::CreateStruct => "create_struct",
+            Self::AddField => "add_field",
+            Self::CloneStruct => "clone_struct",
+            Self::BuildType => "build_type",
+            Self::HasField => "has_field",
+            Self::FieldCount => "field_count",
+            Self::MethodCount => "method_count",
+            Self::FieldType => "field_type",
+            Self::VecType => "vec_type",
+            Self::FieldNameAt => "field_name_at",
+            Self::StructSize => "struct_size",
+            Self::GenerateMethod => "generate_method",
+            Self::CompileError => "compile_error",
+            Self::CompileWarning => "compile_warning",
+            Self::ProcMacroTokenStreamFromStr => "token_stream_from_str",
+            Self::ProcMacroTokenStreamToString => "token_stream_to_string",
+            Self::ShellExec => "shell_exec",
+            Self::ShellFileCopy => "shell_file_copy",
+            Self::ShellFileTemplate => "shell_file_template",
+            Self::ShellFileRsync => "shell_file_rsync",
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+/// A recognized portable call — either a high-level "stdlib idiom differs
+/// per language" op (`Op`, a `PortableOp` resolved from the central
+/// registry — see `PortableOpRegistry`) or a low-level compiler intrinsic
+/// with a fixed, closed set of variants and no meaningful "target doesn't
+/// have this" case (`Intrinsic`). These two stay deliberately asymmetric:
+/// `IntrinsicKind` is closed because its members are genuine compiler
+/// primitives (println, fs read, reflection, ...); `Op`'s openness is the
+/// whole point of the portable-op system.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CallKind {
-    Op(OpKind),
+    Op(PortableOp),
     Intrinsic(IntrinsicKind),
 }
 
-impl From<OpKind> for CallKind {
-    fn from(kind: OpKind) -> Self {
-        Self::Op(kind)
+impl From<PortableOp> for CallKind {
+    fn from(op: PortableOp) -> Self {
+        Self::Op(op)
     }
 }
 
@@ -415,305 +491,57 @@ impl From<IntrinsicKind> for CallKind {
 }
 
 impl CallKind {
-    pub const fn intrinsic_kind(self) -> Option<IntrinsicKind> {
+    /// `Some(kind)` if this call is a genuine low-level intrinsic;
+    /// `None` for a portable `Op` (portable ops never overlap with
+    /// `IntrinsicKind` — a call that maps straight to one is represented as
+    /// `CallKind::Intrinsic` directly, never wrapped in `Op` first).
+    pub fn intrinsic_kind(&self) -> Option<IntrinsicKind> {
         match self {
-            Self::Op(OpKind::Println) => Some(IntrinsicKind::Println),
-            Self::Op(OpKind::Print) => Some(IntrinsicKind::Print),
-            Self::Op(OpKind::Format) => Some(IntrinsicKind::Format),
-            Self::Op(OpKind::Input) => Some(IntrinsicKind::Input),
-            Self::Op(OpKind::TimeNow) => Some(IntrinsicKind::TimeNow),
-            Self::Op(OpKind::FsReadToString) => Some(IntrinsicKind::FsReadToString),
-            Self::Op(OpKind::FsWriteString) => Some(IntrinsicKind::FsWriteString),
-            Self::Op(OpKind::FsAppendString) => Some(IntrinsicKind::FsAppendString),
-            Self::Op(OpKind::FsExists) => Some(IntrinsicKind::FsExists),
-            Self::Op(OpKind::FsIsDir) => Some(IntrinsicKind::FsIsDir),
-            Self::Op(OpKind::FsIsFile) => Some(IntrinsicKind::FsIsFile),
-            Self::Op(OpKind::FsReadDir) => Some(IntrinsicKind::FsReadDir),
-            Self::Op(OpKind::FsWalkDir) => Some(IntrinsicKind::FsWalkDir),
-            Self::Op(OpKind::FsCreateDirAll) => Some(IntrinsicKind::FsCreateDirAll),
-            Self::Op(OpKind::FsRemoveFile) => Some(IntrinsicKind::FsRemoveFile),
-            Self::Op(OpKind::FsRemoveDirAll) => Some(IntrinsicKind::FsRemoveDirAll),
-            Self::Op(OpKind::FsGlob) => Some(IntrinsicKind::FsGlob),
-            Self::Op(OpKind::EnvCurrentDir) => Some(IntrinsicKind::EnvCurrentDir),
-            Self::Op(OpKind::EnvTempDir) => Some(IntrinsicKind::EnvTempDir),
-            Self::Op(OpKind::EnvHomeDir) => Some(IntrinsicKind::EnvHomeDir),
-            Self::Op(OpKind::EnvVar) => Some(IntrinsicKind::EnvVar),
-            Self::Op(OpKind::EnvVarExists) => Some(IntrinsicKind::EnvVarExists),
-            Self::Op(OpKind::IoReadStdinToString) => Some(IntrinsicKind::IoReadStdinToString),
-            Self::Op(OpKind::IoWriteStdout) => Some(IntrinsicKind::IoWriteStdout),
-            Self::Op(OpKind::IoWriteStderr) => Some(IntrinsicKind::IoWriteStderr),
-            Self::Op(OpKind::YamlToJson) => Some(IntrinsicKind::YamlToJson),
-            Self::Op(OpKind::JsonParse) => Some(IntrinsicKind::JsonParse),
-            Self::Op(OpKind::Sleep) => Some(IntrinsicKind::Sleep),
-            Self::Op(OpKind::Spawn) => Some(IntrinsicKind::Spawn),
-            Self::Op(OpKind::Join) => Some(IntrinsicKind::Join),
-            Self::Op(OpKind::Select) => Some(IntrinsicKind::Select),
-            Self::Op(OpKind::ShellExec) => Some(IntrinsicKind::ShellExec),
-            Self::Op(OpKind::ShellFileCopy) => Some(IntrinsicKind::ShellFileCopy),
-            Self::Op(OpKind::ShellFileTemplate) => Some(IntrinsicKind::ShellFileTemplate),
-            Self::Op(OpKind::ShellFileRsync) => Some(IntrinsicKind::ShellFileRsync),
-            Self::Op(OpKind::OptionSome) => None,
-            Self::Op(OpKind::OptionNone) => None,
-            Self::Op(OpKind::OptionUnwrap) => None,
-            Self::Op(OpKind::ResultOk) => None,
-            Self::Op(OpKind::ResultErr) => None,
-            Self::Op(OpKind::VecNew) => None,
-            Self::Op(OpKind::Clone) => None,
-            Self::Op(OpKind::AsRef) => None,
-            Self::Op(OpKind::MapOr) => None,
-            Self::Op(OpKind::Iter) => None,
-            Self::Op(OpKind::Collect) => None,
-            Self::Op(OpKind::Find) => None,
-            Self::Op(OpKind::UnwrapOr) => None,
-            Self::Op(OpKind::ToOwned) => None,
-            Self::Op(OpKind::AsStr) => None,
-            Self::Op(OpKind::ToString) => None,
-            Self::Op(OpKind::AndThen) => None,
-            Self::Op(OpKind::TrimEnd) => None,
-            Self::Op(OpKind::TrimStart) => None,
-            Self::Op(OpKind::SplitWhitespace) => None,
-            Self::Op(OpKind::AsDeref) => None,
-            Self::Op(OpKind::Position) => None,
-            Self::Op(OpKind::IsNone) => None,
-            Self::Op(OpKind::StringFromUtf8Lossy) => None,
-            Self::Op(OpKind::StringFromUtf8) => None,
-            Self::Op(OpKind::Import(_)) => None,
-            Self::Intrinsic(kind) => Some(kind),
+            Self::Intrinsic(kind) => Some(*kind),
+            Self::Op(_) => None,
         }
     }
 
-    pub const fn op_kind(self) -> Option<OpKind> {
+    pub fn name(&self) -> String {
         match self {
-            Self::Op(kind) => Some(kind),
-            Self::Intrinsic(IntrinsicKind::Println) => Some(OpKind::Println),
-            Self::Intrinsic(IntrinsicKind::Print) => Some(OpKind::Print),
-            Self::Intrinsic(IntrinsicKind::Format) => Some(OpKind::Format),
-            Self::Intrinsic(IntrinsicKind::Input) => Some(OpKind::Input),
-            Self::Intrinsic(IntrinsicKind::TimeNow) => Some(OpKind::TimeNow),
-            Self::Intrinsic(IntrinsicKind::FsReadToString) => Some(OpKind::FsReadToString),
-            Self::Intrinsic(IntrinsicKind::FsWriteString) => Some(OpKind::FsWriteString),
-            Self::Intrinsic(IntrinsicKind::FsAppendString) => Some(OpKind::FsAppendString),
-            Self::Intrinsic(IntrinsicKind::FsExists) => Some(OpKind::FsExists),
-            Self::Intrinsic(IntrinsicKind::FsIsDir) => Some(OpKind::FsIsDir),
-            Self::Intrinsic(IntrinsicKind::FsIsFile) => Some(OpKind::FsIsFile),
-            Self::Intrinsic(IntrinsicKind::FsReadDir) => Some(OpKind::FsReadDir),
-            Self::Intrinsic(IntrinsicKind::FsWalkDir) => Some(OpKind::FsWalkDir),
-            Self::Intrinsic(IntrinsicKind::FsCreateDirAll) => Some(OpKind::FsCreateDirAll),
-            Self::Intrinsic(IntrinsicKind::FsRemoveFile) => Some(OpKind::FsRemoveFile),
-            Self::Intrinsic(IntrinsicKind::FsRemoveDirAll) => Some(OpKind::FsRemoveDirAll),
-            Self::Intrinsic(IntrinsicKind::FsGlob) => Some(OpKind::FsGlob),
-            Self::Intrinsic(IntrinsicKind::EnvCurrentDir) => Some(OpKind::EnvCurrentDir),
-            Self::Intrinsic(IntrinsicKind::EnvTempDir) => Some(OpKind::EnvTempDir),
-            Self::Intrinsic(IntrinsicKind::EnvHomeDir) => Some(OpKind::EnvHomeDir),
-            Self::Intrinsic(IntrinsicKind::EnvVar) => Some(OpKind::EnvVar),
-            Self::Intrinsic(IntrinsicKind::EnvVarExists) => Some(OpKind::EnvVarExists),
-            Self::Intrinsic(IntrinsicKind::IoReadStdinToString) => {
-                Some(OpKind::IoReadStdinToString)
-            }
-            Self::Intrinsic(IntrinsicKind::IoWriteStdout) => Some(OpKind::IoWriteStdout),
-            Self::Intrinsic(IntrinsicKind::IoWriteStderr) => Some(OpKind::IoWriteStderr),
-            Self::Intrinsic(IntrinsicKind::YamlToJson) => Some(OpKind::YamlToJson),
-            Self::Intrinsic(IntrinsicKind::JsonParse) => Some(OpKind::JsonParse),
-            Self::Intrinsic(IntrinsicKind::Sleep) => Some(OpKind::Sleep),
-            Self::Intrinsic(IntrinsicKind::Spawn) => Some(OpKind::Spawn),
-            Self::Intrinsic(IntrinsicKind::Join) => Some(OpKind::Join),
-            Self::Intrinsic(IntrinsicKind::Select) => Some(OpKind::Select),
-            Self::Intrinsic(IntrinsicKind::ShellExec) => Some(OpKind::ShellExec),
-            Self::Intrinsic(IntrinsicKind::ShellFileCopy) => Some(OpKind::ShellFileCopy),
-            Self::Intrinsic(IntrinsicKind::ShellFileTemplate) => Some(OpKind::ShellFileTemplate),
-            Self::Intrinsic(IntrinsicKind::ShellFileRsync) => Some(OpKind::ShellFileRsync),
-            Self::Intrinsic(_) => None,
+            Self::Op(op) => op.name().to_string(),
+            Self::Intrinsic(kind) => kind.name().to_string(),
         }
     }
 
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Op(OpKind::Println) | Self::Intrinsic(IntrinsicKind::Println) => "println",
-            Self::Op(OpKind::Print) | Self::Intrinsic(IntrinsicKind::Print) => "print",
-            Self::Op(OpKind::Format) | Self::Intrinsic(IntrinsicKind::Format) => "format",
-            Self::Intrinsic(IntrinsicKind::Len) => "len",
-            Self::Intrinsic(IntrinsicKind::Slice) => "slice",
-            Self::Intrinsic(IntrinsicKind::DebugAssertions) => "debug_assertions",
-            Self::Op(OpKind::Input) | Self::Intrinsic(IntrinsicKind::Input) => "input",
-            Self::Intrinsic(IntrinsicKind::Panic) => "panic",
-            Self::Intrinsic(IntrinsicKind::CatchUnwind) => "catch_unwind",
-            Self::Intrinsic(IntrinsicKind::CatchUnwindResult) => "catch_unwind_result",
-            Self::Op(OpKind::TimeNow) | Self::Intrinsic(IntrinsicKind::TimeNow) => "time_now",
-            Self::Op(OpKind::FsReadDir) | Self::Intrinsic(IntrinsicKind::FsReadDir) => {
-                "fs_read_dir"
-            }
-            Self::Op(OpKind::FsWalkDir) | Self::Intrinsic(IntrinsicKind::FsWalkDir) => {
-                "fs_walk_dir"
-            }
-            Self::Op(OpKind::FsReadToString) | Self::Intrinsic(IntrinsicKind::FsReadToString) => {
-                "fs_read_to_string"
-            }
-            Self::Op(OpKind::FsWriteString) | Self::Intrinsic(IntrinsicKind::FsWriteString) => {
-                "fs_write_string"
-            }
-            Self::Op(OpKind::FsAppendString) | Self::Intrinsic(IntrinsicKind::FsAppendString) => {
-                "fs_append_string"
-            }
-            Self::Op(OpKind::FsExists) | Self::Intrinsic(IntrinsicKind::FsExists) => "fs_exists",
-            Self::Op(OpKind::FsIsDir) | Self::Intrinsic(IntrinsicKind::FsIsDir) => "fs_is_dir",
-            Self::Op(OpKind::FsIsFile) | Self::Intrinsic(IntrinsicKind::FsIsFile) => "fs_is_file",
-            Self::Op(OpKind::FsCreateDirAll) | Self::Intrinsic(IntrinsicKind::FsCreateDirAll) => {
-                "fs_create_dir_all"
-            }
-            Self::Op(OpKind::FsRemoveFile) | Self::Intrinsic(IntrinsicKind::FsRemoveFile) => {
-                "fs_remove_file"
-            }
-            Self::Op(OpKind::FsRemoveDirAll) | Self::Intrinsic(IntrinsicKind::FsRemoveDirAll) => {
-                "fs_remove_dir_all"
-            }
-            Self::Op(OpKind::FsGlob) | Self::Intrinsic(IntrinsicKind::FsGlob) => "fs_glob",
-            Self::Op(OpKind::EnvCurrentDir) | Self::Intrinsic(IntrinsicKind::EnvCurrentDir) => {
-                "env_current_dir"
-            }
-            Self::Op(OpKind::EnvTempDir) | Self::Intrinsic(IntrinsicKind::EnvTempDir) => {
-                "env_temp_dir"
-            }
-            Self::Op(OpKind::EnvHomeDir) | Self::Intrinsic(IntrinsicKind::EnvHomeDir) => {
-                "env_home_dir"
-            }
-            Self::Op(OpKind::EnvVar) | Self::Intrinsic(IntrinsicKind::EnvVar) => "env_var",
-            Self::Op(OpKind::EnvVarExists) | Self::Intrinsic(IntrinsicKind::EnvVarExists) => {
-                "env_var_exists"
-            }
-            Self::Intrinsic(IntrinsicKind::PathJoin) => "path_join",
-            Self::Intrinsic(IntrinsicKind::PathParent) => "path_parent",
-            Self::Intrinsic(IntrinsicKind::PathFileName) => "path_file_name",
-            Self::Intrinsic(IntrinsicKind::PathExtension) => "path_extension",
-            Self::Intrinsic(IntrinsicKind::PathStem) => "path_stem",
-            Self::Intrinsic(IntrinsicKind::PathIsAbsolute) => "path_is_absolute",
-            Self::Intrinsic(IntrinsicKind::PathNormalize) => "path_normalize",
-            Self::Op(OpKind::IoReadStdinToString)
-            | Self::Intrinsic(IntrinsicKind::IoReadStdinToString) => "io_read_stdin_to_string",
-            Self::Op(OpKind::IoWriteStdout) | Self::Intrinsic(IntrinsicKind::IoWriteStdout) => {
-                "io_write_stdout"
-            }
-            Self::Op(OpKind::IoWriteStderr) | Self::Intrinsic(IntrinsicKind::IoWriteStderr) => {
-                "io_write_stderr"
-            }
-            Self::Op(OpKind::YamlToJson) | Self::Intrinsic(IntrinsicKind::YamlToJson) => {
-                "yaml_to_json"
-            }
-            Self::Op(OpKind::JsonParse) | Self::Intrinsic(IntrinsicKind::JsonParse) => "json_parse",
-            Self::Intrinsic(IntrinsicKind::TestCommandMockReset) => "test_command_mock_reset",
-            Self::Intrinsic(IntrinsicKind::TestCommandMockPush) => "test_command_mock_push",
-            Self::Intrinsic(IntrinsicKind::TestCommandMockTakeCalls) => {
-                "test_command_mock_take_calls"
-            }
-            Self::Intrinsic(IntrinsicKind::TestCommandMockApply) => "test_command_mock_apply",
-            Self::Op(OpKind::Sleep) | Self::Intrinsic(IntrinsicKind::Sleep) => "sleep",
-            Self::Op(OpKind::Spawn) | Self::Intrinsic(IntrinsicKind::Spawn) => "spawn",
-            Self::Op(OpKind::Join) | Self::Intrinsic(IntrinsicKind::Join) => "join",
-            Self::Op(OpKind::Select) | Self::Intrinsic(IntrinsicKind::Select) => "select",
-            Self::Intrinsic(IntrinsicKind::Yield) => "yield",
-            Self::Intrinsic(IntrinsicKind::SizeOf) => "size_of",
-            Self::Intrinsic(IntrinsicKind::ReflectFields) => "reflect_fields",
-            Self::Intrinsic(IntrinsicKind::HasMethod) => "has_method",
-            Self::Intrinsic(IntrinsicKind::TypeName) => "type_name",
-            Self::Intrinsic(IntrinsicKind::TypeOf) => "type_of",
-            Self::Intrinsic(IntrinsicKind::CreateStruct) => "create_struct",
-            Self::Intrinsic(IntrinsicKind::AddField) => "add_field",
-            Self::Intrinsic(IntrinsicKind::CloneStruct) => "clone_struct",
-            Self::Intrinsic(IntrinsicKind::BuildType) => "build_type",
-            Self::Intrinsic(IntrinsicKind::HasField) => "has_field",
-            Self::Intrinsic(IntrinsicKind::FieldCount) => "field_count",
-            Self::Intrinsic(IntrinsicKind::MethodCount) => "method_count",
-            Self::Intrinsic(IntrinsicKind::FieldType) => "field_type",
-            Self::Intrinsic(IntrinsicKind::VecType) => "vec_type",
-            Self::Intrinsic(IntrinsicKind::FieldNameAt) => "field_name_at",
-            Self::Intrinsic(IntrinsicKind::StructSize) => "struct_size",
-            Self::Intrinsic(IntrinsicKind::GenerateMethod) => "generate_method",
-            Self::Intrinsic(IntrinsicKind::CompileError) => "compile_error",
-            Self::Intrinsic(IntrinsicKind::CompileWarning) => "compile_warning",
-            Self::Intrinsic(IntrinsicKind::ProcMacroTokenStreamFromStr) => "token_stream_from_str",
-            Self::Intrinsic(IntrinsicKind::ProcMacroTokenStreamToString) => {
-                "token_stream_to_string"
-            }
-            Self::Op(OpKind::ShellExec) | Self::Intrinsic(IntrinsicKind::ShellExec) => "shell_exec",
-            Self::Op(OpKind::ShellFileCopy) | Self::Intrinsic(IntrinsicKind::ShellFileCopy) => {
-                "shell_file_copy"
-            }
-            Self::Op(OpKind::ShellFileTemplate)
-            | Self::Intrinsic(IntrinsicKind::ShellFileTemplate) => "shell_file_template",
-            Self::Op(OpKind::ShellFileRsync) | Self::Intrinsic(IntrinsicKind::ShellFileRsync) => {
-                "shell_file_rsync"
-            }
-            Self::Op(OpKind::OptionSome) => "option_some",
-            Self::Op(OpKind::OptionNone) => "option_none",
-            Self::Op(OpKind::OptionUnwrap) => "option_unwrap",
-            Self::Op(OpKind::ResultOk) => "result_ok",
-            Self::Op(OpKind::ResultErr) => "result_err",
-            Self::Op(OpKind::VecNew) => "vec_new",
-            Self::Op(OpKind::Clone) => "clone",
-            Self::Op(OpKind::AsRef) => "as_ref",
-            Self::Op(OpKind::MapOr) => "map_or",
-            Self::Op(OpKind::Iter) => "iter",
-            Self::Op(OpKind::Collect) => "collect",
-            Self::Op(OpKind::Find) => "find",
-            Self::Op(OpKind::UnwrapOr) => "unwrap_or",
-            Self::Op(OpKind::ToOwned) => "to_owned",
-            Self::Op(OpKind::AsStr) => "as_str",
-            Self::Op(OpKind::ToString) => "to_string",
-            Self::Op(OpKind::AndThen) => "and_then",
-            Self::Op(OpKind::TrimEnd) => "trim_end",
-            Self::Op(OpKind::TrimStart) => "trim_start",
-            Self::Op(OpKind::SplitWhitespace) => "split_whitespace",
-            Self::Op(OpKind::AsDeref) => "as_deref",
-            Self::Op(OpKind::Position) => "position",
-            Self::Op(OpKind::IsNone) => "is_none",
-            Self::Op(OpKind::StringFromUtf8Lossy) => "string_from_utf8_lossy",
-            Self::Op(OpKind::StringFromUtf8) => "string_from_utf8",
-            Self::Op(OpKind::Import(KnownPackage::StdCollections)) => "import_std_collections",
-            Self::Op(OpKind::Import(KnownPackage::StdPath)) => "import_std_path",
-            Self::Op(OpKind::Import(KnownPackage::StdProcess)) => "import_std_process",
-            Self::Op(OpKind::Import(KnownPackage::StdSync)) => "import_std_sync",
-            Self::Op(OpKind::Import(KnownPackage::StdFs)) => "import_std_fs",
-            Self::Op(OpKind::Import(KnownPackage::StdIo)) => "import_std_io",
-            Self::Op(OpKind::Import(KnownPackage::StdStr)) => "import_std_str",
-            Self::Op(OpKind::Import(KnownPackage::StdOption)) => "import_std_option",
-            Self::Op(OpKind::Import(KnownPackage::Serde)) => "import_serde",
-            Self::Op(OpKind::Import(KnownPackage::Winnow)) => "import_winnow",
-            Self::Op(OpKind::Import(KnownPackage::ThisError)) => "import_thiserror",
-            Self::Op(OpKind::Import(KnownPackage::Tracing)) => "import_tracing",
-            Self::Op(OpKind::Import(KnownPackage::AsyncTrait)) => "import_async_trait",
-            Self::Op(OpKind::Import(KnownPackage::Anyhow)) => "import_anyhow",
-            Self::Op(OpKind::Import(KnownPackage::Unsupported)) => "import_unsupported",
-            Self::Op(OpKind::Import(KnownPackage::Other)) => "import_other",
-        }
-    }
-
-    pub const Println: Self = Self::Op(OpKind::Println);
-    pub const Print: Self = Self::Op(OpKind::Print);
-    pub const Format: Self = Self::Op(OpKind::Format);
+    // Ergonomic shortcuts for every `IntrinsicKind` variant, used pervasively
+    // across target-language backends (`matches!(call.kind, CallKind::X)`,
+    // `match call.kind { CallKind::X => .. }`). All genuine intrinsics go
+    // straight to `Self::Intrinsic` — none of these ever need the portable-op
+    // `Op` representation (see `intrinsic_kind`'s doc comment).
+    pub const Println: Self = Self::Intrinsic(IntrinsicKind::Println);
+    pub const Print: Self = Self::Intrinsic(IntrinsicKind::Print);
+    pub const Format: Self = Self::Intrinsic(IntrinsicKind::Format);
     pub const Len: Self = Self::Intrinsic(IntrinsicKind::Len);
     pub const Slice: Self = Self::Intrinsic(IntrinsicKind::Slice);
     pub const DebugAssertions: Self = Self::Intrinsic(IntrinsicKind::DebugAssertions);
-    pub const Input: Self = Self::Op(OpKind::Input);
+    pub const Input: Self = Self::Intrinsic(IntrinsicKind::Input);
     pub const Panic: Self = Self::Intrinsic(IntrinsicKind::Panic);
     pub const CatchUnwind: Self = Self::Intrinsic(IntrinsicKind::CatchUnwind);
     pub const CatchUnwindResult: Self = Self::Intrinsic(IntrinsicKind::CatchUnwindResult);
-    pub const TimeNow: Self = Self::Op(OpKind::TimeNow);
-    pub const FsReadToString: Self = Self::Op(OpKind::FsReadToString);
-    pub const FsWriteString: Self = Self::Op(OpKind::FsWriteString);
-    pub const FsAppendString: Self = Self::Op(OpKind::FsAppendString);
-    pub const FsExists: Self = Self::Op(OpKind::FsExists);
-    pub const FsIsDir: Self = Self::Op(OpKind::FsIsDir);
-    pub const FsIsFile: Self = Self::Op(OpKind::FsIsFile);
-    pub const FsReadDir: Self = Self::Op(OpKind::FsReadDir);
-    pub const FsWalkDir: Self = Self::Op(OpKind::FsWalkDir);
-    pub const FsCreateDirAll: Self = Self::Op(OpKind::FsCreateDirAll);
-    pub const FsRemoveFile: Self = Self::Op(OpKind::FsRemoveFile);
-    pub const FsRemoveDirAll: Self = Self::Op(OpKind::FsRemoveDirAll);
-    pub const FsGlob: Self = Self::Op(OpKind::FsGlob);
-    pub const EnvCurrentDir: Self = Self::Op(OpKind::EnvCurrentDir);
-    pub const EnvTempDir: Self = Self::Op(OpKind::EnvTempDir);
-    pub const EnvHomeDir: Self = Self::Op(OpKind::EnvHomeDir);
-    pub const EnvVar: Self = Self::Op(OpKind::EnvVar);
-    pub const EnvVarExists: Self = Self::Op(OpKind::EnvVarExists);
+    pub const TimeNow: Self = Self::Intrinsic(IntrinsicKind::TimeNow);
+    pub const FsReadToString: Self = Self::Intrinsic(IntrinsicKind::FsReadToString);
+    pub const FsWriteString: Self = Self::Intrinsic(IntrinsicKind::FsWriteString);
+    pub const FsAppendString: Self = Self::Intrinsic(IntrinsicKind::FsAppendString);
+    pub const FsExists: Self = Self::Intrinsic(IntrinsicKind::FsExists);
+    pub const FsIsDir: Self = Self::Intrinsic(IntrinsicKind::FsIsDir);
+    pub const FsIsFile: Self = Self::Intrinsic(IntrinsicKind::FsIsFile);
+    pub const FsReadDir: Self = Self::Intrinsic(IntrinsicKind::FsReadDir);
+    pub const FsWalkDir: Self = Self::Intrinsic(IntrinsicKind::FsWalkDir);
+    pub const FsCreateDirAll: Self = Self::Intrinsic(IntrinsicKind::FsCreateDirAll);
+    pub const FsRemoveFile: Self = Self::Intrinsic(IntrinsicKind::FsRemoveFile);
+    pub const FsRemoveDirAll: Self = Self::Intrinsic(IntrinsicKind::FsRemoveDirAll);
+    pub const FsGlob: Self = Self::Intrinsic(IntrinsicKind::FsGlob);
+    pub const EnvCurrentDir: Self = Self::Intrinsic(IntrinsicKind::EnvCurrentDir);
+    pub const EnvTempDir: Self = Self::Intrinsic(IntrinsicKind::EnvTempDir);
+    pub const EnvHomeDir: Self = Self::Intrinsic(IntrinsicKind::EnvHomeDir);
+    pub const EnvVar: Self = Self::Intrinsic(IntrinsicKind::EnvVar);
+    pub const EnvVarExists: Self = Self::Intrinsic(IntrinsicKind::EnvVarExists);
     pub const PathJoin: Self = Self::Intrinsic(IntrinsicKind::PathJoin);
     pub const PathParent: Self = Self::Intrinsic(IntrinsicKind::PathParent);
     pub const PathFileName: Self = Self::Intrinsic(IntrinsicKind::PathFileName);
@@ -721,20 +549,20 @@ impl CallKind {
     pub const PathStem: Self = Self::Intrinsic(IntrinsicKind::PathStem);
     pub const PathIsAbsolute: Self = Self::Intrinsic(IntrinsicKind::PathIsAbsolute);
     pub const PathNormalize: Self = Self::Intrinsic(IntrinsicKind::PathNormalize);
-    pub const IoReadStdinToString: Self = Self::Op(OpKind::IoReadStdinToString);
-    pub const IoWriteStdout: Self = Self::Op(OpKind::IoWriteStdout);
-    pub const IoWriteStderr: Self = Self::Op(OpKind::IoWriteStderr);
-    pub const YamlToJson: Self = Self::Op(OpKind::YamlToJson);
-    pub const JsonParse: Self = Self::Op(OpKind::JsonParse);
+    pub const IoReadStdinToString: Self = Self::Intrinsic(IntrinsicKind::IoReadStdinToString);
+    pub const IoWriteStdout: Self = Self::Intrinsic(IntrinsicKind::IoWriteStdout);
+    pub const IoWriteStderr: Self = Self::Intrinsic(IntrinsicKind::IoWriteStderr);
+    pub const YamlToJson: Self = Self::Intrinsic(IntrinsicKind::YamlToJson);
+    pub const JsonParse: Self = Self::Intrinsic(IntrinsicKind::JsonParse);
     pub const TestCommandMockReset: Self = Self::Intrinsic(IntrinsicKind::TestCommandMockReset);
     pub const TestCommandMockPush: Self = Self::Intrinsic(IntrinsicKind::TestCommandMockPush);
     pub const TestCommandMockTakeCalls: Self =
         Self::Intrinsic(IntrinsicKind::TestCommandMockTakeCalls);
     pub const TestCommandMockApply: Self = Self::Intrinsic(IntrinsicKind::TestCommandMockApply);
-    pub const Sleep: Self = Self::Op(OpKind::Sleep);
-    pub const Spawn: Self = Self::Op(OpKind::Spawn);
-    pub const Join: Self = Self::Op(OpKind::Join);
-    pub const Select: Self = Self::Op(OpKind::Select);
+    pub const Sleep: Self = Self::Intrinsic(IntrinsicKind::Sleep);
+    pub const Spawn: Self = Self::Intrinsic(IntrinsicKind::Spawn);
+    pub const Join: Self = Self::Intrinsic(IntrinsicKind::Join);
+    pub const Select: Self = Self::Intrinsic(IntrinsicKind::Select);
     pub const Yield: Self = Self::Intrinsic(IntrinsicKind::Yield);
     pub const SizeOf: Self = Self::Intrinsic(IntrinsicKind::SizeOf);
     pub const ReflectFields: Self = Self::Intrinsic(IntrinsicKind::ReflectFields);
@@ -759,8 +587,8 @@ impl CallKind {
         Self::Intrinsic(IntrinsicKind::ProcMacroTokenStreamFromStr);
     pub const ProcMacroTokenStreamToString: Self =
         Self::Intrinsic(IntrinsicKind::ProcMacroTokenStreamToString);
-    pub const ShellExec: Self = Self::Op(OpKind::ShellExec);
-    pub const ShellFileCopy: Self = Self::Op(OpKind::ShellFileCopy);
-    pub const ShellFileTemplate: Self = Self::Op(OpKind::ShellFileTemplate);
-    pub const ShellFileRsync: Self = Self::Op(OpKind::ShellFileRsync);
+    pub const ShellExec: Self = Self::Intrinsic(IntrinsicKind::ShellExec);
+    pub const ShellFileCopy: Self = Self::Intrinsic(IntrinsicKind::ShellFileCopy);
+    pub const ShellFileTemplate: Self = Self::Intrinsic(IntrinsicKind::ShellFileTemplate);
+    pub const ShellFileRsync: Self = Self::Intrinsic(IntrinsicKind::ShellFileRsync);
 }
