@@ -2,7 +2,7 @@ use crate::{CliError, Result};
 
 /// Supported AST output targets for the CLI.
 #[derive(Debug, Clone, Copy)]
-pub enum LanguageTarget {
+pub enum BuiltinLanguageTarget {
     FerroPhase,
     TypeScript,
     JavaScript,
@@ -18,21 +18,21 @@ pub enum LanguageTarget {
 }
 
 /// Parse an AST output target from a user-provided string.
-pub fn parse_language_target(s: &str) -> Result<LanguageTarget> {
+pub fn parse_language_target(s: &str) -> Result<BuiltinLanguageTarget> {
     let normalized = s.to_lowercase();
     let target = match normalized.as_str() {
-        "fp" | "ferro" | "ferrophase" => LanguageTarget::FerroPhase,
-        "typescript" | "ts" => LanguageTarget::TypeScript,
-        "javascript" | "js" => LanguageTarget::JavaScript,
-        "csharp" | "cs" | "c#" => LanguageTarget::CSharp,
-        "python" | "py" => LanguageTarget::Python,
-        "go" | "golang" => LanguageTarget::Go,
-        "gdscript" | "gd" => LanguageTarget::Gdscript,
-        "zig" => LanguageTarget::Zig,
-        "sycl" => LanguageTarget::Sycl,
-        "rust" | "rs" => LanguageTarget::Rust,
-        "wit" => LanguageTarget::Wit,
-        "kotlin" | "kt" => LanguageTarget::Kotlin,
+        "fp" | "ferro" | "ferrophase" => BuiltinLanguageTarget::FerroPhase,
+        "typescript" | "ts" => BuiltinLanguageTarget::TypeScript,
+        "javascript" | "js" => BuiltinLanguageTarget::JavaScript,
+        "csharp" | "cs" | "c#" => BuiltinLanguageTarget::CSharp,
+        "python" | "py" => BuiltinLanguageTarget::Python,
+        "go" | "golang" => BuiltinLanguageTarget::Go,
+        "gdscript" | "gd" => BuiltinLanguageTarget::Gdscript,
+        "zig" => BuiltinLanguageTarget::Zig,
+        "sycl" => BuiltinLanguageTarget::Sycl,
+        "rust" | "rs" => BuiltinLanguageTarget::Rust,
+        "wit" => BuiltinLanguageTarget::Wit,
+        "kotlin" | "kt" => BuiltinLanguageTarget::Kotlin,
         _ => {
             return Err(CliError::InvalidInput(format!("Unsupported target: {}", s)));
         }
@@ -41,20 +41,20 @@ pub fn parse_language_target(s: &str) -> Result<LanguageTarget> {
 }
 
 /// File extension to use when emitting code for a target.
-pub fn output_extension_for(target: LanguageTarget) -> &'static str {
+pub fn output_extension_for(target: BuiltinLanguageTarget) -> &'static str {
     match target {
-        LanguageTarget::FerroPhase => "fp",
-        LanguageTarget::TypeScript => "ts",
-        LanguageTarget::JavaScript => "js",
-        LanguageTarget::CSharp => "cs",
-        LanguageTarget::Python => "py",
-        LanguageTarget::Go => "go",
-        LanguageTarget::Gdscript => "gd",
-        LanguageTarget::Zig => "zig",
-        LanguageTarget::Sycl => "cpp",
-        LanguageTarget::Rust => "rs",
-        LanguageTarget::Wit => "wit",
-        LanguageTarget::Kotlin => "kt",
+        BuiltinLanguageTarget::FerroPhase => "fp",
+        BuiltinLanguageTarget::TypeScript => "ts",
+        BuiltinLanguageTarget::JavaScript => "js",
+        BuiltinLanguageTarget::CSharp => "cs",
+        BuiltinLanguageTarget::Python => "py",
+        BuiltinLanguageTarget::Go => "go",
+        BuiltinLanguageTarget::Gdscript => "gd",
+        BuiltinLanguageTarget::Zig => "zig",
+        BuiltinLanguageTarget::Sycl => "cpp",
+        BuiltinLanguageTarget::Rust => "rs",
+        BuiltinLanguageTarget::Wit => "wit",
+        BuiltinLanguageTarget::Kotlin => "kt",
     }
 }
 
@@ -62,13 +62,13 @@ pub fn output_extension_for(target: LanguageTarget) -> &'static str {
 /// `fp_core::capabilities::LanguageCapabilities`. Each target-emitting
 /// crate that wants anything other than the conservative default declares
 /// its own `CAPABILITIES` const (e.g. `fp_kotlin::CAPABILITIES`); this is
-/// the one place that maps a requested `LanguageTarget` to the right one.
+/// the one place that maps a requested `BuiltinLanguageTarget` to the right one.
 /// Anything not listed here (including any target whose crate is a
 /// disabled optional feature) gets `LanguageCapabilities::NATIVE`.
-pub fn capabilities_for_target(target: LanguageTarget) -> fp_core::capabilities::LanguageCapabilities {
+pub fn capabilities_for_target(target: BuiltinLanguageTarget) -> fp_core::capabilities::LanguageCapabilities {
     match target {
         #[cfg(feature = "lang-kotlin")]
-        LanguageTarget::Kotlin => fp_kotlin::CAPABILITIES,
+        BuiltinLanguageTarget::Kotlin => fp_kotlin::CAPABILITIES,
         _ => fp_core::capabilities::LanguageCapabilities::NATIVE,
     }
 }

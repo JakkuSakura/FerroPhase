@@ -191,10 +191,15 @@ fn target_triple_matches_host(target_triple: &str) -> bool {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum CompileTarget {
     Backend(BackendKind),
-    Ast(crate::languages::backend::LanguageTarget),
+    Ast(crate::languages::backend::BuiltinLanguageTarget),
+    /// A target registered at runtime via `crate::languages::registry`
+    /// (e.g. `skln-fp-graph`'s `fp-graph` binary) — see that module's doc
+    /// comment for why this can't just be another `BuiltinLanguageTarget`
+    /// variant.
+    External(std::sync::Arc<dyn crate::languages::registry::LanguageTarget>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -221,9 +226,10 @@ impl EmitterKind {
 /// Execute the compile command
 pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let target = resolve_compile_target(&args)?;
-    let target_label = match target {
+    let target_label = match &target {
         CompileTarget::Backend(backend) => backend.as_str().to_string(),
         CompileTarget::Ast(ast_target) => format!("{:?}", ast_target),
+        CompileTarget::External(external) => format!("external:{}", external.name()),
     };
     info!("Starting compilation with target: {}", target_label);
 
@@ -253,6 +259,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
             }
         }
         CompileTarget::Ast(_) => BackendKind::Interpret,
+        CompileTarget::External(_) => BackendKind::Interpret,
     };
     let emit_text_bytecode = is_text_backend;
 
@@ -275,7 +282,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         let output_file = determine_output_path(
             input_file,
             args.output.as_ref(),
-            target,
+            target.clone(),
             args.emitter,
             args.target_triple.as_deref(),
             input_class,
@@ -287,7 +294,8 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
         // Compile single file
         if let Some(artifact_path) =
-            compile_file(input_file, &output_file, &args, target, config, input_class).await?
+            compile_file(input_file, &output_file, &args, target.clone(), config, input_class)
+                .await?
         {
             compiled_files.push(artifact_path);
         }
@@ -311,7 +319,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
                 return Ok(());
             }
         }
-        if matches!(target, CompileTarget::Ast(_)) {
+        if matches!(target, CompileTarget::Ast(_) | CompileTarget::External(_)) {
             return Err(CliError::InvalidInput(
                 "--exec is not supported for AST targets".to_string(),
             ));
@@ -407,14 +415,22 @@ async fn compile_file(
     info!("Compiling: {} -> {}", input.display(), output.display());
 
     if input.is_dir() {
-        if let CompileTarget::Ast(target) = target {
-            compile_project(input, output, args, target).await?;
-            return Ok(Some(output.to_path_buf()));
+        match target {
+            CompileTarget::Ast(ast_target) => {
+                compile_project(input, output, args, ast_target).await?;
+                return Ok(Some(output.to_path_buf()));
+            }
+            CompileTarget::External(external) => {
+                compile_project_external(input, output, args, external).await?;
+                return Ok(Some(output.to_path_buf()));
+            }
+            CompileTarget::Backend(_) => {
+                return Err(CliError::InvalidInput(
+                    "directory input requires an AST target (--target kotlin, typescript, etc.)"
+                        .to_string(),
+                ));
+            }
         }
-        return Err(CliError::InvalidInput(
-            "directory input requires an AST target (--target kotlin, typescript, etc.)"
-                .to_string(),
-        ));
     }
 
     let native_asm_kind = match input_class {
@@ -443,9 +459,19 @@ async fn compile_file(
         return Ok(Some(output.to_path_buf()));
     }
 
+    // A lone source file is just the trivial one-package case of the same
+    // package/workspace discovery an `External` target's directory input
+    // goes through above — not a separate code path (see
+    // `compile_project_external`'s doc comment).
+    if let CompileTarget::External(external) = target {
+        compile_project_external(input, output, args, external).await?;
+        return Ok(Some(output.to_path_buf()));
+    }
+
     let backend = match target {
         CompileTarget::Backend(backend) => backend,
         CompileTarget::Ast(_) => unreachable!("AST target should return early"),
+        CompileTarget::External(_) => unreachable!("External target should return early"),
     };
 
     if !args.disable_stage.is_empty() {
@@ -646,7 +672,7 @@ async fn try_compile_with_compiler(
             // Reuse the same AST-target Rust transpile path `--target rust`
             // already goes through (`fp_lang::PrettyAstSerializer`) instead
             // of a second Rust-emission implementation.
-            compile_emit_target(input, output, args, crate::languages::backend::LanguageTarget::Rust)
+            compile_emit_target(input, output, args, crate::languages::backend::BuiltinLanguageTarget::Rust)
                 .await?;
             Ok(Some(output.to_path_buf()))
         }
@@ -762,7 +788,7 @@ async fn compile_emit_target(
     input: &Path,
     output: &Path,
     args: &CompileArgs,
-    target: crate::languages::backend::LanguageTarget,
+    target: crate::languages::backend::BuiltinLanguageTarget,
 ) -> Result<()> {
     if is_tsconfig(input) {
         return Err(CliError::Compilation(
@@ -920,7 +946,7 @@ async fn compile_project(
     input: &Path,
     output: &Path,
     args: &CompileArgs,
-    target: crate::languages::backend::LanguageTarget,
+    target: crate::languages::backend::BuiltinLanguageTarget,
 ) -> Result<()> {
     use crate::languages::detect_project_language;
     use crate::languages::discovery::provider_for_language;
@@ -1064,7 +1090,7 @@ async fn compile_project(
     // `.substring`) are both decided workspace-wide: a struct's fields can
     // be defined in one package and mutated/read from another.
     let (workspace_mutated_fields, workspace_list_fields, workspace_string_fields, workspace_enum_fields, workspace_enum_variant_names) =
-        if matches!(target, crate::languages::backend::LanguageTarget::Kotlin) {
+        if matches!(target, crate::languages::backend::BuiltinLanguageTarget::Kotlin) {
             (
                 fp_kotlin::collect_mutated_field_names(prepared.iter().flat_map(|(_, src)| &src.items)),
                 fp_kotlin::collect_list_field_names(prepared.iter().flat_map(|(_, src)| &src.items)),
@@ -1117,7 +1143,7 @@ async fn compile_project(
         let source = &source;
 
         // Serialize package via language-specific serializer
-        let files = if let crate::languages::backend::LanguageTarget::Kotlin = target {
+        let files = if let crate::languages::backend::BuiltinLanguageTarget::Kotlin = target {
             let serializer = fp_kotlin::KotlinSerializer;
             serializer
                 .serialize_package(source, &workspace_packages, &workspace_mutated_fields, &workspace_list_fields, &workspace_string_fields, &workspace_enum_fields, &workspace_referenced_paths, &workspace_enum_variant_names)
@@ -1142,7 +1168,7 @@ async fn compile_project(
     }
 
     // Generate workspace-level Gradle project for multi-module builds
-    if matches!(target, crate::languages::backend::LanguageTarget::Kotlin) {
+    if matches!(target, crate::languages::backend::BuiltinLanguageTarget::Kotlin) {
         let pkg_names: Vec<String> = packages.iter().map(|p| p.as_str().to_string()).collect();
         let root_name = input
             .file_name()
@@ -1179,6 +1205,197 @@ async fn compile_project(
     Ok(())
 }
 
+/// Runs a registry-provided (`CompileTarget::External`) target through the
+/// same package/workspace discovery + typecheck pipeline `compile_project`
+/// uses for built-in targets (see `crate::languages::registry`'s doc
+/// comment for why an externally-registered target can't just be another
+/// `crate::languages::backend::BuiltinLanguageTarget` match arm inside
+/// `compile_project` itself). Unlike built-in targets — which serialize and
+/// write one file per package — an `External` target *collects* facts
+/// across every package via `LanguageTarget::visit_package` and produces one
+/// accumulated `AstTargetOutput` via `LanguageTarget::finish` at the end, so
+/// this writes a single output file (+ side files), the same single-write
+/// tail `compile_emit_target` uses for single files — not a directory tree
+/// of per-package files like `compile_project`'s built-in-target path.
+///
+/// A lone source file is handled here too, as the trivial one-package case
+/// of the same discovery (`provider_and_package_for_input`/
+/// `compiler::resolve_source_package`) rather than a separate code path —
+/// see `compile_file`'s dispatch.
+async fn compile_project_external(
+    input: &Path,
+    output: &Path,
+    args: &CompileArgs,
+    target: std::sync::Arc<dyn crate::languages::registry::LanguageTarget>,
+) -> Result<()> {
+    use crate::languages::detect_project_language;
+    use crate::languages::discovery::provider_for_language;
+    use crate::languages::registry::{LanguageTargetContext, LanguageTargetPackage};
+
+    let (provider, packages, lang): (
+        std::sync::Arc<dyn fp_core::package::provider::PackageProvider>,
+        Vec<PackageId>,
+        String,
+    ) = if input.is_dir() {
+        let lang = args
+            .source_language
+            .as_deref()
+            .map(|l| l.trim().to_ascii_lowercase())
+            .or_else(|| detect_project_language(input).map(|l| l.name.to_string()))
+            .ok_or_else(|| {
+                CliError::Compilation(format!(
+                    "could not detect source language for project at {}: no Cargo.toml or Magnet.toml found; pass --source-language explicitly",
+                    input.display()
+                ))
+            })?;
+        let provider = provider_for_language(&lang, input)
+            .ok_or_else(|| CliError::Compilation(format!("no provider for language: {lang}")))?;
+        let packages = provider
+            .list_packages()
+            .map_err(|e| CliError::Compilation(e.to_string()))?;
+        (provider, packages, lang)
+    } else {
+        let lang = compiler::resolve_source_language(input, args.source_language.as_deref())?;
+        let (provider, package_id, _tag) = provider_and_package_for_input(input, &lang)?;
+        (provider, vec![package_id], lang)
+    };
+
+    info!(
+        "Project: {} package(s), language: {} (external target: {})",
+        packages.len(),
+        lang,
+        target.name()
+    );
+
+    // `materializer_for_language` only recognizes built-in target names
+    // (e.g. "kotlin"/"kt" for `output_extension_for(Kotlin) == "kt"`) — an
+    // externally-registered target has no such target-language op
+    // materializer, so this always resolves to `None` here (unlike
+    // `compile_project`'s built-in-target path). Source-language
+    // normalization (`normalizer_for_language`) still applies exactly as it
+    // does for every other target, keyed off the *source* language, not the
+    // target.
+    let materializer =
+        crate::languages::materializer::materializer_for_language(target.output_extension());
+    let normalizer = crate::languages::normalizer::normalizer_for_language(&lang, !args.skip_typing);
+
+    let materializing_provider: std::sync::Arc<dyn fp_core::package::provider::PackageProvider> =
+        std::sync::Arc::new(TranspileMaterializingPackageProvider::new(
+            provider.clone(),
+            materializer,
+            normalizer,
+        ));
+
+    let ctx = LanguageTargetContext {
+        project_root: input.to_path_buf(),
+    };
+
+    for package_id in &packages {
+        let source = if !args.skip_typing {
+            let provider_for_typecheck = materializing_provider.clone();
+            let package_id_for_typecheck = package_id.clone();
+            let lossy = LossyCompileOptions {
+                enabled: args.lossy || fp_core::config::lossy_mode(),
+            };
+            let lang_for_typecheck = lang.clone();
+            // Externally-registered targets have no declared
+            // `LanguageCapabilities` of their own (the trait in
+            // `registry.rs` doesn't expose one) — use the same conservative
+            // default `capabilities_for_target` falls back to for every
+            // built-in target it doesn't special-case.
+            let capabilities = fp_core::capabilities::LanguageCapabilities::NATIVE;
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                compiler::typecheck_package(
+                    provider_for_typecheck,
+                    &package_id_for_typecheck,
+                    lossy,
+                    &lang_for_typecheck,
+                    capabilities,
+                )
+            })) {
+                Ok(Ok(typed_source)) => typed_source,
+                Ok(Err(e)) => {
+                    if !lossy.enabled {
+                        return Err(CliError::Compilation(format!(
+                            "typecheck failed for {}: {}",
+                            package_id.as_str(),
+                            e
+                        )));
+                    }
+                    warn!(
+                        "typecheck failed for {}: {} — falling back to untyped (lossy mode)",
+                        package_id.as_str(),
+                        e
+                    );
+                    materializing_provider
+                        .load_package_source(package_id)
+                        .map_err(|e| CliError::Compilation(e.to_string()))?
+                }
+                Err(panic_info) => {
+                    let msg = panic_info
+                        .downcast_ref::<String>()
+                        .map(|s| s.as_str())
+                        .or_else(|| panic_info.downcast_ref::<&str>().copied())
+                        .unwrap_or("(unknown)");
+                    if !lossy.enabled {
+                        return Err(CliError::Compilation(format!(
+                            "typecheck panicked for {}: {}",
+                            package_id.as_str(),
+                            msg
+                        )));
+                    }
+                    warn!(
+                        "typecheck panicked for {}: {} — falling back to untyped (lossy mode)",
+                        package_id.as_str(),
+                        msg
+                    );
+                    materializing_provider
+                        .load_package_source(package_id)
+                        .map_err(|e| CliError::Compilation(e.to_string()))?
+                }
+            }
+        } else {
+            materializing_provider
+                .load_package_source(package_id)
+                .map_err(|e| CliError::Compilation(e.to_string()))?
+        };
+
+        let pkg = LanguageTargetPackage {
+            package_id,
+            items: &source.items,
+        };
+        target
+            .visit_package(&pkg, &ctx)
+            .map_err(|e| CliError::Compilation(e.to_string()))?;
+    }
+
+    let result = target
+        .finish()
+        .map_err(|e| CliError::Compilation(e.to_string()))?;
+
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+    }
+    std::fs::write(output, &result.code).map_err(CliError::Io)?;
+
+    for side_file in result.side_files {
+        let mut side_path = output.to_path_buf();
+        let file_stem = side_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| CliError::InvalidInput("Invalid output file name".to_string()))?;
+        side_path.set_file_name(format!("{}.{}", file_stem, side_file.extension));
+        std::fs::write(side_path, side_file.contents).map_err(CliError::Io)?;
+    }
+
+    info!(
+        "Generated external target output ({}): {}",
+        target.name(),
+        output.display()
+    );
+    Ok(())
+}
+
 /// Serializes a whole package via a target's own `serialize_package`,
 /// covering every target `compile_project` supports except Kotlin (which
 /// needs extra workspace-wide state — mutated fields, list/string field
@@ -1189,15 +1406,15 @@ async fn compile_project(
 #[allow(unused_variables)]
 fn serialize_package_for_target(
     source: &PackageSource,
-    target: crate::languages::backend::LanguageTarget,
+    target: crate::languages::backend::BuiltinLanguageTarget,
     args: &CompileArgs,
     package_root: &Path,
 ) -> Result<Vec<(String, String)>> {
     match target {
-        crate::languages::backend::LanguageTarget::FerroPhase => fp_c::CSerializer
+        crate::languages::backend::BuiltinLanguageTarget::FerroPhase => fp_c::CSerializer
             .serialize_package(source)
             .map_err(|e| CliError::Compilation(e.to_string())),
-        crate::languages::backend::LanguageTarget::TypeScript => {
+        crate::languages::backend::BuiltinLanguageTarget::TypeScript => {
             #[cfg(feature = "lang-typescript")]
             {
                 TypeScriptSerializer::new(args.type_defs)
@@ -1212,7 +1429,7 @@ fn serialize_package_for_target(
                 ))
             }
         }
-        crate::languages::backend::LanguageTarget::JavaScript => {
+        crate::languages::backend::BuiltinLanguageTarget::JavaScript => {
             #[cfg(feature = "lang-typescript")]
             {
                 JavaScriptSerializer
@@ -1227,7 +1444,7 @@ fn serialize_package_for_target(
                 ))
             }
         }
-        crate::languages::backend::LanguageTarget::CSharp => {
+        crate::languages::backend::BuiltinLanguageTarget::CSharp => {
             #[cfg(feature = "lang-csharp")]
             {
                 CSharpSerializer
@@ -1239,10 +1456,10 @@ fn serialize_package_for_target(
                 Err(disabled_feature_error("lang-csharp", "C# package emission"))
             }
         }
-        crate::languages::backend::LanguageTarget::Kotlin => {
+        crate::languages::backend::BuiltinLanguageTarget::Kotlin => {
             unreachable!("Kotlin is dispatched by the caller before reaching this function")
         }
-        crate::languages::backend::LanguageTarget::Python => {
+        crate::languages::backend::BuiltinLanguageTarget::Python => {
             #[cfg(feature = "lang-python")]
             {
                 PythonSerializer
@@ -1257,7 +1474,7 @@ fn serialize_package_for_target(
                 ))
             }
         }
-        crate::languages::backend::LanguageTarget::Go => {
+        crate::languages::backend::BuiltinLanguageTarget::Go => {
             #[cfg(feature = "lang-golang")]
             {
                 GoSerializer::default()
@@ -1269,7 +1486,7 @@ fn serialize_package_for_target(
                 Err(disabled_feature_error("lang-golang", "Go package emission"))
             }
         }
-        crate::languages::backend::LanguageTarget::Gdscript => {
+        crate::languages::backend::BuiltinLanguageTarget::Gdscript => {
             #[cfg(feature = "lang-godot")]
             {
                 GdscriptSerializer
@@ -1284,7 +1501,7 @@ fn serialize_package_for_target(
                 ))
             }
         }
-        crate::languages::backend::LanguageTarget::Zig => {
+        crate::languages::backend::BuiltinLanguageTarget::Zig => {
             #[cfg(feature = "lang-zig")]
             {
                 ZigSerializer
@@ -1296,7 +1513,7 @@ fn serialize_package_for_target(
                 Err(disabled_feature_error("lang-zig", "Zig package emission"))
             }
         }
-        crate::languages::backend::LanguageTarget::Sycl => {
+        crate::languages::backend::BuiltinLanguageTarget::Sycl => {
             #[cfg(feature = "lang-sycl")]
             {
                 SyclSerializer
@@ -1308,10 +1525,10 @@ fn serialize_package_for_target(
                 Err(disabled_feature_error("lang-sycl", "SYCL package emission"))
             }
         }
-        crate::languages::backend::LanguageTarget::Rust => PrettyAstSerializer::new()
+        crate::languages::backend::BuiltinLanguageTarget::Rust => PrettyAstSerializer::new()
             .serialize_package(source)
             .map_err(|e| CliError::Compilation(e.to_string())),
-        crate::languages::backend::LanguageTarget::Wit => {
+        crate::languages::backend::BuiltinLanguageTarget::Wit => {
             #[cfg(feature = "lang-wit")]
             {
                 WitSerializer::with_options(build_wit_options(package_root, args.single_world))
@@ -1329,13 +1546,13 @@ fn serialize_package_for_target(
 #[allow(unused_variables)]
 fn emit_ast_target(
     node: &File,
-    target: crate::languages::backend::LanguageTarget,
+    target: crate::languages::backend::BuiltinLanguageTarget,
     emit_type_defs: bool,
     input: &Path,
     single_world: bool,
 ) -> Result<AstTargetOutput> {
     match target {
-        crate::languages::backend::LanguageTarget::FerroPhase => {
+        crate::languages::backend::BuiltinLanguageTarget::FerroPhase => {
             let serializer = fp_c::CSerializer;
             let code = serializer
                 .serialize_file(node)
@@ -1345,7 +1562,7 @@ fn emit_ast_target(
                 side_files: Vec::new(),
             })
         }
-        crate::languages::backend::LanguageTarget::TypeScript => {
+        crate::languages::backend::BuiltinLanguageTarget::TypeScript => {
             #[cfg(feature = "lang-typescript")]
             {
                 let serializer = TypeScriptSerializer::new(emit_type_defs);
@@ -1372,7 +1589,7 @@ fn emit_ast_target(
                 ))
             }
         }
-        crate::languages::backend::LanguageTarget::JavaScript => {
+        crate::languages::backend::BuiltinLanguageTarget::JavaScript => {
             #[cfg(feature = "lang-typescript")]
             {
                 let serializer = JavaScriptSerializer;
@@ -1392,7 +1609,7 @@ fn emit_ast_target(
                 ))
             }
         }
-        crate::languages::backend::LanguageTarget::CSharp => {
+        crate::languages::backend::BuiltinLanguageTarget::CSharp => {
             #[cfg(feature = "lang-csharp")]
             {
                 let serializer = CSharpSerializer;
@@ -1409,7 +1626,7 @@ fn emit_ast_target(
                 Err(disabled_feature_error("lang-csharp", "C# AST emission"))
             }
         }
-        crate::languages::backend::LanguageTarget::Kotlin => {
+        crate::languages::backend::BuiltinLanguageTarget::Kotlin => {
             #[cfg(feature = "lang-kotlin")]
             {
                 let serializer = KotlinSerializer;
@@ -1426,7 +1643,7 @@ fn emit_ast_target(
                 Err(disabled_feature_error("lang-kotlin", "Kotlin AST emission"))
             }
         }
-        crate::languages::backend::LanguageTarget::Python => {
+        crate::languages::backend::BuiltinLanguageTarget::Python => {
             #[cfg(feature = "lang-python")]
             {
                 let serializer = PythonSerializer;
@@ -1443,7 +1660,7 @@ fn emit_ast_target(
                 Err(disabled_feature_error("lang-python", "Python AST emission"))
             }
         }
-        crate::languages::backend::LanguageTarget::Go => {
+        crate::languages::backend::BuiltinLanguageTarget::Go => {
             #[cfg(feature = "lang-golang")]
             {
                 let serializer = GoSerializer::default();
@@ -1460,7 +1677,7 @@ fn emit_ast_target(
                 Err(disabled_feature_error("lang-golang", "Go AST emission"))
             }
         }
-        crate::languages::backend::LanguageTarget::Gdscript => {
+        crate::languages::backend::BuiltinLanguageTarget::Gdscript => {
             #[cfg(feature = "lang-godot")]
             {
                 let serializer = GdscriptSerializer;
@@ -1480,7 +1697,7 @@ fn emit_ast_target(
                 ))
             }
         }
-        crate::languages::backend::LanguageTarget::Zig => {
+        crate::languages::backend::BuiltinLanguageTarget::Zig => {
             #[cfg(feature = "lang-zig")]
             {
                 let serializer = ZigSerializer;
@@ -1497,7 +1714,7 @@ fn emit_ast_target(
                 Err(disabled_feature_error("lang-zig", "Zig AST emission"))
             }
         }
-        crate::languages::backend::LanguageTarget::Sycl => {
+        crate::languages::backend::BuiltinLanguageTarget::Sycl => {
             #[cfg(feature = "lang-sycl")]
             {
                 let serializer = SyclSerializer;
@@ -1514,7 +1731,7 @@ fn emit_ast_target(
                 Err(disabled_feature_error("lang-sycl", "SYCL AST emission"))
             }
         }
-        crate::languages::backend::LanguageTarget::Rust => {
+        crate::languages::backend::BuiltinLanguageTarget::Rust => {
             let serializer = PrettyAstSerializer::new();
             let code = serializer
                 .serialize_file(node)
@@ -1524,7 +1741,7 @@ fn emit_ast_target(
                 side_files: Vec::new(),
             })
         }
-        crate::languages::backend::LanguageTarget::Wit => {
+        crate::languages::backend::BuiltinLanguageTarget::Wit => {
             #[cfg(feature = "lang-wit")]
             {
                 let serializer =
@@ -1624,8 +1841,18 @@ fn is_tsconfig(path: &Path) -> bool {
 
 fn resolve_compile_target(args: &CompileArgs) -> Result<CompileTarget> {
     if let Some(target) = args.target.as_deref() {
-        let ast_target = crate::languages::backend::parse_language_target(target)?;
-        return Ok(CompileTarget::Ast(ast_target));
+        if let Ok(ast_target) = crate::languages::backend::parse_language_target(target) {
+            return Ok(CompileTarget::Ast(ast_target));
+        }
+        if let Some(external) = crate::languages::registry::find_registered_language_target(target)
+        {
+            return Ok(CompileTarget::External(external));
+        }
+        // Re-run `parse_language_target` for its real error message (unknown
+        // built-in name) now that the registry fallback has also missed —
+        // avoids duplicating `CliError::InvalidInput` construction here.
+        crate::languages::backend::parse_language_target(target)?;
+        unreachable!("parse_language_target either succeeds or returns Err above");
     }
     Ok(CompileTarget::Backend(args.backend))
 }
@@ -1920,6 +2147,29 @@ fn determine_output_path(
         CompileTarget::Backend(backend) => backend,
         CompileTarget::Ast(ast_target) => {
             let extension = crate::languages::backend::output_extension_for(ast_target);
+            if let Some(output) = output {
+                // A directory input (a whole project/package) always compiles into
+                // `output` as a directory root — never derive a single filename+
+                // extension from it. `output_is_dir` only reflects whether the
+                // *output* path happens to already exist as a directory (e.g. from
+                // a prior run), which is unrelated and previously caused a second
+                // transpile into an existing output dir to nest everything under a
+                // spurious `<input-dir-name>.<ext>` subdirectory instead of
+                // overwriting in place.
+                if output_is_dir && !input.is_dir() {
+                    let stem = input.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
+                        CliError::InvalidInput("Invalid input filename".to_string())
+                    })?;
+                    let mut path = output.join(stem);
+                    path.set_extension(extension);
+                    return Ok(path);
+                }
+                return Ok(output.clone());
+            }
+            return Ok(input.with_extension(extension));
+        }
+        CompileTarget::External(external) => {
+            let extension = external.output_extension();
             if let Some(output) = output {
                 // A directory input (a whole project/package) always compiles into
                 // `output` as a directory root — never derive a single filename+
