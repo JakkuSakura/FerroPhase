@@ -4,4 +4,4 @@ pub mod package;
 pub mod printer;
 
 pub use package::SyclPackageProvider;
-pub use printer::SyclSerializer;
+pub use printer::{SyclBackend, SyclSerializer};

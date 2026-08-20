@@ -520,6 +520,45 @@ impl CSerializer {
     }
 }
 
+/// `TargetBackend` for `LanguageTarget::FerroPhase` (the `.fp` pretty-print
+/// target), wrapping [`CSerializer`] — despite the name, `CSerializer`
+/// emits FerroPhase-syntax declarations, not real C/H source; there is no
+/// dedicated C-emitting backend yet. A thin wrapper rather than an impl
+/// directly on `CSerializer` since that's a unit struct constructed bare
+/// (`CSerializer`) at the untouched single-file `emit_ast_target` call site
+/// too; adding a `BackendConfig` field there would break that construction.
+pub struct FerroPhaseAstBackend {
+    config: fp_core::backend::BackendConfig,
+}
+
+impl FerroPhaseAstBackend {
+    pub fn new(config: fp_core::backend::BackendConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl fp_core::backend::TargetBackend for FerroPhaseAstBackend {
+    fn compile_package(
+        &self,
+        workspace: &fp_core::workspace::WorkspaceContext,
+        package_id: &fp_core::package::PackageId,
+    ) -> fp_core::Result<()> {
+        let package = workspace.package_source(package_id)?;
+        let package = &package;
+        let files = CSerializer.serialize_package(package)?;
+        let writer = fp_core::backend::PackageWriter::new(self.config.workspace_root.join(&package.name));
+        for (rel_path, code) in files {
+            let rel = if rel_path.contains('.') {
+                rel_path
+            } else {
+                format!("{rel_path}.fp")
+            };
+            writer.write_file(&rel, code)?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CFrontend, CParser, CSerializer, CompileOptions, ast::Declaration};

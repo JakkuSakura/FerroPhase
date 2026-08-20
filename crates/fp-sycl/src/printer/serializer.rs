@@ -34,3 +34,35 @@ impl SyclSerializer {
             .collect()
     }
 }
+
+pub struct SyclBackend {
+    config: fp_core::backend::BackendConfig,
+}
+
+impl SyclBackend {
+    pub fn new(config: fp_core::backend::BackendConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl fp_core::backend::TargetBackend for SyclBackend {
+    fn compile_package(
+        &self,
+        workspace: &fp_core::workspace::WorkspaceContext,
+        package_id: &fp_core::package::PackageId,
+    ) -> fp_core::error::Result<()> {
+        let package = workspace.package_source(package_id)?;
+        let package = &package;
+        let files = SyclSerializer.serialize_package(package)?;
+        let writer = fp_core::backend::PackageWriter::new(self.config.workspace_root.join(&package.name));
+        for (rel_path, code) in files {
+            let rel = if rel_path.contains('.') {
+                rel_path
+            } else {
+                format!("{rel_path}.cpp")
+            };
+            writer.write_file(&rel, code)?;
+        }
+        Ok(())
+    }
+}

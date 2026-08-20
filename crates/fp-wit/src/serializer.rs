@@ -88,6 +88,106 @@ impl WitSerializer {
     }
 }
 
+/// Derives `WitOptions` from a package's output path (`namespace` from the
+/// parent directory name, `interface` from the path's own file stem) —
+/// moved here from `fp-cli`'s `serialize_package_for_target`/
+/// `emit_ast_target` so both the package (`WitBackend`) and single-file AST
+/// paths share one implementation instead of two copies.
+pub fn build_wit_options(package_root: &std::path::Path, single_world: bool) -> WitOptions {
+    let namespace = package_root
+        .parent()
+        .and_then(|dir| dir.file_name())
+        .and_then(|os| os.to_str())
+        .map(sanitize_wit_component)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "ferrophase".to_string());
+
+    let interface = package_root
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(sanitize_wit_component)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "module".to_string());
+
+    let mut options = WitOptions::default();
+    options.package = format!("{namespace}:{interface}");
+    options.root_interface = interface.clone();
+    if single_world {
+        options.world_mode = WorldMode::Single {
+            world_name: interface,
+        };
+    }
+    options
+}
+
+pub fn sanitize_wit_component(raw: &str) -> String {
+    let mut result = String::new();
+    for ch in raw.chars() {
+        match ch {
+            'a'..='z' | '0'..='9' => result.push(ch),
+            'A'..='Z' => result.push(ch.to_ascii_lowercase()),
+            '_' | '-' => result.push('_'),
+            '/' | ':' | '.' | '@' => result.push('_'),
+            _ => {}
+        }
+    }
+    if result.is_empty() {
+        result.push_str("module");
+    }
+    if result
+        .chars()
+        .next()
+        .map(|ch| ch.is_ascii_digit())
+        .unwrap_or(false)
+    {
+        result.insert(0, '_');
+    }
+    result
+}
+
+/// `TargetBackend` wrapper around [`WitSerializer`]. `WitOptions` depends
+/// on the *per-package* output path (`build_wit_options` derives
+/// `namespace`/`interface` from it), so — unlike the other AST backends —
+/// this can't precompute a single `WitSerializer` at construction; it
+/// rebuilds one per `compile_package` call instead.
+pub struct WitBackend {
+    single_world: bool,
+    config: fp_core::backend::BackendConfig,
+}
+
+impl WitBackend {
+    pub fn new(config: fp_core::backend::BackendConfig, single_world: bool) -> Self {
+        Self {
+            single_world,
+            config,
+        }
+    }
+}
+
+impl fp_core::backend::TargetBackend for WitBackend {
+    fn compile_package(
+        &self,
+        workspace: &fp_core::workspace::WorkspaceContext,
+        package_id: &fp_core::package::PackageId,
+    ) -> Result<()> {
+        let package = workspace.package_source(package_id)?;
+        let package = &package;
+        let package_root = self.config.workspace_root.join(&package.name);
+        let options = build_wit_options(&package_root, self.single_world);
+        let files = WitSerializer::with_options(options).serialize_package(package)?;
+        let writer = fp_core::backend::PackageWriter::new(package_root);
+        for (rel_path, code) in files {
+            let rel = if rel_path.contains('.') {
+                rel_path
+            } else {
+                format!("{rel_path}.wit")
+            };
+            writer.write_file(&rel, code)?;
+        }
+        Ok(())
+    }
+}
+
 fn collect_doc_strings(attrs: &[Attribute]) -> Vec<String> {
     let mut docs = Vec::new();
     for attr in attrs {

@@ -16,4 +16,6 @@ pub use frontend::WitFrontend;
 pub use model::{WitDocument, WitFunction, WitInterface, WitPackage, WitParameter, WitType};
 pub use package::WitPackageProvider;
 pub use parser::{parse_file, parse_str};
-pub use serializer::{WitOptions, WitSerializer, WorldMode};
+pub use serializer::{
+    WitBackend, WitOptions, WitSerializer, WorldMode, build_wit_options, sanitize_wit_component,
+};

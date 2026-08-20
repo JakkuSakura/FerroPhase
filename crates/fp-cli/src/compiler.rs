@@ -51,7 +51,7 @@ use crate::{CliError, Result};
 #[cfg(feature = "lang-typescript")]
 use fp_typescript::frontend::TsParseMode;
 
-fn data_layout() -> LirDataLayout {
+pub(crate) fn data_layout() -> LirDataLayout {
     LirDataLayout::new(
         64,
         8,
@@ -252,8 +252,10 @@ pub fn compile_native_file(
     lossy: LossyCompileOptions,
     options: &NativeCompileOptions,
 ) -> Result<PathBuf> {
+    use fp_core::backend::TargetBackend;
+
     let lowered = lower_file(path, package, source_language, lossy)?;
-    let lir = lowered.lir()?;
+    let workspace = lowered.compiled_workspace()?;
 
     match options.emitter {
         NativeEmitterKind::Native => {
@@ -283,8 +285,10 @@ pub fn compile_native_file(
                 cfg = cfg.with_asm_dump(Some(options.output.with_extension("asm")));
             }
             fp_native::NativeEmitter::new(cfg)
-                .emit(lir, None)
-                .map_err(|err| CliError::Compilation(err.to_string()))
+                .with_module_path(lowered.module_path.clone())
+                .compile_package(&workspace, &lowered.package_id)
+                .map_err(|err| CliError::Compilation(err.to_string()))?;
+            Ok(options.output.clone())
         }
         NativeEmitterKind::GoAsm => {
             let target = Some(GoAsmTarget::resolve(options.target_triple.as_deref()));
@@ -292,13 +296,17 @@ pub fn compile_native_file(
                 .with_target(target)
                 .with_target_triple(options.target_triple.clone());
             fp_goasm::GoAsmEmitter::new(cfg)
-                .emit(lir, None)
-                .map_err(|err| CliError::Compilation(err.to_string()))
+                .with_module_path(lowered.module_path.clone())
+                .compile_package(&workspace, &lowered.package_id)
+                .map_err(|err| CliError::Compilation(err.to_string()))?;
+            Ok(options.output.clone())
         }
         NativeEmitterKind::Urcl => {
             fp_urcl::UrclEmitter::new(fp_urcl::UrclConfig::new(&options.output))
-                .emit(lir, None)
-                .map_err(|err| CliError::Compilation(err.to_string()))
+                .with_module_path(lowered.module_path.clone())
+                .compile_package(&workspace, &lowered.package_id)
+                .map_err(|err| CliError::Compilation(err.to_string()))?;
+            Ok(options.output.clone())
         }
     }
 }
@@ -1224,45 +1232,7 @@ pub fn typecheck_package(
     // placeholders through as if nothing were wrong.
     drain_driver(session.driver(), lossy)?;
 
-    Ok(package_source_from_compiled(package_id, &package))
-}
-
-/// Builds a `PackageSource` from a compiled package — shared by
-/// `typecheck_package`'s single-package path and `compile_project`'s
-/// (`fp-cli/src/commands/compile.rs`) whole-workspace path, so both read
-/// back the same typed/normalized content the same way.
-pub fn package_source_from_compiled(
-    package_id: &PackageId,
-    compiled: &std::rc::Rc<std::cell::RefCell<fp_core::package::CompiledPackage>>,
-) -> PackageSource {
-    let package = compiled.borrow();
-    // Typed/normalized content is already spliced onto `package.items` by
-    // `CompilerDriver::compile_package` (qualified-path-keyed, including
-    // impl methods) — nothing left to reconcile here.
-    let items = package.items.clone();
-
-    let referenced_paths = package
-        .referenced_paths_by_path
-        .as_ref()
-        .map(|by_path| {
-            by_path
-                .iter()
-                .map(|(path, refs)| {
-                    let path = path.to_segments();
-                    let refs = refs.iter().map(|r| r.to_segments()).collect();
-                    (path, refs)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    PackageSource {
-        package_id: package_id.clone(),
-        name: package.name.clone(),
-        graph: package.graph.clone(),
-        module_paths: package.module_paths.clone(),
-        items,
-        referenced_paths,
-    }
+    Ok(fp_core::package::package_source_from_compiled(package_id, &package))
 }
 
 fn parse_file_with_context(
@@ -1436,54 +1406,26 @@ impl LoweredProgram {
         })
     }
 
+    /// Native/LLVM/Cranelift emitters all consume a single flattened
+    /// `LirProgram` merging every dependency's compiled LIR workspace in
+    /// before this package's own (mirroring the same merge
+    /// `evaluate_comptime_lir` already does for comptime execution — a
+    /// cross-package call type-checks and lowers fine on just this
+    /// package's own workspace, since the callee's *signature* is
+    /// predeclared into this package's generator, but without the
+    /// dependency's workspace folded in too, its function *body* never
+    /// reaches the emitted binary), then resolves and renames a `main`
+    /// entrypoint the same way `CompilerDriver::select_entrypoint` does —
+    /// this path builds its own `LirProgram` straight from the workspace
+    /// rather than going through `select_entrypoint`, so a module-nested
+    /// `main`'s mangled name needs the same rename here too. See
+    /// `fp_core::workspace::WorkspaceContext::merged_lir_program`, which
+    /// owns the actual merge/rename logic this delegates to.
     fn lir(&self) -> Result<fp_core::lir::LirProgram> {
-        let package = self.compiled_package()?;
-        let package = package.borrow();
-        if package.lir_workspace.artifacts().is_empty() {
-            return Err(CliError::Compilation(format!(
-                "compiled package `{}` contains no LIR artifacts",
-                self.package_id
-            )));
-        }
-        // Native/LLVM/Cranelift emitters all consume a single flattened
-        // `LirProgram` built from just this package's own workspace — a
-        // cross-package call (e.g. `std::json::parse`) type-checks and
-        // lowers fine (its *signature* is predeclared into this package's
-        // generator, see `predeclare_dependency_function_signatures`), but
-        // without folding dependency workspaces in here too, the callee's
-        // actual function *body* never reaches the emitted binary, leaving
-        // an unresolved external symbol at load time. Merge every
-        // dependency's compiled LIR workspace in before this package's own,
-        // mirroring the same merge `evaluate_comptime_lir` already does for
-        // comptime execution.
-        let mut combined = fp_core::lir::LirWorkspace::new(package.lir_workspace.data_layout.clone());
-        let state = self.driver.state.borrow();
-        for (dependency_id, dep_package) in state.typing_ctx.env_ctx.crates().iter() {
-            if *dependency_id == self.package_id {
-                continue;
-            }
-            combined
-                .add_workspace(&dep_package.borrow().lir_workspace)
-                .map_err(|error| CliError::Compilation(error.to_string()))?;
-        }
-        combined
-            .add_workspace(&package.lir_workspace)
-            .map_err(|error| CliError::Compilation(error.to_string()))?;
-        let mut lir = combined.to_program();
-        // Native/asm emitters locate the process entry point by its final,
-        // bare symbol name (see `CompilerDriver::rename_lir_function`).
-        // This path builds its own `LirProgram` straight from the
-        // workspace rather than going through `select_entrypoint`, so
-        // resolve and rename the entrypoint here too — otherwise a
-        // module-nested `main` keeps its qualified, mangled name and
-        // native emission can't find it.
-        if let Ok(def_id) =
-            self.driver
-                .resolve_entrypoint_def_id(&self.package_id, &self.module_path, "main")
-        {
-            CompilerDriver::rename_lir_function(&mut lir, def_id, "main");
-        }
-        Ok(lir)
+        let workspace = self.compiled_workspace()?;
+        workspace
+            .merged_lir_program(&self.package_id, Some((&self.module_path, "main", "main")))
+            .map_err(|error| CliError::Compilation(error.to_string()))
     }
 
     fn compiled_package(
@@ -1501,6 +1443,13 @@ impl LoweredProgram {
                     self.package_id
                 ))
             })
+    }
+
+    /// Every package this run's driver state knows about (dependencies and
+    /// this package itself), as a `WorkspaceContext` — the input every
+    /// `TargetBackend` reads from.
+    fn compiled_workspace(&self) -> Result<std::rc::Rc<fp_core::workspace::WorkspaceContext>> {
+        Ok(self.driver.state.borrow().typing_ctx.env_ctx.clone())
     }
 
     #[allow(dead_code)]

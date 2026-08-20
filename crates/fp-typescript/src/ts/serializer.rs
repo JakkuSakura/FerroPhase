@@ -79,6 +79,56 @@ impl TypeScriptSerializer {
     }
 }
 
+fn write_package_files(
+    config: &fp_core::backend::BackendConfig,
+    package_name: &str,
+    ext: &str,
+    files: Vec<(String, String)>,
+) -> Result<()> {
+    let writer = fp_core::backend::PackageWriter::new(config.workspace_root.join(package_name));
+    for (rel_path, code) in files {
+        let rel = if rel_path.contains('.') {
+            rel_path
+        } else {
+            format!("{rel_path}.{ext}")
+        };
+        writer.write_file(&rel, code)?;
+    }
+    Ok(())
+}
+
+/// `TargetBackend` wrapper around [`TypeScriptSerializer`] — a wrapper
+/// rather than an impl directly on `TypeScriptSerializer` since the
+/// untouched single-file `emit_ast_target` path constructs it via
+/// `TypeScriptSerializer::new(emit_type_defs)` and reads `take_type_defs()`
+/// off it directly; adding a `BackendConfig` field there would change that
+/// constructor's arity.
+pub struct TypeScriptBackend {
+    serializer: TypeScriptSerializer,
+    config: fp_core::backend::BackendConfig,
+}
+
+impl TypeScriptBackend {
+    pub fn new(config: fp_core::backend::BackendConfig, emit_type_defs: bool) -> Self {
+        Self {
+            serializer: TypeScriptSerializer::new(emit_type_defs),
+            config,
+        }
+    }
+}
+
+impl fp_core::backend::TargetBackend for TypeScriptBackend {
+    fn compile_package(
+        &self,
+        workspace: &fp_core::workspace::WorkspaceContext,
+        package_id: &fp_core::package::PackageId,
+    ) -> Result<()> {
+        let package = workspace.package_source(package_id)?;
+        let files = self.serializer.serialize_package(&package)?;
+        write_package_files(&self.config, &package.name, "ts", files)
+    }
+}
+
 pub struct JavaScriptSerializer;
 
 impl JavaScriptSerializer {
@@ -109,6 +159,28 @@ impl JavaScriptSerializer {
                 Ok((rel_path, code))
             })
             .collect()
+    }
+}
+
+pub struct JavaScriptBackend {
+    config: fp_core::backend::BackendConfig,
+}
+
+impl JavaScriptBackend {
+    pub fn new(config: fp_core::backend::BackendConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl fp_core::backend::TargetBackend for JavaScriptBackend {
+    fn compile_package(
+        &self,
+        workspace: &fp_core::workspace::WorkspaceContext,
+        package_id: &fp_core::package::PackageId,
+    ) -> Result<()> {
+        let package = workspace.package_source(package_id)?;
+        let files = JavaScriptSerializer.serialize_package(&package)?;
+        write_package_files(&self.config, &package.name, "js", files)
     }
 }
 

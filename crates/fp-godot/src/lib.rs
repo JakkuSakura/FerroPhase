@@ -3,7 +3,7 @@
 pub mod package;
 mod serializer;
 
-pub use serializer::GdscriptSerializer;
+pub use serializer::{GdscriptBackend, GdscriptSerializer};
 
 #[cfg(test)]
 mod tests;

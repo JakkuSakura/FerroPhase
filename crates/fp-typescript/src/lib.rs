@@ -15,4 +15,6 @@ pub use package::{
     read_package_json,
 };
 pub use resolution::{ResolveOutcome, ResolvedModule, is_typescript_like_source, resolve_imports};
-pub use ts::serializer::{JavaScriptSerializer, TypeScriptSerializer};
+pub use ts::serializer::{
+    JavaScriptBackend, JavaScriptSerializer, TypeScriptBackend, TypeScriptSerializer,
+};

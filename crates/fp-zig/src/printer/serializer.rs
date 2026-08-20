@@ -34,3 +34,35 @@ impl ZigSerializer {
             .collect()
     }
 }
+
+pub struct ZigBackend {
+    config: fp_core::backend::BackendConfig,
+}
+
+impl ZigBackend {
+    pub fn new(config: fp_core::backend::BackendConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl fp_core::backend::TargetBackend for ZigBackend {
+    fn compile_package(
+        &self,
+        workspace: &fp_core::workspace::WorkspaceContext,
+        package_id: &fp_core::package::PackageId,
+    ) -> fp_core::error::Result<()> {
+        let package = workspace.package_source(package_id)?;
+        let package = &package;
+        let files = ZigSerializer.serialize_package(package)?;
+        let writer = fp_core::backend::PackageWriter::new(self.config.workspace_root.join(&package.name));
+        for (rel_path, code) in files {
+            let rel = if rel_path.contains('.') {
+                rel_path
+            } else {
+                format!("{rel_path}.zig")
+            };
+            writer.write_file(&rel, code)?;
+        }
+        Ok(())
+    }
+}

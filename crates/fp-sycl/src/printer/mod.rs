@@ -6,7 +6,7 @@ use fp_core::ast::{
 };
 use fp_core::error::Result;
 
-pub use serializer::SyclSerializer;
+pub use serializer::{SyclBackend, SyclSerializer};
 
 pub(crate) struct SyclEmitter {
     code: String,

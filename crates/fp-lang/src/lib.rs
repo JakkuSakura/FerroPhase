@@ -15,7 +15,7 @@ use fp_core::ast::{AstSerializer, File, ScriptBlock};
 use fp_core::diagnostics::Diagnostic;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 use fp_core::span::FileId;
-pub use serializer::PrettyAstSerializer;
+pub use serializer::{PrettyAstSerializer, RustBackend};
 
 /// Canonical identifier for the FerroPhase source language.
 pub const FERROPHASE: &str = "ferrophase";

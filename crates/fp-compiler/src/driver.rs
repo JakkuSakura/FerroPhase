@@ -211,33 +211,9 @@ impl CompilerDriver {
             .env_ctx
             .compiled_package(package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
-        let expected_path =
-            hir::DefPath::from_qualified_path(&module_path.with_segment(function_name.to_string()));
-        package
-            .borrow()
-            .hir_program
-            .as_ref()
-            .and_then(|program| {
-                program.items.iter().find_map(|item| match &item.kind {
-                    hir::ItemKind::Function(function)
-                        if function.sig.name.as_str() == function_name
-                            && program
-                                .def_paths
-                                .get(&item.def_id)
-                                .map(|path| path == &expected_path)
-                                .unwrap_or(true) =>
-                    {
-                        Some(item.def_id)
-                    }
-                    _ => None,
-                })
-            })
-            .ok_or_else(|| {
-                CompilerDriverError::Interpreter(format!(
-                    "package `{package_id}` module `{}` has no `{function_name}` entrypoint",
-                    module_path.to_key()
-                ))
-            })
+        let package = package.borrow();
+        fp_core::package::resolve_entrypoint_def_id(package_id, &package, module_path, function_name)
+            .map_err(|error| CompilerDriverError::Interpreter(error.to_string()))
     }
 
     /// Renames the LIR function identified by `def_id` to `bare_name` in
@@ -253,12 +229,7 @@ impl CompilerDriver {
         def_id: hir::DefId,
         bare_name: &str,
     ) {
-        for lir_function in lir.functions.iter_mut() {
-            if lir_function.def_id == Some(def_id) {
-                lir_function.name = fp_core::lir::Name::new(bare_name.to_string());
-                break;
-            }
-        }
+        fp_core::package::rename_lir_function(lir, def_id, bare_name)
     }
 
     pub fn select_entrypoint(
