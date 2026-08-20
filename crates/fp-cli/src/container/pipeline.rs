@@ -30,6 +30,7 @@ pub(crate) async fn maybe_transpile_container(
     args: &CompileArgs,
     _config: &CliConfig,
     kind: Option<ContainerInputKind>,
+    link_requested: bool,
     exec: bool,
 ) -> Result<Option<PathBuf>> {
     let Some(kind) = kind else {
@@ -51,7 +52,7 @@ pub(crate) async fn maybe_transpile_container(
 
     match read.kind {
         ContainerInputKind::NativeObject => {
-            transpile_native_object(input, output, args, &read.payload, exec).await
+            transpile_native_object(input, output, args, &read.payload, link_requested, exec).await
         }
         ContainerInputKind::NativeArchive => {
             transpile_native_archive(input, output, args, &read.payload).await
@@ -70,6 +71,7 @@ async fn transpile_native_object(
     output: &Path,
     args: &CompileArgs,
     bytes: &[u8],
+    link_requested: bool,
     exec: bool,
 ) -> Result<Option<PathBuf>> {
     if args.target != "native" {
@@ -84,8 +86,6 @@ async fn transpile_native_object(
         .map_err(|err| CliError::Compilation(err.to_string()))?;
     let plan = fp_native::emit::emit_plan_from_asmir(asmir, format, arch)
         .map_err(|err| CliError::Compilation(format!("Failed to emit target object: {err}")))?;
-
-    let link_requested = exec || args.link;
 
     let output_path = if args.output.is_none() {
         if link_requested {

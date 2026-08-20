@@ -2,16 +2,13 @@ use std::fs;
 use tempfile::TempDir;
 
 use fp_cli::cli::CliConfig;
-use fp_cli::commands::compile::{CompileArgs, EmitterKind, compile_command};
-use fp_cli::compile_options::BackendKind;
+use fp_cli::commands::compile::{CompileArgs, compile_command};
 
 fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileArgs {
     CompileArgs {
         package: None,
         input: vec![input],
-        backend: BackendKind::JvmBytecode,
-        target: None,
-        emitter: EmitterKind::Llvm,
+        target: "jvm-bytecode".to_string(),
         target_triple: None,
         target_cpu: None,
         native_target: None,

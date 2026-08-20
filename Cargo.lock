@@ -1290,6 +1290,7 @@ dependencies = [
  "fp-rust",
  "fp-sql",
  "fp-stackvm",
+ "fp-stackvm-bytecode",
  "fp-sycl",
  "fp-toml",
  "fp-typescript",
@@ -1654,6 +1655,15 @@ dependencies = [
  "fp-core",
  "fp-interpret",
  "thiserror 2.0.19",
+]
+
+[[package]]
+name = "fp-stackvm-bytecode"
+version = "0.1.0"
+dependencies = [
+ "fp-bytecode",
+ "fp-core",
+ "fp-stackvm",
 ]
 
 [[package]]

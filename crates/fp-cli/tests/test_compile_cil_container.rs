@@ -3,20 +3,17 @@ use std::fs;
 use tempfile::TempDir;
 
 use fp_cli::cli::CliConfig;
-use fp_cli::commands::compile::{CompileArgs, EmitterKind, compile_command};
-use fp_cli::compile_options::BackendKind;
+use fp_cli::commands::compile::{CompileArgs, compile_command};
 
 fn base_args(
     input: std::path::PathBuf,
     output: std::path::PathBuf,
-    backend: BackendKind,
+    target: &str,
 ) -> CompileArgs {
     CompileArgs {
         package: None,
         input: vec![input],
-        backend,
-        target: None,
-        emitter: EmitterKind::Native,
+        target: target.to_string(),
         target_triple: None,
         target_cpu: None,
         native_target: None,
@@ -65,7 +62,7 @@ async fn compile_cil_text_to_dotnet_assembly() {
     let output_file = temp_dir.path().join("main.exe");
     fs::write(&input_file, minimal_cil_program()).unwrap();
 
-    let args = base_args(input_file, output_file.clone(), BackendKind::Dotnet);
+    let args = base_args(input_file, output_file.clone(), "dotnet");
     compile_command(args, &CliConfig::default()).await.unwrap();
 
     let bytes = fs::read(&output_file).unwrap();

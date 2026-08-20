@@ -160,9 +160,18 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let target = args.target.as_str();
     let emit_text_bytecode = target == "text-bytecode";
 
-    // A target-triple/host mismatch silently drops `--exec` (with a
-    // warning) rather than failing the whole compile — the compile itself
-    // is still valid cross-compile output, just not runnable here.
+    // `--exec` implies "link/emit as a runnable artifact" (`link_requested`)
+    // regardless of whether it can actually run on this host — a
+    // cross-target-triple `--exec` build still wants the fully-linked
+    // artifact (e.g. a Windows PE with its import table), just not to
+    // actually be executed here. Whether it's *run* is gated separately by
+    // a target-triple/host match, below.
+    let link_requested = args.link || args.exec;
+
+    // A target-triple/host mismatch silently drops running the artifact
+    // (with a warning) rather than failing the whole compile — the
+    // compile itself is still valid cross-compile output, just not
+    // runnable here.
     let exec = args.exec
         && match args.target_triple.as_deref() {
             None => true,
@@ -202,11 +211,20 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
             input_class,
             emit_text_bytecode,
             output_is_dir,
-            args.link || exec,
-            exec,
+            link_requested,
+            args.exec,
         )?;
 
-        compile_file(input_file, &output_file, &args, config, input_class, exec).await?;
+        compile_file(
+            input_file,
+            &output_file,
+            &args,
+            config,
+            input_class,
+            link_requested,
+            exec,
+        )
+        .await?;
         progress.inc(1);
     }
 
@@ -227,6 +245,7 @@ async fn compile_file(
     args: &CompileArgs,
     _config: &CliConfig,
     input_class: crate::container::InputClass,
+    link_requested: bool,
     exec: bool,
 ) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
@@ -257,6 +276,7 @@ async fn compile_file(
         args,
         _config,
         container_kind,
+        link_requested,
         exec,
     )
     .await?
@@ -792,7 +812,7 @@ fn backend_for_target(
                 ))
             }
         }
-        "bytecode" | "text-bytecode" => Ok(Box::new(fp_bytecode::BytecodeBackend {
+        "bytecode" | "text-bytecode" => Ok(Box::new(fp_stackvm_bytecode::BytecodeBackend {
             output: output.clone(),
             emit_text: name.eq_ignore_ascii_case("text-bytecode")
                 || output.extension().and_then(|ext| ext.to_str()) == Some("ftbc"),

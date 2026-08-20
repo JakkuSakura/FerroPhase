@@ -1,8 +1,7 @@
 use std::fs;
 
 use fp_cli::cli::CliConfig;
-use fp_cli::commands::compile::{CompileArgs, EmitterKind, compile_command};
-use fp_cli::compile_options::BackendKind;
+use fp_cli::commands::compile::{CompileArgs, compile_command};
 use tempfile::TempDir;
 
 #[tokio::test]
@@ -29,9 +28,7 @@ fn main() -> i64 {
     let args = CompileArgs {
         package: None,
         input: vec![input_file],
-        backend: BackendKind::Cil,
-        target: None,
-        emitter: EmitterKind::Native,
+        target: "cil".to_string(),
         target_triple: None,
         target_cpu: None,
         native_target: None,

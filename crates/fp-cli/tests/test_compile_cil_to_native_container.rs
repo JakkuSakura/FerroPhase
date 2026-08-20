@@ -6,16 +6,13 @@ use object::{Architecture, BinaryFormat, SectionKind};
 use tempfile::TempDir;
 
 use fp_cli::cli::CliConfig;
-use fp_cli::commands::compile::{CompileArgs, EmitterKind, compile_command};
-use fp_cli::compile_options::BackendKind;
+use fp_cli::commands::compile::{CompileArgs, compile_command};
 
 fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileArgs {
     CompileArgs {
         package: None,
         input: vec![input],
-        backend: BackendKind::Binary,
-        target: None,
-        emitter: EmitterKind::Native,
+        target: "native".to_string(),
         target_triple: Some("x86_64-unknown-linux-gnu".to_string()),
         target_cpu: None,
         native_target: None,

@@ -1,8 +1,7 @@
 use std::fs;
 
 use fp_cli::cli::CliConfig;
-use fp_cli::commands::compile::{CompileArgs, EmitterKind, compile_command};
-use fp_cli::compile_options::BackendKind;
+use fp_cli::commands::compile::{CompileArgs, compile_command};
 use object::read::archive::ArchiveFile;
 use object::write::Object;
 use object::{Architecture, BinaryFormat, Endianness, Object as _, ObjectSection as _};
@@ -16,9 +15,7 @@ fn base_args(
     CompileArgs {
         package: None,
         input: vec![input],
-        backend: BackendKind::Binary,
-        target: None,
-        emitter: EmitterKind::Native,
+        target: "native".to_string(),
         target_triple: Some(target_triple.to_string()),
         target_cpu: None,
         native_target: None,

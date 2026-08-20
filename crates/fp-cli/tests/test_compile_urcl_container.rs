@@ -6,20 +6,17 @@ use object::{Architecture, BinaryFormat, SectionKind};
 use tempfile::TempDir;
 
 use fp_cli::cli::CliConfig;
-use fp_cli::commands::compile::{CompileArgs, EmitterKind, compile_command};
-use fp_cli::compile_options::BackendKind;
+use fp_cli::commands::compile::{CompileArgs, compile_command};
 
 fn base_args(
     input: std::path::PathBuf,
     output: std::path::PathBuf,
-    emitter: EmitterKind,
+    target: &str,
 ) -> CompileArgs {
     CompileArgs {
         package: None,
         input: vec![input],
-        backend: BackendKind::Binary,
-        target: None,
-        emitter,
+        target: target.to_string(),
         target_triple: Some("x86_64-unknown-linux-gnu".to_string()),
         target_cpu: None,
         native_target: None,
@@ -63,7 +60,7 @@ async fn compile_urcl_input_to_native_object() {
     let output_file = temp_dir.path().join("main.o");
     fs::write(&input_file, minimal_urcl_program()).unwrap();
 
-    let args = base_args(input_file, output_file.clone(), EmitterKind::Native);
+    let args = base_args(input_file, output_file.clone(), "native");
     compile_command(args, &CliConfig::default()).await.unwrap();
 
     let bytes = fs::read(&output_file).unwrap();
@@ -83,7 +80,7 @@ async fn compile_urcl_input_to_goasm_text() {
     let output_file = temp_dir.path().join("main.s");
     fs::write(&input_file, minimal_urcl_program()).unwrap();
 
-    let args = base_args(input_file, output_file.clone(), EmitterKind::Goasm);
+    let args = base_args(input_file, output_file.clone(), "goasm");
     compile_command(args, &CliConfig::default()).await.unwrap();
 
     let text = fs::read_to_string(&output_file).unwrap();
@@ -97,7 +94,7 @@ async fn compile_urcl_input_to_urcl_text() {
     let output_file = temp_dir.path().join("main.out.urcl");
     fs::write(&input_file, minimal_urcl_program()).unwrap();
 
-    let args = base_args(input_file, output_file.clone(), EmitterKind::Urcl);
+    let args = base_args(input_file, output_file.clone(), "urcl");
     compile_command(args, &CliConfig::default()).await.unwrap();
 
     let text = fs::read_to_string(&output_file).unwrap();

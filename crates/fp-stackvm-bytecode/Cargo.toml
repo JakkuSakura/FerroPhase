@@ -1,0 +1,9 @@
+[package]
+name = "fp-stackvm-bytecode"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fp-core = { path = "../fp-core" }
+fp-bytecode = { path = "../fp-bytecode" }
+fp-stackvm = { path = "../fp-stackvm" }

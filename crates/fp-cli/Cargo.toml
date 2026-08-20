@@ -36,6 +36,7 @@ fp-flatbuffers = { path = "../fp-flatbuffers", optional = true }
 fp-toml = { path = "../fp-toml", optional = true }
 fp-hcl = { path = "../fp-hcl", optional = true }
 fp-bytecode = { path = "../fp-bytecode" }
+fp-stackvm-bytecode = { path = "../fp-stackvm-bytecode" }
 fp-jvm = { path = "../fp-jvm" }
 fp-interpret = { path = "../fp-interpret" }
 fp-stackvm = { path = "../fp-stackvm" }
