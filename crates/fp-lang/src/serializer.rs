@@ -1,8 +1,135 @@
 use fp_core::ast::{
-    AstSerializer, BlockStmt, Expr, ExprBlock, File, Item, ItemDefFunction, Ty, Value,
-    ValueFunction,
+    AstSerializer, BlockStmt, Expr, ExprBlock, ExprKind, File, Item, ItemDefFunction, Ty,
+    TypePrimitive, Value, ValueFunction,
 };
 use fp_core::pretty::{PrettyOptions, pretty};
+
+/// Renders a `Ty` as real Rust type syntax — `Option<PathBuf>`, `{ a: A, b: B }`
+/// for a structural type, `(A, B)` for a tuple, `()` for unit, etc. — instead
+/// of `Ty`'s raw `Debug` output (`Structural(TypeStructural { fields: [..] })`).
+///
+/// This is *the* place this matters: `Ty::Display` (see
+/// `fp-core/src/ast/value/ty.rs`) already delegates to whatever
+/// `AstSerializer` is registered thread-locally (`serialize_type`) rather
+/// than formatting itself, specifically so callers (this crate's own
+/// `RustPackageProvider`/`FerroFrontend::parse_file`, which registers
+/// `PrettyAstSerializer` via `register_threadlocal_serializer`) can just
+/// call `ty.to_string()` anywhere and get real output — every caller across
+/// the codebase benefits from fixing this in one place, not just whichever
+/// caller happened to notice the raw-Debug output first.
+///
+/// `TypePrimitive`'s own `Display` (see the same file) *also* delegates
+/// here — so the `Primitive` arm below must render `TypeInt`/`DecimalType`/
+/// `Bool`/`Char`/`String`/`List` directly rather than calling
+/// `primitive.to_string()`, or it would recurse into this function forever.
+fn serialize_type_rust_shaped(ty: &Ty) -> String {
+    match ty {
+        Ty::Unit(_) => "()".to_string(),
+        Ty::Nothing(_) => "!".to_string(),
+        Ty::Wildcard(_) | Ty::InferVar(_) => "_".to_string(),
+        Ty::Unknown(_) => "unknown".to_string(),
+        Ty::Any(_) => "dyn Any".to_string(),
+        Ty::ErrorType(_) => "<error>".to_string(),
+        Ty::Primitive(primitive) => match primitive {
+            TypePrimitive::Int(int) => int.to_string(),
+            TypePrimitive::Decimal(decimal) => decimal.to_string(),
+            TypePrimitive::Bool => "bool".to_string(),
+            TypePrimitive::Char => "char".to_string(),
+            TypePrimitive::String => "String".to_string(),
+            TypePrimitive::List => "List".to_string(),
+        },
+        // A single-type reference (`Option<PathBuf>`, `PathBuf`, ...) —
+        // `Name`'s own `Display` already renders `ParameterPath` generics
+        // (`Ident<Arg1, Arg2>`), recursing back into this function for each
+        // generic argument (`ParameterPathSegment::args: Vec<Ty>`).
+        Ty::Expr(expr) => match expr.kind() {
+            ExprKind::Name(name) => name.to_string(),
+            ExprKind::Reference(reference) => match reference.referee.kind() {
+                ExprKind::Name(name) => format!("&{name}"),
+                _ => format!("{node:?}", node = ty),
+            },
+            _ => format!("{node:?}", node = ty),
+        },
+        Ty::Reference(reference) => {
+            let mutability = if reference.mutability == Some(true) {
+                "mut "
+            } else {
+                ""
+            };
+            format!("&{}{}", mutability, serialize_type_rust_shaped(&reference.ty))
+        }
+        Ty::RawPtr(raw_ptr) => {
+            let mutability = if raw_ptr.mutability == Some(true) {
+                "mut"
+            } else {
+                "const"
+            };
+            format!("*{} {}", mutability, serialize_type_rust_shaped(&raw_ptr.ty))
+        }
+        Ty::Vec(vec_ty) => format!("Vec<{}>", serialize_type_rust_shaped(&vec_ty.ty)),
+        Ty::Slice(slice) => format!("[{}]", serialize_type_rust_shaped(&slice.elem)),
+        Ty::Array(array) => format!("[{}; _]", serialize_type_rust_shaped(&array.elem)),
+        Ty::Tuple(tuple) => {
+            let types: Vec<String> = tuple.types.iter().map(serialize_type_rust_shaped).collect();
+            format!("({})", types.join(", "))
+        }
+        Ty::Structural(structural) => {
+            let fields: Vec<String> = structural
+                .fields
+                .iter()
+                .map(|field| {
+                    format!(
+                        "{}: {}",
+                        field.name,
+                        serialize_type_rust_shaped(&field.value)
+                    )
+                })
+                .collect();
+            format!("{{ {} }}", fields.join(", "))
+        }
+        Ty::Function(function) => {
+            let params: Vec<String> = function
+                .params
+                .iter()
+                .map(serialize_type_rust_shaped)
+                .collect();
+            match &function.ret_ty {
+                Some(ret_ty) => format!(
+                    "fn({}) -> {}",
+                    params.join(", "),
+                    serialize_type_rust_shaped(ret_ty)
+                ),
+                None => format!("fn({})", params.join(", ")),
+            }
+        }
+        Ty::GenericVar(generic_var) => format!("T{}", generic_var.index),
+        // Rare in ordinary source-level field/variant-payload position —
+        // an inline anonymous struct/enum definition, a meta-type, a
+        // const-eval type block, and so on. Falls back to a short marker
+        // rather than a full `Debug` dump, which at least doesn't explode
+        // into hundreds of characters of nested `Expr { id: .., span: .. }`
+        // noise the way the pre-fix behavior did for every other case too.
+        other => format!("<{}>", type_variant_name(other)),
+    }
+}
+
+fn type_variant_name(ty: &Ty) -> &'static str {
+    match ty {
+        Ty::TokenStream(_) => "tokenstream",
+        Ty::Struct(_) => "struct",
+        Ty::Enum(_) => "enum",
+        Ty::ImplTraits(_) => "impl",
+        Ty::TypeBounds(_) => "bounds",
+        Ty::Value(_) => "value",
+        Ty::Type(_) => "type",
+        Ty::RequestedType(_) => "requested",
+        Ty::ConstBlock(_) => "const",
+        Ty::Quote(_) => "quote",
+        Ty::TypeBinaryOp(_) => "binop",
+        Ty::AnyBox(_) => "anybox",
+        _ => "?",
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct PrettyAstSerializer {
@@ -41,7 +168,7 @@ impl AstSerializer for PrettyAstSerializer {
     }
 
     fn serialize_type(&self, node: &Ty) -> Result<String, fp_core::Error> {
-        Ok(format!("{node:?}"))
+        Ok(serialize_type_rust_shaped(node))
     }
 
     fn serialize_block(&self, node: &ExprBlock) -> Result<String, fp_core::Error> {
