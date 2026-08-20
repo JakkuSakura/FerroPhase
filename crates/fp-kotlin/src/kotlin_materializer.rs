@@ -1,9 +1,10 @@
 use fp_core::ast::{
-    Expr, ExprInvoke, ExprInvokeTarget, ExprIntrinsicCall, ExprIntrinsicContainer, ExprKind,
-    Name, TySlot, Value,
+    Expr, ExprBinOp, ExprInvoke, ExprInvokeTarget, ExprIntrinsicCall, ExprIntrinsicContainer,
+    ExprKind, ExprSelect, ExprSelectType, Ident, Name, TySlot, Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicMaterializer, OpKind, CallKind};
+use fp_core::ops::BinOpKind;
 
 /// Kotlin-specific materializer: converts portable ops to Kotlin idioms.
 ///
@@ -108,6 +109,115 @@ impl IntrinsicMaterializer for KotlinMaterializer {
                     Some(expr) => expr.clone(),
                     None => Expr::value(Value::Null(Default::default())),
                 }))
+            }
+            // `x.trim_end()`/`x.trim_start()` — Kotlin's `trimEnd()`/`trimStart()`.
+            CallKind::Op(OpKind::TrimEnd | OpKind::TrimStart) => {
+                let Some(receiver) = call.args.first().cloned() else {
+                    return Ok(Some(Expr::value(Value::Null(Default::default()))));
+                };
+                let method = if matches!(call.kind, CallKind::Op(OpKind::TrimEnd)) {
+                    "trimEnd"
+                } else {
+                    "trimStart"
+                };
+                Ok(Some(Expr::new(ExprKind::Invoke(ExprInvoke {
+                    span: Default::default(),
+                    target: ExprInvokeTarget::Method(ExprSelect {
+                        span: Default::default(),
+                        obj: Box::new(receiver),
+                        field: Ident::new(method),
+                        select: ExprSelectType::Method,
+                    }),
+                    args: vec![],
+                    kwargs: Vec::new(),
+                }))))
+            }
+            // `Option<T>::as_deref()` — same "no borrow-checker distinction
+            // in Kotlin" treatment as `as_ref`.
+            CallKind::Op(OpKind::AsDeref) => Ok(Some(match call.args.first() {
+                Some(expr) => expr.clone(),
+                None => Expr::value(Value::Null(Default::default())),
+            })),
+            // `x.is_none()` — Kotlin's nullable-equality check.
+            CallKind::Op(OpKind::IsNone) => {
+                let Some(receiver) = call.args.first().cloned() else {
+                    return Ok(Some(Expr::value(Value::bool(true))));
+                };
+                Ok(Some(Expr::new(ExprKind::BinOp(ExprBinOp {
+                    span: Default::default(),
+                    kind: BinOpKind::Eq,
+                    lhs: Box::new(receiver),
+                    rhs: Box::new(Expr::value(Value::Null(Default::default()))),
+                }))))
+            }
+            // `x.position(predicate)` — Kotlin's `.indexOfFirst(predicate)`.
+            // Returns `-1` rather than Rust's absent-value `None`, unlike
+            // this op's own `Option<usize>` result type — an exact `Option`
+            // translation would need to wrap the result in a null check,
+            // which needs the call's own result type (not available here);
+            // left as the direct `Int` value for now.
+            CallKind::Op(OpKind::Position) => {
+                let mut args = call.args.drain(..);
+                let Some(receiver) = args.next() else {
+                    return Ok(Some(Expr::value(Value::Null(Default::default()))));
+                };
+                let predicate: Vec<Expr> = args.collect();
+                Ok(Some(Expr::new(ExprKind::Invoke(ExprInvoke {
+                    span: Default::default(),
+                    target: ExprInvokeTarget::Method(ExprSelect {
+                        span: Default::default(),
+                        obj: Box::new(receiver),
+                        field: Ident::new("indexOfFirst"),
+                        select: ExprSelectType::Method,
+                    }),
+                    args: predicate,
+                    kwargs: Vec::new(),
+                }))))
+            }
+            // `x.split_whitespace()` — Kotlin has no direct equivalent;
+            // approximate with a whitespace-regex split (empty runs aren't
+            // filtered out, unlike Rust's version, since that needs a
+            // trailing-lambda `.filter { }` this AST shape can't build
+            // without a closure to splice in).
+            CallKind::Op(OpKind::SplitWhitespace) => {
+                let Some(receiver) = call.args.first().cloned() else {
+                    return Ok(Some(Expr::value(Value::Null(Default::default()))));
+                };
+                let regex = Expr::new(ExprKind::Invoke(ExprInvoke {
+                    span: Default::default(),
+                    target: ExprInvokeTarget::Function(Name::ident("Regex")),
+                    args: vec![Expr::value(Value::string("\\s+".to_string()))],
+                    kwargs: Vec::new(),
+                }));
+                Ok(Some(Expr::new(ExprKind::Invoke(ExprInvoke {
+                    span: Default::default(),
+                    target: ExprInvokeTarget::Method(ExprSelect {
+                        span: Default::default(),
+                        obj: Box::new(receiver),
+                        field: Ident::new("split"),
+                        select: ExprSelectType::Method,
+                    }),
+                    args: vec![regex],
+                    kwargs: Vec::new(),
+                }))))
+            }
+            // `String::from_utf8_lossy(bytes)`/`String::from_utf8(bytes)` —
+            // Kotlin's `String(bytes, Charsets.UTF_8)` constructor.
+            CallKind::Op(OpKind::StringFromUtf8Lossy | OpKind::StringFromUtf8) => {
+                let arg = call.args.first().cloned().unwrap_or_else(|| {
+                    Expr::value(Value::Null(Default::default()))
+                });
+                Ok(Some(Expr::new(ExprKind::Invoke(ExprInvoke {
+                    span: Default::default(),
+                    target: ExprInvokeTarget::Function(Name::ident("String")),
+                    args: vec![arg, Expr::new(ExprKind::Select(ExprSelect {
+                        span: Default::default(),
+                        obj: Box::new(Expr::name(Name::ident("Charsets"))),
+                        field: Ident::new("UTF_8"),
+                        select: ExprSelectType::Field,
+                    }))],
+                    kwargs: Vec::new(),
+                }))))
             }
             _ => Ok(None),
         }

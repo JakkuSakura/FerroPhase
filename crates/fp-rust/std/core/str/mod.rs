@@ -128,6 +128,7 @@ fn slice_error_fail_rt(s: &str, begin: usize, end: usize) -> ! {
     panic!("end byte index {end} is out of bounds for string of length {len}");
 }
 
+#[op(class = "str")]
 impl str {
     /// Returns the length of `self`.
     ///
@@ -1207,6 +1208,7 @@ impl str {
     #[stable(feature = "split_whitespace", since = "1.1.0")]
     #[rustc_diagnostic_item = "str_split_whitespace"]
     #[inline]
+    #[op(method = "split_whitespace")]
     pub fn split_whitespace(&self) -> SplitWhitespace<'_> {
         SplitWhitespace { inner: self.split(IsWhitespace).filter(IsNotEmpty) }
     }
@@ -2241,6 +2243,7 @@ impl str {
                   without modifying the original"]
     #[stable(feature = "trim_direction", since = "1.30.0")]
     #[rustc_diagnostic_item = "str_trim_start"]
+    #[op(method = "trim_start")]
     pub fn trim_start(&self) -> &str {
         self.trim_start_matches(char::is_whitespace)
     }
@@ -2280,6 +2283,7 @@ impl str {
                   without modifying the original"]
     #[stable(feature = "trim_direction", since = "1.30.0")]
     #[rustc_diagnostic_item = "str_trim_end"]
+    #[op(method = "trim_end")]
     pub fn trim_end(&self) -> &str {
         self.trim_end_matches(char::is_whitespace)
     }

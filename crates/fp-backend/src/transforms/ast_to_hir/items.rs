@@ -437,6 +437,7 @@ impl HirGenerator {
                 Span::new(self.current_file, 0, 0),
             );
 
+            let trait_op_class = fp_core::intrinsics::extract_op_attr(&def_trait.attrs, "class");
             let mut items = Vec::new();
             for item in &def_trait.items {
                 match item.kind() {
@@ -449,8 +450,17 @@ impl HirGenerator {
                             Some(self_ty.clone()),
                             true,
                         )?;
+                        let method_def_id = self.def_id_for_item(item);
+                        if let Some(tag) = fp_core::intrinsics::extract_op_attr(&func.attrs, "method") {
+                            let op = trait_op_class
+                                .as_deref()
+                                .and_then(|class| fp_core::intrinsics::OpKind::from_class_and_member(class, &tag));
+                            if let Some(op) = op {
+                                self.op_defs.insert(method_def_id, op);
+                            }
+                        }
                         items.push(hir::TraitItem {
-                            def_id: self.def_id_for_item(item),
+                            def_id: method_def_id,
                             hir_id: self.next_id(),
                             name: func.name.name.clone().into(),
                             kind: hir::TraitItemKind::Method(function),

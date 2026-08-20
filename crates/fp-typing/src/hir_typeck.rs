@@ -3516,12 +3516,19 @@ impl HirTypeChecker {
             // Portable passthroughs: the op's own doc comment says the
             // wrapper simply drops away, so the result type is exactly the
             // (sole) argument's type.
-            OpKind::Clone | OpKind::AsRef | OpKind::Iter | OpKind::ToOwned | OpKind::AsStr => {
+            OpKind::Clone | OpKind::AsRef | OpKind::Iter | OpKind::ToOwned | OpKind::AsStr
+            | OpKind::TrimEnd | OpKind::TrimStart | OpKind::AsDeref => {
                 match arg_types.first() {
                     Some(ty) => ty.clone(),
                     None => self.error_ty(format!("`{}` requires an argument", fp_core::intrinsics::CallKind::Op(op).name())),
                 }
             }
+            // `.is_none()` always produces a `bool`.
+            OpKind::IsNone => Ty::bool(),
+            // `String::from_utf8_lossy`/`String::from_utf8` always produce a string.
+            OpKind::StringFromUtf8Lossy | OpKind::StringFromUtf8 => Ty {
+                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+            },
             // `Ok(x)` unwraps to `x`'s own type (see `OpKind::ResultOk`'s
             // doc comment: `Result<T, E>` is portably represented as `T`).
             OpKind::ResultOk => match arg_types.first() {
@@ -3554,6 +3561,8 @@ impl HirTypeChecker {
             | OpKind::Collect
             | OpKind::Find
             | OpKind::AndThen
+            | OpKind::SplitWhitespace
+            | OpKind::Position
             | OpKind::Import(_) => self.error_ty(format!(
                 "portable op `{}` reached a stage that only handles genuine intrinsics or simple passthroughs",
                 fp_core::intrinsics::CallKind::Op(op).name()

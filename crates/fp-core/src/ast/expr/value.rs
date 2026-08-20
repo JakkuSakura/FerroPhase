@@ -1164,6 +1164,14 @@ pub fn build_intrinsic_call(kind: CallKind, invoke: &ExprInvoke) -> Option<ExprI
         | CallKind::Op(OpKind::AsStr)
         | CallKind::Op(OpKind::ToString)
         | CallKind::Op(OpKind::AndThen)
+        | CallKind::Op(OpKind::TrimEnd)
+        | CallKind::Op(OpKind::TrimStart)
+        | CallKind::Op(OpKind::SplitWhitespace)
+        | CallKind::Op(OpKind::AsDeref)
+        | CallKind::Op(OpKind::Position)
+        | CallKind::Op(OpKind::IsNone)
+        | CallKind::Op(OpKind::StringFromUtf8Lossy)
+        | CallKind::Op(OpKind::StringFromUtf8)
         | CallKind::Op(OpKind::Import(_)) => None,
         CallKind::Intrinsic(_) => None,
     }?;

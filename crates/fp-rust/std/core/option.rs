@@ -683,6 +683,7 @@ impl<T> Option<T> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_const_stable(feature = "const_option_basics", since = "1.48.0")]
+    #[op(method = "is_none")]
     pub const fn is_none(&self) -> bool {
         !self.is_some()
     }
@@ -1390,6 +1391,7 @@ impl<T> Option<T> {
     #[inline]
     #[stable(feature = "option_deref", since = "1.40.0")]
     #[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+    #[op(method = "as_deref")]
     pub const fn as_deref(&self) -> Option<&T::Target>
     where
         T: Deref,

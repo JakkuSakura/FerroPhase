@@ -2985,6 +2985,15 @@ fn map_kt_path(name: &str) -> String {
             return kt_method;
         }
         let kt_prefix = map_name_to_kt(prefix);
+        // `Type::new(...)` — a real constructor call (JDK type like
+        // `ProcessBuilder`/`Arc`, or any user-defined struct's own `new`).
+        // `Vec`/`HashSet`/`HashMap` (the only real static-factory-shaped
+        // `new`s) are already intercepted above, so anything reaching here
+        // is a genuine constructor — render it as `Type(args)`, not
+        // `Type.new(args)`/`Type.of(args)` (neither of which exist).
+        if method == "new" {
+            return kt_prefix;
+        }
         // Drop PascalCase type prefix for local-type static methods not in known mappings
         let is_local_type = prefix.chars().next().map_or(false, |c| c.is_uppercase())
             && !prefix.contains("::")
@@ -2994,7 +3003,13 @@ fn map_kt_path(name: &str) -> String {
             return method.to_string();
         }
         if method.chars().next().map_or(false, |c| c.is_uppercase()) {
-            return format!("{}.{}", kt_prefix, method.to_uppercase());
+            // Enum-variant tuple-struct constructor (e.g.
+            // `CoreError::GitCommand(...)`) — pass the variant name through
+            // unchanged. This branch used to uppercase it, intending to
+            // handle Rust unit-struct-as-constant calls, but that also fired
+            // on ordinary enum-variant constructors, which have no all-caps
+            // Kotlin convention.
+            return format!("{}.{}", kt_prefix, method);
         }
         let kt_method = map_kt_method(method);
         return format!("{}.{}", kt_prefix, kt_method);

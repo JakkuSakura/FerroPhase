@@ -39,6 +39,7 @@ fn _assert_is_dyn_compatible(_: &dyn Iterator<Item = ()>) {}
 #[rustc_diagnostic_item = "Iterator"]
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 #[rustc_const_unstable(feature = "const_iter", issue = "92476")]
+#[op(class = "Iterator")]
 pub const trait Iterator {
     /// The type of the elements being iterated over.
     #[rustc_diagnostic_item = "IteratorItem"]
@@ -3131,6 +3132,7 @@ pub const trait Iterator {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_non_const_trait_method]
+    #[op(method = "position")]
     fn position<P>(&mut self, predicate: P) -> Option<usize>
     where
         Self: Sized,

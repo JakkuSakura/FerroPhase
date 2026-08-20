@@ -69,6 +69,22 @@ pub enum OpKind {
     ToString,
     /// Portable: x.and_then(f) → x?.let { f }
     AndThen,
+    /// Portable: `x.trim_end()` → `x.trimEnd()`
+    TrimEnd,
+    /// Portable: `x.trim_start()` → `x.trimStart()`
+    TrimStart,
+    /// Portable: `x.split_whitespace()` → whitespace-regex split, dropping empty runs
+    SplitWhitespace,
+    /// Portable: `x.as_deref()` → drop (Kotlin nullable)
+    AsDeref,
+    /// Portable: `x.position(f)` → `x.indexOfFirst(f)`
+    Position,
+    /// Portable: `x.is_none()` → `x == null`
+    IsNone,
+    /// Portable: `String::from_utf8_lossy(bytes)` → `String(bytes, Charsets.UTF_8)`
+    StringFromUtf8Lossy,
+    /// Portable: `String::from_utf8(bytes)` → `String(bytes, Charsets.UTF_8)`
+    StringFromUtf8,
     /// Portable import of a known package
     Import(KnownPackage),
 }
@@ -96,6 +112,14 @@ impl OpKind {
             "as_str" => Some(Self::AsStr),
             "to_string" => Some(Self::ToString),
             "and_then" => Some(Self::AndThen),
+            "trim_end" => Some(Self::TrimEnd),
+            "trim_start" => Some(Self::TrimStart),
+            "split_whitespace" => Some(Self::SplitWhitespace),
+            "as_deref" => Some(Self::AsDeref),
+            "position" => Some(Self::Position),
+            "is_none" => Some(Self::IsNone),
+            "string_from_utf8_lossy" => Some(Self::StringFromUtf8Lossy),
+            "string_from_utf8" => Some(Self::StringFromUtf8),
             "clone" => Some(Self::Clone),
             "unwrap" => Some(Self::OptionUnwrap),
             // Free-function ops (`#[op(func = "...")]`) — named after the
@@ -172,6 +196,14 @@ impl OpKind {
             ("Option", "clone") => Some(Self::Clone),
             ("Result", "ok") => Some(Self::ResultOk),
             ("Result", "err") => Some(Self::ResultErr),
+            ("Option", "is_none") => Some(Self::IsNone),
+            ("Option", "as_deref") => Some(Self::AsDeref),
+            ("str", "trim_end") => Some(Self::TrimEnd),
+            ("str", "trim_start") => Some(Self::TrimStart),
+            ("str", "split_whitespace") => Some(Self::SplitWhitespace),
+            ("String", "from_utf8_lossy") => Some(Self::StringFromUtf8Lossy),
+            ("String", "from_utf8") => Some(Self::StringFromUtf8),
+            ("Iterator", "position") => Some(Self::Position),
             _ => None,
         }
     }
@@ -437,6 +469,14 @@ impl CallKind {
             Self::Op(OpKind::AsStr) => None,
             Self::Op(OpKind::ToString) => None,
             Self::Op(OpKind::AndThen) => None,
+            Self::Op(OpKind::TrimEnd) => None,
+            Self::Op(OpKind::TrimStart) => None,
+            Self::Op(OpKind::SplitWhitespace) => None,
+            Self::Op(OpKind::AsDeref) => None,
+            Self::Op(OpKind::Position) => None,
+            Self::Op(OpKind::IsNone) => None,
+            Self::Op(OpKind::StringFromUtf8Lossy) => None,
+            Self::Op(OpKind::StringFromUtf8) => None,
             Self::Op(OpKind::Import(_)) => None,
             Self::Intrinsic(kind) => Some(kind),
         }
@@ -619,6 +659,14 @@ impl CallKind {
             Self::Op(OpKind::AsStr) => "as_str",
             Self::Op(OpKind::ToString) => "to_string",
             Self::Op(OpKind::AndThen) => "and_then",
+            Self::Op(OpKind::TrimEnd) => "trim_end",
+            Self::Op(OpKind::TrimStart) => "trim_start",
+            Self::Op(OpKind::SplitWhitespace) => "split_whitespace",
+            Self::Op(OpKind::AsDeref) => "as_deref",
+            Self::Op(OpKind::Position) => "position",
+            Self::Op(OpKind::IsNone) => "is_none",
+            Self::Op(OpKind::StringFromUtf8Lossy) => "string_from_utf8_lossy",
+            Self::Op(OpKind::StringFromUtf8) => "string_from_utf8",
             Self::Op(OpKind::Import(KnownPackage::StdCollections)) => "import_std_collections",
             Self::Op(OpKind::Import(KnownPackage::StdPath)) => "import_std_path",
             Self::Op(OpKind::Import(KnownPackage::StdProcess)) => "import_std_process",

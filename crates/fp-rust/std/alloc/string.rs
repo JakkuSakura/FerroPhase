@@ -421,6 +421,7 @@ enum FromUtf16ErrorKind {
     OddBytes,
 }
 
+#[op(class = "String")]
 impl String {
     /// Creates a new empty `String`.
     ///
@@ -566,6 +567,7 @@ impl String {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[rustc_diagnostic_item = "string_from_utf8"]
+    #[op(method = "from_utf8")]
     pub fn from_utf8(vec: Vec<u8>) -> Result<String, FromUtf8Error> {
         match str::from_utf8(&vec) {
             Ok(..) => Ok(String { vec }),
@@ -625,6 +627,7 @@ impl String {
     #[must_use]
     #[cfg(not(no_global_oom_handling))]
     #[stable(feature = "rust1", since = "1.0.0")]
+    #[op(method = "from_utf8_lossy")]
     pub fn from_utf8_lossy(v: &[u8]) -> Cow<'_, str> {
         let mut iter = v.utf8_chunks();
 
