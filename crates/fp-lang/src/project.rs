@@ -25,9 +25,12 @@ pub fn list_members(root: &Path) -> Vec<(String, PathBuf)> {
             if let Some(members) = parse_toml_members(&content, root) {
                 return members;
             }
+            if let Some(name) = parse_toml_package_name(&content) {
+                return vec![(name, root.to_path_buf())];
+            }
         }
     }
-    // Single crate at root: lib.rs / main.rs
+    // Single crate at root, no manifest at all: lib.rs / main.rs
     vec![(root.file_name().unwrap_or_default().to_string_lossy().to_string(), root.to_path_buf())]
 }
 
@@ -45,8 +48,23 @@ pub fn list_cargo_members(root: &Path) -> Vec<(String, PathBuf)> {
         if let Some(members) = parse_toml_members(&content, root) {
             return members;
         }
+        if let Some(name) = parse_toml_package_name(&content) {
+            return vec![(name, root.to_path_buf())];
+        }
     }
     vec![(root.file_name().unwrap_or_default().to_string_lossy().to_string(), root.to_path_buf())]
+}
+
+/// A single (non-workspace) manifest's own `[package].name` — the name a
+/// standalone Cargo/Magnet crate declares for itself, as opposed to
+/// `parse_toml_members`'s `[workspace].members` list for multi-crate repos.
+fn parse_toml_package_name(content: &str) -> Option<String> {
+    let manifest: toml::Value = content.parse().ok()?;
+    manifest
+        .get("package")
+        .and_then(|package| package.get("name"))
+        .and_then(|name| name.as_str())
+        .map(str::to_string)
 }
 
 fn parse_toml_members(content: &str, root: &Path) -> Option<Vec<(String, PathBuf)>> {

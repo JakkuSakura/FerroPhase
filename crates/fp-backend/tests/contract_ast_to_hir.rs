@@ -70,7 +70,7 @@ fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::Program> {
         .items
         .into_iter()
         .map(|item| PackageItem {
-            path: QualifiedPath::new(Vec::new()),
+            module_path: QualifiedPath::new(Vec::new()),
             item,
         })
         .collect();
