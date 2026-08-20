@@ -40,7 +40,6 @@ fn inspect_macho_fat_lists_architectures() {
 fn base_compile_args(input: PathBuf, output: PathBuf) -> CompileArgs {
     CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input],
         backend: BackendKind::Bytecode,
         target: None,
@@ -61,8 +60,6 @@ fn base_compile_args(input: PathBuf, output: PathBuf) -> CompileArgs {
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 10,
         source_language: None,
         disable_stage: Vec::new(),
         type_defs: false,

@@ -12,12 +12,6 @@ pub struct TranspileOptions {
     pub target: String,
     pub output: Option<PathBuf>,
     pub package: Option<String>,
-    /// Skip HIR typechecking — falls back to the untyped pipeline. Real
-    /// resolved types make several backend heuristics (List-vs-String
-    /// disambiguation, mutability, etc.) unnecessary, but typing is newer
-    /// and less battle-tested against real multi-file projects than the
-    /// untyped path, so this stays available as an escape hatch.
-    pub skip_typing: bool,
 }
 
 pub fn transpile(options: &TranspileOptions) -> Result<()> {
@@ -50,9 +44,6 @@ pub fn transpile(options: &TranspileOptions) -> Result<()> {
         "--target".into(),
         options.target.clone(),
     ];
-    if options.skip_typing {
-        args.push("--skip-typing".into());
-    }
     if let Some(out) = &options.output {
         args.push("-o".into());
         args.push(out.display().to_string());

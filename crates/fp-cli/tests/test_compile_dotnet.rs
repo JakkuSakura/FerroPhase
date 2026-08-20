@@ -43,7 +43,6 @@ fn main() -> i64 {
 
     let args = CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Dotnet,
         target: None,
@@ -64,8 +63,6 @@ fn main() -> i64 {
         exec: true,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 50,
         source_language: None,
         disable_stage: Vec::new(),
         type_defs: false,
@@ -98,7 +95,6 @@ fn main() -> i64 {
 
     let args = CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Dotnet,
         target: None,
@@ -119,8 +115,6 @@ fn main() -> i64 {
         exec: true,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 50,
         source_language: None,
         disable_stage: Vec::new(),
         type_defs: false,

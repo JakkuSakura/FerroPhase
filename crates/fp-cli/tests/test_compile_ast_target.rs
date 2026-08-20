@@ -10,7 +10,6 @@ use fp_cli::compile_options::BackendKind;
 fn base_compile_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileArgs {
     CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input],
         backend: BackendKind::Binary,
         target: None,
@@ -31,8 +30,6 @@ fn base_compile_args(input: std::path::PathBuf, output: std::path::PathBuf) -> C
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: true,
-        max_errors: 0,
         source_language: None,
         disable_stage: Vec::new(),
         type_defs: false,

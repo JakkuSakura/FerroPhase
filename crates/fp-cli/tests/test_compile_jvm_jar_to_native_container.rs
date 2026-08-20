@@ -39,7 +39,6 @@ async fn compile_jvm_jar_to_native_object() {
 
     let args = CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -60,8 +59,6 @@ async fn compile_jvm_jar_to_native_object() {
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 10,
         source_language: Some("jvm-bytecode".to_string()),
         disable_stage: Vec::new(),
         type_defs: false,

@@ -5,14 +5,12 @@ use crate::compile_options::BackendKind;
 use crate::container::NativeAsmSource;
 use crate::compiler::{
     self, BytecodeCompileOptions, CraneliftCompileOptions, EbpfCompileOptions, JvmCompileOptions,
-    LlvmCompileOptions, LossyCompileOptions, NativeCompileOptions, NativeEmitterKind,
-    WasmCompileOptions,
+    LlvmCompileOptions, NativeCompileOptions, NativeEmitterKind, WasmCompileOptions,
 };
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
 use fp_core::ast::{AstTargetOutput, File, Item};
 use fp_core::package::{PackageId, PackageSource};
-use fp_core::config;
 #[cfg(feature = "lang-csharp")]
 use fp_csharp::CSharpSerializer;
 #[cfg(feature = "lang-godot")]
@@ -136,14 +134,6 @@ pub struct CompileArgs {
     #[arg(long)]
     pub save_intermediates: bool,
 
-    /// Enable lossy mode during compilation
-    #[arg(long)]
-    pub lossy: bool,
-
-    /// Maximum number of errors to collect when lossy mode is enabled (0 = unlimited)
-    #[arg(long, default_value_t = 50)]
-    pub max_errors: usize,
-
     /// Override automatic source language detection (e.g. "typescript")
     #[arg(long = "lang", alias = "language")]
     pub source_language: Option<String>,
@@ -155,10 +145,6 @@ pub struct CompileArgs {
     /// Generate type definitions for TypeScript target.
     #[arg(long)]
     pub type_defs: bool,
-
-    /// Skip HIR typing before AST target emission.
-    #[arg(long)]
-    pub skip_typing: bool,
 
     /// Generate a single WIT world instead of per-package worlds.
     #[arg(long)]
@@ -490,10 +476,6 @@ async fn try_compile_with_compiler(
     args: &CompileArgs,
     backend: BackendKind,
 ) -> Result<Option<PathBuf>> {
-    let lossy = compiler::LossyCompileOptions {
-        enabled: args.lossy || config::lossy_mode(),
-    };
-
     match backend {
         BackendKind::Binary => {
             let emitter = match args.emitter {
@@ -505,7 +487,6 @@ async fn try_compile_with_compiler(
                         input,
                         args.package(),
                         args.source_language.as_deref(),
-                        lossy,
                         &LlvmCompileOptions {
                             output: output.to_path_buf(),
                             target_triple: args.target_triple.clone(),
@@ -531,7 +512,6 @@ async fn try_compile_with_compiler(
                         input,
                         args.package(),
                         args.source_language.as_deref(),
-                        lossy,
                         &CraneliftCompileOptions {
                             output: output.to_path_buf(),
                             target_triple: args.target_triple.clone(),
@@ -551,7 +531,6 @@ async fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                lossy,
                 &NativeCompileOptions {
                     emitter,
                     output: output.to_path_buf(),
@@ -573,7 +552,6 @@ async fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                lossy,
                 &BytecodeCompileOptions {
                     output: output.to_path_buf(),
                     emit_text: matches!(backend, BackendKind::TextBytecode),
@@ -591,7 +569,6 @@ async fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                lossy,
                 &JvmCompileOptions {
                     output: output.to_path_buf(),
                     save_intermediates: args.save_intermediates,
@@ -605,7 +582,6 @@ async fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                lossy,
                 &WasmCompileOptions {
                     output: output.to_path_buf(),
                 },
@@ -617,7 +593,6 @@ async fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                lossy,
                 &EbpfCompileOptions {
                     output: output.to_path_buf(),
                 },
@@ -636,7 +611,6 @@ async fn try_compile_with_compiler(
             let artifact = compiler::compile_dotnet_file(
                 input,
                 args.source_language.as_deref(),
-                lossy,
                 output,
                 args.save_intermediates,
             )?;
@@ -647,7 +621,6 @@ async fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                lossy,
                 &LlvmCompileOptions {
                     output: output.to_path_buf(),
                     target_triple: args.target_triple.clone(),
@@ -804,84 +777,26 @@ async fn compile_emit_target(
             crate::languages::materializer::materializer_for_language(
                 &crate::languages::backend::output_extension_for(target),
             );
-        let normalizer =
-            crate::languages::normalizer::normalizer_for_language(&language, !args.skip_typing);
+        let normalizer = crate::languages::normalizer::normalizer_for_language(&language);
         let wrapped: std::sync::Arc<dyn fp_core::package::provider::PackageProvider> =
             std::sync::Arc::new(TranspileMaterializingPackageProvider::new(
                 provider,
                 materializer.clone(),
                 normalizer,
             ));
-        let source = if args.skip_typing {
-            wrapped
-                .load_package_source(&package_id)
-                .map_err(|e| CliError::Compilation(e.to_string()))?
-        } else {
-            // Typechecking (real HIR type resolution, plus `std`/`libc`
-            // resolution via `std_provider_for`) is only wired up for a
-            // handful of source languages so far — same fallback
-            // `compile_project` already uses for its own multi-file
-            // `--target` path, applied here too instead of this single-file
-            // path being the only one that can't tolerate an unsupported
-            // language.
-            let lossy = LossyCompileOptions {
-                enabled: args.lossy || fp_core::config::lossy_mode(),
-            };
-            let wrapped_for_typecheck = wrapped.clone();
-            let package_id_for_typecheck = package_id.clone();
-            let language_for_typecheck = language.clone();
-            let capabilities = crate::languages::backend::capabilities_for_target(target);
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                compiler::typecheck_package(
-                    wrapped_for_typecheck,
-                    &package_id_for_typecheck,
-                    lossy,
-                    &language_for_typecheck,
-                    capabilities,
-                )
-            })) {
-                Ok(Ok(typed_source)) => typed_source,
-                Ok(Err(e)) => {
-                    if !lossy.enabled {
-                        return Err(CliError::Compilation(format!(
-                            "typecheck failed for {}: {}",
-                            input.display(),
-                            e
-                        )));
-                    }
-                    warn!(
-                        "typecheck failed for {}: {} — falling back to untyped (lossy mode)",
-                        input.display(),
-                        e
-                    );
-                    wrapped
-                        .load_package_source(&package_id)
-                        .map_err(|e| CliError::Compilation(e.to_string()))?
-                }
-                Err(panic_info) => {
-                    let msg = panic_info
-                        .downcast_ref::<String>()
-                        .map(|s| s.as_str())
-                        .or_else(|| panic_info.downcast_ref::<&str>().copied())
-                        .unwrap_or("(unknown)");
-                    if !lossy.enabled {
-                        return Err(CliError::Compilation(format!(
-                            "typecheck panicked for {}: {}",
-                            input.display(),
-                            msg
-                        )));
-                    }
-                    warn!(
-                        "typecheck panicked for {}: {} — falling back to untyped (lossy mode)",
-                        input.display(),
-                        msg
-                    );
-                    wrapped
-                        .load_package_source(&package_id)
-                        .map_err(|e| CliError::Compilation(e.to_string()))?
-                }
-            }
-        };
+        let capabilities = crate::languages::backend::capabilities_for_target(target);
+        let (executor, mut session) =
+            compiler::build_workspace_session(wrapped, &language, capabilities);
+        executor
+            .run(session.driver().compile_package(&package_id))
+            .map_err(|e| {
+                CliError::Compilation(format!("typecheck failed for {}: {}", input.display(), e))
+            })?;
+        compiler::drain_driver(session.driver())?;
+        let workspace = session.driver().state.borrow().typing_ctx.env_ctx.clone();
+        let source = workspace
+            .package_source(&package_id)
+            .map_err(|e| CliError::Compilation(e.to_string()))?;
         // Materialize portable ops post-typechecked-lifting too (see the
         // matching comment in `compile_project`'s phase 2) — the wrapping
         // above only materializes pre-HIR source; `HirToAstLifter`'s
@@ -977,7 +892,7 @@ async fn compile_project(
 
     let mut file_count = 0;
 
-    let normalizer = crate::languages::normalizer::normalizer_for_language(lang, !args.skip_typing);
+    let normalizer = crate::languages::normalizer::normalizer_for_language(lang);
     let materializer = crate::languages::materializer::materializer_for_language(
         &crate::languages::backend::output_extension_for(target)
     );
@@ -1009,106 +924,45 @@ async fn compile_project(
     // recursive, cached, cycle-safe dependency machinery — so `std`/`libc`
     // and any inter-member dependency (a workspace path dependency) is
     // compiled exactly once for the whole workspace, not once per member. A
-    // typecheck error or panic in any one member fails/falls back the whole
-    // workspace compile (not just that member) — a package's own
-    // dependencies already work this way (an unresolvable dependency fails
-    // its dependent), so treating members the same way needs no special
-    // per-member recovery bookkeeping in the shared driver.
-    let untyped_prepared = |packages: &[PackageId]| -> Result<Vec<(PackageId, PackageSource)>> {
-        packages
-            .iter()
-            .map(|package_id| {
-                materializing_provider
-                    .load_package_source(package_id)
-                    .map(|source| (package_id.clone(), source))
-                    .map_err(|e| CliError::Compilation(e.to_string()))
-            })
-            .collect()
-    };
-
+    // typecheck error in any one member fails the whole workspace compile
+    // (not just that member) — a package's own dependencies already work
+    // this way (an unresolvable dependency fails its dependent), so treating
+    // members the same way needs no special per-member recovery bookkeeping
+    // in the shared driver.
     let capabilities = crate::languages::backend::capabilities_for_target(target);
-    let mut typed_workspace: Option<std::rc::Rc<fp_core::workspace::WorkspaceContext>> = None;
-    let prepared: Vec<(PackageId, PackageSource)> = if !args.skip_typing {
-        let lossy = LossyCompileOptions {
-            enabled: args.lossy || fp_core::config::lossy_mode(),
-        };
-        let root_name = input
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("workspace");
-        let root_id = PackageId::new(format!("{root_name}::__workspace_root__"));
-        let (executor, mut session) = compiler::build_workspace_session(
-            materializing_provider.clone(),
-            lang,
-            lossy,
-            capabilities,
-        );
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            executor.run(session.driver().compile_workspace(&root_id, &packages))
-        })) {
-            Ok(Ok(compiled)) => {
-                compiler::drain_driver(session.driver(), lossy)?;
-                typed_workspace = Some(session.driver().state.borrow().typing_ctx.env_ctx.clone());
-                packages
-                    .iter()
-                    .zip(compiled.iter())
-                    .map(|(package_id, compiled_package)| {
-                        (
-                            package_id.clone(),
-                            fp_core::package::package_source_from_compiled(package_id, compiled_package),
-                        )
-                    })
-                    .collect()
-            }
-            Ok(Err(e)) => {
-                if !lossy.enabled {
-                    return Err(CliError::Compilation(format!(
-                        "typecheck failed for project at {}: {}",
-                        input.display(),
-                        e
-                    )));
-                }
-                warn!(
-                    "typecheck failed for project at {}: {} — falling back to untyped (lossy mode)",
-                    input.display(),
-                    e
-                );
-                untyped_prepared(&packages)?
-            }
-            Err(panic_info) => {
-                let msg = panic_info
-                    .downcast_ref::<String>()
-                    .map(|s| s.as_str())
-                    .or_else(|| panic_info.downcast_ref::<&str>().copied())
-                    .unwrap_or("(unknown)");
-                if !lossy.enabled {
-                    return Err(CliError::Compilation(format!(
-                        "typecheck panicked for project at {}: {}",
-                        input.display(),
-                        msg
-                    )));
-                }
-                warn!(
-                    "typecheck panicked for project at {}: {} — falling back to untyped (lossy mode)",
-                    input.display(),
-                    msg
-                );
-                untyped_prepared(&packages)?
-            }
-        }
-    } else {
-        untyped_prepared(&packages)?
-    };
-
-    // Constructed once here (not per package below) — Kotlin's
-    // `KotlinWorkspaceContext::collect` walks every item of every package,
-    // so per-package construction would be an N× regression on an
-    // N-package workspace.
     let root_name = input
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("workspace")
         .to_string();
+    let root_id = PackageId::new(format!("{root_name}::__workspace_root__"));
+    let (executor, mut session) =
+        compiler::build_workspace_session(materializing_provider.clone(), lang, capabilities);
+    executor
+        .run(session.driver().compile_workspace(&root_id, &packages))
+        .map_err(|e| {
+            CliError::Compilation(format!(
+                "typecheck failed for project at {}: {}",
+                input.display(),
+                e
+            ))
+        })?;
+    compiler::drain_driver(session.driver())?;
+    let workspace = session.driver().state.borrow().typing_ctx.env_ctx.clone();
+    let prepared: Vec<(PackageId, PackageSource)> = packages
+        .iter()
+        .map(|package_id| {
+            workspace
+                .package_source(package_id)
+                .map(|source| (package_id.clone(), source))
+                .map_err(|e| CliError::Compilation(e.to_string()))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    // Constructed once here (not per package below) — Kotlin's
+    // `KotlinWorkspaceContext::collect` walks every item of every package,
+    // so per-package construction would be an N× regression on an
+    // N-package workspace.
     let sources: Vec<PackageSource> = prepared.iter().map(|(_, src)| src.clone()).collect();
     let backend_config = fp_core::backend::BackendConfig::new(output.to_path_buf());
     let backend = backend_for_target(target, args, backend_config, &sources, workspace_packages.clone(), root_name)?;
@@ -1120,18 +974,6 @@ async fn compile_project(
     // get surfaced below instead of silently accumulating in the global
     // `DiagnosticManager` with nothing ever reading them back.
     let diagnostics_snapshot = fp_core::diagnostics::diagnostic_manager().snapshot();
-    let workspace: std::rc::Rc<fp_core::workspace::WorkspaceContext> = match &typed_workspace {
-        Some(workspace) => workspace.clone(),
-        None => {
-            let workspace = std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new(
-                materializing_provider.clone(),
-            ));
-            for (package_id, source) in &prepared {
-                workspace.begin_package(package_id.clone(), source.clone(), compiler::data_layout());
-            }
-            workspace
-        }
-    };
     for (package_id, _source) in &prepared {
         // Materialize portable ops (`IntrinsicCall(CallKind::Op(_))`) into
         // this target's real shape (`Some(x)` -> `x`, `Vec::new()` -> an
@@ -1260,7 +1102,7 @@ async fn compile_project_external(
     // target.
     let materializer =
         crate::languages::materializer::materializer_for_language(target.output_extension());
-    let normalizer = crate::languages::normalizer::normalizer_for_language(&lang, !args.skip_typing);
+    let normalizer = crate::languages::normalizer::normalizer_for_language(&lang);
 
     let materializing_provider: std::sync::Arc<dyn fp_core::package::provider::PackageProvider> =
         std::sync::Arc::new(TranspileMaterializingPackageProvider::new(
@@ -1273,76 +1115,34 @@ async fn compile_project_external(
         project_root: input.to_path_buf(),
     };
 
-    for package_id in &packages {
-        let source = if !args.skip_typing {
-            let provider_for_typecheck = materializing_provider.clone();
-            let package_id_for_typecheck = package_id.clone();
-            let lossy = LossyCompileOptions {
-                enabled: args.lossy || fp_core::config::lossy_mode(),
-            };
-            let lang_for_typecheck = lang.clone();
-            // Externally-registered targets have no declared
-            // `LanguageCapabilities` of their own (the trait in
-            // `registry.rs` doesn't expose one) — use the same conservative
-            // default `capabilities_for_target` falls back to for every
-            // built-in target it doesn't special-case.
-            let capabilities = fp_core::capabilities::LanguageCapabilities::NATIVE;
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                compiler::typecheck_package(
-                    provider_for_typecheck,
-                    &package_id_for_typecheck,
-                    lossy,
-                    &lang_for_typecheck,
-                    capabilities,
-                )
-            })) {
-                Ok(Ok(typed_source)) => typed_source,
-                Ok(Err(e)) => {
-                    if !lossy.enabled {
-                        return Err(CliError::Compilation(format!(
-                            "typecheck failed for {}: {}",
-                            package_id.as_str(),
-                            e
-                        )));
-                    }
-                    warn!(
-                        "typecheck failed for {}: {} — falling back to untyped (lossy mode)",
-                        package_id.as_str(),
-                        e
-                    );
-                    materializing_provider
-                        .load_package_source(package_id)
-                        .map_err(|e| CliError::Compilation(e.to_string()))?
-                }
-                Err(panic_info) => {
-                    let msg = panic_info
-                        .downcast_ref::<String>()
-                        .map(|s| s.as_str())
-                        .or_else(|| panic_info.downcast_ref::<&str>().copied())
-                        .unwrap_or("(unknown)");
-                    if !lossy.enabled {
-                        return Err(CliError::Compilation(format!(
-                            "typecheck panicked for {}: {}",
-                            package_id.as_str(),
-                            msg
-                        )));
-                    }
-                    warn!(
-                        "typecheck panicked for {}: {} — falling back to untyped (lossy mode)",
-                        package_id.as_str(),
-                        msg
-                    );
-                    materializing_provider
-                        .load_package_source(package_id)
-                        .map_err(|e| CliError::Compilation(e.to_string()))?
-                }
-            }
-        } else {
-            materializing_provider
-                .load_package_source(package_id)
-                .map_err(|e| CliError::Compilation(e.to_string()))?
-        };
+    // Externally-registered targets have no declared `LanguageCapabilities`
+    // of their own (the trait in `registry.rs` doesn't expose one) — use the
+    // same conservative default `capabilities_for_target` falls back to for
+    // every built-in target it doesn't special-case.
+    let capabilities = fp_core::capabilities::LanguageCapabilities::NATIVE;
+    let root_name = input
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("workspace");
+    let root_id = PackageId::new(format!("{root_name}::__workspace_root__"));
+    let (executor, mut session) =
+        compiler::build_workspace_session(materializing_provider.clone(), &lang, capabilities);
+    executor
+        .run(session.driver().compile_workspace(&root_id, &packages))
+        .map_err(|e| {
+            CliError::Compilation(format!(
+                "typecheck failed for project at {}: {}",
+                input.display(),
+                e
+            ))
+        })?;
+    compiler::drain_driver(session.driver())?;
+    let workspace = session.driver().state.borrow().typing_ctx.env_ctx.clone();
 
+    for package_id in &packages {
+        let source = workspace
+            .package_source(package_id)
+            .map_err(|e| CliError::Compilation(e.to_string()))?;
         let pkg = LanguageTargetPackage {
             package_id,
             items: &source.items,

@@ -28,7 +28,6 @@ fn main() -> i64 {
 
     let args = CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Cil,
         target: None,
@@ -49,8 +48,6 @@ fn main() -> i64 {
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: true,
-        max_errors: 0,
         source_language: None,
         disable_stage: Vec::new(),
         type_defs: false,

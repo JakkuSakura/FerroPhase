@@ -445,12 +445,14 @@ impl CompilerDriver {
     /// `PackageProvider`. An inter-member dependency (e.g. member B
     /// path-depends on sibling A) is compiled exactly once regardless of
     /// which member's turn surfaces it first, since both go through
-    /// `compile_package`'s own `compiled_packages` cache.
+    /// `compile_package`'s own `compiled_packages` cache. Callers read back
+    /// each member's result via `WorkspaceContext::package_source` rather
+    /// than from this call's return value.
     pub async fn compile_workspace(
         &mut self,
         root_id: &PackageId,
         members: &[PackageId],
-    ) -> Result<Vec<Rc<RefCell<fp_core::package::CompiledPackage>>>, CompilerDriverError> {
+    ) -> Result<(), CompilerDriverError> {
         let dependencies: Vec<DependencyDescriptor> = members
             .iter()
             .map(|id| DependencyDescriptor {
@@ -463,11 +465,7 @@ impl CompilerDriver {
                 target: Default::default(),
             })
             .collect();
-        self.compile_dependencies(root_id, &dependencies).await?;
-        Ok(members
-            .iter()
-            .filter_map(|id| self.compiled_packages.get(id).cloned())
-            .collect())
+        self.compile_dependencies(root_id, &dependencies).await
     }
 
     fn publish_lir_units(
@@ -932,25 +930,13 @@ impl CompilerDriver {
                             .map(|diagnostic| diagnostic.as_core_diagnostic().to_string())
                             .collect::<Vec<_>>()
                             .join("\n");
-                        // Strict mode: a real error anywhere is a hard
-                        // failure, same as always. Lossy mode: the items
-                        // that failed already got their own per-item
-                        // fallback (`typecheck_item`'s isolation) — only
-                        // *those* items miss real types; every other item
-                        // in this package typechecked fine and its results
-                        // are already sitting in `shared.results`, so
-                        // there's no reason to discard the whole package's
-                        // typing over one unrelated item's failure (e.g. a
-                        // vendored-std helper this checker doesn't yet
-                        // support). Surface the same diagnostics as a
-                        // warning instead of an `Err`, and keep going with
-                        // whatever did resolve.
-                        if !self.state.borrow().lossy() {
-                            return Err(fp_core::error::Error::diagnostic(
-                                fp_core::diagnostics::Diagnostic::error(combined),
-                            ));
-                        }
-                        eprintln!("fp-compiler: package typecheck had per-item failures (lossy mode, keeping partial results):\n{combined}");
+                        // A real error anywhere is a hard failure: this
+                        // package's `TypeckResults` would otherwise be
+                        // handed straight to HIR->MIR lowering with the
+                        // failed item's types missing.
+                        return Err(fp_core::error::Error::diagnostic(
+                            fp_core::diagnostics::Diagnostic::error(combined),
+                        ));
                     }
                     return Ok(fp_typing::finish_package_typecheck(&shared));
                 }

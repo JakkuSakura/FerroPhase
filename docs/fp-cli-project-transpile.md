@@ -66,13 +66,13 @@ flowchart TD
 
 ```bash
 # Rust/FerroPhase projects (automatic via fp-lang)
-fp compile /path/to/rust-project --target kotlin --skip-typing -o out/
+fp compile /path/to/rust-project --target kotlin -o out/
 
 # TypeScript projects (future, via fp-typescript)
-fp compile /path/to/ts-project --target kotlin --skip-typing -o out/
+fp compile /path/to/ts-project --target kotlin -o out/
 
 # Python projects (future, via fp-python)
-fp compile /path/to/py-project --target kotlin --skip-typing -o out/
+fp compile /path/to/py-project --target kotlin -o out/
 ```
 
 `fp-cli` contains zero parser selection, zero file-extension matching, and zero

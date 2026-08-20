@@ -23,8 +23,8 @@ Undefined behavior is not an escape hatch. If a frontend cannot preserve a
 semantic point, it must declare a degradation rule and emit diagnostics that
 explain the substitution.
 
-`FERROPHASE_LOSSY` is explicitly outside this guarantee and must remain disabled
-for correctness validation.
+There is no lossy/best-effort compilation mode: a typecheck failure is always
+a hard error, with no escape hatch that trades correctness for output.
 
 ## 3. Language Model
 

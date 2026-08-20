@@ -9,7 +9,7 @@ use fp_compiler::{
 };
 use fp_core::ast::path::QualifiedPath;
 use fp_core::package::provider::PackageProvider;
-use fp_core::package::{PackageId, PackageSource};
+use fp_core::package::PackageId;
 use fp_core::{
     ast::{
         Expr, ExprBlock, File, Ident, Item, ItemDefConst, ItemDefFunction, ItemKind, ScriptBlock,
@@ -60,17 +60,12 @@ pub(crate) fn data_layout() -> LirDataLayout {
     .expect("valid CLI data layout")
 }
 
-pub fn check_path(
-    path: &Path,
-    package: &str,
-    syntax_only: bool,
-    lossy: LossyCompileOptions,
-) -> Result<()> {
+pub fn check_path(path: &Path, package: &str, syntax_only: bool) -> Result<()> {
     if syntax_only {
         // A pure syntax check never touches the package/compile pipeline at
         // all, so it stays a direct parse rather than resolving a package
         // for work that's about to be thrown away.
-        parse_file(path, None, lossy)?;
+        parse_file(path, None)?;
         return Ok(());
     }
 
@@ -81,11 +76,10 @@ pub fn check_path(
         SourceInput::Path(path.to_path_buf()),
         &language,
         &identity,
-        lossy,
         &executor,
         PipelineMode::Native,
     )?;
-    drain_driver(&mut driver, lossy)
+    drain_driver(&mut driver)
 }
 
 pub fn eval_script(script: ScriptBlock) -> Result<Value> {
@@ -115,11 +109,10 @@ pub fn eval_script(script: ScriptBlock) -> Result<Value> {
         SourceInput::InMemory(ast),
         languages::FERROPHASE,
         &identity,
-        LossyCompileOptions::default(),
         &executor,
         PipelineMode::Native,
     )?;
-    drain_driver(&mut driver, LossyCompileOptions::default())?;
+    drain_driver(&mut driver)?;
     if let Some((_, value)) = driver
         .state
         .borrow()
@@ -149,7 +142,6 @@ pub fn interpret_file(path: &Path, package: &str) -> Result<Value> {
         &language,
         CompilerIdentity::for_file(package, path),
         fp_core::context::ExecutionMode::Runtime,
-        LossyCompileOptions::default(),
     )
 }
 
@@ -220,11 +212,6 @@ pub struct CraneliftCompileOptions {
     pub save_intermediates: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct LossyCompileOptions {
-    pub enabled: bool,
-}
-
 #[derive(Debug, Clone)]
 pub struct FrontendBundle {
     pub source_language: String,
@@ -249,12 +236,11 @@ pub fn compile_native_file(
     path: &Path,
     package: &str,
     source_language: Option<&str>,
-    lossy: LossyCompileOptions,
     options: &NativeCompileOptions,
 ) -> Result<PathBuf> {
     use fp_core::backend::TargetBackend;
 
-    let lowered = lower_file(path, package, source_language, lossy)?;
+    let lowered = lower_file(path, package, source_language)?;
     let workspace = lowered.compiled_workspace()?;
 
     match options.emitter {
@@ -315,10 +301,9 @@ pub fn compile_bytecode_file(
     path: &Path,
     package: &str,
     source_language: Option<&str>,
-    lossy: LossyCompileOptions,
     options: &BytecodeCompileOptions,
 ) -> Result<PathBuf> {
-    let mut lowered = lower_file(path, package, source_language, lossy)?;
+    let mut lowered = lower_file(path, package, source_language)?;
     let bytecode = lowered
         .executor
         .run(lowered.driver.compile_bytecode(&lowered.package_id))
@@ -359,10 +344,9 @@ pub fn compile_jvm_file(
     path: &Path,
     package: &str,
     source_language: Option<&str>,
-    lossy: LossyCompileOptions,
     options: &JvmCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, package, source_language, lossy)?;
+    let lowered = lower_file(path, package, source_language)?;
     let mir = lowered.mir()?;
     let class_stem = options.class_name_hint.as_deref().unwrap_or("Main");
     let jvm_options = fp_jvm::JvmBackendOptions {
@@ -417,10 +401,9 @@ pub fn compile_wasm_file(
     path: &Path,
     package: &str,
     source_language: Option<&str>,
-    lossy: LossyCompileOptions,
     options: &WasmCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, package, source_language, lossy)?;
+    let lowered = lower_file(path, package, source_language)?;
     let lir = lowered.lir()?;
     let wasm_bytes = fp_wasm::emit_wasm(&lir)
         .map_err(|err| CliError::Compilation(format!("Failed to emit wasm: {}", err)))?;
@@ -435,10 +418,9 @@ pub fn compile_ebpf_file(
     path: &Path,
     package: &str,
     source_language: Option<&str>,
-    lossy: LossyCompileOptions,
     options: &EbpfCompileOptions,
 ) -> Result<PathBuf> {
-    let lowered = lower_file(path, package, source_language, lossy)?;
+    let lowered = lower_file(path, package, source_language)?;
     let lir = lowered.lir()?;
     if let Some(parent) = options.output.parent() {
         std::fs::create_dir_all(parent).map_err(CliError::Io)?;
@@ -458,18 +440,17 @@ pub fn compile_ebpf_file(
 }
 
 pub fn compile_cil_file(path: &Path) -> Result<String> {
-    let ast = parse_file(path, None, LossyCompileOptions::default())?;
+    let ast = parse_file(path, None)?;
     compile_cil_ast(&ast)
 }
 
 pub fn compile_dotnet_file(
     path: &Path,
     source_language: Option<&str>,
-    lossy: LossyCompileOptions,
     output: &Path,
     save_intermediates: bool,
 ) -> Result<PathBuf> {
-    let ast = parse_file(path, source_language, lossy)?;
+    let ast = parse_file(path, source_language)?;
     compile_dotnet_ast(&ast, output, save_intermediates)
 }
 
@@ -477,12 +458,11 @@ pub fn compile_llvm_file(
     path: &Path,
     package: &str,
     source_language: Option<&str>,
-    lossy: LossyCompileOptions,
     options: &LlvmCompileOptions,
 ) -> Result<PathBuf> {
     #[cfg(feature = "llvm")]
     {
-        let lowered = lower_file(path, package, source_language, lossy)?;
+        let lowered = lower_file(path, package, source_language)?;
         let lir = lowered.lir()?;
         let source_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let llvm_output = if options.output.extension().and_then(|ext| ext.to_str()) == Some("ll") {
@@ -556,12 +536,11 @@ pub fn compile_cranelift_file(
     path: &Path,
     package: &str,
     source_language: Option<&str>,
-    lossy: LossyCompileOptions,
     options: &CraneliftCompileOptions,
 ) -> Result<PathBuf> {
     #[cfg(feature = "cranelift")]
     {
-        let lowered = lower_file(path, package, source_language, lossy)?;
+        let lowered = lower_file(path, package, source_language)?;
         let lir = lowered.lir()?;
         let object_path =
             options
@@ -790,7 +769,6 @@ fn execute_ast(
     language: &str,
     identity: CompilerIdentity,
     mode: fp_core::context::ExecutionMode,
-    lossy: LossyCompileOptions,
 ) -> Result<Value> {
     let value_key = identity.path.to_key();
     let executor = CompilerExecutor::new();
@@ -798,11 +776,10 @@ fn execute_ast(
         input,
         language,
         &identity,
-        lossy,
         &executor,
         PipelineMode::Native,
     )?;
-    drain_driver(&mut driver, lossy)?;
+    drain_driver(&mut driver)?;
 
     match mode {
         fp_core::context::ExecutionMode::CompileTime => driver
@@ -827,7 +804,6 @@ fn lower_file(
     path: &Path,
     package: &str,
     source_language: Option<&str>,
-    lossy: LossyCompileOptions,
 ) -> Result<LoweredProgram> {
     let language = resolve_source_language(path, source_language)?;
     let identity = CompilerIdentity::for_file(package, path);
@@ -836,11 +812,10 @@ fn lower_file(
         SourceInput::Path(path.to_path_buf()),
         &language,
         &identity,
-        lossy,
         &executor,
         PipelineMode::Native,
     )?;
-    drain_driver(&mut driver, lossy)?;
+    drain_driver(&mut driver)?;
     let package_id =
         PackageId::new(identity.path.path().head().ok_or_else(|| {
             CliError::Compilation("source file has no package identity".to_string())
@@ -1062,7 +1037,6 @@ fn compile_source_file(
     input: SourceInput,
     language: &str,
     identity: &CompilerIdentity,
-    lossy: LossyCompileOptions,
     executor: &CompilerExecutor,
     pipeline: PipelineMode,
 ) -> Result<CompilerDriver> {
@@ -1077,7 +1051,6 @@ fn compile_source_file(
     let workspace = std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new(provider));
     let mut session = CompilerSession::new(data_layout(), executor, workspace);
     session.driver().pipeline = pipeline;
-    session.driver().state.borrow_mut().set_lossy(lossy.enabled);
     executor
         .run(session.driver().compile_package(&package_id))
         .map_err(|err| CliError::Compilation(err.to_string()))?;
@@ -1098,8 +1071,8 @@ fn compile_source_file(
     Ok(session.into_driver())
 }
 
-pub fn drain_driver(driver: &mut CompilerDriver, lossy: LossyCompileOptions) -> Result<()> {
-    emit_typing_diagnostics(&driver.state.borrow().typing_ctx.diagnostics.borrow(), lossy)
+pub fn drain_driver(driver: &mut CompilerDriver) -> Result<()> {
+    emit_typing_diagnostics(&driver.state.borrow().typing_ctx.diagnostics.borrow())
 }
 
 pub fn parse_expr_with_mode(source: &str, parse_mode: FrontendParseMode) -> Result<File> {
@@ -1110,26 +1083,18 @@ pub fn parse_expr_with_mode(source: &str, parse_mode: FrontendParseMode) -> Resu
     } = frontend
         .parse_expr(source)
         .map_err(|err| CliError::Compilation(err.to_string()))?;
-    emit_frontend_diagnostics(
-        &diagnostics.get_diagnostics(),
-        LossyCompileOptions::default(),
-    )?;
+    emit_frontend_diagnostics(&diagnostics.get_diagnostics())?;
     Ok(ast)
 }
 
-fn parse_file(
-    path: &Path,
-    source_language: Option<&str>,
-    lossy: LossyCompileOptions,
-) -> Result<File> {
-    parse_file_with_mode(path, source_language, FrontendParseMode::Strict, lossy)
+fn parse_file(path: &Path, source_language: Option<&str>) -> Result<File> {
+    parse_file_with_mode(path, source_language, FrontendParseMode::Strict)
 }
 
 pub fn compile_file_to_lir_bundle(
     path: &Path,
     package: &str,
     source_language: Option<&str>,
-    lossy: LossyCompileOptions,
 ) -> Result<LirBundle> {
     let language = resolve_source_language(path, source_language)?;
     let identity = CompilerIdentity::for_file(package, path);
@@ -1138,11 +1103,10 @@ pub fn compile_file_to_lir_bundle(
         SourceInput::Path(path.to_path_buf()),
         &language,
         &identity,
-        lossy,
         &executor,
         PipelineMode::Native,
     )?;
-    drain_driver(&mut driver, lossy)?;
+    drain_driver(&mut driver)?;
     let lowered = LoweredProgram {
         driver,
         package_id: PackageId::new(identity.path.path().head().ok_or_else(|| {
@@ -1165,20 +1129,21 @@ pub fn parse_file_with_mode(
     path: &Path,
     source_language: Option<&str>,
     parse_mode: FrontendParseMode,
-    lossy: LossyCompileOptions,
 ) -> Result<File> {
-    parse_file_with_context(path, source_language, parse_mode, lossy)
+    parse_file_with_context(path, source_language, parse_mode)
 }
 
 /// Builds the executor/provider/workspace/session a typechecking compile
-/// needs — shared by `typecheck_package`'s single-package path and
-/// `compile_project`'s (`fp-cli/src/commands/compile.rs`) whole-workspace
-/// path, so a workspace compile builds this once for every member instead
-/// of once per member.
+/// needs — shared by `compile_emit_target`'s single-package path and
+/// `compile_project`'s/`compile_project_external`'s (`fp-cli/src/commands/
+/// compile.rs`) whole-workspace path, so a workspace compile builds this
+/// once for every member instead of once per member. Callers compile via
+/// `session.driver().compile_package`/`compile_workspace`, then read back
+/// each package's typed `PackageSource` via `WorkspaceContext::package_source`
+/// — never by hand-extracting it themselves.
 pub fn build_workspace_session(
     provider: Arc<dyn PackageProvider>,
     language: &str,
-    lossy: LossyCompileOptions,
     capabilities: fp_core::capabilities::LanguageCapabilities,
 ) -> (CompilerExecutor, CompilerSession) {
     let executor = CompilerExecutor::new();
@@ -1190,56 +1155,14 @@ pub fn build_workspace_session(
     let workspace = std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new(combined));
     let mut session = CompilerSession::new(data_layout(), &executor, workspace);
     session.driver().pipeline = PipelineMode::TypecheckedTranspile;
-    session.driver().state.borrow_mut().set_lossy(lossy.enabled);
     session.driver().state.borrow_mut().set_capabilities(capabilities);
     (executor, session)
-}
-
-/// Typecheck a whole package by registering its real `PackageProvider` with
-/// a fresh `CompilerDriver` under `PipelineMode::TypecheckedTranspile`,
-/// instead of flattening the package's items into a single tag-less `File`
-/// and routing it through `InputPackageProvider`/`FerroModuleSourceResolver`
-/// (which only knows how to *discover* sibling modules from disk — the
-/// wrong tool when a real provider has already parsed and tagged every
-/// item). `HirGenerator::transform_package` reads each item's real
-/// `PackageItem.path` tag to build correct module scoping, so this needs no
-/// AST-level module nesting at all.
-///
-/// Returns the package's items with real resolved types spliced in where
-/// typing succeeded (module declarations, which HIR has no representation
-/// for, pass through untouched), plus, on `PackageSource.referenced_paths`,
-/// the qualified paths each item references — raw facts a target backend
-/// can use to compute which imports it actually needs.
-pub fn typecheck_package(
-    provider: Arc<dyn PackageProvider>,
-    package_id: &PackageId,
-    lossy: LossyCompileOptions,
-    language: &str,
-    capabilities: fp_core::capabilities::LanguageCapabilities,
-) -> Result<PackageSource> {
-    let (executor, mut session) = build_workspace_session(provider, language, lossy, capabilities);
-    let package = executor
-        .run(session.driver().compile_package(package_id))
-        .map_err(|err| CliError::Compilation(err.to_string()))?;
-
-    // `hir_typeck.rs` now records most errors as diagnostics and keeps
-    // going (see `HirTypeChecker::record_error`/`error_ty`) instead of
-    // aborting `compile_package` on the first one, so a successful
-    // `Result` above no longer means "fully, correctly typed" by itself —
-    // check what actually got recorded, same as the single-file path
-    // already does (`drain_driver`), so a genuinely broken package still
-    // falls back to untyped instead of silently carrying `Ty::error()`
-    // placeholders through as if nothing were wrong.
-    drain_driver(session.driver(), lossy)?;
-
-    Ok(fp_core::package::package_source_from_compiled(package_id, &package))
 }
 
 fn parse_file_with_context(
     path: &Path,
     source_language: Option<&str>,
     parse_mode: FrontendParseMode,
-    lossy: LossyCompileOptions,
 ) -> Result<File> {
     let frontend = select_frontend(path, source_language)?;
     frontend.set_parse_mode(parse_mode);
@@ -1247,7 +1170,7 @@ fn parse_file_with_context(
     let FrontendResult { ast, diagnostics, .. } = frontend
         .parse_file(&source, path)
         .map_err(|err| CliError::Compilation(err.to_string()))?;
-    emit_frontend_diagnostics(&diagnostics.get_diagnostics(), lossy)?;
+    emit_frontend_diagnostics(&diagnostics.get_diagnostics())?;
     // Frontends leave `collected_items` empty on every nested block/function/
     // const-block; the typer's predeclare pass relies on it being populated
     // (e.g. to know a nested `type X = const { ... }` needs comptime
@@ -1327,16 +1250,15 @@ pub(crate) fn frontend_for_language(language: &str) -> Result<Box<dyn LanguageFr
     }
 }
 
-fn emit_frontend_diagnostics(diagnostics: &[Diagnostic], lossy: LossyCompileOptions) -> Result<()> {
+fn emit_frontend_diagnostics(diagnostics: &[Diagnostic]) -> Result<()> {
     DiagnosticManager::emit(
         diagnostics,
         Some("frontend"),
         &DiagnosticDisplayOptions::default(),
     );
-    if !lossy.enabled
-        && diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
+    if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
     {
         return Err(CliError::Compilation(
             "frontend stage failed; see diagnostics for details".to_string(),
@@ -1345,20 +1267,16 @@ fn emit_frontend_diagnostics(diagnostics: &[Diagnostic], lossy: LossyCompileOpti
     Ok(())
 }
 
-fn emit_typing_diagnostics(
-    diagnostics: &[TypingDiagnostic],
-    lossy: LossyCompileOptions,
-) -> Result<()> {
+fn emit_typing_diagnostics(diagnostics: &[TypingDiagnostic]) -> Result<()> {
     let rendered: Vec<Diagnostic<String>> = diagnostics.iter().map(as_core_diagnostic).collect();
     DiagnosticManager::emit(
         &rendered,
         Some("typing"),
         &DiagnosticDisplayOptions::default(),
     );
-    if !lossy.enabled
-        && diagnostics
-            .iter()
-            .any(|diagnostic| matches!(diagnostic.level, TypingDiagnosticLevel::Error))
+    if diagnostics
+        .iter()
+        .any(|diagnostic| matches!(diagnostic.level, TypingDiagnosticLevel::Error))
     {
         return Err(CliError::Compilation(
             "typing stage failed; see diagnostics for details".to_string(),
