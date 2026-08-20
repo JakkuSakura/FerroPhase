@@ -536,18 +536,12 @@ async fn run_named_target(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    // Constructed once here (not per package below) — Kotlin's
-    // `KotlinWorkspaceContext::collect` walks every item of every package,
-    // so per-package construction would be an N× regression on an
-    // N-package workspace.
-    let sources: Vec<PackageSource> = prepared.iter().map(|(_, src)| src.clone()).collect();
     let backend_config = fp_core::backend::BackendConfig::new(output.to_path_buf());
     let backend = resolve_target_backend(
         target_name,
         input,
         args,
         backend_config,
-        &sources,
         workspace_packages.clone(),
         root_name,
         module_path,
@@ -571,11 +565,11 @@ async fn run_named_target(
         // lifter's own job stops at producing the bare op node; turning it
         // into this target's real code is this materializer's job.
         //
-        // `prepared`'s own `PackageSource.items` (read further up to build
-        // `sources` for `resolve_target_backend`) must stay un-materialized
-        // — Kotlin's cross-package mutability scan needs the pre-materialize
-        // shape — so this mutates the compiled package's items in place
-        // instead of cloning into a throwaway workspace.
+        // `prepared`'s own `PackageSource.items` must stay un-materialized
+        // — Kotlin's cross-package mutability scan (read lazily from the
+        // workspace by `KotlinBackend::ensure_scan`) needs the
+        // pre-materialize shape — so this mutates the compiled package's
+        // items in place instead of cloning into a throwaway workspace.
         if let Some(mat) = &materializer {
             let compiled_package = workspace.compiled_package(package_id).ok_or_else(|| {
                 CliError::Compilation(format!(
@@ -625,16 +619,15 @@ async fn run_named_target(
 /// Resolves `name` to a `TargetBackend`, trying built-ins first
 /// (`backend_for_target`) then the runtime registry
 /// (`crate::languages::registry::find_registered_target_backend`) — the
-/// registry entry's `sources`/`workspace_packages`/`root_name` are unused
-/// (a registered backend already captured whatever it needs at
-/// registration time), but every call site builds them uniformly since
-/// most callers don't know in advance which side will answer.
+/// registry entry's `workspace_packages`/`root_name` are unused (a
+/// registered backend already captured whatever it needs at registration
+/// time), but every call site builds them uniformly since most callers
+/// don't know in advance which side will answer.
 fn resolve_target_backend(
     name: &str,
     input: &Path,
     args: &CompileArgs,
     config: fp_core::backend::BackendConfig,
-    sources: &[PackageSource],
     workspace_packages: std::collections::HashSet<String>,
     root_name: String,
     module_path: Option<fp_core::ast::path::QualifiedPath>,
@@ -644,7 +637,6 @@ fn resolve_target_backend(
         input,
         args,
         config,
-        sources,
         workspace_packages,
         root_name,
         module_path,
@@ -684,20 +676,16 @@ fn disabled_feature_error(feature: &str, what: &str) -> CliError {
 }
 
 /// Constructs the `TargetBackend` for a built-in target name — called
-/// exactly once per invocation (not once per package: Kotlin's
-/// `KotlinWorkspaceContext::collect` walks every item of every package, so
-/// per-package construction would be an N× regression on an N-package
-/// workspace). Returns `None` for a name this function doesn't recognize
-/// at all (so `resolve_target_backend` can fall through to the runtime
-/// registry), `Some(Err(_))` for a recognized name whose crate is a
-/// disabled optional feature.
-#[allow(unused_variables, clippy::too_many_arguments)]
+/// exactly once per invocation. Returns `None` for a name this function
+/// doesn't recognize at all (so `resolve_target_backend` can fall through
+/// to the runtime registry), `Some(Err(_))` for a recognized name whose
+/// crate is a disabled optional feature.
+#[allow(unused_variables)]
 fn backend_for_target(
     name: &str,
     input: &Path,
     args: &CompileArgs,
     config: fp_core::backend::BackendConfig,
-    sources: &[PackageSource],
     workspace_packages: std::collections::HashSet<String>,
     root_name: String,
     module_path: Option<fp_core::ast::path::QualifiedPath>,
@@ -886,7 +874,6 @@ fn backend_for_target(
             {
                 Ok(Box::new(fp_kotlin::KotlinBackend::new(
                     config,
-                    sources,
                     workspace_packages,
                     root_name,
                 )))

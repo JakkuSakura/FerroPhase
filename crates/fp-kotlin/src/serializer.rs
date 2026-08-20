@@ -322,44 +322,70 @@ impl KotlinSerializer {
     }
 }
 
+/// The workspace-wide facts `KotlinBackend` needs beyond a single
+/// package's own `PackageSource` — computed lazily (see `ensure_scan`)
+/// from `&WorkspaceContext` on first use and cached, instead of being
+/// force-fed at construction time.
+struct KotlinScan {
+    ctx: KotlinWorkspaceContext,
+    /// Every package name in this workspace compile, sorted — used only
+    /// by `write_workspace_files` for `settings.gradle.kts`'s
+    /// `include(...)` lines.
+    package_names: Vec<String>,
+}
+
 /// `TargetBackend` wrapper around [`KotlinSerializer`]. Kotlin needs
 /// workspace-wide context (`KotlinWorkspaceContext`, `workspace_packages`)
 /// beyond what `BackendConfig` carries, so — per the trait's design — it
 /// bakes that extra context into its own constructor instead of the trait.
+/// Unlike `workspace_packages`/`root_name` (small identifiers `WorkspaceContext`
+/// has no way to reconstruct), the workspace-wide `KotlinScan` is read
+/// lazily from `&WorkspaceContext` on first `compile_package`/
+/// `write_workspace_files` call — same as every other backend gets its
+/// input — rather than being passed a full `Vec<PackageSource>` up front.
 pub struct KotlinBackend {
     serializer: KotlinSerializer,
     workspace_packages: HashSet<String>,
-    ctx: KotlinWorkspaceContext,
     config: BackendConfig,
-    /// Every package name in this workspace compile, in discovery order —
-    /// used only by `write_workspace_files` for `settings.gradle.kts`'s
-    /// `include(...)` lines.
-    package_names: Vec<String>,
     /// The workspace's own project name (`settings.gradle.kts`'s
     /// `rootProject.name`) — derived by the caller from the *source*
     /// project directory's name, not `config.workspace_root` (the output
     /// directory), matching what `compile_project` computed inline before
     /// this refactor.
     root_name: String,
+    scan: std::sync::OnceLock<KotlinScan>,
 }
 
 impl KotlinBackend {
-    pub fn new(
-        config: BackendConfig,
-        sources: &[PackageSource],
-        workspace_packages: HashSet<String>,
-        root_name: String,
-    ) -> Self {
-        let ctx = KotlinWorkspaceContext::collect(sources.iter());
-        let package_names = sources.iter().map(|s| s.name.clone()).collect();
+    pub fn new(config: BackendConfig, workspace_packages: HashSet<String>, root_name: String) -> Self {
         Self {
             serializer: KotlinSerializer,
             workspace_packages,
-            ctx,
             config,
-            package_names,
             root_name,
+            scan: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Builds and caches the workspace-wide scan from `&WorkspaceContext`
+    /// on first call. Safe to call from any package's `compile_package` —
+    /// including the very first — since `run_named_target`'s typecheck
+    /// phase already ran for every package in `workspace_packages` before
+    /// any `compile_package` call happens.
+    fn ensure_scan(&self, workspace: &fp_core::workspace::WorkspaceContext) -> fp_core::error::Result<&KotlinScan> {
+        if let Some(scan) = self.scan.get() {
+            return Ok(scan);
+        }
+        let sources: Vec<PackageSource> = self
+            .workspace_packages
+            .iter()
+            .map(|name| workspace.package_source(&fp_core::package::PackageId::new(name.clone())))
+            .collect::<fp_core::error::Result<_>>()?;
+        let ctx = KotlinWorkspaceContext::collect(sources.iter());
+        let mut package_names: Vec<String> = sources.iter().map(|s| s.name.clone()).collect();
+        package_names.sort();
+        let _ = self.scan.set(KotlinScan { ctx, package_names });
+        Ok(self.scan.get().expect("just set above"))
     }
 }
 
@@ -369,11 +395,12 @@ impl TargetBackend for KotlinBackend {
         workspace: &fp_core::workspace::WorkspaceContext,
         package_id: &fp_core::package::PackageId,
     ) -> fp_core::error::Result<()> {
+        let scan = self.ensure_scan(workspace)?;
         let package = workspace.package_source(package_id)?;
         let package = &package;
         let files = self
             .serializer
-            .serialize_package(package, &self.workspace_packages, &self.ctx)?;
+            .serialize_package(package, &self.workspace_packages, &scan.ctx)?;
         let writer = PackageWriter::new(self.config.workspace_root.join(&package.name));
         for (mod_path, code) in files {
             let rel = if mod_path.contains('.') {
@@ -388,12 +415,13 @@ impl TargetBackend for KotlinBackend {
 
     fn write_workspace_files(
         &self,
-        _workspace: &fp_core::workspace::WorkspaceContext,
+        workspace: &fp_core::workspace::WorkspaceContext,
     ) -> fp_core::error::Result<()> {
+        let scan = self.ensure_scan(workspace)?;
         let root_name = self.root_name.replace('-', "_");
         let settings = format!(
             "rootProject.name = \"{root_name}\"\n\n{}\n",
-            self.package_names
+            scan.package_names
                 .iter()
                 .map(|n| format!("include(\":{}\")", n))
                 .collect::<Vec<_>>()
