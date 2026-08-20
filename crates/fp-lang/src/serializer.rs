@@ -131,6 +131,93 @@ fn type_variant_name(ty: &Ty) -> &'static str {
     }
 }
 
+/// Renders a `Value` as real Rust literal syntax — `0`, `"text"`, `true`,
+/// `None`, `Some(1)`, `MyStruct { a: 1 }`, `[1, 2]`, `(1, 2)` — instead of
+/// `Value`'s raw `Debug` output (`Int(ValueInt { value: 0 })`).
+///
+/// Same reasoning as `serialize_type_rust_shaped`: `Value::Display` (see
+/// `fp-core/src/ast/value/mod.rs`) delegates to whatever `AstSerializer` is
+/// registered thread-locally, so fixing this one place fixes every
+/// `value.to_string()` caller across the codebase. Most leaf variants
+/// (`ValueInt`, `ValueBool`, `ValueChar`, ...) are built with the
+/// `plain_value!` macro, which gives them their own real `Display` already
+/// (safe to call `.to_string()` on directly, no recursion risk) — the
+/// exceptions are the unit-like ones (`ValueUnit`/`ValueNull`/`ValueNone`/
+/// `ValueUndefined`), whose `plain_value!`-generated `Display` just prints
+/// their Rust type name (`"ValueUnit"`, `"ValueNull"`, ...), not real syntax,
+/// so those still need an explicit mapping below rather than a bare
+/// `.to_string()`.
+fn serialize_value_rust_shaped(value: &Value) -> String {
+    match value {
+        Value::Int(int) => int.to_string(),
+        Value::UInt(uint) => uint.to_string(),
+        Value::BigInt(big) => big.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Decimal(d) => d.to_string(),
+        Value::BigDecimal(d) => d.to_string(),
+        Value::Char(c) => c.to_string(),
+        Value::String(s) => format!("{:?}", s.to_string()),
+        Value::Unit(_) => "()".to_string(),
+        Value::Null(_) | Value::None(_) => "None".to_string(),
+        Value::Undefined(_) => "undefined".to_string(),
+        Value::Some(some) => format!("Some({})", serialize_value_rust_shaped(&some.value)),
+        Value::Option(opt) => match &opt.value {
+            Some(inner) => format!("Some({})", serialize_value_rust_shaped(inner)),
+            None => "None".to_string(),
+        },
+        Value::List(list) => format!(
+            "[{}]",
+            list.values
+                .iter()
+                .map(serialize_value_rust_shaped)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Tuple(tuple) => format!(
+            "({})",
+            tuple
+                .values
+                .iter()
+                .map(serialize_value_rust_shaped)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Struct(s) => serialize_value_structural(&s.ty.name.to_string(), &s.structural),
+        Value::Structural(structural) => serialize_value_structural("", structural),
+        Value::Type(ty) => serialize_type_rust_shaped(ty),
+        // Rare in ordinary literal position — functions, quote tokens,
+        // binary/unary op tags, and so on. Falls back to a short marker
+        // rather than a full `Debug` dump.
+        _ => format!("<{}>", value_variant_name(value)),
+    }
+}
+
+fn serialize_value_structural(name: &str, structural: &fp_core::ast::ValueStructural) -> String {
+    let fields: Vec<String> = structural
+        .fields
+        .iter()
+        .map(|field| format!("{}: {}", field.name, serialize_value_rust_shaped(&field.value)))
+        .collect();
+    format!("{name} {{ {} }}", fields.join(", "))
+}
+
+fn value_variant_name(value: &Value) -> &'static str {
+    match value {
+        Value::Pointer(_) => "pointer",
+        Value::Offset(_) => "offset",
+        Value::Escaped(_) => "escaped",
+        Value::Function(_) => "fn",
+        Value::QuoteToken(_) => "quotetoken",
+        Value::TokenStream(_) => "tokenstream",
+        Value::Expr(_) => "expr",
+        Value::BinOpKind(_) => "binop",
+        Value::UnOpKind(_) => "unop",
+        Value::Map(_) => "map",
+        Value::Bytes(_) => "bytes",
+        _ => "?",
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PrettyAstSerializer {
     options: PrettyOptions,
@@ -164,7 +251,7 @@ impl AstSerializer for PrettyAstSerializer {
     }
 
     fn serialize_value(&self, node: &Value) -> Result<String, fp_core::Error> {
-        Ok(format!("{node:?}"))
+        Ok(serialize_value_rust_shaped(node))
     }
 
     fn serialize_type(&self, node: &Ty) -> Result<String, fp_core::Error> {
