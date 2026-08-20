@@ -28,6 +28,16 @@ pub struct PipelineOptions {
     pub jit: Option<JitOptions>,
 }
 
+/// The fixed set of built-in `--backend` kinds. Unlike `--target` (which
+/// resolves through `crate::languages::registry` too, so an externally
+/// registered `TargetBackend` can be selected by name at runtime), this is
+/// still a closed `clap::ValueEnum` — `--backend` can't yet name a
+/// runtime-registered backend the way `--target` can. Closing that gap
+/// (letting `--backend <name>` also fall back to the registry, the same
+/// way `resolve_compile_target` already does for `--target`) is deliberately
+/// deferred, not an oversight: it needs `--backend` to stop being a fixed
+/// `ValueEnum` first, which ripples into every `CompileArgs` construction
+/// site (tests included).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum BackendKind {
     Interpret,

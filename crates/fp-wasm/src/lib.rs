@@ -2179,3 +2179,32 @@ fn value_type_for(
     let _ = (func, reg_types);
     value.ty.clone()
 }
+
+/// `TargetBackend` for the `--backend wasm` target — merges the package's
+/// LIR off the shared workspace exactly like `NativeEmitter` does, instead
+/// of re-driving a second, independent compile from source.
+pub struct WasmBackend {
+    pub output: std::path::PathBuf,
+    pub module_path: Option<fp_core::ast::path::QualifiedPath>,
+}
+
+impl fp_core::backend::TargetBackend for WasmBackend {
+    fn compile_package(
+        &self,
+        workspace: &fp_core::workspace::WorkspaceContext,
+        package_id: &fp_core::package::PackageId,
+    ) -> fp_core::error::Result<()> {
+        let entrypoint = self
+            .module_path
+            .as_ref()
+            .map(|module_path| (module_path, "main", "main"));
+        let lir = workspace.merged_lir_program(package_id, entrypoint)?;
+        let wasm_bytes = emit_wasm(&lir)
+            .map_err(|e| fp_core::error::Error::from(format!("Failed to emit wasm: {e}")))?;
+        if let Some(parent) = self.output.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&self.output, wasm_bytes)?;
+        Ok(())
+    }
+}

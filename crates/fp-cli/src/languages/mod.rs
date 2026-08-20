@@ -2,6 +2,7 @@ pub mod backend;
 pub mod discovery;
 pub mod frontend;
 pub mod materializer;
+pub mod native_toolchain_backends;
 pub mod normalizer;
 pub mod registry;
 pub mod single_file;
@@ -244,12 +245,6 @@ pub fn detect_target_language(target: &str) -> Option<&'static Language> {
     })
 }
 
-/// Get file extension for a target language
-pub fn get_target_extension(target: &str) -> Option<&'static str> {
-    backend::parse_language_target(target)
-        .ok()
-        .map(backend::output_extension_for)
-}
 
 /// Check if a target language is supported as an AST output target.
 pub fn is_ast_target_supported(target: &str) -> bool {

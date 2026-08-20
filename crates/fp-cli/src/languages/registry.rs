@@ -4,111 +4,41 @@
 //! workspace and cannot be a dependency of `fp-cli` without reversing the
 //! `FerroPhase` git submodule relationship.
 //!
-//! `LanguageTarget` is named the same as (and modeled after) what
-//! `crate::languages::backend::BuiltinLanguageTarget` used to be called,
-//! because it is meant to be the *universal* shape a compile target
-//! implements — not a special "external-only" side channel. Only
-//! externally-registered targets implement this trait today; migrating
-//! built-in targets (Kotlin, TypeScript, ...) off
-//! `BuiltinLanguageTarget`'s match-arm dispatch onto this trait is future
-//! work, out of scope here.
-//!
-//! The trait models a *collector*, not a one-shot file transform, so a
-//! target can accumulate facts across every package in a workspace before
-//! producing its output — symmetric with how Kotlin already collects
-//! cross-package facts (mutated fields, list/string fields, ...) before
-//! serializing (`commands/compile.rs`'s `compile_project`, phase 1 vs.
-//! phase 2).
+//! Registered targets are plain `fp_core::backend::TargetBackend` impls —
+//! the exact same trait every built-in target implements (see
+//! `commands::compile::backend_for_target`). fp-cli has no separate
+//! "external target" protocol; a registered backend is looked up by name
+//! and driven through `compile_package`/`write_workspace_files` exactly
+//! like a built-in one.
 
 use std::sync::{Arc, Mutex, OnceLock};
 
-/// The universal shape of a compile target: something that collects facts
-/// from each package as fp-cli's normal package/typecheck pipeline visits
-/// it, then serializes the accumulated result once the whole workspace has
-/// been walked.
-pub trait LanguageTarget: Send + Sync {
-    /// The canonical name a user passes via `--target <name>`.
-    fn name(&self) -> &'static str;
+use fp_core::backend::TargetBackend;
 
-    /// Additional strings that should also resolve to this target.
-    fn aliases(&self) -> &[&'static str] {
-        &[]
-    }
+static REGISTRY: OnceLock<Mutex<Vec<(&'static str, Arc<dyn TargetBackend>)>>> = OnceLock::new();
 
-    /// File extension used when no explicit `--output` is given.
-    fn output_extension(&self) -> &'static str;
-
-    /// Called once per package as `compile_project`/`compile_project_external`'s
-    /// package-discovery loop (`PackageProvider`/`ContainerRegistry`) visits
-    /// it, after that package has gone through the same `typecheck_package`
-    /// step every built-in target uses (subject to the same `--skip-typing`
-    /// escape hatch a user may pass). Implementations accumulate internal
-    /// state here — the "collect" half, run inline with discovery, not as a
-    /// separate pass.
-    fn visit_package(
-        &self,
-        package: &LanguageTargetPackage<'_>,
-        ctx: &LanguageTargetContext,
-    ) -> fp_core::Result<()>;
-
-    /// Called once after every package in the workspace has been visited.
-    /// Implementations serialize their accumulated state here — the
-    /// "serialize" half.
-    fn finish(&self) -> fp_core::Result<fp_core::ast::AstTargetOutput>;
-}
-
-/// One package's worth of (typechecked, unless `--skip-typing`) source
-/// handed to `LanguageTarget::visit_package`.
-///
-/// A real `fp_core::package::PackageSource` spans potentially many source
-/// files/modules within the package (see `PackageSource::items`'s doc
-/// comment) — there is no single `file_path` per package to hand out here,
-/// unlike a plain single-file `AstSerializer`. Each item still carries its
-/// file's module path (`PackageItem::module_path` — shared by every item
-/// from that file, not a per-item fully-qualified path; see that field's own
-/// doc comment), which a target can use to recover file/module-level
-/// grouping itself if it needs it (e.g. by calling
-/// `fp_core::package::split_package_into_modules`).
-pub struct LanguageTargetPackage<'a> {
-    pub package_id: &'a fp_core::package::PackageId,
-    pub items: &'a [fp_core::package::PackageItem],
-}
-
-pub struct LanguageTargetContext {
-    pub project_root: std::path::PathBuf,
-}
-
-static REGISTRY: OnceLock<Mutex<Vec<Arc<dyn LanguageTarget>>>> = OnceLock::new();
-
-fn registry() -> &'static Mutex<Vec<Arc<dyn LanguageTarget>>> {
+fn registry() -> &'static Mutex<Vec<(&'static str, Arc<dyn TargetBackend>)>> {
     REGISTRY.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-/// Registers a target so `--target <name>` (or one of its `aliases()`) can
-/// resolve to it. Expected to be called by the embedding binary's `main()`
-/// before it calls `commands::compile::compile_command`.
-pub fn register_language_target(target: Arc<dyn LanguageTarget>) {
+/// Registers a backend so `--target <name>` can resolve to it. Expected to
+/// be called by the embedding binary's `main()` before it calls
+/// `commands::compile::compile_command`.
+pub fn register_target_backend(name: &'static str, backend: Arc<dyn TargetBackend>) {
     registry()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .push(target);
+        .push((name, backend));
 }
 
-/// Looks up a previously `register_language_target`-ed target by name or
-/// alias, case-insensitively (matching `parse_language_target`'s own
-/// case-insensitive lookup for built-in names).
-pub fn find_registered_language_target(name: &str) -> Option<Arc<dyn LanguageTarget>> {
+/// Looks up a previously `register_target_backend`-ed backend by name,
+/// case-insensitively.
+pub fn find_registered_target_backend(name: &str) -> Option<Arc<dyn TargetBackend>> {
     let normalized = name.to_lowercase();
     registry()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .iter()
-        .find(|target| {
-            target.name().eq_ignore_ascii_case(&normalized)
-                || target
-                    .aliases()
-                    .iter()
-                    .any(|alias| alias.eq_ignore_ascii_case(&normalized))
-        })
-        .cloned()
+        .find(|(registered_name, _)| registered_name.eq_ignore_ascii_case(&normalized))
+        .map(|(_, backend)| backend.clone())
 }

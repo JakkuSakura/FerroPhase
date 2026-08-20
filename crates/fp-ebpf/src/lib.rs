@@ -2178,6 +2178,42 @@ fn ensure_section_consumed(data: &[u8], section: &str) -> Result<()> {
     }
 }
 
+/// `TargetBackend` for the `--backend ebpf` target — merges the package's
+/// LIR off the shared workspace exactly like `NativeEmitter` does, instead
+/// of re-driving a second, independent compile from source.
+pub struct EbpfBackend {
+    pub output: std::path::PathBuf,
+    pub module_path: Option<fp_core::ast::path::QualifiedPath>,
+}
+
+impl fp_core::backend::TargetBackend for EbpfBackend {
+    fn compile_package(
+        &self,
+        workspace: &fp_core::workspace::WorkspaceContext,
+        package_id: &fp_core::package::PackageId,
+    ) -> fp_core::error::Result<()> {
+        let entrypoint = self
+            .module_path
+            .as_ref()
+            .map(|module_path| (module_path, "main", "main"));
+        let lir = workspace.merged_lir_program(package_id, entrypoint)?;
+        if let Some(parent) = self.output.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if self.output.extension().and_then(|ext| ext.to_str()) == Some("o") {
+            let object_bytes = emit_object(&lir)
+                .map_err(|e| fp_core::error::Error::from(format!("eBPF object emission failed: {e}")))?;
+            std::fs::write(&self.output, object_bytes)?;
+        } else {
+            let text = emit_assembly(&lir).map_err(|e| {
+                fp_core::error::Error::from(format!("eBPF assembly emission failed: {e}"))
+            })?;
+            std::fs::write(&self.output, text)?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{emit_assembly, emit_object, read_object_metadata, validate_program};

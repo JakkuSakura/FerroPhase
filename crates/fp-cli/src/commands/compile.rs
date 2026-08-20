@@ -3,36 +3,14 @@
 use crate::commands::{setup_progress_bar, validate_paths_exist};
 use crate::compile_options::BackendKind;
 use crate::container::NativeAsmSource;
-use crate::compiler::{
-    self, BytecodeCompileOptions, CraneliftCompileOptions, EbpfCompileOptions, JvmCompileOptions,
-    LlvmCompileOptions, NativeCompileOptions, NativeEmitterKind, WasmCompileOptions,
-};
+use crate::compiler;
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
-use fp_core::ast::{AstTargetOutput, File, Item};
+use fp_core::ast::File;
 use fp_core::package::{PackageId, PackageSource};
-#[cfg(feature = "lang-csharp")]
-use fp_csharp::CSharpSerializer;
-#[cfg(feature = "lang-godot")]
-use fp_godot::GdscriptSerializer;
-#[cfg(feature = "lang-golang")]
-use fp_golang::GoSerializer;
-#[cfg(feature = "lang-kotlin")]
-use fp_kotlin::KotlinSerializer;
-use fp_lang::PrettyAstSerializer;
 use fp_native::asm::{aarch64::AsmAarch64Program, x86_64::AsmX86_64Program};
 use fp_native::asmir::{lift_from_aarch64, lift_from_x86_64, lower_to_aarch64, lower_to_x86_64};
 use fp_native::emit::{self, TargetArch};
-#[cfg(feature = "lang-python")]
-use fp_python::PythonSerializer;
-#[cfg(feature = "lang-sycl")]
-use fp_sycl::SyclSerializer;
-#[cfg(feature = "lang-typescript")]
-use fp_typescript::{JavaScriptSerializer, TypeScriptSerializer};
-#[cfg(feature = "lang-wit")]
-use fp_wit::WitSerializer;
-#[cfg(feature = "lang-zig")]
-use fp_zig::ZigSerializer;
 use object::Object as _;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -151,12 +129,6 @@ pub struct CompileArgs {
     pub single_world: bool,
 }
 
-impl CompileArgs {
-    fn package(&self) -> &str {
-        self.package.as_deref().unwrap_or("unnamed")
-    }
-}
-
 fn target_triple_matches_host(target_triple: &str) -> bool {
     let target_triple = target_triple.to_ascii_lowercase();
     let (host_arch, host_os) = (std::env::consts::ARCH, std::env::consts::OS);
@@ -177,16 +149,13 @@ fn target_triple_matches_host(target_triple: &str) -> bool {
     }
 }
 
-#[derive(Clone)]
-enum CompileTarget {
-    Backend(BackendKind),
-    Ast(crate::languages::backend::BuiltinLanguageTarget),
-    /// A target registered at runtime via `crate::languages::registry`
-    /// (e.g. `skln-fp-graph`'s `fp-graph` binary) — see that module's doc
-    /// comment for why this can't just be another `BuiltinLanguageTarget`
-    /// variant.
-    External(std::sync::Arc<dyn crate::languages::registry::LanguageTarget>),
-}
+/// `Some(name)` for a `--target <name>` compile (built-in or registered at
+/// runtime via `crate::languages::registry`, e.g. `skln-fp-graph`'s
+/// `fp-graph` binary — both are just `TargetBackend` impls looked up by
+/// name, no separate protocol). `None` means "no `--target` given, use
+/// `args.backend` instead" — `args.backend` is a plain `CompileArgs` field
+/// already, so there's nothing else to wrap.
+type CompileTarget = Option<String>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum EmitterKind {
@@ -213,9 +182,8 @@ impl EmitterKind {
 pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let target = resolve_compile_target(&args)?;
     let target_label = match &target {
-        CompileTarget::Backend(backend) => backend.as_str().to_string(),
-        CompileTarget::Ast(ast_target) => format!("{:?}", ast_target),
-        CompileTarget::External(external) => format!("external:{}", external.name()),
+        None => args.backend.as_str().to_string(),
+        Some(name) => format!("target:{name}"),
     };
     info!("Starting compilation with target: {}", target_label);
 
@@ -230,22 +198,21 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
     let mut compiled_files = Vec::new();
     let target = resolve_compile_target(&args)?;
-    let goasm_text_target = matches!(target, CompileTarget::Backend(BackendKind::Binary))
-        && args.emitter == EmitterKind::Goasm;
-    let urcl_text_target = matches!(target, CompileTarget::Backend(BackendKind::Binary))
-        && args.emitter == EmitterKind::Urcl;
+    let goasm_text_target =
+        target.is_none() && args.backend == BackendKind::Binary && args.emitter == EmitterKind::Goasm;
+    let urcl_text_target =
+        target.is_none() && args.backend == BackendKind::Binary && args.emitter == EmitterKind::Urcl;
 
-    let is_text_backend = matches!(target, CompileTarget::Backend(BackendKind::TextBytecode));
-    let target_backend = match target {
-        CompileTarget::Backend(backend) => {
+    let is_text_backend = target.is_none() && args.backend == BackendKind::TextBytecode;
+    let target_backend = match &target {
+        None => {
             if is_text_backend {
                 BackendKind::Bytecode
             } else {
-                backend
+                args.backend
             }
         }
-        CompileTarget::Ast(_) => BackendKind::Interpret,
-        CompileTarget::External(_) => BackendKind::Interpret,
+        Some(_) => BackendKind::Interpret,
     };
     let emit_text_bytecode = is_text_backend;
 
@@ -269,6 +236,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
             input_file,
             args.output.as_ref(),
             target.clone(),
+            args.backend,
             args.emitter,
             args.target_triple.as_deref(),
             input_class,
@@ -305,9 +273,9 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
                 return Ok(());
             }
         }
-        if matches!(target, CompileTarget::Ast(_) | CompileTarget::External(_)) {
+        if target.is_some() {
             return Err(CliError::InvalidInput(
-                "--exec is not supported for AST targets".to_string(),
+                "--exec is not supported for named (--target) compiles".to_string(),
             ));
         }
         match target_backend {
@@ -401,22 +369,16 @@ async fn compile_file(
     info!("Compiling: {} -> {}", input.display(), output.display());
 
     if input.is_dir() {
-        match target {
-            CompileTarget::Ast(ast_target) => {
-                compile_project(input, output, args, ast_target).await?;
-                return Ok(Some(output.to_path_buf()));
+        return match &target {
+            Some(name) => {
+                run_named_target(input, output, args, name).await?;
+                Ok(Some(output.to_path_buf()))
             }
-            CompileTarget::External(external) => {
-                compile_project_external(input, output, args, external).await?;
-                return Ok(Some(output.to_path_buf()));
-            }
-            CompileTarget::Backend(_) => {
-                return Err(CliError::InvalidInput(
-                    "directory input requires an AST target (--target kotlin, typescript, etc.)"
-                        .to_string(),
-                ));
-            }
-        }
+            None => Err(CliError::InvalidInput(
+                "directory input requires a named target (--target kotlin, typescript, etc.)"
+                    .to_string(),
+            )),
+        };
     }
 
     let native_asm_kind = match input_class {
@@ -440,25 +402,13 @@ async fn compile_file(
         return Ok(Some(artifact));
     }
 
-    if let CompileTarget::Ast(ast_target) = target {
-        compile_emit_target(input, output, args, ast_target).await?;
-        return Ok(Some(output.to_path_buf()));
-    }
-
     // A lone source file is just the trivial one-package case of the same
-    // package/workspace discovery an `External` target's directory input
-    // goes through above — not a separate code path (see
-    // `compile_project_external`'s doc comment).
-    if let CompileTarget::External(external) = target {
-        compile_project_external(input, output, args, external).await?;
+    // package/workspace discovery a directory input goes through above —
+    // not a separate code path (see `run_named_target`'s doc comment).
+    if let Some(name) = target {
+        run_named_target(input, output, args, &name).await?;
         return Ok(Some(output.to_path_buf()));
     }
-
-    let backend = match target {
-        CompileTarget::Backend(backend) => backend,
-        CompileTarget::Ast(_) => unreachable!("AST target should return early"),
-        CompileTarget::External(_) => unreachable!("External target should return early"),
-    };
 
     if !args.disable_stage.is_empty() {
         warn!(
@@ -467,198 +417,10 @@ async fn compile_file(
         );
     }
 
-    try_compile_with_compiler(input, output, args, backend).await
+    run_named_target(input, output, args, args.backend.as_str()).await?;
+    Ok(Some(output.to_path_buf()))
 }
 
-async fn try_compile_with_compiler(
-    input: &Path,
-    output: &Path,
-    args: &CompileArgs,
-    backend: BackendKind,
-) -> Result<Option<PathBuf>> {
-    match backend {
-        BackendKind::Binary => {
-            let emitter = match args.emitter {
-                EmitterKind::Native => NativeEmitterKind::Native,
-                EmitterKind::Goasm => NativeEmitterKind::GoAsm,
-                EmitterKind::Urcl => NativeEmitterKind::Urcl,
-                EmitterKind::Llvm => {
-                    let artifact = compiler::compile_llvm_file(
-                        input,
-                        args.package(),
-                        args.source_language.as_deref(),
-                        &LlvmCompileOptions {
-                            output: output.to_path_buf(),
-                            target_triple: args.target_triple.clone(),
-                            target_cpu: args.target_cpu.clone(),
-                            target_features: args.target_features.clone(),
-                            target_sysroot: args.target_sysroot.clone(),
-                            linker: Some(args.linker.clone()),
-                            target_linker: args.target_linker.clone(),
-                            release: args.release,
-                            debug_info: args.debug,
-                            module_name: input
-                                .file_stem()
-                                .and_then(|stem| stem.to_str())
-                                .unwrap_or("main")
-                                .to_string(),
-                            save_intermediates: args.save_intermediates,
-                        },
-                    )?;
-                    return Ok(Some(artifact));
-                }
-                EmitterKind::Cranelift => {
-                    let artifact = compiler::compile_cranelift_file(
-                        input,
-                        args.package(),
-                        args.source_language.as_deref(),
-                        &CraneliftCompileOptions {
-                            output: output.to_path_buf(),
-                            target_triple: args.target_triple.clone(),
-                            target_cpu: args.target_cpu.clone(),
-                            target_features: args.target_features.clone(),
-                            target_sysroot: args.target_sysroot.clone(),
-                            linker: Some(args.linker.clone()),
-                            target_linker: args.target_linker.clone(),
-                            release: args.release,
-                            save_intermediates: args.save_intermediates,
-                        },
-                    )?;
-                    return Ok(Some(artifact));
-                }
-            };
-            let artifact = compiler::compile_native_file(
-                input,
-                args.package(),
-                args.source_language.as_deref(),
-                &NativeCompileOptions {
-                    emitter,
-                    output: output.to_path_buf(),
-                    target_triple: args.target_triple.clone(),
-                    target_cpu: args.target_cpu.clone(),
-                    native_target: args.native_target.clone(),
-                    target_features: args.target_features.clone(),
-                    target_sysroot: args.target_sysroot.clone(),
-                    linker: Some(args.linker.clone()),
-                    target_linker: args.target_linker.clone(),
-                    release: args.release,
-                    save_intermediates: args.save_intermediates,
-                },
-            )?;
-            Ok(Some(artifact))
-        }
-        BackendKind::Bytecode | BackendKind::TextBytecode => {
-            let artifact = compiler::compile_bytecode_file(
-                input,
-                args.package(),
-                args.source_language.as_deref(),
-                &BytecodeCompileOptions {
-                    output: output.to_path_buf(),
-                    emit_text: matches!(backend, BackendKind::TextBytecode),
-                    save_intermediates: args.save_intermediates,
-                },
-            )?;
-            Ok(Some(artifact))
-        }
-        BackendKind::JvmBytecode => {
-            let class_name_hint = input
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .map(|stem| stem.to_string());
-            let artifact = compiler::compile_jvm_file(
-                input,
-                args.package(),
-                args.source_language.as_deref(),
-                &JvmCompileOptions {
-                    output: output.to_path_buf(),
-                    save_intermediates: args.save_intermediates,
-                    class_name_hint,
-                },
-            )?;
-            Ok(Some(artifact))
-        }
-        BackendKind::Wasm => {
-            let artifact = compiler::compile_wasm_file(
-                input,
-                args.package(),
-                args.source_language.as_deref(),
-                &WasmCompileOptions {
-                    output: output.to_path_buf(),
-                },
-            )?;
-            Ok(Some(artifact))
-        }
-        BackendKind::Ebpf => {
-            let artifact = compiler::compile_ebpf_file(
-                input,
-                args.package(),
-                args.source_language.as_deref(),
-                &EbpfCompileOptions {
-                    output: output.to_path_buf(),
-                },
-            )?;
-            Ok(Some(artifact))
-        }
-        BackendKind::Cil => {
-            let code = compiler::compile_cil_file(input)?;
-            if let Some(parent) = output.parent() {
-                std::fs::create_dir_all(parent).map_err(CliError::Io)?;
-            }
-            std::fs::write(output, code).map_err(CliError::Io)?;
-            Ok(Some(output.to_path_buf()))
-        }
-        BackendKind::Dotnet => {
-            let artifact = compiler::compile_dotnet_file(
-                input,
-                args.source_language.as_deref(),
-                output,
-                args.save_intermediates,
-            )?;
-            Ok(Some(artifact))
-        }
-        BackendKind::Llvm => {
-            let artifact = compiler::compile_llvm_file(
-                input,
-                args.package(),
-                args.source_language.as_deref(),
-                &LlvmCompileOptions {
-                    output: output.to_path_buf(),
-                    target_triple: args.target_triple.clone(),
-                    target_cpu: args.target_cpu.clone(),
-                    target_features: args.target_features.clone(),
-                    target_sysroot: args.target_sysroot.clone(),
-                    linker: Some(args.linker.clone()),
-                    target_linker: args.target_linker.clone(),
-                    release: args.release,
-                    debug_info: args.debug,
-                    module_name: input
-                        .file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .unwrap_or("main")
-                        .to_string(),
-                    save_intermediates: true,
-                },
-            )?;
-            Ok(Some(artifact))
-        }
-        BackendKind::Rust => {
-            // Reuse the same AST-target Rust transpile path `--target rust`
-            // already goes through (`fp_lang::PrettyAstSerializer`) instead
-            // of a second Rust-emission implementation.
-            compile_emit_target(input, output, args, crate::languages::backend::BuiltinLanguageTarget::Rust)
-                .await?;
-            Ok(Some(output.to_path_buf()))
-        }
-        _ => Err(CliError::Compilation(format!(
-            "fp-compiler does not support backend {} on this path",
-            backend.as_str()
-        ))),
-    }
-}
-
-/// `source_kind` is the classification `compile_once` already computed once
-/// for this input via `ContainerRegistry::classify_input` — not re-detected
-/// here.
 async fn maybe_transpile_native_asm(
     input: &Path,
     output: &Path,
@@ -757,89 +519,6 @@ fn parse_native_asm_source(text: &str, source: NativeAsmSource) -> Result<Parsed
     }
 }
 
-async fn compile_emit_target(
-    input: &Path,
-    output: &Path,
-    args: &CompileArgs,
-    target: crate::languages::backend::BuiltinLanguageTarget,
-) -> Result<()> {
-    if is_tsconfig(input) {
-        return Err(CliError::Compilation(
-            "fp compile --target requires source files, not tsconfig".to_string(),
-        ));
-    }
-
-    let language = compiler::resolve_source_language(input, args.source_language.as_deref())?;
-
-    let ast = {
-        let (provider, package_id, tag) = provider_and_package_for_input(input, &language)?;
-        let materializer =
-            crate::languages::materializer::materializer_for_language(
-                &crate::languages::backend::output_extension_for(target),
-            );
-        let normalizer = crate::languages::normalizer::normalizer_for_language(&language);
-        let wrapped: std::sync::Arc<dyn fp_core::package::provider::PackageProvider> =
-            std::sync::Arc::new(TranspileMaterializingPackageProvider::new(
-                provider,
-                materializer.clone(),
-                normalizer,
-            ));
-        let capabilities = crate::languages::backend::capabilities_for_target(target);
-        let (executor, mut session) =
-            compiler::build_workspace_session(wrapped, &language, capabilities);
-        executor
-            .run(session.driver().compile_package(&package_id))
-            .map_err(|e| {
-                CliError::Compilation(format!("typecheck failed for {}: {}", input.display(), e))
-            })?;
-        compiler::drain_driver(session.driver())?;
-        let workspace = session.driver().state.borrow().typing_ctx.env_ctx.clone();
-        let source = workspace
-            .package_source(&package_id)
-            .map_err(|e| CliError::Compilation(e.to_string()))?;
-        // Materialize portable ops post-typechecked-lifting too (see the
-        // matching comment in `compile_project`'s phase 2) — the wrapping
-        // above only materializes pre-HIR source; `HirToAstLifter`'s
-        // `program.op_defs`-based classification happens after that.
-        let items: Vec<Item> = source
-            .items
-            .into_iter()
-            .filter(|pkg_item| pkg_item.module_path == tag)
-            .map(|pkg_item| match &materializer {
-                Some(mat) => fp_core::intrinsics::materialize_item(pkg_item.item, mat.as_ref())
-                    .map_err(|e| CliError::Compilation(e.to_string())),
-                None => Ok(pkg_item.item),
-            })
-            .collect::<Result<Vec<Item>>>()?;
-        File {
-            path: input.to_path_buf(),
-            attrs: vec![],
-            collected_items: vec![],
-            items,
-        }
-    };
-
-    let result = emit_ast_target(&ast, target, args.type_defs, input, args.single_world)?;
-
-    if let Some(parent) = output.parent() {
-        std::fs::create_dir_all(parent).map_err(CliError::Io)?;
-    }
-    std::fs::write(output, &result.code).map_err(CliError::Io)?;
-
-    for side_file in result.side_files {
-        let mut side_path = output.to_path_buf();
-        let file_stem = side_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| CliError::InvalidInput("Invalid output file name".to_string()))?;
-        side_path.set_file_name(format!("{}.{}", file_stem, side_file.extension));
-        std::fs::write(side_path, side_file.contents).map_err(CliError::Io)?;
-    }
-
-    info!("Generated AST target output: {}", output.display());
-    Ok(())
-}
-
 /// A single file is a package with one member — find (and prefer) the real
 /// one if `input` belongs to a discoverable multi-file package; otherwise
 /// wrap it as a synthetic single-member package. Delegates to
@@ -857,45 +536,67 @@ fn provider_and_package_for_input(
     compiler::resolve_source_package(input, language, "cli")
 }
 
-async fn compile_project(
-    input: &Path,
-    output: &Path,
-    args: &CompileArgs,
-    target: crate::languages::backend::BuiltinLanguageTarget,
-) -> Result<()> {
+/// Runs a `--target <name>` compile — built-in (`backend_for_target`) or
+/// registered at runtime via `crate::languages::registry` — for either a
+/// whole directory/project or a single file, through the same package/
+/// workspace discovery, typecheck, and `TargetBackend::compile_package`/
+/// `write_workspace_files` pipeline either way. A single file is just the
+/// trivial one-package case of the same discovery a directory input goes
+/// through, not a separate code path.
+async fn run_named_target(input: &Path, output: &Path, args: &CompileArgs, target_name: &str) -> Result<()> {
+    if is_tsconfig(input) {
+        return Err(CliError::Compilation(
+            "fp compile --target requires source files, not tsconfig".to_string(),
+        ));
+    }
+
     use crate::languages::detect_project_language;
     use crate::languages::discovery::provider_for_language;
 
-    let lang = args
-        .source_language
-        .as_deref()
-        .map(|l| l.trim().to_ascii_lowercase())
-        .or_else(|| detect_project_language(input).map(|l| l.name.to_string()))
-        .ok_or_else(|| {
-            CliError::Compilation(format!(
-                "could not detect source language for project at {}: no Cargo.toml or Magnet.toml found; pass --source-language explicitly",
-                input.display()
-            ))
-        })?;
+    let (provider, packages, lang, module_path): (
+        std::sync::Arc<dyn fp_core::package::provider::PackageProvider>,
+        Vec<PackageId>,
+        String,
+        Option<fp_core::ast::path::QualifiedPath>,
+    ) = if input.is_dir() {
+        let lang = args
+            .source_language
+            .as_deref()
+            .map(|l| l.trim().to_ascii_lowercase())
+            .or_else(|| detect_project_language(input).map(|l| l.name.to_string()))
+            .ok_or_else(|| {
+                CliError::Compilation(format!(
+                    "could not detect source language for project at {}: no Cargo.toml or Magnet.toml found; pass --source-language explicitly",
+                    input.display()
+                ))
+            })?;
+        let provider = provider_for_language(&lang, input)
+            .ok_or_else(|| CliError::Compilation(format!("no provider for language: {lang}")))?;
+        let packages = provider
+            .list_packages()
+            .map_err(|e| CliError::Compilation(e.to_string()))?;
+        (provider, packages, lang, None)
+    } else {
+        let lang = compiler::resolve_source_language(input, args.source_language.as_deref())?;
+        let (provider, package_id, tag) = provider_and_package_for_input(input, &lang)?;
+        (provider, vec![package_id], lang, Some(tag))
+    };
     let lang = lang.as_str();
 
-    let provider = provider_for_language(lang, input)
-        .ok_or_else(|| CliError::Compilation(format!("no provider for language: {lang}")))?;
-
-    let packages = provider
-        .list_packages()
-        .map_err(|e| CliError::Compilation(e.to_string()))?;
     let workspace_packages: std::collections::HashSet<String> =
         packages.iter().map(|p| p.as_str().to_string()).collect();
 
-    info!("Project: {} package(s), language: {}", packages.len(), lang);
+    info!(
+        "Project: {} package(s), language: {} (target: {})",
+        packages.len(),
+        lang,
+        target_name
+    );
 
     let mut file_count = 0;
 
     let normalizer = crate::languages::normalizer::normalizer_for_language(lang);
-    let materializer = crate::languages::materializer::materializer_for_language(
-        &crate::languages::backend::output_extension_for(target)
-    );
+    let materializer = crate::languages::materializer::materializer_for_language(target_name);
 
     // Wrap the real provider so `load_package_source` also applies the
     // target-language materialize + normalize transforms. Registered
@@ -929,7 +630,7 @@ async fn compile_project(
     // this way (an unresolvable dependency fails its dependent), so treating
     // members the same way needs no special per-member recovery bookkeeping
     // in the shared driver.
-    let capabilities = crate::languages::backend::capabilities_for_target(target);
+    let capabilities = crate::languages::backend::capabilities_for_target(target_name);
     let root_name = input
         .file_name()
         .and_then(|n| n.to_str())
@@ -965,7 +666,16 @@ async fn compile_project(
     // N-package workspace.
     let sources: Vec<PackageSource> = prepared.iter().map(|(_, src)| src.clone()).collect();
     let backend_config = fp_core::backend::BackendConfig::new(output.to_path_buf());
-    let backend = backend_for_target(target, args, backend_config, &sources, workspace_packages.clone(), root_name)?;
+    let backend = resolve_target_backend(
+        target_name,
+        input,
+        args,
+        backend_config,
+        &sources,
+        workspace_packages.clone(),
+        root_name,
+        module_path,
+    )?;
 
     // Phase 2: serialize + write every package now that the workspace-wide
     // mutability set (and any other cross-package info) is complete.
@@ -986,8 +696,8 @@ async fn compile_project(
         // into this target's real code is this materializer's job.
         //
         // `prepared`'s own `PackageSource.items` (read further up to build
-        // `sources` for `backend_for_target`) must stay un-materialized —
-        // Kotlin's cross-package mutability scan needs the pre-materialize
+        // `sources` for `resolve_target_backend`) must stay un-materialized
+        // — Kotlin's cross-package mutability scan needs the pre-materialize
         // shape — so this mutates the compiled package's items in place
         // instead of cloning into a throwaway workspace.
         if let Some(mat) = &materializer {
@@ -1030,153 +740,56 @@ async fn compile_project(
     Ok(())
 }
 
-/// Runs a registry-provided (`CompileTarget::External`) target through the
-/// same package/workspace discovery + typecheck pipeline `compile_project`
-/// uses for built-in targets (see `crate::languages::registry`'s doc
-/// comment for why an externally-registered target can't just be another
-/// `crate::languages::backend::BuiltinLanguageTarget` match arm inside
-/// `compile_project` itself). Unlike built-in targets — which serialize and
-/// write one file per package — an `External` target *collects* facts
-/// across every package via `LanguageTarget::visit_package` and produces one
-/// accumulated `AstTargetOutput` via `LanguageTarget::finish` at the end, so
-/// this writes a single output file (+ side files), the same single-write
-/// tail `compile_emit_target` uses for single files — not a directory tree
-/// of per-package files like `compile_project`'s built-in-target path.
-///
-/// A lone source file is handled here too, as the trivial one-package case
-/// of the same discovery (`provider_and_package_for_input`/
-/// `compiler::resolve_source_package`) rather than a separate code path —
-/// see `compile_file`'s dispatch.
-async fn compile_project_external(
+/// Resolves `name` to a `TargetBackend`, trying built-ins first
+/// (`backend_for_target`) then the runtime registry
+/// (`crate::languages::registry::find_registered_target_backend`) — the
+/// registry entry's `sources`/`workspace_packages`/`root_name` are unused
+/// (a registered backend already captured whatever it needs at
+/// registration time), but every call site builds them uniformly since
+/// most callers don't know in advance which side will answer.
+fn resolve_target_backend(
+    name: &str,
     input: &Path,
-    output: &Path,
     args: &CompileArgs,
-    target: std::sync::Arc<dyn crate::languages::registry::LanguageTarget>,
-) -> Result<()> {
-    use crate::languages::detect_project_language;
-    use crate::languages::discovery::provider_for_language;
-    use crate::languages::registry::{LanguageTargetContext, LanguageTargetPackage};
-
-    let (provider, packages, lang): (
-        std::sync::Arc<dyn fp_core::package::provider::PackageProvider>,
-        Vec<PackageId>,
-        String,
-    ) = if input.is_dir() {
-        let lang = args
-            .source_language
-            .as_deref()
-            .map(|l| l.trim().to_ascii_lowercase())
-            .or_else(|| detect_project_language(input).map(|l| l.name.to_string()))
-            .ok_or_else(|| {
-                CliError::Compilation(format!(
-                    "could not detect source language for project at {}: no Cargo.toml or Magnet.toml found; pass --source-language explicitly",
-                    input.display()
-                ))
-            })?;
-        let provider = provider_for_language(&lang, input)
-            .ok_or_else(|| CliError::Compilation(format!("no provider for language: {lang}")))?;
-        let packages = provider
-            .list_packages()
-            .map_err(|e| CliError::Compilation(e.to_string()))?;
-        (provider, packages, lang)
-    } else {
-        let lang = compiler::resolve_source_language(input, args.source_language.as_deref())?;
-        let (provider, package_id, _tag) = provider_and_package_for_input(input, &lang)?;
-        (provider, vec![package_id], lang)
-    };
-
-    info!(
-        "Project: {} package(s), language: {} (external target: {})",
-        packages.len(),
-        lang,
-        target.name()
-    );
-
-    // `materializer_for_language` only recognizes built-in target names
-    // (e.g. "kotlin"/"kt" for `output_extension_for(Kotlin) == "kt"`) — an
-    // externally-registered target has no such target-language op
-    // materializer, so this always resolves to `None` here (unlike
-    // `compile_project`'s built-in-target path). Source-language
-    // normalization (`normalizer_for_language`) still applies exactly as it
-    // does for every other target, keyed off the *source* language, not the
-    // target.
-    let materializer =
-        crate::languages::materializer::materializer_for_language(target.output_extension());
-    let normalizer = crate::languages::normalizer::normalizer_for_language(&lang);
-
-    let materializing_provider: std::sync::Arc<dyn fp_core::package::provider::PackageProvider> =
-        std::sync::Arc::new(TranspileMaterializingPackageProvider::new(
-            provider.clone(),
-            materializer,
-            normalizer,
-        ));
-
-    let ctx = LanguageTargetContext {
-        project_root: input.to_path_buf(),
-    };
-
-    // Externally-registered targets have no declared `LanguageCapabilities`
-    // of their own (the trait in `registry.rs` doesn't expose one) — use the
-    // same conservative default `capabilities_for_target` falls back to for
-    // every built-in target it doesn't special-case.
-    let capabilities = fp_core::capabilities::LanguageCapabilities::NATIVE;
-    let root_name = input
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("workspace");
-    let root_id = PackageId::new(format!("{root_name}::__workspace_root__"));
-    let (executor, mut session) =
-        compiler::build_workspace_session(materializing_provider.clone(), &lang, capabilities);
-    executor
-        .run(session.driver().compile_workspace(&root_id, &packages))
-        .map_err(|e| {
-            CliError::Compilation(format!(
-                "typecheck failed for project at {}: {}",
-                input.display(),
-                e
-            ))
-        })?;
-    compiler::drain_driver(session.driver())?;
-    let workspace = session.driver().state.borrow().typing_ctx.env_ctx.clone();
-
-    for package_id in &packages {
-        let source = workspace
-            .package_source(package_id)
-            .map_err(|e| CliError::Compilation(e.to_string()))?;
-        let pkg = LanguageTargetPackage {
-            package_id,
-            items: &source.items,
-        };
-        target
-            .visit_package(&pkg, &ctx)
-            .map_err(|e| CliError::Compilation(e.to_string()))?;
+    config: fp_core::backend::BackendConfig,
+    sources: &[PackageSource],
+    workspace_packages: std::collections::HashSet<String>,
+    root_name: String,
+    module_path: Option<fp_core::ast::path::QualifiedPath>,
+) -> Result<Box<dyn fp_core::backend::TargetBackend>> {
+    if let Some(result) = backend_for_target(
+        name,
+        input,
+        args,
+        config,
+        sources,
+        workspace_packages,
+        root_name,
+        module_path,
+    ) {
+        return result;
     }
-
-    let result = target
-        .finish()
-        .map_err(|e| CliError::Compilation(e.to_string()))?;
-
-    if let Some(parent) = output.parent() {
-        std::fs::create_dir_all(parent).map_err(CliError::Io)?;
-    }
-    std::fs::write(output, &result.code).map_err(CliError::Io)?;
-
-    for side_file in result.side_files {
-        let mut side_path = output.to_path_buf();
-        let file_stem = side_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| CliError::InvalidInput("Invalid output file name".to_string()))?;
-        side_path.set_file_name(format!("{}.{}", file_stem, side_file.extension));
-        std::fs::write(side_path, side_file.contents).map_err(CliError::Io)?;
-    }
-
-    info!(
-        "Generated external target output ({}): {}",
-        target.name(),
-        output.display()
-    );
-    Ok(())
+    crate::languages::registry::find_registered_target_backend(name)
+        .map(|backend| -> Box<dyn fp_core::backend::TargetBackend> {
+            struct Shared(std::sync::Arc<dyn fp_core::backend::TargetBackend>);
+            impl fp_core::backend::TargetBackend for Shared {
+                fn compile_package(
+                    &self,
+                    workspace: &fp_core::workspace::WorkspaceContext,
+                    package_id: &PackageId,
+                ) -> fp_core::error::Result<()> {
+                    self.0.compile_package(workspace, package_id)
+                }
+                fn write_workspace_files(
+                    &self,
+                    workspace: &fp_core::workspace::WorkspaceContext,
+                ) -> fp_core::error::Result<()> {
+                    self.0.write_workspace_files(workspace)
+                }
+            }
+            Box::new(Shared(backend))
+        })
+        .ok_or_else(|| CliError::InvalidInput(format!("Unsupported target: {name}")))
 }
 
 /// Error returned by an AST-target arm whose crate is gated behind a
@@ -1188,26 +801,89 @@ fn disabled_feature_error(feature: &str, what: &str) -> CliError {
     ))
 }
 
-/// Constructs the `TargetBackend` for a `compile_project` run — called
+/// Constructs the `TargetBackend` for a built-in target name — called
 /// exactly once per invocation (not once per package: Kotlin's
 /// `KotlinWorkspaceContext::collect` walks every item of every package, so
 /// per-package construction would be an N× regression on an N-package
-/// workspace). Same per-arm `#[cfg(feature = "lang-...")]` gating as the
-/// serialization match this replaces.
+/// workspace). Returns `None` for a name this function doesn't recognize
+/// at all (so `resolve_target_backend` can fall through to the runtime
+/// registry), `Some(Err(_))` for a recognized name whose crate is a
+/// disabled optional feature.
 #[allow(unused_variables, clippy::too_many_arguments)]
 fn backend_for_target(
-    target: crate::languages::backend::BuiltinLanguageTarget,
+    name: &str,
+    input: &Path,
     args: &CompileArgs,
     config: fp_core::backend::BackendConfig,
     sources: &[PackageSource],
     workspace_packages: std::collections::HashSet<String>,
     root_name: String,
-) -> Result<Box<dyn fp_core::backend::TargetBackend>> {
-    match target {
-        crate::languages::backend::BuiltinLanguageTarget::FerroPhase => {
-            Ok(Box::new(fp_c::FerroPhaseAstBackend::new(config)))
+    module_path: Option<fp_core::ast::path::QualifiedPath>,
+) -> Option<Result<Box<dyn fp_core::backend::TargetBackend>>> {
+    let output = config.workspace_root.clone();
+    let module_name = input
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("main")
+        .to_string();
+    Some(match name.to_lowercase().as_str() {
+        "binary" => native_binary_backend(&output, args, module_path.clone(), module_name.clone()),
+        "llvm" => {
+            #[cfg(feature = "llvm")]
+            {
+                Ok(Box::new(crate::languages::native_toolchain_backends::LlvmBackend {
+                    module_path: module_path.clone(),
+                    output: output.clone(),
+                    target_triple: args.target_triple.clone(),
+                    target_cpu: args.target_cpu.clone(),
+                    target_features: args.target_features.clone(),
+                    target_sysroot: args.target_sysroot.clone(),
+                    linker: Some(args.linker.clone()),
+                    target_linker: args.target_linker.clone(),
+                    release: args.release,
+                    debug_info: args.debug,
+                    module_name: module_name.clone(),
+                    save_intermediates: true,
+                }))
+            }
+            #[cfg(not(feature = "llvm"))]
+            {
+                Err(CliError::MissingDependency(
+                    "Feature 'llvm' is disabled; enable it to use the LLVM emitter.".to_string(),
+                ))
+            }
         }
-        crate::languages::backend::BuiltinLanguageTarget::TypeScript => {
+        "bytecode" | "text-bytecode" => Ok(Box::new(fp_bytecode::BytecodeBackend {
+            output: output.clone(),
+            emit_text: name.eq_ignore_ascii_case("text-bytecode")
+                || output.extension().and_then(|ext| ext.to_str()) == Some("ftbc"),
+            save_intermediates: args.save_intermediates,
+        })),
+        "jvm-bytecode" => Ok(Box::new(fp_jvm::JvmBackend {
+            output: output.clone(),
+            class_name_hint: Some(module_name.clone()),
+            save_intermediates: args.save_intermediates,
+        })),
+        "wasm" => Ok(Box::new(fp_wasm::WasmBackend {
+            output: output.clone(),
+            module_path: module_path.clone(),
+        })),
+        "ebpf" => Ok(Box::new(fp_ebpf::EbpfBackend {
+            output: output.clone(),
+            module_path: module_path.clone(),
+        })),
+        "cil" => Ok(Box::new(fp_dotnet::CilBackend {
+            output: output.clone(),
+        })),
+        "dotnet" => Ok(Box::new(fp_dotnet::DotnetBackend {
+            output: output.clone(),
+            save_intermediates: args.save_intermediates,
+        })),
+        "interpret" => Ok(Box::new(fp_interpret::InterpreterBackend {
+            module_path: module_path.clone(),
+        })),
+        "fp" | "ferro" | "ferrophase" => Ok(Box::new(fp_c::FerroPhaseAstBackend::new(config))),
+        "typescript" | "ts" => {
             #[cfg(feature = "lang-typescript")]
             {
                 Ok(Box::new(fp_typescript::TypeScriptBackend::new(
@@ -1223,7 +899,7 @@ fn backend_for_target(
                 ))
             }
         }
-        crate::languages::backend::BuiltinLanguageTarget::JavaScript => {
+        "javascript" | "js" => {
             #[cfg(feature = "lang-typescript")]
             {
                 Ok(Box::new(fp_typescript::JavaScriptBackend::new(config)))
@@ -1236,7 +912,7 @@ fn backend_for_target(
                 ))
             }
         }
-        crate::languages::backend::BuiltinLanguageTarget::CSharp => {
+        "csharp" | "cs" | "c#" => {
             #[cfg(feature = "lang-csharp")]
             {
                 Ok(Box::new(fp_csharp::CSharpBackend::new(config)))
@@ -1246,7 +922,7 @@ fn backend_for_target(
                 Err(disabled_feature_error("lang-csharp", "C# package emission"))
             }
         }
-        crate::languages::backend::BuiltinLanguageTarget::Kotlin => {
+        "kotlin" | "kt" => {
             #[cfg(feature = "lang-kotlin")]
             {
                 Ok(Box::new(fp_kotlin::KotlinBackend::new(
@@ -1261,7 +937,7 @@ fn backend_for_target(
                 Err(disabled_feature_error("lang-kotlin", "Kotlin package emission"))
             }
         }
-        crate::languages::backend::BuiltinLanguageTarget::Python => {
+        "python" | "py" => {
             #[cfg(feature = "lang-python")]
             {
                 Ok(Box::new(fp_python::PythonBackend::new(config)))
@@ -1274,7 +950,7 @@ fn backend_for_target(
                 ))
             }
         }
-        crate::languages::backend::BuiltinLanguageTarget::Go => {
+        "go" | "golang" => {
             #[cfg(feature = "lang-golang")]
             {
                 Ok(Box::new(fp_golang::GoBackend::new(config)))
@@ -1284,7 +960,7 @@ fn backend_for_target(
                 Err(disabled_feature_error("lang-golang", "Go package emission"))
             }
         }
-        crate::languages::backend::BuiltinLanguageTarget::Gdscript => {
+        "gdscript" | "gd" => {
             #[cfg(feature = "lang-godot")]
             {
                 Ok(Box::new(fp_godot::GdscriptBackend::new(config)))
@@ -1297,7 +973,7 @@ fn backend_for_target(
                 ))
             }
         }
-        crate::languages::backend::BuiltinLanguageTarget::Zig => {
+        "zig" => {
             #[cfg(feature = "lang-zig")]
             {
                 Ok(Box::new(fp_zig::ZigBackend::new(config)))
@@ -1307,7 +983,7 @@ fn backend_for_target(
                 Err(disabled_feature_error("lang-zig", "Zig package emission"))
             }
         }
-        crate::languages::backend::BuiltinLanguageTarget::Sycl => {
+        "sycl" => {
             #[cfg(feature = "lang-sycl")]
             {
                 Ok(Box::new(fp_sycl::SyclBackend::new(config)))
@@ -1317,10 +993,8 @@ fn backend_for_target(
                 Err(disabled_feature_error("lang-sycl", "SYCL package emission"))
             }
         }
-        crate::languages::backend::BuiltinLanguageTarget::Rust => {
-            Ok(Box::new(fp_lang::RustBackend::new(config)))
-        }
-        crate::languages::backend::BuiltinLanguageTarget::Wit => {
+        "rust" | "rs" => Ok(Box::new(fp_lang::RustBackend::new(config))),
+        "wit" => {
             #[cfg(feature = "lang-wit")]
             {
                 Ok(Box::new(fp_wit::WitBackend::new(config, args.single_world)))
@@ -1330,240 +1004,117 @@ fn backend_for_target(
                 Err(disabled_feature_error("lang-wit", "WIT package emission"))
             }
         }
-        crate::languages::backend::BuiltinLanguageTarget::C => {
-            Ok(Box::new(fp_c::codegen::CBackend::new(config)))
-        }
-    }
+        "c" => Ok(Box::new(fp_c::codegen::CBackend::new(config))),
+        _ => return None,
+    })
 }
 
-#[allow(unused_variables)]
-fn emit_ast_target(
-    node: &File,
-    target: crate::languages::backend::BuiltinLanguageTarget,
-    emit_type_defs: bool,
-    input: &Path,
-    single_world: bool,
-) -> Result<AstTargetOutput> {
-    match target {
-        crate::languages::backend::BuiltinLanguageTarget::FerroPhase => {
-            let serializer = fp_c::CSerializer;
-            let code = serializer
-                .serialize_file(node)
-                .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-            Ok(fp_core::ast::AstTargetOutput {
-                code,
-                side_files: Vec::new(),
-            })
-        }
-        crate::languages::backend::BuiltinLanguageTarget::TypeScript => {
-            #[cfg(feature = "lang-typescript")]
-            {
-                let serializer = TypeScriptSerializer::new(emit_type_defs);
-                let code = serializer
-                    .serialize_file(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                let mut result = fp_core::ast::AstTargetOutput {
-                    code,
-                    side_files: Vec::new(),
-                };
-                if let Some(defs) = serializer.take_type_defs() {
-                    result.side_files.push(fp_core::ast::AstTargetSideFile {
-                        extension: "d.ts".to_string(),
-                        contents: defs,
-                    });
-                }
-                Ok(result)
+/// Constructs the `TargetBackend` for `--backend binary`, dispatching on
+/// `--emitter` — a native/GoAsm/URCL emitter directly, or the LLVM/Cranelift
+/// codegen backends (see `native_toolchain_backends`).
+fn native_binary_backend(
+    output: &Path,
+    args: &CompileArgs,
+    module_path: Option<fp_core::ast::path::QualifiedPath>,
+    module_name: String,
+) -> Result<Box<dyn fp_core::backend::TargetBackend>> {
+    match args.emitter {
+        EmitterKind::Native => {
+            let native_target = match args.native_target.as_deref() {
+                Some(value) => Some(
+                    fp_native::config::NativeTarget::resolve(value, args.target_triple.as_deref())
+                        .ok_or_else(|| {
+                            CliError::Compilation(format!("Unsupported fp-native target: {value}"))
+                        })?,
+                ),
+                None => None,
+            };
+            let mut cfg = fp_native::config::NativeConfig::executable(output)
+                .with_target_triple(args.target_triple.clone())
+                .with_target_cpu(args.target_cpu.clone())
+                .with_native_target(native_target)
+                .with_target_features(args.target_features.clone())
+                .with_sysroot(args.target_sysroot.clone())
+                .with_fuse_ld(args.target_linker.clone())
+                .with_linker_driver(Some(args.linker.clone()))
+                .with_release(args.release);
+            if args.save_intermediates {
+                cfg = cfg.with_asm_dump(Some(output.with_extension("asm")));
             }
-            #[cfg(not(feature = "lang-typescript"))]
+            let mut emitter = fp_native::NativeEmitter::new(cfg);
+            if let Some(module_path) = module_path {
+                emitter = emitter.with_module_path(module_path);
+            }
+            Ok(Box::new(emitter))
+        }
+        EmitterKind::Goasm => {
+            let target = Some(fp_goasm::config::GoAsmTarget::resolve(
+                args.target_triple.as_deref(),
+            ));
+            let cfg = fp_goasm::config::GoAsmConfig::new(output)
+                .with_target(target)
+                .with_target_triple(args.target_triple.clone());
+            let mut emitter = fp_goasm::GoAsmEmitter::new(cfg);
+            if let Some(module_path) = module_path {
+                emitter = emitter.with_module_path(module_path);
+            }
+            Ok(Box::new(emitter))
+        }
+        EmitterKind::Urcl => {
+            let mut emitter = fp_urcl::UrclEmitter::new(fp_urcl::UrclConfig::new(output));
+            if let Some(module_path) = module_path {
+                emitter = emitter.with_module_path(module_path);
+            }
+            Ok(Box::new(emitter))
+        }
+        EmitterKind::Llvm => {
+            #[cfg(feature = "llvm")]
             {
-                Err(disabled_feature_error(
-                    "lang-typescript",
-                    "TypeScript/JavaScript AST emission",
+                Ok(Box::new(crate::languages::native_toolchain_backends::LlvmBackend {
+                    module_path,
+                    output: output.to_path_buf(),
+                    target_triple: args.target_triple.clone(),
+                    target_cpu: args.target_cpu.clone(),
+                    target_features: args.target_features.clone(),
+                    target_sysroot: args.target_sysroot.clone(),
+                    linker: Some(args.linker.clone()),
+                    target_linker: args.target_linker.clone(),
+                    release: args.release,
+                    debug_info: args.debug,
+                    module_name,
+                    save_intermediates: args.save_intermediates,
+                }))
+            }
+            #[cfg(not(feature = "llvm"))]
+            {
+                Err(CliError::MissingDependency(
+                    "Feature 'llvm' is disabled; enable it to use the LLVM emitter.".to_string(),
                 ))
             }
         }
-        crate::languages::backend::BuiltinLanguageTarget::JavaScript => {
-            #[cfg(feature = "lang-typescript")]
+        EmitterKind::Cranelift => {
+            #[cfg(feature = "cranelift")]
             {
-                let serializer = JavaScriptSerializer;
-                let code = serializer
-                    .serialize_file(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput {
-                    code,
-                    side_files: Vec::new(),
-                })
+                Ok(Box::new(crate::languages::native_toolchain_backends::CraneliftBackend {
+                    module_path,
+                    output: output.to_path_buf(),
+                    target_triple: args.target_triple.clone(),
+                    target_cpu: args.target_cpu.clone(),
+                    target_features: args.target_features.clone(),
+                    target_sysroot: args.target_sysroot.clone(),
+                    linker: Some(args.linker.clone()),
+                    target_linker: args.target_linker.clone(),
+                    release: args.release,
+                    save_intermediates: args.save_intermediates,
+                }))
             }
-            #[cfg(not(feature = "lang-typescript"))]
+            #[cfg(not(feature = "cranelift"))]
             {
-                Err(disabled_feature_error(
-                    "lang-typescript",
-                    "JavaScript AST emission",
+                Err(CliError::MissingDependency(
+                    "Feature 'cranelift' is disabled; enable it to use the Cranelift emitter."
+                        .to_string(),
                 ))
             }
-        }
-        crate::languages::backend::BuiltinLanguageTarget::CSharp => {
-            #[cfg(feature = "lang-csharp")]
-            {
-                let serializer = CSharpSerializer;
-                let code = serializer
-                    .serialize_file(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput {
-                    code,
-                    side_files: Vec::new(),
-                })
-            }
-            #[cfg(not(feature = "lang-csharp"))]
-            {
-                Err(disabled_feature_error("lang-csharp", "C# AST emission"))
-            }
-        }
-        crate::languages::backend::BuiltinLanguageTarget::Kotlin => {
-            #[cfg(feature = "lang-kotlin")]
-            {
-                let serializer = KotlinSerializer;
-                let code = serializer
-                    .serialize_file(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput {
-                    code,
-                    side_files: Vec::new(),
-                })
-            }
-            #[cfg(not(feature = "lang-kotlin"))]
-            {
-                Err(disabled_feature_error("lang-kotlin", "Kotlin AST emission"))
-            }
-        }
-        crate::languages::backend::BuiltinLanguageTarget::Python => {
-            #[cfg(feature = "lang-python")]
-            {
-                let serializer = PythonSerializer;
-                let code = serializer
-                    .serialize_file(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput {
-                    code,
-                    side_files: Vec::new(),
-                })
-            }
-            #[cfg(not(feature = "lang-python"))]
-            {
-                Err(disabled_feature_error("lang-python", "Python AST emission"))
-            }
-        }
-        crate::languages::backend::BuiltinLanguageTarget::Go => {
-            #[cfg(feature = "lang-golang")]
-            {
-                let serializer = GoSerializer::default();
-                let code = serializer
-                    .serialize_file(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput {
-                    code,
-                    side_files: Vec::new(),
-                })
-            }
-            #[cfg(not(feature = "lang-golang"))]
-            {
-                Err(disabled_feature_error("lang-golang", "Go AST emission"))
-            }
-        }
-        crate::languages::backend::BuiltinLanguageTarget::Gdscript => {
-            #[cfg(feature = "lang-godot")]
-            {
-                let serializer = GdscriptSerializer;
-                let code = serializer
-                    .serialize_file(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput {
-                    code,
-                    side_files: Vec::new(),
-                })
-            }
-            #[cfg(not(feature = "lang-godot"))]
-            {
-                Err(disabled_feature_error(
-                    "lang-godot",
-                    "GDScript AST emission",
-                ))
-            }
-        }
-        crate::languages::backend::BuiltinLanguageTarget::Zig => {
-            #[cfg(feature = "lang-zig")]
-            {
-                let serializer = ZigSerializer;
-                let code = serializer
-                    .serialize_file(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput {
-                    code,
-                    side_files: Vec::new(),
-                })
-            }
-            #[cfg(not(feature = "lang-zig"))]
-            {
-                Err(disabled_feature_error("lang-zig", "Zig AST emission"))
-            }
-        }
-        crate::languages::backend::BuiltinLanguageTarget::Sycl => {
-            #[cfg(feature = "lang-sycl")]
-            {
-                let serializer = SyclSerializer;
-                let code = serializer
-                    .serialize_file(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput {
-                    code,
-                    side_files: Vec::new(),
-                })
-            }
-            #[cfg(not(feature = "lang-sycl"))]
-            {
-                Err(disabled_feature_error("lang-sycl", "SYCL AST emission"))
-            }
-        }
-        crate::languages::backend::BuiltinLanguageTarget::Rust => {
-            let serializer = PrettyAstSerializer::new();
-            let code = serializer
-                .serialize_file(node)
-                .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-            Ok(fp_core::ast::AstTargetOutput {
-                code,
-                side_files: Vec::new(),
-            })
-        }
-        crate::languages::backend::BuiltinLanguageTarget::Wit => {
-            #[cfg(feature = "lang-wit")]
-            {
-                let serializer =
-                    WitSerializer::with_options(fp_wit::build_wit_options(input, single_world));
-                let code = serializer
-                    .serialize_file(node)
-                    .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-                Ok(fp_core::ast::AstTargetOutput {
-                    code,
-                    side_files: Vec::new(),
-                })
-            }
-            #[cfg(not(feature = "lang-wit"))]
-            {
-                Err(disabled_feature_error("lang-wit", "WIT AST emission"))
-            }
-        }
-        crate::languages::backend::BuiltinLanguageTarget::C => {
-            let serializer = fp_c::codegen::CSourceSerializer::new();
-            let (header, source) = serializer
-                .serialize_file(node)
-                .map_err(|e| CliError::TargetEmit(e.to_string()))?;
-            Ok(fp_core::ast::AstTargetOutput {
-                code: source,
-                side_files: vec![fp_core::ast::AstTargetSideFile {
-                    extension: "h".to_string(),
-                    contents: header,
-                }],
-            })
         }
     }
 }
@@ -1593,21 +1144,39 @@ fn is_tsconfig(path: &Path) -> bool {
 }
 
 fn resolve_compile_target(args: &CompileArgs) -> Result<CompileTarget> {
-    if let Some(target) = args.target.as_deref() {
-        if let Ok(ast_target) = crate::languages::backend::parse_language_target(target) {
-            return Ok(CompileTarget::Ast(ast_target));
-        }
-        if let Some(external) = crate::languages::registry::find_registered_language_target(target)
-        {
-            return Ok(CompileTarget::External(external));
-        }
-        // Re-run `parse_language_target` for its real error message (unknown
-        // built-in name) now that the registry fallback has also missed —
-        // avoids duplicating `CliError::InvalidInput` construction here.
-        crate::languages::backend::parse_language_target(target)?;
-        unreachable!("parse_language_target either succeeds or returns Err above");
+    let Some(target) = args.target.as_deref() else {
+        return Ok(None);
+    };
+    if is_known_builtin_target(target)
+        || crate::languages::registry::find_registered_target_backend(target).is_some()
+    {
+        Ok(Some(target.to_string()))
+    } else {
+        Err(CliError::InvalidInput(format!("Unsupported target: {target}")))
     }
-    Ok(CompileTarget::Backend(args.backend))
+}
+
+/// Whether `name` is one of `backend_for_target`'s recognized target names
+/// (regardless of whether its crate is compiled into this build) — used
+/// only to validate `--target <name>` up front, before the actual package
+/// discovery/typecheck/backend-construction pipeline runs.
+fn is_known_builtin_target(name: &str) -> bool {
+    matches!(
+        name.to_lowercase().as_str(),
+        "fp" | "ferro" | "ferrophase"
+            | "typescript" | "ts"
+            | "javascript" | "js"
+            | "csharp" | "cs" | "c#"
+            | "kotlin" | "kt"
+            | "python" | "py"
+            | "go" | "golang"
+            | "gdscript" | "gd"
+            | "zig"
+            | "sycl"
+            | "rust" | "rs"
+            | "wit"
+            | "c"
+    )
 }
 
 async fn exec_compiled_binary(path: &Path) -> Result<()> {
@@ -1888,6 +1457,7 @@ fn determine_output_path(
     input: &Path,
     output: Option<&PathBuf>,
     target: CompileTarget,
+    backend: BackendKind,
     emitter: EmitterKind,
     target_triple: Option<&str>,
     input_class: crate::container::InputClass,
@@ -1897,32 +1467,13 @@ fn determine_output_path(
     exec_requested: bool,
 ) -> Result<PathBuf> {
     let backend = match target {
-        CompileTarget::Backend(backend) => backend,
-        CompileTarget::Ast(ast_target) => {
-            let extension = crate::languages::backend::output_extension_for(ast_target);
-            if let Some(output) = output {
-                // A directory input (a whole project/package) always compiles into
-                // `output` as a directory root — never derive a single filename+
-                // extension from it. `output_is_dir` only reflects whether the
-                // *output* path happens to already exist as a directory (e.g. from
-                // a prior run), which is unrelated and previously caused a second
-                // transpile into an existing output dir to nest everything under a
-                // spurious `<input-dir-name>.<ext>` subdirectory instead of
-                // overwriting in place.
-                if output_is_dir && !input.is_dir() {
-                    let stem = input.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
-                        CliError::InvalidInput("Invalid input filename".to_string())
-                    })?;
-                    let mut path = output.join(stem);
-                    path.set_extension(extension);
-                    return Ok(path);
-                }
-                return Ok(output.clone());
-            }
-            return Ok(input.with_extension(extension));
-        }
-        CompileTarget::External(external) => {
-            let extension = external.output_extension();
+        None => backend,
+        Some(_name) => {
+            // Every `--target` compile is opaque to fp-cli now (see
+            // `fp_core::backend::TargetBackend`) — there's no per-target
+            // extension to guess, so this always falls back to a generic
+            // default rather than trying to derive one from the target name.
+            let extension = crate::languages::backend::DEFAULT_TARGET_OUTPUT_EXTENSION;
             if let Some(output) = output {
                 // A directory input (a whole project/package) always compiles into
                 // `output` as a directory root — never derive a single filename+
