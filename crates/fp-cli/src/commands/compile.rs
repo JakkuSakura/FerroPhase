@@ -1003,115 +1003,110 @@ async fn compile_project(
     // to decide `val` vs `var` when emitting the struct, so that has to be
     // computed from every package's fully-processed AST, not just the one
     // currently being serialized.
-    let mut prepared: Vec<(PackageId, PackageSource)> = Vec::with_capacity(packages.len());
+    //
+    // Every member is compiled through ONE `CompilerDriver::compile_workspace`
+    // call, which treats the members as if they were dependencies of a
+    // synthetic root package and walks them via `compile_package`'s own
+    // recursive, cached, cycle-safe dependency machinery — so `std`/`libc`
+    // and any inter-member dependency (a workspace path dependency) is
+    // compiled exactly once for the whole workspace, not once per member. A
+    // typecheck error or panic in any one member fails/falls back the whole
+    // workspace compile (not just that member) — a package's own
+    // dependencies already work this way (an unresolvable dependency fails
+    // its dependent), so treating members the same way needs no special
+    // per-member recovery bookkeeping in the shared driver.
+    let untyped_prepared = |packages: &[PackageId]| -> Result<Vec<(PackageId, PackageSource)>> {
+        packages
+            .iter()
+            .map(|package_id| {
+                materializing_provider
+                    .load_package_source(package_id)
+                    .map(|source| (package_id.clone(), source))
+                    .map_err(|e| CliError::Compilation(e.to_string()))
+            })
+            .collect()
+    };
 
-    for package_id in &packages {
-        // Typecheck: resolve types via HIR to populate AST type slots.
-        //
-        // Batched by whole *package*, not per-file: a package's `impl SomeType`
-        // block routinely lives in a different file than `SomeType`'s own
-        // definition (e.g. types.rs defines the struct, other files add impls
-        // for it) — typechecking file-by-file makes those siblings invisible
-        // to each other, causing spurious "unresolved impl self type" errors
-        // for essentially every real multi-file package. Whole-package batching
-        // gives the typechecker the full context it needs at the cost of
-        // coarser fault isolation (one bad item anywhere in the package falls
-        // the *whole* package back to untyped, not just its one file) — still
-        // safe either way, since the call is wrapped in `catch_unwind` below.
-        let source = if !args.skip_typing {
-            let provider_for_typecheck = materializing_provider.clone();
-            let package_id_for_typecheck = package_id.clone();
-            let lossy = LossyCompileOptions {
-                enabled: args.lossy || fp_core::config::lossy_mode(),
-            };
-            let lang = lang.to_string();
-            let capabilities = crate::languages::backend::capabilities_for_target(target);
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                compiler::typecheck_package(
-                    provider_for_typecheck,
-                    &package_id_for_typecheck,
-                    lossy,
-                    &lang,
-                    capabilities,
-                )
-            })) {
-                Ok(Ok(typed_source)) => typed_source,
-                Ok(Err(e)) => {
-                    if !lossy.enabled {
-                        return Err(CliError::Compilation(format!(
-                            "typecheck failed for {}: {}",
-                            package_id.as_str(),
-                            e
-                        )));
-                    }
-                    warn!(
-                        "typecheck failed for {}: {} — falling back to untyped (lossy mode)",
-                        package_id.as_str(),
-                        e
-                    );
-                    materializing_provider
-                        .load_package_source(package_id)
-                        .map_err(|e| CliError::Compilation(e.to_string()))?
-                }
-                Err(panic_info) => {
-                    let msg = panic_info
-                        .downcast_ref::<String>()
-                        .map(|s| s.as_str())
-                        .or_else(|| panic_info.downcast_ref::<&str>().copied())
-                        .unwrap_or("(unknown)");
-                    if !lossy.enabled {
-                        return Err(CliError::Compilation(format!(
-                            "typecheck panicked for {}: {}",
-                            package_id.as_str(),
-                            msg
-                        )));
-                    }
-                    warn!(
-                        "typecheck panicked for {}: {} — falling back to untyped (lossy mode)",
-                        package_id.as_str(),
-                        msg
-                    );
-                    materializing_provider
-                        .load_package_source(package_id)
-                        .map_err(|e| CliError::Compilation(e.to_string()))?
-                }
+    let capabilities = crate::languages::backend::capabilities_for_target(target);
+    let prepared: Vec<(PackageId, PackageSource)> = if !args.skip_typing {
+        let lossy = LossyCompileOptions {
+            enabled: args.lossy || fp_core::config::lossy_mode(),
+        };
+        let root_name = input
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("workspace");
+        let root_id = PackageId::new(format!("{root_name}::__workspace_root__"));
+        let (executor, mut session) = compiler::build_workspace_session(
+            materializing_provider.clone(),
+            lang,
+            lossy,
+            capabilities,
+        );
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            executor.run(session.driver().compile_workspace(&root_id, &packages))
+        })) {
+            Ok(Ok(compiled)) => {
+                compiler::drain_driver(session.driver(), lossy)?;
+                packages
+                    .iter()
+                    .zip(compiled.iter())
+                    .map(|(package_id, compiled_package)| {
+                        (
+                            package_id.clone(),
+                            compiler::package_source_from_compiled(package_id, compiled_package),
+                        )
+                    })
+                    .collect()
             }
-        } else {
-            materializing_provider
-                .load_package_source(package_id)
-                .map_err(|e| CliError::Compilation(e.to_string()))?
-        };
+            Ok(Err(e)) => {
+                if !lossy.enabled {
+                    return Err(CliError::Compilation(format!(
+                        "typecheck failed for project at {}: {}",
+                        input.display(),
+                        e
+                    )));
+                }
+                warn!(
+                    "typecheck failed for project at {}: {} — falling back to untyped (lossy mode)",
+                    input.display(),
+                    e
+                );
+                untyped_prepared(&packages)?
+            }
+            Err(panic_info) => {
+                let msg = panic_info
+                    .downcast_ref::<String>()
+                    .map(|s| s.as_str())
+                    .or_else(|| panic_info.downcast_ref::<&str>().copied())
+                    .unwrap_or("(unknown)");
+                if !lossy.enabled {
+                    return Err(CliError::Compilation(format!(
+                        "typecheck panicked for project at {}: {}",
+                        input.display(),
+                        msg
+                    )));
+                }
+                warn!(
+                    "typecheck panicked for project at {}: {} — falling back to untyped (lossy mode)",
+                    input.display(),
+                    msg
+                );
+                untyped_prepared(&packages)?
+            }
+        }
+    } else {
+        untyped_prepared(&packages)?
+    };
 
-        prepared.push((package_id.clone(), source));
-    }
-
-    // Field mutability (`val` vs `var`) and List-vs-String disambiguation
-    // (`.len()` -> `.size` not `.length`, range-index -> `.subList` not
-    // `.substring`) are both decided workspace-wide: a struct's fields can
-    // be defined in one package and mutated/read from another.
-    let (workspace_mutated_fields, workspace_list_fields, workspace_string_fields, workspace_enum_fields, workspace_enum_variant_names) =
-        if matches!(target, crate::languages::backend::BuiltinLanguageTarget::Kotlin) {
-            (
-                fp_kotlin::collect_mutated_field_names(prepared.iter().flat_map(|(_, src)| &src.items)),
-                fp_kotlin::collect_list_field_names(prepared.iter().flat_map(|(_, src)| &src.items)),
-                fp_kotlin::collect_string_field_names(prepared.iter().flat_map(|(_, src)| &src.items)),
-                fp_kotlin::collect_enum_field_names(prepared.iter().flat_map(|(_, src)| &src.items)),
-                fp_kotlin::collect_enum_variant_names(prepared.iter().flat_map(|(_, src)| &src.items)),
-            )
-        } else {
-            (Default::default(), Default::default(), Default::default(), Default::default(), Default::default())
-        };
-
-    // Every item's own qualified path -> qualified paths it references,
-    // merged across every package in the workspace (see `PackageSource::
-    // referenced_paths`) — lets the Kotlin serializer compute imports for
-    // spliced-in content from actual usage rather than only echoing the
-    // source file's pre-existing `use` items.
-    let workspace_referenced_paths: std::collections::HashMap<Vec<String>, Vec<Vec<String>>> = prepared
-        .iter()
-        .flat_map(|(_, src)| src.referenced_paths.iter())
-        .map(|(path, refs)| (path.clone(), refs.clone()))
-        .collect();
+    // Cross-package facts (field mutability, List-vs-String disambiguation,
+    // referenced-path imports) the Kotlin backend needs before serializing
+    // any single package — see `KotlinWorkspaceContext`'s doc comment.
+    let kotlin_ctx = if matches!(target, crate::languages::backend::BuiltinLanguageTarget::Kotlin) {
+        fp_kotlin::KotlinWorkspaceContext::collect(prepared.iter().map(|(_, src)| src))
+    } else {
+        fp_kotlin::KotlinWorkspaceContext::default()
+    };
 
     // Phase 2: serialize + write every package now that the workspace-wide
     // mutability set (and any other cross-package info) is complete.
@@ -1146,7 +1141,7 @@ async fn compile_project(
         let files = if let crate::languages::backend::BuiltinLanguageTarget::Kotlin = target {
             let serializer = fp_kotlin::KotlinSerializer;
             serializer
-                .serialize_package(source, &workspace_packages, &workspace_mutated_fields, &workspace_list_fields, &workspace_string_fields, &workspace_enum_fields, &workspace_referenced_paths, &workspace_enum_variant_names)
+                .serialize_package(source, &workspace_packages, &kotlin_ctx)
                 .map_err(|e| CliError::Compilation(e.to_string()))?
         } else {
             serialize_package_for_target(source, target, &args, &output.join(name))?

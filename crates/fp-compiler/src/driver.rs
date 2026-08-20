@@ -4,7 +4,7 @@ use fp_core::hir;
 use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::ast::path::QualifiedPath;
-use fp_core::package::PackageId;
+use fp_core::package::{DependencyDescriptor, DependencyKind, PackageId};
 use fp_core::span::Span;
 use fp_interpret::LirInterpreter;
 use fp_lang::FerroIntrinsicNormalizer;
@@ -367,22 +367,8 @@ impl CompilerDriver {
                     )));
                 }
 
-                for dependency in &metadata.metadata.dependencies {
-                    let dependency_id =
-                        dependency.resolved_package_id.clone().ok_or_else(|| {
-                            CompilerDriverError::UnresolvablePackage(format!(
-                            "dependency `{}` of package `{package_id}` has no selected package ID",
-                            dependency.package
-                        ))
-                        })?;
-                    let dependency_package = Box::pin(self.compile_package(&dependency_id)).await?;
-                    if dependency_id.as_str() == "std" {
-                        self.state.borrow()
-                            .typing_ctx
-                            .env_ctx
-                            .install_prelude(dependency_package);
-                    }
-                }
+                self.compile_dependencies(package_id, &metadata.metadata.dependencies)
+                    .await?;
 
                 let source = provider.load_package_source(package_id).map_err(|error| {
                     CompilerDriverError::UnresolvablePackage(format!("{package_id}: {error}"))
@@ -450,6 +436,67 @@ impl CompilerDriver {
             .env_ctx
             .import_package(package_id.clone(), package.clone());
         Ok(package)
+    }
+
+    /// Compile each of `package_id`'s declared dependencies, in order,
+    /// installing `std`'s package as the prelude source once it's compiled.
+    /// Extracted out of `compile_package` so `compile_workspace` can drive
+    /// the same recursive, cached, cycle-safe walk over a synthetic
+    /// dependency list built from a workspace's member packages.
+    async fn compile_dependencies(
+        &mut self,
+        package_id: &PackageId,
+        dependencies: &[DependencyDescriptor],
+    ) -> Result<(), CompilerDriverError> {
+        for dependency in dependencies {
+            let dependency_id = dependency.resolved_package_id.clone().ok_or_else(|| {
+                CompilerDriverError::UnresolvablePackage(format!(
+                    "dependency `{}` of package `{package_id}` has no selected package ID",
+                    dependency.package
+                ))
+            })?;
+            let dependency_package = Box::pin(self.compile_package(&dependency_id)).await?;
+            if dependency_id.as_str() == "std" {
+                self.state
+                    .borrow()
+                    .typing_ctx
+                    .env_ctx
+                    .install_prelude(dependency_package);
+            }
+        }
+        Ok(())
+    }
+
+    /// Compile every member of a workspace by walking them through the same
+    /// recursive, cached, cycle-safe dependency machinery `compile_package`
+    /// already uses for a package's own declared dependencies — `root_id` is
+    /// a caller-supplied bookkeeping identity only, never resolved through a
+    /// `PackageProvider`. An inter-member dependency (e.g. member B
+    /// path-depends on sibling A) is compiled exactly once regardless of
+    /// which member's turn surfaces it first, since both go through
+    /// `compile_package`'s own `compiled_packages` cache.
+    pub async fn compile_workspace(
+        &mut self,
+        root_id: &PackageId,
+        members: &[PackageId],
+    ) -> Result<Vec<Rc<RefCell<fp_core::package::CompiledPackage>>>, CompilerDriverError> {
+        let dependencies: Vec<DependencyDescriptor> = members
+            .iter()
+            .map(|id| DependencyDescriptor {
+                package: id.as_str().to_string(),
+                resolved_package_id: Some(id.clone()),
+                constraint: None,
+                kind: DependencyKind::Normal,
+                features: Vec::new(),
+                optional: false,
+                target: Default::default(),
+            })
+            .collect();
+        self.compile_dependencies(root_id, &dependencies).await?;
+        Ok(members
+            .iter()
+            .filter_map(|id| self.compiled_packages.get(id).cloned())
+            .collect())
     }
 
     fn publish_lir_units(

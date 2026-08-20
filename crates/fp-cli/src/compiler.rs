@@ -1090,7 +1090,7 @@ fn compile_source_file(
     Ok(session.into_driver())
 }
 
-fn drain_driver(driver: &mut CompilerDriver, lossy: LossyCompileOptions) -> Result<()> {
+pub fn drain_driver(driver: &mut CompilerDriver, lossy: LossyCompileOptions) -> Result<()> {
     emit_typing_diagnostics(&driver.state.borrow().typing_ctx.diagnostics.borrow(), lossy)
 }
 
@@ -1162,6 +1162,31 @@ pub fn parse_file_with_mode(
     parse_file_with_context(path, source_language, parse_mode, lossy)
 }
 
+/// Builds the executor/provider/workspace/session a typechecking compile
+/// needs — shared by `typecheck_package`'s single-package path and
+/// `compile_project`'s (`fp-cli/src/commands/compile.rs`) whole-workspace
+/// path, so a workspace compile builds this once for every member instead
+/// of once per member.
+pub fn build_workspace_session(
+    provider: Arc<dyn PackageProvider>,
+    language: &str,
+    lossy: LossyCompileOptions,
+    capabilities: fp_core::capabilities::LanguageCapabilities,
+) -> (CompilerExecutor, CompilerSession) {
+    let executor = CompilerExecutor::new();
+    let std_provider = std_provider_for(language);
+    let combined = Arc::new(fp_core::package::provider::CompositeProvider::new(vec![
+        std_provider,
+        provider,
+    ]));
+    let workspace = std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new(combined));
+    let mut session = CompilerSession::new(data_layout(), &executor, workspace);
+    session.driver().pipeline = PipelineMode::TypecheckedTranspile;
+    session.driver().state.borrow_mut().set_lossy(lossy.enabled);
+    session.driver().state.borrow_mut().set_capabilities(capabilities);
+    (executor, session)
+}
+
 /// Typecheck a whole package by registering its real `PackageProvider` with
 /// a fresh `CompilerDriver` under `PipelineMode::TypecheckedTranspile`,
 /// instead of flattening the package's items into a single tag-less `File`
@@ -1184,17 +1209,7 @@ pub fn typecheck_package(
     language: &str,
     capabilities: fp_core::capabilities::LanguageCapabilities,
 ) -> Result<PackageSource> {
-    let executor = CompilerExecutor::new();
-    let std_provider = std_provider_for(language);
-    let combined = Arc::new(fp_core::package::provider::CompositeProvider::new(vec![
-        std_provider,
-        provider,
-    ]));
-    let workspace = std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new(combined));
-    let mut session = CompilerSession::new(data_layout(), &executor, workspace);
-    session.driver().pipeline = PipelineMode::TypecheckedTranspile;
-    session.driver().state.borrow_mut().set_lossy(lossy.enabled);
-    session.driver().state.borrow_mut().set_capabilities(capabilities);
+    let (executor, mut session) = build_workspace_session(provider, language, lossy, capabilities);
     let package = executor
         .run(session.driver().compile_package(package_id))
         .map_err(|err| CliError::Compilation(err.to_string()))?;
@@ -1209,7 +1224,18 @@ pub fn typecheck_package(
     // placeholders through as if nothing were wrong.
     drain_driver(session.driver(), lossy)?;
 
-    let package = package.borrow();
+    Ok(package_source_from_compiled(package_id, &package))
+}
+
+/// Builds a `PackageSource` from a compiled package — shared by
+/// `typecheck_package`'s single-package path and `compile_project`'s
+/// (`fp-cli/src/commands/compile.rs`) whole-workspace path, so both read
+/// back the same typed/normalized content the same way.
+pub fn package_source_from_compiled(
+    package_id: &PackageId,
+    compiled: &std::rc::Rc<std::cell::RefCell<fp_core::package::CompiledPackage>>,
+) -> PackageSource {
+    let package = compiled.borrow();
     // Typed/normalized content is already spliced onto `package.items` by
     // `CompilerDriver::compile_package` (qualified-path-keyed, including
     // impl methods) — nothing left to reconcile here.
@@ -1229,15 +1255,14 @@ pub fn typecheck_package(
                 .collect()
         })
         .unwrap_or_default();
-    let source = PackageSource {
+    PackageSource {
         package_id: package_id.clone(),
         name: package.name.clone(),
         graph: package.graph.clone(),
         module_paths: package.module_paths.clone(),
         items,
         referenced_paths,
-    };
-    Ok(source)
+    }
 }
 
 fn parse_file_with_context(

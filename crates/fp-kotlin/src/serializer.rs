@@ -169,6 +169,55 @@ impl KotlinEmitter {
 
 // ── Serializer entry ─────────────────────────────────────────────────────────
 
+/// Cross-package facts the Kotlin backend needs before it can serialize any
+/// single package: field mutability (`val` vs `var`) and List-vs-String
+/// disambiguation (`.len()` -> `.size` not `.length`, range-index ->
+/// `.subList` not `.substring`) are both decided workspace-wide, since a
+/// struct's fields can be defined in one package and mutated/read from
+/// another — see the individual `collect_*` functions' doc comments for why
+/// each field is needed. Kotlin is the only backend that needs anything
+/// beyond a single `PackageSource` to serialize a package; this groups what
+/// would otherwise be five loose values plus a separately-merged map into
+/// one value threaded through `serialize_package`.
+#[derive(Default)]
+pub struct KotlinWorkspaceContext {
+    pub mutated_fields: HashSet<String>,
+    pub list_fields: HashMap<String, String>,
+    pub string_fields: HashSet<String>,
+    pub enum_fields: HashSet<String>,
+    pub enum_variant_names: HashMap<String, HashMap<String, String>>,
+    /// `PackageSource::referenced_paths` merged across every package in the
+    /// workspace — each item's own qualified path (module + name) mapped to
+    /// the qualified paths it references.
+    pub referenced_paths: HashMap<Vec<String>, Vec<Vec<String>>>,
+}
+
+impl KotlinWorkspaceContext {
+    /// Collects every workspace-wide fact from every package's items in one
+    /// pass. `sources` must be cheaply cloneable (e.g. `sources.iter()` on a
+    /// slice) since each fact is collected via its own full traversal.
+    pub fn collect<'a>(sources: impl Iterator<Item = &'a PackageSource> + Clone) -> Self {
+        let items = || sources.clone().flat_map(|src| src.items.iter());
+        let mutated_fields = collect_mutated_field_names(items());
+        let list_fields = collect_list_field_names(items());
+        let string_fields = collect_string_field_names(items());
+        let enum_fields = collect_enum_field_names(items());
+        let enum_variant_names = collect_enum_variant_names(items());
+        let referenced_paths = sources
+            .flat_map(|src| src.referenced_paths.iter())
+            .map(|(path, refs)| (path.clone(), refs.clone()))
+            .collect();
+        Self {
+            mutated_fields,
+            list_fields,
+            string_fields,
+            enum_fields,
+            enum_variant_names,
+            referenced_paths,
+        }
+    }
+}
+
 pub struct KotlinSerializer;
 
 impl KotlinSerializer {
@@ -185,28 +234,22 @@ impl KotlinSerializer {
     /// compile (e.g. every other Cargo crate in the same `magnet transpile`
     /// run) — used to recognize cross-package imports within the workspace
     /// and to skip emitting an (unresolvable) Kotlin import for them.
-    /// `mutated_fields` is the workspace-wide set of struct field names ever
-    /// assigned to (`x.field = ...`) anywhere — see `collect_mutated_field_names`
-    /// — used to decide `val` vs `var` when emitting a struct's fields.
-    /// `referenced_paths` is `PackageSource::referenced_paths` merged across
-    /// every package in the workspace — each item's own qualified path
-    /// (module + name) mapped to the qualified paths it references —
-    /// used to add imports for genuinely external (std-equivalent)
-    /// references that a file's own pre-existing `use` items might not
-    /// (fully) cover, without ever importing same-package sibling modules
-    /// (which need no Kotlin import at all — see `known_package`/`Other`).
+    /// `ctx` is the workspace-wide state described by `KotlinWorkspaceContext`.
     /// Returns `Vec<(relative_path, code)>` — source files + build files.
     pub fn serialize_package(
         &self,
         source: &PackageSource,
         workspace_packages: &HashSet<String>,
-        mutated_fields: &HashSet<String>,
-        list_fields: &HashMap<String, String>,
-        string_fields: &HashSet<String>,
-        enum_fields: &HashSet<String>,
-        referenced_paths: &HashMap<Vec<String>, Vec<Vec<String>>>,
-        enum_variant_names: &HashMap<String, HashMap<String, String>>,
+        ctx: &KotlinWorkspaceContext,
     ) -> Result<Vec<(String, String)>> {
+        let KotlinWorkspaceContext {
+            mutated_fields,
+            list_fields,
+            string_fields,
+            enum_fields,
+            enum_variant_names,
+            referenced_paths,
+        } = ctx;
         let modules = fp_core::package::split_package_into_modules(source);
 
         let pkg_name = &source.name;
