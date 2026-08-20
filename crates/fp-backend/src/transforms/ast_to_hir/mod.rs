@@ -28,8 +28,13 @@ const DIAGNOSTIC_CONTEXT: &str = "ast_to_hir";
 
 #[derive(Clone, Debug, Default)]
 pub struct HirLoweringConfig {
-    /// When `false` (the default, matching every existing caller), a
-    /// closure literal is defunctionalized (decomposed into an ordinary
+    /// What the eventual target language can express directly — see
+    /// `fp_core::capabilities::LanguageCapabilities`. Defaults to
+    /// `LanguageCapabilities::NATIVE` (nothing first-class), matching
+    /// every existing caller's behavior exactly.
+    ///
+    /// When `capabilities.first_class_closures` is `false` (the default),
+    /// a closure literal is defunctionalized (decomposed into an ordinary
     /// struct + function pair) by `ClosureLowering` *before* HIR
     /// generation even runs — needed by pipelines that lower to MIR
     /// (`PipelineMode::Native`), since MIR has no closure representation
@@ -41,11 +46,17 @@ pub struct HirLoweringConfig {
     /// (a closure stays a rich, typed expression throughout type
     /// checking, with its signature resolved via ordinary expected-type
     /// propagation from its call site, and is only "compiled away" as a
-    /// later lowering concern). Used by `PipelineMode::TypecheckedTranspile`
-    /// (the Kotlin/etc. backends), which never lowers to MIR and whose
-    /// backends want a genuine closure literal to render as an idiomatic
-    /// target-language lambda.
-    pub keep_closures_first_class: bool,
+    /// later lowering concern). Set by targets (e.g. `fp-kotlin`) that
+    /// never lower to MIR and want a genuine closure literal to render as
+    /// an idiomatic target-language lambda.
+    ///
+    /// Similarly, `capabilities.first_class_for_loops` controls whether a
+    /// `for` loop is desugared into an index-based `while` loop before HIR
+    /// generation (`false`, the default) or survives as a real
+    /// `hir::ExprKind::For` node (`true`) for targets whose own `for`/
+    /// collection methods can express the original iterator chain
+    /// directly (see `ast_to_hir::exprs::transform_for_to_hir`).
+    pub capabilities: fp_core::capabilities::LanguageCapabilities,
 }
 
 fn query_origin(document: &QueryDocument) -> QueryOrigin {
@@ -1707,12 +1718,13 @@ impl HirGenerator {
         // -compiled package's struct field types too, so
         // `closure_param_ty_for_invoke`'s structural lookup isn't blind to
         // them (see `ClosureLowering::collect_struct_field_types`).
-        // `keep_closures_first_class` pipelines (Kotlin/etc.) lower a
-        // closure literal directly into a real `hir::ExprKind::Closure`
-        // node instead (see `transform_expr_to_hir_inner`'s `Closure` arm)
-        // — running this pre-pass too would defunctionalize it first,
-        // defeating that entirely.
-        if !self.lowering_config.keep_closures_first_class {
+        // Targets with `capabilities.first_class_closures` set (Kotlin/etc.)
+        // lower a closure literal directly into a real
+        // `hir::ExprKind::Closure` node instead (see
+        // `transform_expr_to_hir_inner`'s `Closure` arm) — running this
+        // pre-pass too would defunctionalize it first, defeating that
+        // entirely.
+        if !self.lowering_config.capabilities.first_class_closures {
             let dependency_struct_field_types = self.workspace_struct_field_types();
             lower_closures_in_items(&mut lowered_items, &dependency_struct_field_types)?;
         }

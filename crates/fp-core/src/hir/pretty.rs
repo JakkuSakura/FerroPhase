@@ -443,6 +443,17 @@ fn write_expr(expr: &Expr, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fm
             ctx.writeln(f, format!("while ({})", format_expr_inline(cond, ctx)))?;
             ctx.with_indent(|ctx| write_block(block, f, ctx))
         }
+        ExprKind::For(pat, iter, body) => {
+            ctx.writeln(
+                f,
+                format!(
+                    "for ({} in {})",
+                    format_pat(pat, ctx),
+                    format_expr_inline(iter, ctx)
+                ),
+            )?;
+            ctx.with_indent(|ctx| write_block(body, f, ctx))
+        }
         ExprKind::With(context, body) => {
             ctx.writeln(f, format!("with ({})", format_expr_inline(context, ctx)))?;
             ctx.with_indent(|ctx| write_expr(body, f, ctx))
@@ -721,6 +732,19 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
                 .join(", ");
             format!("|{}| {}", params, format_expr_inline(&closure.body, ctx))
         }
+        // `format_expr_inline` builds a single-line string with no access
+        // to a mutable writer (unlike `write_expr`, which renders these
+        // properly, multi-line, via `PrettyCtx`'s real `StyledFileWriter`)
+        // — a control-flow construct's *body* genuinely can't be rendered
+        // faithfully as one line, so it's elided here. `For`'s own head
+        // (pattern + iterator) has no such problem — both are ordinary
+        // exprs `format_expr_inline` can render fully — so only the body
+        // is elided, not the whole construct.
+        ExprKind::For(pat, iter, _body) => format!(
+            "for ({} in {}) {{ .. }}",
+            format_pat(pat, ctx),
+            format_expr_inline(iter, ctx)
+        ),
         ExprKind::Loop(_) | ExprKind::If(_, _, _) | ExprKind::Block(_) | ExprKind::While(_, _) => {
             "<control-flow>".into()
         }

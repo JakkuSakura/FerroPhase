@@ -804,12 +804,14 @@ async fn compile_emit_target(
             let wrapped_for_typecheck = wrapped.clone();
             let package_id_for_typecheck = package_id.clone();
             let language_for_typecheck = language.clone();
+            let capabilities = crate::languages::backend::capabilities_for_target(target);
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 compiler::typecheck_package(
                     wrapped_for_typecheck,
                     &package_id_for_typecheck,
                     lossy,
                     &language_for_typecheck,
+                    capabilities,
                 )
             })) {
                 Ok(Ok(typed_source)) => typed_source,
@@ -997,12 +999,14 @@ async fn compile_project(
                 enabled: args.lossy || fp_core::config::lossy_mode(),
             };
             let lang = lang.to_string();
+            let capabilities = crate::languages::backend::capabilities_for_target(target);
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 compiler::typecheck_package(
                     provider_for_typecheck,
                     &package_id_for_typecheck,
                     lossy,
                     &lang,
+                    capabilities,
                 )
             })) {
                 Ok(Ok(typed_source)) => typed_source,

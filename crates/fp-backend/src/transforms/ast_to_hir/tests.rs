@@ -959,6 +959,10 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
                 collect_paths(cond, out);
                 collect_paths_from_block(block, out);
             }
+            hir::ExprKind::For(_pat, iter, block) => {
+                collect_paths(iter, out);
+                collect_paths_from_block(block, out);
+            }
             hir::ExprKind::With(context, body) => {
                 collect_paths(context, out);
                 collect_paths(body, out);

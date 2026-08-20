@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 
 use fp_core::ast::{
     self, BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprAssign, ExprBinOp, ExprBlock, ExprBreak,
-    ExprCast, ExprClosure, ExprContinue, ExprIf, ExprIndex, ExprIntrinsicCall, ExprKwArg, ExprLet, ExprLoop,
+    ExprCast, ExprClosure, ExprContinue, ExprFor, ExprIf, ExprIndex, ExprIntrinsicCall, ExprKwArg, ExprLet, ExprLoop,
     ExprMatch, ExprMatchCase, ExprReference, ExprReturn, ExprSelect, ExprSelectType,
     ExprStringTemplate, ExprStruct, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp, ExprWhile, ExprWith,
     FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction, ItemDefConst, ItemDefEnum,
@@ -739,6 +739,22 @@ impl<'a> HirToAstLifter<'a> {
                 span: expr.span,
                 cond: Box::new(self.lift_expr(cond)?),
                 body: Box::new(Expr::new(ast::ExprKind::Block(self.lift_block(block)?))),
+            })),
+            // Only ever produced for a target with
+            // `LanguageCapabilities::first_class_for_loops` set — lifted
+            // plainly, no special-case detection needed: `iter` recurses
+            // as an ordinary expression (e.g. `list.iter().take(n)` lifts
+            // to an ordinary method-call chain; the existing generic
+            // `Op(Iter)` promotion already reduces `.iter()` itself to a
+            // no-op passthrough, same as `.as_ref()`/`.to_owned()` — see
+            // `kotlin_materializer.rs`), and the target's own serializer
+            // renders its native `for`/`foreach` construct from whatever
+            // `iter` expression results.
+            hir::ExprKind::For(pat, iter, body) => Expr::new(ast::ExprKind::For(ExprFor {
+                span: expr.span,
+                pat: Box::new(self.lift_pat(pat)?),
+                iter: Box::new(self.lift_expr(iter)?),
+                body: Box::new(Expr::new(ast::ExprKind::Block(self.lift_block(body)?))),
             })),
             hir::ExprKind::With(context, body) => Expr::new(ast::ExprKind::With(ExprWith {
                 span: expr.span,
@@ -1670,6 +1686,9 @@ fn expr_assigns_local(expr: &hir::Expr, target: hir::HirId) -> bool {
         hir::ExprKind::Loop(b) => block_assigns_local(b, target),
         hir::ExprKind::While(cond, b) => {
             expr_assigns_local(cond, target) || block_assigns_local(b, target)
+        }
+        hir::ExprKind::For(_pat, iter, b) => {
+            expr_assigns_local(iter, target) || block_assigns_local(b, target)
         }
         hir::ExprKind::With(a, b) => expr_assigns_local(a, target) || expr_assigns_local(b, target),
         hir::ExprKind::Array(items) | hir::ExprKind::Tuple(items) => {

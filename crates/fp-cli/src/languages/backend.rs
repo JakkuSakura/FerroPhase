@@ -58,6 +58,21 @@ pub fn output_extension_for(target: LanguageTarget) -> &'static str {
     }
 }
 
+/// What a given output target can express directly — see
+/// `fp_core::capabilities::LanguageCapabilities`. Each target-emitting
+/// crate that wants anything other than the conservative default declares
+/// its own `CAPABILITIES` const (e.g. `fp_kotlin::CAPABILITIES`); this is
+/// the one place that maps a requested `LanguageTarget` to the right one.
+/// Anything not listed here (including any target whose crate is a
+/// disabled optional feature) gets `LanguageCapabilities::NATIVE`.
+pub fn capabilities_for_target(target: LanguageTarget) -> fp_core::capabilities::LanguageCapabilities {
+    match target {
+        #[cfg(feature = "lang-kotlin")]
+        LanguageTarget::Kotlin => fp_kotlin::CAPABILITIES,
+        _ => fp_core::capabilities::LanguageCapabilities::NATIVE,
+    }
+}
+
 use std::path::{Path, PathBuf};
 
 /// Resolve the desired output path for a target, respecting explicit output.

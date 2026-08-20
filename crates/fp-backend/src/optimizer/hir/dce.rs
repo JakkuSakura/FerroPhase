@@ -193,6 +193,14 @@ fn expr_has_unresolved_paths(expr: &hir::Expr) -> bool {
                     .as_ref()
                     .is_some_and(|expr| expr_has_unresolved_paths(expr))
         }
+        hir::ExprKind::For(_pat, iter, block) => {
+            expr_has_unresolved_paths(iter)
+                || block.stmts.iter().any(stmt_has_unresolved_paths)
+                || block
+                    .expr
+                    .as_ref()
+                    .is_some_and(|expr| expr_has_unresolved_paths(expr))
+        }
         hir::ExprKind::With(context, body) => {
             expr_has_unresolved_paths(context) || expr_has_unresolved_paths(body)
         }
@@ -440,6 +448,10 @@ fn collect_expr_refs(
         }
         hir::ExprKind::While(cond, block) => {
             collect_expr_refs(cond, tail_map, work);
+            collect_block_refs(block, tail_map, work);
+        }
+        hir::ExprKind::For(_pat, iter, block) => {
+            collect_expr_refs(iter, tail_map, work);
             collect_block_refs(block, tail_map, work);
         }
         hir::ExprKind::With(context, body) => {

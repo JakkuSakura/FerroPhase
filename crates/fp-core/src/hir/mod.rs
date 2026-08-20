@@ -362,6 +362,15 @@ pub enum ExprKind {
     /// this variant at all, or is defunctionalized earlier by
     /// `ClosureLowering` for pipelines — e.g. Native — that need MIR).
     Closure(ExprClosure),
+    /// A real, un-desugared `for pat in iter { body }` — only ever
+    /// constructed when the target's `LanguageCapabilities::
+    /// first_class_for_loops` is set (see `ast_to_hir::exprs::
+    /// transform_for_to_hir`); every pipeline that hasn't opted in
+    /// (in particular `PipelineMode::Native`, whose MIR has no iterator-
+    /// protocol concept) still eagerly desugars into an index-based
+    /// `While`/`Loop` before HIR generation, exactly as before this
+    /// variant existed, so this is simply never produced for those.
+    For(Box<Pat>, Box<Expr>, Block),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1055,6 +1064,7 @@ impl ExprKind {
             ExprKind::Continue => Span::null(),
             ExprKind::Loop(block) => block.span(),
             ExprKind::While(cond, block) => Span::union([cond.span(), block.span()]),
+            ExprKind::For(_pat, iter, body) => Span::union([iter.span(), body.span()]),
             ExprKind::With(context, body) => Span::union([context.span(), body.span()]),
             ExprKind::Array(exprs) => Span::union(exprs.iter().map(Expr::span)),
             ExprKind::ArrayRepeat { elem, len } => Span::union([elem.span(), len.span()]),

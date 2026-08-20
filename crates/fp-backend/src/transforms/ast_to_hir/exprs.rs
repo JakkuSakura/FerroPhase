@@ -323,16 +323,17 @@ impl HirGenerator {
                 return Ok(hir::Expr { hir_id, kind, span });
             }
             ExprKind::Closure(closure) => {
-                // `keep_closures_first_class` (set by the driver for
-                // `PipelineMode::TypecheckedTranspile`) means the closure
-                // hasn't already been defunctionalized by `ClosureLowering`
-                // — lower it as a real, first-class HIR node so
-                // `HirTypeChecker` can resolve its signature via ordinary
-                // expected-type propagation from its call site (see
-                // `hir_typeck.rs`'s `Closure` arm). Every other pipeline
-                // (Native, needing MIR) still runs the pre-pass, so a
-                // closure never reaches here in the first place for those.
-                if self.lowering_config.keep_closures_first_class {
+                // `capabilities.first_class_closures` (set by the driver
+                // per target, see `fp_core::capabilities::
+                // LanguageCapabilities`) means the closure hasn't already
+                // been defunctionalized by `ClosureLowering` — lower it as
+                // a real, first-class HIR node so `HirTypeChecker` can
+                // resolve its signature via ordinary expected-type
+                // propagation from its call site (see `hir_typeck.rs`'s
+                // `Closure` arm). Every other pipeline (Native, needing
+                // MIR) still runs the pre-pass, so a closure never reaches
+                // here in the first place for those.
+                if self.lowering_config.capabilities.first_class_closures {
                     self.push_value_scope();
                     let params = closure
                         .params
@@ -1166,6 +1167,32 @@ impl HirGenerator {
         &mut self,
         for_expr: &ast::ExprFor,
     ) -> Result<hir::ExprKind> {
+        // A target with `LanguageCapabilities::first_class_for_loops` set
+        // (Kotlin, currently) has its own native `for`/`foreach` plus real
+        // collection methods (`.take(n)`, `.drop(n)`, ...) — lower the loop
+        // as a real, un-desugared `hir::ExprKind::For` instead of eagerly
+        // decomposing it into an index-based `while` loop here. `iter` is
+        // lowered as an ordinary expression (no special-case shape
+        // detection needed: `list.iter().take(n)` becomes a perfectly
+        // normal method-call chain; `HirToAstLifter::lift_expr`'s `For` arm
+        // and the existing generic `Op(Iter)` promotion handle it from
+        // there), which is what avoids the whole class of "unrecognized
+        // surface shape" bugs the index-loop extraction below is prone to
+        // (see `extract_iter_loop_spec`'s doc comments for the specific
+        // bugs this replaced). Every other pipeline (in particular
+        // `PipelineMode::Native`, whose MIR has no iterator-protocol
+        // concept) still falls through to the unchanged desugaring below.
+        if self.lowering_config.capabilities.first_class_for_loops {
+            let (pat, _ty, _) = self.transform_pattern_with_metadata(&for_expr.pat)?;
+            self.register_pattern_bindings(&pat);
+            let iter = self.transform_expr_to_hir(&for_expr.iter)?;
+            let hir::ExprKind::Block(body) = self.transform_expr_to_hir(&for_expr.body)?.kind
+            else {
+                unreachable!("for-loop body is always a block expression")
+            };
+            return Ok(hir::ExprKind::For(Box::new(pat), Box::new(iter), body));
+        }
+
         let mut stmts = Vec::new();
 
         if !matches!(for_expr.iter.kind(), ast::ExprKind::Range(_)) {

@@ -1182,6 +1182,7 @@ pub fn typecheck_package(
     package_id: &PackageId,
     lossy: LossyCompileOptions,
     language: &str,
+    capabilities: fp_core::capabilities::LanguageCapabilities,
 ) -> Result<PackageSource> {
     let executor = CompilerExecutor::new();
     let std_provider = std_provider_for(language);
@@ -1193,6 +1194,7 @@ pub fn typecheck_package(
     let mut session = CompilerSession::new(data_layout(), &executor, workspace);
     session.driver().pipeline = PipelineMode::TypecheckedTranspile;
     session.driver().state.borrow_mut().set_lossy(lossy.enabled);
+    session.driver().state.borrow_mut().set_capabilities(capabilities);
     let package = executor
         .run(session.driver().compile_package(package_id))
         .map_err(|err| CliError::Compilation(err.to_string()))?;

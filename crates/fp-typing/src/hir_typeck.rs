@@ -1018,6 +1018,22 @@ impl HirTypeChecker {
                     self.require_same(&condition_ty, &Ty::bool())?;
                     self.check_block(block).await?
                 }
+                hir::ExprKind::For(pat, iter, body) => {
+                    // Only ever constructed for a target whose
+                    // `LanguageCapabilities::first_class_for_loops` is set
+                    // (see `ast_to_hir::exprs::transform_for_to_hir`) — the
+                    // loop pattern's own scope must enclose the body block,
+                    // so it's pushed/popped here rather than delegated to
+                    // `check_block`, which only scopes the body itself.
+                    let iter_ty = self.check_expr(iter).await?;
+                    let elem_ty = self.for_loop_element_ty(&iter_ty);
+                    self.locals.push(HashMap::new());
+                    self.bind_pattern(pat, elem_ty)?;
+                    let result = self.check_block(body).await;
+                    self.locals.pop();
+                    result?;
+                    self.unit_ty()
+                }
                 hir::ExprKind::Array(values) => {
                     if values.is_empty() {
                         return Ok(self.error_ty("empty array has no inferable element type"));
@@ -1755,6 +1771,35 @@ impl HirTypeChecker {
                 Some(Ok(make_sig(vec![input], output)))
             }
             _ => None,
+        }
+    }
+
+    /// Element type a `hir::ExprKind::For`'s loop pattern binds to, given
+    /// the already-checked type of its iterator expression. Handles the
+    /// shapes an un-desugared `for` loop's `iter` can actually resolve to:
+    /// a real `Array`/`Slice`, or `Vec<T>` (a real struct with a generic
+    /// argument, not `TyKind::Array`/`Slice` — see the `Index` arm above
+    /// for why `Vec` needs its own case here rather than falling out of
+    /// the array/slice shapes). Anything else (a custom iterator-returning
+    /// method chain this compiler doesn't model the `Iterator`/`IntoIterator`
+    /// trait for) records a diagnostic and yields an error type rather
+    /// than hard-failing the whole item.
+    fn for_loop_element_ty(&self, iter_ty: &Ty) -> Ty {
+        let iter_ty = match &iter_ty.kind {
+            TyKind::Ref(_, inner, _) => inner.as_ref(),
+            _ => iter_ty,
+        };
+        match &iter_ty.kind {
+            TyKind::Array(elem, _) | TyKind::Slice(elem) => (**elem).clone(),
+            TyKind::Adt(adt, args) if Some(adt.did) == self.well_known_struct_def_id("Vec") => {
+                match args.first() {
+                    Some(GenericArg::Type(elem)) => elem.clone(),
+                    _ => self.error_ty("`Vec` for-loop iterator missing its element type argument"),
+                }
+            }
+            _ => self.error_ty(format!(
+                "`for` loop iterator must be Vec/array/slice-shaped, found `{iter_ty}`"
+            )),
         }
     }
 

@@ -268,6 +268,10 @@ fn normalize_expr_inner(
             normalize_expr(cond, op_defs, typeck, promote_op_only);
             normalize_block(block, op_defs, typeck, promote_op_only);
         }
+        hir::ExprKind::For(_pat, iter, block) => {
+            normalize_expr(iter, op_defs, typeck, promote_op_only);
+            normalize_block(block, op_defs, typeck, promote_op_only);
+        }
         hir::ExprKind::With(context, body) => {
             normalize_expr(context, op_defs, typeck, promote_op_only);
             normalize_expr(body, op_defs, typeck, promote_op_only);

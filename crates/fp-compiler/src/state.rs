@@ -22,6 +22,11 @@ pub struct CompilerState {
     pub typing_ctx: std::rc::Rc<TypingContext>,
     runtime_values: BTreeMap<RuntimeValueId, Value>,
     lossy: bool,
+    /// What the requested output target can express directly — see
+    /// `fp_core::capabilities::LanguageCapabilities`. Defaults to
+    /// `NATIVE` (nothing first-class); `fp-cli` sets the real value per
+    /// target language before compiling (`set_capabilities`).
+    capabilities: fp_core::capabilities::LanguageCapabilities,
     bytecode: BTreeMap<BytecodeId, fp_bytecode::BytecodeProgram>,
     /// The one shared task pool every suspendable unit of driver work runs
     /// through: per-compile-unit HIR typing tasks and compiler-owned
@@ -54,6 +59,7 @@ impl CompilerState {
             )),
             runtime_values: BTreeMap::new(),
             lossy: false,
+            capabilities: fp_core::capabilities::LanguageCapabilities::NATIVE,
             bytecode: BTreeMap::new(),
             tasks,
         }
@@ -113,6 +119,14 @@ impl CompilerState {
 
     pub fn set_lossy(&mut self, lossy: bool) {
         self.lossy = lossy;
+    }
+
+    pub fn set_capabilities(&mut self, capabilities: fp_core::capabilities::LanguageCapabilities) {
+        self.capabilities = capabilities;
+    }
+
+    pub fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
+        self.capabilities
     }
 
     pub fn hir(&self, hir_id: &HirId) -> Result<&hir::Program, CompilerDriverError> {
