@@ -649,7 +649,7 @@ fn parse_primary_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Ex
         alt((
             |input: &mut &[Token]| parse_closure_expr(input, file),
             |input: &mut &[Token]| parse_if_expr(input, file),
-            |input: &mut &[Token]| parse_let_expr(input, file),
+            |input: &mut &[Token]| parse_let_expr_no_struct(input, file),
             |input: &mut &[Token]| parse_loop_expr(input, file),
             |input: &mut &[Token]| parse_while_expr(input, file),
             |input: &mut &[Token]| parse_for_expr(input, file),
@@ -1220,7 +1220,26 @@ pub(crate) fn parse_block_stmt_entry(input: &mut &[Token], file: FileId) -> Moda
     // "callee" is the if-expression), silently swallowing the next
     // statement into bogus call arguments.
     let expr = if starts_block_like_stmt_expr(*input) {
-        parse_primary(input, file)?
+        let block_expr = parse_primary(input, file)?;
+        // Unlike a bare `(`/`[` immediately following (ambiguous with a new
+        // statement, per the comment above), a leading `.` or `?` right
+        // after a block-like statement expression is never ambiguous —
+        // nothing else can start a new statement with `.`/`?` — so real
+        // Rust still allows `unsafe { x() }.method()?` here (a common idiom
+        // for a block-like tail expression), and once postfix parsing has
+        // consumed that leading `.`/`?`, any `(...)`/`[...]` after it
+        // unambiguously belongs to the method call/index, not to a new
+        // statement, so the full postfix grammar (including calls/indexing)
+        // is safe to resume from there.
+        if matches!(peek_symbol(input), Some(".") | Some("?")) {
+            let suffixes: Vec<Postfix> = repeat(0.., |input: &mut &[Token]| {
+                parse_postfix_suffix(input, file)
+            })
+            .parse_next(input)?;
+            apply_postfixes(block_expr, suffixes)
+        } else {
+            block_expr
+        }
     } else {
         parse_expr_winnow(input, file)?
     };
@@ -2562,13 +2581,37 @@ fn parse_if_expr_no_struct_condition<'a>(
 }
 
 fn parse_let_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    parse_let_expr_impl(input, file, false)
+}
+
+/// `parse_let_expr`, but for a `let` reached through
+/// [`parse_primary_no_struct`] (an `if`/`while` condition's `let`-chain,
+/// e.g. `if let Some(x) = a && let Some(y) = b { .. }`). The scrutinee after
+/// `=` must itself stay in no-struct mode too — otherwise, when a let-chain
+/// has more than one nested `let` (each one's own scrutinee is parsed by
+/// recursing back into this same primary-expression grammar), the innermost
+/// `let`'s scrutinee can reach all the way up to the chain's final bare
+/// identifier (e.g. `&& z > y` in a longer chain) and misparse `y {` as the
+/// start of a struct literal instead of stopping there for the condition's
+/// own block to be parsed — since `parse_let_expr`'s scrutinee parse used to
+/// always call the struct-permitting `parse_expr_winnow` regardless of which
+/// context (`parse_primary` vs `parse_primary_no_struct`) reached it.
+fn parse_let_expr_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    parse_let_expr_impl(input, file, true)
+}
+
+fn parse_let_expr_impl(input: &mut &[Token], file: FileId, no_struct: bool) -> ModalResult<Expr> {
     let mut probe = *input;
     if skip_keyword(&mut probe, Keyword::Let).is_err() {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
     let pat = parse_general_pattern(&mut probe)?;
     skip_symbol(&mut probe, "=")?;
-    let expr = parse_expr_winnow(&mut probe, file)?;
+    let expr = if no_struct {
+        parse_expr_winnow_no_struct(&mut probe, file)?
+    } else {
+        parse_expr_winnow(&mut probe, file)?
+    };
     *input = probe;
     Ok(ExprKind::Let(ExprLet {
         span: union_spans(pat.span(), expr.span()),
