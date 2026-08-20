@@ -46,9 +46,15 @@ fn serialize_type_rust_shaped(ty: &Ty) -> String {
             ExprKind::Name(name) => name.to_string(),
             ExprKind::Reference(reference) => match reference.referee.kind() {
                 ExprKind::Name(name) => format!("&{name}"),
-                _ => format!("{node:?}", node = ty),
+                other => format!("&{}", expr_kind_tag(other)),
             },
-            _ => format!("{node:?}", node = ty),
+            // A type-position expression that isn't a plain name/reference
+            // (e.g. an associated-type-bound generic like `Iterator<Item =
+            // T>`, parsed as an `Assign`-shaped bound rather than a bare
+            // `Name`) — a short tag, not a full recursive `Debug` dump of
+            // the whole expression tree (ids/spans/nested `Expr { .. }`
+            // noise), which is what this arm did before this fix.
+            other => expr_kind_tag(other),
         },
         Ty::Reference(reference) => {
             let mutability = if reference.mutability == Some(true) {
@@ -103,6 +109,12 @@ fn serialize_type_rust_shaped(ty: &Ty) -> String {
             }
         }
         Ty::GenericVar(generic_var) => format!("T{}", generic_var.index),
+        // `-> impl IntoResponse`, `-> impl Iterator<Item = T>`, etc. — a
+        // real, common return-type shape (esp. in web-handler-style code),
+        // not a rare one; each bound is an `Expr` (typically a bare
+        // `Name`), rendered the same way `render_expr`'s `Name` arm would.
+        Ty::ImplTraits(impl_traits) => format!("impl {}", render_bounds(&impl_traits.bounds)),
+        Ty::TypeBounds(bounds) => render_bounds(bounds),
         // Rare in ordinary source-level field/variant-payload position —
         // an inline anonymous struct/enum definition, a meta-type, a
         // const-eval type block, and so on. Falls back to a short marker
@@ -113,13 +125,41 @@ fn serialize_type_rust_shaped(ty: &Ty) -> String {
     }
 }
 
+/// Renders a `TypeBounds`'s trait list as `Trait1 + Trait2` — each bound is
+/// an `Expr`, typically a bare `Name` (`IntoResponse`), occasionally a
+/// generic instantiation (`Iterator<Item = T>`) via other `ExprKind` shapes;
+/// falls back to `expr_kind_tag` for anything stranger rather than a full
+/// recursive `Debug` dump.
+fn render_bounds(bounds: &fp_core::ast::TypeBounds) -> String {
+    bounds
+        .bounds
+        .iter()
+        .map(|bound| match bound.kind() {
+            fp_core::ast::ExprKind::Name(name) => name.to_string(),
+            other => expr_kind_tag(other),
+        })
+        .collect::<Vec<_>>()
+        .join(" + ")
+}
+
+/// A short `<VariantName>` tag for an `ExprKind` this module doesn't render
+/// in full — the variant name extracted from `Debug` output, not the whole
+/// recursive dump (ids/spans/nested `Expr { .. }` noise).
+fn expr_kind_tag(kind: &fp_core::ast::ExprKind) -> String {
+    let debug = format!("{kind:?}");
+    let variant = debug
+        .split(['(', ' ', '{'])
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("?");
+    format!("<{variant}>")
+}
+
 fn type_variant_name(ty: &Ty) -> &'static str {
     match ty {
         Ty::TokenStream(_) => "tokenstream",
         Ty::Struct(_) => "struct",
         Ty::Enum(_) => "enum",
-        Ty::ImplTraits(_) => "impl",
-        Ty::TypeBounds(_) => "bounds",
         Ty::Value(_) => "value",
         Ty::Type(_) => "type",
         Ty::RequestedType(_) => "requested",
