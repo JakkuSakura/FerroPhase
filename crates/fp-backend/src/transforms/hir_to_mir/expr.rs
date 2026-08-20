@@ -762,6 +762,7 @@ impl MirLowering {
                 _ => {}
             }
         }
+        self.register_all_dependency_adts();
         self.finalize_adt_definitions(&hir_program);
         for item in &hir_program.items {
             if let hir::ItemKind::Impl(impl_block) = &item.kind {
@@ -816,16 +817,56 @@ impl MirLowering {
         }
     }
 
-    /// On-demand registration for a struct/enum defined in a *different*
-    /// package (std/libc/etc.) — reached only when `def_id` isn't already
-    /// registered locally. `hir_def_map`/`hir_def_paths` (populated once in
-    /// `lower_program`) are a superset covering every previously-compiled
-    /// workspace package, via `seed_workspace_definitions`, so this is a
-    /// plain O(1) point lookup, not a scan — no dependency's ADTs need to
-    /// be eagerly registered ahead of whatever a given package actually
-    /// references. `mem::take`s `hir_def_paths` for the duration of the
-    /// call to hand `register_struct`/`register_enum` an owned reference
-    /// without a `&self`/`&mut self` borrow conflict.
+    /// Eagerly registers every struct/enum reachable in `hir_def_map` —
+    /// every previously-compiled workspace package's own items, via
+    /// `seed_workspace_definitions` — before any layout is ever computed.
+    /// Mirrors rustc's own model: `AdtDef` collection for every reachable
+    /// item happens upfront and unconditionally, with layout resolution
+    /// staying a separate, later, lazy/memoized query — there is no
+    /// "register on whichever lookup happens to miss first" step in
+    /// rustc's pipeline, and that ordering-dependence is exactly what let
+    /// `finalize_adt_definitions`'s eager local-layout pass reach a
+    /// not-yet-registered dependency type (e.g. `std::alloc::Vec`, needed
+    /// by `std::json::Value`'s own layout) before this pass existed.
+    ///
+    /// `register_enum` evaluates explicit variant discriminants and can
+    /// `emit_error` on failure. Registering *every* reachable dependency
+    /// enum — not just what this package actually references — risks
+    /// surfacing a spurious diagnostic for some unrelated, unused,
+    /// possibly-broken enum elsewhere in `std`. Matching rustc's own
+    /// split (bare `AdtDef` collection is unconditional and cannot fail;
+    /// discriminant evaluation is a separate, still-lazy query fired only
+    /// once a type is genuinely used), diagnostics raised purely by this
+    /// eager pre-pass are discarded rather than surfaced — a real failure
+    /// still surfaces normally the moment something in the current
+    /// compile actually uses the offending enum, via the ordinary
+    /// `finalize_adt_definitions`/on-demand layout paths below.
+    fn register_all_dependency_adts(&mut self) {
+        let diagnostics_before = self.diagnostics.len();
+        let had_errors_before = self.has_errors;
+        let def_paths = self.hir_def_paths.clone();
+        let items: Vec<hir::Item> = self.hir_def_map.values().cloned().collect();
+        for item in &items {
+            match &item.kind {
+                hir::ItemKind::Struct(def) => {
+                    self.register_struct(&def_paths, item.def_id, def, item.span);
+                }
+                hir::ItemKind::Enum(def) => {
+                    self.register_enum(&def_paths, item.def_id, def, item.span);
+                }
+                _ => {}
+            }
+        }
+        self.diagnostics.truncate(diagnostics_before);
+        self.has_errors = had_errors_before;
+    }
+
+    /// Defensive fallback for a struct/enum somehow missed by
+    /// `register_all_dependency_adts`'s eager sweep of `hir_def_map` —
+    /// reached only when a `def_id` isn't already registered locally.
+    /// `mem::take`s `hir_def_paths` for the duration of the call to hand
+    /// `register_struct`/`register_enum` an owned reference without a
+    /// `&self`/`&mut self` borrow conflict.
     fn try_lazily_register_adt(&mut self, def_id: hir::DefId, span: Span) {
         let Some(item) = self.hir_def_map.get(&def_id).cloned() else {
             return;
@@ -1235,6 +1276,7 @@ impl MirLowering {
                 _ => {}
             }
         }
+        self.register_all_dependency_adts();
         self.finalize_adt_definitions(program);
         // Signature-only pre-pass (see `register_impl_signatures`'s own doc
         // comment) so non-generic method/associated-function calls resolve
@@ -8393,12 +8435,33 @@ impl MirLowering {
             // for a `ty` containing `Infer` wildcard positions (the one
             // case `enum_layout_ty_matches` can match that an exact
             // `HashMap` key lookup can't).
-            _ => self.enum_layout_for_ty_exact(ty).or_else(|| {
-                self.enum_layouts
-                    .values()
-                    .find(|layout| Self::enum_layout_ty_matches(&layout.enum_ty, ty))
-            }),
+            _ => self
+                .enum_layout_for_ty_exact(ty)
+                .or_else(|| self.enum_layout_for_ty_fuzzy(ty)),
         }
+    }
+
+    /// Fallback for a `ty` containing `Infer` wildcard positions, where
+    /// more than one cached `EnumLayout` can structurally match the same
+    /// flattened shape — e.g. `std::json::Value`'s own concrete layout and
+    /// `std::option::Option<T>`'s generic *template* layout (built with
+    /// `Infer` filler args for a context-free `Some(..)`/`None`
+    /// construction) both flatten to the same `Tuple[I64, X]` shape.
+    /// Picking arbitrarily (a bare `.find()` over `enum_layouts.values()`,
+    /// whose iteration order is randomized per-process by `HashMap`) is a
+    /// real non-determinism bug — there is no "guess which cached layout
+    /// looks right" step anywhere in rustc's own layout-query model.
+    /// Deterministically prefer a genuinely concrete instantiation (no
+    /// unresolved arg) over a still-generic template, then break any
+    /// remaining tie by `def_id` — never by hash order.
+    fn enum_layout_for_ty_fuzzy(&self, ty: &Ty) -> Option<&EnumLayout> {
+        self.enum_layouts
+            .values()
+            .filter(|layout| Self::enum_layout_ty_matches(&layout.enum_ty, ty))
+            .min_by_key(|layout| {
+                let is_template = layout.args.iter().any(|arg| self.has_unresolved_ty(arg));
+                (is_template, layout.def_id)
+            })
     }
 
     fn enum_layout_ty_matches(layout_ty: &Ty, requested_ty: &Ty) -> bool {

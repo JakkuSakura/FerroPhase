@@ -712,3 +712,95 @@ fn collect_macro_rules_defs_into<'a>(
         }
     }
 }
+
+/// A bare top-level macro invocation (e.g. `make_adder!(add_two, 2);`) whose
+/// transcriber expands to real items (functions, structs, ...) never gets a
+/// chance to run: `ast_to_hir` only ever knows how to *predeclare*/lower
+/// concrete item kinds, so an unexpanded `ItemKind::Macro` invocation is
+/// silently dropped with a warning rather than becoming a real, callable
+/// definition. Matching rustc's own model — macro-expanded tokens are
+/// re-parsed into ordinary AST and flow through the exact same pipeline as
+/// hand-written code, with no separate/lesser pipeline for macro output —
+/// this expands every item-position invocation into real `Item`s *before*
+/// HIR generation ever sees them, splicing the result in place of the
+/// invocation. Reuses the same `match_macro_rule`/`substitute_template`
+/// primitives the already-working expression-position path uses
+/// (`normalization.rs`), just re-parsing the substituted tokens as items
+/// (`parse_items_tokens`) instead of as an expression.
+const MAX_MACRO_EXPANSION_DEPTH: u32 = 16;
+
+pub fn expand_item_macros(
+    items: Vec<fp_core::package::PackageItem>,
+    defs: &HashMap<String, MacroRulesDef>,
+) -> Vec<fp_core::package::PackageItem> {
+    items
+        .into_iter()
+        .map(|package_item| {
+            let fp_core::package::PackageItem { path, item } = package_item;
+            let expanded = expand_items(vec![item], defs, 0);
+            (path, expanded)
+        })
+        .flat_map(|(path, expanded)| {
+            expanded
+                .into_iter()
+                .map(move |item| fp_core::package::PackageItem {
+                    path: path.clone(),
+                    item,
+                })
+        })
+        .collect()
+}
+
+fn expand_items(items: Vec<Item>, defs: &HashMap<String, MacroRulesDef>, depth: u32) -> Vec<Item> {
+    if depth > MAX_MACRO_EXPANSION_DEPTH {
+        return items;
+    }
+    let mut out = Vec::with_capacity(items.len());
+    for mut item in items {
+        match item.kind_mut() {
+            ItemKind::Module(module) => {
+                let expanded = expand_items(std::mem::take(&mut module.items), defs, depth);
+                module.items = expanded;
+                out.push(item);
+            }
+            ItemKind::Macro(item_macro) if item_macro.declared_name.is_none() => {
+                let Some(macro_name) = item_macro.invocation.path.segments.last() else {
+                    out.push(item);
+                    continue;
+                };
+                let macro_name = macro_name.as_str().trim_end_matches('!').to_string();
+                let Some(def) = defs.get(&macro_name) else {
+                    out.push(item);
+                    continue;
+                };
+                let invocation_tokens = &item_macro.invocation.token_trees;
+                let file_id = macro_tokens_file_id(invocation_tokens);
+                let mut expanded_items = None;
+                for rule in &def.rules {
+                    let Some(bindings) = match_macro_rule(&rule.matcher, invocation_tokens, file_id)
+                    else {
+                        continue;
+                    };
+                    let substituted = substitute_template(&rule.transcriber, &bindings);
+                    let flat = macro_token_trees_to_tokens(&substituted);
+                    if let Ok(parsed) = crate::ast::parse_items_tokens(&flat, file_id) {
+                        expanded_items = Some(parsed);
+                        break;
+                    }
+                }
+                match expanded_items {
+                    Some(parsed) => out.extend(expand_items(parsed, defs, depth + 1)),
+                    // No rule matched (or the invocation names a macro with
+                    // no `macro_rules!` definition in scope) — leave the
+                    // unexpanded item in place. `ast_to_hir` already emits
+                    // its own "dropping macro item" diagnostic for exactly
+                    // this case, matching its existing behavior for any
+                    // other never-expanded macro item.
+                    None => out.push(item),
+                }
+            }
+            _ => out.push(item),
+        }
+    }
+    out
+}

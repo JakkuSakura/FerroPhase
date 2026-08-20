@@ -507,9 +507,17 @@ impl CompilerDriver {
                     .map(|package| package.borrow().package_id)
             })
             .unwrap_or_default();
-        let package_source = package.borrow().clone();
+        let mut package_source = package.borrow().clone();
         let macro_rules_defs =
             fp_lang::collect_macro_rules_defs(package_source.items.iter().map(|item| &item.item));
+        // Item-position macro invocations (e.g. `make_adder!(add_two, 2);`)
+        // must expand into real items *before* `HirGenerator` ever sees
+        // them — matching rustc's own model, where macro-expanded tokens
+        // re-enter the exact same pipeline as hand-written code rather than
+        // a separate, lesser one. Without this, such an invocation is
+        // silently dropped by `ast_to_hir`'s own item loop, and whatever it
+        // would have defined never exists.
+        package_source.items = fp_lang::expand_item_macros(package_source.items, &macro_rules_defs);
         let mut generator = HirGenerator::new()
             .with_intrinsic_normalizer(
                 FerroIntrinsicNormalizer::new(fp_core::intrinsics::IntrinsicNormalizationMode::Compile)
