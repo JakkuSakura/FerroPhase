@@ -34,8 +34,12 @@ pub struct RustPackageProvider {
 
 impl RustPackageProvider {
     pub fn new(root: PathBuf) -> Self {
+        // `list_cargo_members`, not `list_members`: this provider is
+        // specifically for real Rust/Cargo projects, so `Cargo.toml` is
+        // authoritative here even if a stale/unrelated `Magnet.toml` also
+        // exists at the same root — see that function's doc comment.
         let members = project::find_manifest(&root)
-            .map(|manifest_root| project::list_members(&manifest_root))
+            .map(|manifest_root| project::list_cargo_members(&manifest_root))
             .unwrap_or_default();
         Self {
             root,

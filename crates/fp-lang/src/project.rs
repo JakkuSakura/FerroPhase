@@ -31,6 +31,24 @@ pub fn list_members(root: &Path) -> Vec<(String, PathBuf)> {
     vec![(root.file_name().unwrap_or_default().to_string_lossy().to_string(), root.to_path_buf())]
 }
 
+/// Parse workspace members from `Cargo.toml` only, ignoring any sibling
+/// `Magnet.toml` entirely. For a real Rust/Cargo project, `Cargo.toml` is the
+/// authoritative workspace manifest — a repo can carry a stale/out-of-sync
+/// `Magnet.toml` left over from unrelated FerroPhase tooling (it has its own,
+/// independent `[workspace] members` list, meant for `.fp`/Magnet packages,
+/// not Cargo crates), and `list_members`'s Magnet-first precedence would
+/// silently use that instead of the real Cargo workspace for a Rust source
+/// language. Used by [`crate::project::find_manifest`]-driven Rust-specific
+/// discovery (see `fp_rust::RustPackageProvider`) instead of `list_members`.
+pub fn list_cargo_members(root: &Path) -> Vec<(String, PathBuf)> {
+    if let Ok(content) = std::fs::read_to_string(root.join("Cargo.toml")) {
+        if let Some(members) = parse_toml_members(&content, root) {
+            return members;
+        }
+    }
+    vec![(root.file_name().unwrap_or_default().to_string_lossy().to_string(), root.to_path_buf())]
+}
+
 fn parse_toml_members(content: &str, root: &Path) -> Option<Vec<(String, PathBuf)>> {
     let manifest: toml::Value = content.parse().ok()?;
     let members = manifest
