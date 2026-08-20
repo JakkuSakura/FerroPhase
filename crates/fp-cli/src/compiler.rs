@@ -917,7 +917,7 @@ pub fn find_manifest_package(
     Ok(Some((provider, package_id, package_root_abs)))
 }
 
-/// Computes the `PackageItem` path tag a package's own provider would tag
+/// Computes the `PackageItem::module_path` tag a package's own provider would tag
 /// `input` with, given its package root — the one implementation shared by
 /// `resolve_input_package`'s single-file resolution and
 /// `commands::compile::provider_and_package_for_input`'s `--target` path,
@@ -1194,7 +1194,7 @@ pub fn build_workspace_session(
 /// (which only knows how to *discover* sibling modules from disk — the
 /// wrong tool when a real provider has already parsed and tagged every
 /// item). `HirGenerator::transform_package` reads each item's real
-/// `PackageItem.path` tag to build correct module scoping, so this needs no
+/// `PackageItem.module_path` tag to build correct module scoping, so this needs no
 /// AST-level module nesting at all.
 ///
 /// Returns the package's items with real resolved types spliced in where

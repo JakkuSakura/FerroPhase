@@ -34,7 +34,7 @@ fn package_from_items(items: Vec<ast::Item>) -> Result<fp_core::package::Compile
     source.items = items
         .into_iter()
         .map(|item| fp_core::package::PackageItem {
-            path: QualifiedPath::new(Vec::new()),
+            module_path: QualifiedPath::new(Vec::new()),
             item,
         })
         .collect();
@@ -62,7 +62,7 @@ fn package_from_module_items(
     source.items = items
         .into_iter()
         .map(|item| fp_core::package::PackageItem {
-            path: QualifiedPath::new(module_path.clone()),
+            module_path: QualifiedPath::new(module_path.clone()),
             item,
         })
         .collect();

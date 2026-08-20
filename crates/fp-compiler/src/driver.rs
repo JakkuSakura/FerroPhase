@@ -682,7 +682,7 @@ impl CompilerDriver {
                         if imp.trait_ty.is_some() {
                             continue;
                         }
-                        let mut base_path = pkg_item.path.segments.clone();
+                        let mut base_path = pkg_item.module_path.segments.clone();
                         let Some(self_ty_name) = impl_self_type_name(&imp.self_ty) else {
                             continue;
                         };
@@ -709,7 +709,7 @@ impl CompilerDriver {
                         // source form.
                         continue;
                     };
-                    let mut path = pkg_item.path.segments.clone();
+                    let mut path = pkg_item.module_path.segments.clone();
                     path.push(name.to_string());
                     let key = fp_core::hir::DefPath::new(
                         path.into_iter().map(fp_core::hir::Symbol::new).collect(),

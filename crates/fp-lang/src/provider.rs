@@ -36,7 +36,7 @@ fn flatten_items(path: &QualifiedPath, items: &[Item], output: &mut Vec<PackageI
             );
         } else {
             output.push(PackageItem {
-                path: path.clone(),
+                module_path: path.clone(),
                 item: item.clone(),
             });
         }

@@ -40,7 +40,7 @@ fn package_from_file(
     source.items = items
         .into_iter()
         .map(|item| fp_core::package::PackageItem {
-            path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+            module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
             item,
         })
         .collect();

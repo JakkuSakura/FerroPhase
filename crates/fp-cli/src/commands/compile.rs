@@ -889,7 +889,7 @@ async fn compile_emit_target(
         let items: Vec<Item> = source
             .items
             .into_iter()
-            .filter(|pkg_item| pkg_item.path == tag)
+            .filter(|pkg_item| pkg_item.module_path == tag)
             .map(|pkg_item| match &materializer {
                 Some(mat) => fp_core::intrinsics::materialize_item(pkg_item.item, mat.as_ref())
                     .map_err(|e| CliError::Compilation(e.to_string())),

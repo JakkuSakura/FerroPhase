@@ -142,7 +142,16 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug)]
 pub struct PackageItem {
-    pub path: QualifiedPath,
+    /// The *file's* module path — computed once per source file and shared
+    /// identically by every item parsed from it (see
+    /// `fp_rust::provider::RustPackageProvider::load_package_source` and
+    /// `fp_lang::magnet_provider::MagnetWorkspaceProvider::load_package_source`,
+    /// the two providers that construct this). It does **not** include the
+    /// item's own name — `Item` already carries that itself. Named
+    /// `module_path` (not `path`) specifically to make that contract
+    /// unambiguous: a prior name of plain `path` invited exactly the wrong
+    /// assumption that it was a per-item fully-qualified path.
+    pub module_path: QualifiedPath,
     pub item: Item,
 }
 
@@ -217,7 +226,7 @@ pub fn split_package_into_modules(source: &PackageSource) -> Vec<PackageModule> 
     let mut modules: BTreeMap<Vec<String>, Vec<Item>> = BTreeMap::new();
     for pkg_item in &source.items {
         modules
-            .entry(pkg_item.path.segments.clone())
+            .entry(pkg_item.module_path.segments.clone())
             .or_default()
             .push(pkg_item.item.clone());
     }

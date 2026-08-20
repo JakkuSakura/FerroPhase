@@ -129,7 +129,7 @@ impl PackageProvider for RustPackageProvider {
                     .into_iter()
                     .filter(|item| !is_cfg_test(item_attrs(item)))
                     .map(|item| PackageItem {
-                        path: path.clone(),
+                        module_path: path.clone(),
                         item,
                     }),
             );
@@ -217,13 +217,19 @@ pub fn rs_relative_to_module_path(rel: &str) -> QualifiedPath {
         return QualifiedPath::new(Vec::new());
     }
     let stem = rel.trim_end_matches(".rs").trim_end_matches(".fp");
-    let parts: Vec<String> = stem.split('/').map(|s| s.to_string()).collect();
+    let mut parts: Vec<String> = stem.split('/').map(|s| s.to_string()).collect();
+    // Pre-2018-edition module file convention: `foo/mod.rs` *is* module
+    // `foo` itself, not a `mod` submodule nested inside it — drop the
+    // trailing "mod" segment `mod.rs` would otherwise contribute.
+    if parts.len() > 1 && parts.last().map(String::as_str) == Some("mod") {
+        parts.pop();
+    }
     QualifiedPath::new(parts)
 }
 
 fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> PackageSource {
     use std::collections::HashSet;
-    let paths: HashSet<_> = items.iter().map(|item| item.path.clone()).collect();
+    let paths: HashSet<_> = items.iter().map(|item| item.module_path.clone()).collect();
     let descriptors: Vec<ModuleDescriptor> = paths
         .into_iter()
         .map(|path| ModuleDescriptor {
@@ -345,7 +351,7 @@ fn flatten_items(path: &QualifiedPath, items: &[Item], output: &mut Vec<PackageI
             );
         } else {
             output.push(PackageItem {
-                path: path.clone(),
+                module_path: path.clone(),
                 item: item.clone(),
             });
         }

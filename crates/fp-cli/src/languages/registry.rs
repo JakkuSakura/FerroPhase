@@ -64,9 +64,11 @@ pub trait LanguageTarget: Send + Sync {
 /// files/modules within the package (see `PackageSource::items`'s doc
 /// comment) — there is no single `file_path` per package to hand out here,
 /// unlike a plain single-file `AstSerializer`. Each item still carries its
-/// own fully-qualified module path (`PackageItem::path`), which a target can
-/// use to recover file/module-level grouping itself if it needs it (e.g. by
-/// calling `fp_core::package::split_package_into_modules`).
+/// file's module path (`PackageItem::module_path` — shared by every item
+/// from that file, not a per-item fully-qualified path; see that field's own
+/// doc comment), which a target can use to recover file/module-level
+/// grouping itself if it needs it (e.g. by calling
+/// `fp_core::package::split_package_into_modules`).
 pub struct LanguageTargetPackage<'a> {
     pub package_id: &'a fp_core::package::PackageId,
     pub items: &'a [fp_core::package::PackageItem],

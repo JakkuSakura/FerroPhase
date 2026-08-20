@@ -1737,9 +1737,9 @@ impl HirGenerator {
                 let path = if i < generated_count {
                     root_path.clone()
                 } else {
-                    package.items[i - generated_count].path.clone()
+                    package.items[i - generated_count].module_path.clone()
                 };
-                fp_core::package::PackageItem { path, item }
+                fp_core::package::PackageItem { module_path: path, item }
             })
             .collect();
 
@@ -1752,7 +1752,7 @@ impl HirGenerator {
         // been processed, get deferred into `pending_impls` instead of
         // failing immediately; see `predeclare_items`'s `ItemKind::Impl` arm).
         for package_item in &package_items {
-            self.with_module_scope(&package_item.path, |this| {
+            self.with_module_scope(&package_item.module_path, |this| {
                 this.predeclare_items(std::slice::from_ref(&package_item.item), true)
             })?;
         }
@@ -1776,7 +1776,7 @@ impl HirGenerator {
 
         // 4: append — unchanged.
         for package_item in &package_items {
-            self.with_module_scope(&package_item.path, |this| {
+            self.with_module_scope(&package_item.module_path, |this| {
                 this.append_item(&mut program, &package_item.item)
             })?;
         }
@@ -1815,12 +1815,12 @@ impl HirGenerator {
         )> = Vec::new();
         for package_item in &package.items {
             if let ItemKind::Import(import) = package_item.item.kind() {
-                self.with_module_scope(&package_item.path, |this| {
+                self.with_module_scope(&package_item.module_path, |this| {
                     let mut bindings = Vec::new();
                     this.collect_imports(Vec::new(), &import.tree, &mut bindings)?;
                     for binding in bindings {
                         pending.push((
-                            package_item.path.clone(),
+                            package_item.module_path.clone(),
                             binding,
                             import.visibility.clone(),
                         ));
