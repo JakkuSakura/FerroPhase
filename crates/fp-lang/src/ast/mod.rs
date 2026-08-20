@@ -134,6 +134,11 @@ impl FerroPhaseParser {
         path: PathBuf,
     ) -> Result<fp_core::ast::File> {
         let file_id = resolve_file_id(file, source, source_path);
+        // So `token_span_to_span` (used throughout tokenizing/parsing below)
+        // stamps every span it builds with this file instead of a
+        // placeholder — see `fp_core::span::set_current_parse_file`'s doc
+        // comment.
+        fp_core::span::set_current_parse_file(file_id);
         let tokens = crate::lexer::tokenizer::lex(source).map_err(|err| {
             if let Some(span) = err.span() {
                 let span = fp_core::span::Span::new(file_id, span.start as u32, span.end as u32);
@@ -621,7 +626,11 @@ fn error_at_current(input: &[Token], message: impl Into<String>) -> DirectParseE
 }
 
 fn token_span_to_span(token: &Token) -> Span {
-    Span::new(0, token.span.start as u32, token.span.end as u32)
+    Span::new(
+        fp_core::span::current_parse_file(),
+        token.span.start as u32,
+        token.span.end as u32,
+    )
 }
 
 fn span_from_expr(expr: &Expr) -> Span {

@@ -145,6 +145,9 @@ where
 
         if let Some(span) = self.span {
             write!(f, " [span {}:{}-{}]", span.file, span.lo, span.hi)?;
+            if let Some(snippet) = span.snippet() {
+                write!(f, " ({snippet:?})")?;
+            }
         }
 
         if !self.suggestions.is_empty() {
@@ -259,6 +262,9 @@ impl DiagnosticManager {
 
             if let Some(span) = diagnostic.span {
                 full_message.push_str(&format!(" [span {}:{}-{}]", span.file, span.lo, span.hi));
+                if let Some(snippet) = span.snippet() {
+                    full_message.push_str(&format!(" ({snippet:?})"));
+                }
             }
 
             emit_tracing(&diagnostic.level, context, &full_message);
