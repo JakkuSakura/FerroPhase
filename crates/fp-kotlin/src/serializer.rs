@@ -15,13 +15,13 @@ use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::intrinsics::calls::{CallKind, KnownClass, KnownPackage, OpKind};
 use fp_core::package::{PackageItem, PackageSource};
 use fp_core::diagnostics::report_warning_with_context;
-use fp_core::writer::{IndentStyle, StyledFileWriter, WriterConfig};
+use fp_core::writer::{IndentStyle, StyledWriter, WriterConfig};
 use eyre::{bail, Result};
 
 // ── Emitter context ──────────────────────────────────────────────────────────
 
 struct KotlinEmitter {
-    writer: StyledFileWriter,
+    writer: StyledWriter,
     var_counter: usize,
     /// Names of sibling modules generated into the same (default) Kotlin package —
     /// imports targeting these are skipped since they're already visible.
@@ -119,7 +119,7 @@ fn kotlin_writer_config() -> WriterConfig {
 impl KotlinEmitter {
     fn new() -> Self {
         Self {
-            writer: StyledFileWriter::new(kotlin_writer_config()),
+            writer: StyledWriter::new(kotlin_writer_config()),
             var_counter: 0,
             local_modules: HashSet::new(),
             workspace_packages: HashSet::new(),
@@ -2186,14 +2186,14 @@ fn expr_receiver_name(expr: &Expr) -> Option<String> {
     }
 }
 
-/// Render `body` into a *fresh, depth-0* scratch `StyledFileWriter` swapped
+/// Render `body` into a *fresh, depth-0* scratch `StyledWriter` swapped
 /// in for `e.writer`'s real one, restoring the original writer afterward
 /// (whether `body` errors or not) — used wherever `render_expr` needs to
 /// build a self-contained, correctly-nested multi-line Kotlin snippet (e.g.
 /// a `run { ... }`/`if (...) { ... }` wrapper for an `if let` pattern) as a
 /// plain `String` to return, rather than writing directly to the real
 /// output. The result is meant to be embedded elsewhere via
-/// `StyledFileWriter::write_lines`, which stacks the *real* depth at the
+/// `StyledWriter::write_lines`, which stacks the *real* depth at the
 /// embedding site on top of whatever relative indentation these lines
 /// already carry — so building it through the same `write_line`/`block`/
 /// `increase_indent` primitives the rest of the emitter uses (rather than

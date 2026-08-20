@@ -13,7 +13,7 @@ use fp_core::ast::{
 use fp_core::error::Result;
 use fp_core::intrinsics::CallKind;
 use fp_core::ops::UnOpKind;
-use fp_core::writer::{IndentStyle, StyledFileWriter, WriterConfig};
+use fp_core::writer::{IndentStyle, StyledWriter, WriterConfig};
 use itertools::Itertools;
 
 pub struct TypeScriptSerializer {
@@ -120,7 +120,7 @@ enum ScriptFlavor {
 
 struct ScriptEmitter {
     flavor: ScriptFlavor,
-    writer: StyledFileWriter,
+    writer: StyledWriter,
     type_defs: Vec<String>,
     structs: HashMap<String, TypeStruct>,
     seen_structs: HashSet<String>,
@@ -137,7 +137,7 @@ impl ScriptEmitter {
         };
         Self {
             flavor,
-            writer: StyledFileWriter::new(writer_config),
+            writer: StyledWriter::new(writer_config),
             type_defs: Vec::new(),
             structs: HashMap::new(),
             seen_structs: HashSet::new(),
@@ -148,7 +148,7 @@ impl ScriptEmitter {
     }
 
     /// Write `header` followed by ` {`, run `body` at one deeper indent
-    /// level, then close with `}`. Unlike [`StyledFileWriter::block`], the
+    /// level, then close with `}`. Unlike [`StyledWriter::block`], the
     /// closure gets the whole emitter (not just the writer) since most
     /// bodies need to read/mutate other emitter state (`structs`, `flavor`,
     /// recursive `emit_*`/`render_*` calls).

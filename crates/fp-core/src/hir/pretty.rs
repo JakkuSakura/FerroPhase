@@ -734,7 +734,7 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
         }
         // `format_expr_inline` builds a single-line string with no access
         // to a mutable writer (unlike `write_expr`, which renders these
-        // properly, multi-line, via `PrettyCtx`'s real `StyledFileWriter`)
+        // properly, multi-line, via `PrettyCtx`'s real `StyledWriter`)
         // — a control-flow construct's *body* genuinely can't be rendered
         // faithfully as one line, so it's elided here. `For`'s own head
         // (pattern + iterator) has no such problem — both are ordinary

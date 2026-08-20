@@ -1,4 +1,4 @@
-//! `StyledFileWriter`: a small line-oriented buffer for backends that
+//! `StyledWriter`: a small line-oriented buffer for backends that
 //! generate source text (Kotlin, Go, Python, ...). It owns indentation
 //! bookkeeping and brace pairing so individual backends don't each
 //! reimplement `indent: usize` + manual `"    ".repeat(n)` calls.
@@ -36,7 +36,7 @@ impl IndentStyle {
 }
 
 /// A standalone indent-depth tracker: how deep the current nesting level is,
-/// and how to render that depth as a literal prefix string. [`StyledFileWriter`]
+/// and how to render that depth as a literal prefix string. [`StyledWriter`]
 /// is built on top of one of these rather than reimplementing depth tracking
 /// itself — and it's just as usable on its own, independent of any output
 /// buffer, whenever code needs to build a self-consistent, *relatively*
@@ -157,7 +157,7 @@ impl Formatter {
 
 /// Spacing/wrapping knobs for [`IndentedBuffer`] alone — the subset of
 /// [`WriterConfig`] relevant to plain indented-line buffering, without any
-/// of [`StyledFileWriter`]'s brace-pairing/formatting concerns on top.
+/// of [`StyledWriter`]'s brace-pairing/formatting concerns on top.
 #[derive(Clone, Debug)]
 pub struct BufferConfig {
     pub indent_style: IndentStyle,
@@ -183,7 +183,7 @@ impl Default for BufferConfig {
 
 /// Indented line buffer: owns the raw text accumulator, indent-depth
 /// tracking (via [`Indent`]), and optional max-width wrapping. This is the
-/// layer [`StyledFileWriter`] is built on top of (adding brace-pairing and
+/// layer [`StyledWriter`] is built on top of (adding brace-pairing and
 /// formatting) — but it's a complete, useful primitive on its own wherever
 /// code needs to build a self-consistent, depth-tracked multi-line snippet
 /// (e.g. as a plain `String`, to be embedded later at whatever real depth it
@@ -362,7 +362,7 @@ impl IndentedBuffer {
     }
 
     /// Run `body` with the indent depth increased by one level. Does not
-    /// emit any delimiters — see [`StyledFileWriter::block`] for brace pairs.
+    /// emit any delimiters — see [`StyledWriter::block`] for brace pairs.
     pub fn indented<F, T, E>(&mut self, body: F) -> Result<T, E>
     where
         F: FnOnce(&mut Self) -> Result<T, E>,
@@ -387,7 +387,7 @@ impl IndentedBuffer {
     }
 
     /// The raw buffered contents, as-is — no formatter pass, no
-    /// trailing-newline normalization (that's [`StyledFileWriter::finish`]'s
+    /// trailing-newline normalization (that's [`StyledWriter::finish`]'s
     /// job, one layer up).
     pub fn raw_contents(&self) -> &str {
         &self.out
@@ -412,7 +412,7 @@ impl fmt::Write for IndentedBuffer {
     }
 }
 
-/// Spacing/indentation knobs for [`StyledFileWriter`].
+/// Spacing/indentation knobs for [`StyledWriter`].
 #[derive(Clone, Debug)]
 pub struct WriterConfig {
     pub indent_style: IndentStyle,
@@ -463,15 +463,15 @@ impl WriterConfig {
 /// [`IndentedBuffer`], which owns the actual indent tracking and line buffer.
 ///
 /// Three ways to add content, from lowest to highest level:
-/// - [`StyledFileWriter::atom`] appends a token to the current line,
+/// - [`StyledWriter::atom`] appends a token to the current line,
 ///   inserting exactly one space of separation from whatever's already on it.
-/// - [`StyledFileWriter::write_line`] appends a complete line and terminates it.
-/// - [`StyledFileWriter::block`] writes a header, opens a brace pair, indents
+/// - [`StyledWriter::write_line`] appends a complete line and terminates it.
+/// - [`StyledWriter::block`] writes a header, opens a brace pair, indents
 ///   a closure's output, then closes the brace pair.
 ///
 /// It also implements [`std::fmt::Write`], so existing call sites built
 /// around `write!`/`writeln!` into a `String` buffer can switch to a
-/// `StyledFileWriter` with no other changes.
+/// `StyledWriter` with no other changes.
 ///
 /// When [`WriterConfig::max_width`] is set, a line that doesn't fit
 /// (indentation included) is wrapped across multiple lines on space
@@ -490,14 +490,14 @@ impl WriterConfig {
 /// header/brace-pair applies — it can't be left unbalanced by an early
 /// return, and needs no explicit closer.
 #[derive(Clone)]
-pub struct StyledFileWriter {
+pub struct StyledWriter {
     buffer: Rc<RefCell<IndentedBuffer>>,
     brace_style: BraceStyle,
     trailing_newline: bool,
     formatter: Option<Formatter>,
 }
 
-impl StyledFileWriter {
+impl StyledWriter {
     pub fn new(config: WriterConfig) -> Self {
         Self {
             buffer: Rc::new(RefCell::new(IndentedBuffer::new(config.buffer_config()))),
@@ -557,7 +557,7 @@ impl StyledFileWriter {
 
     /// Append pre-rendered text verbatim, ignoring current indentation.
     /// Useful for splicing output built by an independent renderer (e.g. a
-    /// side-channel `StyledFileWriter`/`IndentedBuffer`, or a hand-built
+    /// side-channel `StyledWriter`/`IndentedBuffer`, or a hand-built
     /// literal block) directly into this buffer. Flushes any pending
     /// unterminated line first, and ensures the appended block ends with
     /// exactly one newline.
@@ -593,7 +593,7 @@ impl StyledFileWriter {
     }
 
     /// Run `body` with the indent depth increased by one level. Does not
-    /// emit any delimiters — use [`StyledFileWriter::block`] for brace pairs.
+    /// emit any delimiters — use [`StyledWriter::block`] for brace pairs.
     pub fn indented<F, T, E>(&self, body: F) -> Result<T, E>
     where
         F: FnOnce(&Self) -> Result<T, E>,
@@ -609,8 +609,8 @@ impl StyledFileWriter {
     /// `{ ... }` block.
     ///
     /// ```
-    /// # use fp_core::writer::{StyledFileWriter, WriterConfig};
-    /// let w = StyledFileWriter::new(WriterConfig::default());
+    /// # use fp_core::writer::{StyledWriter, WriterConfig};
+    /// let w = StyledWriter::new(WriterConfig::default());
     /// w.block("fn main()", |w| -> Result<(), ()> {
     ///     w.write_line("println(\"hi\")");
     ///     Ok(())
@@ -671,7 +671,7 @@ impl StyledFileWriter {
         if let Some(formatter) = &self.formatter {
             match formatter.apply(&text) {
                 Ok(formatted) => text = formatted,
-                Err(err) => tracing::warn!("StyledFileWriter: formatter failed, using unformatted output: {err}"),
+                Err(err) => tracing::warn!("StyledWriter: formatter failed, using unformatted output: {err}"),
             }
         }
         if self.trailing_newline {
@@ -694,7 +694,7 @@ impl StyledFileWriter {
     }
 }
 
-impl fmt::Write for StyledFileWriter {
+impl fmt::Write for StyledWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         self.buffer.borrow_mut().write_str(s)
     }
@@ -707,7 +707,7 @@ mod tests {
 
     #[test]
     fn write_line_indents_and_terminates() {
-        let mut w = StyledFileWriter::new(WriterConfig::default());
+        let mut w = StyledWriter::new(WriterConfig::default());
         w.write_line("a");
         w.write_line("b");
         assert_eq!(w.finish(), "a\nb\n");
@@ -715,21 +715,21 @@ mod tests {
 
     #[test]
     fn atom_joins_with_single_space() {
-        let mut w = StyledFileWriter::new(WriterConfig::default());
+        let mut w = StyledWriter::new(WriterConfig::default());
         w.atom("let").atom("x").atom("=").atom("1").newline();
         assert_eq!(w.finish(), "let x = 1\n");
     }
 
     #[test]
     fn atom_ignores_empty_tokens() {
-        let mut w = StyledFileWriter::new(WriterConfig::default());
+        let mut w = StyledWriter::new(WriterConfig::default());
         w.atom("x").atom("").atom("y").newline();
         assert_eq!(w.finish(), "x y\n");
     }
 
     #[test]
     fn block_indents_body_and_closes_brace() {
-        let mut w = StyledFileWriter::new(WriterConfig::default());
+        let mut w = StyledWriter::new(WriterConfig::default());
         w.block("fn main()", |w| -> Result<(), ()> {
             w.write_line("a()");
             w.block("if true", |w| {
@@ -746,7 +746,7 @@ mod tests {
     fn block_next_line_brace_style() {
         let mut config = WriterConfig::default();
         config.brace_style = BraceStyle::NextLine;
-        let mut w = StyledFileWriter::new(config);
+        let mut w = StyledWriter::new(config);
         w.block("void main()", |w| -> Result<(), ()> {
             w.write_line("a();");
             Ok(())
@@ -757,7 +757,7 @@ mod tests {
 
     #[test]
     fn block_closes_brace_even_when_body_errors() {
-        let mut w = StyledFileWriter::new(WriterConfig::default());
+        let mut w = StyledWriter::new(WriterConfig::default());
         let result = w.block("fn main()", |w| -> Result<(), &'static str> {
             w.write_line("a()");
             Err("boom")
@@ -769,7 +769,7 @@ mod tests {
     #[test]
     fn tabs_and_custom_spacing() {
         let config = WriterConfig { indent_style: IndentStyle::Tabs, ..WriterConfig::default() };
-        let mut w = StyledFileWriter::new(config);
+        let mut w = StyledWriter::new(config);
         w.block("fn main()", |w| -> Result<(), ()> {
             w.write_line("a()");
             Ok(())
@@ -780,7 +780,7 @@ mod tests {
 
     #[test]
     fn fmt_write_interop_splits_on_newlines() {
-        let mut w = StyledFileWriter::new(WriterConfig::default());
+        let mut w = StyledWriter::new(WriterConfig::default());
         write!(w, "a = {}", 1).unwrap();
         writeln!(w).unwrap();
         write!(w, "b").unwrap();
@@ -790,7 +790,7 @@ mod tests {
 
     #[test]
     fn blank_line_has_no_trailing_whitespace() {
-        let mut w = StyledFileWriter::new(WriterConfig::default());
+        let mut w = StyledWriter::new(WriterConfig::default());
         w.indented(|w| -> Result<(), ()> {
             w.write_line("a");
             w.newline();
@@ -803,7 +803,7 @@ mod tests {
 
     #[test]
     fn trailing_newline_is_normalized() {
-        let mut w = StyledFileWriter::new(WriterConfig::default());
+        let mut w = StyledWriter::new(WriterConfig::default());
         w.write_line("a");
         w.newline();
         w.newline();
@@ -816,7 +816,7 @@ mod tests {
             formatter: Some(Formatter::function(|s| Ok(s.to_uppercase()))),
             ..WriterConfig::default()
         };
-        let mut w = StyledFileWriter::new(config);
+        let mut w = StyledWriter::new(config);
         w.write_line("hello");
         assert_eq!(w.finish(), "HELLO\n");
     }
@@ -825,7 +825,7 @@ mod tests {
     fn write_to_file_creates_parent_dirs() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested/out.txt");
-        let mut w = StyledFileWriter::new(WriterConfig::default());
+        let mut w = StyledWriter::new(WriterConfig::default());
         w.write_line("hi");
         w.write_to_file(&path).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "hi\n");
@@ -834,7 +834,7 @@ mod tests {
     #[test]
     fn wraps_long_lines_on_word_boundaries() {
         let config = WriterConfig { max_width: Some(20), ..WriterConfig::default() };
-        let mut w = StyledFileWriter::new(config);
+        let mut w = StyledWriter::new(config);
         w.atom("let").atom("x").atom("=").atom("aaaa").atom("+").atom("bbbb").atom("+").atom("cccc").newline();
         assert_eq!(w.finish(), "let x = aaaa + bbbb\n    + cccc\n");
     }
@@ -842,7 +842,7 @@ mod tests {
     #[test]
     fn wrapping_accounts_for_indent_depth() {
         let config = WriterConfig { max_width: Some(20), ..WriterConfig::default() };
-        let mut w = StyledFileWriter::new(config);
+        let mut w = StyledWriter::new(config);
         w.block("fn f()", |w| -> Result<(), ()> {
             w.atom("let").atom("x").atom("=").atom("aaaa").atom("+").atom("bbbb").atom("+").atom("cccc").newline();
             Ok(())
@@ -856,14 +856,14 @@ mod tests {
     #[test]
     fn unbreakable_token_overflows_rather_than_splitting_mid_token() {
         let config = WriterConfig { max_width: Some(10), ..WriterConfig::default() };
-        let mut w = StyledFileWriter::new(config);
+        let mut w = StyledWriter::new(config);
         w.write_line("aaaaaaaaaaaaaaaaaaaa");
         assert_eq!(w.finish(), "aaaaaaaaaaaaaaaaaaaa\n");
     }
 
     #[test]
     fn no_wrapping_when_max_width_unset() {
-        let mut w = StyledFileWriter::new(WriterConfig::default());
+        let mut w = StyledWriter::new(WriterConfig::default());
         w.write_line("a very long line that would exceed any reasonable width if wrapping were enabled here");
         assert_eq!(w.finish(), "a very long line that would exceed any reasonable width if wrapping were enabled here\n");
     }
@@ -871,14 +871,14 @@ mod tests {
     #[test]
     fn short_line_is_unaffected_by_max_width() {
         let config = WriterConfig { max_width: Some(80), ..WriterConfig::default() };
-        let mut w = StyledFileWriter::new(config);
+        let mut w = StyledWriter::new(config);
         w.write_line("short");
         assert_eq!(w.finish(), "short\n");
     }
 
     #[test]
     fn ensure_blank_line_is_idempotent_and_skips_when_empty() {
-        let mut w = StyledFileWriter::new(WriterConfig::default());
+        let mut w = StyledWriter::new(WriterConfig::default());
         w.ensure_blank_line(); // no-op: buffer is empty
         w.write_line("a");
         w.ensure_blank_line();
@@ -889,7 +889,7 @@ mod tests {
 
     #[test]
     fn write_verbatim_ignores_current_indent_and_normalizes_trailing_newline() {
-        let mut w = StyledFileWriter::new(WriterConfig::default());
+        let mut w = StyledWriter::new(WriterConfig::default());
         w.increase_indent();
         w.write_verbatim("interface Foo {\n  x: number;\n}\n\n\n");
         w.write_line("after");
@@ -898,7 +898,7 @@ mod tests {
 
     #[test]
     fn write_lines_indents_every_line_not_just_the_first() {
-        let mut w = StyledFileWriter::new(WriterConfig::default());
+        let mut w = StyledWriter::new(WriterConfig::default());
         w.increase_indent();
         // A pre-rendered snippet with its own baked-in *relative* indent,
         // as if produced standalone at depth 0 (e.g. by an expression
@@ -909,7 +909,7 @@ mod tests {
 
     #[test]
     fn write_lines_matches_write_line_for_single_line_input() {
-        let mut w = StyledFileWriter::new(WriterConfig::default());
+        let mut w = StyledWriter::new(WriterConfig::default());
         w.increase_indent();
         w.write_lines("val x = 1");
         assert_eq!(w.finish(), "    val x = 1\n");
@@ -917,7 +917,7 @@ mod tests {
 
     #[test]
     fn raw_indent_primitives_compose_like_block() {
-        let mut w = StyledFileWriter::new(WriterConfig::default());
+        let mut w = StyledWriter::new(WriterConfig::default());
         w.write_line("outer {");
         w.increase_indent();
         w.write_line("inner");
@@ -928,7 +928,7 @@ mod tests {
 
     #[test]
     fn swap_buffer_redirects_a_scratch_render_without_losing_indent() {
-        let mut w = StyledFileWriter::new(WriterConfig::default());
+        let mut w = StyledWriter::new(WriterConfig::default());
         w.write_line("outer");
         w.increase_indent();
         let saved = w.swap_buffer(String::new());
@@ -965,7 +965,7 @@ mod tests {
         assert_eq!(buf.raw_contents(), "outer {\n    inner\n}\n");
     }
 
-    /// The whole point of layering `StyledFileWriter` on top of a reusable
+    /// The whole point of layering `StyledWriter` on top of a reusable
     /// `IndentedBuffer`: a snippet can be built self-consistently at depth 0
     /// in one buffer, then embedded via `write_lines` into another buffer
     /// sitting at some real, unrelated depth — the two compose additively
@@ -990,7 +990,7 @@ mod tests {
         let snippet = render_nested_snippet();
         assert_eq!(snippet, "run {\n    val x = 1\n}");
 
-        let mut w = StyledFileWriter::new(WriterConfig::default());
+        let mut w = StyledWriter::new(WriterConfig::default());
         w.block("fun outer()", |w| -> Result<(), ()> {
             w.block("fun inner()", |w| {
                 w.write_lines(&snippet);

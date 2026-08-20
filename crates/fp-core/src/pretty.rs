@@ -1,6 +1,6 @@
 use std::fmt::{self, Formatter};
 
-use crate::writer::{IndentStyle, StyledFileWriter, WriterConfig};
+use crate::writer::{IndentStyle, StyledWriter, WriterConfig};
 
 /// Configuration for pretty-printing intermediate representations.
 #[derive(Debug, Clone)]
@@ -25,13 +25,13 @@ impl Default for PrettyOptions {
 
 /// Formatting context shared across pretty printers.
 ///
-/// Backed by a [`StyledFileWriter`] for indentation/line bookkeeping: output
+/// Backed by a [`StyledWriter`] for indentation/line bookkeeping: output
 /// is buffered as `fmt_pretty` walks the tree and flushed to the real
 /// `Formatter` once, by [`PrettyDisplay::fmt`], rather than written
 /// line-by-line as each node renders.
 pub struct PrettyCtx<'a> {
     pub options: &'a PrettyOptions,
-    writer: StyledFileWriter,
+    writer: StyledWriter,
 }
 
 impl<'a> PrettyCtx<'a> {
@@ -42,7 +42,7 @@ impl<'a> PrettyCtx<'a> {
         };
         Self {
             options,
-            writer: StyledFileWriter::new(config),
+            writer: StyledWriter::new(config),
         }
     }
 
