@@ -15,6 +15,7 @@ pub enum BuiltinLanguageTarget {
     Rust,
     Wit,
     Kotlin,
+    C,
 }
 
 /// Parse an AST output target from a user-provided string.
@@ -33,6 +34,7 @@ pub fn parse_language_target(s: &str) -> Result<BuiltinLanguageTarget> {
         "rust" | "rs" => BuiltinLanguageTarget::Rust,
         "wit" => BuiltinLanguageTarget::Wit,
         "kotlin" | "kt" => BuiltinLanguageTarget::Kotlin,
+        "c" => BuiltinLanguageTarget::C,
         _ => {
             return Err(CliError::InvalidInput(format!("Unsupported target: {}", s)));
         }
@@ -55,6 +57,10 @@ pub fn output_extension_for(target: BuiltinLanguageTarget) -> &'static str {
         BuiltinLanguageTarget::Rust => "rs",
         BuiltinLanguageTarget::Wit => "wit",
         BuiltinLanguageTarget::Kotlin => "kt",
+        // The header (`.h`) is a side file `CBackend` writes itself
+        // alongside the `.c` source — same one-extension-per-target
+        // limitation Kotlin's extra Gradle files already accept here.
+        BuiltinLanguageTarget::C => "c",
     }
 }
 

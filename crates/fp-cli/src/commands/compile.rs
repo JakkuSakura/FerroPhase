@@ -1330,6 +1330,9 @@ fn backend_for_target(
                 Err(disabled_feature_error("lang-wit", "WIT package emission"))
             }
         }
+        crate::languages::backend::BuiltinLanguageTarget::C => {
+            Ok(Box::new(fp_c::codegen::CBackend::new(config)))
+        }
     }
 }
 
@@ -1548,6 +1551,19 @@ fn emit_ast_target(
             {
                 Err(disabled_feature_error("lang-wit", "WIT AST emission"))
             }
+        }
+        crate::languages::backend::BuiltinLanguageTarget::C => {
+            let serializer = fp_c::codegen::CSourceSerializer::new();
+            let (header, source) = serializer
+                .serialize_file(node)
+                .map_err(|e| CliError::TargetEmit(e.to_string()))?;
+            Ok(fp_core::ast::AstTargetOutput {
+                code: source,
+                side_files: vec![fp_core::ast::AstTargetSideFile {
+                    extension: "h".to_string(),
+                    contents: header,
+                }],
+            })
         }
     }
 }
