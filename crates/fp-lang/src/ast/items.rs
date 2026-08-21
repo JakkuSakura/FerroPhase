@@ -1318,6 +1318,21 @@ fn parse_mod_item(
     attrs.extend(parse_inner_attrs(input, file)?);
     let mut items = Vec::new();
     while peek_symbol(input) != Some("}") {
+        // A nested `mod { .. }` body needs the same `extern`/`unsafe
+        // extern` block special-casing `parse_items_tokens`/
+        // `parse_file_tokens`/`parse_block` already have (real
+        // `core::ffi::mod`'s own `mod c_char_definition { .. unsafe
+        // extern "C" { .. } .. }`) — `parse_item_winnow`'s own dispatch
+        // only recognizes a bare `extern "ABI" fn`/single-item form, not
+        // the multi-item block form, and expands to more than one item.
+        if looks_like_extern_block(*input) {
+            items.extend(parse_extern_block_items(input, file)?);
+            continue;
+        }
+        if starts_unsafe_extern_block(*input) {
+            items.extend(parse_prefixed_unsafe_extern_block_items(input, file)?);
+            continue;
+        }
         items.push(parse_item_winnow(input, file)?);
     }
     skip_symbol(input, "}")?;
