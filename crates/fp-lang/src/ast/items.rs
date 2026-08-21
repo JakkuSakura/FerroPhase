@@ -177,6 +177,7 @@ pub(crate) fn parse_item_winnow(input: &mut &[Token], file: FileId) -> ModalResu
         Some(TokenKind::Keyword(Keyword::Quote)) => {
             parse_fn_item(input, file, visibility, attrs, true)
         }
+        Some(TokenKind::Ident) if starts_macro_2_def(*input) => parse_macro_2_def(input, attrs),
         Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) if looks_like_item_macro(*input) => {
             parse_item_macro(input, attrs)
         }
@@ -1321,6 +1322,76 @@ fn parse_opaque_type_item(
         visibility,
         name,
     })))
+}
+
+/// `macro Name(...) { .. }` — declarative "macro 2.0" syntax (distinct
+/// from `macro_rules! Name { .. }`, which `looks_like_item_macro`/
+/// `parse_item_macro` already handle via the generic `ident!` shape).
+/// `macro` isn't a lexer keyword (tokenizes as a plain `Ident`), so this
+/// needs its own lookahead rather than a `Keyword::Macro` dispatch arm.
+fn starts_macro_2_def(input: &[Token]) -> bool {
+    matches!(
+        input,
+        [first, second, third, ..]
+            if first.kind == TokenKind::Ident
+                && first.lexeme == "macro"
+                && matches!(second.kind, TokenKind::Ident | TokenKind::Keyword(_))
+                && third.lexeme == "("
+    )
+}
+
+/// Every real use of this syntax in vendored std (e.g. `derive(Default)`'s
+/// own definition) is a compiler built-in whose body is just a marker
+/// comment — there's no real expansion to model, so this only consumes
+/// the well-formed `macro Name(params) { body }` shape and drops it,
+/// exactly like a real `macro_rules!` item already gets dropped
+/// downstream (see `ast_to_hir`'s `ItemKind::Macro` handling).
+fn parse_macro_2_def(input: &mut &[Token], _attrs: Vec<Attribute>) -> ModalResult<Item> {
+    skip_ident(input, "macro")?;
+    let name = ident_like(input)?;
+    skip_balanced_delimiters(input, "(", ")")?;
+    skip_balanced_delimiters(input, "{", "}")?;
+    Ok(Item::from(ItemKind::Macro(ItemMacro {
+        invocation: MacroInvocation::new(
+            Path::from_ident(name.clone()),
+            MacroDelimiter::Brace,
+            String::new(),
+        ),
+        declared_name: Some(name),
+    })))
+}
+
+fn skip_ident(input: &mut &[Token], expected: &str) -> ModalResult<()> {
+    match input.first() {
+        Some(token) if token.kind == TokenKind::Ident && token.lexeme == expected => {
+            *input = &input[1..];
+            Ok(())
+        }
+        _ => Err(ErrMode::Backtrack(ContextError::new())),
+    }
+}
+
+/// Consume a `open ... close` run starting at `input`'s current position,
+/// tracking nesting depth so an inner occurrence of `open`/`close` (e.g.
+/// a nested `{ }` block inside a macro 2.0 body) doesn't close the outer
+/// group early.
+fn skip_balanced_delimiters(input: &mut &[Token], open: &str, close: &str) -> ModalResult<()> {
+    let mut probe = *input;
+    skip_symbol(&mut probe, open)?;
+    let mut depth = 1usize;
+    while depth > 0 {
+        if probe.is_empty() {
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
+        match peek_symbol(probe) {
+            Some(s) if s == open => depth += 1,
+            Some(s) if s == close => depth -= 1,
+            _ => {}
+        }
+        probe = &probe[1..];
+    }
+    *input = probe;
+    Ok(())
 }
 
 fn parse_item_macro(input: &mut &[Token], _attrs: Vec<Attribute>) -> ModalResult<Item> {
