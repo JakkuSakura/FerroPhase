@@ -143,12 +143,6 @@ pub(crate) fn parse_item_winnow(input: &mut &[Token], file: FileId) -> ModalResu
         Some(TokenKind::Keyword(Keyword::Unsafe | Keyword::Const))
             if skips_modifiers_to_trait(*input) =>
         {
-            while matches!(
-                input.first().map(|token| &token.kind),
-                Some(TokenKind::Keyword(Keyword::Unsafe | Keyword::Const))
-            ) {
-                *input = &input[1..];
-            }
             parse_trait_item(input, file, visibility, attrs)
         }
         // `impl(restriction) trait Foo { .. }` — a sealed/restricted-impl
@@ -493,12 +487,37 @@ fn parse_fn_item_core(
     })))
 }
 
+/// Drop any run of `unsafe`/`const`/`auto` immediately preceding
+/// `trait` — real `core::num::nonzero`'s own `pub impl(self) unsafe
+/// trait ZeroablePrimitive: ..` stacks `impl(self)` (stripped by its own
+/// dispatch arm before this runs) and `unsafe`; `core::marker`'s `pub
+/// unsafe auto trait Send {}` stacks `unsafe` and `auto` (`auto` isn't a
+/// lexer keyword, so it tokenizes as a plain `Ident`). None of these
+/// modifiers carry meaning this checker models for a trait declaration.
+fn skip_trait_modifiers(input: &mut &[Token]) {
+    loop {
+        match input.first() {
+            Some(token) if token.kind == TokenKind::Keyword(Keyword::Unsafe) => {
+                *input = &input[1..]
+            }
+            Some(token) if token.kind == TokenKind::Keyword(Keyword::Const) => {
+                *input = &input[1..]
+            }
+            Some(token) if token.kind == TokenKind::Ident && token.lexeme == "auto" => {
+                *input = &input[1..]
+            }
+            _ => return,
+        }
+    }
+}
+
 fn parse_trait_item(
     input: &mut &[Token],
     file: FileId,
     visibility: Visibility,
     attrs: Vec<Attribute>,
 ) -> ModalResult<Item> {
+    skip_trait_modifiers(input);
     skip_keyword(input, Keyword::Trait)?;
     let name = ident_like(input)?;
     let generics_params = parse_optional_generic_params(input)?;

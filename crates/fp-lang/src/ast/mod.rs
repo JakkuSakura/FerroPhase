@@ -339,11 +339,16 @@ pub(super) fn skips_modifiers_to_fn(input: &[Token]) -> bool {
 pub(super) fn skips_modifiers_to_trait(input: &[Token]) -> bool {
     let mut rest = input;
     loop {
-        match rest.first().map(|t| &t.kind) {
-            Some(TokenKind::Keyword(Keyword::Unsafe | Keyword::Const)) => {
-                rest = &rest[1..];
+        match rest.first() {
+            Some(token) if token.kind == TokenKind::Keyword(Keyword::Unsafe) => rest = &rest[1..],
+            Some(token) if token.kind == TokenKind::Keyword(Keyword::Const) => rest = &rest[1..],
+            // `auto trait Foo {}` (marker traits) — `auto` isn't a lexer
+            // keyword (tokenizes as a plain `Ident`), unlike `unsafe`/
+            // `const`.
+            Some(token) if token.kind == TokenKind::Ident && token.lexeme == "auto" => {
+                rest = &rest[1..]
             }
-            Some(TokenKind::Keyword(Keyword::Trait)) => return true,
+            Some(token) if token.kind == TokenKind::Keyword(Keyword::Trait) => return true,
             _ => return false,
         }
     }
