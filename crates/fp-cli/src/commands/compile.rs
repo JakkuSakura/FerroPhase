@@ -1,6 +1,6 @@
 //! Compilation command implementation
 
-use crate::commands::{setup_progress_bar, validate_paths_exist};
+use crate::commands::setup_progress_bar;
 use crate::compiler;
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
@@ -133,16 +133,8 @@ fn target_triple_matches_host(target_triple: &str) -> bool {
 
 /// Execute the compile command
 pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()> {
-    validate_compile_target(&args.target)?;
     info!("Starting compilation with target: {}", args.target);
 
-    // Validate inputs
-    validate_inputs(&args)?;
-
-    compile_once(args, config).await
-}
-
-async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let progress = setup_progress_bar(1);
 
     // A target-triple/host mismatch silently drops running the artifact
@@ -176,9 +168,23 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let input_class =
         container_registry.classify_input(input_file, args.source_language.as_deref());
 
-    let output_file = determine_output_path(input_file, &args)?;
+    // Resolve `-o`'s effective path from pure user intent — no target
+    // knowledge here. Extension defaulting (if any) is each target's own
+    // concern, decided by its own factory closure in
+    // `crate::languages::backend_registry::builtin_target_backends` once it
+    // has the resolved `BackendConfig`.
+    let output_file = match args.output.as_ref() {
+        Some(output) if output.is_dir() => {
+            let stem = input_file
+                .file_stem()
+                .ok_or_else(|| CliError::InvalidInput("Invalid input filename".to_string()))?;
+            output.join(stem)
+        }
+        Some(output) => output.clone(),
+        None => input_file.with_extension(""),
+    };
 
-    compile_file(input_file, &output_file, &args, config, input_class, exec).await?;
+    compile_workspace_entrypoint(input_file, &output_file, &args, config, input_class, exec).await?;
     progress.inc(1);
 
     progress.finish_with_message(format!("{} Compiled successfully", style("✓").green()));
@@ -188,7 +194,13 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
 // Note: former compile watch loop removed intentionally.
 
-async fn compile_file(
+/// `input` is a workspace entrypoint, not necessarily a literal single
+/// file — a directory resolves to that project's whole workspace, and a
+/// single file resolves to a synthetic one-package workspace with that file
+/// as its sole member (see `run_named_target`'s own directory/file split).
+/// Either way this always ends up compiling a workspace, just picking a
+/// different entry package depending on what `input` was.
+async fn compile_workspace_entrypoint(
     input: &Path,
     output: &Path,
     args: &CompileArgs,
@@ -485,60 +497,3 @@ fn is_tsconfig(path: &Path) -> bool {
         })
         .unwrap_or(false)
 }
-
-/// Validates `--target <name>` up front, before the actual package
-/// discovery/typecheck/backend-construction pipeline runs.
-fn validate_compile_target(target: &str) -> Result<()> {
-    if crate::languages::backend_registry::is_known_target(target) {
-        Ok(())
-    } else {
-        Err(CliError::InvalidInput(format!("Unsupported target: {target}")))
-    }
-}
-
-fn validate_inputs(args: &CompileArgs) -> Result<()> {
-    let must_be_file = !args.input.is_dir();
-    validate_paths_exist(&[args.input.clone()], must_be_file, "compile")?;
-
-    // Validate optimization level
-    if args.opt_level > 3 {
-        return Err(CliError::InvalidInput(
-            "Optimization level must be 0-3".to_string(),
-        ));
-    }
-
-    Ok(())
-}
-
-/// Resolves `-o`'s effective path from pure user intent — no target
-/// knowledge, no extension guessing. What extension (if any) gets filled in
-/// when one's missing is each target's own concern, decided by its own
-/// factory closure in `crate::languages::backend_registry::builtin_target_backends`
-/// once it has the resolved `BackendConfig`, not something fp-cli decides
-/// by matching on the target's name up front.
-fn determine_output_path(input: &Path, args: &CompileArgs) -> Result<PathBuf> {
-    if args.target == "interpret" && args.output.is_none() {
-        return Err(CliError::InvalidInput(
-            "the \"interpret\" target does not write an output file; pass --exec instead".to_string(),
-        ));
-    }
-
-    let Some(output) = args.output.as_ref() else {
-        // No `--output`: a bare stem next to the input, extension-less —
-        // the backend appends its own default.
-        return Ok(input.with_extension(""));
-    };
-
-    if output.is_dir() {
-        let stem = input
-            .file_stem()
-            .ok_or_else(|| CliError::InvalidInput("Invalid input filename".to_string()))?;
-        return Ok(output.join(stem));
-    }
-
-    // An explicit `-o <path>` (with or without an extension) is always used
-    // exactly as given.
-    Ok(output.clone())
-}
-
-// Progress bar helper moved to commands::common
