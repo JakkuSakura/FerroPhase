@@ -1477,6 +1477,12 @@ fn parse_block_item(input: &mut &[Token], file: FileId) -> ModalResult<Item> {
 
 fn parse_closure_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     let mut probe = *input;
+    // `const || ..`/`const move || ..` (nightly const closures) — `const`
+    // carries no meaning this checker models for a closure (no notion of
+    // restricting it to a const-evaluable body beyond what's already
+    // checked), so it's dropped like the other no-op safety/const
+    // modifiers elsewhere.
+    let _is_const = skip_keyword(&mut probe, Keyword::Const).is_ok();
     let movability = if skip_keyword(&mut probe, Keyword::Move).is_ok() {
         Some(true)
     } else {
@@ -2000,6 +2006,25 @@ fn skip_outer_attrs_before_expr(input: &mut &[Token], file: FileId) -> ModalResu
 
 fn parse_match_pattern(input: &mut &[Token]) -> ModalResult<Pattern> {
     let mut probe = *input;
+    // `&&pat` — a double-reference pattern (real `core::str::count`'s own
+    // `.filter(|&&byte| ..)`), same tokenizer ambiguity as the `&&expr`
+    // double-reference expression already handled in prefix-expression
+    // position: the lexer emits `&&` as one lexeme shared with logical-and,
+    // so it must be split apart here rather than relying on two separate
+    // `&` tokens.
+    if skip_symbol(&mut probe, "&&").is_ok() {
+        let mutability = skip_keyword(&mut probe, Keyword::Mut).is_ok();
+        let inner_pattern = parse_general_pattern(&mut probe)?;
+        *input = probe;
+        let inner = Pattern::new(PatternKind::Ref(PatternRef {
+            mutability: mutability.then_some(true),
+            pattern: Box::new(inner_pattern),
+        }));
+        return Ok(Pattern::new(PatternKind::Ref(PatternRef {
+            mutability: None,
+            pattern: Box::new(inner),
+        })));
+    }
     if skip_symbol(&mut probe, "&").is_ok() {
         let mutability = skip_keyword(&mut probe, Keyword::Mut).is_ok();
         let pattern = parse_general_pattern(&mut probe)?;

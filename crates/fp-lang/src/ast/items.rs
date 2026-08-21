@@ -650,6 +650,14 @@ fn parse_trait_member(input: &mut &[Token], file: FileId) -> ModalResult<Item> {
         if skip_symbol(input, "=").is_ok() {
             let _default = parse_type_expr(input)?;
         }
+        // An associated type declaration's own `where` clause (real
+        // `core::ops::async_function`'s own `type CallRefFuture<'a>:
+        // Future<Output = Self::Output> where Self: 'a;`) — carries no
+        // meaning this checker models, same treatment as everywhere else
+        // a where clause is dropped.
+        if skip_keyword(input, Keyword::Where).is_ok() {
+            skip_where_clause(input)?;
+        }
         skip_symbol(input, ";")?;
         return Ok(Item::from(ItemKind::DeclType(ItemDeclType {
             ty_annotation: None,
@@ -990,6 +998,20 @@ fn starts_context_param_marker(input: &[Token]) -> bool {
 }
 
 fn parse_fn_param_name(input: &mut &[Token]) -> ModalResult<Ident> {
+    // `&item`/`&mut item` — a by-ref destructuring pattern parameter (real
+    // `alloc::collections::binary_heap`'s own `fn extend_one(&mut self,
+    // &item: &'a T)`). `FunctionParam` has no slot for a real pattern, only
+    // a bare name, so — same lossy treatment already given to a
+    // tuple-struct-wrapped name like `Wrapping(n)` below — this keeps just
+    // the inner binding name and drops the `&`/`&mut` itself.
+    let mut ref_probe = *input;
+    if skip_symbol(&mut ref_probe, "&").is_ok() {
+        let _ = skip_keyword(&mut ref_probe, Keyword::Mut);
+        if let Ok(name) = ident_like(&mut ref_probe) {
+            *input = ref_probe;
+            return Ok(name);
+        }
+    }
     let mut probe = *input;
     let simple_name = ident_like(&mut probe)?;
     // Consume an optional `::ident` chain before the destructuring
