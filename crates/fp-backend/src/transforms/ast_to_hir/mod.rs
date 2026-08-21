@@ -1938,21 +1938,51 @@ impl HirGenerator {
             ImportBinding,
             ast::Visibility,
         )> = Vec::new();
-        for package_item in &package.items {
-            if let ItemKind::Import(import) = package_item.item.kind() {
-                self.with_module_scope(&package_item.module_path, |this| {
-                    let mut bindings = Vec::new();
-                    this.collect_imports(Vec::new(), &import.tree, &mut bindings)?;
-                    for binding in bindings {
-                        pending.push((
-                            package_item.module_path.clone(),
-                            binding,
-                            import.visibility.clone(),
-                        ));
+        // Collects every `use` in `item`, at whatever nesting depth —
+        // `package.items`' own `module_path` only reflects each *file's*
+        // location (`RustPackageProvider` gives every `.rs` file's
+        // top-level items that file's own module path), but a source file
+        // can still write `mod foo { use ...; }` inline rather than as a
+        // separate `mod foo;` file declaration (real std's own
+        // `std::prelude::v1`'s `mod ambiguous_macros_only { pub use crate
+        // ::*; }`), nesting the `use` one or more `ast::ItemKind::Module`
+        // levels below the file's own path. A single flat scan over
+        // `package.items` never looks inside those, so an import written
+        // this way was silently never collected as pending at all.
+        fn collect_pending_imports_recursive(
+            this: &mut HirGenerator,
+            module_path: &fp_core::ast::path::QualifiedPath,
+            item: &ast::Item,
+            pending: &mut Vec<(fp_core::ast::path::QualifiedPath, ImportBinding, ast::Visibility)>,
+        ) -> Result<()> {
+            match item.kind() {
+                ItemKind::Import(import) => {
+                    this.with_module_scope(module_path, |this| {
+                        let mut bindings = Vec::new();
+                        this.collect_imports(Vec::new(), &import.tree, &mut bindings)?;
+                        for binding in bindings {
+                            pending.push((module_path.clone(), binding, import.visibility.clone()));
+                        }
+                        Ok(())
+                    })?;
+                }
+                ItemKind::Module(module) => {
+                    let nested_path = module_path.with_segment(module.name.name.clone());
+                    for child in &module.items {
+                        collect_pending_imports_recursive(this, &nested_path, child, pending)?;
                     }
-                    Ok(())
-                })?;
+                }
+                _ => {}
             }
+            Ok(())
+        }
+        for package_item in &package.items {
+            collect_pending_imports_recursive(
+                self,
+                &package_item.module_path,
+                &package_item.item,
+                &mut pending,
+            )?;
         }
 
         loop {

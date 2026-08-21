@@ -76,6 +76,36 @@ fn package_from_module_items(
     Ok(package)
 }
 
+/// Like `package_from_module_items`, but each item carries its own
+/// module path — mirrors how a real multi-file source tree actually loads
+/// (`RustPackageProvider` gives every `.rs` file's own top-level items the
+/// module path matching that file's location; `mod foo { .. }` written
+/// inline in one file is the only case that instead nests as a literal
+/// `ast::ItemKind::Module`). Needed for repros of file-boundary-crossing
+/// behavior (e.g. `use`/prelude resolution) that a single uniform
+/// `module_path` can't exercise.
+fn package_from_items_with_paths(
+    items: Vec<(Vec<String>, ast::Item)>,
+) -> Result<fp_core::package::CompiledPackage> {
+    let package_id = PackageId::new("test");
+    let mut source = PackageSource::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
+    source.items = items
+        .into_iter()
+        .map(|(module_path, item)| fp_core::package::PackageItem {
+            module_path: QualifiedPath::new(module_path),
+            item,
+        })
+        .collect();
+    let provider = FixedPackageProvider::for_source(package_id.clone(), source);
+    let loaded = provider
+        .load_package_source(&package_id)
+        .map_err(|e| crate::error::optimization_error(e.to_string()))?;
+    let workspace = WorkspaceContext::new(std::sync::Arc::new(provider));
+    let package = workspace.begin_package(package_id, loaded, test_data_layout());
+    let package = package.borrow().clone();
+    Ok(package)
+}
+
 fn ident(name: &str) -> ast::Ident {
     ast::Ident::new(name)
 }
@@ -841,6 +871,203 @@ fn transform_package_resolves_impl_self_type_in_nested_module_path() -> Result<(
         })
         .expect("method present");
     assert_eq!(method.sig.name.as_str(), "get");
+
+    Ok(())
+}
+
+/// Fast, targeted repro for the "unresolved type path `Vec`/`Option`/
+/// `Arc`/..." bugs found typechecking the real vendored std (`fp compile`
+/// against it takes ~30 minutes; this test exercises the exact same
+/// resolution machinery — `load_default_prelude_defs`'s `prelude_bare_name`
+/// scan and `resolve_global_type_symbol`'s consultation of it — in
+/// milliseconds). Mirrors real std's own *file* layout, not an inline `mod
+/// foo { .. }` block: `inner.rs` (module path `["inner"]`) declares `pub
+/// struct Foo`, `prelude/v1.rs` (module path `["prelude", "v1"]`) has a
+/// top-level `pub use crate::inner::Foo;` (matching `std::prelude::v1`'s own
+/// top-level `pub use crate::vec::Vec;`), and `other.rs` (module path
+/// `["other"]`) references the bare, unqualified name with no explicit
+/// `use` of its own — exactly how every real std/core/alloc source file
+/// relies on the compiler's implicit per-module prelude import.
+#[test]
+fn transform_package_resolves_bare_prelude_reexport_from_sibling_module() -> Result<()> {
+    let inner_item = make_struct("Foo", vec![("value", int_ty())]);
+
+    let prelude_use = ast::Item::from(ast::ItemKind::Import(ast::ItemImport {
+        attrs: Vec::new(),
+        visibility: ast::Visibility::Public,
+        style: ast::ItemImportStyle::Plain,
+        tree: ast::ItemImportTree::Path(ast::ItemImportPath {
+            segments: vec![
+                ast::ItemImportTree::Crate,
+                ast::ItemImportTree::Ident(ident("inner")),
+                ast::ItemImportTree::Ident(ident("Foo")),
+            ],
+        }),
+    }));
+
+    // References the bare name `Foo` with no `use` of its own — relies
+    // entirely on `load_default_prelude_defs` having picked it up from
+    // `prelude::v1`'s re-export.
+    let make_fn_item = make_fn(
+        "make",
+        Vec::new(),
+        ty_ident("Foo"),
+        ast::Expr::from(ast::ExprKind::Struct(ast::ExprStruct::new_ident(
+            ident("Foo"),
+            vec![ast::ExprField::new(
+                ident("value"),
+                ast::Expr::value(ast::Value::int(1)),
+            )],
+        ))),
+    );
+
+    // A second-hop re-export (`crate::b::Foo` re-exporting `crate::inner
+    // ::Foo`, then `prelude::v1` re-exporting `crate::b::Foo`) — mirrors
+    // real std's own multi-hop chains (e.g. `std::prelude::v1` re-exports
+    // `crate::vec::Vec`, and `crate::vec` module re-exports `alloc::vec::
+    // Vec` from a *different* real crate merged into the same package).
+    let b_reexport = ast::Item::from(ast::ItemKind::Import(ast::ItemImport {
+        attrs: Vec::new(),
+        visibility: ast::Visibility::Public,
+        style: ast::ItemImportStyle::Plain,
+        tree: ast::ItemImportTree::Path(ast::ItemImportPath {
+            segments: vec![
+                ast::ItemImportTree::Crate,
+                ast::ItemImportTree::Ident(ident("inner")),
+                ast::ItemImportTree::Ident(ident("Foo")),
+            ],
+        }),
+    }));
+    let prelude_reexports_b = ast::Item::from(ast::ItemKind::Import(ast::ItemImport {
+        attrs: Vec::new(),
+        visibility: ast::Visibility::Public,
+        style: ast::ItemImportStyle::Plain,
+        tree: ast::ItemImportTree::Path(ast::ItemImportPath {
+            segments: vec![
+                ast::ItemImportTree::Crate,
+                ast::ItemImportTree::Ident(ident("b")),
+                ast::ItemImportTree::Ident(ident("Foo")),
+            ],
+        }),
+    }));
+    let _ = prelude_use;
+
+    let items = vec![
+        (vec!["inner".to_string()], inner_item),
+        (vec!["b".to_string()], b_reexport),
+        (
+            vec!["prelude".to_string(), "v1".to_string()],
+            prelude_reexports_b,
+        ),
+        (vec!["other".to_string()], make_fn_item),
+    ];
+    let package = package_from_items_with_paths(items)?;
+    let mut generator = HirGenerator::new();
+    let program = generator.transform_package(&package)?;
+
+    fn find_fn<'a>(items: &'a [hir::Item], name: &str) -> Option<&'a hir::Function> {
+        items.iter().find_map(|item| match &item.kind {
+            hir::ItemKind::Function(func) if func.sig.name.as_str() == name => Some(func),
+            _ => None,
+        })
+    }
+    let make_fn_hir = find_fn(&program.items, "make").expect("`make` function present");
+    let hir::TypeExprKind::Path(ret_path) = &make_fn_hir.sig.output.kind else {
+        panic!("expected `make`'s return type to lower to a path, got {:?}", make_fn_hir.sig.output.kind);
+    };
+    assert!(
+        ret_path.res.is_some(),
+        "bare `Foo` return type in a sibling module must resolve via the \
+         prelude re-export — got unresolved path {ret_path:?}"
+    );
+
+    Ok(())
+}
+
+/// Companion to the flat-file prelude repro above — real std's own
+/// `std::prelude::v1` (`crates/fp-rust/std/std/prelude/v1.rs`) writes a
+/// `use` inline inside a *nested* `mod ambiguous_macros_only { pub use
+/// crate::*; }` block rather than only at its own file's top level.
+/// `resolve_pending_imports` used to scan only `package.items`' own
+/// top-level entries, never recursing into `ast::ItemKind::Module`, so an
+/// import written this way was silently never collected as pending at all
+/// — this constructs that exact shape (`use` nested inside an inline
+/// `mod`, itself inside the module the import needs to end up visible in)
+/// and asserts the re-exported name still resolves.
+#[test]
+fn transform_package_resolves_import_nested_inside_inline_module() -> Result<()> {
+    let inner_item = make_struct("Foo", vec![("value", int_ty())]);
+
+    let prelude_use = ast::Item::from(ast::ItemKind::Import(ast::ItemImport {
+        attrs: Vec::new(),
+        visibility: ast::Visibility::Public,
+        style: ast::ItemImportStyle::Plain,
+        tree: ast::ItemImportTree::Path(ast::ItemImportPath {
+            segments: vec![
+                ast::ItemImportTree::Crate,
+                ast::ItemImportTree::Ident(ident("inner")),
+                ast::ItemImportTree::Ident(ident("Foo")),
+            ],
+        }),
+    }));
+    // The function that needs to see the re-export lives *inside* the same
+    // inline module the `use` is nested in — matching real std's own
+    // shape, where `ambiguous_macros_only`'s whole point is scoping its
+    // own re-export locally rather than leaking it to `prelude::v1`
+    // itself (that requires its own further explicit re-export one level
+    // up, a separate, unrelated concern from whether the nested `use`
+    // resolves at all).
+    let make_fn_item = make_fn(
+        "make",
+        Vec::new(),
+        ty_ident("Foo"),
+        ast::Expr::from(ast::ExprKind::Struct(ast::ExprStruct::new_ident(
+            ident("Foo"),
+            vec![ast::ExprField::new(
+                ident("value"),
+                ast::Expr::value(ast::Value::int(1)),
+            )],
+        ))),
+    );
+    let nested_inline_module = ast::Item::from(ast::ItemKind::Module(ast::Module {
+        attrs: Vec::new(),
+        name: ident("ambiguous_macros_only"),
+        collected_items: Vec::new(),
+        items: vec![prelude_use, make_fn_item],
+        visibility: ast::Visibility::Public,
+        is_external: false,
+    }));
+
+    let items = vec![
+        (vec!["inner".to_string()], inner_item),
+        (
+            vec!["prelude".to_string(), "v1".to_string()],
+            nested_inline_module,
+        ),
+    ];
+    let package = package_from_items_with_paths(items)?;
+    let mut generator = HirGenerator::new();
+    let program = generator.transform_package(&package)?;
+
+    let make_fn_hir = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(func) if func.sig.name.as_str() == "make" => Some(func),
+            _ => None,
+        })
+        .expect("`make` function present");
+    let hir::TypeExprKind::Path(ret_path) = &make_fn_hir.sig.output.kind else {
+        panic!(
+            "expected `make`'s return type to lower to a path, got {:?}",
+            make_fn_hir.sig.output.kind
+        );
+    };
+    assert!(
+        ret_path.res.is_some(),
+        "bare `Foo` return type must resolve via a `use` nested inside an \
+         inline `mod` block — got unresolved path {ret_path:?}"
+    );
 
     Ok(())
 }
