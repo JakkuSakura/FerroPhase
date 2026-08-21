@@ -279,8 +279,19 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         let bounds = parse_dyn_type_bounds(input)?;
         return Ok(Ty::TypeBounds(bounds));
     }
+    // A type-position macro invocation (real `core::pat`'s own nightly
+    // `pattern_type!(*const T is !null)`) must be parsed as just the
+    // invocation itself, NOT via the full binary-operator-aware expression
+    // entry point — inside a generic-arg list (`Foo<pattern_type!(..)>`)
+    // that entry point would try to keep consuming tokens past the macro
+    // call looking for a binary operator, misreading the arg list's own
+    // closing `>` as a comparison operator (or, worse, an unrelated
+    // trailing `= expr` as this "type"'s own assignment RHS).
+    if looks_like_type_expr_macro(*input) {
+        let expr = parse_macro_expr(input)?;
+        return Ok(Ty::Expr(Box::new(expr)));
+    }
     if matches!(input.first(), Some(token) if token.kind == TokenKind::Keyword(Keyword::Const))
-        || looks_like_type_expr_macro(*input)
         || matches!(input.first(), Some(token) if token.kind == TokenKind::Number || token.kind == TokenKind::StringLiteral)
         || matches!(peek_ident_like(*input), Some("true" | "false" | "null"))
     {
@@ -681,6 +692,20 @@ fn parse_type_arg(input: &mut &[Token]) -> ModalResult<Ty> {
                 })
                 .into(),
             )));
+        }
+        // An associated-type *bound* generic arg (real `alloc::collections
+        // ::vec_deque`'s own `IntoIterator<Item = T, IntoIter:
+        // DoubleEndedIterator>`) — as opposed to the `Ident = Type` binding
+        // above, this constrains the associated type without naming it
+        // concretely. This checker has no separate slot for it, so it's
+        // parsed and dropped, same treatment already given to any other
+        // bound this checker doesn't act on further.
+        let mut bound_probe = probe;
+        if skip_symbol(&mut bound_probe, ":").is_ok() && parse_type_bounds(&mut bound_probe).is_ok() {
+            *input = bound_probe;
+            return Ok(Ty::Expr(Box::new(Expr::name(Name::path(Path::plain(vec![
+                ident,
+            ]))))));
         }
     }
     parse_type_expr(input)

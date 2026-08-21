@@ -1708,7 +1708,7 @@ pub(crate) fn parse_balanced_quote_block(
     Err(ErrMode::Cut(ContextError::new()))
 }
 
-fn parse_macro_expr(input: &mut &[Token]) -> ModalResult<Expr> {
+pub(super) fn parse_macro_expr(input: &mut &[Token]) -> ModalResult<Expr> {
     let mut probe = *input;
     let path = parse_macro_path(&mut probe)?;
     skip_symbol(&mut probe, "!")?;
