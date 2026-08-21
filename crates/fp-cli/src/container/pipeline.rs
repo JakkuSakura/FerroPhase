@@ -33,9 +33,13 @@ pub(crate) async fn maybe_transpile_container(
     let Some(kind) = kind else {
         return Ok(None);
     };
-    if exec && kind != ContainerInputKind::NativeObject {
+    // None of the remaining bespoke-pipeline container kinds support
+    // `--exec` (native objects, the one kind that did, are a real
+    // registered language now — see `fp_native::NativeObjectPackageProvider`
+    // — and never reach this function at all).
+    if exec {
         return Err(CliError::InvalidInput(
-            "--exec is only supported for native object container inputs".to_string(),
+            "--exec is not supported for this container input".to_string(),
         ));
     }
     let registry = ContainerRegistry::new();
@@ -48,14 +52,6 @@ pub(crate) async fn maybe_transpile_container(
     let read = registry.read_container(kind, payload)?;
 
     match read.kind {
-        // Handled directly by `compile_file`/`run_native_object_target`
-        // (`crates/fp-cli/src/commands/compile.rs`) before this function is
-        // ever reached — it runs through the same `PackageProvider` ->
-        // `WorkspaceContext` -> `TargetBackend` pipeline every other target
-        // uses instead of this module's bespoke read/transform/write shape.
-        ContainerInputKind::NativeObject => unreachable!(
-            "ContainerInputKind::NativeObject is dispatched in compile_file, not here"
-        ),
         ContainerInputKind::NativeArchive => {
             transpile_native_archive(input, output, args, &read.payload).await
         }
