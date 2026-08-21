@@ -1067,6 +1067,21 @@ impl HirGenerator {
                 prelude_bare_name(key).map(|name| (name.to_owned(), entry.res.clone()))
             })
             .collect();
+        if std::env::var("FP_DEBUG_PRELUDE").is_ok() {
+            eprintln!(
+                "DEBUG load_default_prelude_defs: package_id={:?} {} type aliases, {} value aliases, global_type_defs.len()={}, has String={}",
+                self.package_id,
+                type_aliases.len(),
+                value_aliases.len(),
+                self.global_type_defs.len(),
+                type_aliases.iter().any(|(name, _)| name == "String"),
+            );
+            for (key, _) in self.global_type_defs.iter() {
+                if key.ends_with("::String") || key == "String" {
+                    eprintln!("DEBUG global_type_defs candidate: {key}");
+                }
+            }
+        }
         self.prelude_type_defs = type_aliases.into_iter().collect();
         self.prelude_value_defs = value_aliases.into_iter().collect();
 
@@ -1804,7 +1819,6 @@ impl HirGenerator {
 
         let mut program = hir::Program::new();
         self.seed_workspace_definitions(&mut program);
-        self.load_default_prelude_defs();
 
         // 1: definitions (tolerant — impls whose self-type isn't resolvable
         // yet, because it's only reachable through an import that hasn't
@@ -1832,6 +1846,22 @@ impl HirGenerator {
             })?;
         }
         self.program_def_map = program.def_map.clone();
+
+        // `load_default_prelude_defs` scans *this* package's own
+        // `global_type_defs`/`global_value_defs` for prelude-tagged entries
+        // (see its doc comment) — those tables are only populated by
+        // `predeclare_items` (steps 1/3 above), so this must run after both,
+        // never before. Running it before predeclare (the previous
+        // placement, right after `seed_workspace_definitions`) meant a
+        // package's own prelude module scanned an always-empty table,
+        // silently hiding every one of its own prelude items (`Vec`,
+        // `String`, `Option`, `Box`, `Rc`, ...) from its own unqualified
+        // uses — exactly the case when compiling `std` itself, whose source
+        // relies on its own prelude bare names throughout. Cross-package
+        // prelude (a *dependency*'s prelude, via `workspace.hir_definitions()`
+        // below) was never affected by this ordering bug since it doesn't
+        // depend on this package's own tables at all.
+        self.load_default_prelude_defs();
 
         // 4: append — unchanged.
         for package_item in &package_items {

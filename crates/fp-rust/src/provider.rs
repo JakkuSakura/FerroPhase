@@ -426,7 +426,6 @@ fn cached_std_items() -> HashMap<String, Vec<Item>> {
 /// per-file item map to that path afterward, for `build.rs` to bundle into
 /// the next build.
 fn load_real_std_package() -> ProviderResult<PackageSource> {
-    let frontend = RustFrontend::new();
     let package_id = PackageId::new(STD_PACKAGE_NAME);
     let root = crate::embedded_std::root_dir();
     let mut descriptors = Vec::new();
@@ -469,6 +468,15 @@ fn load_real_std_package() -> ProviderResult<PackageSource> {
         if module_path.is_empty() {
             continue;
         }
+        // A fresh frontend per file, not one shared across the whole
+        // loop — each `.rs` file is its own independent translation unit,
+        // and a parser is free to accumulate internal recovery/nesting
+        // state across `parse_file` calls since nothing about its public
+        // API promises isolation between them. A syntax error in one file
+        // (there are, unfortunately, real ones among these — see
+        // `FP_STD_PARSE_VERBOSE`) must never leave that state dirty enough
+        // to spuriously fail the *next* file's otherwise-valid parse.
+        let frontend = RustFrontend::new();
         let file_items = if let Some(cached) = cache.get(*relative_str) {
             frontend.register_file_only(source, &path);
             cache_hits += 1;

@@ -675,6 +675,39 @@ fn parse_use_group(input: &mut &[Token]) -> ModalResult<fp_core::ast::ItemImport
     Ok(group)
 }
 
+/// Skip a `#[...]`/`#![...]` attribute's whole bracketed token run, if one
+/// is present at `input`'s current position — used where an attribute's
+/// value has no bearing on typechecking/codegen (see
+/// `parse_optional_generic_params`'s call site) so plumbing a `FileId`
+/// through for a real `parse_attrs` call isn't worth it. Tracks nesting
+/// depth so an attribute whose meta contains its own brackets (e.g.
+/// `#[cfg(feature = "x")]`... more relevantly `#[unstable(feature = "y",
+/// issue = "z")]`, which has none, but this must still not stop at the
+/// first `]` if one were nested) closes at the right one.
+fn skip_bracketed_attr(input: &mut &[Token]) {
+    loop {
+        let mut probe = *input;
+        if skip_symbol(&mut probe, "#").is_err() {
+            return;
+        }
+        let _ = skip_symbol(&mut probe, "!");
+        if skip_symbol(&mut probe, "[").is_err() {
+            return;
+        }
+        let mut depth = 1usize;
+        while depth > 0 {
+            match peek_symbol(probe) {
+                Some("[") => depth += 1,
+                Some("]") => depth -= 1,
+                None => return,
+                _ => {}
+            }
+            probe = &probe[1..];
+        }
+        *input = probe;
+    }
+}
+
 pub(crate) fn parse_optional_generic_params(
     input: &mut &[Token],
 ) -> ModalResult<Vec<fp_core::ast::GenericParam>> {
@@ -685,6 +718,10 @@ pub(crate) fn parse_optional_generic_params(
     let mut params = Vec::new();
     if peek_symbol(probe) != Some(">") {
         loop {
+            // A generic parameter may carry its own attribute (e.g. real
+            // `alloc`'s `pub struct Box<T: ?Sized, #[unstable(feature =
+            // "allocator_api", issue = "32838")] A: Allocator = Global>`).
+            skip_bracketed_attr(&mut probe);
             let is_const = skip_keyword(&mut probe, Keyword::Const).is_ok();
             let name = ident_like(&mut probe)?;
             let bounds = if skip_symbol(&mut probe, ":").is_ok() && !is_const {

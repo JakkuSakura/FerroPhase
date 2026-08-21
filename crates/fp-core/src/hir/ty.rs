@@ -671,6 +671,74 @@ impl Ty {
     }
 }
 
+fn write_generic_args(f: &mut fmt::Formatter<'_>, args: &[GenericArg]) -> fmt::Result {
+    if args.is_empty() {
+        return Ok(());
+    }
+    write!(f, "<")?;
+    for (i, arg) in args.iter().enumerate() {
+        if i > 0 {
+            write!(f, ", ")?;
+        }
+        match arg {
+            GenericArg::Type(ty) => write!(f, "{}", ty)?,
+            GenericArg::Lifetime(region) => write!(f, "{}", region)?,
+            GenericArg::Const(kind) => write!(f, "{}", kind)?,
+        }
+    }
+    write!(f, ">")
+}
+
+impl fmt::Display for Region {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Region::ReStatic => write!(f, "'static"),
+            Region::ReErased => write!(f, "'_"),
+            _ => write!(f, "'_"),
+        }
+    }
+}
+
+impl fmt::Display for ConstKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConstKind::Param(param) => write!(f, "{}", param.name),
+            ConstKind::Value(ConstValue::Scalar(Scalar::Int(int))) => write!(f, "{}", int.data),
+            _ => write!(f, "_"),
+        }
+    }
+}
+
+impl fmt::Display for InferTy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InferTy::TyVar(_) | InferTy::FreshTy(_) => write!(f, "_"),
+            InferTy::IntVar(_) | InferTy::FreshIntTy(_) => write!(f, "{{integer}}"),
+            InferTy::FloatVar(_) | InferTy::FreshFloatTy(_) => write!(f, "{{float}}"),
+        }
+    }
+}
+
+impl fmt::Display for FnSig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if matches!(self.unsafety, Unsafety::Unsafe) {
+            write!(f, "unsafe ")?;
+        }
+        write!(f, "fn(")?;
+        for (i, input) in self.inputs.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", input)?;
+        }
+        write!(f, ")")?;
+        if !matches!(self.output.kind, TyKind::Tuple(ref tys) if tys.is_empty()) {
+            write!(f, " -> {}", self.output)?;
+        }
+        Ok(())
+    }
+}
+
 impl fmt::Display for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
@@ -690,7 +758,49 @@ impl fmt::Display for Ty {
                 }
                 write!(f, ")")
             }
-            _ => write!(f, "<??>"), // Simplified display for complex types
+            TyKind::Adt(adt, args) => {
+                let kind_label = if adt.flags.contains(AdtFlags::IS_ENUM) {
+                    "enum"
+                } else if adt.flags.contains(AdtFlags::IS_UNION) {
+                    "union"
+                } else {
+                    "struct"
+                };
+                write!(f, "{kind_label}#{}", adt.did.index)?;
+                write_generic_args(f, args)
+            }
+            TyKind::Array(elem, len) => write!(f, "[{}; {}]", elem, len),
+            TyKind::Slice(elem) => write!(f, "[{}]", elem),
+            TyKind::RawPtr(TypeAndMut { ty, mutbl }) => {
+                write!(f, "*{} {}", if *mutbl == Mutability::Mut { "mut" } else { "const" }, ty)
+            }
+            TyKind::Ref(_, ty, mutbl) => {
+                write!(f, "&{}{}", if *mutbl == Mutability::Mut { "mut " } else { "" }, ty)
+            }
+            TyKind::FnDef(def_id, args) => {
+                write!(f, "fn#{}", def_id.index)?;
+                write_generic_args(f, args)
+            }
+            TyKind::FnPtr(sig) => write!(f, "{}", sig.binder.value),
+            TyKind::Dynamic(_, _) => write!(f, "dyn"),
+            TyKind::Closure(def_id, _) => write!(f, "{{closure#{}}}", def_id.index),
+            TyKind::Generator(def_id, _, _) => write!(f, "{{generator#{}}}", def_id.index),
+            TyKind::GeneratorWitness(_) => write!(f, "{{generator-witness}}"),
+            TyKind::Projection(proj) => write!(f, "<projection#{}>", proj.item_def_id.index),
+            TyKind::Opaque(def_id, args) => {
+                write!(f, "impl#{}", def_id.index)?;
+                write_generic_args(f, args)
+            }
+            TyKind::Param(param) => write!(f, "{}", param.name),
+            TyKind::Bound(_, bound) => match &bound.kind {
+                BoundTyKind::Param(name) => write!(f, "{}", name),
+                BoundTyKind::Anon => write!(f, "{{bound}}"),
+            },
+            TyKind::Placeholder(_) => write!(f, "{{placeholder}}"),
+            TyKind::Infer(infer) => write!(f, "{}", infer),
+            TyKind::Error(_) => write!(f, "{{error}}"),
+            TyKind::Type => write!(f, "type"),
+            TyKind::Any => write!(f, "any"),
         }
     }
 }
