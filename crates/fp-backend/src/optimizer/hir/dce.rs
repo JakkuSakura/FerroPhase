@@ -699,6 +699,7 @@ mod tests {
             placeholder_defs: HashSet::new(),
             op_defs: HashMap::new(),
             intrinsic_defs: HashMap::new(),
+            type_alias_targets: HashMap::new(),
         }
     }
 

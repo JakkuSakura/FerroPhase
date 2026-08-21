@@ -1577,13 +1577,12 @@ impl HirTypeChecker {
             Some(hir::Res::Def(def_id)) => Some(def_id),
             _ => None,
         }) else {
-            // Treat `void` as unit type (C compatibility)
+            // Treat `void` as unit type (C compatibility) — a genuine,
+            // narrow, intentional modeling choice: C's `void` has no Rust
+            // equivalent type at all, unlike every other unresolved path
+            // below, which is a real resolution failure that must surface
+            // rather than be silently laundered into `()`.
             if path.segments.len() == 1 && path.segments[0].name.as_str() == "void" {
-                return Ok(hir::Ty { kind: hir::ty::TyKind::Tuple(vec![]) });
-            }
-            // Fallback: treat single-segment unresolved types as unit type
-            // (handles C FFI types like fenv_t, etc.)
-            if path.segments.len() == 1 && path.res.is_none() {
                 return Ok(hir::Ty { kind: hir::ty::TyKind::Tuple(vec![]) });
             }
             return Ok(self.error_ty(format!(
@@ -1597,6 +1596,14 @@ impl HirTypeChecker {
         };
         if let Some(generic) = self.generic_ty(def_id) {
             return Ok(generic);
+        }
+        // A transparent type alias (`type __darwin_useconds_t =
+        // __uint32_t;`) — HIR has no first-class item for one (see
+        // `hir::Program::type_alias_targets`'s doc comment), so its
+        // `DefId` has no `def_map` entry to look up; expand it in place by
+        // checking its already-lowered target type expression instead.
+        if let Some(target) = self.shared.program.type_alias_targets.get(&def_id).cloned() {
+            return self.check_type_expr(&target);
         }
         let Some(item) = self.shared.program.def_map.get(&def_id).cloned() else {
             return Ok(self.error_ty(format!("type definition `{def_id}` was not found")));

@@ -126,6 +126,21 @@ pub struct Program {
     /// it stays an ordinary (and, for a genuinely undefined name, erroring)
     /// call, same as any other unresolved identifier.
     pub intrinsic_defs: HashMap<DefId, CallKind>,
+    /// A transparent type alias's expansion (`type Foo = Bar;`, where
+    /// `Bar` isn't itself a fresh struct/enum/structural literal this
+    /// alias declaration introduces) — HIR has no first-class "type
+    /// alias" item (mirroring the `placeholder_defs` doc comment above:
+    /// there's no dedicated item shape for this either), so the alias's
+    /// own `DefId` still resolves (via `global_type_defs`/`def_map`
+    /// registration at `ast_to_hir` time) but has no entry in `def_map`
+    /// itself — `path_ty` consults this table instead, recursively
+    /// checking the aliased type expression in the alias's own place.
+    /// Without this, `type __darwin_useconds_t = __uint32_t;`-style
+    /// aliases (extremely common in real Rust — most of libc's typedefs,
+    /// and many of std's own `pub type Result<T> = ...`-style aliases)
+    /// could never resolve at all: nothing else in the pipeline gives a
+    /// non-materializing alias any HIR item to look up.
+    pub type_alias_targets: HashMap<DefId, TypeExpr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -777,6 +792,7 @@ impl Program {
             placeholder_defs: HashSet::new(),
             op_defs: HashMap::new(),
             intrinsic_defs: HashMap::new(),
+            type_alias_targets: HashMap::new(),
         }
     }
 

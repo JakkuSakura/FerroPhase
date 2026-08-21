@@ -162,6 +162,14 @@ pub struct HirGenerator {
     /// `#[intrinsic = "..."]` source attribute at the same point `op_defs`
     /// is (free functions in `transform_item_to_hir`).
     intrinsic_defs: HashMap<hir::DefId, fp_core::intrinsics::CallKind>,
+    /// Mirrored into the final `hir::Program::type_alias_targets` the
+    /// same way `op_defs` is — a transparent type alias's own `DefId`
+    /// (allocated so `type X = Y;` resolves at all, even though HIR has
+    /// no first-class item shape for a non-materializing alias) mapped
+    /// to its already-lowered target `hir::TypeExpr`, populated at the
+    /// same point `predeclare_items`'s `ItemKind::DefType` arm decides
+    /// the alias doesn't materialize into a fresh struct/enum/structural.
+    type_alias_targets: HashMap<hir::DefId, hir::TypeExpr>,
     resolving_type_aliases: HashSet<String>,
     resolved_names: ResolvedNameTable,
     target_env: TargetEnv,
@@ -644,6 +652,7 @@ impl HirGenerator {
             placeholder_defs: HashSet::new(),
             op_defs: HashMap::new(),
             intrinsic_defs: HashMap::new(),
+            type_alias_targets: HashMap::new(),
             resolving_type_aliases: HashSet::new(),
             resolved_names: ResolvedNameTable::new(),
             target_env: TargetEnv::host(),
@@ -1143,6 +1152,9 @@ impl HirGenerator {
             program.def_paths.extend(hir_program.def_paths);
             program.op_defs.extend(hir_program.op_defs);
             program.intrinsic_defs.extend(hir_program.intrinsic_defs);
+            program
+                .type_alias_targets
+                .extend(hir_program.type_alias_targets);
             // Cross-package exported value/type symbols (`_exports`) are
             // *not* eagerly copied into `global_value_defs`/
             // `global_type_defs` here — `resolve_type_symbol`/
@@ -1332,6 +1344,27 @@ impl HirGenerator {
                                 }
                             }
                         }
+                    } else {
+                        // A transparent alias (`type __darwin_useconds_t =
+                        // __uint32_t;`, `type Result<T> = ...;`) — the
+                        // aliased type isn't a fresh struct/enum/structural
+                        // this declaration itself introduces, so there's no
+                        // new nominal HIR item to build. HIR has no
+                        // first-class "type alias" item at all, so without
+                        // this branch the alias's own name would never be
+                        // given a `DefId`/`Res::Def` and could never resolve
+                        // anywhere it's referenced — real Rust code (std's
+                        // own `pub type Result<T> = ..`-style aliases,
+                        // nearly every libc typedef) uses this shape
+                        // constantly. Give it a real `DefId` (so qualified
+                        // lookups like `macos::useconds_t` still work
+                        // exactly like a materializing alias's would), and
+                        // record its already-lowered target `TypeExpr` so
+                        // `path_ty` can expand it in place at every use.
+                        let def_id = self.allocate_def_id_for_item(item);
+                        self.register_type_def(&def_type.name.name, def_id, &def_type.visibility);
+                        let target = self.transform_type_to_hir(&def_type.value)?;
+                        self.type_alias_targets.insert(def_id, target);
                     }
                 }
                 ItemKind::Impl(_) => {
@@ -1883,6 +1916,9 @@ impl HirGenerator {
         program.placeholder_defs = self.placeholder_defs.clone();
         program.op_defs.extend(self.op_defs.clone());
         program.intrinsic_defs.extend(self.intrinsic_defs.clone());
+        program
+            .type_alias_targets
+            .extend(self.type_alias_targets.clone());
         Ok(program)
     }
 
@@ -1970,6 +2006,9 @@ impl HirGenerator {
         program.placeholder_defs = self.placeholder_defs.clone();
         program.op_defs.extend(self.op_defs.clone());
         program.intrinsic_defs.extend(self.intrinsic_defs.clone());
+        program
+            .type_alias_targets
+            .extend(self.type_alias_targets.clone());
         Ok(program)
     }
 
@@ -2021,6 +2060,9 @@ impl HirGenerator {
         program.placeholder_defs = self.placeholder_defs.clone();
         program.op_defs.extend(self.op_defs.clone());
         program.intrinsic_defs.extend(self.intrinsic_defs.clone());
+        program
+            .type_alias_targets
+            .extend(self.type_alias_targets.clone());
 
         Ok(program)
     }
