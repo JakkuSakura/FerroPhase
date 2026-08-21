@@ -145,6 +145,14 @@ pub(crate) fn parse_item_winnow(input: &mut &[Token], file: FileId) -> ModalResu
         {
             parse_trait_item(input, file, visibility, attrs)
         }
+        // `pub auto trait Unpin {}` — a bare `auto trait` with no leading
+        // `unsafe`/`const` modifier at all (real `core::marker`'s own
+        // marker trait declarations). `auto` isn't a lexer keyword, so
+        // this needs its own dispatch arm distinct from the
+        // Unsafe/Const-modifier-run one above.
+        Some(TokenKind::Ident) if skips_modifiers_to_trait(*input) => {
+            parse_trait_item(input, file, visibility, attrs)
+        }
         // `impl(restriction) trait Foo { .. }` — a sealed/restricted-impl
         // trait marker (real `core::convert::num`'s own `pub impl(self)
         // trait FloatToInt<Int>: Sized { .. }`) — distinguished from a
@@ -271,6 +279,13 @@ fn parse_type_alias_item(
     }
     skip_symbol(input, "=")?;
     let value = parse_type_expr(input)?;
+    // A type alias's `where` clause can also trail the `= value` instead
+    // of (or in addition to real Rust's still-nightly-only "where clause
+    // before the equals" position) — real `alloc::boxed`'s own `type
+    // CallRefFuture<'a> = F::CallRefFuture<'a> where Self: 'a;`.
+    if skip_keyword(input, Keyword::Where).is_ok() {
+        skip_where_clause(input)?;
+    }
     skip_symbol(input, ";")?;
     Ok(Item::from(ItemKind::DefType(ItemDefType {
         attrs,
@@ -627,6 +642,17 @@ fn parse_trait_item(
 
 fn parse_trait_member(input: &mut &[Token], file: FileId) -> ModalResult<Item> {
     let attrs = parse_outer_attrs(input, file)?;
+    // `final fn share(&self) -> Self { .. }` (nightly non-overridable
+    // trait method default) — real `core::clone`'s own `Clone::share`.
+    // `final` isn't a lexer keyword, and carries no meaning this checker
+    // models (no notion of an impl overriding a default method body being
+    // disallowed), so it's dropped like `default` already is elsewhere.
+    if matches!(
+        input.first(),
+        Some(token) if token.kind == TokenKind::Ident && token.lexeme == "final"
+    ) {
+        *input = &input[1..];
+    }
     if skip_keyword(input, Keyword::Const).is_ok() {
         let name = ident_like(input)?;
         skip_symbol(input, ":")?;
