@@ -335,6 +335,13 @@ fn parse_cast_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr>
 }
 
 fn parse_prefix(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    // An arbitrary expression in value position may carry its own
+    // attribute (real `std::panicking`'s own `let write = #[optimize(size)]
+    // |err: &mut dyn ..| { .. };`) — carries no meaning this checker models
+    // for an arbitrary expression, so it's dropped here, same as call
+    // arguments/match arms/etc. already do. Idempotent if the caller
+    // already skipped attributes itself.
+    skip_outer_attrs_before_expr(input, file)?;
     let mut probe = *input;
     if skip_keyword(&mut probe, Keyword::Splice).is_ok() {
         if let Ok(inner) =
@@ -463,6 +470,7 @@ fn parse_prefix(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
 }
 
 fn parse_prefix_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    skip_outer_attrs_before_expr(input, file)?;
     let mut probe = *input;
     if skip_keyword(&mut probe, Keyword::Splice).is_ok() {
         if let Ok(inner) = parse_prefix_no_struct(&mut probe, file)
@@ -729,7 +737,9 @@ fn parse_primary(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
 /// calls, ...) continues from there unchanged.
 fn parse_qualified_path_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     let mut probe = *input;
-    skip_symbol(&mut probe, "<")?;
+    if !try_eat_symbol(&mut probe, "<") {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
     let ty = parse_type_expr(&mut probe)?;
     if skip_keyword(&mut probe, Keyword::As).is_ok() {
         let _trait_ty = parse_type_expr(&mut probe)?;

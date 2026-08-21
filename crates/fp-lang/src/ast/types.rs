@@ -20,7 +20,13 @@ use fp_core::ast::TypeWildcard;
 /// diagnostics degradation, not a parse failure.
 fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
     let mut probe = *input;
-    skip_symbol(&mut probe, "<")?;
+    // A nested qualified path (real `core::future::future`'s own
+    // `<<P as ops::Deref>::Target as Future>::Output`) lexes its two
+    // adjacent openers as one `<<` token — same ambiguity `try_eat_symbol`
+    // already resolves for ordinary generic-argument nesting.
+    if !try_eat_symbol(&mut probe, "<") {
+        return Err(ErrMode::Backtrack(ContextError::new()));
+    }
     let ty = parse_type_expr(&mut probe)?;
     if skip_keyword(&mut probe, Keyword::As).is_ok() {
         let _trait_ty = parse_type_expr(&mut probe)?;

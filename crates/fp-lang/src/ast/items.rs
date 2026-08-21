@@ -1045,6 +1045,28 @@ fn starts_context_param_marker(input: &[Token]) -> bool {
 }
 
 fn parse_fn_param_name(input: &mut &[Token]) -> ModalResult<Ident> {
+    // `(_,)`/`(name,)` — a bare single-element tuple destructuring
+    // pattern with no wrapping constructor name (real
+    // `core::ops::function`'s own blanket `fn call_mut(&mut self, (_
+    // /* ignore argument */,): (usize,)) -> ..`). Same lossy treatment
+    // as the other pattern shapes here: `FunctionParam` has no slot for
+    // a real pattern, so keep just the inner binding name (or a
+    // synthetic `_` for a wildcard) and drop the tuple wrapper.
+    let mut tuple_probe = *input;
+    if skip_symbol(&mut tuple_probe, "(").is_ok() {
+        let inner_name = if let Ok(name) = ident_like(&mut tuple_probe) {
+            name
+        } else if skip_symbol(&mut tuple_probe, "_").is_ok() {
+            Ident::new("_")
+        } else {
+            return Err(ErrMode::Backtrack(ContextError::new()));
+        };
+        let _ = skip_symbol(&mut tuple_probe, ",");
+        if skip_symbol(&mut tuple_probe, ")").is_ok() {
+            *input = tuple_probe;
+            return Ok(inner_name);
+        }
+    }
     // `&item`/`&mut item` — a by-ref destructuring pattern parameter (real
     // `alloc::collections::binary_heap`'s own `fn extend_one(&mut self,
     // &item: &'a T)`). `FunctionParam` has no slot for a real pattern, only
