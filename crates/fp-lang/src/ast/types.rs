@@ -771,12 +771,12 @@ fn skip_bracketed_attr(input: &mut &[Token]) {
         // lexeme or as separate `#`/`!`/`[` tokens depending on context
         // (see `parse_attrs`'s identical two-step check) — try the
         // combined form first, then fall back to the separate tokens.
-        if skip_symbol(&mut probe, "#[").is_err() && skip_symbol(&mut probe, "#![").is_err() {
-            if skip_symbol(&mut probe, "#").is_err() {
+        if !try_eat_symbol(&mut probe, "#[") && !try_eat_symbol(&mut probe, "#![") {
+            if !try_eat_symbol(&mut probe, "#") {
                 return;
             }
-            let _ = skip_symbol(&mut probe, "!");
-            if skip_symbol(&mut probe, "[").is_err() {
+            let _ = try_eat_symbol(&mut probe, "!");
+            if !try_eat_symbol(&mut probe, "[") {
                 return;
             }
         }

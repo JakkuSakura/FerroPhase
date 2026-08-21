@@ -386,6 +386,29 @@ fn parse_prefix(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
         .into());
     }
 
+    // `&&expr` — a double reference (`&(&expr)`), not the boolean `&&`
+    // operator, whenever it appears in prefix/operand position (real
+    // `core::array`'s own `fmt::Debug::fmt(&&self[..], f)`). The
+    // tokenizer emits `&&` as one lexeme (same as the logical-and binary
+    // operator), so this must be split apart here rather than relying on
+    // two separate `&` tokens.
+    if try_eat_symbol(input, "&&") {
+        let is_mut_ref = skip_keyword(input, Keyword::Mut).is_ok();
+        let inner_value = parse_prefix(input, file)?;
+        let inner = ExprKind::Reference(ExprReference {
+            span: span_from_expr(&inner_value),
+            referee: Box::new(inner_value),
+            mutable: is_mut_ref.then_some(true),
+        })
+        .into();
+        return Ok(ExprKind::Reference(ExprReference {
+            span: span_from_expr(&inner),
+            referee: Box::new(inner),
+            mutable: None,
+        })
+        .into());
+    }
+
     if let Some(op) = peek_symbol(input) {
         if matches!(op, "!" | "-" | "*" | "&") {
             let op = op.to_string();
@@ -466,6 +489,23 @@ fn parse_prefix_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Exp
         return Ok(ExprKind::Await(ExprAwait {
             span: span_from_expr(&base),
             base: Box::new(base),
+        })
+        .into());
+    }
+
+    if try_eat_symbol(input, "&&") {
+        let is_mut_ref = skip_keyword(input, Keyword::Mut).is_ok();
+        let inner_value = parse_prefix_no_struct(input, file)?;
+        let inner = ExprKind::Reference(ExprReference {
+            span: span_from_expr(&inner_value),
+            referee: Box::new(inner_value),
+            mutable: is_mut_ref.then_some(true),
+        })
+        .into();
+        return Ok(ExprKind::Reference(ExprReference {
+            span: span_from_expr(&inner),
+            referee: Box::new(inner),
+            mutable: None,
         })
         .into());
     }

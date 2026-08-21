@@ -539,6 +539,15 @@ fn skip_symbol(input: &mut &[Token], expected: &str) -> ModalResult<()> {
     }
 }
 
+/// `skip_symbol`, but as a plain bool instead of a `ModalResult` — for
+/// call sites that branch on presence/absence rather than backtrack on
+/// mismatch (the common `skip_symbol(input, "x").is_ok()` idiom, spelled
+/// out as its own named primitive instead of repeated inline). Mirrors
+/// `rustc_parse`'s own `Parser::eat` (bump-if-present, no error path).
+pub(super) fn try_eat_symbol(input: &mut &[Token], expected: &str) -> bool {
+    skip_symbol(input, expected).is_ok()
+}
+
 fn ident_like(input: &mut &[Token]) -> ModalResult<Ident> {
     match input.split_first() {
         Some((token, rest)) if matches!(token.kind, TokenKind::Ident | TokenKind::Keyword(_)) => {
