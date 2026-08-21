@@ -558,11 +558,24 @@ fn parse_trait_member(input: &mut &[Token], file: FileId) -> ModalResult<Item> {
     }
     if skip_keyword(input, Keyword::Type).is_ok() {
         let name = ident_like(input)?;
+        let _generics_params = parse_optional_generic_params(input)?;
+        // An associated type declaration may carry its own bound (real
+        // `alloc::borrow`'s own `type Owned: Borrow<Self>;`) and/or a
+        // default (`type Owned: Borrow<Self> = Self;`) — neither was
+        // previously recognized, only the bare `type Name;` shape.
+        let bounds = if skip_symbol(input, ":").is_ok() {
+            parse_type_bounds(input)?
+        } else {
+            TypeBounds::any()
+        };
+        if skip_symbol(input, "=").is_ok() {
+            let _default = parse_type_expr(input)?;
+        }
         skip_symbol(input, ";")?;
         return Ok(Item::from(ItemKind::DeclType(ItemDeclType {
             ty_annotation: None,
             name,
-            bounds: TypeBounds::any(),
+            bounds,
         })));
     }
     let visibility = Visibility::Inherited;
