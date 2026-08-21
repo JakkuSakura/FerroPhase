@@ -138,6 +138,15 @@ impl PackageProvider for RustPackageProvider {
             module_ids.push(ModuleId::new(&path.to_key()));
         }
         let mut metadata = PackageMetadata::default();
+        metadata.dependencies.push(DependencyDescriptor {
+            package: "std".to_string(),
+            resolved_package_id: Some(PackageId::new("std")),
+            constraint: None,
+            kind: DependencyKind::Normal,
+            features: Vec::new(),
+            optional: false,
+            target: Default::default(),
+        });
         if let MemberRoot::Dir(dir) = member_root {
             metadata
                 .dependencies

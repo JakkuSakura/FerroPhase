@@ -26,6 +26,23 @@ pub struct FerroPhaseProvider;
 const STD_PACKAGE_NAME: &str = "std";
 const LIBC_PACKAGE_NAME: &str = "libc";
 
+/// A dependency on `std` — `CompilerDriver::compile_dependencies` compiles
+/// and installs the prelude for any declared dependency named `"std"`
+/// generically, so a real FerroPhase source package opts into std/prelude
+/// support by declaring this, the same way `std` itself declares `libc`
+/// below (`load_package_metadata`'s `STD_PACKAGE_NAME` arm).
+pub(crate) fn std_dependency() -> DependencyDescriptor {
+    DependencyDescriptor {
+        package: STD_PACKAGE_NAME.to_string(),
+        resolved_package_id: Some(PackageId::new(STD_PACKAGE_NAME)),
+        constraint: None,
+        kind: DependencyKind::Normal,
+        features: Vec::new(),
+        optional: false,
+        target: Default::default(),
+    }
+}
+
 fn flatten_items(path: &QualifiedPath, items: &[Item], output: &mut Vec<PackageItem>) {
     for item in items {
         if let ItemKind::Module(module) = item.kind() {
@@ -183,7 +200,10 @@ impl InputPackageProvider {
             version: None,
             manifest_path: VirtualPath::from_path(&source.path),
             root: VirtualPath::from_path(source.path.parent().unwrap_or(Path::new("."))),
-            metadata: Default::default(),
+            metadata: PackageMetadata {
+                dependencies: vec![std_dependency()],
+                ..Default::default()
+            },
             modules: Vec::new(),
         };
         let resolver = FerroModuleSourceResolver::new(Arc::new(UnixFileSystem::new("/")));

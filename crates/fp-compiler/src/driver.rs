@@ -288,25 +288,7 @@ impl CompilerDriver {
             )));
         }
 
-        let std_package = if matches!(package_id.as_str(), "std" | "libc") {
-            None
-        } else {
-            match Box::pin(self.compile_package(&PackageId::new("std"))).await {
-                Ok(package) => Some(package),
-                Err(error) => {
-                    self.building_packages.remove(package_id);
-                    return Err(error);
-                }
-            }
-        };
-
         let package_workspace = parent_context.env_ctx.for_package(package_id.clone());
-        if let Some(std_package) = std_package {
-            package_workspace.import_package(PackageId::new("std"), std_package);
-            if let Some(std_package) = package_workspace.compiled_package(&PackageId::new("std")) {
-                package_workspace.install_prelude(std_package);
-            }
-        }
         self.state.borrow_mut().typing_ctx = Rc::new(TypingContext::new(
             parent_context.data_layout.clone(),
             Rc::new(package_workspace),

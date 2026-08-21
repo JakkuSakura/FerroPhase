@@ -7,7 +7,7 @@ use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
 use fp_core::package::graph::PackageGraph;
 use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
-use fp_core::package::{PackageDescriptor, PackageId, PackageItem, PackageSource};
+use fp_core::package::{PackageDescriptor, PackageId, PackageItem, PackageMetadata, PackageSource};
 use fp_core::vfs::VirtualPath;
 
 use crate::FerroFrontend;
@@ -112,7 +112,10 @@ impl PackageProvider for MagnetWorkspaceProvider {
             version: None,
             manifest_path: VirtualPath::from_path(&member_root.manifest_path()),
             root: VirtualPath::from_path(member_root.root_path()),
-            metadata: Default::default(),
+            metadata: PackageMetadata {
+                dependencies: vec![crate::provider::std_dependency()],
+                ..Default::default()
+            },
             modules: module_ids,
         }))
     }
