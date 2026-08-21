@@ -420,6 +420,16 @@ fn parse_fn_item_core(
         }
         break;
     }
+    // `extern "ABI" fn ..` — an impl-block method (or free function) can
+    // name its own calling convention, same as a trait method
+    // declaration can (real `core::ops::function`'s own blanket `impl<A,
+    // F: Fn<A>> FnMut<A> for &F { extern "rust-call" fn call(..) { .. }
+    // }`).
+    let abi = if peek_keyword(*input, Keyword::Extern) {
+        parse_extern_abi(input)?
+    } else {
+        fp_core::ast::Abi::Rust
+    };
     if quoted {
         skip_keyword(input, Keyword::Quote)?;
     }
@@ -461,7 +471,7 @@ fn parse_fn_item_core(
         params,
         generics_params,
         is_const,
-        abi: fp_core::ast::Abi::Rust,
+        abi,
         quote_kind: quoted.then_some(QuoteFragmentKind::Item),
         ret_ty,
     };
@@ -581,6 +591,7 @@ fn parse_trait_member(input: &mut &[Token], file: FileId) -> ModalResult<Item> {
     let visibility = Visibility::Inherited;
     if peek_keyword(*input, Keyword::Fn)
         || peek_keyword(*input, Keyword::Quote)
+        || peek_keyword(*input, Keyword::Extern)
         || starts_async_fn(*input)
         || skips_modifiers_to_fn(*input)
     {
@@ -606,6 +617,15 @@ fn parse_trait_fn_member(
     ) {
         *input = &input[1..];
     }
+    // `extern "ABI" fn ..;` — a trait method declaration can name its own
+    // calling convention (real `core::ops::function`'s own `extern
+    // "rust-call" fn call(&self, args: Args) -> Self::Output;`), same as
+    // a real function item already can.
+    let abi = if peek_keyword(*input, Keyword::Extern) {
+        parse_extern_abi(input)?
+    } else {
+        fp_core::ast::Abi::Rust
+    };
     let is_async = skip_keyword(input, Keyword::Async).is_ok();
     let quoted = skip_keyword(input, Keyword::Quote).is_ok();
     if quoted {
@@ -632,7 +652,7 @@ fn parse_trait_fn_member(
         params,
         generics_params,
         is_const: false,
-        abi: fp_core::ast::Abi::Rust,
+        abi,
         quote_kind: quoted.then_some(QuoteFragmentKind::Item),
         ret_ty,
     };
