@@ -24,6 +24,10 @@ impl PackageProvider for PrqlPackageProvider {
         todo!()
     }
 
+    fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        self.list_packages()
+    }
+
     fn load_package_metadata(&self, _id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         todo!()
     }

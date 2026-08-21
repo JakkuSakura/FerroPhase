@@ -602,6 +602,21 @@ impl WorkspaceContext {
             .collect()
     }
 
+    /// The current workspace's own packages — as opposed to
+    /// `registered_names()`, which also includes anything else this
+    /// workspace's provider can supply (e.g. `std`, blended in by
+    /// `CompositeProvider`). See `PackageProvider::workspace_packages`'s
+    /// doc comment.
+    pub fn workspace_packages(&self) -> Vec<String> {
+        self.providers
+            .workspace_packages()
+            .ok()
+            .into_iter()
+            .flatten()
+            .map(|id| id.as_str().to_owned())
+            .collect()
+    }
+
     pub fn module_paths(&self) -> Vec<QualifiedPath> {
         let mut paths: Vec<_> = self
             .sorted_packages()

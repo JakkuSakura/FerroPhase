@@ -61,6 +61,10 @@ impl PackageProvider for SingleFilePackageProvider {
         Ok(vec![self.package_id.clone()])
     }
 
+    fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        self.list_packages()
+    }
+
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         if id != &self.package_id {
             return Err(ProviderError::PackageNotFound(id.clone()));
@@ -166,6 +170,10 @@ struct InMemoryPackageProvider {
 impl PackageProvider for InMemoryPackageProvider {
     fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
         Ok(vec![self.package_id.clone()])
+    }
+
+    fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        self.list_packages()
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {

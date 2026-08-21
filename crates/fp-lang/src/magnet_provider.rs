@@ -46,6 +46,10 @@ impl PackageProvider for MagnetWorkspaceProvider {
             .collect())
     }
 
+    fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        self.list_packages()
+    }
+
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let dir = self.resolve_dir(id)?;
         let mut module_ids = Vec::new();

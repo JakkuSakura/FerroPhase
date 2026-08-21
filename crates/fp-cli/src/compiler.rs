@@ -396,10 +396,10 @@ fn compile_source_file(
         resolve_input_package(input, language, identity)?;
 
     let std_provider = std_provider_for(language);
-    let provider = Arc::new(fp_core::package::provider::CompositeProvider::new(vec![
-        std_provider,
+    let provider = Arc::new(fp_core::package::provider::CompositeProvider::new(
+        vec![std_provider],
         input_provider,
-    ]));
+    ));
     let workspace = std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new(provider));
     let mut session = CompilerSession::new(data_layout(), executor, workspace);
     session.driver().pipeline = pipeline;
@@ -519,10 +519,10 @@ pub fn build_workspace_session(
 ) -> (CompilerExecutor, CompilerSession) {
     let executor = CompilerExecutor::new();
     let std_provider = std_provider_for(language);
-    let combined = Arc::new(fp_core::package::provider::CompositeProvider::new(vec![
-        std_provider,
+    let combined = Arc::new(fp_core::package::provider::CompositeProvider::new(
+        vec![std_provider],
         provider,
-    ]));
+    ));
     let workspace = std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new(combined));
     let mut session = CompilerSession::new(data_layout(), &executor, workspace);
     session.driver().pipeline = PipelineMode::TypecheckedTranspile;

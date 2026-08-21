@@ -38,6 +38,17 @@ pub trait PackageProvider {
     /// `module_paths`, and `graph` are populated; compiler-owned registries
     /// are left empty for the compiler to fill in.
     fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource>;
+
+    /// Packages this provider considers part of the *current workspace*,
+    /// as opposed to packages it can merely also supply (e.g. `std`,
+    /// blended in by `CompositeProvider` alongside the real project
+    /// provider). Deliberately no default body: "all of `list_packages()`"
+    /// is only correct for a provider that exclusively serves one
+    /// project's own packages, and a provider that blends in others (like
+    /// `CompositeProvider`) getting this wrong by inheriting that default
+    /// would be an easy, silent mistake — every implementor states it
+    /// explicitly instead.
+    fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>>;
 }
 
 /// A `PackageProvider` that always hands back one already-built
@@ -85,6 +96,10 @@ impl PackageProvider for FixedPackageProvider {
         Ok(vec![self.package_id.clone()])
     }
 
+    fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        self.list_packages()
+    }
+
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         if id != &self.package_id {
             return Err(ProviderError::PackageNotFound(id.clone()));
@@ -116,6 +131,10 @@ impl PackageProvider for EmptyProvider {
         Ok(Vec::new())
     }
 
+    fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        Ok(Vec::new())
+    }
+
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         Err(ProviderError::PackageNotFound(id.clone()))
     }
@@ -136,20 +155,34 @@ impl PackageProvider for EmptyProvider {
 /// constructing the workspace. Not a language-dispatch mechanism: every
 /// sub-provider is picked by the caller ahead of time, same as if only one
 /// provider were being registered.
+///
+/// `dependencies` and `workspace` are kept distinct (rather than one flat
+/// list) so `workspace_packages()` can report only the real project's own
+/// packages — `dependencies` (e.g. `std`/`libc`) are reachable through
+/// `list_packages()` like any other package, but aren't part of the
+/// current workspace.
 pub struct CompositeProvider {
-    providers: Vec<Arc<dyn PackageProvider>>,
+    dependencies: Vec<Arc<dyn PackageProvider>>,
+    workspace: Arc<dyn PackageProvider>,
 }
 
 impl CompositeProvider {
-    pub fn new(providers: Vec<Arc<dyn PackageProvider>>) -> Self {
-        Self { providers }
+    pub fn new(dependencies: Vec<Arc<dyn PackageProvider>>, workspace: Arc<dyn PackageProvider>) -> Self {
+        Self {
+            dependencies,
+            workspace,
+        }
+    }
+
+    fn all_providers(&self) -> impl Iterator<Item = &Arc<dyn PackageProvider>> {
+        self.dependencies.iter().chain(std::iter::once(&self.workspace))
     }
 
     /// The sub-provider whose own `list_packages()` includes `id` — bounded
-    /// by `self.providers.len()` (2 in every real call site today), not by
-    /// workspace size, so a plain linear scan here is fine.
+    /// by `self.all_providers().count()` (2 in every real call site today),
+    /// not by workspace size, so a plain linear scan here is fine.
     fn provider_for(&self, id: &PackageId) -> Option<&Arc<dyn PackageProvider>> {
-        self.providers.iter().find(|provider| {
+        self.all_providers().find(|provider| {
             provider
                 .list_packages()
                 .map(|packages| packages.iter().any(|candidate| candidate == id))
@@ -161,11 +194,14 @@ impl CompositeProvider {
 impl PackageProvider for CompositeProvider {
     fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
         Ok(self
-            .providers
-            .iter()
+            .all_providers()
             .filter_map(|provider| provider.list_packages().ok())
             .flatten()
             .collect())
+    }
+
+    fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        self.workspace.workspace_packages()
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
@@ -175,7 +211,7 @@ impl PackageProvider for CompositeProvider {
     }
 
     fn refresh(&self) -> ProviderResult<()> {
-        for provider in &self.providers {
+        for provider in self.all_providers() {
             provider.refresh()?;
         }
         Ok(())

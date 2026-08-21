@@ -109,6 +109,10 @@ impl PackageProvider for FerroPhaseProvider {
         ])
     }
 
+    fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        self.list_packages()
+    }
+
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let root = match id.as_str() {
             STD_PACKAGE_NAME => embedded_std::root_dir(),
@@ -196,6 +200,10 @@ impl InputPackageProvider {
 impl PackageProvider for InputPackageProvider {
     fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
         Ok(vec![self.package_id.clone()])
+    }
+
+    fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        self.list_packages()
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {

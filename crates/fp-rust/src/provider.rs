@@ -70,6 +70,10 @@ impl PackageProvider for RustPackageProvider {
             .collect())
     }
 
+    fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        self.list_packages()
+    }
+
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let dir = self.resolve_dir(id)?;
         let mut module_ids = Vec::new();
@@ -283,6 +287,10 @@ impl PackageProvider for RustStdProvider {
             PackageId::new(STD_PACKAGE_NAME),
             PackageId::new(LIBC_PACKAGE_NAME),
         ])
+    }
+
+    fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        self.list_packages()
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {

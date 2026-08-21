@@ -458,9 +458,6 @@ async fn run_named_target(
     };
     let lang = lang.as_str();
 
-    let workspace_packages: std::collections::HashSet<String> =
-        packages.iter().map(|p| p.as_str().to_string()).collect();
-
     info!(
         "Project: {} package(s), language: {} (target: {})",
         packages.len(),
@@ -536,14 +533,7 @@ async fn run_named_target(
         .collect::<Result<Vec<_>>>()?;
 
     let backend_config = fp_core::backend::BackendConfig::new(output.to_path_buf());
-    let backend = resolve_target_backend(
-        target_name,
-        input,
-        args,
-        backend_config,
-        workspace_packages.clone(),
-        root_name,
-    )?;
+    let backend = resolve_target_backend(target_name, input, args, backend_config, root_name)?;
 
     // Phase 2: serialize + write every package now that the workspace-wide
     // mutability set (and any other cross-package info) is complete.
@@ -617,21 +607,18 @@ async fn run_named_target(
 /// Resolves `name` to a `TargetBackend`, trying built-ins first
 /// (`backend_for_target`) then the runtime registry
 /// (`crate::languages::registry::find_registered_target_backend`) — the
-/// registry entry's `workspace_packages`/`root_name` are unused (a
-/// registered backend already captured whatever it needs at registration
-/// time), but every call site builds them uniformly since most callers
-/// don't know in advance which side will answer.
+/// registry entry's `root_name` is unused (a registered backend already
+/// captured whatever it needs at registration time), but every call site
+/// builds it uniformly since most callers don't know in advance which
+/// side will answer.
 fn resolve_target_backend(
     name: &str,
     input: &Path,
     args: &CompileArgs,
     config: fp_core::backend::BackendConfig,
-    workspace_packages: std::collections::HashSet<String>,
     root_name: String,
 ) -> Result<Box<dyn fp_core::backend::TargetBackend>> {
-    if let Some(result) =
-        backend_for_target(name, input, args, config, workspace_packages, root_name)
-    {
+    if let Some(result) = backend_for_target(name, input, args, config, root_name) {
         return result;
     }
     crate::languages::registry::find_registered_target_backend(name)
@@ -677,7 +664,6 @@ fn backend_for_target(
     input: &Path,
     args: &CompileArgs,
     config: fp_core::backend::BackendConfig,
-    workspace_packages: std::collections::HashSet<String>,
     root_name: String,
 ) -> Option<Result<Box<dyn fp_core::backend::TargetBackend>>> {
     let output = config.workspace_root.clone();
@@ -847,11 +833,7 @@ fn backend_for_target(
         "kotlin" | "kt" => {
             #[cfg(feature = "lang-kotlin")]
             {
-                Ok(Box::new(fp_kotlin::KotlinBackend::new(
-                    config,
-                    workspace_packages,
-                    root_name,
-                )))
+                Ok(Box::new(fp_kotlin::KotlinBackend::new(config, root_name)))
             }
             #[cfg(not(feature = "lang-kotlin"))]
             {
@@ -1228,6 +1210,12 @@ impl fp_core::package::provider::PackageProvider for TranspileMaterializingPacka
         &self,
     ) -> fp_core::package::provider::ProviderResult<Vec<fp_core::package::PackageId>> {
         self.inner.list_packages()
+    }
+
+    fn workspace_packages(
+        &self,
+    ) -> fp_core::package::provider::ProviderResult<Vec<fp_core::package::PackageId>> {
+        self.inner.workspace_packages()
     }
 
     fn load_package_metadata(

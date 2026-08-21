@@ -155,6 +155,10 @@ impl PackageProvider for TypeScriptPackageProvider {
         Ok(packages)
     }
 
+    fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>> {
+        self.list_packages()
+    }
+
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let guard = match self.packages.read() {
             Ok(g) => g,
