@@ -76,6 +76,12 @@ impl TypingShared {
             impl_items_by_receiver_def: RefCell::new(None),
         })
     }
+
+    /// Read-only access to this package's own HIR — for diagnostics (e.g.
+    /// resolving a stalled task's key back to a human-readable item path).
+    pub fn program(&self) -> &hir::Program {
+        &self.program
+    }
 }
 
 /// Type checks resolved HIR and records semantic types outside the side

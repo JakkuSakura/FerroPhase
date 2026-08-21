@@ -923,6 +923,14 @@ impl CompilerDriver {
                     // check left behind) would then mask the real,
                     // specific diagnostic recorded here.
                     if context.has_typing_errors() {
+                        // Every diagnostic accumulated so far — not just the
+                        // hard item-check aborts folded into the returned
+                        // `Err` below — goes to stderr, so a recovered/
+                        // non-fatal mismatch elsewhere in the same package
+                        // (which never aborts an item's check, so never
+                        // makes it into the combined `Err` message) is
+                        // still visible when diagnosing a failure.
+                        Self::emit_typing_diagnostics_to_stderr(&context);
                         let combined = context
                             .item_check_failures
                             .borrow()
@@ -963,17 +971,126 @@ impl CompilerDriver {
                         continue;
                     }
                     if context.executor.has_parked_tasks() {
+                        // A stall has no combined-`Err` diagnostic message
+                        // of its own (unlike the `has_typing_errors` branch
+                        // above) — whatever real, specific diagnostics did
+                        // get recorded before the stall are the only lead on
+                        // *why* the cycle happened, so they must reach
+                        // stderr here or they're lost entirely.
+                        Self::emit_typing_diagnostics_to_stderr(&context);
+                        let keys = context.executor.parked_task_keys();
+                        eprintln!("fp-compiler: {} task(s) still parked at stall:", keys.len());
+                        let key_to_path: std::collections::HashMap<String, String> = shared
+                            .program()
+                            .def_paths
+                            .iter()
+                            .map(|(def_id, path)| (format!("typecheck:{def_id:?}"), path.to_string()))
+                            .collect();
+                        for key in &keys {
+                            let resolved = key_to_path.get(key).cloned().or_else(|| {
+                                Self::find_item_label_by_key(shared.program(), key)
+                            });
+                            eprintln!(
+                                "  {key} -> {}",
+                                resolved.as_deref().unwrap_or("? (not found)")
+                            );
+                        }
                         return Err(fp_core::error::Error::from(
                             "HIR type checking stalled: a genuine dependency cycle among \
                              same-package items prevented further progress",
                         ));
                     }
+                    Self::emit_typing_diagnostics_to_stderr(&context);
                     return Err(fp_core::error::Error::from(
                         "HIR type checking suspended without a comptime request",
                     ));
                 }
             }
         }
+    }
+
+    /// Prints every diagnostic accumulated on `context` so far to stderr,
+    /// one per line — both the hard item-check aborts (`item_check_failures`)
+    /// and every other recovered/non-fatal mismatch recorded along the way
+    /// (`diagnostics`), since either category can be the real lead on why a
+    /// package's typecheck ultimately failed or stalled, and previously
+    /// neither was visible outside the one combined message folded into a
+    /// success-path `Err` (never emitted at all on the stall path).
+    fn emit_typing_diagnostics_to_stderr(context: &fp_typing::TypingContext) {
+        let diagnostics = context.diagnostics.borrow();
+        if diagnostics.is_empty() {
+            return;
+        }
+        eprintln!(
+            "fp-compiler: {} typing diagnostic(s) recorded before failure:",
+            diagnostics.len()
+        );
+        for diagnostic in diagnostics.iter() {
+            eprintln!("  {}", diagnostic.as_core_diagnostic());
+        }
+    }
+
+    /// Best-effort fallback for a stalled task's key that `def_paths` has no
+    /// entry for — the common case is a function-local item statement,
+    /// which deliberately never gets a module-qualified registration (see
+    /// `suppress_global_registration_depth` in `ast_to_hir`) and so has no
+    /// `def_paths` entry either. Walks every item (recursing one level into
+    /// function/method bodies, where a local item statement actually
+    /// lives) looking for a matching `DefId`, and reports it by its own
+    /// `HirId`/kind — not a real qualified path (there isn't one), just
+    /// enough to identify which declaration is stuck.
+    fn find_item_label_by_key(program: &hir::Program, key: &str) -> Option<String> {
+        fn scan_block(block: &hir::Block, target: &str, found: &mut Option<String>) {
+            if found.is_some() {
+                return;
+            }
+            for stmt in &block.stmts {
+                if let hir::StmtKind::Item(item) = &stmt.kind {
+                    if format!("typecheck:{:?}", item.def_id) == target {
+                        *found = Some(format!("<local item, kind {:?}>", item.kind));
+                        return;
+                    }
+                    scan_item(item, target, found);
+                }
+            }
+        }
+        fn scan_item(item: &hir::Item, target: &str, found: &mut Option<String>) {
+            if found.is_some() {
+                return;
+            }
+            match &item.kind {
+                hir::ItemKind::Function(function) => {
+                    if let Some(body) = &function.body {
+                        scan_block(body, target, found);
+                    }
+                }
+                hir::ItemKind::Impl(impl_item) => {
+                    for member in &impl_item.items {
+                        if format!("typecheck:{:?}", member.def_id) == target {
+                            *found = Some(format!("<impl member, kind {:?}>", member.kind));
+                            return;
+                        }
+                        if let hir::ImplItemKind::Method(function) = &member.kind {
+                            if let Some(body) = &function.body {
+                                scan_block(body, target, found);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut found = None;
+        for item in &program.items {
+            if format!("typecheck:{:?}", item.def_id) == key {
+                return Some(format!("<top-level item, kind {:?}>", item.kind));
+            }
+            scan_item(item, key, &mut found);
+            if found.is_some() {
+                break;
+            }
+        }
+        found
     }
 
     /// Resolves exactly one pending comptime request, using only its own

@@ -108,6 +108,40 @@ pub struct HirGenerator {
     synthetic_items: Vec<hir::Item>,
     module_defs: HashSet<fp_core::ast::path::QualifiedPath>,
     program_def_map: HashMap<hir::DefId, hir::Item>,
+    /// Nonzero while lowering a function-local item statement (an
+    /// `ast::BlockStmt::Item` — e.g. a `const`/`struct` declared inside a
+    /// function body, via `transform_item_to_hir_stmt`'s fallthrough arm).
+    /// `record_value_symbol`/`record_type_symbol` (the two, and only,
+    /// insertion sites for `global_value_defs`/`global_type_defs`) check
+    /// this and skip the module-qualified/global registration while it's
+    /// set, since such an item is only ever visible through the enclosing
+    /// block's lexical scope (`current_value_scope`/`current_type_scope`,
+    /// already pushed/popped correctly) — never via a module-qualified/
+    /// `self::`-style lookup. Without this, a function-local item whose
+    /// name happens to match a real module-level item of the same name
+    /// (e.g. `core/time.rs`'s module-level `NANOS_PER_SEC` const and an
+    /// unrelated function-local `const NANOS_PER_SEC` shadowing it)
+    /// clobbers that module item's global registration *before* the local
+    /// item's own body is lowered, so a `self::`-qualified reference in
+    /// that very body (meant to reach past its own shadow to the module
+    /// item) resolves back to itself — a genuine, silent self-reference
+    /// baked directly into the HIR, which the per-item typecheck task
+    /// executor then (correctly, if confusingly) reports as a stalled
+    /// dependency cycle. A counter (not a bool) since local item
+    /// statements can nest (an item inside a block inside another local
+    /// item's body).
+    suppress_global_registration_depth: u32,
+    /// Debug-only labels for function-local items (see
+    /// `suppress_global_registration_depth`'s doc comment) — deliberately
+    /// distinct from any real module-qualified path (an
+    /// `"<local>"`-tagged segment can never collide with a real path
+    /// segment) so it's safe to populate even though the whole point of
+    /// `suppress_global_registration_depth` is to keep these items out of
+    /// the real, lookup-relevant symbol tables. Exists purely so a stalled
+    /// task's `DefId` can still be resolved to a human-readable name for
+    /// diagnostics (see `driver.rs`'s stall printout) — reading this map
+    /// is never part of any actual name-resolution decision.
+    local_item_debug_labels: HashMap<hir::DefId, String>,
     unimplemented_type_def_ids: HashSet<hir::DefId>,
     /// Mirrored into the final `hir::Program::placeholder_defs` (see its
     /// doc comment) the same way `def_paths` is — `DefId`s whose HIR item
@@ -604,6 +638,8 @@ impl HirGenerator {
             synthetic_items: Vec::new(),
             module_defs: HashSet::new(),
             program_def_map: HashMap::new(),
+            suppress_global_registration_depth: 0,
+            local_item_debug_labels: HashMap::new(),
             unimplemented_type_def_ids: HashSet::new(),
             placeholder_defs: HashSet::new(),
             op_defs: HashMap::new(),
@@ -762,6 +798,14 @@ impl HirGenerator {
     fn record_value_symbol(&mut self, name: &str, res: hir::Res, visibility: &ast::Visibility) {
         let path = self.qualify_path(name);
         self.record_def_path(&res, &path);
+        // See `suppress_global_registration_depth`'s doc comment: a
+        // function-local item statement's name must never enter the
+        // module-qualified global table, only its own lexical scope
+        // (already handled by `register_value_def`'s separate
+        // `current_value_scope()` insert, unaffected by this guard).
+        if self.suppress_global_registration_depth > 0 {
+            return;
+        }
         let qualified = path.to_key();
         let export = self.symbol_export_marker(visibility);
         self.global_value_defs.insert(
@@ -795,6 +839,10 @@ impl HirGenerator {
     fn record_type_symbol(&mut self, name: &str, res: hir::Res, visibility: &ast::Visibility) {
         let path = self.qualify_path(name);
         self.record_def_path(&res, &path);
+        // See `suppress_global_registration_depth`'s doc comment.
+        if self.suppress_global_registration_depth > 0 {
+            return;
+        }
         let qualified = path.to_key();
         let export = self.symbol_export_marker(visibility);
         if let hir::Res::Def(def_id) = &res {
@@ -1455,10 +1503,16 @@ impl HirGenerator {
             .find_map(|scope| scope.get(name).cloned())
     }
 
-    fn resolve_type_symbol(&self, name: &str) -> Option<hir::Res> {
+    /// The module-qualified/global tiers only — no lexical/local scope.
+    /// Factored out of `resolve_type_symbol` so `self::`-prefixed paths
+    /// (see `name_to_hir_path_with_scope`'s `PathPrefix::SelfMod` arm) can
+    /// use it directly: `self::` is an explicit module path, semantically
+    /// distinct from a bare name, and must never resolve to a same-named
+    /// local/function-scoped shadow the way a bare reference correctly
+    /// does.
+    fn resolve_global_type_symbol(&self, name: &str) -> Option<hir::Res> {
         let qualified = self.module_path.with_segment(name.to_string()).to_key();
-        self.resolve_lexical_type_symbol(name)
-            .or_else(|| self.lookup_symbol(&qualified, &self.global_type_defs))
+        self.lookup_symbol(&qualified, &self.global_type_defs)
             .or_else(|| self.prelude_type_defs.get(name).cloned())
             .or_else(|| self.lookup_symbol(name, &self.global_type_defs))
             // Cross-package export (e.g. `libc::char`), looked up lazily
@@ -1470,6 +1524,11 @@ impl HirGenerator {
             // lives at `core::option::Option` in real std) — fall back
             // to a suffix scan across every package's exports.
             .or_else(|| self.workspace.as_ref()?.find_export_by_name(name))
+    }
+
+    fn resolve_type_symbol(&self, name: &str) -> Option<hir::Res> {
+        self.resolve_lexical_type_symbol(name)
+            .or_else(|| self.resolve_global_type_symbol(name))
     }
 
     fn resolve_value_symbol(&self, name: &str) -> Option<hir::Res> {
@@ -2163,9 +2222,51 @@ impl HirGenerator {
                 Ok(hir::StmtKind::Expr(unit_expr))
             }
             _ => {
-                let hir_item = self.transform_item_to_hir(item.as_ref())?;
+                // `transform_item_to_hir` is shared with real top-level
+                // items, so it unconditionally registers `item`'s name into
+                // the module-qualified global symbol tables
+                // (`register_value_def`/`register_type_def` ->
+                // `record_value_symbol`/`record_type_symbol`) as a side
+                // effect. That's correct for a real module item, but this
+                // call site handles a function-local item statement (e.g.
+                // a `const`/`struct` declared inside a function body) —
+                // such an item is only visible via the enclosing block's
+                // lexical scope (`current_value_scope`/`current_type_scope`,
+                // already pushed/popped per block, and unaffected by this
+                // guard), never via a module-qualified/`self::`-style
+                // lookup. `suppress_global_registration_depth` (see its
+                // doc comment) makes `record_value_symbol`/
+                // `record_type_symbol` skip the global registration while
+                // this item (and anything nested inside its own body) is
+                // being lowered — guarding the whole call, not just this
+                // item's own registration, since the same collision can
+                // recur for any item nested inside its body. Without this,
+                // a function-local item whose name happens to match a real
+                // module-level item (e.g. `core/time.rs`'s module-level
+                // `NANOS_PER_SEC` const and an unrelated function-local
+                // `const NANOS_PER_SEC` shadowing it) clobbers that module
+                // item's global registration *before* the local item's own
+                // body is lowered, so a `self::`-qualified reference in
+                // that very body (meant to reach past its own shadow to
+                // the module item) resolves back to itself — a genuine,
+                // silent self-reference baked directly into the HIR, which
+                // the per-item typecheck task executor then (correctly, if
+                // confusingly) reports as a stalled dependency cycle.
+                self.suppress_global_registration_depth += 1;
+                let hir_item = self.transform_item_to_hir(item.as_ref());
+                self.suppress_global_registration_depth -= 1;
+                let hir_item = hir_item?;
                 self.program_def_map
                     .insert(hir_item.def_id, hir_item.clone());
+                if let Some(ident) = item.as_ref().get_ident() {
+                    let label = format!(
+                        "{}::<local>::{}",
+                        self.module_path.to_key(),
+                        ident.name.as_str()
+                    );
+                    self.local_item_debug_labels
+                        .insert(hir_item.def_id, label);
+                }
                 Ok(hir::StmtKind::Item(hir_item))
             }
         }

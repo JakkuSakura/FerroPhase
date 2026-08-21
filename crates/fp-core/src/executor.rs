@@ -198,6 +198,10 @@ impl ExecutorHandle {
         self.inner.has_parked_tasks()
     }
 
+    pub fn parked_task_keys(&self) -> Vec<String> {
+        self.inner.parked_task_keys()
+    }
+
     pub fn run<F: Future>(&self, future: F) -> F::Output {
         self.inner.run(future)
     }
@@ -346,6 +350,14 @@ impl ExecutorState {
     /// explicitly — callers use this to detect that condition.
     pub(crate) fn has_parked_tasks(&self) -> bool {
         !self.tasks.borrow().is_empty() && self.ready.borrow().is_empty()
+    }
+
+    /// Keys of every task still tracked (i.e. not yet `Ready`) at the
+    /// moment of a stall — for diagnostics only (see `has_parked_tasks`'s
+    /// doc comment on what "parked" means); not meant to be polled in a
+    /// hot loop.
+    pub(crate) fn parked_task_keys(&self) -> Vec<String> {
+        self.tasks.borrow().keys().cloned().collect()
     }
 
     fn run<F: Future>(&self, future: F) -> F::Output {

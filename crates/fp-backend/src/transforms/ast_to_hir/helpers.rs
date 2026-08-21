@@ -180,10 +180,20 @@ impl HirGenerator {
         let mut resolved = None;
 
         if segments.len() == 1 {
-            if path_prefix == PathPrefix::Plain || path_prefix == PathPrefix::SelfMod {
+            if path_prefix == PathPrefix::Plain {
                 resolved = segments.last().and_then(|segment| match scope {
                     PathResolutionScope::Value => self.resolve_value_symbol(&segment.name),
                     PathResolutionScope::Type => self.resolve_type_symbol(&segment.name),
+                });
+            } else if path_prefix == PathPrefix::SelfMod {
+                // `self::` is an explicit module path — unlike a bare
+                // name, it must never resolve to a lexically-scoped local
+                // shadow (e.g. a function-local `const` of the same name
+                // as a module-level item it's initialized from), so this
+                // skips straight to the module-qualified/global tiers.
+                resolved = segments.last().and_then(|segment| match scope {
+                    PathResolutionScope::Value => self.resolve_global_value_symbol(&segment.name),
+                    PathResolutionScope::Type => self.resolve_global_type_symbol(&segment.name),
                 });
             } else if matches!(path_prefix, PathPrefix::Super(_)) {
                 resolved = segments.last().and_then(|segment| match scope {
