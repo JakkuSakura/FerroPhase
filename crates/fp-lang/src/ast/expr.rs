@@ -1158,6 +1158,13 @@ fn parse_call_args(
     }
 
     loop {
+        // A call argument may carry its own attribute (real
+        // `std::thread::current`'s own `get().unwrap_or_else(\n #[cold]
+        // \n || { .. })`) — carries no meaning this checker models for an
+        // arbitrary expression, so it's skipped before parsing the
+        // argument itself, same as attributes are already dropped before
+        // match arms/struct fields/etc.
+        skip_outer_attrs_before_expr(input, file)?;
         let mut probe = *input;
         if let Ok(name) = parse_kwarg_name(&mut probe) {
             if skip_symbol(&mut probe, "=").is_ok() {

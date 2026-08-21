@@ -605,6 +605,9 @@ fn parse_trait_item(
     } else {
         TypeBounds::any()
     };
+    if skip_keyword(input, Keyword::Where).is_ok() {
+        skip_where_clause(input)?;
+    }
     skip_symbol(input, "{")?;
     let mut items = Vec::new();
     while peek_symbol(input) != Some("}") {
@@ -628,6 +631,24 @@ fn parse_trait_member(input: &mut &[Token], file: FileId) -> ModalResult<Item> {
         let name = ident_like(input)?;
         skip_symbol(input, ":")?;
         let ty = parse_type_expr(input)?;
+        // A trait-associated const may carry a default value (real
+        // `core::field`'s own `const OFFSET: usize =
+        // crate::intrinsics::field_offset::<Self>();`), not just the bare
+        // `const NAME: TYPE;` declaration — same shape a trait method
+        // already gets to choose between (declaration vs. default body).
+        if skip_symbol(input, "=").is_ok() {
+            let value = parse_expr_winnow(input, file)?;
+            skip_symbol(input, ";")?;
+            return Ok(Item::from(ItemKind::DefConst(ItemDefConst {
+                attrs,
+                mutable: None,
+                ty_annotation: None,
+                visibility: Visibility::Inherited,
+                name,
+                ty: Some(ty),
+                value: Box::new(value),
+            })));
+        }
         skip_symbol(input, ";")?;
         return Ok(Item::from(ItemKind::DeclConst(ItemDeclConst {
             ty_annotation: None,
