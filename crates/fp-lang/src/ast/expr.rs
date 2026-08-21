@@ -1480,6 +1480,22 @@ fn starts_block_item(input: &[Token]) -> bool {
         {
             true
         }
+        // A local `macro_rules! name { .. }` definition as a
+        // function-local statement (real `core::str::validations`'s own
+        // `while .. { macro_rules! err { .. } .. }`). Deliberately
+        // narrower than "any item-position macro invocation" — an
+        // ordinary macro *call* used as part of a larger expression
+        // (`vec![1, 2, 3].len()`, `some_macro!(x)?`) must still fall
+        // through to expression-statement parsing so its trailing
+        // `.method()`/`?`/etc. aren't left as orphaned tokens.
+        [first, second, ..]
+            if first.kind == TokenKind::Ident
+                && first.lexeme == "macro_rules"
+                && second.kind == TokenKind::Symbol
+                && second.lexeme == "!" =>
+        {
+            true
+        }
         _ => false,
     }
 }

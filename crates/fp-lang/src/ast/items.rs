@@ -1352,6 +1352,14 @@ pub(super) fn parse_extern_block_items(input: &mut &[Token], file: FileId) -> Mo
         ) {
             *input = &input[1..];
         }
+        // `unsafe fn`/`unsafe static` — the other edition-2024 per-item
+        // safety marker inside an `unsafe extern` block (real
+        // `std::sys::time::unix`'s own `unsafe extern "C" { unsafe fn
+        // mach_timebase_info(..) -> ..; }`), the counterpart to `safe`
+        // above. Carries no meaning this checker models beyond "requires
+        // an unsafe block to call" — already true of everything else in
+        // an extern block — so it's dropped the same way.
+        let _ = skip_keyword(input, Keyword::Unsafe);
         if peek_keyword(*input, Keyword::Fn) {
             items.push(parse_abi_fn_item(
                 input,
@@ -1882,7 +1890,7 @@ pub(crate) fn parse_attr_meta_direct(input: &mut &[Token], file: FileId) -> Moda
     Ok(AttrMeta::Path(name))
 }
 
-fn looks_like_item_macro(input: &[Token]) -> bool {
+pub(super) fn looks_like_item_macro(input: &[Token]) -> bool {
     let mut saw_segment = false;
     let mut rest = input;
     while let [first, second, tail @ ..] = rest {
