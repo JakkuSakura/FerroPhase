@@ -1395,20 +1395,28 @@ fn starts_macro_2_def(input: &[Token]) -> bool {
             if first.kind == TokenKind::Ident
                 && first.lexeme == "macro"
                 && matches!(second.kind, TokenKind::Ident | TokenKind::Keyword(_))
-                && third.lexeme == "("
+                && (third.lexeme == "(" || third.lexeme == "{")
     )
 }
 
-/// Every real use of this syntax in vendored std (e.g. `derive(Default)`'s
-/// own definition) is a compiler built-in whose body is just a marker
-/// comment — there's no real expansion to model, so this only consumes
-/// the well-formed `macro Name(params) { body }` shape and drops it,
-/// exactly like a real `macro_rules!` item already gets dropped
-/// downstream (see `ast_to_hir`'s `ItemKind::Macro` handling).
+/// Every real use of the `macro Name(params) { body }` shape in vendored
+/// std (e.g. `derive(Default)`'s own definition) is a compiler built-in
+/// whose body is just a marker comment — no real expansion to model, so
+/// that shape is dropped, exactly like a real `macro_rules!` item
+/// already gets dropped downstream (see `ast_to_hir`'s `ItemKind::Macro`
+/// handling). The bodied `macro Name { rule => expansion; .. }` shape
+/// (no separate params group — real `alloc::vec::into_iter`'s own
+/// `non_null!`) is a genuinely different, functioning macro whose call
+/// sites this compiler still can't expand, but that's an existing,
+/// separate limitation for whatever already fails to resolve a
+/// `macro_rules!` invocation — this only needs to stop that limitation
+/// from *also* taking down the rest of the file's otherwise-valid parse.
 fn parse_macro_2_def(input: &mut &[Token], _attrs: Vec<Attribute>) -> ModalResult<Item> {
     skip_ident(input, "macro")?;
     let name = ident_like(input)?;
-    skip_balanced_delimiters(input, "(", ")")?;
+    if peek_symbol(*input) == Some("(") {
+        skip_balanced_delimiters(input, "(", ")")?;
+    }
     skip_balanced_delimiters(input, "{", "}")?;
     Ok(Item::from(ItemKind::Macro(ItemMacro {
         invocation: MacroInvocation::new(
