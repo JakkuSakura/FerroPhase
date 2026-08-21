@@ -81,6 +81,14 @@ fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
 }
 
 pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
+    // A relaxed bound (`?Sized`) can appear as an operand of a `+`-joined
+    // bound list (`R: Read + ?Sized`), which `parse_type_binary` parses via
+    // ordinary type-expression recursion — so the `?` marker must be
+    // droppable wherever a type is expected, not just at `parse_type_bounds`'
+    // own top level.
+    if skip_symbol(input, "?").is_ok() {
+        return parse_simple_type(input);
+    }
     if peek_symbol(*input) == Some("<") {
         let mut probe = *input;
         if let Ok(ty) = parse_qualified_path_type(&mut probe) {
