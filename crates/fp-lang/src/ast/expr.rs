@@ -1129,6 +1129,24 @@ pub(crate) fn parse_block(input: &mut &[Token], file: FileId) -> ModalResult<Exp
     skip_symbol(input, "{")?;
     let mut stmts = Vec::new();
     while peek_symbol(input) != Some("}") {
+        // An `extern`/`unsafe extern "ABI" { .. }` block (real
+        // `core::panicking`'s local `unsafe extern "Rust" { fn
+        // panic_impl(..) -> !; }`, resolving to the `#[panic_handler]`)
+        // can appear inside a function body, not just at file scope —
+        // same special-case `parse_items_tokens`/`parse_file_tokens`/
+        // `parse_script_tokens` already need, since it expands to
+        // multiple items, not the single `BlockStmt` `parse_block_stmt_
+        // entry`'s signature returns one of.
+        if looks_like_extern_block(input) {
+            let items = parse_extern_block_items(input, file)?;
+            stmts.extend(items.into_iter().map(|item| BlockStmt::Item(Box::new(item))));
+            continue;
+        }
+        if starts_unsafe_extern_block(input) {
+            let items = parse_prefixed_unsafe_extern_block_items(input, file)?;
+            stmts.extend(items.into_iter().map(|item| BlockStmt::Item(Box::new(item))));
+            continue;
+        }
         stmts.push(parse_block_stmt_entry(input, file)?);
     }
     skip_symbol(input, "}")?;

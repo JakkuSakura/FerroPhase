@@ -636,6 +636,16 @@ fn parse_impl_item(input: &mut &[Token], file: FileId, attrs: Vec<Attribute>) ->
     while peek_symbol(input) != Some("}") {
         let member_attrs = parse_outer_attrs(input, file)?;
         let visibility = parse_visibility(input)?;
+        // `default fn`/`default const`/`default type` (specialization) —
+        // `default` isn't a reserved keyword in this lexer (tokenizes as a
+        // plain `Ident`), and carries no meaning this checker models (no
+        // notion of specialization to apply), so just drop it.
+        if matches!(
+            input.first(),
+            Some(token) if token.kind == TokenKind::Ident && token.lexeme == "default"
+        ) {
+            *input = &input[1..];
+        }
         let member = if peek_keyword(*input, Keyword::Type) {
             parse_type_alias_item(input, visibility, member_attrs)?
         } else if peek_keyword(*input, Keyword::Const) && starts_const_fn(*input) {
@@ -1063,7 +1073,7 @@ fn parse_extern_fn_item(
     })))
 }
 
-fn parse_extern_block_items(input: &mut &[Token], file: FileId) -> ModalResult<Vec<Item>> {
+pub(super) fn parse_extern_block_items(input: &mut &[Token], file: FileId) -> ModalResult<Vec<Item>> {
     let abi = parse_extern_abi(input)?;
     skip_symbol(input, "{")?;
     let mut items = Vec::new();
@@ -1091,7 +1101,7 @@ fn parse_unsafe_extern_block_items(input: &mut &[Token], file: FileId) -> ModalR
     parse_extern_block_items(input, file)
 }
 
-fn parse_prefixed_unsafe_extern_block_items(
+pub(super) fn parse_prefixed_unsafe_extern_block_items(
     input: &mut &[Token],
     file: FileId,
 ) -> ModalResult<Vec<Item>> {
