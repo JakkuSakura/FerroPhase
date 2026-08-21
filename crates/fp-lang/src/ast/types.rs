@@ -164,6 +164,19 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         let mut params = Vec::new();
         if peek_symbol(input) != Some(")") {
             loop {
+                // A fn-pointer type's parameter may carry an optional,
+                // purely-documentary name/`_` label before its type (real
+                // `core::io::error`'s own `pub format_os_error: fn(_:
+                // RawOsError, _: &mut fmt::Formatter<'_>, _: &str) ->
+                // fmt::Result`) — unlike an ordinary fn item's parameters,
+                // this label binds nothing (a fn pointer has no body to
+                // reference it in), so it's parsed and dropped.
+                let mut probe = *input;
+                let has_label =
+                    ident_like(&mut probe).is_ok() && skip_symbol(&mut probe, ":").is_ok();
+                if has_label {
+                    *input = probe;
+                }
                 params.push(parse_type_expr(input)?);
                 if skip_symbol(input, ",").is_err() {
                     break;

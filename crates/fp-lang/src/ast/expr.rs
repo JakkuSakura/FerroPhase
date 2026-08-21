@@ -413,7 +413,28 @@ fn parse_prefix(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
         if matches!(op, "!" | "-" | "*" | "&") {
             let op = op.to_string();
             skip_symbol(input, &op)?;
+            // `&raw const expr` / `&raw mut expr` — raw-pointer-producing
+            // address-of syntax. `raw` isn't a lexer keyword (a plain
+            // `Ident`), so it must be checked positionally rather than via
+            // `skip_keyword`. This checker has no separate raw-pointer
+            // reference node, and the existing `*const`/`*mut` coercion
+            // already used at cast/annotation sites accepts an ordinary
+            // reference in its place, so `&raw const`/`&raw mut` lower to
+            // the same `ExprReference` an ordinary `&`/`&mut` would.
+            if op == "&"
+                && matches!(
+                    input.first(),
+                    Some(token) if token.kind == TokenKind::Ident && token.lexeme == "raw"
+                )
+                && matches!(
+                    input.get(1).map(|t| &t.kind),
+                    Some(TokenKind::Keyword(Keyword::Const | Keyword::Mut))
+                )
+            {
+                *input = &input[1..]; // `raw`
+            }
             let is_mut_ref = op == "&" && skip_keyword(input, Keyword::Mut).is_ok();
+            let _ = op == "&" && skip_keyword(input, Keyword::Const).is_ok();
             let value = parse_prefix(input, file)?;
             if op == "&" {
                 return Ok(ExprKind::Reference(ExprReference {
@@ -514,7 +535,20 @@ fn parse_prefix_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Exp
         if matches!(op, "!" | "-" | "*" | "&") {
             let op = op.to_string();
             skip_symbol(input, &op)?;
+            if op == "&"
+                && matches!(
+                    input.first(),
+                    Some(token) if token.kind == TokenKind::Ident && token.lexeme == "raw"
+                )
+                && matches!(
+                    input.get(1).map(|t| &t.kind),
+                    Some(TokenKind::Keyword(Keyword::Const | Keyword::Mut))
+                )
+            {
+                *input = &input[1..]; // `raw`
+            }
             let is_mut_ref = op == "&" && skip_keyword(input, Keyword::Mut).is_ok();
+            let _ = op == "&" && skip_keyword(input, Keyword::Const).is_ok();
             let value = parse_prefix_no_struct(input, file)?;
             if op == "&" {
                 return Ok(ExprKind::Reference(ExprReference {
@@ -1390,6 +1424,19 @@ fn expr_can_omit_semicolon_in_block(expr: &Expr) -> bool {
 fn starts_block_item(input: &[Token]) -> bool {
     match input {
         [first, ..] if first.lexeme == "#" => true,
+        // `unsafe fn`/`unsafe extern "ABI" fn`/`unsafe impl` as a
+        // function-local item statement (real
+        // `std::sys::fs::windows::copy`'s own local `unsafe extern "system"
+        // fn callback(..) { .. }`) — distinguished from an `unsafe { .. }`
+        // *expression* (a normal statement, not a local item) by whether
+        // the modifier run actually leads to `fn`/`impl`.
+        [first, ..]
+            if first.kind == TokenKind::Keyword(Keyword::Unsafe)
+                && (super::skips_modifiers_to_fn(input)
+                    || crate::ast::items::starts_unsafe_impl(input)) =>
+        {
+            true
+        }
         [first, second, ..] if first.kind == TokenKind::Keyword(Keyword::Const) => {
             matches!(second.kind, TokenKind::Ident | TokenKind::Keyword(_))
         }
@@ -1403,6 +1450,7 @@ fn starts_block_item(input: &[Token]) -> bool {
                         | Keyword::Static
                         | Keyword::Type
                         | Keyword::Struct
+                        | Keyword::Union
                         | Keyword::Enum
                         | Keyword::Mod
                         | Keyword::Trait

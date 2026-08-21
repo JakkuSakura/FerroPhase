@@ -169,6 +169,7 @@ pub(crate) fn parse_item_winnow(input: &mut &[Token], file: FileId) -> ModalResu
         }
         Some(TokenKind::Keyword(Keyword::Type)) => parse_type_alias_item(input, visibility, attrs),
         Some(TokenKind::Keyword(Keyword::Struct)) => parse_struct_item(input, visibility, attrs),
+        Some(TokenKind::Keyword(Keyword::Union)) => parse_union_item(input, visibility, attrs),
         Some(TokenKind::Keyword(Keyword::Enum)) => parse_enum_item(input, file, visibility, attrs),
         Some(TokenKind::Keyword(Keyword::Mod)) => parse_mod_item(input, file, visibility, attrs),
         Some(TokenKind::Keyword(Keyword::Opaque)) => {
@@ -349,6 +350,51 @@ fn parse_struct_item(
                 .into(),
             );
         }
+        fields.push(StructuralField::new(field_name, value));
+        if skip_symbol(input, ",").is_err() {
+            break;
+        }
+    }
+    skip_symbol(input, "}")?;
+    Ok(Item::from(ItemKind::DefStruct(ItemDefStruct {
+        attrs,
+        visibility,
+        name: name.clone(),
+        value: TypeStruct {
+            name,
+            generics_params,
+            repr: ReprOptions::default(),
+            fields,
+        },
+    })))
+}
+
+/// `union Name { fields }` — this checker models no distinction between a
+/// tagged union's "only one field active at a time" storage layout and an
+/// ordinary struct's "all fields present" layout (there's no notion of
+/// reading an inactive field being unsound, since nothing here ever reads
+/// through raw union field access outside `unsafe` blocks this checker
+/// already treats as opaque), so a union is parsed exactly like a
+/// brace-bodied struct and represented as one.
+fn parse_union_item(
+    input: &mut &[Token],
+    visibility: Visibility,
+    attrs: Vec<Attribute>,
+) -> ModalResult<Item> {
+    skip_keyword(input, Keyword::Union)?;
+    let name = ident_like(input)?;
+    let generics_params = parse_optional_generic_params(input)?;
+    if skip_keyword(input, Keyword::Where).is_ok() {
+        skip_where_clause(input)?;
+    }
+    let mut fields = Vec::new();
+    skip_symbol(input, "{")?;
+    while peek_symbol(input) != Some("}") {
+        skip_outer_attrs_for_field(input)?;
+        let _field_visibility = parse_visibility(input)?;
+        let field_name = ident_like(input)?;
+        skip_symbol(input, ":")?;
+        let value = parse_type_expr(input)?;
         fields.push(StructuralField::new(field_name, value));
         if skip_symbol(input, ",").is_err() {
             break;
@@ -984,7 +1030,7 @@ fn starts_unsafe_fn(input: &[Token]) -> bool {
     ) && super::skips_modifiers_to_fn(input)
 }
 
-fn starts_unsafe_impl(input: &[Token]) -> bool {
+pub(super) fn starts_unsafe_impl(input: &[Token]) -> bool {
     matches!(
         input,
         [first, second, ..]
@@ -1166,6 +1212,16 @@ pub(super) fn parse_extern_block_items(input: &mut &[Token], file: FileId) -> Mo
     while peek_symbol(input) != Some("}") {
         let attrs = parse_outer_attrs(input, file)?;
         let visibility = parse_visibility(input)?;
+        // `safe fn`/`safe static` — edition-2024 `unsafe extern` blocks may
+        // mark individual items callable without an `unsafe` block. `safe`
+        // isn't a lexer keyword (a plain `Ident`), and carries no meaning
+        // this checker models beyond "callable normally", so just drop it.
+        if matches!(
+            input.first(),
+            Some(token) if token.kind == TokenKind::Ident && token.lexeme == "safe"
+        ) {
+            *input = &input[1..];
+        }
         if peek_keyword(*input, Keyword::Fn) {
             items.push(parse_abi_fn_item(
                 input,
@@ -1277,6 +1333,9 @@ fn parse_enum_item(
     skip_keyword(input, Keyword::Enum)?;
     let name = ident_like(input)?;
     let generics_params = parse_optional_generic_params(input)?;
+    if skip_keyword(input, Keyword::Where).is_ok() {
+        skip_where_clause(input)?;
+    }
     skip_symbol(input, "{")?;
     let mut variants = Vec::new();
     while peek_symbol(input) != Some("}") {
