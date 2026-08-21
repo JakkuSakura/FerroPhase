@@ -544,8 +544,51 @@ fn skip_symbol(input: &mut &[Token], expected: &str) -> ModalResult<()> {
 /// mismatch (the common `skip_symbol(input, "x").is_ok()` idiom, spelled
 /// out as its own named primitive instead of repeated inline). Mirrors
 /// `rustc_parse`'s own `Parser::eat` (bump-if-present, no error path).
+///
+/// For `expected == "<"` specifically, this also glues apart a `<<`
+/// token when the single `<` alone doesn't match — real generic-argument
+/// position routinely nests two openers back to back (e.g. `Option<<I
+/// as Iterator>::Item>`), which the tokenizer has no way to tell apart
+/// from a real `<<` shift-left operator at lex time (unlike `>>`, which
+/// it already splits based on bracket-nesting depth, `<` nesting isn't
+/// known until the *second* `<` is reached). Splitting only on demand,
+/// only for this one caller-selected symbol, means shift-left itself
+/// (looked up as a single `<<` token) is never affected.
 pub(super) fn try_eat_symbol(input: &mut &[Token], expected: &str) -> bool {
-    skip_symbol(input, expected).is_ok()
+    if skip_symbol(input, expected).is_ok() {
+        return true;
+    }
+    if expected == "<" {
+        return try_split_leading_double_angle(input);
+    }
+    false
+}
+
+/// See `try_eat_symbol`'s doc comment. Consumes a leading `<<` token and
+/// replaces `*input` with a synthetic single `<` (covering the token's
+/// second character) followed by the rest of the original stream —
+/// leaked as `'static` since this compiler processes one input per
+/// process and never accumulates these across a long-running session.
+fn try_split_leading_double_angle(input: &mut &[Token]) -> bool {
+    let Some((first, rest)) = input.split_first() else {
+        return false;
+    };
+    if first.kind != TokenKind::Symbol || first.lexeme != "<<" {
+        return false;
+    }
+    let synthetic = Token {
+        kind: TokenKind::Symbol,
+        lexeme: "<".to_string(),
+        span: crate::lexer::tokenizer::Span {
+            start: first.span.start + 1,
+            end: first.span.end,
+        },
+    };
+    let combined: Vec<Token> = std::iter::once(synthetic)
+        .chain(rest.iter().cloned())
+        .collect();
+    *input = Box::leak(combined.into_boxed_slice());
+    true
 }
 
 fn ident_like(input: &mut &[Token]) -> ModalResult<Ident> {

@@ -47,6 +47,18 @@ fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
         return Ok(ty);
     };
     let name = match expr.kind() {
+        // A single-segment path (e.g. plain `I`) collapses to `Name::
+        // Ident` at construction time (see `Name::path`'s own doc
+        // comment) rather than staying a one-element `Name::Path` — the
+        // common case for a disambiguated type in a qualified path
+        // (`<I as Iterator>::Item`), so this needs its own arm rather
+        // than falling through to the catch-all below.
+        ExprKind::Name(Name::Ident(ident)) => Name::parameter_path(ParameterPath::new(
+            PathPrefix::Plain,
+            std::iter::once(ParameterPathSegment::new(ident.clone(), Vec::new()))
+                .chain(extra_segments)
+                .collect(),
+        )),
         ExprKind::Name(Name::Path(path)) => Name::parameter_path(ParameterPath::new(
             path.prefix,
             path.segments
@@ -605,7 +617,7 @@ fn type_binary_op(symbol: &str) -> Option<(u8, TypeBinaryOpKind)> {
 
 pub(crate) fn parse_optional_type_args(input: &mut &[Token]) -> ModalResult<Vec<Ty>> {
     let mut probe = *input;
-    if skip_symbol(&mut probe, "<").is_err() {
+    if !try_eat_symbol(&mut probe, "<") {
         return Ok(Vec::new());
     }
     let mut args = Vec::new();
@@ -800,7 +812,7 @@ pub(crate) fn parse_optional_generic_params(
     input: &mut &[Token],
 ) -> ModalResult<Vec<fp_core::ast::GenericParam>> {
     let mut probe = *input;
-    if skip_symbol(&mut probe, "<").is_err() {
+    if !try_eat_symbol(&mut probe, "<") {
         return Ok(Vec::new());
     }
     let mut params = Vec::new();
