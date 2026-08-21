@@ -52,6 +52,30 @@ where
     Arc::new(f)
 }
 
+/// Appends `ext` to `path` only if `path` has no extension already — fp-cli
+/// hands every target a path resolved from pure user intent (verbatim if
+/// `-o` was explicit, otherwise a bare stem), so each target's own factory
+/// closure calls this with its own default before constructing its backend,
+/// rather than fp-cli guessing a target's extension by name up front.
+fn fill_missing_extension(path: &std::path::Path, ext: &str) -> std::path::PathBuf {
+    if path.extension().is_some() {
+        path.to_path_buf()
+    } else {
+        path.with_extension(ext)
+    }
+}
+
+/// `true` when `target_triple` (or, absent one, the host) is Windows —
+/// needed by every target whose default extension differs between a
+/// Windows PE (`.exe`) and everything else (`.out`).
+fn is_windows_target(target_triple: Option<&str>) -> bool {
+    let triple = match target_triple {
+        Some(triple) => triple,
+        None => return cfg!(target_os = "windows"),
+    };
+    triple.contains("windows") || triple.contains("msvc") || triple.contains("mingw")
+}
+
 /// Registers a target-backend factory so `--target <name>` resolves to
 /// it. Expected to be called by the embedding binary's `main()` before it
 /// calls `commands::compile::compile_command`.
@@ -112,7 +136,26 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
     entries.push((
         "native",
         factory(|config: BackendConfig| {
-            let output = config.workspace_root.clone();
+            // Own default: assembly text when asked to emit text, an
+            // executable (`.exe` on Windows, `.out` elsewhere) when linking
+            // was requested, otherwise a relocatable object — losing, versus
+            // the object-vs-archive distinction fp-cli used to make by
+            // sniffing the *input*'s container kind, only for the rare case
+            // of an unlinked native re-emission with no explicit `-o<ext>`
+            // (both now default to `.o`); every explicit `-o` is untouched
+            // regardless.
+            let default_ext = if config.emit_text {
+                "s"
+            } else if config.link_requested {
+                if is_windows_target(config.target_triple.as_deref()) {
+                    "exe"
+                } else {
+                    crate::languages::backend::DEFAULT_TARGET_OUTPUT_EXTENSION
+                }
+            } else {
+                "o"
+            };
+            let output = fill_missing_extension(&config.workspace_root, default_ext);
             let native_target = match config.native_target.as_deref() {
                 Some(value) => Some(
                     fp_native::config::NativeTarget::resolve(value, config.target_triple.as_deref())
@@ -146,7 +189,7 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
     entries.push((
         "goasm",
         factory(|config: BackendConfig| {
-            let output = config.workspace_root.clone();
+            let output = fill_missing_extension(&config.workspace_root, "s");
             let target = Some(fp_goasm::config::GoAsmTarget::resolve(
                 config.target_triple.as_deref(),
             ));
@@ -160,7 +203,7 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
     entries.push((
         "urcl",
         factory(|config: BackendConfig| {
-            let output = config.workspace_root.clone();
+            let output = fill_missing_extension(&config.workspace_root, "urcl");
             Ok(
                 Box::new(fp_urcl::UrclEmitter::new(fp_urcl::UrclConfig::new(&output)))
                     as Box<dyn TargetBackend>,
@@ -182,7 +225,12 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
         factory(|config: BackendConfig| {
             #[cfg(feature = "cranelift")]
             {
-                let output = config.workspace_root.clone();
+                let default_ext = if is_windows_target(config.target_triple.as_deref()) {
+                    "exe"
+                } else {
+                    crate::languages::backend::DEFAULT_TARGET_OUTPUT_EXTENSION
+                };
+                let output = fill_missing_extension(&config.workspace_root, default_ext);
                 Ok(Box::new(fp_cranelift::CraneliftBackend {
                     output,
                     target_triple: config.target_triple.clone(),
@@ -210,7 +258,7 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
         "bytecode",
         factory(|config: BackendConfig| {
             Ok(Box::new(fp_stackvm_bytecode::BytecodeBackend {
-                output: config.workspace_root.clone(),
+                output: fill_missing_extension(&config.workspace_root, "fbc"),
                 emit_text: false,
                 save_intermediates: config.save_intermediates,
             }) as Box<dyn TargetBackend>)
@@ -220,7 +268,7 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
         "text-bytecode",
         factory(|config: BackendConfig| {
             Ok(Box::new(fp_stackvm_bytecode::BytecodeBackend {
-                output: config.workspace_root.clone(),
+                output: fill_missing_extension(&config.workspace_root, "ftbc"),
                 // `emit_text` only forces text mode for the explicit
                 // "text-bytecode" target name — `compile_package`'s own
                 // `wants_text` already falls back to sniffing `.ftbc` off
@@ -235,7 +283,7 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
         "jvm-bytecode",
         factory(|config: BackendConfig| {
             Ok(Box::new(fp_jvm::JvmBackend {
-                output: config.workspace_root.clone(),
+                output: fill_missing_extension(&config.workspace_root, "class"),
                 save_intermediates: config.save_intermediates,
             }) as Box<dyn TargetBackend>)
         }),
@@ -245,7 +293,7 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
         "wasm",
         factory(|config: BackendConfig| {
             Ok(Box::new(fp_wasm::WasmBackend {
-                output: config.workspace_root.clone(),
+                output: fill_missing_extension(&config.workspace_root, "wasm"),
             }) as Box<dyn TargetBackend>)
         }),
     ));
@@ -253,8 +301,9 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
     entries.push((
         "ebpf",
         factory(|config: BackendConfig| {
+            let default_ext = if config.exec_requested { "o" } else { "ebpf" };
             Ok(Box::new(fp_ebpf::EbpfBackend {
-                output: config.workspace_root.clone(),
+                output: fill_missing_extension(&config.workspace_root, default_ext),
             }) as Box<dyn TargetBackend>)
         }),
     ));
@@ -263,7 +312,7 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
         "cil",
         factory(|config: BackendConfig| {
             Ok(Box::new(fp_dotnet::CilBackend {
-                output: config.workspace_root.clone(),
+                output: fill_missing_extension(&config.workspace_root, "il"),
             }) as Box<dyn TargetBackend>)
         }),
     ));
@@ -272,7 +321,7 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
         "dotnet",
         factory(|config: BackendConfig| {
             Ok(Box::new(fp_dotnet::DotnetBackend {
-                output: config.workspace_root.clone(),
+                output: fill_missing_extension(&config.workspace_root, "exe"),
                 save_intermediates: config.save_intermediates,
             }) as Box<dyn TargetBackend>)
         }),
@@ -461,8 +510,15 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
 fn llvm_backend(config: BackendConfig, text_only: bool) -> Result<Box<dyn TargetBackend>> {
     #[cfg(feature = "llvm")]
     {
+        let default_ext = if text_only {
+            "ll"
+        } else if is_windows_target(config.target_triple.as_deref()) {
+            "exe"
+        } else {
+            crate::languages::backend::DEFAULT_TARGET_OUTPUT_EXTENSION
+        };
         Ok(Box::new(fp_llvm::LlvmBackend {
-            output: config.workspace_root.clone(),
+            output: fill_missing_extension(&config.workspace_root, default_ext),
             target_triple: config.target_triple.clone(),
             target_cpu: config.target_cpu.clone(),
             target_features: config.target_features.clone(),

@@ -60,6 +60,11 @@ pub struct BackendConfig {
     /// compile foo.s`) and wasn't asked to `--link`/`--exec`; `false` for
     /// every ordinary source compile.
     pub emit_text: bool,
+    /// Whether `--exec` was requested — only meaningful to a backend whose
+    /// default output shape differs between "write an artifact" and "write
+    /// something immediately runnable" (e.g. eBPF's `.o` vs `.ebpf`);
+    /// `false` for every backend that doesn't care.
+    pub exec_requested: bool,
 }
 
 impl BackendConfig {
@@ -81,6 +86,7 @@ impl BackendConfig {
             root_name: "workspace".to_string(),
             link_requested: true,
             emit_text: false,
+            exec_requested: false,
         }
     }
 
@@ -156,6 +162,11 @@ impl BackendConfig {
 
     pub fn with_emit_text(mut self, emit_text: bool) -> Self {
         self.emit_text = emit_text;
+        self
+    }
+
+    pub fn with_exec_requested(mut self, exec_requested: bool) -> Self {
+        self.exec_requested = exec_requested;
         self
     }
 }

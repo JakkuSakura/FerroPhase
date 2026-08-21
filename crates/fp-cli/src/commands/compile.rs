@@ -145,14 +145,6 @@ pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()
 async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let progress = setup_progress_bar(1);
 
-    // `--exec` implies "link/emit as a runnable artifact" (`link_requested`)
-    // regardless of whether it can actually run on this host — a
-    // cross-target-triple `--exec` build still wants the fully-linked
-    // artifact (e.g. a Windows PE with its import table), just not to
-    // actually be executed here. Whether it's *run* is gated separately by
-    // a target-triple/host match, below.
-    let link_requested = args.link || args.exec;
-
     // A target-triple/host mismatch silently drops running the artifact
     // (with a warning) rather than failing the whole compile — the
     // compile itself is still valid cross-compile output, just not
@@ -184,7 +176,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let input_class =
         container_registry.classify_input(input_file, args.source_language.as_deref());
 
-    let output_file = determine_output_path(input_file, &args, input_class, link_requested)?;
+    let output_file = determine_output_path(input_file, &args)?;
 
     compile_file(input_file, &output_file, &args, config, input_class, exec).await?;
     progress.inc(1);
@@ -343,7 +335,8 @@ async fn run_named_target(
         .with_single_world(args.single_world)
         .with_root_name(root_name.clone())
         .with_link_requested(link_requested)
-        .with_emit_text(emit_text);
+        .with_emit_text(emit_text)
+        .with_exec_requested(args.exec);
     let backend = backend_for_target(target_name, backend_config)?;
 
     run_compile_pipeline(
@@ -517,139 +510,35 @@ fn validate_inputs(args: &CompileArgs) -> Result<()> {
     Ok(())
 }
 
-/// True when `target` should write to (or derive a name from) `output`/
-/// `input` as-is, rather than applying the normal extension defaulting
-/// below — i.e. every raw/foreign-artifact re-emission case a codegen
-/// target must preserve verbatim (goasm/urcl always; `native` only when
-/// re-emitting a foreign container input, since a fresh source compile
-/// still wants the normal `.out`/`.exe` default).
-fn is_raw_binary_passthrough(target: &str, input_class: crate::container::InputClass) -> bool {
-    match target {
-        "goasm" | "urcl" => true,
-        "native" => !matches!(input_class, crate::container::InputClass::Source),
-        _ => false,
+/// Resolves `-o`'s effective path from pure user intent — no target
+/// knowledge, no extension guessing. What extension (if any) gets filled in
+/// when one's missing is each target's own concern, decided by its own
+/// factory closure in `crate::languages::backend_registry::builtin_target_backends`
+/// once it has the resolved `BackendConfig`, not something fp-cli decides
+/// by matching on the target's name up front.
+fn determine_output_path(input: &Path, args: &CompileArgs) -> Result<PathBuf> {
+    if args.target == "interpret" && args.output.is_none() {
+        return Err(CliError::InvalidInput(
+            "the \"interpret\" target does not write an output file; pass --exec instead".to_string(),
+        ));
     }
-}
-
-/// The default filename extension for `target`'s output, given which
-/// raw/foreign artifact `input` classified as (if any, `native` only).
-/// `native_link_requested` only matters for object/archive container
-/// inputs re-emitted as native — deriving a bare `input.<ext>` path (no
-/// `--output` given) always uses the unlinked extension regardless of
-/// `--link`/`--exec` (pass `false`), while writing under an explicit
-/// output *directory* respects it.
-fn output_extension_for(
-    target: &str,
-    input_class: crate::container::InputClass,
-    target_triple: Option<&str>,
-    emit_text_bytecode: bool,
-    native_link_requested: bool,
-    exec_requested: bool,
-) -> &'static str {
-    use crate::container::{ContainerInputKind, InputClass};
-    match target {
-        "goasm" => "s",
-        "urcl" => "urcl",
-        "native" => match input_class {
-            InputClass::NativeAsm(_) => "s",
-            InputClass::Container(ContainerInputKind::NativeObject) => {
-                if native_link_requested { "out" } else { "o" }
-            }
-            InputClass::Container(ContainerInputKind::NativeArchive) => {
-                if native_link_requested { "out" } else { "a" }
-            }
-            InputClass::Container(
-                ContainerInputKind::Urcl
-                | ContainerInputKind::GoAsm
-                | ContainerInputKind::Cil
-                | ContainerInputKind::JvmBytecode,
-            ) => "o",
-            InputClass::Source => {
-                if is_windows_target(target_triple) { "exe" } else { "out" }
-            }
-        },
-        "llvm-binary" | "cranelift" => {
-            if is_windows_target(target_triple) { "exe" } else { "out" }
-        }
-        "llvm-text" => "ll",
-        "ebpf" => {
-            if exec_requested { "o" } else { "ebpf" }
-        }
-        "cil" => "il",
-        "dotnet" => "exe",
-        "rust" | "rs" => "rs",
-        "wasm" => "wasm",
-        "bytecode" | "text-bytecode" => {
-            if emit_text_bytecode { "ftbc" } else { "fbc" }
-        }
-        "jvm-bytecode" => "class",
-        "interpret" => "out",
-        _ => crate::languages::backend::DEFAULT_TARGET_OUTPUT_EXTENSION,
-    }
-}
-
-/// Derives `-o`'s effective path from `args` and `input`'s classification —
-/// takes `args` itself rather than each of its fields spelled out
-/// positionally, since every value this needs (`target`, `target_triple`,
-/// `link`, `exec`) is already sitting on it; only `input_class` (computed
-/// once by the caller from `input`'s bytes, not re-detected here) and
-/// `link_requested` (`args.link || args.exec`, already resolved by the
-/// caller so it isn't recomputed at every call site) come in separately.
-fn determine_output_path(
-    input: &Path,
-    args: &CompileArgs,
-    input_class: crate::container::InputClass,
-    link_requested: bool,
-) -> Result<PathBuf> {
-    let target = args.target.as_str();
-    let extension = output_extension_for(
-        target,
-        input_class,
-        args.target_triple.as_deref(),
-        target == "text-bytecode",
-        link_requested,
-        args.exec,
-    );
 
     let Some(output) = args.output.as_ref() else {
-        if target == "interpret" {
-            return Err(CliError::InvalidInput(
-                "Unknown target for output extension: interpret".to_string(),
-            ));
-        }
-        return Ok(input.with_extension(extension));
+        // No `--output`: a bare stem next to the input, extension-less —
+        // the backend appends its own default.
+        return Ok(input.with_extension(""));
     };
 
     if output.is_dir() {
         let stem = input
             .file_stem()
-            .and_then(|s| s.to_str())
             .ok_or_else(|| CliError::InvalidInput("Invalid input filename".to_string()))?;
-        let mut path = output.join(stem);
-        path.set_extension(extension);
-        return Ok(path);
+        return Ok(output.join(stem));
     }
 
-    if is_raw_binary_passthrough(target, input_class) {
-        return Ok(output.clone());
-    }
-
-    // Respect explicit `-o <path>.<ext>` even when the extension differs
-    // from the target's default. Only fill the extension when the user
-    // did not provide one.
-    let mut path = output.clone();
-    if path.extension().is_none() {
-        path.set_extension(extension);
-    }
-    Ok(path)
-}
-
-fn is_windows_target(target_triple: Option<&str>) -> bool {
-    let triple = match target_triple {
-        Some(triple) => triple,
-        None => return cfg!(target_os = "windows"),
-    };
-    triple.contains("windows") || triple.contains("msvc") || triple.contains("mingw")
+    // An explicit `-o <path>` (with or without an extension) is always used
+    // exactly as given.
+    Ok(output.clone())
 }
 
 // Progress bar helper moved to commands::common
