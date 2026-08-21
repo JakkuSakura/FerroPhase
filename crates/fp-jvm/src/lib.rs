@@ -18,7 +18,6 @@ pub use parse::parse_class_to_lir;
 /// helpers used, just without re-driving a second compile.
 pub struct JvmBackend {
     pub output: std::path::PathBuf,
-    pub class_name_hint: Option<String>,
     pub save_intermediates: bool,
 }
 
@@ -35,7 +34,7 @@ impl fp_core::backend::TargetBackend for JvmBackend {
             fp_core::error::Error::from(format!("package `{package_id}` has no MIR program"))
         })?;
 
-        let class_stem = self.class_name_hint.as_deref().unwrap_or("Main");
+        let class_stem = package_id.as_str();
         let jvm_options = JvmBackendOptions {
             class_name: derive_class_name(class_stem),
             emit_java_entrypoint: true,

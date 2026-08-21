@@ -533,7 +533,7 @@ async fn run_named_target(
         .collect::<Result<Vec<_>>>()?;
 
     let backend_config = fp_core::backend::BackendConfig::new(output.to_path_buf());
-    let backend = resolve_target_backend(target_name, input, args, backend_config, root_name)?;
+    let backend = resolve_target_backend(target_name, args, backend_config, root_name)?;
 
     // Phase 2: serialize + write every package now that the workspace-wide
     // mutability set (and any other cross-package info) is complete.
@@ -613,12 +613,11 @@ async fn run_named_target(
 /// side will answer.
 fn resolve_target_backend(
     name: &str,
-    input: &Path,
     args: &CompileArgs,
     config: fp_core::backend::BackendConfig,
     root_name: String,
 ) -> Result<Box<dyn fp_core::backend::TargetBackend>> {
-    if let Some(result) = backend_for_target(name, input, args, config, root_name) {
+    if let Some(result) = backend_for_target(name, args, config, root_name) {
         return result;
     }
     crate::languages::registry::find_registered_target_backend(name)
@@ -661,17 +660,11 @@ fn disabled_feature_error(feature: &str, what: &str) -> CliError {
 #[allow(unused_variables)]
 fn backend_for_target(
     name: &str,
-    input: &Path,
     args: &CompileArgs,
     config: fp_core::backend::BackendConfig,
     root_name: String,
 ) -> Option<Result<Box<dyn fp_core::backend::TargetBackend>>> {
     let output = config.workspace_root.clone();
-    let module_name = input
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("main")
-        .to_string();
     Some(match name.to_lowercase().as_str() {
         "native" => {
             let native_target = match args.native_target.as_deref() {
@@ -730,7 +723,6 @@ fn backend_for_target(
                     target_linker: args.target_linker.clone(),
                     release: args.release,
                     debug_info: args.debug,
-                    module_name: module_name.clone(),
                     save_intermediates: args.save_intermediates,
                     text_only: name.eq_ignore_ascii_case("llvm-text"),
                 }))
@@ -773,7 +765,6 @@ fn backend_for_target(
         })),
         "jvm-bytecode" => Ok(Box::new(fp_jvm::JvmBackend {
             output: output.clone(),
-            class_name_hint: Some(module_name.clone()),
             save_intermediates: args.save_intermediates,
         })),
         "wasm" => Ok(Box::new(fp_wasm::WasmBackend {

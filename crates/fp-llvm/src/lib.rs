@@ -302,7 +302,6 @@ pub struct LlvmBackend {
     pub target_linker: Option<PathBuf>,
     pub release: bool,
     pub debug_info: bool,
-    pub module_name: String,
     pub save_intermediates: bool,
     /// `llvm-text`: always stop after writing the `.ll` file, never link.
     pub text_only: bool,
@@ -346,7 +345,7 @@ impl fp_core::backend::TargetBackend for LlvmBackend {
             .with_target(target)
             .with_linker(linker)
             .with_debug_info(self.debug_info)
-            .with_module_name(self.module_name.clone());
+            .with_module_name(package_id.as_str());
 
         let compiler = LlvmCompiler::new(config);
         let (_ir_path, ir_text) = compiler
