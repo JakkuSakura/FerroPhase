@@ -13,7 +13,6 @@ fn base_args(
 ) -> CompileArgs {
     CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input],
         backend: BackendKind::Binary,
         target: None,
@@ -34,8 +33,6 @@ fn base_args(
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 10,
         source_language: None,
         disable_stage: Vec::new(),
         type_defs: false,
@@ -193,7 +190,6 @@ async fn compile_native_asm_reemits_same_isa_text() {
 
     let args = CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -214,8 +210,6 @@ async fn compile_native_asm_reemits_same_isa_text() {
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
         type_defs: false,
@@ -243,7 +237,6 @@ async fn compile_native_asm_transpiles_triplet_architecture() {
 
     let args = CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -264,8 +257,6 @@ async fn compile_native_asm_transpiles_triplet_architecture() {
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
         type_defs: false,
@@ -295,7 +286,6 @@ async fn compile_native_asm_transpiles_memory_load() {
 
     let args = CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -316,8 +306,6 @@ async fn compile_native_asm_transpiles_memory_load() {
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
         type_defs: false,
@@ -345,7 +333,6 @@ async fn compile_native_asm_transpiles_memory_store() {
 
     let args = CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -366,8 +353,6 @@ async fn compile_native_asm_transpiles_memory_store() {
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
         type_defs: false,
@@ -396,7 +381,6 @@ async fn compile_native_asm_transpiles_indirect_register_call() {
 
     let args = CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -417,8 +401,6 @@ async fn compile_native_asm_transpiles_indirect_register_call() {
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
         type_defs: false,
@@ -445,7 +427,6 @@ async fn compile_native_asm_transpiles_compare_branch() {
 
     let args = CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -466,8 +447,6 @@ async fn compile_native_asm_transpiles_compare_branch() {
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
         type_defs: false,
@@ -495,7 +474,6 @@ async fn compile_native_asm_reemits_same_isa_physical_operands() {
 
     let args = CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -516,8 +494,6 @@ async fn compile_native_asm_reemits_same_isa_physical_operands() {
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
         type_defs: false,
@@ -545,7 +521,6 @@ async fn compile_native_asm_translates_x86_physical_registers_to_aarch64() {
 
     let args = CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -566,8 +541,6 @@ async fn compile_native_asm_translates_x86_physical_registers_to_aarch64() {
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
         type_defs: false,
@@ -596,7 +569,6 @@ async fn compile_native_asm_translates_aarch64_physical_registers_to_x86() {
 
     let args = CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -617,8 +589,6 @@ async fn compile_native_asm_translates_aarch64_physical_registers_to_x86() {
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 10,
         source_language: Some("aarch64-asm".to_string()),
         disable_stage: Vec::new(),
         type_defs: false,
@@ -647,7 +617,6 @@ async fn compile_native_asm_translates_indexed_x86_address_to_aarch64() {
 
     let args = CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -668,8 +637,6 @@ async fn compile_native_asm_translates_indexed_x86_address_to_aarch64() {
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 10,
         source_language: Some("x86_64-asm".to_string()),
         disable_stage: Vec::new(),
         type_defs: false,
@@ -697,7 +664,6 @@ async fn compile_native_asm_translates_indexed_aarch64_address_to_x86() {
 
     let args = CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Binary,
         target: None,
@@ -718,8 +684,6 @@ async fn compile_native_asm_translates_indexed_aarch64_address_to_x86() {
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 10,
         source_language: Some("aarch64-asm".to_string()),
         disable_stage: Vec::new(),
         type_defs: false,

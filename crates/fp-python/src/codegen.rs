@@ -48,6 +48,38 @@ impl PythonSerializer {
     }
 }
 
+pub struct PythonBackend {
+    config: fp_core::backend::BackendConfig,
+}
+
+impl PythonBackend {
+    pub fn new(config: fp_core::backend::BackendConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl fp_core::backend::TargetBackend for PythonBackend {
+    fn compile_package(
+        &self,
+        workspace: &fp_core::workspace::WorkspaceContext,
+        package_id: &fp_core::package::PackageId,
+    ) -> Result<()> {
+        let package = workspace.package_source(package_id)?;
+        let package = &package;
+        let files = PythonSerializer.serialize_package(package)?;
+        let writer = fp_core::backend::PackageWriter::new(self.config.workspace_root.join(&package.name));
+        for (rel_path, code) in files {
+            let rel = if rel_path.contains('.') {
+                rel_path
+            } else {
+                format!("{rel_path}.py")
+            };
+            writer.write_file(&rel, code)?;
+        }
+        Ok(())
+    }
+}
+
 struct PythonEmitter {
     code: String,
     indent: usize,

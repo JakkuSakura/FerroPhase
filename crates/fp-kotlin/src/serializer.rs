@@ -15,6 +15,7 @@ use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::intrinsics::calls::{CallKind, KnownClass, KnownPackage};
 use fp_core::package::{PackageItem, PackageSource};
 use fp_core::diagnostics::report_warning_with_context;
+use fp_core::backend::{BackendConfig, PackageWriter, TargetBackend};
 use fp_core::writer::{IndentStyle, StyledWriter, WriterConfig};
 use eyre::{bail, Result};
 
@@ -318,6 +319,94 @@ impl KotlinSerializer {
             files.push((out_path, code));
         }
         Ok(files)
+    }
+}
+
+/// `TargetBackend` wrapper around [`KotlinSerializer`]. Kotlin needs
+/// workspace-wide context (`KotlinWorkspaceContext`, `workspace_packages`)
+/// beyond what `BackendConfig` carries, so — per the trait's design — it
+/// bakes that extra context into its own constructor instead of the trait.
+pub struct KotlinBackend {
+    serializer: KotlinSerializer,
+    workspace_packages: HashSet<String>,
+    ctx: KotlinWorkspaceContext,
+    config: BackendConfig,
+    /// Every package name in this workspace compile, in discovery order —
+    /// used only by `write_workspace_files` for `settings.gradle.kts`'s
+    /// `include(...)` lines.
+    package_names: Vec<String>,
+    /// The workspace's own project name (`settings.gradle.kts`'s
+    /// `rootProject.name`) — derived by the caller from the *source*
+    /// project directory's name, not `config.workspace_root` (the output
+    /// directory), matching what `compile_project` computed inline before
+    /// this refactor.
+    root_name: String,
+}
+
+impl KotlinBackend {
+    pub fn new(
+        config: BackendConfig,
+        sources: &[PackageSource],
+        workspace_packages: HashSet<String>,
+        root_name: String,
+    ) -> Self {
+        let ctx = KotlinWorkspaceContext::collect(sources.iter());
+        let package_names = sources.iter().map(|s| s.name.clone()).collect();
+        Self {
+            serializer: KotlinSerializer,
+            workspace_packages,
+            ctx,
+            config,
+            package_names,
+            root_name,
+        }
+    }
+}
+
+impl TargetBackend for KotlinBackend {
+    fn compile_package(
+        &self,
+        workspace: &fp_core::workspace::WorkspaceContext,
+        package_id: &fp_core::package::PackageId,
+    ) -> fp_core::error::Result<()> {
+        let package = workspace.package_source(package_id)?;
+        let package = &package;
+        let files = self
+            .serializer
+            .serialize_package(package, &self.workspace_packages, &self.ctx)?;
+        let writer = PackageWriter::new(self.config.workspace_root.join(&package.name));
+        for (mod_path, code) in files {
+            let rel = if mod_path.contains('.') {
+                mod_path
+            } else {
+                format!("{}.kt", mod_path)
+            };
+            writer.write_file(&rel, code)?;
+        }
+        Ok(())
+    }
+
+    fn write_workspace_files(
+        &self,
+        _workspace: &fp_core::workspace::WorkspaceContext,
+    ) -> fp_core::error::Result<()> {
+        let root_name = self.root_name.replace('-', "_");
+        let settings = format!(
+            "rootProject.name = \"{root_name}\"\n\n{}\n",
+            self.package_names
+                .iter()
+                .map(|n| format!("include(\":{}\")", n))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let writer = PackageWriter::new(self.config.workspace_root.clone());
+        writer.write_file("settings.gradle.kts", settings)?;
+        writer.write_file(
+            "build.gradle.kts",
+            "plugins {\n    kotlin(\"jvm\") version \"2.1.0\" apply false\n}\n\n\
+             allprojects {\n    repositories { mavenCentral() }\n}\n",
+        )?;
+        Ok(())
     }
 }
 

@@ -211,33 +211,9 @@ impl CompilerDriver {
             .env_ctx
             .compiled_package(package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
-        let expected_path =
-            hir::DefPath::from_qualified_path(&module_path.with_segment(function_name.to_string()));
-        package
-            .borrow()
-            .hir_program
-            .as_ref()
-            .and_then(|program| {
-                program.items.iter().find_map(|item| match &item.kind {
-                    hir::ItemKind::Function(function)
-                        if function.sig.name.as_str() == function_name
-                            && program
-                                .def_paths
-                                .get(&item.def_id)
-                                .map(|path| path == &expected_path)
-                                .unwrap_or(true) =>
-                    {
-                        Some(item.def_id)
-                    }
-                    _ => None,
-                })
-            })
-            .ok_or_else(|| {
-                CompilerDriverError::Interpreter(format!(
-                    "package `{package_id}` module `{}` has no `{function_name}` entrypoint",
-                    module_path.to_key()
-                ))
-            })
+        let package = package.borrow();
+        fp_core::package::resolve_entrypoint_def_id(package_id, &package, module_path, function_name)
+            .map_err(|error| CompilerDriverError::Interpreter(error.to_string()))
     }
 
     /// Renames the LIR function identified by `def_id` to `bare_name` in
@@ -253,12 +229,7 @@ impl CompilerDriver {
         def_id: hir::DefId,
         bare_name: &str,
     ) {
-        for lir_function in lir.functions.iter_mut() {
-            if lir_function.def_id == Some(def_id) {
-                lir_function.name = fp_core::lir::Name::new(bare_name.to_string());
-                break;
-            }
-        }
+        fp_core::package::rename_lir_function(lir, def_id, bare_name)
     }
 
     pub fn select_entrypoint(
@@ -474,12 +445,14 @@ impl CompilerDriver {
     /// `PackageProvider`. An inter-member dependency (e.g. member B
     /// path-depends on sibling A) is compiled exactly once regardless of
     /// which member's turn surfaces it first, since both go through
-    /// `compile_package`'s own `compiled_packages` cache.
+    /// `compile_package`'s own `compiled_packages` cache. Callers read back
+    /// each member's result via `WorkspaceContext::package_source` rather
+    /// than from this call's return value.
     pub async fn compile_workspace(
         &mut self,
         root_id: &PackageId,
         members: &[PackageId],
-    ) -> Result<Vec<Rc<RefCell<fp_core::package::CompiledPackage>>>, CompilerDriverError> {
+    ) -> Result<(), CompilerDriverError> {
         let dependencies: Vec<DependencyDescriptor> = members
             .iter()
             .map(|id| DependencyDescriptor {
@@ -492,11 +465,7 @@ impl CompilerDriver {
                 target: Default::default(),
             })
             .collect();
-        self.compile_dependencies(root_id, &dependencies).await?;
-        Ok(members
-            .iter()
-            .filter_map(|id| self.compiled_packages.get(id).cloned())
-            .collect())
+        self.compile_dependencies(root_id, &dependencies).await
     }
 
     fn publish_lir_units(
@@ -961,25 +930,13 @@ impl CompilerDriver {
                             .map(|diagnostic| diagnostic.as_core_diagnostic().to_string())
                             .collect::<Vec<_>>()
                             .join("\n");
-                        // Strict mode: a real error anywhere is a hard
-                        // failure, same as always. Lossy mode: the items
-                        // that failed already got their own per-item
-                        // fallback (`typecheck_item`'s isolation) — only
-                        // *those* items miss real types; every other item
-                        // in this package typechecked fine and its results
-                        // are already sitting in `shared.results`, so
-                        // there's no reason to discard the whole package's
-                        // typing over one unrelated item's failure (e.g. a
-                        // vendored-std helper this checker doesn't yet
-                        // support). Surface the same diagnostics as a
-                        // warning instead of an `Err`, and keep going with
-                        // whatever did resolve.
-                        if !self.state.borrow().lossy() {
-                            return Err(fp_core::error::Error::diagnostic(
-                                fp_core::diagnostics::Diagnostic::error(combined),
-                            ));
-                        }
-                        eprintln!("fp-compiler: package typecheck had per-item failures (lossy mode, keeping partial results):\n{combined}");
+                        // A real error anywhere is a hard failure: this
+                        // package's `TypeckResults` would otherwise be
+                        // handed straight to HIR->MIR lowering with the
+                        // failed item's types missing.
+                        return Err(fp_core::error::Error::diagnostic(
+                            fp_core::diagnostics::Diagnostic::error(combined),
+                        ));
                     }
                     return Ok(fp_typing::finish_package_typecheck(&shared));
                 }

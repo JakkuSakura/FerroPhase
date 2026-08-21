@@ -5,14 +5,12 @@ use crate::compile_options::BackendKind;
 use crate::container::NativeAsmSource;
 use crate::compiler::{
     self, BytecodeCompileOptions, CraneliftCompileOptions, EbpfCompileOptions, JvmCompileOptions,
-    LlvmCompileOptions, LossyCompileOptions, NativeCompileOptions, NativeEmitterKind,
-    WasmCompileOptions,
+    LlvmCompileOptions, NativeCompileOptions, NativeEmitterKind, WasmCompileOptions,
 };
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
 use fp_core::ast::{AstTargetOutput, File, Item};
 use fp_core::package::{PackageId, PackageSource};
-use fp_core::config;
 #[cfg(feature = "lang-csharp")]
 use fp_csharp::CSharpSerializer;
 #[cfg(feature = "lang-godot")]
@@ -32,7 +30,7 @@ use fp_sycl::SyclSerializer;
 #[cfg(feature = "lang-typescript")]
 use fp_typescript::{JavaScriptSerializer, TypeScriptSerializer};
 #[cfg(feature = "lang-wit")]
-use fp_wit::{WitOptions, WitSerializer, WorldMode};
+use fp_wit::WitSerializer;
 #[cfg(feature = "lang-zig")]
 use fp_zig::ZigSerializer;
 use object::Object as _;
@@ -136,14 +134,6 @@ pub struct CompileArgs {
     #[arg(long)]
     pub save_intermediates: bool,
 
-    /// Enable lossy mode during compilation
-    #[arg(long)]
-    pub lossy: bool,
-
-    /// Maximum number of errors to collect when lossy mode is enabled (0 = unlimited)
-    #[arg(long, default_value_t = 50)]
-    pub max_errors: usize,
-
     /// Override automatic source language detection (e.g. "typescript")
     #[arg(long = "lang", alias = "language")]
     pub source_language: Option<String>,
@@ -155,10 +145,6 @@ pub struct CompileArgs {
     /// Generate type definitions for TypeScript target.
     #[arg(long)]
     pub type_defs: bool,
-
-    /// Skip HIR typing before AST target emission.
-    #[arg(long)]
-    pub skip_typing: bool,
 
     /// Generate a single WIT world instead of per-package worlds.
     #[arg(long)]
@@ -490,10 +476,6 @@ async fn try_compile_with_compiler(
     args: &CompileArgs,
     backend: BackendKind,
 ) -> Result<Option<PathBuf>> {
-    let lossy = compiler::LossyCompileOptions {
-        enabled: args.lossy || config::lossy_mode(),
-    };
-
     match backend {
         BackendKind::Binary => {
             let emitter = match args.emitter {
@@ -505,7 +487,6 @@ async fn try_compile_with_compiler(
                         input,
                         args.package(),
                         args.source_language.as_deref(),
-                        lossy,
                         &LlvmCompileOptions {
                             output: output.to_path_buf(),
                             target_triple: args.target_triple.clone(),
@@ -531,7 +512,6 @@ async fn try_compile_with_compiler(
                         input,
                         args.package(),
                         args.source_language.as_deref(),
-                        lossy,
                         &CraneliftCompileOptions {
                             output: output.to_path_buf(),
                             target_triple: args.target_triple.clone(),
@@ -551,7 +531,6 @@ async fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                lossy,
                 &NativeCompileOptions {
                     emitter,
                     output: output.to_path_buf(),
@@ -573,7 +552,6 @@ async fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                lossy,
                 &BytecodeCompileOptions {
                     output: output.to_path_buf(),
                     emit_text: matches!(backend, BackendKind::TextBytecode),
@@ -591,7 +569,6 @@ async fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                lossy,
                 &JvmCompileOptions {
                     output: output.to_path_buf(),
                     save_intermediates: args.save_intermediates,
@@ -605,7 +582,6 @@ async fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                lossy,
                 &WasmCompileOptions {
                     output: output.to_path_buf(),
                 },
@@ -617,7 +593,6 @@ async fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                lossy,
                 &EbpfCompileOptions {
                     output: output.to_path_buf(),
                 },
@@ -636,7 +611,6 @@ async fn try_compile_with_compiler(
             let artifact = compiler::compile_dotnet_file(
                 input,
                 args.source_language.as_deref(),
-                lossy,
                 output,
                 args.save_intermediates,
             )?;
@@ -647,7 +621,6 @@ async fn try_compile_with_compiler(
                 input,
                 args.package(),
                 args.source_language.as_deref(),
-                lossy,
                 &LlvmCompileOptions {
                     output: output.to_path_buf(),
                     target_triple: args.target_triple.clone(),
@@ -804,84 +777,26 @@ async fn compile_emit_target(
             crate::languages::materializer::materializer_for_language(
                 &crate::languages::backend::output_extension_for(target),
             );
-        let normalizer =
-            crate::languages::normalizer::normalizer_for_language(&language, !args.skip_typing);
+        let normalizer = crate::languages::normalizer::normalizer_for_language(&language);
         let wrapped: std::sync::Arc<dyn fp_core::package::provider::PackageProvider> =
             std::sync::Arc::new(TranspileMaterializingPackageProvider::new(
                 provider,
                 materializer.clone(),
                 normalizer,
             ));
-        let source = if args.skip_typing {
-            wrapped
-                .load_package_source(&package_id)
-                .map_err(|e| CliError::Compilation(e.to_string()))?
-        } else {
-            // Typechecking (real HIR type resolution, plus `std`/`libc`
-            // resolution via `std_provider_for`) is only wired up for a
-            // handful of source languages so far — same fallback
-            // `compile_project` already uses for its own multi-file
-            // `--target` path, applied here too instead of this single-file
-            // path being the only one that can't tolerate an unsupported
-            // language.
-            let lossy = LossyCompileOptions {
-                enabled: args.lossy || fp_core::config::lossy_mode(),
-            };
-            let wrapped_for_typecheck = wrapped.clone();
-            let package_id_for_typecheck = package_id.clone();
-            let language_for_typecheck = language.clone();
-            let capabilities = crate::languages::backend::capabilities_for_target(target);
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                compiler::typecheck_package(
-                    wrapped_for_typecheck,
-                    &package_id_for_typecheck,
-                    lossy,
-                    &language_for_typecheck,
-                    capabilities,
-                )
-            })) {
-                Ok(Ok(typed_source)) => typed_source,
-                Ok(Err(e)) => {
-                    if !lossy.enabled {
-                        return Err(CliError::Compilation(format!(
-                            "typecheck failed for {}: {}",
-                            input.display(),
-                            e
-                        )));
-                    }
-                    warn!(
-                        "typecheck failed for {}: {} — falling back to untyped (lossy mode)",
-                        input.display(),
-                        e
-                    );
-                    wrapped
-                        .load_package_source(&package_id)
-                        .map_err(|e| CliError::Compilation(e.to_string()))?
-                }
-                Err(panic_info) => {
-                    let msg = panic_info
-                        .downcast_ref::<String>()
-                        .map(|s| s.as_str())
-                        .or_else(|| panic_info.downcast_ref::<&str>().copied())
-                        .unwrap_or("(unknown)");
-                    if !lossy.enabled {
-                        return Err(CliError::Compilation(format!(
-                            "typecheck panicked for {}: {}",
-                            input.display(),
-                            msg
-                        )));
-                    }
-                    warn!(
-                        "typecheck panicked for {}: {} — falling back to untyped (lossy mode)",
-                        input.display(),
-                        msg
-                    );
-                    wrapped
-                        .load_package_source(&package_id)
-                        .map_err(|e| CliError::Compilation(e.to_string()))?
-                }
-            }
-        };
+        let capabilities = crate::languages::backend::capabilities_for_target(target);
+        let (executor, mut session) =
+            compiler::build_workspace_session(wrapped, &language, capabilities);
+        executor
+            .run(session.driver().compile_package(&package_id))
+            .map_err(|e| {
+                CliError::Compilation(format!("typecheck failed for {}: {}", input.display(), e))
+            })?;
+        compiler::drain_driver(session.driver())?;
+        let workspace = session.driver().state.borrow().typing_ctx.env_ctx.clone();
+        let source = workspace
+            .package_source(&package_id)
+            .map_err(|e| CliError::Compilation(e.to_string()))?;
         // Materialize portable ops post-typechecked-lifting too (see the
         // matching comment in `compile_project`'s phase 2) — the wrapping
         // above only materializes pre-HIR source; `HirToAstLifter`'s
@@ -975,10 +890,9 @@ async fn compile_project(
 
     info!("Project: {} package(s), language: {}", packages.len(), lang);
 
-    let ext = crate::languages::backend::output_extension_for(target);
     let mut file_count = 0;
 
-    let normalizer = crate::languages::normalizer::normalizer_for_language(lang, !args.skip_typing);
+    let normalizer = crate::languages::normalizer::normalizer_for_language(lang);
     let materializer = crate::languages::materializer::materializer_for_language(
         &crate::languages::backend::output_extension_for(target)
     );
@@ -1010,103 +924,48 @@ async fn compile_project(
     // recursive, cached, cycle-safe dependency machinery — so `std`/`libc`
     // and any inter-member dependency (a workspace path dependency) is
     // compiled exactly once for the whole workspace, not once per member. A
-    // typecheck error or panic in any one member fails/falls back the whole
-    // workspace compile (not just that member) — a package's own
-    // dependencies already work this way (an unresolvable dependency fails
-    // its dependent), so treating members the same way needs no special
-    // per-member recovery bookkeeping in the shared driver.
-    let untyped_prepared = |packages: &[PackageId]| -> Result<Vec<(PackageId, PackageSource)>> {
-        packages
-            .iter()
-            .map(|package_id| {
-                materializing_provider
-                    .load_package_source(package_id)
-                    .map(|source| (package_id.clone(), source))
-                    .map_err(|e| CliError::Compilation(e.to_string()))
-            })
-            .collect()
-    };
-
+    // typecheck error in any one member fails the whole workspace compile
+    // (not just that member) — a package's own dependencies already work
+    // this way (an unresolvable dependency fails its dependent), so treating
+    // members the same way needs no special per-member recovery bookkeeping
+    // in the shared driver.
     let capabilities = crate::languages::backend::capabilities_for_target(target);
-    let prepared: Vec<(PackageId, PackageSource)> = if !args.skip_typing {
-        let lossy = LossyCompileOptions {
-            enabled: args.lossy || fp_core::config::lossy_mode(),
-        };
-        let root_name = input
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("workspace");
-        let root_id = PackageId::new(format!("{root_name}::__workspace_root__"));
-        let (executor, mut session) = compiler::build_workspace_session(
-            materializing_provider.clone(),
-            lang,
-            lossy,
-            capabilities,
-        );
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            executor.run(session.driver().compile_workspace(&root_id, &packages))
-        })) {
-            Ok(Ok(compiled)) => {
-                compiler::drain_driver(session.driver(), lossy)?;
-                packages
-                    .iter()
-                    .zip(compiled.iter())
-                    .map(|(package_id, compiled_package)| {
-                        (
-                            package_id.clone(),
-                            compiler::package_source_from_compiled(package_id, compiled_package),
-                        )
-                    })
-                    .collect()
-            }
-            Ok(Err(e)) => {
-                if !lossy.enabled {
-                    return Err(CliError::Compilation(format!(
-                        "typecheck failed for project at {}: {}",
-                        input.display(),
-                        e
-                    )));
-                }
-                warn!(
-                    "typecheck failed for project at {}: {} — falling back to untyped (lossy mode)",
-                    input.display(),
-                    e
-                );
-                untyped_prepared(&packages)?
-            }
-            Err(panic_info) => {
-                let msg = panic_info
-                    .downcast_ref::<String>()
-                    .map(|s| s.as_str())
-                    .or_else(|| panic_info.downcast_ref::<&str>().copied())
-                    .unwrap_or("(unknown)");
-                if !lossy.enabled {
-                    return Err(CliError::Compilation(format!(
-                        "typecheck panicked for project at {}: {}",
-                        input.display(),
-                        msg
-                    )));
-                }
-                warn!(
-                    "typecheck panicked for project at {}: {} — falling back to untyped (lossy mode)",
-                    input.display(),
-                    msg
-                );
-                untyped_prepared(&packages)?
-            }
-        }
-    } else {
-        untyped_prepared(&packages)?
-    };
+    let root_name = input
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("workspace")
+        .to_string();
+    let root_id = PackageId::new(format!("{root_name}::__workspace_root__"));
+    let (executor, mut session) =
+        compiler::build_workspace_session(materializing_provider.clone(), lang, capabilities);
+    executor
+        .run(session.driver().compile_workspace(&root_id, &packages))
+        .map_err(|e| {
+            CliError::Compilation(format!(
+                "typecheck failed for project at {}: {}",
+                input.display(),
+                e
+            ))
+        })?;
+    compiler::drain_driver(session.driver())?;
+    let workspace = session.driver().state.borrow().typing_ctx.env_ctx.clone();
+    let prepared: Vec<(PackageId, PackageSource)> = packages
+        .iter()
+        .map(|package_id| {
+            workspace
+                .package_source(package_id)
+                .map(|source| (package_id.clone(), source))
+                .map_err(|e| CliError::Compilation(e.to_string()))
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-    // Cross-package facts (field mutability, List-vs-String disambiguation,
-    // referenced-path imports) the Kotlin backend needs before serializing
-    // any single package — see `KotlinWorkspaceContext`'s doc comment.
-    let kotlin_ctx = if matches!(target, crate::languages::backend::BuiltinLanguageTarget::Kotlin) {
-        fp_kotlin::KotlinWorkspaceContext::collect(prepared.iter().map(|(_, src)| src))
-    } else {
-        fp_kotlin::KotlinWorkspaceContext::default()
-    };
+    // Constructed once here (not per package below) — Kotlin's
+    // `KotlinWorkspaceContext::collect` walks every item of every package,
+    // so per-package construction would be an N× regression on an
+    // N-package workspace.
+    let sources: Vec<PackageSource> = prepared.iter().map(|(_, src)| src.clone()).collect();
+    let backend_config = fp_core::backend::BackendConfig::new(output.to_path_buf());
+    let backend = backend_for_target(target, args, backend_config, &sources, workspace_packages.clone(), root_name)?;
 
     // Phase 2: serialize + write every package now that the workspace-wide
     // mutability set (and any other cross-package info) is complete.
@@ -1115,9 +974,7 @@ async fn compile_project(
     // get surfaced below instead of silently accumulating in the global
     // `DiagnosticManager` with nothing ever reading them back.
     let diagnostics_snapshot = fp_core::diagnostics::diagnostic_manager().snapshot();
-    for (package_id, source) in &prepared {
-        let name = package_id.as_str();
-
+    for (package_id, _source) in &prepared {
         // Materialize portable ops (`IntrinsicCall(CallKind::Op(_))`) into
         // this target's real shape (`Some(x)` -> `x`, `Vec::new()` -> an
         // empty list literal, ...) *after* typechecked lifting produced
@@ -1127,61 +984,35 @@ async fn compile_project(
         // (`program.op_defs`, resolved by real `DefId`, not by name). The
         // lifter's own job stops at producing the bare op node; turning it
         // into this target's real code is this materializer's job.
-        let mut source = source.clone();
+        //
+        // `prepared`'s own `PackageSource.items` (read further up to build
+        // `sources` for `backend_for_target`) must stay un-materialized —
+        // Kotlin's cross-package mutability scan needs the pre-materialize
+        // shape — so this mutates the compiled package's items in place
+        // instead of cloning into a throwaway workspace.
         if let Some(mat) = &materializer {
-            for pkg_item in &mut source.items {
+            let compiled_package = workspace.compiled_package(package_id).ok_or_else(|| {
+                CliError::Compilation(format!(
+                    "package `{package_id}` is unavailable for materialization"
+                ))
+            })?;
+            let mut compiled_package = compiled_package.borrow_mut();
+            for pkg_item in &mut compiled_package.items {
                 pkg_item.item =
                     fp_core::intrinsics::materialize_item(pkg_item.item.clone(), mat.as_ref())
                         .map_err(|e| CliError::Compilation(e.to_string()))?;
             }
         }
-        let source = &source;
 
-        // Serialize package via language-specific serializer
-        let files = if let crate::languages::backend::BuiltinLanguageTarget::Kotlin = target {
-            let serializer = fp_kotlin::KotlinSerializer;
-            serializer
-                .serialize_package(source, &workspace_packages, &kotlin_ctx)
-                .map_err(|e| CliError::Compilation(e.to_string()))?
-        } else {
-            serialize_package_for_target(source, target, &args, &output.join(name))?
-        };
-
-        for (mod_path, code) in files {
-            let rel = if mod_path.contains('.') {
-                mod_path.clone()
-            } else {
-                format!("{}.{}", mod_path, ext)
-            };
-            let out_path = output.join(name).join(&rel);
-            if let Some(parent) = out_path.parent() {
-                std::fs::create_dir_all(parent).map_err(CliError::Io)?;
-            }
-            std::fs::write(&out_path, &code).map_err(CliError::Io)?;
-            file_count += 1;
-        }
+        backend
+            .compile_package(&workspace, package_id)
+            .map_err(|e| CliError::Compilation(e.to_string()))?;
+        file_count += 1;
     }
 
-    // Generate workspace-level Gradle project for multi-module builds
-    if matches!(target, crate::languages::backend::BuiltinLanguageTarget::Kotlin) {
-        let pkg_names: Vec<String> = packages.iter().map(|p| p.as_str().to_string()).collect();
-        let root_name = input
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("workspace")
-            .replace('-', "_");
-        let settings = format!(
-            "rootProject.name = \"{root_name}\"\n\n{}\n",
-            pkg_names.iter()
-                .map(|n| format!("include(\":{}\")", n))
-                .collect::<Vec<_>>().join("\n")
-        );
-        std::fs::write(output.join("settings.gradle.kts"), &settings).map_err(CliError::Io)?;
-        std::fs::write(output.join("build.gradle.kts"),
-            "plugins {\n    kotlin(\"jvm\") version \"2.1.0\" apply false\n}\n\n\
-             allprojects {\n    repositories { mavenCentral() }\n}\n"
-        ).map_err(CliError::Io)?;
-    }
+    backend
+        .write_workspace_files(&workspace)
+        .map_err(|e| CliError::Compilation(e.to_string()))?;
 
     let codegen_diagnostics =
         fp_core::diagnostics::diagnostic_manager().diagnostics_since(diagnostics_snapshot);
@@ -1192,9 +1023,8 @@ async fn compile_project(
     );
 
     info!(
-        "Transpiled {} files from {} package(s) to {}",
+        "Transpiled {} package(s) to {}",
         file_count,
-        packages.len(),
         output.display()
     );
     Ok(())
@@ -1272,7 +1102,7 @@ async fn compile_project_external(
     // target.
     let materializer =
         crate::languages::materializer::materializer_for_language(target.output_extension());
-    let normalizer = crate::languages::normalizer::normalizer_for_language(&lang, !args.skip_typing);
+    let normalizer = crate::languages::normalizer::normalizer_for_language(&lang);
 
     let materializing_provider: std::sync::Arc<dyn fp_core::package::provider::PackageProvider> =
         std::sync::Arc::new(TranspileMaterializingPackageProvider::new(
@@ -1285,76 +1115,34 @@ async fn compile_project_external(
         project_root: input.to_path_buf(),
     };
 
-    for package_id in &packages {
-        let source = if !args.skip_typing {
-            let provider_for_typecheck = materializing_provider.clone();
-            let package_id_for_typecheck = package_id.clone();
-            let lossy = LossyCompileOptions {
-                enabled: args.lossy || fp_core::config::lossy_mode(),
-            };
-            let lang_for_typecheck = lang.clone();
-            // Externally-registered targets have no declared
-            // `LanguageCapabilities` of their own (the trait in
-            // `registry.rs` doesn't expose one) — use the same conservative
-            // default `capabilities_for_target` falls back to for every
-            // built-in target it doesn't special-case.
-            let capabilities = fp_core::capabilities::LanguageCapabilities::NATIVE;
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                compiler::typecheck_package(
-                    provider_for_typecheck,
-                    &package_id_for_typecheck,
-                    lossy,
-                    &lang_for_typecheck,
-                    capabilities,
-                )
-            })) {
-                Ok(Ok(typed_source)) => typed_source,
-                Ok(Err(e)) => {
-                    if !lossy.enabled {
-                        return Err(CliError::Compilation(format!(
-                            "typecheck failed for {}: {}",
-                            package_id.as_str(),
-                            e
-                        )));
-                    }
-                    warn!(
-                        "typecheck failed for {}: {} — falling back to untyped (lossy mode)",
-                        package_id.as_str(),
-                        e
-                    );
-                    materializing_provider
-                        .load_package_source(package_id)
-                        .map_err(|e| CliError::Compilation(e.to_string()))?
-                }
-                Err(panic_info) => {
-                    let msg = panic_info
-                        .downcast_ref::<String>()
-                        .map(|s| s.as_str())
-                        .or_else(|| panic_info.downcast_ref::<&str>().copied())
-                        .unwrap_or("(unknown)");
-                    if !lossy.enabled {
-                        return Err(CliError::Compilation(format!(
-                            "typecheck panicked for {}: {}",
-                            package_id.as_str(),
-                            msg
-                        )));
-                    }
-                    warn!(
-                        "typecheck panicked for {}: {} — falling back to untyped (lossy mode)",
-                        package_id.as_str(),
-                        msg
-                    );
-                    materializing_provider
-                        .load_package_source(package_id)
-                        .map_err(|e| CliError::Compilation(e.to_string()))?
-                }
-            }
-        } else {
-            materializing_provider
-                .load_package_source(package_id)
-                .map_err(|e| CliError::Compilation(e.to_string()))?
-        };
+    // Externally-registered targets have no declared `LanguageCapabilities`
+    // of their own (the trait in `registry.rs` doesn't expose one) — use the
+    // same conservative default `capabilities_for_target` falls back to for
+    // every built-in target it doesn't special-case.
+    let capabilities = fp_core::capabilities::LanguageCapabilities::NATIVE;
+    let root_name = input
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("workspace");
+    let root_id = PackageId::new(format!("{root_name}::__workspace_root__"));
+    let (executor, mut session) =
+        compiler::build_workspace_session(materializing_provider.clone(), &lang, capabilities);
+    executor
+        .run(session.driver().compile_workspace(&root_id, &packages))
+        .map_err(|e| {
+            CliError::Compilation(format!(
+                "typecheck failed for project at {}: {}",
+                input.display(),
+                e
+            ))
+        })?;
+    compiler::drain_driver(session.driver())?;
+    let workspace = session.driver().state.borrow().typing_ctx.env_ctx.clone();
 
+    for package_id in &packages {
+        let source = workspace
+            .package_source(package_id)
+            .map_err(|e| CliError::Compilation(e.to_string()))?;
         let pkg = LanguageTargetPackage {
             package_id,
             items: &source.items,
@@ -1400,30 +1188,32 @@ fn disabled_feature_error(feature: &str, what: &str) -> CliError {
     ))
 }
 
-/// Serializes a whole package via a target's own `serialize_package`,
-/// covering every target `compile_project` supports except Kotlin (which
-/// needs extra workspace-wide state — mutated fields, list/string field
-/// disambiguation, referenced-path imports — passed separately by its own
-/// caller). `package_root` stands in for the single-file `emit_ast_target`'s
-/// `input` path (used only by WIT to derive a namespace/interface name);
-/// here it's the package's own output directory.
-#[allow(unused_variables)]
-fn serialize_package_for_target(
-    source: &PackageSource,
+/// Constructs the `TargetBackend` for a `compile_project` run — called
+/// exactly once per invocation (not once per package: Kotlin's
+/// `KotlinWorkspaceContext::collect` walks every item of every package, so
+/// per-package construction would be an N× regression on an N-package
+/// workspace). Same per-arm `#[cfg(feature = "lang-...")]` gating as the
+/// serialization match this replaces.
+#[allow(unused_variables, clippy::too_many_arguments)]
+fn backend_for_target(
     target: crate::languages::backend::BuiltinLanguageTarget,
     args: &CompileArgs,
-    package_root: &Path,
-) -> Result<Vec<(String, String)>> {
+    config: fp_core::backend::BackendConfig,
+    sources: &[PackageSource],
+    workspace_packages: std::collections::HashSet<String>,
+    root_name: String,
+) -> Result<Box<dyn fp_core::backend::TargetBackend>> {
     match target {
-        crate::languages::backend::BuiltinLanguageTarget::FerroPhase => fp_c::CSerializer
-            .serialize_package(source)
-            .map_err(|e| CliError::Compilation(e.to_string())),
+        crate::languages::backend::BuiltinLanguageTarget::FerroPhase => {
+            Ok(Box::new(fp_c::FerroPhaseAstBackend::new(config)))
+        }
         crate::languages::backend::BuiltinLanguageTarget::TypeScript => {
             #[cfg(feature = "lang-typescript")]
             {
-                TypeScriptSerializer::new(args.type_defs)
-                    .serialize_package(source)
-                    .map_err(|e| CliError::Compilation(e.to_string()))
+                Ok(Box::new(fp_typescript::TypeScriptBackend::new(
+                    config,
+                    args.type_defs,
+                )))
             }
             #[cfg(not(feature = "lang-typescript"))]
             {
@@ -1436,9 +1226,7 @@ fn serialize_package_for_target(
         crate::languages::backend::BuiltinLanguageTarget::JavaScript => {
             #[cfg(feature = "lang-typescript")]
             {
-                JavaScriptSerializer
-                    .serialize_package(source)
-                    .map_err(|e| CliError::Compilation(e.to_string()))
+                Ok(Box::new(fp_typescript::JavaScriptBackend::new(config)))
             }
             #[cfg(not(feature = "lang-typescript"))]
             {
@@ -1451,9 +1239,7 @@ fn serialize_package_for_target(
         crate::languages::backend::BuiltinLanguageTarget::CSharp => {
             #[cfg(feature = "lang-csharp")]
             {
-                CSharpSerializer
-                    .serialize_package(source)
-                    .map_err(|e| CliError::Compilation(e.to_string()))
+                Ok(Box::new(fp_csharp::CSharpBackend::new(config)))
             }
             #[cfg(not(feature = "lang-csharp"))]
             {
@@ -1461,14 +1247,24 @@ fn serialize_package_for_target(
             }
         }
         crate::languages::backend::BuiltinLanguageTarget::Kotlin => {
-            unreachable!("Kotlin is dispatched by the caller before reaching this function")
+            #[cfg(feature = "lang-kotlin")]
+            {
+                Ok(Box::new(fp_kotlin::KotlinBackend::new(
+                    config,
+                    sources,
+                    workspace_packages,
+                    root_name,
+                )))
+            }
+            #[cfg(not(feature = "lang-kotlin"))]
+            {
+                Err(disabled_feature_error("lang-kotlin", "Kotlin package emission"))
+            }
         }
         crate::languages::backend::BuiltinLanguageTarget::Python => {
             #[cfg(feature = "lang-python")]
             {
-                PythonSerializer
-                    .serialize_package(source)
-                    .map_err(|e| CliError::Compilation(e.to_string()))
+                Ok(Box::new(fp_python::PythonBackend::new(config)))
             }
             #[cfg(not(feature = "lang-python"))]
             {
@@ -1481,9 +1277,7 @@ fn serialize_package_for_target(
         crate::languages::backend::BuiltinLanguageTarget::Go => {
             #[cfg(feature = "lang-golang")]
             {
-                GoSerializer::default()
-                    .serialize_package(source)
-                    .map_err(|e| CliError::Compilation(e.to_string()))
+                Ok(Box::new(fp_golang::GoBackend::new(config)))
             }
             #[cfg(not(feature = "lang-golang"))]
             {
@@ -1493,9 +1287,7 @@ fn serialize_package_for_target(
         crate::languages::backend::BuiltinLanguageTarget::Gdscript => {
             #[cfg(feature = "lang-godot")]
             {
-                GdscriptSerializer
-                    .serialize_package(source)
-                    .map_err(|e| CliError::Compilation(e.to_string()))
+                Ok(Box::new(fp_godot::GdscriptBackend::new(config)))
             }
             #[cfg(not(feature = "lang-godot"))]
             {
@@ -1508,9 +1300,7 @@ fn serialize_package_for_target(
         crate::languages::backend::BuiltinLanguageTarget::Zig => {
             #[cfg(feature = "lang-zig")]
             {
-                ZigSerializer
-                    .serialize_package(source)
-                    .map_err(|e| CliError::Compilation(e.to_string()))
+                Ok(Box::new(fp_zig::ZigBackend::new(config)))
             }
             #[cfg(not(feature = "lang-zig"))]
             {
@@ -1520,24 +1310,20 @@ fn serialize_package_for_target(
         crate::languages::backend::BuiltinLanguageTarget::Sycl => {
             #[cfg(feature = "lang-sycl")]
             {
-                SyclSerializer
-                    .serialize_package(source)
-                    .map_err(|e| CliError::Compilation(e.to_string()))
+                Ok(Box::new(fp_sycl::SyclBackend::new(config)))
             }
             #[cfg(not(feature = "lang-sycl"))]
             {
                 Err(disabled_feature_error("lang-sycl", "SYCL package emission"))
             }
         }
-        crate::languages::backend::BuiltinLanguageTarget::Rust => PrettyAstSerializer::new()
-            .serialize_package(source)
-            .map_err(|e| CliError::Compilation(e.to_string())),
+        crate::languages::backend::BuiltinLanguageTarget::Rust => {
+            Ok(Box::new(fp_lang::RustBackend::new(config)))
+        }
         crate::languages::backend::BuiltinLanguageTarget::Wit => {
             #[cfg(feature = "lang-wit")]
             {
-                WitSerializer::with_options(build_wit_options(package_root, args.single_world))
-                    .serialize_package(source)
-                    .map_err(|e| CliError::Compilation(e.to_string()))
+                Ok(Box::new(fp_wit::WitBackend::new(config, args.single_world)))
             }
             #[cfg(not(feature = "lang-wit"))]
             {
@@ -1749,7 +1535,7 @@ fn emit_ast_target(
             #[cfg(feature = "lang-wit")]
             {
                 let serializer =
-                    WitSerializer::with_options(build_wit_options(input, single_world));
+                    WitSerializer::with_options(fp_wit::build_wit_options(input, single_world));
                 let code = serializer
                     .serialize_file(node)
                     .map_err(|e| CliError::TargetEmit(e.to_string()))?;
@@ -1764,59 +1550,6 @@ fn emit_ast_target(
             }
         }
     }
-}
-
-#[cfg(feature = "lang-wit")]
-fn build_wit_options(input: &Path, single_world: bool) -> WitOptions {
-    let namespace = input
-        .parent()
-        .and_then(|dir| dir.file_name())
-        .and_then(|os| os.to_str())
-        .map(sanitize_wit_component)
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "ferrophase".to_string());
-
-    let interface = input
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .map(sanitize_wit_component)
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "module".to_string());
-
-    let mut options = WitOptions::default();
-    options.package = format!("{namespace}:{interface}");
-    options.root_interface = interface.clone();
-    if single_world {
-        options.world_mode = WorldMode::Single {
-            world_name: interface,
-        };
-    }
-    options
-}
-
-fn sanitize_wit_component(raw: &str) -> String {
-    let mut result = String::new();
-    for ch in raw.chars() {
-        match ch {
-            'a'..='z' | '0'..='9' => result.push(ch),
-            'A'..='Z' => result.push(ch.to_ascii_lowercase()),
-            '_' | '-' => result.push('_'),
-            '/' | ':' | '.' | '@' => result.push('_'),
-            _ => {}
-        }
-    }
-    if result.is_empty() {
-        result.push_str("module");
-    }
-    if result
-        .chars()
-        .next()
-        .map(|ch| ch.is_ascii_digit())
-        .unwrap_or(false)
-    {
-        result.insert(0, '_');
-    }
-    result
 }
 
 #[allow(dead_code)]

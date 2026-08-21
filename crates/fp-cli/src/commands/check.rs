@@ -3,7 +3,6 @@
 use crate::{Result, cli::CliConfig, compiler, utils::FileUtils};
 use clap::Args;
 use console::style;
-use fp_core::config;
 use std::path::PathBuf;
 
 /// Arguments for the check command
@@ -32,14 +31,7 @@ pub async fn check_command(args: CheckArgs, _config: &CliConfig) -> Result<()> {
 
     let files = collect_check_files(&args)?;
     for file in &files {
-        compiler::check_path(
-            file,
-            &args.package,
-            args.syntax_only,
-            compiler::LossyCompileOptions {
-                enabled: config::lossy_mode(),
-            },
-        )?;
+        compiler::check_path(file, &args.package, args.syntax_only)?;
     }
 
     println!("{} Checked {} file(s)", style("✓").green(), files.len());

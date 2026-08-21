@@ -88,7 +88,6 @@ Common flags:
 - `--debug` – Include debug info
 - `--emit {ast,ast-typed,hir,mir,lir}` - Persist intermediates for inspection
 - `--save-intermediates` – Shortcut to emit all intermediates
-- `--skip-typing` – Skip HIR typing for AST targets that do not require it
 
 For example:
 

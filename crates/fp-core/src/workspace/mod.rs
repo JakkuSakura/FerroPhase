@@ -703,4 +703,66 @@ impl WorkspaceContext {
     pub fn crates(&self) -> Ref<'_, HashMap<PackageId, Rc<RefCell<CompiledPackage>>>> {
         self.crates.borrow()
     }
+
+    /// A `TargetBackend`'s view of `id` as a `PackageSource` — every
+    /// AST-emitting backend's input. `id` must already be loaded via
+    /// `begin_package`/`import_package`.
+    pub fn package_source(&self, id: &PackageId) -> crate::error::Result<PackageSource> {
+        let package = self.compiled_package(id).ok_or_else(|| {
+            crate::error::Error::from(format!(
+                "package `{id}` is not present in this compiled workspace"
+            ))
+        })?;
+        Ok(crate::package::package_source_from_compiled(id, &package))
+    }
+
+    /// Merges every other loaded package's compiled LIR workspace into
+    /// `id`'s own (dependencies first, mirroring the same merge order
+    /// `evaluate_comptime_lir` uses for comptime execution — see
+    /// `fp-compiler`'s `LoweredProgram::lir` this was moved from), then
+    /// optionally resolves an entrypoint function by name within `id` and
+    /// renames it to `bare_name` in the merged program — native/asm
+    /// emitters locate the process entry point by that final, bare symbol
+    /// name (see `crate::package::rename_lir_function`'s doc comment), and a
+    /// module-nested `main` built from a flattened, ad hoc `LirProgram`
+    /// like this one (rather than through `CompilerDriver::select_entrypoint`)
+    /// otherwise never gets that renaming.
+    pub fn merged_lir_program(
+        &self,
+        id: &PackageId,
+        entrypoint: Option<(&QualifiedPath, &str, &str)>,
+    ) -> crate::error::Result<crate::lir::LirProgram> {
+        let package = self.compiled_package(id).ok_or_else(|| {
+            crate::error::Error::from(format!(
+                "compiled package `{id}` is unavailable for LIR merging"
+            ))
+        })?;
+        let package = package.borrow();
+        if package.lir_workspace.artifacts().is_empty() {
+            return Err(crate::error::Error::from(format!(
+                "compiled package `{id}` contains no LIR artifacts"
+            )));
+        }
+        let mut combined = crate::lir::LirWorkspace::new(package.lir_workspace.data_layout.clone());
+        for (dependency_id, dep_package) in self.crates.borrow().iter() {
+            if dependency_id == id {
+                continue;
+            }
+            combined
+                .add_workspace(&dep_package.borrow().lir_workspace)
+                .map_err(|error| crate::error::Error::from(error.to_string()))?;
+        }
+        combined
+            .add_workspace(&package.lir_workspace)
+            .map_err(|error| crate::error::Error::from(error.to_string()))?;
+        let mut lir = combined.to_program();
+        if let Some((module_path, function_name, bare_name)) = entrypoint {
+            if let Ok(def_id) =
+                crate::package::resolve_entrypoint_def_id(id, &package, module_path, function_name)
+            {
+                crate::package::rename_lir_function(&mut lir, def_id, bare_name);
+            }
+        }
+        Ok(lir)
+    }
 }

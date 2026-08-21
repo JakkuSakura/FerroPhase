@@ -22,7 +22,6 @@ fn main() {
 
     let args = CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input_file],
         backend: BackendKind::Rust,
         target: None,
@@ -43,8 +42,6 @@ fn main() {
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 10,
         source_language: None,
         disable_stage: Vec::new(),
         type_defs: false,

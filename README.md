@@ -46,8 +46,7 @@ fp compile src/main.fp --package demo --emit ast --emit ast-typed --emit hir
 ```
 
 Print a source target through the same frontend, HIR, typing, and AST-lift
-pipeline. Use `--skip-typing` only when the target does not require HIR type
-information:
+pipeline (typing is always performed):
 
 ```bash
 fp compile src/main.fp --package demo --target fp --output normalized.fp

@@ -12,7 +12,7 @@ pub use manifest::{
     estimate_module_path_with_roots, read_go_mod,
 };
 pub use parser::GoParser;
-pub use serializer::GoSerializer;
+pub use serializer::{GoBackend, GoSerializer};
 
 #[cfg(test)]
 mod tests;

@@ -144,12 +144,7 @@ fn parse_file(
     resolve_imports: bool,
     snapshot: Option<PathBuf>,
 ) -> Result<()> {
-    let ast = match compiler::parse_file_with_mode(
-        path,
-        None,
-        mode,
-        compiler::LossyCompileOptions::default(),
-    ) {
+    let ast = match compiler::parse_file_with_mode(path, None, mode) {
         Ok(ast) => ast,
         Err(err) => {
             if matches!(mode, FrontendParseMode::Loose) {

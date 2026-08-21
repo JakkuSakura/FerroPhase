@@ -178,8 +178,8 @@ fn main() -> Result<()> {
             };
             magnet_cli.build(&options)
         }
-        Some(Commands::Transpile { path, target, output, package, skip_typing }) => {
-            let options = TranspileOptions { path, target, output, package, skip_typing };
+        Some(Commands::Transpile { path, target, output, package }) => {
+            let options = TranspileOptions { path, target, output, package };
             magnet_cli.transpile(&options)
         }
         Some(Commands::Test {
@@ -497,11 +497,6 @@ enum Commands {
         /// Select a package by name
         #[arg(long)]
         package: Option<String>,
-
-        /// Skip HIR typechecking (falls back to the untyped pipeline —
-        /// use this if typing panics or is otherwise unusable for a project)
-        #[arg(long)]
-        skip_typing: bool,
     },
     /// Run tests for a package
     Test {

@@ -21,7 +21,6 @@ pub struct CompilerState {
     resolved_const_values: BTreeMap<String, mir::Constant>,
     pub typing_ctx: std::rc::Rc<TypingContext>,
     runtime_values: BTreeMap<RuntimeValueId, Value>,
-    lossy: bool,
     /// What the requested output target can express directly — see
     /// `fp_core::capabilities::LanguageCapabilities`. Defaults to
     /// `NATIVE` (nothing first-class); `fp-cli` sets the real value per
@@ -58,7 +57,6 @@ impl CompilerState {
                 tasks.clone(),
             )),
             runtime_values: BTreeMap::new(),
-            lossy: false,
             capabilities: fp_core::capabilities::LanguageCapabilities::NATIVE,
             bytecode: BTreeMap::new(),
             tasks,
@@ -117,10 +115,6 @@ impl CompilerState {
         self.runtime_values.insert(value_id, value);
     }
 
-    pub fn set_lossy(&mut self, lossy: bool) {
-        self.lossy = lossy;
-    }
-
     pub fn set_capabilities(&mut self, capabilities: fp_core::capabilities::LanguageCapabilities) {
         self.capabilities = capabilities;
     }
@@ -169,10 +163,6 @@ impl CompilerState {
         self.runtime_values
             .get(value_id)
             .ok_or_else(|| CompilerDriverError::MissingRuntimeValue(value_id.clone()))
-    }
-
-    pub fn lossy(&self) -> bool {
-        self.lossy
     }
 
     pub fn hir_len(&self) -> usize {

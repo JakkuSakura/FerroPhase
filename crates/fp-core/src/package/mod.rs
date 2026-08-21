@@ -416,6 +416,99 @@ impl CompiledPackage {
     }
 }
 
+/// Builds a `PackageSource` from a compiled package — the read-back
+/// conversion every consumer of a typechecked package (`WorkspaceContext`,
+/// `fp-cli`'s single-package and whole-workspace typecheck paths) needs the
+/// same way: typed/normalized content is already spliced onto
+/// `package.items` by `CompilerDriver::compile_package`, so there's nothing
+/// left to reconcile here beyond copying fields across.
+pub fn package_source_from_compiled(
+    package_id: &PackageId,
+    compiled: &std::rc::Rc<std::cell::RefCell<CompiledPackage>>,
+) -> PackageSource {
+    let package = compiled.borrow();
+    let items = package.items.clone();
+    let referenced_paths = package
+        .referenced_paths_by_path
+        .as_ref()
+        .map(|by_path| {
+            by_path
+                .iter()
+                .map(|(path, refs)| {
+                    let path = path.to_segments();
+                    let refs = refs.iter().map(|r| r.to_segments()).collect();
+                    (path, refs)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    PackageSource {
+        package_id: package_id.clone(),
+        name: package.name.clone(),
+        graph: package.graph.clone(),
+        module_paths: package.module_paths.clone(),
+        items,
+        referenced_paths,
+    }
+}
+
+/// Resolves the `DefId` of the function named `function_name` declared in
+/// `module_path` within `compiled`'s published HIR — pure over an
+/// already-borrowed `CompiledPackage` so both `CompilerDriver` (which owns
+/// the driver-state lookup that produces the `CompiledPackage` in the
+/// first place) and `WorkspaceContext` (which already holds one) can
+/// share this without either depending on the other. See
+/// `crate::hir::Program::def_paths`'s doc comment for why `sig.name` is
+/// always the bare, local identifier and disambiguation instead relies on
+/// the recorded def path.
+pub fn resolve_entrypoint_def_id(
+    package_id: &PackageId,
+    compiled: &CompiledPackage,
+    module_path: &QualifiedPath,
+    function_name: &str,
+) -> crate::error::Result<crate::hir::DefId> {
+    let expected_path =
+        crate::hir::DefPath::from_qualified_path(&module_path.with_segment(function_name.to_string()));
+    compiled
+        .hir_program
+        .as_ref()
+        .and_then(|program| {
+            program.items.iter().find_map(|item| match &item.kind {
+                crate::hir::ItemKind::Function(function)
+                    if function.sig.name.as_str() == function_name
+                        && program
+                            .def_paths
+                            .get(&item.def_id)
+                            .map(|path| path == &expected_path)
+                            .unwrap_or(true) =>
+                {
+                    Some(item.def_id)
+                }
+                _ => None,
+            })
+        })
+        .ok_or_else(|| {
+            crate::error::Error::from(format!(
+                "package `{package_id}` module `{}` has no `{function_name}` entrypoint",
+                module_path.to_key()
+            ))
+        })
+}
+
+/// Renames the LIR function identified by `def_id` to `bare_name` in
+/// place. The process entry point is located downstream (native/asm
+/// emission) by its final, bare symbol name — a linkage requirement, not a
+/// display convention — so a module-nested `main`'s mangled qualified name
+/// needs renaming back to the bare name it was resolved by.
+pub fn rename_lir_function(lir: &mut crate::lir::LirProgram, def_id: crate::hir::DefId, bare_name: &str) {
+    for lir_function in lir.functions.iter_mut() {
+        if lir_function.def_id == Some(def_id) {
+            lir_function.name = crate::lir::Name::new(bare_name.to_string());
+            break;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::PackageId;

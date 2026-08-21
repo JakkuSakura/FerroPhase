@@ -22,7 +22,6 @@ fn base_args(
 ) -> CompileArgs {
     CompileArgs {
         package: None,
-        skip_typing: false,
         input: vec![input],
         backend: BackendKind::Binary,
         target: None,
@@ -43,8 +42,6 @@ fn base_args(
         exec: false,
         link: false,
         save_intermediates: false,
-        lossy: false,
-        max_errors: 10,
         source_language: Some("object".to_string()),
         disable_stage: Vec::new(),
         type_defs: false,

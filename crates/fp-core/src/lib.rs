@@ -3,10 +3,10 @@ pub mod macros;
 
 pub mod asmir;
 pub mod ast;
+pub mod backend;
 pub mod capabilities;
 pub mod cfg;
 pub mod collections;
-pub mod config;
 pub mod container;
 pub mod context;
 pub mod diagnostics;

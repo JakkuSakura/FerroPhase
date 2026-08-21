@@ -9,4 +9,4 @@ pub mod printer;
 
 pub use package::ZigPackageProvider;
 pub use parser::ZigParser;
-pub use printer::ZigSerializer;
+pub use printer::{ZigBackend, ZigSerializer};

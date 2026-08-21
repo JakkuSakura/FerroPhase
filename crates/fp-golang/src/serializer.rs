@@ -69,6 +69,42 @@ impl GoSerializer {
     }
 }
 
+pub struct GoBackend {
+    serializer: GoSerializer,
+    config: fp_core::backend::BackendConfig,
+}
+
+impl GoBackend {
+    pub fn new(config: fp_core::backend::BackendConfig) -> Self {
+        Self {
+            serializer: GoSerializer::default(),
+            config,
+        }
+    }
+}
+
+impl fp_core::backend::TargetBackend for GoBackend {
+    fn compile_package(
+        &self,
+        workspace: &fp_core::workspace::WorkspaceContext,
+        package_id: &fp_core::package::PackageId,
+    ) -> Result<()> {
+        let package = workspace.package_source(package_id)?;
+        let package = &package;
+        let files = self.serializer.serialize_package(package)?;
+        let writer = fp_core::backend::PackageWriter::new(self.config.workspace_root.join(&package.name));
+        for (rel_path, code) in files {
+            let rel = if rel_path.contains('.') {
+                rel_path
+            } else {
+                format!("{rel_path}.go")
+            };
+            writer.write_file(&rel, code)?;
+        }
+        Ok(())
+    }
+}
+
 struct GoEmitter {
     code: String,
     indent: usize,

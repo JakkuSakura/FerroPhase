@@ -15,6 +15,7 @@ pub mod system_api;
 
 use crate::config::{EmitKind, NativeConfig};
 use crate::emit::{detect_target, resolve_native_target};
+use fp_core::ast::path::QualifiedPath;
 use fp_core::error::Result;
 use fp_core::lir::LirProgram;
 use std::path::{Path, PathBuf};
@@ -32,11 +33,26 @@ pub use crate::jit::{
 /// This is intended as an incremental replacement for `fp-llvm`.
 pub struct NativeEmitter {
     config: NativeConfig,
+    /// The module a `main` entrypoint should be resolved and renamed from
+    /// when driven through `TargetBackend::compile_package` (see
+    /// `fp_core::workspace::WorkspaceContext::merged_lir_program`) — `None`
+    /// for callers (tests, `fp-cli`'s container pipeline) that drive
+    /// `emit`/`compile` directly with an already-flattened `LirProgram`
+    /// and have no module to resolve one from.
+    module_path: Option<QualifiedPath>,
 }
 
 impl NativeEmitter {
     pub fn new(config: NativeConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            module_path: None,
+        }
+    }
+
+    pub fn with_module_path(mut self, module_path: QualifiedPath) -> Self {
+        self.module_path = Some(module_path);
+        self
     }
 
     /// Emit LIR into an object or executable.
@@ -55,7 +71,30 @@ impl NativeEmitter {
     pub fn compile(&self, lir_program: LirProgram, source_file: Option<&Path>) -> Result<PathBuf> {
         self.emit(lir_program, source_file)
     }
+}
 
+/// `NativeEmitter` already carries its own fully-resolved output path via
+/// `NativeConfig` (constructed by the caller with the exact artifact path
+/// before the emitter itself), so unlike the AST-emitting backends this
+/// doesn't need a separate `BackendConfig` — the existing config already is
+/// the "where to write" state `TargetBackend`'s design calls for.
+impl fp_core::backend::TargetBackend for NativeEmitter {
+    fn compile_package(
+        &self,
+        workspace: &fp_core::workspace::WorkspaceContext,
+        package_id: &fp_core::package::PackageId,
+    ) -> Result<()> {
+        let entrypoint = self
+            .module_path
+            .as_ref()
+            .map(|module_path| (module_path, "main", "main"));
+        let lir = workspace.merged_lir_program(package_id, entrypoint)?;
+        self.emit(lir, None)?;
+        Ok(())
+    }
+}
+
+impl NativeEmitter {
     fn emit_impl(&self, lir_program: &LirProgram) -> Result<PathBuf> {
         let out = self.config.output_path.clone();
         resolve_native_target(
