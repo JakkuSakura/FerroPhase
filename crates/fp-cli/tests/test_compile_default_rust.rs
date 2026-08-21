@@ -28,7 +28,7 @@ fn main() {
 
     let args = CompileArgs {
         package: None,
-        input: vec![input_file],
+        input: input_file,
         target: "rust".to_string(),
         target_triple: None,
         target_cpu: None,

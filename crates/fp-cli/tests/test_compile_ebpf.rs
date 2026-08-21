@@ -32,7 +32,7 @@ fn main() -> i32 {
 
     let args = CompileArgs {
         package: None,
-        input: vec![input_file],
+        input: input_file,
         target: "ebpf".to_string(),
         target_triple: None,
         target_cpu: None,
@@ -83,7 +83,7 @@ fn main() -> i32 {
 
     let args = CompileArgs {
         package: None,
-        input: vec![input_file],
+        input: input_file,
         target: "ebpf".to_string(),
         target_triple: None,
         target_cpu: None,

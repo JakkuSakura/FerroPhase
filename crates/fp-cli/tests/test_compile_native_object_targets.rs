@@ -21,7 +21,7 @@ fn base_args(
 ) -> CompileArgs {
     CompileArgs {
         package: None,
-        input: vec![input],
+        input: input,
         target: "native".to_string(),
         target_triple: Some(target_triple.to_string()),
         target_cpu: None,

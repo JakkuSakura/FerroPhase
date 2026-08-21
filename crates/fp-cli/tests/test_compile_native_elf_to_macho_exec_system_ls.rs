@@ -14,7 +14,7 @@ use fp_cli::commands::compile::{CompileArgs, compile_command};
 fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileArgs {
     CompileArgs {
         package: None,
-        input: vec![input],
+        input: input,
         target: "native".to_string(),
         target_triple: Some("aarch64-apple-darwin".to_string()),
         target_cpu: None,

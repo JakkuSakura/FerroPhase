@@ -27,7 +27,7 @@ fn main() -> i64 {
 
     let args = CompileArgs {
         package: None,
-        input: vec![input_file],
+        input: input_file,
         target: "cil".to_string(),
         target_triple: None,
         target_cpu: None,

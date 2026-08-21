@@ -15,7 +15,7 @@ fn base_args(
 ) -> CompileArgs {
     CompileArgs {
         package: None,
-        input: vec![input],
+        input: input,
         target: target.to_string(),
         target_triple: Some("x86_64-unknown-linux-gnu".to_string()),
         target_cpu: None,

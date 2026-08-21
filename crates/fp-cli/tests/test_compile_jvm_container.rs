@@ -8,7 +8,7 @@ use fp_cli::commands::compile::{CompileArgs, compile_command};
 fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileArgs {
     CompileArgs {
         package: None,
-        input: vec![input],
+        input: input,
         target: "jvm-bytecode".to_string(),
         target_triple: None,
         target_cpu: None,

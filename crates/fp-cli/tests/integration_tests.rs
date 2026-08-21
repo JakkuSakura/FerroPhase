@@ -103,7 +103,7 @@ async fn compile_example_async(example_name: &str) {
 
     let args = CompileArgs {
         package: None,
-        input: vec![source_path.clone()],
+        input: source_path.clone(),
         target: "bytecode".to_string(),
         target_triple: None,
         target_cpu: None,

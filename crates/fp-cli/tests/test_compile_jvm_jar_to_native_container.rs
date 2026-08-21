@@ -38,7 +38,7 @@ async fn compile_jvm_jar_to_native_object() {
 
     let args = CompileArgs {
         package: None,
-        input: vec![input_file],
+        input: input_file,
         target: "native".to_string(),
         target_triple: Some("x86_64-unknown-linux-gnu".to_string()),
         target_cpu: None,

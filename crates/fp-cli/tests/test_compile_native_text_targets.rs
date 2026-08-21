@@ -12,7 +12,7 @@ fn base_args(
 ) -> CompileArgs {
     CompileArgs {
         package: None,
-        input: vec![input],
+        input: input,
         target: target.to_string(),
         target_triple: None,
         target_cpu: None,
@@ -198,7 +198,7 @@ async fn compile_native_asm_reemits_same_isa_text() {
 
     let args = CompileArgs {
         package: None,
-        input: vec![input_file],
+        input: input_file,
         target: "native".to_string(),
         target_triple: Some("x86_64-unknown-linux-gnu".to_string()),
         target_cpu: None,
@@ -242,7 +242,7 @@ async fn compile_native_asm_transpiles_triplet_architecture() {
 
     let args = CompileArgs {
         package: None,
-        input: vec![input_file],
+        input: input_file,
         target: "native".to_string(),
         target_triple: Some("aarch64-unknown-linux-gnu".to_string()),
         target_cpu: None,
@@ -288,7 +288,7 @@ async fn compile_native_asm_transpiles_memory_load() {
 
     let args = CompileArgs {
         package: None,
-        input: vec![input_file],
+        input: input_file,
         target: "native".to_string(),
         target_triple: Some("aarch64-unknown-linux-gnu".to_string()),
         target_cpu: None,
@@ -332,7 +332,7 @@ async fn compile_native_asm_transpiles_memory_store() {
 
     let args = CompileArgs {
         package: None,
-        input: vec![input_file],
+        input: input_file,
         target: "native".to_string(),
         target_triple: Some("aarch64-unknown-linux-gnu".to_string()),
         target_cpu: None,
@@ -377,7 +377,7 @@ async fn compile_native_asm_transpiles_indirect_register_call() {
 
     let args = CompileArgs {
         package: None,
-        input: vec![input_file],
+        input: input_file,
         target: "native".to_string(),
         target_triple: Some("aarch64-unknown-linux-gnu".to_string()),
         target_cpu: None,
@@ -420,7 +420,7 @@ async fn compile_native_asm_transpiles_compare_branch() {
 
     let args = CompileArgs {
         package: None,
-        input: vec![input_file],
+        input: input_file,
         target: "native".to_string(),
         target_triple: Some("aarch64-unknown-linux-gnu".to_string()),
         target_cpu: None,
@@ -464,7 +464,7 @@ async fn compile_native_asm_reemits_same_isa_physical_operands() {
 
     let args = CompileArgs {
         package: None,
-        input: vec![input_file],
+        input: input_file,
         target: "native".to_string(),
         target_triple: Some("x86_64-unknown-linux-gnu".to_string()),
         target_cpu: None,
@@ -508,7 +508,7 @@ async fn compile_native_asm_translates_x86_physical_registers_to_aarch64() {
 
     let args = CompileArgs {
         package: None,
-        input: vec![input_file],
+        input: input_file,
         target: "native".to_string(),
         target_triple: Some("aarch64-unknown-linux-gnu".to_string()),
         target_cpu: None,
@@ -553,7 +553,7 @@ async fn compile_native_asm_translates_aarch64_physical_registers_to_x86() {
 
     let args = CompileArgs {
         package: None,
-        input: vec![input_file],
+        input: input_file,
         target: "native".to_string(),
         target_triple: Some("x86_64-unknown-linux-gnu".to_string()),
         target_cpu: None,
@@ -598,7 +598,7 @@ async fn compile_native_asm_translates_indexed_x86_address_to_aarch64() {
 
     let args = CompileArgs {
         package: None,
-        input: vec![input_file],
+        input: input_file,
         target: "native".to_string(),
         target_triple: Some("aarch64-unknown-linux-gnu".to_string()),
         target_cpu: None,
@@ -642,7 +642,7 @@ async fn compile_native_asm_translates_indexed_aarch64_address_to_x86() {
 
     let args = CompileArgs {
         package: None,
-        input: vec![input_file],
+        input: input_file,
         target: "native".to_string(),
         target_triple: Some("x86_64-unknown-linux-gnu".to_string()),
         target_cpu: None,

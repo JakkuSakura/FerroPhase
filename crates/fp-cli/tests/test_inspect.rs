@@ -39,7 +39,7 @@ fn inspect_macho_fat_lists_architectures() {
 fn base_compile_args(input: PathBuf, output: PathBuf) -> CompileArgs {
     CompileArgs {
         package: None,
-        input: vec![input],
+        input: input,
         target: "bytecode".to_string(),
         target_triple: None,
         target_cpu: None,

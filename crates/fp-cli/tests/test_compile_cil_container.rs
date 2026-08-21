@@ -12,7 +12,7 @@ fn base_args(
 ) -> CompileArgs {
     CompileArgs {
         package: None,
-        input: vec![input],
+        input: input,
         target: target.to_string(),
         target_triple: None,
         target_cpu: None,

@@ -13,9 +13,9 @@ use clap::Args;
 /// Arguments for the compile command (also used by Clap)
 #[derive(Debug, Clone, Args)]
 pub struct CompileArgs {
-    /// Input file(s) to compile
+    /// Input file or directory to compile
     #[arg(required = true)]
-    pub input: Vec<PathBuf>,
+    pub input: PathBuf,
     /// Package name used to qualify source identities (auto-detected for projects)
     #[arg(long = "package")]
     pub package: Option<String>,
@@ -144,7 +144,7 @@ pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()
 }
 
 async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
-    let progress = setup_progress_bar(args.input.len());
+    let progress = setup_progress_bar(1);
 
     let target = args.target.as_str();
     let emit_text_bytecode = target == "text-bytecode";
@@ -177,43 +177,34 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         };
 
     let container_registry = crate::container::ContainerRegistry::new();
-    let output_is_dir = args
-        .output
-        .as_ref()
-        .is_some_and(|path| args.input.len() > 1 || path.is_dir());
+    let input_file = &args.input;
+    let output_is_dir = args.output.as_ref().is_some_and(|path| path.is_dir());
 
-    for input_file in &args.input {
-        progress.set_message(format!("Compiling {}", input_file.display()));
+    progress.set_message(format!("Compiling {}", input_file.display()));
 
-        // Classified exactly once per input, then threaded through both
-        // output-path derivation and the actual compile/transpile dispatch
-        // below — instead of each independently re-detecting (and, for the
-        // byte-sniffed case, re-reading) the same input.
-        let input_class =
-            container_registry.classify_input(input_file, args.source_language.as_deref());
+    // Classified once, then threaded through both output-path derivation
+    // and the actual compile/transpile dispatch below — instead of each
+    // independently re-detecting (and, for the byte-sniffed case,
+    // re-reading) the same input.
+    let input_class =
+        container_registry.classify_input(input_file, args.source_language.as_deref());
 
-        let output_file = determine_output_path(
-            input_file,
-            args.output.as_ref(),
-            target,
-            args.target_triple.as_deref(),
-            input_class,
-            emit_text_bytecode,
-            output_is_dir,
-            link_requested,
-            args.exec,
-        )?;
+    let output_file = determine_output_path(
+        input_file,
+        args.output.as_ref(),
+        target,
+        args.target_triple.as_deref(),
+        input_class,
+        emit_text_bytecode,
+        output_is_dir,
+        link_requested,
+        args.exec,
+    )?;
 
-        compile_file(input_file, &output_file, &args, config, input_class, exec)
-            .await?;
-        progress.inc(1);
-    }
+    compile_file(input_file, &output_file, &args, config, input_class, exec).await?;
+    progress.inc(1);
 
-    progress.finish_with_message(format!(
-        "{} Compiled {} file(s) successfully",
-        style("✓").green(),
-        args.input.len()
-    ));
+    progress.finish_with_message(format!("{} Compiled successfully", style("✓").green()));
 
     Ok(())
 }
@@ -544,8 +535,8 @@ fn validate_compile_target(target: &str) -> Result<()> {
 }
 
 fn validate_inputs(args: &CompileArgs) -> Result<()> {
-    let has_dir = args.input.iter().any(|p| p.is_dir());
-    validate_paths_exist(&args.input, !has_dir, "compile")?;
+    let must_be_file = !args.input.is_dir();
+    validate_paths_exist(&[args.input.clone()], must_be_file, "compile")?;
 
     // Validate optimization level
     if args.opt_level > 3 {
