@@ -389,10 +389,6 @@ impl KotlinBackend {
 }
 
 impl TargetBackend for KotlinBackend {
-    fn materializer(&self) -> Option<std::sync::Arc<dyn fp_core::intrinsics::IntrinsicMaterializer>> {
-        Some(std::sync::Arc::new(crate::KotlinMaterializer))
-    }
-
     fn compile_package(
         &self,
         workspace: &fp_core::workspace::WorkspaceContext,

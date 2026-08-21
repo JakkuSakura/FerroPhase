@@ -2,7 +2,6 @@ pub mod backend;
 pub mod backend_registry;
 pub mod frontend;
 pub mod in_memory;
-pub mod normalizer;
 pub mod package_provider_registry;
 
 use std::path::Path;

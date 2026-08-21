@@ -4,7 +4,6 @@ use crate::commands::{setup_progress_bar, validate_paths_exist};
 use crate::compiler;
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
-use fp_core::ast::File;
 use fp_core::package::{PackageId, PackageSource};
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
@@ -145,8 +144,6 @@ pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()
 
 async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let progress = setup_progress_bar(1);
-
-    let target = args.target.as_str();
 
     // `--exec` implies "link/emit as a runnable artifact" (`link_requested`)
     // regardless of whether it can actually run on this host — a
@@ -363,10 +360,9 @@ async fn run_named_target(
     .await
 }
 
-/// Shared tail of every named-target compile: wraps `provider` with the
-/// target-language materialize/normalize transforms, typechecks every
-/// package in one `CompilerDriver::compile_workspace` call, hands each one
-/// to `backend.compile_package`, then `write_workspace_files`/`exec`.
+/// Shared tail of every named-target compile: typechecks every package in
+/// one `CompilerDriver::compile_workspace` call, hands each one to
+/// `backend.compile_package`, then `write_workspace_files`/`exec`.
 async fn run_compile_pipeline(
     input: &Path,
     output: &Path,
@@ -387,22 +383,7 @@ async fn run_compile_pipeline(
 
     let mut file_count = 0;
 
-    let normalizer = crate::languages::normalizer::normalizer_for_language(lang);
-    let materializer = backend.materializer();
-
-    // Wrap the real provider so `load_package_source` also applies the
-    // target-language materialize + normalize transforms. Registered
-    // as-is (not pre-resolved into a single snapshot) with the typechecker
-    // below, so the driver can still do genuine resolution for any package
-    // id it asks about (e.g. `std`), not just the one being typechecked.
-    let materializing_provider: std::sync::Arc<dyn fp_core::package::provider::PackageProvider> =
-        std::sync::Arc::new(TranspileMaterializingPackageProvider::new(
-            provider.clone(),
-            materializer.clone(),
-            normalizer,
-        ));
-
-    // Phase 1: load + materialize + normalize + typecheck every package before
+    // Phase 1: load + typecheck every package before
     // serializing any of them. A struct's fields can be defined in one
     // package and mutated through a `&mut` reference in another (e.g.
     // skln-core's `FileChange` mutated from skln-git's diff parser) — Kotlin
@@ -425,7 +406,7 @@ async fn run_compile_pipeline(
     let capabilities = crate::languages::backend::capabilities_for_target(target_name);
     let root_id = PackageId::new(format!("{root_name}::__workspace_root__"));
     let (executor, mut session) =
-        compiler::build_workspace_session(materializing_provider.clone(), lang, capabilities);
+        compiler::build_workspace_session(provider.clone(), lang, capabilities);
     executor
         .run(session.driver().compile_workspace(&root_id, &packages))
         .map_err(|e| {
@@ -661,103 +642,6 @@ fn determine_output_path(
         path.set_extension(extension);
     }
     Ok(path)
-}
-
-/// Wraps a real, already-discovered `PackageProvider` (e.g. `RustPackageProvider`,
-/// covering an entire workspace) and applies the target-language materialize
-/// + source-normalize transforms to every item `load_package_source` returns.
-///
-/// Exists so whole-package typechecking (`typecheck_package`) can register a
-/// provider that does genuine resolution for *any* package id — including
-/// `std`/dependencies the driver asks about internally — instead of a
-/// one-off shim that only knows how to answer for a single pre-baked
-/// `PackageSource` snapshot. `list_packages`/`load_package_metadata`/`refresh`
-/// delegate straight through; only `load_package_source` adds work.
-///
-/// Used only by the `Transpile`/`TypecheckedTranspile` paths in this module
-/// — `PipelineMode::Native` needs none of this (portable ops already
-/// resolve to real std functions there; see `fp_native::NativeIntrinsicMaterializer`'s
-/// doc comment), so it stays on the plain, unwrapped provider in
-/// `compiler::compile_source_file`.
-struct TranspileMaterializingPackageProvider {
-    inner: std::sync::Arc<dyn fp_core::package::provider::PackageProvider>,
-    materializer: Option<std::sync::Arc<dyn fp_core::intrinsics::IntrinsicMaterializer>>,
-    normalizer: Option<std::sync::Arc<dyn fp_core::intrinsics::IntrinsicNormalizer>>,
-}
-
-impl TranspileMaterializingPackageProvider {
-    fn new(
-        inner: std::sync::Arc<dyn fp_core::package::provider::PackageProvider>,
-        materializer: Option<std::sync::Arc<dyn fp_core::intrinsics::IntrinsicMaterializer>>,
-        normalizer: Option<std::sync::Arc<dyn fp_core::intrinsics::IntrinsicNormalizer>>,
-    ) -> Self {
-        Self {
-            inner,
-            materializer,
-            normalizer,
-        }
-    }
-}
-
-impl fp_core::package::provider::PackageProvider for TranspileMaterializingPackageProvider {
-    fn list_packages(
-        &self,
-    ) -> fp_core::package::provider::ProviderResult<Vec<fp_core::package::PackageId>> {
-        self.inner.list_packages()
-    }
-
-    fn workspace_packages(
-        &self,
-    ) -> fp_core::package::provider::ProviderResult<Vec<fp_core::package::PackageId>> {
-        self.inner.workspace_packages()
-    }
-
-    fn load_package_metadata(
-        &self,
-        id: &fp_core::package::PackageId,
-    ) -> fp_core::package::provider::ProviderResult<std::sync::Arc<fp_core::package::PackageDescriptor>>
-    {
-        self.inner.load_package_metadata(id)
-    }
-
-    fn refresh(&self) -> fp_core::package::provider::ProviderResult<()> {
-        self.inner.refresh()
-    }
-
-    fn load_package_source(
-        &self,
-        id: &fp_core::package::PackageId,
-    ) -> fp_core::package::provider::ProviderResult<PackageSource> {
-        let mut source = self.inner.load_package_source(id)?;
-
-        if let Some(ref mat) = self.materializer {
-            for pkg_item in &mut source.items {
-                let file = File {
-                    path: PathBuf::new(),
-                    attrs: vec![],
-                    collected_items: vec![],
-                    items: vec![pkg_item.item.clone()],
-                };
-                let file = fp_core::intrinsics::materialize_file(file, mat.as_ref())
-                    .map_err(|e| fp_core::package::provider::ProviderError::other(e.to_string()))?;
-                if let Some(item) = file.items.into_iter().next() {
-                    pkg_item.item = item;
-                }
-            }
-        }
-
-        if let Some(ref norm) = self.normalizer {
-            for pkg_item in &mut source.items {
-                fp_lang::normalization::normalize_items(
-                    std::slice::from_mut(&mut pkg_item.item),
-                    norm.as_ref(),
-                )
-                .map_err(|e| fp_core::package::provider::ProviderError::other(e.to_string()))?;
-            }
-        }
-
-        Ok(source)
-    }
 }
 
 fn is_windows_target(target_triple: Option<&str>) -> bool {
