@@ -343,23 +343,21 @@ struct KotlinScan {
 /// workspace-wide context beyond what `BackendConfig` carries — the
 /// workspace-wide `KotlinScan` is read lazily from `&WorkspaceContext` on
 /// first `compile_package`/`write_workspace_files` call, same as every
-/// other backend gets its input. `root_name` stays a construction
-/// parameter: it's the *source* project directory's name (not
-/// `config.workspace_root`, the output directory), which `WorkspaceContext`
-/// has no way to reconstruct — it isn't package data at all.
+/// other backend gets its input. `config.root_name` (the *source* project
+/// directory's name, not `config.workspace_root`, the output directory)
+/// is read straight off `self.config` — `WorkspaceContext` has no way to
+/// reconstruct it, it isn't package data at all.
 pub struct KotlinBackend {
     serializer: KotlinSerializer,
     config: BackendConfig,
-    root_name: String,
     scan: std::sync::OnceLock<KotlinScan>,
 }
 
 impl KotlinBackend {
-    pub fn new(config: BackendConfig, root_name: String) -> Self {
+    pub fn new(config: BackendConfig) -> Self {
         Self {
             serializer: KotlinSerializer,
             config,
-            root_name,
             scan: std::sync::OnceLock::new(),
         }
     }
@@ -419,7 +417,7 @@ impl TargetBackend for KotlinBackend {
         workspace: &fp_core::workspace::WorkspaceContext,
     ) -> fp_core::error::Result<()> {
         let scan = self.ensure_scan(workspace)?;
-        let root_name = self.root_name.replace('-', "_");
+        let root_name = self.config.root_name.replace('-', "_");
         let settings = format!(
             "rootProject.name = \"{root_name}\"\n\n{}\n",
             scan.package_names

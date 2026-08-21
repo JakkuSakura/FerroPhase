@@ -544,8 +544,9 @@ async fn run_named_target(
         .with_debug_info(args.debug)
         .with_save_intermediates(args.save_intermediates)
         .with_type_defs(args.type_defs)
-        .with_single_world(args.single_world);
-    let backend = resolve_target_backend(target_name, backend_config, root_name)?;
+        .with_single_world(args.single_world)
+        .with_root_name(root_name);
+    let backend = backend_for_target(target_name, backend_config)?;
 
     // Phase 2: serialize + write every package now that the workspace-wide
     // mutability set (and any other cross-package info) is complete.
@@ -616,44 +617,6 @@ async fn run_named_target(
     Ok(())
 }
 
-/// Resolves `name` to a `TargetBackend`, trying built-ins first
-/// (`backend_for_target`) then the runtime registry
-/// (`crate::languages::registry::find_registered_target_backend`) — the
-/// registry entry's `root_name` is unused (a registered backend already
-/// captured whatever it needs at registration time), but every call site
-/// builds it uniformly since most callers don't know in advance which
-/// side will answer.
-fn resolve_target_backend(
-    name: &str,
-    config: fp_core::backend::BackendConfig,
-    root_name: String,
-) -> Result<Box<dyn fp_core::backend::TargetBackend>> {
-    if let Some(result) = backend_for_target(name, config, root_name) {
-        return result;
-    }
-    crate::languages::registry::find_registered_target_backend(name)
-        .map(|backend| -> Box<dyn fp_core::backend::TargetBackend> {
-            struct Shared(std::sync::Arc<dyn fp_core::backend::TargetBackend>);
-            impl fp_core::backend::TargetBackend for Shared {
-                fn compile_package(
-                    &self,
-                    workspace: &fp_core::workspace::WorkspaceContext,
-                    package_id: &PackageId,
-                ) -> fp_core::error::Result<()> {
-                    self.0.compile_package(workspace, package_id)
-                }
-                fn write_workspace_files(
-                    &self,
-                    workspace: &fp_core::workspace::WorkspaceContext,
-                ) -> fp_core::error::Result<()> {
-                    self.0.write_workspace_files(workspace)
-                }
-            }
-            Box::new(Shared(backend))
-        })
-        .ok_or_else(|| CliError::InvalidInput(format!("Unsupported target: {name}")))
-}
-
 /// Error returned by an AST-target arm whose crate is gated behind a
 /// disabled optional `lang-*` feature (see e.g. `lang-typescript` in this
 /// crate's `Cargo.toml`).
@@ -663,19 +626,16 @@ fn disabled_feature_error(feature: &str, what: &str) -> CliError {
     ))
 }
 
-/// Constructs the `TargetBackend` for a built-in target name — called
-/// exactly once per invocation. Returns `None` for a name this function
-/// doesn't recognize at all (so `resolve_target_backend` can fall through
-/// to the runtime registry), `Some(Err(_))` for a recognized name whose
-/// crate is a disabled optional feature.
-#[allow(unused_variables)]
+/// Constructs the `TargetBackend` for `name` — every built-in target
+/// first, falling through to the runtime registry
+/// (`crate::languages::registry::find_registered_target_backend`) for
+/// anything it doesn't recognize.
 fn backend_for_target(
     name: &str,
     config: fp_core::backend::BackendConfig,
-    root_name: String,
-) -> Option<Result<Box<dyn fp_core::backend::TargetBackend>>> {
+) -> Result<Box<dyn fp_core::backend::TargetBackend>> {
     let output = config.workspace_root.clone();
-    Some(match name.to_lowercase().as_str() {
+    match name.to_lowercase().as_str() {
         "native" => {
             let native_target = match config.native_target.as_deref() {
                 Some(value) => Some(
@@ -831,7 +791,7 @@ fn backend_for_target(
         "kotlin" | "kt" => {
             #[cfg(feature = "lang-kotlin")]
             {
-                Ok(Box::new(fp_kotlin::KotlinBackend::new(config, root_name)))
+                Ok(Box::new(fp_kotlin::KotlinBackend::new(config)))
             }
             #[cfg(not(feature = "lang-kotlin"))]
             {
@@ -906,8 +866,28 @@ fn backend_for_target(
             }
         }
         "c" => Ok(Box::new(fp_c::codegen::CBackend::new(config))),
-        _ => return None,
-    })
+        _ => crate::languages::registry::find_registered_target_backend(name)
+            .map(|backend| -> Box<dyn fp_core::backend::TargetBackend> {
+                struct Shared(std::sync::Arc<dyn fp_core::backend::TargetBackend>);
+                impl fp_core::backend::TargetBackend for Shared {
+                    fn compile_package(
+                        &self,
+                        workspace: &fp_core::workspace::WorkspaceContext,
+                        package_id: &PackageId,
+                    ) -> fp_core::error::Result<()> {
+                        self.0.compile_package(workspace, package_id)
+                    }
+                    fn write_workspace_files(
+                        &self,
+                        workspace: &fp_core::workspace::WorkspaceContext,
+                    ) -> fp_core::error::Result<()> {
+                        self.0.write_workspace_files(workspace)
+                    }
+                }
+                Box::new(Shared(backend))
+            })
+            .ok_or_else(|| CliError::InvalidInput(format!("Unsupported target: {name}"))),
+    }
 }
 
 fn is_tsconfig(path: &Path) -> bool {

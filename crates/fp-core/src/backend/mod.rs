@@ -41,6 +41,11 @@ pub struct BackendConfig {
     pub save_intermediates: bool,
     pub type_defs: bool,
     pub single_world: bool,
+    /// The workspace's own project name (Kotlin's `settings.gradle.kts`
+    /// `rootProject.name`) — derived by the caller from the *source*
+    /// project directory's name, not `workspace_root` (the output
+    /// directory).
+    pub root_name: String,
 }
 
 impl BackendConfig {
@@ -59,6 +64,7 @@ impl BackendConfig {
             save_intermediates: false,
             type_defs: false,
             single_world: false,
+            root_name: "workspace".to_string(),
         }
     }
 
@@ -119,6 +125,11 @@ impl BackendConfig {
 
     pub fn with_single_world(mut self, single_world: bool) -> Self {
         self.single_world = single_world;
+        self
+    }
+
+    pub fn with_root_name(mut self, root_name: String) -> Self {
+        self.root_name = root_name;
         self
     }
 }
