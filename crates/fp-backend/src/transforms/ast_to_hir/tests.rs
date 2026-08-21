@@ -89,6 +89,21 @@ fn package_from_items_with_paths(
 ) -> Result<fp_core::package::CompiledPackage> {
     let package_id = PackageId::new("test");
     let mut source = PackageSource::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
+    // Real providers (`RustPackageProvider`) record every distinct module
+    // path they see across all loaded files here — including a bare
+    // crate-root file's own path (e.g. `alloc/lib.rs` -> `["alloc"]`),
+    // which is what makes a *whole-module* import/`extern crate` alias
+    // resolve at all (`module_defs` is seeded straight from this set, see
+    // `transform_package`'s own comment). `WorkspaceContext::begin_package`
+    // copies `source.module_paths` verbatim (`krate.module_paths =
+    // source.module_paths;`, never recomputes it from `source.graph`), so
+    // setting it here is both correct and sufficient for a test — no need
+    // to also build a real `PackageGraph`.
+    source.module_paths = items
+        .iter()
+        .map(|(module_path, _)| QualifiedPath::new(module_path.clone()))
+        .filter(|path| !path.segments.is_empty())
+        .collect();
     source.items = items
         .into_iter()
         .map(|(module_path, item)| fp_core::package::PackageItem {
@@ -1160,6 +1175,116 @@ fn transform_package_resolves_self_plus_variants_group_import() -> Result<()> {
         "bare `Foo` return type must resolve via the `Foo::{{self, \
          Variant}}` group import's own `self` member — got unresolved \
          path {ret_path:?}"
+    );
+
+    Ok(())
+}
+
+/// Real `std/lib.rs` writes `extern crate alloc as alloc_crate;` then
+/// re-exports through it (`pub use alloc_crate::vec;`, `pub use
+/// alloc_crate::boxed;`, ...) — the vendored std source merges the real
+/// `core`/`alloc`/`std` crates into one FerroPhase package, so this
+/// "extern crate" is really a *whole-module* alias within the same
+/// package, not a cross-package dependency. Mirrors that exact shape:
+/// `alloc::vec` defines `Vec`, a top-level `alloc` module path is
+/// registered (matching `alloc/lib.rs`'s own crate-root file), `std`
+/// aliases `alloc` as `alloc_crate` then re-exports `alloc_crate::vec::
+/// Vec`, and a third module references the bare name.
+#[test]
+fn transform_package_resolves_extern_crate_alias_reexport_chain() -> Result<()> {
+    let vec_item = make_struct("Vec", vec![("value", int_ty())]);
+
+    // A stand-in for `alloc/lib.rs`'s own top-level items — content
+    // doesn't matter, only that *some* item exists at module path
+    // `["alloc"]` so that path gets registered (mirroring a real
+    // crate-root file's module path).
+    let alloc_crate_root_marker = ast::Item::from(ast::ItemKind::DefConst(ast::ItemDefConst {
+        attrs: Vec::new(),
+        mutable: None,
+        ty_annotation: None,
+        visibility: ast::Visibility::Public,
+        name: ident("ALLOC_MARKER"),
+        ty: None,
+        value: Box::new(ast::Expr::value(ast::Value::int(0))),
+    }));
+
+    // `extern crate alloc as alloc_crate;`
+    let extern_crate_alloc = ast::Item::from(ast::ItemKind::Import(ast::ItemImport {
+        attrs: Vec::new(),
+        visibility: ast::Visibility::Public,
+        style: ast::ItemImportStyle::Plain,
+        tree: ast::ItemImportTree::Rename(ast::ItemImportRename {
+            from: ident("alloc"),
+            to: ident("alloc_crate"),
+        }),
+    }));
+    // `pub use alloc_crate::vec::Vec;`
+    let reexport_vec = ast::Item::from(ast::ItemKind::Import(ast::ItemImport {
+        attrs: Vec::new(),
+        visibility: ast::Visibility::Public,
+        style: ast::ItemImportStyle::Plain,
+        tree: ast::ItemImportTree::Path(ast::ItemImportPath {
+            segments: vec![
+                ast::ItemImportTree::Ident(ident("alloc_crate")),
+                ast::ItemImportTree::Ident(ident("vec")),
+                ast::ItemImportTree::Ident(ident("Vec")),
+            ],
+        }),
+    }));
+
+    let make_fn_item = make_fn(
+        "make",
+        Vec::new(),
+        ty_ident("Vec"),
+        ast::Expr::from(ast::ExprKind::Struct(ast::ExprStruct::new_ident(
+            ident("Vec"),
+            vec![ast::ExprField::new(
+                ident("value"),
+                ast::Expr::value(ast::Value::int(1)),
+            )],
+        ))),
+    );
+
+    // `make` lives in `std` too (not a third, unrelated module) —
+    // `alloc_crate::vec::Vec`'s re-export binds `Vec` into `std`'s own
+    // module scope directly; whether an *unrelated sibling* module can
+    // also see it bare (without its own `use`) is the separate prelude
+    // mechanism already covered by
+    // `transform_package_resolves_bare_prelude_reexport_from_sibling_module`,
+    // not what this test is isolating.
+    let items = vec![
+        (vec!["alloc".to_string()], alloc_crate_root_marker),
+        (
+            vec!["alloc".to_string(), "vec".to_string()],
+            vec_item,
+        ),
+        (vec!["std".to_string()], extern_crate_alloc),
+        (vec!["std".to_string()], reexport_vec),
+        (vec!["std".to_string()], make_fn_item),
+    ];
+    let package = package_from_items_with_paths(items)?;
+    let mut generator = HirGenerator::new();
+    let program = generator.transform_package(&package)?;
+
+    let make_fn_hir = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(func) if func.sig.name.as_str() == "make" => Some(func),
+            _ => None,
+        })
+        .expect("`make` function present");
+    let hir::TypeExprKind::Path(ret_path) = &make_fn_hir.sig.output.kind else {
+        panic!(
+            "expected `make`'s return type to lower to a path, got {:?}",
+            make_fn_hir.sig.output.kind
+        );
+    };
+    assert!(
+        ret_path.res.is_some(),
+        "bare `Vec` return type must resolve via `extern crate alloc as \
+         alloc_crate;` + `pub use alloc_crate::vec::Vec;` — got \
+         unresolved path {ret_path:?}"
     );
 
     Ok(())
