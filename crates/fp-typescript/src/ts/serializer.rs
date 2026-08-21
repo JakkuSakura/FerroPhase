@@ -97,21 +97,19 @@ fn write_package_files(
     Ok(())
 }
 
-/// `TargetBackend` wrapper around [`TypeScriptSerializer`] — a wrapper
-/// rather than an impl directly on `TypeScriptSerializer` since the
-/// untouched single-file `emit_ast_target` path constructs it via
-/// `TypeScriptSerializer::new(emit_type_defs)` and reads `take_type_defs()`
-/// off it directly; adding a `BackendConfig` field there would change that
-/// constructor's arity.
+/// `TargetBackend` wrapper around [`TypeScriptSerializer`] — a thin
+/// wrapper rather than an impl directly on `TypeScriptSerializer` so the
+/// serializer itself stays usable without a `BackendConfig` (e.g. by
+/// tests that only need `serialize_file`).
 pub struct TypeScriptBackend {
     serializer: TypeScriptSerializer,
     config: fp_core::backend::BackendConfig,
 }
 
 impl TypeScriptBackend {
-    pub fn new(config: fp_core::backend::BackendConfig, emit_type_defs: bool) -> Self {
+    pub fn new(config: fp_core::backend::BackendConfig) -> Self {
         Self {
-            serializer: TypeScriptSerializer::new(emit_type_defs),
+            serializer: TypeScriptSerializer::new(config.type_defs),
             config,
         }
     }

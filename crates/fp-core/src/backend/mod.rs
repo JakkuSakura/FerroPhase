@@ -19,13 +19,107 @@ use crate::workspace::WorkspaceContext;
 /// backends it's the workspace-rooted output directory (per-package
 /// subdirectories are derived from it); for single-artifact backends
 /// (native/goasm/urcl) it's the artifact's own output path.
+///
+/// The remaining fields are every construction-time codegen/emission
+/// option a built-in backend reads — deliberately not `CompileArgs`
+/// itself (fp-cli's whole CLI-flag surface, including things like `exec`/
+/// `link`/`opt_level` that have nothing to do with constructing a
+/// backend): this is the one value a backend constructor should ever
+/// need, so fp-cli's own dispatch (`backend_for_target`) never has to
+/// reach past it into `CompileArgs`.
 pub struct BackendConfig {
     pub workspace_root: PathBuf,
+    pub target_triple: Option<String>,
+    pub target_cpu: Option<String>,
+    pub native_target: Option<String>,
+    pub target_features: Option<String>,
+    pub target_sysroot: Option<PathBuf>,
+    pub linker: String,
+    pub target_linker: Option<PathBuf>,
+    pub release: bool,
+    pub debug_info: bool,
+    pub save_intermediates: bool,
+    pub type_defs: bool,
+    pub single_world: bool,
 }
 
 impl BackendConfig {
     pub fn new(workspace_root: PathBuf) -> Self {
-        Self { workspace_root }
+        Self {
+            workspace_root,
+            target_triple: None,
+            target_cpu: None,
+            native_target: None,
+            target_features: None,
+            target_sysroot: None,
+            linker: "clang".to_string(),
+            target_linker: None,
+            release: false,
+            debug_info: false,
+            save_intermediates: false,
+            type_defs: false,
+            single_world: false,
+        }
+    }
+
+    pub fn with_target_triple(mut self, target_triple: Option<String>) -> Self {
+        self.target_triple = target_triple;
+        self
+    }
+
+    pub fn with_target_cpu(mut self, target_cpu: Option<String>) -> Self {
+        self.target_cpu = target_cpu;
+        self
+    }
+
+    pub fn with_native_target(mut self, native_target: Option<String>) -> Self {
+        self.native_target = native_target;
+        self
+    }
+
+    pub fn with_target_features(mut self, target_features: Option<String>) -> Self {
+        self.target_features = target_features;
+        self
+    }
+
+    pub fn with_target_sysroot(mut self, target_sysroot: Option<PathBuf>) -> Self {
+        self.target_sysroot = target_sysroot;
+        self
+    }
+
+    pub fn with_linker(mut self, linker: String) -> Self {
+        self.linker = linker;
+        self
+    }
+
+    pub fn with_target_linker(mut self, target_linker: Option<PathBuf>) -> Self {
+        self.target_linker = target_linker;
+        self
+    }
+
+    pub fn with_release(mut self, release: bool) -> Self {
+        self.release = release;
+        self
+    }
+
+    pub fn with_debug_info(mut self, debug_info: bool) -> Self {
+        self.debug_info = debug_info;
+        self
+    }
+
+    pub fn with_save_intermediates(mut self, save_intermediates: bool) -> Self {
+        self.save_intermediates = save_intermediates;
+        self
+    }
+
+    pub fn with_type_defs(mut self, type_defs: bool) -> Self {
+        self.type_defs = type_defs;
+        self
+    }
+
+    pub fn with_single_world(mut self, single_world: bool) -> Self {
+        self.single_world = single_world;
+        self
     }
 }
 

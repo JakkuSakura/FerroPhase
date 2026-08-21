@@ -156,9 +156,9 @@ pub struct WitBackend {
 }
 
 impl WitBackend {
-    pub fn new(config: fp_core::backend::BackendConfig, single_world: bool) -> Self {
+    pub fn new(config: fp_core::backend::BackendConfig) -> Self {
         Self {
-            single_world,
+            single_world: config.single_world,
             config,
         }
     }

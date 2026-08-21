@@ -532,8 +532,20 @@ async fn run_named_target(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let backend_config = fp_core::backend::BackendConfig::new(output.to_path_buf());
-    let backend = resolve_target_backend(target_name, args, backend_config, root_name)?;
+    let backend_config = fp_core::backend::BackendConfig::new(output.to_path_buf())
+        .with_target_triple(args.target_triple.clone())
+        .with_target_cpu(args.target_cpu.clone())
+        .with_native_target(args.native_target.clone())
+        .with_target_features(args.target_features.clone())
+        .with_target_sysroot(args.target_sysroot.clone())
+        .with_linker(args.linker.clone())
+        .with_target_linker(args.target_linker.clone())
+        .with_release(args.release)
+        .with_debug_info(args.debug)
+        .with_save_intermediates(args.save_intermediates)
+        .with_type_defs(args.type_defs)
+        .with_single_world(args.single_world);
+    let backend = resolve_target_backend(target_name, backend_config, root_name)?;
 
     // Phase 2: serialize + write every package now that the workspace-wide
     // mutability set (and any other cross-package info) is complete.
@@ -613,11 +625,10 @@ async fn run_named_target(
 /// side will answer.
 fn resolve_target_backend(
     name: &str,
-    args: &CompileArgs,
     config: fp_core::backend::BackendConfig,
     root_name: String,
 ) -> Result<Box<dyn fp_core::backend::TargetBackend>> {
-    if let Some(result) = backend_for_target(name, args, config, root_name) {
+    if let Some(result) = backend_for_target(name, config, root_name) {
         return result;
     }
     crate::languages::registry::find_registered_target_backend(name)
@@ -660,16 +671,15 @@ fn disabled_feature_error(feature: &str, what: &str) -> CliError {
 #[allow(unused_variables)]
 fn backend_for_target(
     name: &str,
-    args: &CompileArgs,
     config: fp_core::backend::BackendConfig,
     root_name: String,
 ) -> Option<Result<Box<dyn fp_core::backend::TargetBackend>>> {
     let output = config.workspace_root.clone();
     Some(match name.to_lowercase().as_str() {
         "native" => {
-            let native_target = match args.native_target.as_deref() {
+            let native_target = match config.native_target.as_deref() {
                 Some(value) => Some(
-                    fp_native::config::NativeTarget::resolve(value, args.target_triple.as_deref())
+                    fp_native::config::NativeTarget::resolve(value, config.target_triple.as_deref())
                         .ok_or_else(|| {
                             CliError::Compilation(format!("Unsupported fp-native target: {value}"))
                         }),
@@ -679,15 +689,15 @@ fn backend_for_target(
             match native_target.transpose() {
                 Ok(native_target) => {
                     let mut cfg = fp_native::config::NativeConfig::executable(&output)
-                        .with_target_triple(args.target_triple.clone())
-                        .with_target_cpu(args.target_cpu.clone())
+                        .with_target_triple(config.target_triple.clone())
+                        .with_target_cpu(config.target_cpu.clone())
                         .with_native_target(native_target)
-                        .with_target_features(args.target_features.clone())
-                        .with_sysroot(args.target_sysroot.clone())
-                        .with_fuse_ld(args.target_linker.clone())
-                        .with_linker_driver(Some(args.linker.clone()))
-                        .with_release(args.release);
-                    if args.save_intermediates {
+                        .with_target_features(config.target_features.clone())
+                        .with_sysroot(config.target_sysroot.clone())
+                        .with_fuse_ld(config.target_linker.clone())
+                        .with_linker_driver(Some(config.linker.clone()))
+                        .with_release(config.release);
+                    if config.save_intermediates {
                         cfg = cfg.with_asm_dump(Some(output.with_extension("asm")));
                     }
                     let emitter = fp_native::NativeEmitter::new(cfg);
@@ -698,11 +708,11 @@ fn backend_for_target(
         }
         "goasm" => {
             let target = Some(fp_goasm::config::GoAsmTarget::resolve(
-                args.target_triple.as_deref(),
+                config.target_triple.as_deref(),
             ));
             let cfg = fp_goasm::config::GoAsmConfig::new(&output)
                 .with_target(target)
-                .with_target_triple(args.target_triple.clone());
+                .with_target_triple(config.target_triple.clone());
             let emitter = fp_goasm::GoAsmEmitter::new(cfg);
             Ok(Box::new(emitter))
         }
@@ -715,15 +725,15 @@ fn backend_for_target(
             {
                 Ok(Box::new(fp_llvm::LlvmBackend {
                     output: output.clone(),
-                    target_triple: args.target_triple.clone(),
-                    target_cpu: args.target_cpu.clone(),
-                    target_features: args.target_features.clone(),
-                    target_sysroot: args.target_sysroot.clone(),
-                    linker: Some(args.linker.clone()),
-                    target_linker: args.target_linker.clone(),
-                    release: args.release,
-                    debug_info: args.debug,
-                    save_intermediates: args.save_intermediates,
+                    target_triple: config.target_triple.clone(),
+                    target_cpu: config.target_cpu.clone(),
+                    target_features: config.target_features.clone(),
+                    target_sysroot: config.target_sysroot.clone(),
+                    linker: Some(config.linker.clone()),
+                    target_linker: config.target_linker.clone(),
+                    release: config.release,
+                    debug_info: config.debug_info,
+                    save_intermediates: config.save_intermediates,
                     text_only: name.eq_ignore_ascii_case("llvm-text"),
                 }))
             }
@@ -739,14 +749,14 @@ fn backend_for_target(
             {
                 Ok(Box::new(fp_cranelift::CraneliftBackend {
                     output: output.clone(),
-                    target_triple: args.target_triple.clone(),
-                    target_cpu: args.target_cpu.clone(),
-                    target_features: args.target_features.clone(),
-                    target_sysroot: args.target_sysroot.clone(),
-                    linker: Some(args.linker.clone()),
-                    target_linker: args.target_linker.clone(),
-                    release: args.release,
-                    save_intermediates: args.save_intermediates,
+                    target_triple: config.target_triple.clone(),
+                    target_cpu: config.target_cpu.clone(),
+                    target_features: config.target_features.clone(),
+                    target_sysroot: config.target_sysroot.clone(),
+                    linker: Some(config.linker.clone()),
+                    target_linker: config.target_linker.clone(),
+                    release: config.release,
+                    save_intermediates: config.save_intermediates,
                 }))
             }
             #[cfg(not(feature = "cranelift"))]
@@ -761,11 +771,11 @@ fn backend_for_target(
             output: output.clone(),
             emit_text: name.eq_ignore_ascii_case("text-bytecode")
                 || output.extension().and_then(|ext| ext.to_str()) == Some("ftbc"),
-            save_intermediates: args.save_intermediates,
+            save_intermediates: config.save_intermediates,
         })),
         "jvm-bytecode" => Ok(Box::new(fp_jvm::JvmBackend {
             output: output.clone(),
-            save_intermediates: args.save_intermediates,
+            save_intermediates: config.save_intermediates,
         })),
         "wasm" => Ok(Box::new(fp_wasm::WasmBackend {
             output: output.clone(),
@@ -778,17 +788,14 @@ fn backend_for_target(
         })),
         "dotnet" => Ok(Box::new(fp_dotnet::DotnetBackend {
             output: output.clone(),
-            save_intermediates: args.save_intermediates,
+            save_intermediates: config.save_intermediates,
         })),
         "interpret" => Ok(Box::new(fp_interpret::InterpreterBackend)),
         "fp" | "ferro" | "ferrophase" => Ok(Box::new(fp_c::FerroPhaseAstBackend::new(config))),
         "typescript" | "ts" => {
             #[cfg(feature = "lang-typescript")]
             {
-                Ok(Box::new(fp_typescript::TypeScriptBackend::new(
-                    config,
-                    args.type_defs,
-                )))
+                Ok(Box::new(fp_typescript::TypeScriptBackend::new(config)))
             }
             #[cfg(not(feature = "lang-typescript"))]
             {
@@ -891,7 +898,7 @@ fn backend_for_target(
         "wit" => {
             #[cfg(feature = "lang-wit")]
             {
-                Ok(Box::new(fp_wit::WitBackend::new(config, args.single_world)))
+                Ok(Box::new(fp_wit::WitBackend::new(config)))
             }
             #[cfg(not(feature = "lang-wit"))]
             {
