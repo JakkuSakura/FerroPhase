@@ -637,10 +637,33 @@ fn parse_primary(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
             |input: &mut &[Token]| parse_string(input, file),
             |input: &mut &[Token]| parse_array_expr(input, file),
             |input: &mut &[Token]| parse_grouped(input, file),
+            |input: &mut &[Token]| parse_qualified_path_expr(input, file),
             parse_name_expr,
         )),
     ))
     .parse_next(input)
+}
+
+/// A UFCS-disambiguated qualified path (`<Type as Trait>::assoc_item`,
+/// or the trait-less `<Type>::assoc_item`) — real `alloc::boxed`'s own
+/// `<T as SizedTypeProperties>::method(..)` needs this. This checker has
+/// no notion of picking a specific trait impl over an inherent one when
+/// both exist (same simplification `Self::Target` already makes — see
+/// its own doc comment), so the `as Trait` disambiguator is parsed and
+/// dropped; the result is exactly the same as if `Type::assoc_item` had
+/// been written directly, and the ordinary postfix chain (`::field`,
+/// calls, ...) continues from there unchanged.
+fn parse_qualified_path_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+    let mut probe = *input;
+    skip_symbol(&mut probe, "<")?;
+    let ty = parse_type_expr(&mut probe)?;
+    if skip_keyword(&mut probe, Keyword::As).is_ok() {
+        let _trait_ty = parse_type_expr(&mut probe)?;
+    }
+    skip_symbol(&mut probe, ">")?;
+    let _ = file;
+    *input = probe;
+    Ok(type_to_expr(&ty))
 }
 
 fn parse_primary_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
@@ -673,6 +696,7 @@ fn parse_primary_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Ex
             |input: &mut &[Token]| parse_string(input, file),
             |input: &mut &[Token]| parse_array_expr(input, file),
             |input: &mut &[Token]| parse_grouped(input, file),
+            |input: &mut &[Token]| parse_qualified_path_expr(input, file),
             parse_name_expr,
         )),
     ))
