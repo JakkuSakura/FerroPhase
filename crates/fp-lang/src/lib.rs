@@ -37,7 +37,15 @@ impl FerroFrontend {
     }
 
     fn clean_source(&self, source: &str) -> String {
-        if source.starts_with("#!") {
+        // Only a real shebang line (`#!/usr/bin/env ...`) is stripped here,
+        // never a module-level inner attribute (`#![cfg(...)]`, `#![no_std]`,
+        // ...) that merely starts with the same two characters — matching
+        // the tokenizer's own `frontmatter_end_offset`, which already gets
+        // this distinction right. Without the `#![` exclusion, any file
+        // whose first line is `#![...]` (real std's own module preludes)
+        // had that entire first line silently discarded, corrupting
+        // multi-line attributes into orphaned tokens starting on line 2.
+        if source.starts_with("#!") && !source.starts_with("#![") {
             source.lines().skip(1).collect::<Vec<_>>().join("\n")
         } else {
             source.to_string()
