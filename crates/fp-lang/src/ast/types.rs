@@ -4,7 +4,78 @@ use fp_core::ast::TypeNothing;
 use fp_core::ast::TypeType;
 use fp_core::ast::TypeWildcard;
 
+/// A UFCS-disambiguated qualified path in *type* position (`<R::Residual
+/// as Residual<Box<R::Output>>>::TryType`, real `alloc::boxed`'s own
+/// `Box::try_map`) — same simplification `parse_qualified_path_expr`
+/// (the expression-position sibling of this) already makes: the `as
+/// Trait` disambiguator is parsed and dropped. The disambiguated type
+/// is nearly always itself a plain (possibly multi-segment, possibly
+/// generic) named path (`R::Residual`, `T`, ...) — when it is, this
+/// appends the trailing `::segment`s directly onto that same path
+/// rather than trying to model a real, separate "projection of an
+/// associated type through this specific path" type. When it isn't
+/// (e.g. `<[T; N] as ..>::Assoc`), there is no flat path to extend, so
+/// the trailing segments are simply dropped and the base type stands in
+/// for the whole thing — a rarer case, and only a type-display/
+/// diagnostics degradation, not a parse failure.
+fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
+    let mut probe = *input;
+    skip_symbol(&mut probe, "<")?;
+    let ty = parse_type_expr(&mut probe)?;
+    if skip_keyword(&mut probe, Keyword::As).is_ok() {
+        let _trait_ty = parse_type_expr(&mut probe)?;
+    }
+    skip_symbol(&mut probe, ">")?;
+    let mut extra_segments = Vec::new();
+    loop {
+        let mut seg_probe = probe;
+        if skip_symbol(&mut seg_probe, "::").is_err() {
+            break;
+        }
+        let Ok(next) = ident_like(&mut seg_probe) else {
+            break;
+        };
+        let args = parse_optional_type_args(&mut seg_probe)?;
+        probe = seg_probe;
+        extra_segments.push(ParameterPathSegment::new(next, args));
+    }
+    *input = probe;
+    if extra_segments.is_empty() {
+        return Ok(ty);
+    }
+    let Ty::Expr(expr) = &ty else {
+        return Ok(ty);
+    };
+    let name = match expr.kind() {
+        ExprKind::Name(Name::Path(path)) => Name::parameter_path(ParameterPath::new(
+            path.prefix,
+            path.segments
+                .iter()
+                .map(|ident| ParameterPathSegment::new(ident.clone(), Vec::new()))
+                .chain(extra_segments)
+                .collect(),
+        )),
+        ExprKind::Name(Name::ParameterPath(path)) => Name::parameter_path(ParameterPath::new(
+            path.prefix,
+            path.segments
+                .iter()
+                .cloned()
+                .chain(extra_segments)
+                .collect(),
+        )),
+        _ => return Ok(ty),
+    };
+    Ok(Ty::Expr(Box::new(Expr::name(name))))
+}
+
 pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
+    if peek_symbol(*input) == Some("<") {
+        let mut probe = *input;
+        if let Ok(ty) = parse_qualified_path_type(&mut probe) {
+            *input = probe;
+            return Ok(ty);
+        }
+    }
     let _is_unsafe = skip_keyword(input, Keyword::Unsafe).is_ok();
     let abi = if skip_keyword(input, Keyword::Extern).is_ok() {
         let abi = token_kind(input, TokenKind::StringLiteral)?;
