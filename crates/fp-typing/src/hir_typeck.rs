@@ -59,6 +59,19 @@ pub struct TypingShared {
     /// `TyKind::Adt` with the same `did`), so this index lets that lookup
     /// skip straight to the real candidates.
     impl_items_by_receiver_def: RefCell<Option<Rc<HashMap<hir::DefId, Vec<usize>>>>>,
+    /// Memoized `function_signature` results, keyed by the function's own
+    /// `output` type's `HirId` (stable per declared function, independent
+    /// of any particular call site). `function_signature` only ever
+    /// type-checks the function's own declared inputs/output against its
+    /// own generics — never anything about the caller — so its result is
+    /// identical no matter how many call sites ask for it. Before this
+    /// cache, a commonly-called method (an `Iterator`/`String`/`Vec`
+    /// method called from thousands of sites across a large program like
+    /// the vendored std) re-typechecked its own signature from scratch on
+    /// every single call, the same class of O(workspace) blowup already
+    /// fixed once for `method_output` (see `impl_lookup_items`'s doc
+    /// comment above) but left unaddressed here.
+    function_signature_cache: RefCell<HashMap<hir::HirId, Ty>>,
 }
 
 impl TypingShared {
@@ -74,6 +87,7 @@ impl TypingShared {
             executor,
             impl_lookup_items: RefCell::new(None),
             impl_items_by_receiver_def: RefCell::new(None),
+            function_signature_cache: RefCell::new(HashMap::new()),
         })
     }
 
@@ -2098,6 +2112,15 @@ impl HirTypeChecker {
     }
 
     fn function_signature(&mut self, function: &hir::Function) -> Result<Ty> {
+        // Keyed on the function's own `output` HirId — unique per declared
+        // function, and never revisited via a different generic
+        // substitution here (this checks the function's *own* declared
+        // generics, not a call site's), so it's safe to cache across every
+        // call site that asks for this same function's signature.
+        let cache_key = function.sig.output.hir_id;
+        if let Some(cached) = self.shared.function_signature_cache.borrow().get(&cache_key) {
+            return Ok(cached.clone());
+        }
         let mut scope = self.generic_scope(&function.sig.generics);
         let inputs = function
             .sig
@@ -2106,7 +2129,8 @@ impl HirTypeChecker {
             .map(|input| scope.check_type_expr(&input.ty).map(Box::new))
             .collect::<Result<Vec<_>>>()?;
         let output = Box::new(scope.check_type_expr(&function.sig.output)?);
-        Ok(Ty {
+        drop(scope);
+        let signature = Ty {
             kind: TyKind::FnPtr(ty::PolyFnSig {
                 binder: ty::Binder {
                     value: ty::FnSig {
@@ -2119,7 +2143,12 @@ impl HirTypeChecker {
                     bound_vars: Vec::new(),
                 },
             }),
-        })
+        };
+        self.shared
+            .function_signature_cache
+            .borrow_mut()
+            .insert(cache_key, signature.clone());
+        Ok(signature)
     }
 
     fn instantiate_call(
