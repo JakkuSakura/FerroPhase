@@ -586,8 +586,17 @@ pub(crate) fn parse_type_bounds(input: &mut &[Token]) -> ModalResult<TypeBounds>
     let mut bounds = Vec::new();
     loop {
         skip_const_trait_modifier(input);
-        let ty = parse_type_expr(input)?;
-        bounds.push(type_to_expr(&ty));
+        // A relaxed/"maybe" bound (`?Sized`, the only one stable today) —
+        // this checker has no notion of the implicit `Sized` bound to
+        // relax in the first place, so the leading `?` is dropped and the
+        // named trait parsed normally rather than counted as a real bound
+        // at all.
+        if skip_symbol(input, "?").is_ok() {
+            let _ = parse_type_expr(input)?;
+        } else {
+            let ty = parse_type_expr(input)?;
+            bounds.push(type_to_expr(&ty));
+        }
         if skip_symbol(input, "+").is_err() {
             break;
         }
