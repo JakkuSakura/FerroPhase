@@ -31,7 +31,6 @@ fn base_args(
         link: false,
         save_intermediates: false,
         source_language: None,
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     }
@@ -218,7 +217,6 @@ async fn compile_native_asm_reemits_same_isa_text() {
         link: false,
         save_intermediates: false,
         source_language: Some("x86_64-asm".to_string()),
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     };
@@ -263,7 +261,6 @@ async fn compile_native_asm_transpiles_triplet_architecture() {
         link: false,
         save_intermediates: false,
         source_language: Some("x86_64-asm".to_string()),
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     };
@@ -310,7 +307,6 @@ async fn compile_native_asm_transpiles_memory_load() {
         link: false,
         save_intermediates: false,
         source_language: Some("x86_64-asm".to_string()),
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     };
@@ -355,7 +351,6 @@ async fn compile_native_asm_transpiles_memory_store() {
         link: false,
         save_intermediates: false,
         source_language: Some("x86_64-asm".to_string()),
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     };
@@ -401,7 +396,6 @@ async fn compile_native_asm_transpiles_indirect_register_call() {
         link: false,
         save_intermediates: false,
         source_language: Some("x86_64-asm".to_string()),
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     };
@@ -445,7 +439,6 @@ async fn compile_native_asm_transpiles_compare_branch() {
         link: false,
         save_intermediates: false,
         source_language: Some("x86_64-asm".to_string()),
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     };
@@ -490,7 +483,6 @@ async fn compile_native_asm_reemits_same_isa_physical_operands() {
         link: false,
         save_intermediates: false,
         source_language: Some("x86_64-asm".to_string()),
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     };
@@ -535,7 +527,6 @@ async fn compile_native_asm_translates_x86_physical_registers_to_aarch64() {
         link: false,
         save_intermediates: false,
         source_language: Some("x86_64-asm".to_string()),
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     };
@@ -581,7 +572,6 @@ async fn compile_native_asm_translates_aarch64_physical_registers_to_x86() {
         link: false,
         save_intermediates: false,
         source_language: Some("aarch64-asm".to_string()),
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     };
@@ -627,7 +617,6 @@ async fn compile_native_asm_translates_indexed_x86_address_to_aarch64() {
         link: false,
         save_intermediates: false,
         source_language: Some("x86_64-asm".to_string()),
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     };
@@ -672,7 +661,6 @@ async fn compile_native_asm_translates_indexed_aarch64_address_to_x86() {
         link: false,
         save_intermediates: false,
         source_language: Some("aarch64-asm".to_string()),
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     };

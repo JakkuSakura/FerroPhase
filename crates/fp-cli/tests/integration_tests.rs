@@ -122,7 +122,6 @@ async fn compile_example_async(example_name: &str) {
         link: false,
         save_intermediates: false,
         source_language: None,
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     };

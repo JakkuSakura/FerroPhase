@@ -18,9 +18,6 @@
 //! # Initialize a new FerroPhase project
 //! magnet init my-project --template basic
 //!
-//! # Check and validate FerroPhase code
-//! fp check src/
-//!
 //! # Start an interactive REPL
 //! fp repl
 //! ```
@@ -30,8 +27,8 @@ use fp_cli::{
     Result,
     cli::CliConfig,
     commands::{
-        self, check::CheckArgs, compile::CompileArgs, completions::CompletionsArgs, eval::EvalArgs,
-        inspect::InspectArgs, interpret::InterpretArgs, parse::ParseArgs,
+        self, compile::CompileArgs, completions::CompletionsArgs, eval::EvalArgs,
+        inspect::InspectArgs, interpret::InterpretArgs,
     },
     diagnostics::setup_error_reporting,
 };
@@ -106,17 +103,11 @@ enum Commands {
     /// Evaluate expressions using the interpreter
     Eval(EvalArgs),
 
-    /// Parse and display AST for FerroPhase code
-    Parse(ParseArgs),
-
     /// Interpret bytecode produced by `compile --target bytecode`
     Interpret(InterpretArgs),
 
     /// Inspect binary, bytecode, and object artifacts
     Inspect(InspectArgs),
-
-    /// Check and validate FerroPhase code
-    Check(CheckArgs),
 
     /// Generate shell completions
     Completions(CompletionsArgs),
@@ -160,10 +151,8 @@ async fn async_main() -> Result<()> {
     let result = match cli.command {
         Commands::Compile(args) => commands::compile_command(args, &config).await,
         Commands::Eval(args) => commands::eval_command(args, &config).await,
-        Commands::Parse(args) => commands::parse_command(args, &config).await,
         Commands::Interpret(args) => commands::interpret_command(args, &config).await,
         Commands::Inspect(args) => commands::inspect_command(args, &config).await,
-        Commands::Check(args) => commands::check_command(args, &config).await,
         Commands::Completions(args) => commands::completions_command(args, &config).await,
     };
 

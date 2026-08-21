@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fp_c::CFrontend;
 use fp_compiler::{
     CompilerDriver, CompilerExecutor, CompilerSession, ConstValueId, FullyQualifiedPath, LirId,
     PipelineMode,
@@ -21,34 +20,10 @@ use fp_core::{
 use fp_lang::FerroFrontend;
 use fp_typing::{TypingDiagnostic, TypingDiagnosticLevel};
 
-#[cfg(feature = "lang-flatbuffers")]
-use crate::languages::frontend::FlatbuffersFrontend;
-#[cfg(feature = "lang-golang")]
-use crate::languages::frontend::GoFrontend;
-#[cfg(feature = "lang-hcl")]
-use crate::languages::frontend::HclFrontend;
-#[cfg(feature = "lang-json")]
-use crate::languages::frontend::JsonFrontend;
-#[cfg(feature = "lang-jsonschema")]
-use crate::languages::frontend::JsonSchemaFrontend;
-#[cfg(feature = "lang-prql")]
-use crate::languages::frontend::PrqlFrontend;
-#[cfg(feature = "lang-python")]
-use crate::languages::frontend::PythonFrontend;
-#[cfg(feature = "lang-sql")]
-use crate::languages::frontend::SqlFrontend;
-#[cfg(feature = "lang-toml")]
-use crate::languages::frontend::TomlFrontend;
-#[cfg(feature = "lang-typescript")]
-use crate::languages::frontend::TypeScriptFrontend;
-#[cfg(feature = "lang-wit")]
-use crate::languages::frontend::WitFrontend;
-use crate::languages::package_provider_registry::provider_for_language;
 use crate::languages::in_memory::in_memory_provider;
+use crate::languages::package_provider_registry::provider_for_language;
 use crate::languages::{self, detect_source_language};
 use crate::{CliError, Result};
-#[cfg(feature = "lang-typescript")]
-use fp_typescript::frontend::TsParseMode;
 
 pub(crate) fn data_layout() -> LirDataLayout {
     LirDataLayout::new(
@@ -57,28 +32,6 @@ pub(crate) fn data_layout() -> LirDataLayout {
         vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
     )
     .expect("valid CLI data layout")
-}
-
-pub fn check_path(path: &Path, package: &str, syntax_only: bool) -> Result<()> {
-    if syntax_only {
-        // A pure syntax check never touches the package/compile pipeline at
-        // all, so it stays a direct parse rather than resolving a package
-        // for work that's about to be thrown away.
-        parse_file(path, None)?;
-        return Ok(());
-    }
-
-    let language = resolve_source_language(path, None)?;
-    let executor = CompilerExecutor::new();
-    let identity = CompilerIdentity::for_file(package, path);
-    let mut driver = compile_source_file(
-        SourceInput::Path(path.to_path_buf()),
-        &language,
-        &identity,
-        &executor,
-        PipelineMode::Native,
-    )?;
-    drain_driver(&mut driver)
 }
 
 pub fn eval_script(script: ScriptBlock) -> Result<Value> {
@@ -454,10 +407,6 @@ pub fn parse_expr_with_mode(source: &str, parse_mode: FrontendParseMode) -> Resu
     Ok(ast)
 }
 
-fn parse_file(path: &Path, source_language: Option<&str>) -> Result<File> {
-    parse_file_with_mode(path, source_language, FrontendParseMode::Strict)
-}
-
 #[derive(Debug, Clone)]
 pub struct FrontendBundle {
     pub source_language: String,
@@ -511,14 +460,6 @@ pub fn compile_file_to_lir_bundle(
     })
 }
 
-pub fn parse_file_with_mode(
-    path: &Path,
-    source_language: Option<&str>,
-    parse_mode: FrontendParseMode,
-) -> Result<File> {
-    parse_file_with_context(path, source_language, parse_mode)
-}
-
 /// Builds the executor/provider/workspace/session a typechecking compile
 /// needs — shared by `compile_emit_target`'s single-package path and
 /// `compile_project`'s/`compile_project_external`'s (`fp-cli/src/commands/
@@ -545,28 +486,6 @@ pub fn build_workspace_session(
     (executor, session)
 }
 
-fn parse_file_with_context(
-    path: &Path,
-    source_language: Option<&str>,
-    parse_mode: FrontendParseMode,
-) -> Result<File> {
-    let frontend = select_frontend(path, source_language)?;
-    frontend.set_parse_mode(parse_mode);
-    let source = std::fs::read_to_string(path).map_err(CliError::Io)?;
-    let FrontendResult { ast, diagnostics, .. } = frontend
-        .parse_file(&source, path)
-        .map_err(|err| CliError::Compilation(err.to_string()))?;
-    emit_frontend_diagnostics(&diagnostics.get_diagnostics())?;
-    // Frontends leave `collected_items` empty on every nested block/function/
-    // const-block; the typer's predeclare pass relies on it being populated
-    // (e.g. to know a nested `type X = const { ... }` needs comptime
-    // evaluation before the item is fully typed) so compute it here, once,
-    // for every language frontend.
-    let mut ast = ast;
-    fp_core::ast::annotate_collected_items(&mut ast);
-    Ok(ast)
-}
-
 /// Resolves the effective source language for `path`: an explicit
 /// `source_language` override, else extension-based detection. No silent
 /// default — an undetectable language (unknown/missing extension, no
@@ -583,57 +502,6 @@ pub(crate) fn resolve_source_language(path: &Path, source_language: Option<&str>
                 path.display()
             ))
         })
-}
-
-fn select_frontend(
-    path: &Path,
-    source_language: Option<&str>,
-) -> Result<Box<dyn LanguageFrontend>> {
-    let language = resolve_source_language(path, source_language)?;
-    frontend_for_language(&language)
-}
-
-/// Registry lookup: the one place a language name maps to its
-/// `LanguageFrontend` implementation. Callers that already know the
-/// resolved language (e.g. package/single-file provider construction)
-/// should call this directly instead of going through `select_frontend`'s
-/// path-based detection.
-pub(crate) fn frontend_for_language(language: &str) -> Result<Box<dyn LanguageFrontend>> {
-    match language {
-        value if value == languages::C => Ok(Box::new(CFrontend::new().map_err(|err| {
-            CliError::Compilation(format!("failed to initialize C frontend: {err}"))
-        })?)),
-        value if value == languages::FERROPHASE => Ok(Box::new(FerroFrontend::new())),
-        value if value == languages::RUST => Ok(Box::new(fp_rust::RustFrontend::new())),
-        #[cfg(feature = "lang-typescript")]
-        value if value == languages::TYPESCRIPT || value == languages::JAVASCRIPT => {
-            Ok(Box::new(TypeScriptFrontend::new(TsParseMode::Loose)))
-        }
-        #[cfg(feature = "lang-wit")]
-        value if value == languages::WIT => Ok(Box::new(WitFrontend::new())),
-        #[cfg(feature = "lang-python")]
-        value if value == languages::PYTHON => Ok(Box::new(PythonFrontend::new())),
-        #[cfg(feature = "lang-golang")]
-        value if value == languages::GO => Ok(Box::new(GoFrontend::new())),
-        #[cfg(feature = "lang-sql")]
-        value if value == languages::SQL => Ok(Box::new(SqlFrontend::new())),
-        #[cfg(feature = "lang-prql")]
-        value if value == languages::PRQL => Ok(Box::new(PrqlFrontend::new())),
-        #[cfg(feature = "lang-jsonschema")]
-        value if value == languages::JSONSCHEMA => Ok(Box::new(JsonSchemaFrontend::new())),
-        #[cfg(feature = "lang-json")]
-        value if value == languages::JSON => Ok(Box::new(JsonFrontend::new())),
-        #[cfg(feature = "lang-flatbuffers")]
-        value if value == languages::FLATBUFFERS => Ok(Box::new(FlatbuffersFrontend::new())),
-        #[cfg(feature = "lang-toml")]
-        value if value == languages::TOML => Ok(Box::new(TomlFrontend::new())),
-        #[cfg(feature = "lang-hcl")]
-        value if value == languages::HCL => Ok(Box::new(HclFrontend::new())),
-        other => Err(CliError::InvalidInput(format!(
-            "Unsupported source language for compiler path: {}",
-            other
-        ))),
-    }
 }
 
 fn emit_frontend_diagnostics(diagnostics: &[Diagnostic]) -> Result<()> {

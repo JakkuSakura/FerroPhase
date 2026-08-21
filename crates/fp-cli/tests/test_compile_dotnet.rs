@@ -61,7 +61,6 @@ fn main() -> i64 {
         link: false,
         save_intermediates: false,
         source_language: None,
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     };
@@ -111,7 +110,6 @@ fn main() -> i64 {
         link: false,
         save_intermediates: false,
         source_language: None,
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     };

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use tokio::fs as async_fs;
 use tracing::{info, warn};
 
-use clap::{ArgAction, Args};
+use clap::Args;
 /// Arguments for the compile command (also used by Clap)
 #[derive(Debug, Clone, Args)]
 pub struct CompileArgs {
@@ -107,10 +107,6 @@ pub struct CompileArgs {
     /// Override automatic source language detection (e.g. "typescript")
     #[arg(long = "lang", alias = "language")]
     pub source_language: Option<String>,
-
-    /// Disable pipeline stages by name (repeatable).
-    #[arg(long = "disable-stage", action = ArgAction::Append)]
-    pub disable_stage: Vec<String>,
 
     /// Generate type definitions for TypeScript target.
     #[arg(long)]
@@ -276,13 +272,6 @@ async fn compile_file(
     .await?
     {
         return Ok(Some(artifact));
-    }
-
-    if !args.disable_stage.is_empty() {
-        warn!(
-            "--disable-stage is ignored on the fp-compiler compile path: {}",
-            args.disable_stage.join(", ")
-        );
     }
 
     run_named_target(input, output, args, &args.target, exec).await?;

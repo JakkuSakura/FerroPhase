@@ -58,7 +58,6 @@ fn base_compile_args(input: PathBuf, output: PathBuf) -> CompileArgs {
         link: false,
         save_intermediates: false,
         source_language: None,
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     }

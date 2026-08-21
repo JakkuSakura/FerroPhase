@@ -33,7 +33,6 @@ fn base_args(input: std::path::PathBuf, output: std::path::PathBuf) -> CompileAr
         link: false,
         save_intermediates: false,
         source_language: Some("object".to_string()),
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     }

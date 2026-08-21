@@ -31,7 +31,6 @@ fn base_args(
         link: false,
         save_intermediates: false,
         source_language: Some("cil".to_string()),
-        disable_stage: Vec::new(),
         type_defs: false,
         single_world: false,
     }
