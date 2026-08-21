@@ -1,18 +1,12 @@
 //! Compilation command implementation
 
 use crate::commands::{setup_progress_bar, validate_paths_exist};
-use crate::container::NativeAsmSource;
 use crate::compiler;
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
 use fp_core::ast::File;
 use fp_core::package::{PackageId, PackageSource};
-use fp_native::asm::{aarch64::AsmAarch64Program, x86_64::AsmX86_64Program};
-use fp_native::asmir::{lift_from_aarch64, lift_from_x86_64, lower_to_aarch64, lower_to_x86_64};
-use fp_native::emit::{self, TargetArch};
-use std::io;
 use std::path::{Path, PathBuf};
-use tokio::fs as async_fs;
 use tracing::{info, warn};
 
 use clap::Args;
@@ -236,140 +230,29 @@ async fn compile_file(
 ) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
 
-    if input.is_dir() {
-        run_named_target(input, output, args, &args.target, exec).await?;
-        return Ok(Some(output.to_path_buf()));
-    }
-
-    let native_asm_kind = match input_class {
-        crate::container::InputClass::NativeAsm(kind) => Some(kind),
-        _ => None,
-    };
+    // `run_named_target` already handles directory vs. single-file input
+    // itself (its own package discovery branches on it), so this only
+    // needs one thing to decide up front: is this a container format
+    // (archive/JVM/CIL/goasm/URCL) `maybe_transpile_container` still
+    // hand-rolls its own binary-to-binary rewrite for? Everything else —
+    // including native-object and native-asm-text input — flows through
+    // `run_named_target`'s ordinary language-provider pipeline, the same
+    // as any other language (`"object"`/`"native-asm"` resolve to
+    // `fp_native::NativeObjectPackageProvider` there, not a special case
+    // here).
     let container_kind = match input_class {
         crate::container::InputClass::Container(kind) => Some(kind),
         _ => None,
     };
-
     if let Some(artifact) =
-        maybe_transpile_native_asm(input, output, args, native_asm_kind, exec).await?
-    {
-        return Ok(Some(artifact));
-    }
-
-    // Native-object input (`ContainerInputKind::NativeObject`) is handled
-    // by `run_named_target`'s fallthrough below, the same as any other
-    // language — `resolve_input_package`/`provider_for_language` resolve
-    // it via `fp_native::NativeObjectPackageProvider` once `"object"` is
-    // detected as the source language, not a special case here.
-    if let Some(artifact) = crate::container::maybe_transpile_container(
-        input,
-        output,
-        args,
-        _config,
-        container_kind,
-        exec,
-    )
-    .await?
+        crate::container::maybe_transpile_container(input, output, args, _config, container_kind, exec)
+            .await?
     {
         return Ok(Some(artifact));
     }
 
     run_named_target(input, output, args, &args.target, exec).await?;
     Ok(Some(output.to_path_buf()))
-}
-
-async fn maybe_transpile_native_asm(
-    input: &Path,
-    output: &Path,
-    args: &CompileArgs,
-    source_kind: Option<crate::container::NativeAsmSource>,
-    exec: bool,
-) -> Result<Option<PathBuf>> {
-    let Some(source_kind) = source_kind else {
-        return Ok(None);
-    };
-
-    if args.target != "native" {
-        return Err(CliError::InvalidInput(
-            "native asm input currently requires `--target native`".to_string(),
-        ));
-    }
-    if exec {
-        return Err(CliError::InvalidInput(
-            "`--exec` is not supported for native asm transpilation".to_string(),
-        ));
-    }
-
-    let text = async_fs::read_to_string(input).await.map_err(|err| {
-        CliError::Io(io::Error::other(format!("Failed to read asm input: {err}")))
-    })?;
-    let source_program = parse_native_asm_source(&text, source_kind)?;
-    let (_, target_arch) = emit::detect_target(args.target_triple.as_deref())
-        .map_err(|err| CliError::Compilation(err.to_string()))?;
-
-    let output_program = match source_program {
-        ParsedNativeAsm::X86_64(program) => {
-            if matches!(target_arch, TargetArch::X86_64) {
-                program.to_text()
-            } else {
-                let mut target_program = lift_from_x86_64(&program)
-                    .map_err(|err| CliError::Compilation(err.to_string()))?;
-                target_program.target.architecture = fp_core::asmir::AsmArchitecture::Aarch64;
-                fp_native::asmir::normalize_for_target(&mut target_program);
-                lower_to_aarch64(&target_program).to_text()
-            }
-        }
-        ParsedNativeAsm::Aarch64(program) => {
-            if matches!(target_arch, TargetArch::Aarch64) {
-                program.to_text()
-            } else {
-                let mut target_program = lift_from_aarch64(&program)
-                    .map_err(|err| CliError::Compilation(err.to_string()))?;
-                target_program.target.architecture = fp_core::asmir::AsmArchitecture::X86_64;
-                fp_native::asmir::normalize_for_target(&mut target_program);
-                lower_to_x86_64(&target_program).to_text()
-            }
-        }
-    };
-
-    let output_path = if args.output.is_none() {
-        input.with_extension("s")
-    } else {
-        output.to_path_buf()
-    };
-    async_fs::write(&output_path, output_program)
-        .await
-        .map_err(|err| {
-            CliError::Io(io::Error::other(format!(
-                "Failed to write asm output: {err}"
-            )))
-        })?;
-    Ok(Some(output_path))
-}
-
-enum ParsedNativeAsm {
-    X86_64(AsmX86_64Program),
-    Aarch64(AsmAarch64Program),
-}
-
-fn parse_native_asm_source(text: &str, source: NativeAsmSource) -> Result<ParsedNativeAsm> {
-    match source {
-        NativeAsmSource::X86_64 => AsmX86_64Program::parse_text(text)
-            .map(ParsedNativeAsm::X86_64)
-            .map_err(|err| CliError::Compilation(format!("Failed to parse x86_64 asm: {err}"))),
-        NativeAsmSource::Aarch64 => AsmAarch64Program::parse_text(text)
-            .map(ParsedNativeAsm::Aarch64)
-            .map_err(|err| CliError::Compilation(format!("Failed to parse aarch64 asm: {err}"))),
-        NativeAsmSource::Auto => match AsmX86_64Program::parse_text(text) {
-            Ok(program) => Ok(ParsedNativeAsm::X86_64(program)),
-            Err(x86_err) => match AsmAarch64Program::parse_text(text) {
-                Ok(program) => Ok(ParsedNativeAsm::Aarch64(program)),
-                Err(aarch64_err) => Err(CliError::Compilation(format!(
-                    "Failed to detect native asm dialect; x86_64: {x86_err}; aarch64: {aarch64_err}"
-                ))),
-            },
-        },
-    }
 }
 
 /// A single file is a package with one member — find (and prefer) the real
@@ -460,11 +343,15 @@ async fn run_named_target(
     // it (`--link`/`--exec` both absent) — every ordinary source compile
     // always wants a runnable executable regardless of `--link`, matching
     // today's behavior.
-    let link_requested = if lang == crate::languages::NATIVE_OBJECT {
+    let link_requested = if lang == crate::languages::NATIVE_OBJECT || lang == crate::languages::NATIVE_ASM {
         args.link || args.exec
     } else {
         true
     };
+    // Native asm-text input that isn't being linked/exec'd should stay as
+    // human-readable assembly rather than getting reassembled to an
+    // object it was never asked to produce.
+    let emit_text = lang == crate::languages::NATIVE_ASM && !link_requested;
     let backend_config = fp_core::backend::BackendConfig::new(output.to_path_buf())
         .with_target_triple(args.target_triple.clone())
         .with_target_cpu(args.target_cpu.clone())
@@ -479,7 +366,8 @@ async fn run_named_target(
         .with_type_defs(args.type_defs)
         .with_single_world(args.single_world)
         .with_root_name(root_name.clone())
-        .with_link_requested(link_requested);
+        .with_link_requested(link_requested)
+        .with_emit_text(emit_text);
     let backend = backend_for_target(target_name, backend_config)?;
 
     run_compile_pipeline(
@@ -624,282 +512,15 @@ async fn run_compile_pipeline(
     Ok(())
 }
 
-/// Error returned by an AST-target arm whose crate is gated behind a
-/// disabled optional `lang-*` feature (see e.g. `lang-typescript` in this
-/// crate's `Cargo.toml`).
-fn disabled_feature_error(feature: &str, what: &str) -> CliError {
-    CliError::InvalidInput(format!(
-        "{what} requires the \"{feature}\" feature, which is disabled in this build"
-    ))
-}
-
-/// Constructs the `TargetBackend` for `name` — every built-in target
-/// first, falling through to the runtime registry
-/// (`crate::languages::backend_registry::find_registered_target_backend`) for
-/// anything it doesn't recognize.
+/// Constructs the `TargetBackend` for `name` — a plain lookup into the
+/// shared target-backend registry (`crate::languages::backend_registry`),
+/// which built-in and externally `register_target_backend`-ed targets sit
+/// in identically; no separate "is this built-in" branch here.
 fn backend_for_target(
     name: &str,
     config: fp_core::backend::BackendConfig,
 ) -> Result<Box<dyn fp_core::backend::TargetBackend>> {
-    let output = config.workspace_root.clone();
-    match name.to_lowercase().as_str() {
-        "native" => {
-            let native_target = match config.native_target.as_deref() {
-                Some(value) => Some(
-                    fp_native::config::NativeTarget::resolve(value, config.target_triple.as_deref())
-                        .ok_or_else(|| {
-                            CliError::Compilation(format!("Unsupported fp-native target: {value}"))
-                        }),
-                ),
-                None => None,
-            };
-            match native_target.transpose() {
-                Ok(native_target) => {
-                    let cfg = if config.link_requested {
-                        fp_native::config::NativeConfig::executable(&output)
-                    } else {
-                        fp_native::config::NativeConfig::object(&output)
-                    }
-                        .with_target_triple(config.target_triple.clone())
-                        .with_target_cpu(config.target_cpu.clone())
-                        .with_native_target(native_target)
-                        .with_target_features(config.target_features.clone())
-                        .with_sysroot(config.target_sysroot.clone())
-                        .with_fuse_ld(config.target_linker.clone())
-                        .with_linker_driver(Some(config.linker.clone()))
-                        .with_release(config.release)
-                        .with_save_intermediates(config.save_intermediates);
-                    let emitter = fp_native::NativeEmitter::new(cfg);
-                    Ok(Box::new(emitter) as Box<dyn fp_core::backend::TargetBackend>)
-                }
-                Err(e) => Err(e),
-            }
-        }
-        "goasm" => {
-            let target = Some(fp_goasm::config::GoAsmTarget::resolve(
-                config.target_triple.as_deref(),
-            ));
-            let cfg = fp_goasm::config::GoAsmConfig::new(&output)
-                .with_target(target)
-                .with_target_triple(config.target_triple.clone());
-            let emitter = fp_goasm::GoAsmEmitter::new(cfg);
-            Ok(Box::new(emitter))
-        }
-        "urcl" => {
-            let emitter = fp_urcl::UrclEmitter::new(fp_urcl::UrclConfig::new(&output));
-            Ok(Box::new(emitter))
-        }
-        "llvm-binary" | "llvm-text" => {
-            #[cfg(feature = "llvm")]
-            {
-                Ok(Box::new(fp_llvm::LlvmBackend {
-                    output: output.clone(),
-                    target_triple: config.target_triple.clone(),
-                    target_cpu: config.target_cpu.clone(),
-                    target_features: config.target_features.clone(),
-                    target_sysroot: config.target_sysroot.clone(),
-                    linker: Some(config.linker.clone()),
-                    target_linker: config.target_linker.clone(),
-                    release: config.release,
-                    debug_info: config.debug_info,
-                    save_intermediates: config.save_intermediates,
-                    text_only: name.eq_ignore_ascii_case("llvm-text"),
-                }))
-            }
-            #[cfg(not(feature = "llvm"))]
-            {
-                Err(CliError::MissingDependency(
-                    "Feature 'llvm' is disabled; enable it to use the LLVM backend.".to_string(),
-                ))
-            }
-        }
-        "cranelift" => {
-            #[cfg(feature = "cranelift")]
-            {
-                Ok(Box::new(fp_cranelift::CraneliftBackend {
-                    output: output.clone(),
-                    target_triple: config.target_triple.clone(),
-                    target_cpu: config.target_cpu.clone(),
-                    target_features: config.target_features.clone(),
-                    target_sysroot: config.target_sysroot.clone(),
-                    linker: Some(config.linker.clone()),
-                    target_linker: config.target_linker.clone(),
-                    release: config.release,
-                    save_intermediates: config.save_intermediates,
-                }))
-            }
-            #[cfg(not(feature = "cranelift"))]
-            {
-                Err(CliError::MissingDependency(
-                    "Feature 'cranelift' is disabled; enable it to use the Cranelift backend."
-                        .to_string(),
-                ))
-            }
-        }
-        "bytecode" | "text-bytecode" => Ok(Box::new(fp_stackvm_bytecode::BytecodeBackend {
-            output: output.clone(),
-            // `emit_text` only forces text mode for the explicit
-            // "text-bytecode" target name — `compile_package`'s own
-            // `wants_text` already falls back to sniffing `.ftbc` off
-            // `output`, so fp-cli doesn't need to duplicate that here.
-            emit_text: name.eq_ignore_ascii_case("text-bytecode"),
-            save_intermediates: config.save_intermediates,
-        })),
-        "jvm-bytecode" => Ok(Box::new(fp_jvm::JvmBackend {
-            output: output.clone(),
-            save_intermediates: config.save_intermediates,
-        })),
-        "wasm" => Ok(Box::new(fp_wasm::WasmBackend {
-            output: output.clone(),
-        })),
-        "ebpf" => Ok(Box::new(fp_ebpf::EbpfBackend {
-            output: output.clone(),
-        })),
-        "cil" => Ok(Box::new(fp_dotnet::CilBackend {
-            output: output.clone(),
-        })),
-        "dotnet" => Ok(Box::new(fp_dotnet::DotnetBackend {
-            output: output.clone(),
-            save_intermediates: config.save_intermediates,
-        })),
-        "interpret" => Ok(Box::new(fp_interpret::InterpreterBackend)),
-        "fp" | "ferro" | "ferrophase" => Ok(Box::new(fp_c::FerroPhaseAstBackend::new(config))),
-        "typescript" | "ts" => {
-            #[cfg(feature = "lang-typescript")]
-            {
-                Ok(Box::new(fp_typescript::TypeScriptBackend::new(config)))
-            }
-            #[cfg(not(feature = "lang-typescript"))]
-            {
-                Err(disabled_feature_error(
-                    "lang-typescript",
-                    "TypeScript package emission",
-                ))
-            }
-        }
-        "javascript" | "js" => {
-            #[cfg(feature = "lang-typescript")]
-            {
-                Ok(Box::new(fp_typescript::JavaScriptBackend::new(config)))
-            }
-            #[cfg(not(feature = "lang-typescript"))]
-            {
-                Err(disabled_feature_error(
-                    "lang-typescript",
-                    "JavaScript package emission",
-                ))
-            }
-        }
-        "csharp" | "cs" | "c#" => {
-            #[cfg(feature = "lang-csharp")]
-            {
-                Ok(Box::new(fp_csharp::CSharpBackend::new(config)))
-            }
-            #[cfg(not(feature = "lang-csharp"))]
-            {
-                Err(disabled_feature_error("lang-csharp", "C# package emission"))
-            }
-        }
-        "kotlin" | "kt" => {
-            #[cfg(feature = "lang-kotlin")]
-            {
-                Ok(Box::new(fp_kotlin::KotlinBackend::new(config)))
-            }
-            #[cfg(not(feature = "lang-kotlin"))]
-            {
-                Err(disabled_feature_error("lang-kotlin", "Kotlin package emission"))
-            }
-        }
-        "python" | "py" => {
-            #[cfg(feature = "lang-python")]
-            {
-                Ok(Box::new(fp_python::PythonBackend::new(config)))
-            }
-            #[cfg(not(feature = "lang-python"))]
-            {
-                Err(disabled_feature_error(
-                    "lang-python",
-                    "Python package emission",
-                ))
-            }
-        }
-        "go" | "golang" => {
-            #[cfg(feature = "lang-golang")]
-            {
-                Ok(Box::new(fp_golang::GoBackend::new(config)))
-            }
-            #[cfg(not(feature = "lang-golang"))]
-            {
-                Err(disabled_feature_error("lang-golang", "Go package emission"))
-            }
-        }
-        "gdscript" | "gd" => {
-            #[cfg(feature = "lang-godot")]
-            {
-                Ok(Box::new(fp_godot::GdscriptBackend::new(config)))
-            }
-            #[cfg(not(feature = "lang-godot"))]
-            {
-                Err(disabled_feature_error(
-                    "lang-godot",
-                    "GDScript package emission",
-                ))
-            }
-        }
-        "zig" => {
-            #[cfg(feature = "lang-zig")]
-            {
-                Ok(Box::new(fp_zig::ZigBackend::new(config)))
-            }
-            #[cfg(not(feature = "lang-zig"))]
-            {
-                Err(disabled_feature_error("lang-zig", "Zig package emission"))
-            }
-        }
-        "sycl" => {
-            #[cfg(feature = "lang-sycl")]
-            {
-                Ok(Box::new(fp_sycl::SyclBackend::new(config)))
-            }
-            #[cfg(not(feature = "lang-sycl"))]
-            {
-                Err(disabled_feature_error("lang-sycl", "SYCL package emission"))
-            }
-        }
-        "rust" | "rs" => Ok(Box::new(fp_lang::RustBackend::new(config))),
-        "wit" => {
-            #[cfg(feature = "lang-wit")]
-            {
-                Ok(Box::new(fp_wit::WitBackend::new(config)))
-            }
-            #[cfg(not(feature = "lang-wit"))]
-            {
-                Err(disabled_feature_error("lang-wit", "WIT package emission"))
-            }
-        }
-        "c" => Ok(Box::new(fp_c::codegen::CBackend::new(config))),
-        _ => crate::languages::backend_registry::find_registered_target_backend(name)
-            .map(|backend| -> Box<dyn fp_core::backend::TargetBackend> {
-                struct Shared(std::sync::Arc<dyn fp_core::backend::TargetBackend>);
-                impl fp_core::backend::TargetBackend for Shared {
-                    fn compile_package(
-                        &self,
-                        workspace: &fp_core::workspace::WorkspaceContext,
-                        package_id: &PackageId,
-                    ) -> fp_core::error::Result<()> {
-                        self.0.compile_package(workspace, package_id)
-                    }
-                    fn write_workspace_files(
-                        &self,
-                        workspace: &fp_core::workspace::WorkspaceContext,
-                    ) -> fp_core::error::Result<()> {
-                        self.0.write_workspace_files(workspace)
-                    }
-                }
-                Box::new(Shared(backend))
-            })
-            .ok_or_else(|| CliError::InvalidInput(format!("Unsupported target: {name}"))),
-    }
+    crate::languages::backend_registry::backend_for_target(name, config)
 }
 
 fn is_tsconfig(path: &Path) -> bool {
@@ -915,38 +536,11 @@ fn is_tsconfig(path: &Path) -> bool {
 /// Validates `--target <name>` up front, before the actual package
 /// discovery/typecheck/backend-construction pipeline runs.
 fn validate_compile_target(target: &str) -> Result<()> {
-    if is_known_builtin_target(target)
-        || crate::languages::backend_registry::find_registered_target_backend(target).is_some()
-    {
+    if crate::languages::backend_registry::is_known_target(target) {
         Ok(())
     } else {
         Err(CliError::InvalidInput(format!("Unsupported target: {target}")))
     }
-}
-
-/// Whether `name` is one of `backend_for_target`'s recognized target names
-/// (regardless of whether its crate is compiled into this build).
-fn is_known_builtin_target(name: &str) -> bool {
-    matches!(
-        name.to_lowercase().as_str(),
-        "native" | "goasm" | "urcl" | "llvm-binary" | "llvm-text" | "cranelift"
-            | "ebpf" | "cil" | "dotnet"
-            | "bytecode" | "text-bytecode" | "jvm-bytecode"
-            | "wasm" | "interpret"
-            | "fp" | "ferro" | "ferrophase"
-            | "typescript" | "ts"
-            | "javascript" | "js"
-            | "csharp" | "cs" | "c#"
-            | "kotlin" | "kt"
-            | "python" | "py"
-            | "go" | "golang"
-            | "gdscript" | "gd"
-            | "zig"
-            | "sycl"
-            | "rust" | "rs"
-            | "wit"
-            | "c"
-    )
 }
 
 fn validate_inputs(args: &CompileArgs) -> Result<()> {

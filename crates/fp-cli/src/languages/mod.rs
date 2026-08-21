@@ -11,6 +11,10 @@ use std::path::Path;
 /// A pre-compiled native object file given directly as `fp compile`'s
 /// input (not FerroPhase source) — see `fp_native::NativeObjectPackageProvider`.
 pub const NATIVE_OBJECT: &str = "object";
+/// Raw native assembly text given directly as `fp compile`'s input (auto
+/// x86_64/aarch64 dialect detection) — see
+/// `fp_native::NativeObjectPackageProvider::from_asm`.
+pub const NATIVE_ASM: &str = "native-asm";
 pub const TYPESCRIPT: &str = "typescript";
 pub const JAVASCRIPT: &str = "javascript";
 pub const CSHARP: &str = "csharp";
@@ -73,6 +77,11 @@ pub const SUPPORTED_LANGUAGES: &[Language] = &[
     Language {
         name: NATIVE_OBJECT,
         extensions: &["o", "obj"],
+        ast_target_supported: false,
+    },
+    Language {
+        name: NATIVE_ASM,
+        extensions: &["s", "asm"],
         ast_target_supported: false,
     },
     #[cfg(feature = "lang-typescript")]

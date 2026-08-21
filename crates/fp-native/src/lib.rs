@@ -138,9 +138,7 @@ impl NativeEmitter {
             }
             EmitKind::Object => emit::write_object(&out, &plan)?,
             EmitKind::AssemblyText => {
-                return Err(Error::from(
-                    "fp-native does not support textual assembly emission",
-                ));
+                std::fs::write(&out, asm_program_to_text(&plan.asmir, arch))?;
             }
         }
         Ok(out)
@@ -308,12 +306,23 @@ int main(int argc, char **argv, char **envp) {
             EmitKind::Object => emit::write_object(&out, &plan)?,
             EmitKind::Executable => emit::write_executable(&out, &plan)?,
             EmitKind::AssemblyText => {
-                return Err(fp_core::error::Error::from(
-                    "fp-native does not support textual assembly emission",
-                ));
+                std::fs::write(&out, asm_program_to_text(&plan.asmir, arch))?;
             }
         }
         Ok(out)
+    }
+}
+
+/// Renders `asmir` (already selected/normalized for `arch` by
+/// `emit::emit_plan`/`emit_plan_from_asmir`) as human-readable target
+/// assembly text — `EmitKind::AssemblyText`'s implementation, shared by
+/// `emit_impl` (from `LirProgram`) and `emit_precompiled` (from an
+/// already-compiled `AsmProgram`, e.g. lifted from asm text or an object
+/// file) since both end up with the same kind of `EmitPlan` either way.
+fn asm_program_to_text(asmir: &AsmProgram, arch: emit::TargetArch) -> String {
+    match arch {
+        emit::TargetArch::X86_64 => crate::asmir::lower_to_x86_64(asmir).to_text(),
+        emit::TargetArch::Aarch64 => crate::asmir::lower_to_aarch64(asmir).to_text(),
     }
 }
 
@@ -349,6 +358,15 @@ impl NativeObjectPackageProvider {
     pub fn new(package_id: fp_core::package::PackageId, bytes: &[u8]) -> Result<Self> {
         let asm = crate::binary::lift_object_to_asmir(bytes)
             .map_err(|err| Error::from(format!("Failed to lift object file: {err}")))?;
+        Ok(Self::from_asm(package_id, asm))
+    }
+
+    /// Same one-item package shape as `new`, but from an `AsmProgram`
+    /// that's already been lifted — e.g. from asm *text* (`fp compile
+    /// foo.s`, lifted via `asmir::lift_from_x86_64`/`lift_from_aarch64`
+    /// after `asm::x86_64::AsmX86_64Program::parse_text`/`asm::aarch64::
+    /// AsmAarch64Program::parse_text`) rather than a binary object file.
+    pub fn from_asm(package_id: fp_core::package::PackageId, asm: AsmProgram) -> Self {
         let mut source = fp_core::package::PackageSource::new(
             package_id.clone(),
             package_id.as_str().to_string(),
@@ -367,11 +385,11 @@ impl NativeObjectPackageProvider {
             metadata: fp_core::package::PackageMetadata::default(),
             modules: Vec::new(),
         };
-        Ok(Self {
+        Self {
             package_id,
             descriptor: std::sync::Arc::new(descriptor),
             source,
-        })
+        }
     }
 }
 

@@ -70,6 +70,25 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     entries.push(("c", c.clone()));
     entries.push(("cil", c));
 
+    // Raw asm text has no manifest/project shape either — same one-file,
+    // one-package treatment as `object`, just lifted from a parsed
+    // `AsmX86_64Program`/`AsmAarch64Program` instead of a binary object.
+    let native_asm_auto = factory(|root: &Path| native_asm_provider(root, NativeAsmDialect::Auto));
+    entries.push(("native-asm", native_asm_auto.clone()));
+    entries.push(("asm", native_asm_auto));
+    let native_asm_x86_64 =
+        factory(|root: &Path| native_asm_provider(root, NativeAsmDialect::X86_64));
+    entries.push(("x86_64-asm", native_asm_x86_64.clone()));
+    entries.push(("asm-x86_64", native_asm_x86_64.clone()));
+    entries.push(("x86asm", native_asm_x86_64.clone()));
+    entries.push(("x86_64asm", native_asm_x86_64));
+    let native_asm_aarch64 =
+        factory(|root: &Path| native_asm_provider(root, NativeAsmDialect::Aarch64));
+    entries.push(("aarch64-asm", native_asm_aarch64.clone()));
+    entries.push(("asm-aarch64", native_asm_aarch64.clone()));
+    entries.push(("arm64-asm", native_asm_aarch64.clone()));
+    entries.push(("aarch64asm", native_asm_aarch64));
+
     entries.push((
         "goasm",
         factory(|root: &Path| {
@@ -235,4 +254,47 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     }
 
     entries
+}
+
+/// Which native asm dialect to parse `root`'s text as — `Auto` tries
+/// x86_64 first, falling back to aarch64, matching every other
+/// extension-detected language's "just figure it out" default.
+enum NativeAsmDialect {
+    Auto,
+    X86_64,
+    Aarch64,
+}
+
+/// Reads `root` as asm text, parses+lifts it to a target-independent
+/// `AsmProgram` (the same `fp_native::asmir` machinery `fp_native::binary::
+/// lift_object_to_asmir` uses for binary object files), and wraps it as a
+/// one-package provider the same way `NativeObjectPackageProvider::new`
+/// does for objects — `NativeEmitter::compile_package`/`emit_precompiled`
+/// then retargets and emits it (as text, an object, or an executable,
+/// depending on `BackendConfig`) without knowing or caring that it came
+/// from text rather than a binary.
+fn native_asm_provider(root: &Path, dialect: NativeAsmDialect) -> Option<Arc<dyn PackageProvider>> {
+    use fp_native::asm::{aarch64::AsmAarch64Program, x86_64::AsmX86_64Program};
+    use fp_native::asmir::{lift_from_aarch64, lift_from_x86_64};
+
+    let text = std::fs::read_to_string(root).ok()?;
+    let asm = match dialect {
+        NativeAsmDialect::X86_64 => lift_from_x86_64(&AsmX86_64Program::parse_text(&text).ok()?).ok()?,
+        NativeAsmDialect::Aarch64 => {
+            lift_from_aarch64(&AsmAarch64Program::parse_text(&text).ok()?).ok()?
+        }
+        NativeAsmDialect::Auto => match AsmX86_64Program::parse_text(&text) {
+            Ok(program) => lift_from_x86_64(&program).ok()?,
+            Err(_) => lift_from_aarch64(&AsmAarch64Program::parse_text(&text).ok()?).ok()?,
+        },
+    };
+    let name = root
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("main")
+        .to_string();
+    Some(Arc::new(fp_native::NativeObjectPackageProvider::from_asm(
+        fp_core::package::PackageId::new(name),
+        asm,
+    )) as Arc<dyn PackageProvider>)
 }

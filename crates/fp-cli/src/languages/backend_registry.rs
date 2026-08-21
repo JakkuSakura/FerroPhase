@@ -1,51 +1,487 @@
 //! A runtime extension point for compile targets *and* source-language
-//! providers that live outside the `fp-cli` crate (and thus outside its
-//! own Cargo workspace) — e.g. `skln-fp-graph`'s `fp-graph` binary, which
-//! lives in the outer SakuraLens workspace and cannot be a dependency of
-//! `fp-cli` without reversing the `FerroPhase` git submodule relationship.
+//! providers — there's no distinction between "built-in" and
+//! "externally registered": every target (including every one fp-cli
+//! itself ships, see `builtin_target_backends`) is just one more entry in
+//! this same registry, looked up the same way. This is what lets an
+//! embedding binary that lives outside `fp-cli`'s own Cargo workspace
+//! (e.g. `skln-fp-graph`'s `fp-graph` binary, which can't be a dependency
+//! of `fp-cli` without reversing the `FerroPhase` git submodule
+//! relationship) add a target or source language fp-cli has no crate
+//! dependency on, by registering one more factory before it calls
+//! `commands::compile::compile_command`.
 //!
 //! Registered targets are plain `fp_core::backend::TargetBackend` impls —
-//! the exact same trait every built-in target implements (see
-//! `commands::compile::backend_for_target`). fp-cli has no separate
-//! "external target" protocol; a registered backend is looked up by name
-//! and driven through `compile_package`/`write_workspace_files` exactly
-//! like a built-in one. Registered source-language providers are plain
-//! `fp_core::package::provider::PackageProvider` factories, looked up the
-//! same way by `package_provider_registry::provider_for_language` (see
-//! `register_language_provider`).
+//! the exact same trait every target implements, built-in or not — driven
+//! through `compile_package`/`write_workspace_files` exactly the same way
+//! regardless of where the factory came from. Registered source-language
+//! providers are plain `fp_core::package::provider::PackageProvider`
+//! factories, looked up the same way by
+//! `package_provider_registry::provider_for_language`.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use fp_core::backend::TargetBackend;
+use fp_core::backend::{BackendConfig, TargetBackend};
 use fp_core::package::provider::PackageProvider;
 
-static REGISTRY: OnceLock<Mutex<Vec<(&'static str, Arc<dyn TargetBackend>)>>> = OnceLock::new();
+use crate::error::CliError;
+use crate::Result;
 
-fn registry() -> &'static Mutex<Vec<(&'static str, Arc<dyn TargetBackend>)>> {
-    REGISTRY.get_or_init(|| Mutex::new(Vec::new()))
+/// A target-backend factory — every target needs a fresh `BackendConfig`
+/// per compile (output path, target triple, ...), so this is a
+/// constructor, not a pre-built value; a caller that wants to share one
+/// underlying instance across compiles captures it in the closure itself.
+pub type TargetBackendFactory =
+    Arc<dyn Fn(BackendConfig) -> Result<Box<dyn TargetBackend>> + Send + Sync>;
+
+static TARGET_BACKEND_REGISTRY: OnceLock<Mutex<Vec<(&'static str, TargetBackendFactory)>>> =
+    OnceLock::new();
+
+/// Seeded once with every built-in target's own factory
+/// (`builtin_target_backends`) — built-ins and anything an embedding
+/// binary later registers live in the exact same table, looked up the
+/// exact same way.
+fn target_backend_registry() -> &'static Mutex<Vec<(&'static str, TargetBackendFactory)>> {
+    TARGET_BACKEND_REGISTRY.get_or_init(|| Mutex::new(builtin_target_backends()))
 }
 
-/// Registers a backend so `--target <name>` can resolve to it. Expected to
-/// be called by the embedding binary's `main()` before it calls
-/// `commands::compile::compile_command`.
-pub fn register_target_backend(name: &'static str, backend: Arc<dyn TargetBackend>) {
-    registry()
+fn factory<F>(f: F) -> TargetBackendFactory
+where
+    F: Fn(BackendConfig) -> Result<Box<dyn TargetBackend>> + Send + Sync + 'static,
+{
+    Arc::new(f)
+}
+
+/// Registers a target-backend factory so `--target <name>` resolves to
+/// it. Expected to be called by the embedding binary's `main()` before it
+/// calls `commands::compile::compile_command`.
+pub fn register_target_backend(
+    name: &'static str,
+    factory: impl Fn(BackendConfig) -> Result<Box<dyn TargetBackend>> + Send + Sync + 'static,
+) {
+    target_backend_registry()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .push((name, backend));
+        .push((name, Arc::new(factory)));
 }
 
-/// Looks up a previously `register_target_backend`-ed backend by name,
-/// case-insensitively.
-pub fn find_registered_target_backend(name: &str) -> Option<Arc<dyn TargetBackend>> {
+/// Looks up a previously registered (built-in or externally
+/// `register_target_backend`-ed) factory by name, case-insensitively.
+pub fn find_registered_target_backend(name: &str) -> Option<TargetBackendFactory> {
     let normalized = name.to_lowercase();
-    registry()
+    target_backend_registry()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .iter()
         .find(|(registered_name, _)| registered_name.eq_ignore_ascii_case(&normalized))
-        .map(|(_, backend)| backend.clone())
+        .map(|(_, factory)| factory.clone())
+}
+
+/// Constructs the `TargetBackend` for `name` — a plain registry lookup
+/// followed by a call, nothing more.
+pub fn backend_for_target(name: &str, config: BackendConfig) -> Result<Box<dyn TargetBackend>> {
+    let factory = find_registered_target_backend(name)
+        .ok_or_else(|| CliError::InvalidInput(format!("Unsupported target: {name}")))?;
+    factory(config)
+}
+
+/// Whether `name` resolves to a registered target (built-in or external),
+/// regardless of whether its crate is actually compiled into this build
+/// (a feature-gated built-in still counts — its factory just returns a
+/// "feature disabled" error when called).
+pub fn is_known_target(name: &str) -> bool {
+    find_registered_target_backend(name).is_some()
+}
+
+/// Error returned by a target factory whose crate is gated behind a
+/// disabled optional `lang-*` feature (see e.g. `lang-typescript` in this
+/// crate's `Cargo.toml`).
+fn disabled_feature_error(feature: &str, what: &str) -> CliError {
+    CliError::InvalidInput(format!(
+        "{what} requires the \"{feature}\" feature, which is disabled in this build"
+    ))
+}
+
+/// Every target `fp-cli` itself ships a backend for, as `(name, factory)`
+/// pairs — the initial contents of the shared target-backend registry.
+/// Feature-gated targets simply aren't pushed when their feature is off,
+/// rather than registering a factory that always errors.
+fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
+    let mut entries: Vec<(&'static str, TargetBackendFactory)> = Vec::new();
+
+    entries.push((
+        "native",
+        factory(|config: BackendConfig| {
+            let output = config.workspace_root.clone();
+            let native_target = match config.native_target.as_deref() {
+                Some(value) => Some(
+                    fp_native::config::NativeTarget::resolve(value, config.target_triple.as_deref())
+                        .ok_or_else(|| {
+                            CliError::Compilation(format!("Unsupported fp-native target: {value}"))
+                        })?,
+                ),
+                None => None,
+            };
+            let cfg = if config.emit_text {
+                fp_native::config::NativeConfig::assembly(&output)
+            } else if config.link_requested {
+                fp_native::config::NativeConfig::executable(&output)
+            } else {
+                fp_native::config::NativeConfig::object(&output)
+            }
+            .with_target_triple(config.target_triple.clone())
+            .with_target_cpu(config.target_cpu.clone())
+            .with_native_target(native_target)
+            .with_target_features(config.target_features.clone())
+            .with_sysroot(config.target_sysroot.clone())
+            .with_fuse_ld(config.target_linker.clone())
+            .with_linker_driver(Some(config.linker.clone()))
+            .with_release(config.release)
+            .with_save_intermediates(config.save_intermediates);
+            let emitter = fp_native::NativeEmitter::new(cfg);
+            Ok(Box::new(emitter) as Box<dyn TargetBackend>)
+        }),
+    ));
+
+    entries.push((
+        "goasm",
+        factory(|config: BackendConfig| {
+            let output = config.workspace_root.clone();
+            let target = Some(fp_goasm::config::GoAsmTarget::resolve(
+                config.target_triple.as_deref(),
+            ));
+            let cfg = fp_goasm::config::GoAsmConfig::new(&output)
+                .with_target(target)
+                .with_target_triple(config.target_triple.clone());
+            Ok(Box::new(fp_goasm::GoAsmEmitter::new(cfg)) as Box<dyn TargetBackend>)
+        }),
+    ));
+
+    entries.push((
+        "urcl",
+        factory(|config: BackendConfig| {
+            let output = config.workspace_root.clone();
+            Ok(
+                Box::new(fp_urcl::UrclEmitter::new(fp_urcl::UrclConfig::new(&output)))
+                    as Box<dyn TargetBackend>,
+            )
+        }),
+    ));
+
+    entries.push((
+        "llvm-binary",
+        factory(|config: BackendConfig| llvm_backend(config, false)),
+    ));
+    entries.push((
+        "llvm-text",
+        factory(|config: BackendConfig| llvm_backend(config, true)),
+    ));
+
+    entries.push((
+        "cranelift",
+        factory(|config: BackendConfig| {
+            #[cfg(feature = "cranelift")]
+            {
+                let output = config.workspace_root.clone();
+                Ok(Box::new(fp_cranelift::CraneliftBackend {
+                    output,
+                    target_triple: config.target_triple.clone(),
+                    target_cpu: config.target_cpu.clone(),
+                    target_features: config.target_features.clone(),
+                    target_sysroot: config.target_sysroot.clone(),
+                    linker: Some(config.linker.clone()),
+                    target_linker: config.target_linker.clone(),
+                    release: config.release,
+                    save_intermediates: config.save_intermediates,
+                }) as Box<dyn TargetBackend>)
+            }
+            #[cfg(not(feature = "cranelift"))]
+            {
+                let _ = config;
+                Err(CliError::MissingDependency(
+                    "Feature 'cranelift' is disabled; enable it to use the Cranelift backend."
+                        .to_string(),
+                ))
+            }
+        }),
+    ));
+
+    entries.push((
+        "bytecode",
+        factory(|config: BackendConfig| {
+            Ok(Box::new(fp_stackvm_bytecode::BytecodeBackend {
+                output: config.workspace_root.clone(),
+                emit_text: false,
+                save_intermediates: config.save_intermediates,
+            }) as Box<dyn TargetBackend>)
+        }),
+    ));
+    entries.push((
+        "text-bytecode",
+        factory(|config: BackendConfig| {
+            Ok(Box::new(fp_stackvm_bytecode::BytecodeBackend {
+                output: config.workspace_root.clone(),
+                // `emit_text` only forces text mode for the explicit
+                // "text-bytecode" target name — `compile_package`'s own
+                // `wants_text` already falls back to sniffing `.ftbc` off
+                // `output`, so fp-cli doesn't need to duplicate that here.
+                emit_text: true,
+                save_intermediates: config.save_intermediates,
+            }) as Box<dyn TargetBackend>)
+        }),
+    ));
+
+    entries.push((
+        "jvm-bytecode",
+        factory(|config: BackendConfig| {
+            Ok(Box::new(fp_jvm::JvmBackend {
+                output: config.workspace_root.clone(),
+                save_intermediates: config.save_intermediates,
+            }) as Box<dyn TargetBackend>)
+        }),
+    ));
+
+    entries.push((
+        "wasm",
+        factory(|config: BackendConfig| {
+            Ok(Box::new(fp_wasm::WasmBackend {
+                output: config.workspace_root.clone(),
+            }) as Box<dyn TargetBackend>)
+        }),
+    ));
+
+    entries.push((
+        "ebpf",
+        factory(|config: BackendConfig| {
+            Ok(Box::new(fp_ebpf::EbpfBackend {
+                output: config.workspace_root.clone(),
+            }) as Box<dyn TargetBackend>)
+        }),
+    ));
+
+    entries.push((
+        "cil",
+        factory(|config: BackendConfig| {
+            Ok(Box::new(fp_dotnet::CilBackend {
+                output: config.workspace_root.clone(),
+            }) as Box<dyn TargetBackend>)
+        }),
+    ));
+
+    entries.push((
+        "dotnet",
+        factory(|config: BackendConfig| {
+            Ok(Box::new(fp_dotnet::DotnetBackend {
+                output: config.workspace_root.clone(),
+                save_intermediates: config.save_intermediates,
+            }) as Box<dyn TargetBackend>)
+        }),
+    ));
+
+    entries.push((
+        "interpret",
+        factory(|_config: BackendConfig| {
+            Ok(Box::new(fp_interpret::InterpreterBackend) as Box<dyn TargetBackend>)
+        }),
+    ));
+
+    let ferrophase: TargetBackendFactory = factory(|config: BackendConfig| {
+        Ok(Box::new(fp_c::FerroPhaseAstBackend::new(config)) as Box<dyn TargetBackend>)
+    });
+    entries.push(("fp", ferrophase.clone()));
+    entries.push(("ferro", ferrophase.clone()));
+    entries.push(("ferrophase", ferrophase));
+
+    let typescript: TargetBackendFactory = factory(|config: BackendConfig| {
+        #[cfg(feature = "lang-typescript")]
+        {
+            Ok(Box::new(fp_typescript::TypeScriptBackend::new(config)) as Box<dyn TargetBackend>)
+        }
+        #[cfg(not(feature = "lang-typescript"))]
+        {
+            let _ = config;
+            Err(disabled_feature_error(
+                "lang-typescript",
+                "TypeScript package emission",
+            ))
+        }
+    });
+    entries.push(("typescript", typescript.clone()));
+    entries.push(("ts", typescript));
+
+    let javascript: TargetBackendFactory = factory(|config: BackendConfig| {
+        #[cfg(feature = "lang-typescript")]
+        {
+            Ok(Box::new(fp_typescript::JavaScriptBackend::new(config)) as Box<dyn TargetBackend>)
+        }
+        #[cfg(not(feature = "lang-typescript"))]
+        {
+            let _ = config;
+            Err(disabled_feature_error(
+                "lang-typescript",
+                "JavaScript package emission",
+            ))
+        }
+    });
+    entries.push(("javascript", javascript.clone()));
+    entries.push(("js", javascript));
+
+    let csharp: TargetBackendFactory = factory(|config: BackendConfig| {
+        #[cfg(feature = "lang-csharp")]
+        {
+            Ok(Box::new(fp_csharp::CSharpBackend::new(config)) as Box<dyn TargetBackend>)
+        }
+        #[cfg(not(feature = "lang-csharp"))]
+        {
+            let _ = config;
+            Err(disabled_feature_error("lang-csharp", "C# package emission"))
+        }
+    });
+    entries.push(("csharp", csharp.clone()));
+    entries.push(("cs", csharp.clone()));
+    entries.push(("c#", csharp));
+
+    let kotlin: TargetBackendFactory = factory(|config: BackendConfig| {
+        #[cfg(feature = "lang-kotlin")]
+        {
+            Ok(Box::new(fp_kotlin::KotlinBackend::new(config)) as Box<dyn TargetBackend>)
+        }
+        #[cfg(not(feature = "lang-kotlin"))]
+        {
+            let _ = config;
+            Err(disabled_feature_error("lang-kotlin", "Kotlin package emission"))
+        }
+    });
+    entries.push(("kotlin", kotlin.clone()));
+    entries.push(("kt", kotlin));
+
+    let python: TargetBackendFactory = factory(|config: BackendConfig| {
+        #[cfg(feature = "lang-python")]
+        {
+            Ok(Box::new(fp_python::PythonBackend::new(config)) as Box<dyn TargetBackend>)
+        }
+        #[cfg(not(feature = "lang-python"))]
+        {
+            let _ = config;
+            Err(disabled_feature_error("lang-python", "Python package emission"))
+        }
+    });
+    entries.push(("python", python.clone()));
+    entries.push(("py", python));
+
+    let golang: TargetBackendFactory = factory(|config: BackendConfig| {
+        #[cfg(feature = "lang-golang")]
+        {
+            Ok(Box::new(fp_golang::GoBackend::new(config)) as Box<dyn TargetBackend>)
+        }
+        #[cfg(not(feature = "lang-golang"))]
+        {
+            let _ = config;
+            Err(disabled_feature_error("lang-golang", "Go package emission"))
+        }
+    });
+    entries.push(("go", golang.clone()));
+    entries.push(("golang", golang));
+
+    let gdscript: TargetBackendFactory = factory(|config: BackendConfig| {
+        #[cfg(feature = "lang-godot")]
+        {
+            Ok(Box::new(fp_godot::GdscriptBackend::new(config)) as Box<dyn TargetBackend>)
+        }
+        #[cfg(not(feature = "lang-godot"))]
+        {
+            let _ = config;
+            Err(disabled_feature_error("lang-godot", "GDScript package emission"))
+        }
+    });
+    entries.push(("gdscript", gdscript.clone()));
+    entries.push(("gd", gdscript));
+
+    entries.push((
+        "zig",
+        factory(|config: BackendConfig| {
+            #[cfg(feature = "lang-zig")]
+            {
+                Ok(Box::new(fp_zig::ZigBackend::new(config)) as Box<dyn TargetBackend>)
+            }
+            #[cfg(not(feature = "lang-zig"))]
+            {
+                let _ = config;
+                Err(disabled_feature_error("lang-zig", "Zig package emission"))
+            }
+        }),
+    ));
+
+    entries.push((
+        "sycl",
+        factory(|config: BackendConfig| {
+            #[cfg(feature = "lang-sycl")]
+            {
+                Ok(Box::new(fp_sycl::SyclBackend::new(config)) as Box<dyn TargetBackend>)
+            }
+            #[cfg(not(feature = "lang-sycl"))]
+            {
+                let _ = config;
+                Err(disabled_feature_error("lang-sycl", "SYCL package emission"))
+            }
+        }),
+    ));
+
+    let rust: TargetBackendFactory = factory(|config: BackendConfig| {
+        Ok(Box::new(fp_lang::RustBackend::new(config)) as Box<dyn TargetBackend>)
+    });
+    entries.push(("rust", rust.clone()));
+    entries.push(("rs", rust));
+
+    entries.push((
+        "wit",
+        factory(|config: BackendConfig| {
+            #[cfg(feature = "lang-wit")]
+            {
+                Ok(Box::new(fp_wit::WitBackend::new(config)) as Box<dyn TargetBackend>)
+            }
+            #[cfg(not(feature = "lang-wit"))]
+            {
+                let _ = config;
+                Err(disabled_feature_error("lang-wit", "WIT package emission"))
+            }
+        }),
+    ));
+
+    entries.push((
+        "c",
+        factory(|config: BackendConfig| {
+            Ok(Box::new(fp_c::codegen::CBackend::new(config)) as Box<dyn TargetBackend>)
+        }),
+    ));
+
+    entries
+}
+
+fn llvm_backend(config: BackendConfig, text_only: bool) -> Result<Box<dyn TargetBackend>> {
+    #[cfg(feature = "llvm")]
+    {
+        Ok(Box::new(fp_llvm::LlvmBackend {
+            output: config.workspace_root.clone(),
+            target_triple: config.target_triple.clone(),
+            target_cpu: config.target_cpu.clone(),
+            target_features: config.target_features.clone(),
+            target_sysroot: config.target_sysroot.clone(),
+            linker: Some(config.linker.clone()),
+            target_linker: config.target_linker.clone(),
+            release: config.release,
+            debug_info: config.debug_info,
+            save_intermediates: config.save_intermediates,
+            text_only,
+        }) as Box<dyn TargetBackend>)
+    }
+    #[cfg(not(feature = "llvm"))]
+    {
+        let _ = (config, text_only);
+        Err(CliError::MissingDependency(
+            "Feature 'llvm' is disabled; enable it to use the LLVM backend.".to_string(),
+        ))
+    }
 }
 
 /// A source-language provider factory — `root` is either a project
@@ -61,10 +497,9 @@ static LANGUAGE_PROVIDER_REGISTRY: OnceLock<Mutex<Vec<(&'static str, LanguagePro
     OnceLock::new();
 
 /// Seeded once with every built-in language's own factory
-/// (`package_provider_registry::builtin_language_providers`) — built-ins and anything an
-/// embedding binary later registers live in the exact same table, looked
-/// up the exact same way; there's no separate "check built-ins first"
-/// step.
+/// (`package_provider_registry::builtin_language_providers`) — built-ins
+/// and anything an embedding binary later registers live in the exact
+/// same table, looked up the exact same way.
 fn language_provider_registry() -> &'static Mutex<Vec<(&'static str, LanguageProviderFactory)>> {
     LANGUAGE_PROVIDER_REGISTRY
         .get_or_init(|| Mutex::new(super::package_provider_registry::builtin_language_providers()))
@@ -89,7 +524,10 @@ pub fn register_language_provider(
 
 /// Looks up a previously `register_language_provider`-ed factory by name,
 /// case-insensitively, and invokes it with `root`.
-pub fn find_registered_language_provider(name: &str, root: &Path) -> Option<Arc<dyn PackageProvider>> {
+pub fn find_registered_language_provider(
+    name: &str,
+    root: &Path,
+) -> Option<Arc<dyn PackageProvider>> {
     let normalized = name.to_lowercase();
     let factory = language_provider_registry()
         .lock()
