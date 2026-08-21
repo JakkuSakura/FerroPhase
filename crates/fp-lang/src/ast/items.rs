@@ -1068,8 +1068,17 @@ fn starts_const_impl(input: &[Token]) -> bool {
 }
 
 fn skip_where_clause(input: &mut &[Token]) -> ModalResult<()> {
+    // A `where` clause is followed by either a body (`{`, an item
+    // definition) or, for a bodiless declaration (a trait method/type
+    // decl, an `extern` fn, ...), a bare `;` — this must stop at *either*
+    // terminator without consuming it, or a `;`-terminated where clause
+    // (real `core::iter::adapters::FuseImpl::try_fold`'s own multi-bound
+    // `where Self: Sized, Fold: FnMut(..) -> R, R: Try<Output = Acc>;`)
+    // would blindly consume every token past its own `;` hunting for a
+    // `{` that might be arbitrarily far downstream, corrupting everything
+    // in between.
     while !input.is_empty() {
-        if peek_symbol(input) == Some("{") {
+        if matches!(peek_symbol(input), Some("{") | Some(";")) {
             return Ok(());
         }
         *input = &input[1..];
