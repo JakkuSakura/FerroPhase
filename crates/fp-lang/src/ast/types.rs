@@ -696,19 +696,27 @@ fn parse_use_group(input: &mut &[Token]) -> ModalResult<fp_core::ast::ItemImport
 fn skip_bracketed_attr(input: &mut &[Token]) {
     loop {
         let mut probe = *input;
-        if skip_symbol(&mut probe, "#").is_err() {
-            return;
-        }
-        let _ = skip_symbol(&mut probe, "!");
-        if skip_symbol(&mut probe, "[").is_err() {
-            return;
+        // The tokenizer may emit `#[`/`#![` as a single combined symbol
+        // lexeme or as separate `#`/`!`/`[` tokens depending on context
+        // (see `parse_attrs`'s identical two-step check) — try the
+        // combined form first, then fall back to the separate tokens.
+        if skip_symbol(&mut probe, "#[").is_err() && skip_symbol(&mut probe, "#![").is_err() {
+            if skip_symbol(&mut probe, "#").is_err() {
+                return;
+            }
+            let _ = skip_symbol(&mut probe, "!");
+            if skip_symbol(&mut probe, "[").is_err() {
+                return;
+            }
         }
         let mut depth = 1usize;
         while depth > 0 {
+            if probe.is_empty() {
+                return;
+            }
             match peek_symbol(probe) {
                 Some("[") => depth += 1,
                 Some("]") => depth -= 1,
-                None => return,
                 _ => {}
             }
             probe = &probe[1..];
@@ -750,6 +758,13 @@ pub(crate) fn parse_optional_generic_params(
             }
             params.push(fp_core::ast::GenericParam { name, bounds });
             if skip_symbol(&mut probe, ",").is_err() {
+                break;
+            }
+            // Trailing comma before the closing `>` (e.g. real `alloc`'s
+            // multi-line `Box<T: ?Sized, #[..] A: Allocator = Global,>`)
+            // — without this, the loop always expects one more param after
+            // any comma, and chokes on `>` itself as if it were a name.
+            if peek_symbol(probe) == Some(">") {
                 break;
             }
         }
