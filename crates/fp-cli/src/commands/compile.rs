@@ -147,7 +147,6 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let progress = setup_progress_bar(1);
 
     let target = args.target.as_str();
-    let emit_text_bytecode = target == "text-bytecode";
 
     // `--exec` implies "link/emit as a runnable artifact" (`link_requested`)
     // regardless of whether it can actually run on this host — a
@@ -178,7 +177,6 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
     let container_registry = crate::container::ContainerRegistry::new();
     let input_file = &args.input;
-    let output_is_dir = args.output.as_ref().is_some_and(|path| path.is_dir());
 
     progress.set_message(format!("Compiling {}", input_file.display()));
 
@@ -189,17 +187,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let input_class =
         container_registry.classify_input(input_file, args.source_language.as_deref());
 
-    let output_file = determine_output_path(
-        input_file,
-        args.output.as_ref(),
-        target,
-        args.target_triple.as_deref(),
-        input_class,
-        emit_text_bytecode,
-        output_is_dir,
-        link_requested,
-        args.exec,
-    )?;
+    let output_file = determine_output_path(input_file, &args, input_class, link_requested)?;
 
     compile_file(input_file, &output_file, &args, config, input_class, exec).await?;
     progress.inc(1);
@@ -619,73 +607,60 @@ fn output_extension_for(
     }
 }
 
+/// Derives `-o`'s effective path from `args` and `input`'s classification —
+/// takes `args` itself rather than each of its fields spelled out
+/// positionally, since every value this needs (`target`, `target_triple`,
+/// `link`, `exec`) is already sitting on it; only `input_class` (computed
+/// once by the caller from `input`'s bytes, not re-detected here) and
+/// `link_requested` (`args.link || args.exec`, already resolved by the
+/// caller so it isn't recomputed at every call site) come in separately.
 fn determine_output_path(
     input: &Path,
-    output: Option<&PathBuf>,
-    target: &str,
-    target_triple: Option<&str>,
+    args: &CompileArgs,
     input_class: crate::container::InputClass,
-    emit_text_bytecode: bool,
-    output_is_dir: bool,
-    native_link_requested: bool,
-    exec_requested: bool,
+    link_requested: bool,
 ) -> Result<PathBuf> {
-    if let Some(output) = output {
-        if output_is_dir {
-            let extension = output_extension_for(
-                target,
-                input_class,
-                target_triple,
-                emit_text_bytecode,
-                native_link_requested,
-                exec_requested,
-            );
-            let stem = input
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .ok_or_else(|| CliError::InvalidInput("Invalid input filename".to_string()))?;
-            let mut path = output.join(stem);
-            path.set_extension(extension);
-            return Ok(path);
-        }
-
-        if is_raw_binary_passthrough(target, input_class) {
-            return Ok(output.clone());
-        }
-
-        // Respect explicit `-o <path>.<ext>` even when the extension differs
-        // from the target's default. Only fill the extension when the user
-        // did not provide one.
-        let mut path = output.clone();
-        if path.extension().is_none() {
-            let extension = output_extension_for(
-                target,
-                input_class,
-                target_triple,
-                emit_text_bytecode,
-                native_link_requested,
-                exec_requested,
-            );
-            path.set_extension(extension);
-        }
-        return Ok(path);
-    }
-
-    if target == "interpret" {
-        return Err(CliError::InvalidInput(
-            "Unknown target for output extension: interpret".to_string(),
-        ));
-    }
-
+    let target = args.target.as_str();
     let extension = output_extension_for(
         target,
         input_class,
-        target_triple,
-        emit_text_bytecode,
-        native_link_requested,
-        exec_requested,
+        args.target_triple.as_deref(),
+        target == "text-bytecode",
+        link_requested,
+        args.exec,
     );
-    Ok(input.with_extension(extension))
+
+    let Some(output) = args.output.as_ref() else {
+        if target == "interpret" {
+            return Err(CliError::InvalidInput(
+                "Unknown target for output extension: interpret".to_string(),
+            ));
+        }
+        return Ok(input.with_extension(extension));
+    };
+
+    if output.is_dir() {
+        let stem = input
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| CliError::InvalidInput("Invalid input filename".to_string()))?;
+        let mut path = output.join(stem);
+        path.set_extension(extension);
+        return Ok(path);
+    }
+
+    if is_raw_binary_passthrough(target, input_class) {
+        return Ok(output.clone());
+    }
+
+    // Respect explicit `-o <path>.<ext>` even when the extension differs
+    // from the target's default. Only fill the extension when the user
+    // did not provide one.
+    let mut path = output.clone();
+    if path.extension().is_none() {
+        path.set_extension(extension);
+    }
+    Ok(path)
 }
 
 /// Wraps a real, already-discovered `PackageProvider` (e.g. `RustPackageProvider`,
