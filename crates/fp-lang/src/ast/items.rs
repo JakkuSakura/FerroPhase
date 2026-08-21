@@ -133,20 +133,22 @@ pub(crate) fn parse_item_winnow(input: &mut &[Token], file: FileId) -> ModalResu
         Some(TokenKind::Keyword(Keyword::Unsafe)) if starts_unsafe_impl(*input) => {
             parse_impl_item(input, file, attrs)
         }
-        // `unsafe trait Foo { .. }`/`unsafe impl Foo for Bar {}` marks a
-        // trait as having safety obligations its implementors must uphold
-        // manually (e.g. real `alloc`'s `unsafe trait IsZero`) — the
-        // `unsafe` marker itself carries no meaning for typechecking/
-        // codegen here (this checker has no notion of trait-level safety
-        // contracts to enforce), so just consume and drop it before
-        // delegating to the ordinary trait-item parser.
-        Some(TokenKind::Keyword(Keyword::Unsafe))
-            if matches!(
-                input.get(1).map(|token| &token.kind),
-                Some(TokenKind::Keyword(Keyword::Trait))
-            ) =>
+        // `unsafe trait Foo { .. }`/`const unsafe trait Foo { .. }` (the
+        // latter unstable, but present in real `core::alloc::Allocator`)
+        // marks a trait as having safety/const obligations its
+        // implementors must uphold manually — neither marker carries any
+        // meaning for typechecking/codegen here, so just consume and drop
+        // whatever run of them precedes `trait` before delegating to the
+        // ordinary trait-item parser.
+        Some(TokenKind::Keyword(Keyword::Unsafe | Keyword::Const))
+            if skips_modifiers_to_trait(*input) =>
         {
-            skip_keyword(input, Keyword::Unsafe)?;
+            while matches!(
+                input.first().map(|token| &token.kind),
+                Some(TokenKind::Keyword(Keyword::Unsafe | Keyword::Const))
+            ) {
+                *input = &input[1..];
+            }
             parse_trait_item(input, file, visibility, attrs)
         }
         Some(TokenKind::Keyword(Keyword::Async)) if starts_async_fn(*input) => {

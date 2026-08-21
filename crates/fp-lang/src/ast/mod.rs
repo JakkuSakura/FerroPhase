@@ -333,6 +333,22 @@ pub(super) fn skips_modifiers_to_fn(input: &[Token]) -> bool {
     }
 }
 
+/// Same idea as `skips_modifiers_to_fn`, for `trait` — real Rust allows
+/// `unsafe trait`/`const unsafe trait` (the latter currently unstable,
+/// but present in real `core::alloc::Allocator`) before the keyword.
+pub(super) fn skips_modifiers_to_trait(input: &[Token]) -> bool {
+    let mut rest = input;
+    loop {
+        match rest.first().map(|t| &t.kind) {
+            Some(TokenKind::Keyword(Keyword::Unsafe | Keyword::Const)) => {
+                rest = &rest[1..];
+            }
+            Some(TokenKind::Keyword(Keyword::Trait)) => return true,
+            _ => return false,
+        }
+    }
+}
+
 fn starts_const_fn(input: &[Token]) -> bool {
     matches!(
         input,
