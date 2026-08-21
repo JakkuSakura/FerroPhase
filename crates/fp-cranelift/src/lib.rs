@@ -54,7 +54,6 @@ pub type CraneliftCompiler = CraneliftEmitter;
 /// final binary — that final linking step lives here (an OS-toolchain
 /// concern) rather than in `fp-cli`.
 pub struct CraneliftBackend {
-    pub module_path: Option<fp_core::ast::path::QualifiedPath>,
     pub output: PathBuf,
     pub target_triple: Option<String>,
     pub target_cpu: Option<String>,
@@ -72,11 +71,7 @@ impl fp_core::backend::TargetBackend for CraneliftBackend {
         workspace: &fp_core::workspace::WorkspaceContext,
         package_id: &fp_core::package::PackageId,
     ) -> Result<()> {
-        let entrypoint = self
-            .module_path
-            .as_ref()
-            .map(|module_path| (module_path, "main", "main"));
-        let lir = workspace.merged_lir_program(package_id, entrypoint)?;
+        let lir = workspace.merged_lir_program(package_id)?;
 
         let object_path = self
             .output

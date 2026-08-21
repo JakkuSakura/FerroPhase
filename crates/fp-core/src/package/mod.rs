@@ -452,36 +452,35 @@ pub fn package_source_from_compiled(
     }
 }
 
-/// Resolves the `DefId` of the function named `function_name` declared in
-/// `module_path` within `compiled`'s published HIR — pure over an
+/// Resolves the `DefId` of the function named `function_name` anywhere in
+/// `compiled`'s published HIR — package-based, not module-based: it
+/// doesn't matter which module the function lives in, only that exactly
+/// one item in the package is named `function_name`. Pure over an
 /// already-borrowed `CompiledPackage` so both `CompilerDriver` (which owns
 /// the driver-state lookup that produces the `CompiledPackage` in the
 /// first place) and `WorkspaceContext` (which already holds one) can
-/// share this without either depending on the other. See
-/// `crate::hir::Program::def_paths`'s doc comment for why `sig.name` is
-/// always the bare, local identifier and disambiguation instead relies on
-/// the recorded def path.
+/// share this without either depending on the other.
+///
+/// This is deliberately name-only, not module/class-qualified — every
+/// current backend just needs "the function named `main`" and a
+/// FerroPhase package conventionally has exactly one. A backend whose
+/// *host* language has its own module-qualified entrypoint convention
+/// (e.g. JVM/Java, where `public static void main` must live in one
+/// specific class the launcher is told to run) isn't served by this
+/// helper and shouldn't be forced to be — it should resolve its own
+/// entrypoint against its own module/class structure instead of this
+/// package-wide, name-only search.
 pub fn resolve_entrypoint_def_id(
     package_id: &PackageId,
     compiled: &CompiledPackage,
-    module_path: &QualifiedPath,
     function_name: &str,
 ) -> crate::error::Result<crate::hir::DefId> {
-    let expected_path =
-        crate::hir::DefPath::from_qualified_path(&module_path.with_segment(function_name.to_string()));
     compiled
         .hir_program
         .as_ref()
         .and_then(|program| {
             program.items.iter().find_map(|item| match &item.kind {
-                crate::hir::ItemKind::Function(function)
-                    if function.sig.name.as_str() == function_name
-                        && program
-                            .def_paths
-                            .get(&item.def_id)
-                            .map(|path| path == &expected_path)
-                            .unwrap_or(true) =>
-                {
+                crate::hir::ItemKind::Function(function) if function.sig.name.as_str() == function_name => {
                     Some(item.def_id)
                 }
                 _ => None,
@@ -489,8 +488,7 @@ pub fn resolve_entrypoint_def_id(
         })
         .ok_or_else(|| {
             crate::error::Error::from(format!(
-                "package `{package_id}` module `{}` has no `{function_name}` entrypoint",
-                module_path.to_key()
+                "package `{package_id}` has no `{function_name}` entrypoint"
             ))
         })
 }

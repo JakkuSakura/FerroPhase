@@ -293,7 +293,6 @@ pub fn is_available() -> bool {
 /// lives here (an OS-toolchain concern) rather than in `fp-cli`, so
 /// `fp-cli` has zero knowledge of how this target turns LIR into output.
 pub struct LlvmBackend {
-    pub module_path: Option<fp_core::ast::path::QualifiedPath>,
     pub output: PathBuf,
     pub target_triple: Option<String>,
     pub target_cpu: Option<String>,
@@ -315,11 +314,7 @@ impl fp_core::backend::TargetBackend for LlvmBackend {
         workspace: &fp_core::workspace::WorkspaceContext,
         package_id: &fp_core::package::PackageId,
     ) -> Result<()> {
-        let entrypoint = self
-            .module_path
-            .as_ref()
-            .map(|module_path| (module_path, "main", "main"));
-        let lir = workspace.merged_lir_program(package_id, entrypoint)?;
+        let lir = workspace.merged_lir_program(package_id)?;
 
         let llvm_output = if self.text_only || self.output.extension().and_then(|ext| ext.to_str()) == Some("ll") {
             self.output.clone()

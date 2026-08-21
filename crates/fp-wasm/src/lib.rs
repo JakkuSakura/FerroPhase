@@ -2185,7 +2185,6 @@ fn value_type_for(
 /// of re-driving a second, independent compile from source.
 pub struct WasmBackend {
     pub output: std::path::PathBuf,
-    pub module_path: Option<fp_core::ast::path::QualifiedPath>,
 }
 
 impl fp_core::backend::TargetBackend for WasmBackend {
@@ -2194,11 +2193,7 @@ impl fp_core::backend::TargetBackend for WasmBackend {
         workspace: &fp_core::workspace::WorkspaceContext,
         package_id: &fp_core::package::PackageId,
     ) -> fp_core::error::Result<()> {
-        let entrypoint = self
-            .module_path
-            .as_ref()
-            .map(|module_path| (module_path, "main", "main"));
-        let lir = workspace.merged_lir_program(package_id, entrypoint)?;
+        let lir = workspace.merged_lir_program(package_id)?;
         let wasm_bytes = emit_wasm(&lir)
             .map_err(|e| fp_core::error::Error::from(format!("Failed to emit wasm: {e}")))?;
         if let Some(parent) = self.output.parent() {

@@ -188,23 +188,20 @@ impl CompilerDriver {
         Ok(value)
     }
 
-    /// Resolves the `DefId` of the function named `function_name` declared
-    /// in `module_path` within `package_id`. `sig.name` is always the bare,
-    /// local identifier — HIR items never carry a qualified path on
-    /// themselves (see `hir::Program::def_paths`). Disambiguating
-    /// candidates by that table's recorded path lets a package with
-    /// several nested modules each defining their own `main` resolve the
-    /// one actually in `module_path`, rather than the first bare-name hit.
-    /// A function with no `def_paths` entry (e.g. the synthetic `main`
-    /// `create_main_function` builds for a bare top-level expression,
-    /// which is never registered via `register_value_def`) is trusted on
-    /// the bare-name match alone.
+    /// Resolves the `DefId` of the function named `function_name` anywhere
+    /// in `package_id`'s published HIR — package-based, not module-based
+    /// (see `fp_core::package::resolve_entrypoint_def_id`'s doc comment).
+    /// `module_path` isn't used for this resolution itself; it's taken here
+    /// only because every caller already has one on hand for the sibling
+    /// LIR-id-keying/comptime-path purposes `select_entrypoint`/
+    /// `compile_package_module_native` need it for.
     pub fn resolve_entrypoint_def_id(
         &self,
         package_id: &PackageId,
         module_path: &QualifiedPath,
         function_name: &str,
     ) -> Result<hir::DefId, CompilerDriverError> {
+        let _ = module_path;
         let package = self
             .state.borrow()
             .typing_ctx
@@ -212,7 +209,7 @@ impl CompilerDriver {
             .compiled_package(package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
         let package = package.borrow();
-        fp_core::package::resolve_entrypoint_def_id(package_id, &package, module_path, function_name)
+        fp_core::package::resolve_entrypoint_def_id(package_id, &package, function_name)
             .map_err(|error| CompilerDriverError::Interpreter(error.to_string()))
     }
 

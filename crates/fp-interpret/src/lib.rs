@@ -2690,9 +2690,7 @@ fn lir_ty_to_ffi(ty: &LirType) -> FfiType {
 /// `compile_package`'s `Result<()>` has no channel for the interpreted
 /// `Value`, so it's printed as a side effect; the CLI previously discarded
 /// this value entirely, so this is new information, not a regression.
-pub struct InterpreterBackend {
-    pub module_path: Option<fp_core::ast::path::QualifiedPath>,
-}
+pub struct InterpreterBackend;
 
 impl fp_core::backend::TargetBackend for InterpreterBackend {
     fn compile_package(
@@ -2700,11 +2698,7 @@ impl fp_core::backend::TargetBackend for InterpreterBackend {
         workspace: &fp_core::workspace::WorkspaceContext,
         package_id: &PackageId,
     ) -> fp_core::error::Result<()> {
-        let entrypoint = self
-            .module_path
-            .as_ref()
-            .map(|module_path| (module_path, "main", "main"));
-        let lir = workspace.merged_lir_program(package_id, entrypoint)?;
+        let lir = workspace.merged_lir_program(package_id)?;
         let mut interpreter = LirInterpreter::new();
         let value = interpreter
             .run_main(&lir)

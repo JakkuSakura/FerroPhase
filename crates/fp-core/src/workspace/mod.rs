@@ -720,18 +720,20 @@ impl WorkspaceContext {
     /// `id`'s own (dependencies first, mirroring the same merge order
     /// `evaluate_comptime_lir` uses for comptime execution — see
     /// `fp-compiler`'s `LoweredProgram::lir` this was moved from), then
-    /// optionally resolves an entrypoint function by name within `id` and
-    /// renames it to `bare_name` in the merged program — native/asm
+    /// best-effort resolves `id`'s `main` function (searched by name alone
+    /// across the whole package — see `crate::package::resolve_entrypoint_def_id`'s
+    /// doc comment for why this is deliberately package-based, not
+    /// module-based, and not a fit for a host language whose own
+    /// entrypoint convention is module/class-qualified) and renames it to
+    /// the bare symbol name `main` in the merged program — native/asm
     /// emitters locate the process entry point by that final, bare symbol
     /// name (see `crate::package::rename_lir_function`'s doc comment), and a
     /// module-nested `main` built from a flattened, ad hoc `LirProgram`
     /// like this one (rather than through `CompilerDriver::select_entrypoint`)
-    /// otherwise never gets that renaming.
-    pub fn merged_lir_program(
-        &self,
-        id: &PackageId,
-        entrypoint: Option<(&QualifiedPath, &str, &str)>,
-    ) -> crate::error::Result<crate::lir::LirProgram> {
+    /// otherwise never gets that renaming. Silently does nothing if `id`
+    /// has no `main` (e.g. a pure library package) — this is best-effort,
+    /// not a requirement every package must satisfy.
+    pub fn merged_lir_program(&self, id: &PackageId) -> crate::error::Result<crate::lir::LirProgram> {
         let package = self.compiled_package(id).ok_or_else(|| {
             crate::error::Error::from(format!(
                 "compiled package `{id}` is unavailable for LIR merging"
@@ -756,12 +758,8 @@ impl WorkspaceContext {
             .add_workspace(&package.lir_workspace)
             .map_err(|error| crate::error::Error::from(error.to_string()))?;
         let mut lir = combined.to_program();
-        if let Some((module_path, function_name, bare_name)) = entrypoint {
-            if let Ok(def_id) =
-                crate::package::resolve_entrypoint_def_id(id, &package, module_path, function_name)
-            {
-                crate::package::rename_lir_function(&mut lir, def_id, bare_name);
-            }
+        if let Ok(def_id) = crate::package::resolve_entrypoint_def_id(id, &package, "main") {
+            crate::package::rename_lir_function(&mut lir, def_id, "main");
         }
         Ok(lir)
     }

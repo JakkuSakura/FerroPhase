@@ -429,11 +429,10 @@ async fn run_named_target(
     use crate::languages::detect_project_language;
     use crate::languages::discovery::provider_for_language;
 
-    let (provider, packages, lang, module_path): (
+    let (provider, packages, lang): (
         std::sync::Arc<dyn fp_core::package::provider::PackageProvider>,
         Vec<PackageId>,
         String,
-        Option<fp_core::ast::path::QualifiedPath>,
     ) = if input.is_dir() {
         let lang = args
             .source_language
@@ -451,11 +450,11 @@ async fn run_named_target(
         let packages = provider
             .list_packages()
             .map_err(|e| CliError::Compilation(e.to_string()))?;
-        (provider, packages, lang, None)
+        (provider, packages, lang)
     } else {
         let lang = compiler::resolve_source_language(input, args.source_language.as_deref())?;
-        let (provider, package_id, tag) = provider_and_package_for_input(input, &lang)?;
-        (provider, vec![package_id], lang, Some(tag))
+        let (provider, package_id, _tag) = provider_and_package_for_input(input, &lang)?;
+        (provider, vec![package_id], lang)
     };
     let lang = lang.as_str();
 
@@ -544,7 +543,6 @@ async fn run_named_target(
         backend_config,
         workspace_packages.clone(),
         root_name,
-        module_path,
     )?;
 
     // Phase 2: serialize + write every package now that the workspace-wide
@@ -630,17 +628,10 @@ fn resolve_target_backend(
     config: fp_core::backend::BackendConfig,
     workspace_packages: std::collections::HashSet<String>,
     root_name: String,
-    module_path: Option<fp_core::ast::path::QualifiedPath>,
 ) -> Result<Box<dyn fp_core::backend::TargetBackend>> {
-    if let Some(result) = backend_for_target(
-        name,
-        input,
-        args,
-        config,
-        workspace_packages,
-        root_name,
-        module_path,
-    ) {
+    if let Some(result) =
+        backend_for_target(name, input, args, config, workspace_packages, root_name)
+    {
         return result;
     }
     crate::languages::registry::find_registered_target_backend(name)
@@ -688,7 +679,6 @@ fn backend_for_target(
     config: fp_core::backend::BackendConfig,
     workspace_packages: std::collections::HashSet<String>,
     root_name: String,
-    module_path: Option<fp_core::ast::path::QualifiedPath>,
 ) -> Option<Result<Box<dyn fp_core::backend::TargetBackend>>> {
     let output = config.workspace_root.clone();
     let module_name = input
@@ -721,10 +711,7 @@ fn backend_for_target(
                     if args.save_intermediates {
                         cfg = cfg.with_asm_dump(Some(output.with_extension("asm")));
                     }
-                    let mut emitter = fp_native::NativeEmitter::new(cfg);
-                    if let Some(module_path) = module_path.clone() {
-                        emitter = emitter.with_module_path(module_path);
-                    }
+                    let emitter = fp_native::NativeEmitter::new(cfg);
                     Ok(Box::new(emitter) as Box<dyn fp_core::backend::TargetBackend>)
                 }
                 Err(e) => Err(e),
@@ -737,24 +724,17 @@ fn backend_for_target(
             let cfg = fp_goasm::config::GoAsmConfig::new(&output)
                 .with_target(target)
                 .with_target_triple(args.target_triple.clone());
-            let mut emitter = fp_goasm::GoAsmEmitter::new(cfg);
-            if let Some(module_path) = module_path.clone() {
-                emitter = emitter.with_module_path(module_path);
-            }
+            let emitter = fp_goasm::GoAsmEmitter::new(cfg);
             Ok(Box::new(emitter))
         }
         "urcl" => {
-            let mut emitter = fp_urcl::UrclEmitter::new(fp_urcl::UrclConfig::new(&output));
-            if let Some(module_path) = module_path.clone() {
-                emitter = emitter.with_module_path(module_path);
-            }
+            let emitter = fp_urcl::UrclEmitter::new(fp_urcl::UrclConfig::new(&output));
             Ok(Box::new(emitter))
         }
         "llvm-binary" | "llvm-text" => {
             #[cfg(feature = "llvm")]
             {
                 Ok(Box::new(fp_llvm::LlvmBackend {
-                    module_path: module_path.clone(),
                     output: output.clone(),
                     target_triple: args.target_triple.clone(),
                     target_cpu: args.target_cpu.clone(),
@@ -780,7 +760,6 @@ fn backend_for_target(
             #[cfg(feature = "cranelift")]
             {
                 Ok(Box::new(fp_cranelift::CraneliftBackend {
-                    module_path: module_path.clone(),
                     output: output.clone(),
                     target_triple: args.target_triple.clone(),
                     target_cpu: args.target_cpu.clone(),
@@ -813,11 +792,9 @@ fn backend_for_target(
         })),
         "wasm" => Ok(Box::new(fp_wasm::WasmBackend {
             output: output.clone(),
-            module_path: module_path.clone(),
         })),
         "ebpf" => Ok(Box::new(fp_ebpf::EbpfBackend {
             output: output.clone(),
-            module_path: module_path.clone(),
         })),
         "cil" => Ok(Box::new(fp_dotnet::CilBackend {
             output: output.clone(),
@@ -826,9 +803,7 @@ fn backend_for_target(
             output: output.clone(),
             save_intermediates: args.save_intermediates,
         })),
-        "interpret" => Ok(Box::new(fp_interpret::InterpreterBackend {
-            module_path: module_path.clone(),
-        })),
+        "interpret" => Ok(Box::new(fp_interpret::InterpreterBackend)),
         "fp" | "ferro" | "ferrophase" => Ok(Box::new(fp_c::FerroPhaseAstBackend::new(config))),
         "typescript" | "ts" => {
             #[cfg(feature = "lang-typescript")]

@@ -484,7 +484,6 @@ pub fn compile_file_to_lir_bundle(
         package_id: PackageId::new(identity.path.path().head().ok_or_else(|| {
             CliError::Compilation("source file has no package identity".to_string())
         })?),
-        module_path: identity.path.path().clone(),
         executor,
     };
     Ok(LirBundle {
@@ -668,7 +667,6 @@ struct CompilerIdentity {
 struct LoweredProgram {
     driver: CompilerDriver,
     package_id: PackageId,
-    module_path: QualifiedPath,
     executor: CompilerExecutor,
 }
 
@@ -704,17 +702,18 @@ impl LoweredProgram {
     /// package's own workspace, since the callee's *signature* is
     /// predeclared into this package's generator, but without the
     /// dependency's workspace folded in too, its function *body* never
-    /// reaches the emitted binary), then resolves and renames a `main`
-    /// entrypoint the same way `CompilerDriver::select_entrypoint` does —
-    /// this path builds its own `LirProgram` straight from the workspace
-    /// rather than going through `select_entrypoint`, so a module-nested
-    /// `main`'s mangled name needs the same rename here too. See
+    /// reaches the emitted binary), then best-effort resolves and renames
+    /// a `main` entrypoint the same way `CompilerDriver::select_entrypoint`
+    /// does — this path builds its own `LirProgram` straight from the
+    /// workspace rather than going through `select_entrypoint`, so a
+    /// mangled `main` needs the same rename here too. See
     /// `fp_core::workspace::WorkspaceContext::merged_lir_program`, which
-    /// owns the actual merge/rename logic this delegates to.
+    /// owns the actual merge/rename logic this delegates to (package-based,
+    /// not module-based — see that method's doc comment).
     fn lir(&self) -> Result<fp_core::lir::LirProgram> {
         let workspace = self.compiled_workspace()?;
         workspace
-            .merged_lir_program(&self.package_id, Some((&self.module_path, "main", "main")))
+            .merged_lir_program(&self.package_id)
             .map_err(|error| CliError::Compilation(error.to_string()))
     }
 
