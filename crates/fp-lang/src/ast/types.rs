@@ -661,6 +661,32 @@ pub(crate) fn parse_optional_type_args(input: &mut &[Token]) -> ModalResult<Vec<
     let mut args = Vec::new();
     if peek_symbol(probe) != Some(">") {
         loop {
+            // A lifetime argument (real `alloc::borrow`'s own `Cow<'a, B>`)
+            // — this checker doesn't model borrow-checking, so lifetime
+            // arguments are dropped here rather than falling through to
+            // `parse_type_arg`, which would otherwise reparse the
+            // lifetime's own ident-like token as if it were an ordinary
+            // type name (producing a bogus type literally named `'a`
+            // that can never resolve). Dropping it here — never
+            // constructing a `Ty` for it, never pushing anything into
+            // `args` — also keeps the remaining argument list's
+            // positions exactly aligned with the type-arg list a
+            // consuming type declares (lifetime args always precede type
+            // args in real Rust source), matching how rustc's own
+            // `GenericArgs` already separates the two.
+            if matches!(peek_ident_like(probe), Some(name) if name.starts_with('\'')) {
+                let _ = ident_like(&mut probe);
+                let mut comma_probe = probe;
+                if skip_symbol(&mut comma_probe, ",").is_err() {
+                    break;
+                }
+                if peek_symbol(comma_probe) == Some(">") {
+                    probe = comma_probe;
+                    break;
+                }
+                probe = comma_probe;
+                continue;
+            }
             let Ok(arg) = parse_type_arg(&mut probe) else {
                 return Ok(Vec::new());
             };
@@ -874,6 +900,31 @@ pub(crate) fn parse_optional_generic_params(
             // `alloc`'s `pub struct Box<T: ?Sized, #[unstable(feature =
             // "allocator_api", issue = "32838")] A: Allocator = Global>`).
             skip_bracketed_attr(&mut probe);
+            // A lifetime parameter (`<'a, T>`, `<'a: 'b, T>`) — this
+            // checker doesn't model borrow-checking, so it's dropped
+            // rather than fed through the type-parameter pipeline (a
+            // lifetime is not a type parameter with its own `DefId`/`Ty`,
+            // even though real Rust's own `<'a, T>` list mixes them
+            // syntactically). Its own `: 'b + 'c` lifetime-bound list (if
+            // any) is dropped along with it.
+            if matches!(peek_ident_like(probe), Some(name) if name.starts_with('\'')) {
+                let _ = ident_like(&mut probe)?;
+                if skip_symbol(&mut probe, ":").is_ok() {
+                    loop {
+                        let _ = ident_like(&mut probe)?;
+                        if skip_symbol(&mut probe, "+").is_err() {
+                            break;
+                        }
+                    }
+                }
+                if skip_symbol(&mut probe, ",").is_err() {
+                    break;
+                }
+                if peek_symbol(probe) == Some(">") {
+                    break;
+                }
+                continue;
+            }
             let is_const = skip_keyword(&mut probe, Keyword::Const).is_ok();
             let name = ident_like(&mut probe)?;
             let bounds = if skip_symbol(&mut probe, ":").is_ok() && !is_const {
