@@ -203,7 +203,7 @@ use fp_core::ast::{
     ExprStruct, ExprStructural, ExprTry, ExprTryCatch, ExprTuple, ExprUnOp, ExprWhile, ExprWith,
     FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, FunctionParam,
     FunctionParamReceiver, FunctionSignature, Ident, Item, ItemDeclConst, ItemDeclFunction,
-    ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct,
+    ItemDeclStatic, ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct,
     ItemDefTrait, ItemDefType, ItemImpl, ItemKind, ItemMacro, ItemOpaqueType, MacroDelimiter,
     MacroGroup, MacroInvocation, MacroToken, MacroTokenTree, Module, Name, ParameterPath,
     ParameterPathSegment, Path, Pattern, PatternBox, PatternIdent, PatternKind, PatternOr,

@@ -1103,6 +1103,15 @@ pub(super) fn parse_extern_block_items(input: &mut &[Token], file: FileId) -> Mo
             )?);
             continue;
         }
+        // `static [mut] NAME: TYPE;` — an external symbol declaration
+        // (real `std::sys::alloc::vexos`'s linkerscript-provided
+        // `__heap_start`/`__heap_end`), never has an initializer (unlike
+        // an ordinary `static`, whose value lives in *this* module) — the
+        // linker resolves it, not this compiler.
+        if peek_keyword(*input, Keyword::Static) {
+            items.push(parse_extern_static_decl(input)?);
+            continue;
+        }
         return Err(ErrMode::Cut(ContextError::new()));
     }
     skip_symbol(input, "}")?;
@@ -1120,6 +1129,20 @@ pub(super) fn parse_prefixed_unsafe_extern_block_items(
 ) -> ModalResult<Vec<Item>> {
     let _ = parse_outer_attrs(input, file)?;
     parse_unsafe_extern_block_items(input, file)
+}
+
+fn parse_extern_static_decl(input: &mut &[Token]) -> ModalResult<Item> {
+    skip_keyword(input, Keyword::Static)?;
+    let _mutable = skip_keyword(input, Keyword::Mut).is_ok();
+    let name = ident_like(input)?;
+    skip_symbol(input, ":")?;
+    let ty = parse_type_expr(input)?;
+    skip_symbol(input, ";")?;
+    Ok(Item::from(ItemKind::DeclStatic(ItemDeclStatic {
+        ty_annotation: None,
+        name,
+        ty,
+    })))
 }
 
 fn parse_abi_fn_item(

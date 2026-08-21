@@ -2528,6 +2528,36 @@ impl HirGenerator {
                 let function = self.transform_decl_function_sig(func_decl, None)?;
                 (hir::ItemKind::Function(function), hir::Visibility::Public)
             }
+            ItemKind::DeclStatic(decl) => {
+                // An external symbol declaration (real `std::sys::alloc::
+                // vexos`'s linkerscript-provided `__heap_start`) — its
+                // real value comes from the linker at link time, not from
+                // any expression this compiler could evaluate. HIR has no
+                // declaration-only static/const shape (`hir::ItemKind::
+                // Const` always carries a body), so this fabricates an
+                // integer-literal placeholder body — deliberately picked
+                // so `expr_path_ty`'s literal fast path (matching on
+                // `Literal(Integer(_))`) reports this const's type as its
+                // own *declared* type to callers, instead of the
+                // placeholder body's actual (irrelevant) inferred type.
+                self.register_value_def(&decl.name.name, def_id, &ast::Visibility::Public);
+                let ty = self.transform_type_to_hir(&decl.ty)?;
+                let body = hir::Body {
+                    hir_id: self.next_id(),
+                    params: Vec::new(),
+                    value: hir::Expr {
+                        hir_id: self.next_id(),
+                        kind: hir::ExprKind::Literal(hir::Lit::Integer(0)),
+                        span: self.create_span(1),
+                    },
+                };
+                let konst = hir::Const {
+                    name: hir::Symbol::new(decl.name.name.clone()),
+                    ty,
+                    body,
+                };
+                (hir::ItemKind::Const(konst), hir::Visibility::Public)
+            }
             ItemKind::Impl(impl_block) => {
                 let hir_impl = self.transform_impl(impl_block)?;
                 (hir::ItemKind::Impl(hir_impl), hir::Visibility::Private)
