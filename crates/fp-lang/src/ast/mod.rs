@@ -327,6 +327,15 @@ pub(super) fn skips_modifiers_to_fn(input: &[Token]) -> bool {
             Some(TokenKind::Keyword(Keyword::Unsafe | Keyword::Async | Keyword::Const)) => {
                 rest = &rest[1..];
             }
+            // `unsafe extern "C" fn ...` — an ABI clause can appear in the
+            // modifier run too, and must itself be skipped (string literal
+            // included) before continuing to look for `fn`.
+            Some(TokenKind::Keyword(Keyword::Extern)) => {
+                rest = &rest[1..];
+                if matches!(rest.first().map(|t| &t.kind), Some(TokenKind::StringLiteral)) {
+                    rest = &rest[1..];
+                }
+            }
             Some(TokenKind::Keyword(Keyword::Fn)) => return true,
             _ => return false,
         }
