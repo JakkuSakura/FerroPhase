@@ -498,7 +498,8 @@ fn parse_fn_item_core(
     let name = ident_like(input)?;
     let generics_params = parse_optional_generic_params(input)?;
     skip_symbol(input, "(")?;
-    let (receiver, params) = parse_fn_params_with_receiver(input)?;
+    let mut destructures = Vec::new();
+    let (receiver, params) = parse_fn_params_with_receiver(input, &mut destructures)?;
     skip_symbol(input, ")")?;
     let ret_ty = if skip_symbol(input, "->").is_ok() {
         Some(parse_type_expr(input)?)
@@ -537,7 +538,7 @@ fn parse_fn_item_core(
     // token-balanced way `quote<item> { .. }`'s contents are (raw item
     // syntax, not ordinary expression syntax; struct/enum/etc. items
     // aren't valid expressions on their own).
-    let body = if quoted {
+    let mut body = if quoted {
         let quote_block = parse_balanced_quote_block(input, file)?;
         let quote_expr = Expr::from(ExprKind::Quote(fp_core::ast::ExprQuote {
             span: quote_block.span,
@@ -549,6 +550,15 @@ fn parse_fn_item_core(
     } else {
         parse_function_block(input, file)?
     };
+    if !destructures.is_empty() {
+        // Real bindings for every name in a multi-element tuple-pattern
+        // parameter (see `parse_fn_param_name`) — prepended so they're in
+        // scope for the rest of the body exactly as they would be for a
+        // real Rust parameter pattern.
+        let mut stmts = destructures;
+        stmts.extend(body.stmts);
+        body.stmts = stmts;
+    }
     let mut sig = FunctionSignature {
         name: Some(name.clone()),
         receiver,
@@ -760,7 +770,8 @@ fn parse_trait_fn_member(
     let name = ident_like(input)?;
     let generics_params = parse_optional_generic_params(input)?;
     skip_symbol(input, "(")?;
-    let (receiver, params) = parse_fn_params_with_receiver(input)?;
+    let mut destructures = Vec::new();
+    let (receiver, params) = parse_fn_params_with_receiver(input, &mut destructures)?;
     skip_symbol(input, ")")?;
     let ret_ty = if skip_symbol(input, "->").is_ok() {
         Some(parse_type_expr(input)?)
@@ -797,7 +808,12 @@ fn parse_trait_fn_member(
             sig,
         })));
     }
-    let body = parse_function_block(input, file)?;
+    let mut body = parse_function_block(input, file)?;
+    if !destructures.is_empty() {
+        let mut stmts = destructures;
+        stmts.extend(body.stmts);
+        body.stmts = stmts;
+    }
     Ok(Item::from(ItemKind::DefFunction(ItemDefFunction {
         ty_annotation: None,
         attrs,
@@ -895,12 +911,19 @@ fn type_to_name(ty: &Ty) -> Option<Name> {
 }
 
 fn parse_fn_params(input: &mut &[Token]) -> ModalResult<Vec<FunctionParam>> {
-    let (_, params) = parse_fn_params_with_receiver(input)?;
+    // A bodiless declaration (extern-block fn/etc.) has nowhere to bind a
+    // multi-element tuple-pattern parameter's names into, so any
+    // destructure statements this would otherwise need are simply
+    // discarded here — same simplification real Rust itself effectively
+    // makes (the pattern is never actually bound to anything in a body).
+    let mut destructures = Vec::new();
+    let (_, params) = parse_fn_params_with_receiver(input, &mut destructures)?;
     Ok(params)
 }
 
 fn parse_fn_params_with_receiver(
     input: &mut &[Token],
+    destructures: &mut Vec<BlockStmt>,
 ) -> ModalResult<(Option<FunctionParamReceiver>, Vec<FunctionParam>)> {
     let mut params = Vec::new();
     let mut receiver = None;
@@ -930,7 +953,7 @@ fn parse_fn_params_with_receiver(
         } else if peek_two_stars(*input) {
             skip_symbol(input, "*")?;
             skip_symbol(input, "*")?;
-            let mut param = parse_fn_param_core(input)?;
+            let mut param = parse_fn_param_core(input, destructures)?;
             param.as_dict = true;
             param.keyword_only = true;
             params.push(param);
@@ -939,7 +962,7 @@ fn parse_fn_params_with_receiver(
             if peek_symbol(probe) == Some(",") || peek_symbol(probe) == Some(")") {
                 saw_keyword_only_boundary = true;
             } else {
-                let mut param = parse_fn_param_after_star(&mut probe)?;
+                let mut param = parse_fn_param_after_star(&mut probe, destructures)?;
                 param.as_tuple = true;
                 if saw_keyword_only_boundary {
                     param.keyword_only = true;
@@ -949,7 +972,7 @@ fn parse_fn_params_with_receiver(
                 saw_keyword_only_boundary = true;
             }
         } else {
-            let mut param = parse_fn_param_core(input)?;
+            let mut param = parse_fn_param_core(input, destructures)?;
             if saw_keyword_only_boundary {
                 param.keyword_only = true;
             }
@@ -966,8 +989,11 @@ fn parse_fn_params_with_receiver(
     Ok((receiver, params))
 }
 
-fn parse_fn_param_after_star(input: &mut &[Token]) -> ModalResult<FunctionParam> {
-    parse_fn_param_core(input)
+fn parse_fn_param_after_star(
+    input: &mut &[Token],
+    destructures: &mut Vec<BlockStmt>,
+) -> ModalResult<FunctionParam> {
+    parse_fn_param_core(input, destructures)
 }
 
 fn parse_receiver(input: &mut &[Token]) -> ModalResult<Option<FunctionParamReceiver>> {
@@ -1005,14 +1031,17 @@ fn parse_receiver(input: &mut &[Token]) -> ModalResult<Option<FunctionParamRecei
     Ok(Some(receiver))
 }
 
-fn parse_fn_param_core(input: &mut &[Token]) -> ModalResult<FunctionParam> {
+fn parse_fn_param_core(
+    input: &mut &[Token],
+    destructures: &mut Vec<BlockStmt>,
+) -> ModalResult<FunctionParam> {
     let is_const = skip_keyword(input, Keyword::Const).is_ok();
     let is_context = starts_context_param_marker(*input);
     if is_context {
         let _ = ident_like(input)?;
     }
     let _is_mut = skip_keyword(input, Keyword::Mut).is_ok();
-    let name = parse_fn_param_name(input)?;
+    let name = parse_fn_param_name(input, destructures)?;
     skip_symbol(input, ":")?;
     let ty = parse_type_expr(input)?;
     let mut param = FunctionParam::new(name, ty);
@@ -1044,27 +1073,63 @@ fn starts_context_param_marker(input: &[Token]) -> bool {
     )
 }
 
-fn parse_fn_param_name(input: &mut &[Token]) -> ModalResult<Ident> {
-    // `(_,)`/`(name,)` — a bare single-element tuple destructuring
-    // pattern with no wrapping constructor name (real
-    // `core::ops::function`'s own blanket `fn call_mut(&mut self, (_
-    // /* ignore argument */,): (usize,)) -> ..`). Same lossy treatment
-    // as the other pattern shapes here: `FunctionParam` has no slot for
-    // a real pattern, so keep just the inner binding name (or a
-    // synthetic `_` for a wildcard) and drop the tuple wrapper.
+fn parse_fn_param_name(
+    input: &mut &[Token],
+    destructures: &mut Vec<BlockStmt>,
+) -> ModalResult<Ident> {
+    // `(a, b, ..)` — a tuple destructuring pattern parameter with no
+    // wrapping constructor name (real `std::process`'s own `fn
+    // from_inner((handle, io): (imp::Process, StdioPipes)) -> Child`,
+    // `core::ops::function`'s own blanket `fn call_mut(&mut self, (_ /*
+    // ignore */,): (usize,))`). `FunctionParam` has no slot for a real
+    // pattern, only a bare name, so this binds the parameter itself to a
+    // synthetic name and hands back a `let (a, b, ..) = __synthetic;`
+    // destructure statement for the caller to prepend to the function
+    // body — real, working bindings for every name in the pattern,
+    // rather than lossily keeping just one.
     let mut tuple_probe = *input;
     if skip_symbol(&mut tuple_probe, "(").is_ok() {
-        let inner_name = if let Ok(name) = ident_like(&mut tuple_probe) {
-            name
-        } else if skip_symbol(&mut tuple_probe, "_").is_ok() {
-            Ident::new("_")
-        } else {
-            return Err(ErrMode::Backtrack(ContextError::new()));
-        };
-        let _ = skip_symbol(&mut tuple_probe, ",");
-        if skip_symbol(&mut tuple_probe, ")").is_ok() {
+        let mut names = Vec::new();
+        while peek_symbol(tuple_probe) != Some(")") {
+            let name = if let Ok(name) = ident_like(&mut tuple_probe) {
+                name
+            } else if skip_symbol(&mut tuple_probe, "_").is_ok() {
+                Ident::new("_")
+            } else {
+                return Err(ErrMode::Backtrack(ContextError::new()));
+            };
+            names.push(name);
+            if skip_symbol(&mut tuple_probe, ",").is_err() {
+                break;
+            }
+        }
+        if skip_symbol(&mut tuple_probe, ")").is_ok() && !names.is_empty() {
             *input = tuple_probe;
-            return Ok(inner_name);
+            if names.len() == 1 {
+                return Ok(names.remove(0));
+            }
+            let synthetic = Ident::new(format!("__tuple_param{}", destructures.len()));
+            let pattern = Pattern::new(PatternKind::Tuple(PatternTuple {
+                patterns: names
+                    .into_iter()
+                    .map(|ident| {
+                        if ident.as_str() == "_" {
+                            Pattern::new(PatternKind::Wildcard(PatternWildcard {}))
+                        } else {
+                            Pattern::new(PatternKind::Ident(PatternIdent {
+                                ident,
+                                mutability: None,
+                            }))
+                        }
+                    })
+                    .collect(),
+            }));
+            destructures.push(BlockStmt::Let(StmtLet::new(
+                pattern,
+                Some(Expr::name(Name::from_ident(synthetic.clone()))),
+                None,
+            )));
+            return Ok(synthetic);
         }
     }
     // `&item`/`&mut item` — a by-ref destructuring pattern parameter (real
