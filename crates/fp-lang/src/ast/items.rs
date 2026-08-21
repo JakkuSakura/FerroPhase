@@ -151,6 +151,19 @@ pub(crate) fn parse_item_winnow(input: &mut &[Token], file: FileId) -> ModalResu
             }
             parse_trait_item(input, file, visibility, attrs)
         }
+        // `impl(restriction) trait Foo { .. }` — a sealed/restricted-impl
+        // trait marker (real `core::convert::num`'s own `pub impl(self)
+        // trait FloatToInt<Int>: Sized { .. }`) — distinguished from a
+        // genuine `impl Type`/`impl<T> Trait for Type` block by the `(`
+        // immediately after `impl` (a real impl block's self-type is
+        // never itself parenthesized at that exact position). Neither
+        // the restriction's target nor its very existence changes
+        // anything this checker models about the trait, so drop it.
+        Some(TokenKind::Keyword(Keyword::Impl)) if starts_restricted_trait(*input) => {
+            *input = &input[1..]; // `impl`
+            skip_balanced_delimiters(input, "(", ")")?;
+            parse_trait_item(input, file, visibility, attrs)
+        }
         Some(TokenKind::Keyword(Keyword::Async)) if starts_async_fn(*input) => {
             parse_fn_item(input, file, visibility, attrs, false)
         }
@@ -925,6 +938,14 @@ fn starts_unsafe_impl(input: &[Token]) -> bool {
         [first, second, ..]
             if first.kind == TokenKind::Keyword(Keyword::Unsafe)
                 && second.kind == TokenKind::Keyword(Keyword::Impl)
+    )
+}
+
+fn starts_restricted_trait(input: &[Token]) -> bool {
+    matches!(
+        input,
+        [first, second, ..]
+            if first.kind == TokenKind::Keyword(Keyword::Impl) && second.lexeme == "("
     )
 }
 
