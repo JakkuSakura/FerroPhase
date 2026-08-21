@@ -536,6 +536,7 @@ fn parse_trait_member(input: &mut &[Token], file: FileId) -> ModalResult<Item> {
     if peek_keyword(*input, Keyword::Fn)
         || peek_keyword(*input, Keyword::Quote)
         || starts_async_fn(*input)
+        || skips_modifiers_to_fn(*input)
     {
         return parse_trait_fn_member(input, file, visibility, attrs);
     }
@@ -548,6 +549,17 @@ fn parse_trait_fn_member(
     visibility: Visibility,
     attrs: Vec<Attribute>,
 ) -> ModalResult<Item> {
+    // `unsafe fn`/`const fn`/`const unsafe fn` (any order/count) — a
+    // trait method declaration can carry the same safety/const modifiers
+    // a real definition can, e.g. real `core::array`'s `unsafe fn
+    // partial_drop(&mut self, ..)`. Neither carries meaning this checker
+    // models for a bodiless trait *declaration*, so just drop them.
+    while matches!(
+        input.first().map(|token| &token.kind),
+        Some(TokenKind::Keyword(Keyword::Unsafe | Keyword::Const))
+    ) {
+        *input = &input[1..];
+    }
     let is_async = skip_keyword(input, Keyword::Async).is_ok();
     let quoted = skip_keyword(input, Keyword::Quote).is_ok();
     if quoted {
