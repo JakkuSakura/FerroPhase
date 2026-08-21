@@ -46,6 +46,14 @@ pub struct BackendConfig {
     /// project directory's name, not `workspace_root` (the output
     /// directory).
     pub root_name: String,
+    /// Whether the backend should produce a fully-linked, runnable
+    /// artifact rather than a relocatable object — `true` for every
+    /// ordinary source compile (which always wants an executable
+    /// regardless of `--link`); only a container-input compile (e.g. a
+    /// native object file given directly as `fp compile`'s input) can
+    /// legitimately set this `false` to just retarget the object without
+    /// linking it.
+    pub link_requested: bool,
 }
 
 impl BackendConfig {
@@ -65,6 +73,7 @@ impl BackendConfig {
             type_defs: false,
             single_world: false,
             root_name: "workspace".to_string(),
+            link_requested: true,
         }
     }
 
@@ -130,6 +139,11 @@ impl BackendConfig {
 
     pub fn with_root_name(mut self, root_name: String) -> Self {
         self.root_name = root_name;
+        self
+    }
+
+    pub fn with_link_requested(mut self, link_requested: bool) -> Self {
+        self.link_requested = link_requested;
         self
     }
 }

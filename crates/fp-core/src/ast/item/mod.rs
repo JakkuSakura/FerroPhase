@@ -4,7 +4,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::ast::*;
 use crate::span::Span;
-use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
 
 mod decl;
@@ -64,7 +63,16 @@ common_enum! {
         /// The block's return value is a compile error — only splices
         /// are meaningful at this level.
         ConstBlock(ExprConstBlock),
-        Any(AnyBox),
+        /// An already-compiled artifact this item carries instead of real
+        /// FerroPhase source (e.g. a native object file lifted to
+        /// `AsmProgram` by `fp_native::binary::lift_object_to_asmir`).
+        /// Opaque to HIR/MIR/LIR by design — skipped during HIR generation
+        /// (`ast_to_hir::append_item`); a backend that knows how to
+        /// consume it (today, only `fp_native::NativeEmitter`) reads it
+        /// straight off `PackageSource.items`/`CompiledPackage.items`, the
+        /// same way every AST-emitting backend already reads its
+        /// package's items.
+        PrecompiledAsm(crate::asmir::AsmProgram),
     }
 }
 
@@ -124,8 +132,8 @@ impl Item {
         &mut self.kind
     }
 
-    pub fn any<T: AnyBoxable>(any: T) -> Self {
-        Self::from(ItemKind::Any(AnyBox::new(any)))
+    pub fn precompiled_asm(asm: crate::asmir::AsmProgram) -> Self {
+        Self::from(ItemKind::PrecompiledAsm(asm))
     }
     pub fn as_expr(&self) -> Option<&Expr> {
         match self.kind() {
@@ -232,7 +240,7 @@ impl ItemKind {
             ItemKind::Macro(mac) => mac.span(),
             ItemKind::Expr(expr) => expr.span(),
             ItemKind::ConstBlock(block) => block.span(),
-            ItemKind::Any(_) => Span::null(),
+            ItemKind::PrecompiledAsm(_) => Span::null(),
         }
     }
 }

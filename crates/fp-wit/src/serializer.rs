@@ -386,7 +386,7 @@ impl WitEmitter {
             }
             ItemKind::Expr(_)
             | ItemKind::ConstBlock(_)
-            | ItemKind::Any(_)
+            | ItemKind::PrecompiledAsm(_)
             | ItemKind::Import(_)
             | ItemKind::DeclConst(_)
             | ItemKind::DeclStatic(_)
@@ -797,7 +797,6 @@ impl InterfaceBuilder {
             | Ty::InferVar(_)
             | Ty::Wildcard(_)
             | Ty::TypeBinaryOp(_)
-            | Ty::AnyBox(_)
             | Ty::Unknown(_)
             | Ty::Nothing(_) => "json".to_string(),
             Ty::Type(_) | Ty::TypeBounds(_) | Ty::ImplTraits(_) | Ty::RequestedType(_) => {
@@ -1617,8 +1616,7 @@ fn ty_to_wit_with_self(ty: &Ty, self_name: Option<&str>) -> String {
         | Ty::ErrorType(_)
         | Ty::InferVar(_)
         | Ty::Wildcard(_)
-        | Ty::TypeBinaryOp(_)
-        | Ty::AnyBox(_) => "json".to_string(),
+        | Ty::TypeBinaryOp(_) => "json".to_string(),
         Ty::Expr(expr) => expr_to_wit_type(expr, self_name).unwrap_or_else(|| "json".to_string()),
         Ty::ConstBlock(block) => {
             expr_to_wit_type(&block.expr, self_name).unwrap_or_else(|| "json".to_string())

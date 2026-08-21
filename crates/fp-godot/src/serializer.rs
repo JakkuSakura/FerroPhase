@@ -325,7 +325,7 @@ impl GdscriptEmitter {
             | ItemKind::DefStructural(_)
             | ItemKind::Macro(_)
             | ItemKind::ConstBlock(_)
-            | ItemKind::Any(_) => {
+            | ItemKind::PrecompiledAsm(_) => {
                 self.push_comment(&format!(
                     "unsupported item in gdscript output: {:?}",
                     item.kind()
@@ -653,10 +653,6 @@ impl GdscriptEmitter {
                 Ok(())
             }
             BlockStmt::Noop => Ok(()),
-            BlockStmt::Any(_) => Err(eyre!(
-                "gdscript target cannot process placeholder statements during emission"
-            )
-            .into()),
         }
     }
 
@@ -816,10 +812,6 @@ impl GdscriptEmitter {
                 };
                 Ok(format!("({then} if {cond} else {elze})"))
             }
-            ExprKind::Any(_) => Err(eyre!(
-                "gdscript target cannot process placeholder expressions during emission"
-            )
-            .into()),
             other => Err(eyre!("unsupported expression in gdscript emitter: {other:?}").into()),
         }
     }

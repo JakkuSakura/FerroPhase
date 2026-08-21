@@ -108,10 +108,6 @@ impl ZigEmitter {
                 Ok(true)
             }
             BlockStmt::Noop => Ok(false),
-            BlockStmt::Any(_) => {
-                self.push_comment("TODO: placeholder statements are not supported in Zig backend");
-                Ok(true)
-            }
         }
     }
 

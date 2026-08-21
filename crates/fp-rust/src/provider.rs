@@ -26,21 +26,77 @@ use crate::RustFrontend;
 /// `RustFrontend` specifically — kept as its own path (rather than
 /// delegating to `MagnetWorkspaceProvider` wholesale) so Rust-specific parsing
 /// work has a real seam to land in without touching `.fp`-dialect behavior.
+/// A member's own source root — either a real directory (walked via
+/// `project::list_sources`, the ordinary Cargo-project case) or a single
+/// standalone file with no enclosing project (`fp compile foo.rs` with no
+/// `Cargo.toml` anywhere above it) — the degenerate one-module package
+/// case, always tagged as the crate root (empty module path) regardless of
+/// the file's own name, matching how `lib.rs`/`main.rs` already collapse
+/// to the crate root in the directory case.
+enum MemberRoot {
+    Dir(PathBuf),
+    File(PathBuf),
+}
+
+impl MemberRoot {
+    /// `(relative_path_tag, absolute_path)` pairs — a single-file member
+    /// is always exactly one entry, whose relative tag is the empty string
+    /// (so `rs_relative_to_module_path` doesn't need a special case).
+    fn sources(&self) -> Vec<(String, PathBuf)> {
+        match self {
+            MemberRoot::Dir(dir) => project::list_sources(dir),
+            MemberRoot::File(path) => vec![(String::new(), path.clone())],
+        }
+    }
+
+    fn manifest_path(&self) -> PathBuf {
+        match self {
+            MemberRoot::Dir(dir) => dir.join("Cargo.toml"),
+            MemberRoot::File(path) => path.clone(),
+        }
+    }
+
+    fn root_path(&self) -> &Path {
+        match self {
+            MemberRoot::Dir(dir) => dir,
+            MemberRoot::File(path) => path,
+        }
+    }
+}
+
 pub struct RustPackageProvider {
     root: PathBuf,
-    members: Vec<(String, PathBuf)>,
+    members: Vec<(String, MemberRoot)>,
     cache: RwLock<HashMap<String, Vec<PackageItem>>>,
 }
 
 impl RustPackageProvider {
     pub fn new(root: PathBuf) -> Self {
+        // A standalone file (no enclosing Cargo project) is its own
+        // one-member package, named after itself — the degenerate case of
+        // "package", not a separate code path.
+        if root.is_file() {
+            let name = root
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("main")
+                .to_string();
+            return Self {
+                root: root.clone(),
+                members: vec![(name, MemberRoot::File(root))],
+                cache: RwLock::new(HashMap::new()),
+            };
+        }
         // `list_cargo_members`, not `list_members`: this provider is
         // specifically for real Rust/Cargo projects, so `Cargo.toml` is
         // authoritative here even if a stale/unrelated `Magnet.toml` also
         // exists at the same root — see that function's doc comment.
         let members = project::find_manifest(&root)
             .map(|manifest_root| project::list_cargo_members(&manifest_root))
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, dir)| (name, MemberRoot::Dir(dir)))
+            .collect();
         Self {
             root,
             members,
@@ -52,11 +108,11 @@ impl RustPackageProvider {
         Ok(Self::new(root.to_path_buf()))
     }
 
-    fn resolve_dir(&self, id: &PackageId) -> ProviderResult<PathBuf> {
+    fn resolve_root(&self, id: &PackageId) -> ProviderResult<&MemberRoot> {
         self.members
             .iter()
             .find(|(name, _)| name == id.as_str())
-            .map(|(_, dir)| dir.clone())
+            .map(|(_, root)| root)
             .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))
     }
 }
@@ -75,22 +131,24 @@ impl PackageProvider for RustPackageProvider {
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
-        let dir = self.resolve_dir(id)?;
+        let member_root = self.resolve_root(id)?;
         let mut module_ids = Vec::new();
-        for (rel, _) in project::list_sources(&dir) {
+        for (rel, _) in member_root.sources() {
             let path = rs_relative_to_module_path(&rel);
             module_ids.push(ModuleId::new(&path.to_key()));
         }
         let mut metadata = PackageMetadata::default();
-        metadata
-            .dependencies
-            .extend(workspace_path_dependencies(&dir, &self.members));
+        if let MemberRoot::Dir(dir) = member_root {
+            metadata
+                .dependencies
+                .extend(workspace_path_dependencies(dir, &self.members));
+        }
         Ok(Arc::new(PackageDescriptor {
             id: id.clone(),
             name: id.as_str().to_string(),
             version: None,
-            manifest_path: VirtualPath::from_path(&dir.join("Cargo.toml")),
-            root: VirtualPath::from_path(&dir),
+            manifest_path: VirtualPath::from_path(&member_root.manifest_path()),
+            root: VirtualPath::from_path(member_root.root_path()),
             metadata,
             modules: module_ids,
         }))
@@ -110,11 +168,11 @@ impl PackageProvider for RustPackageProvider {
             }
         }
 
-        let dir = self.resolve_dir(id)?;
+        let member_root = self.resolve_root(id)?;
         let frontend = RustFrontend::new();
         let mut items = Vec::new();
 
-        for (rel, abs) in project::list_sources(&dir) {
+        for (rel, abs) in member_root.sources() {
             let source = std::fs::read_to_string(&abs)
                 .map_err(|e| ProviderError::other(format!("read {}: {}", abs.display(), e)))?;
             let result = frontend
@@ -161,7 +219,7 @@ impl PackageProvider for RustPackageProvider {
 /// loop error out.
 fn workspace_path_dependencies(
     package_dir: &Path,
-    members: &[(String, PathBuf)],
+    members: &[(String, MemberRoot)],
 ) -> Vec<DependencyDescriptor> {
     let manifest_path = package_dir.join("Cargo.toml");
     let Ok(content) = std::fs::read_to_string(&manifest_path) else {
@@ -176,10 +234,11 @@ fn workspace_path_dependencies(
 
     let canonical_members: Vec<(String, PathBuf)> = members
         .iter()
-        .map(|(name, path)| {
+        .map(|(name, root)| {
+            let path = root.root_path();
             (
                 name.clone(),
-                std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()),
+                std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
             )
         })
         .collect();
@@ -217,7 +276,7 @@ pub fn rs_relative_to_module_path(rel: &str) -> QualifiedPath {
     // `main::` submodule — tag it with an empty path so
     // `HirGenerator::transform_package`'s per-item `with_module_scope` (which
     // pushes one scope level per path segment) doesn't wrongly nest them.
-    if !rel.contains('/') && (rel == "lib.rs" || rel == "main.rs") {
+    if rel.is_empty() || (!rel.contains('/') && (rel == "lib.rs" || rel == "main.rs")) {
         return QualifiedPath::new(Vec::new());
     }
     let stem = rel.trim_end_matches(".rs").trim_end_matches(".fp");

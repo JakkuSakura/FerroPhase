@@ -347,7 +347,7 @@ impl<'a> PowerShellRenderer<'a> {
                 Ok(())
             }
             BlockStmt::Defer(_) => Ok(()),
-            BlockStmt::Any(_) | BlockStmt::Item(_) | BlockStmt::Noop => Ok(()),
+            BlockStmt::Item(_) | BlockStmt::Noop => Ok(()),
         }
     }
 

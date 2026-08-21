@@ -728,12 +728,6 @@ impl ScriptEmitter {
                 );
             }
             BlockStmt::Noop => {}
-            BlockStmt::Any(_) => {
-                return Err(eyre!(
-                    "Normalization cannot process placeholder statements during target emission"
-                )
-                .into());
-            }
         }
         Ok(())
     }
@@ -842,10 +836,6 @@ impl ScriptEmitter {
                 let body = self.render_expr(closure.body.as_ref())?;
                 Ok(format!("({params}) => {body}"))
             }
-            ExprKind::Any(_) => Err(eyre!(
-                "Normalization cannot process placeholder expressions during target emission"
-            )
-            .into()),
             other => Err(eyre!("Unsupported expression in target emitter: {:?}", other).into()),
         }
     }

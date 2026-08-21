@@ -8,16 +8,11 @@ use fp_core::error::{Error, Result};
 use std::ffi::{CString, c_void};
 
 // Re-export FFI types from the shared crate.
+pub use fp_core::ast::FfiSliceRef;
 pub use fp_ffi::{FfiSignature, FfiType, FfiValue};
 
 fn ffi_err(e: impl std::error::Error) -> Error {
     Error::from(format!("ffi: {e}"))
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct FfiSliceRef {
-    pub values: Vec<Value>,
-    pub index: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -265,33 +260,31 @@ fn push_arg_value(
                 args.push(FfiValue::Ptr(escaped.ptr.value as *mut c_void));
                 return Ok(());
             }
-            if let Value::Any(any) = value {
-                if let Some(slice_ref) = any.downcast_ref::<FfiSliceRef>() {
-                    let elem_ty = ty.as_ref();
-                    let elem_layout = c_abi_layout(elem_ty)?;
-                    let buf_size = elem_layout
-                        .size
-                        .checked_mul(slice_ref.values.len())
-                        .ok_or_else(|| Error::from("ffi slice buffer size overflow"))?;
-                    let mut escaped = ValueEscaped::new(buf_size as i64, elem_layout.align as i64);
-                    {
-                        let buf = unsafe { escaped.as_slice_mut() };
-                        for (idx, value) in slice_ref.values.iter().enumerate() {
-                            let offset = idx
-                                .checked_mul(elem_layout.size)
-                                .ok_or_else(|| Error::from("ffi slice offset overflow"))?;
-                            write_c_abi_value(elem_ty, value, buf, offset)?;
-                        }
+            if let Value::FfiSliceRef(slice_ref) = value {
+                let elem_ty = ty.as_ref();
+                let elem_layout = c_abi_layout(elem_ty)?;
+                let buf_size = elem_layout
+                    .size
+                    .checked_mul(slice_ref.values.len())
+                    .ok_or_else(|| Error::from("ffi slice buffer size overflow"))?;
+                let mut escaped = ValueEscaped::new(buf_size as i64, elem_layout.align as i64);
+                {
+                    let buf = unsafe { escaped.as_slice_mut() };
+                    for (idx, value) in slice_ref.values.iter().enumerate() {
+                        let offset = idx
+                            .checked_mul(elem_layout.size)
+                            .ok_or_else(|| Error::from("ffi slice offset overflow"))?;
+                        write_c_abi_value(elem_ty, value, buf, offset)?;
                     }
-                    let offset = slice_ref
-                        .index
-                        .checked_mul(elem_layout.size)
-                        .ok_or_else(|| Error::from("ffi slice index overflow"))?;
-                    let ptr = unsafe { escaped.as_ptr().add(offset) } as *mut c_void;
-                    args.push(FfiValue::Ptr(ptr));
-                    escapes.push(escaped);
-                    return Ok(());
                 }
+                let offset = slice_ref
+                    .index
+                    .checked_mul(elem_layout.size)
+                    .ok_or_else(|| Error::from("ffi slice index overflow"))?;
+                let ptr = unsafe { escaped.as_ptr().add(offset) } as *mut c_void;
+                args.push(FfiValue::Ptr(ptr));
+                escapes.push(escaped);
+                return Ok(());
             }
 
             let layout = c_abi_layout(ty.as_ref())?;

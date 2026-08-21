@@ -7,7 +7,6 @@ use crate::ast::{
 use crate::common_enum;
 use crate::common_struct;
 use crate::span::Span;
-use crate::utils::anybox::{AnyBox, AnyBoxable};
 
 common_enum! {
     pub enum BlockStmt {
@@ -17,7 +16,6 @@ common_enum! {
         Expr(BlockStmtExpr),
         /// really noop
         Noop,
-        Any(AnyBox),
     }
 }
 
@@ -36,14 +34,11 @@ impl BlockStmt {
                 .flatten(),
             ),
             Self::Defer(stmt) => stmt.span(),
-            Self::Noop | Self::Any(_) => Span::null(),
+            Self::Noop => Span::null(),
         }
     }
     pub fn noop() -> Self {
         Self::Noop
-    }
-    pub fn any<T: AnyBoxable>(any: T) -> Self {
-        Self::Any(AnyBox::new(any))
     }
     pub fn item(item: Item) -> Self {
         Self::Item(Box::new(item))

@@ -214,16 +214,8 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
             args.exec,
         )?;
 
-        compile_file(
-            input_file,
-            &output_file,
-            &args,
-            config,
-            input_class,
-            link_requested,
-            exec,
-        )
-        .await?;
+        compile_file(input_file, &output_file, &args, config, input_class, exec)
+            .await?;
         progress.inc(1);
     }
 
@@ -244,7 +236,6 @@ async fn compile_file(
     args: &CompileArgs,
     _config: &CliConfig,
     input_class: crate::container::InputClass,
-    link_requested: bool,
     exec: bool,
 ) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
@@ -269,23 +260,11 @@ async fn compile_file(
         return Ok(Some(artifact));
     }
 
-    if container_kind == Some(crate::container::ContainerInputKind::NativeObject) {
-        let payload = tokio::fs::read(input).await.map_err(|err| {
-            CliError::Io(std::io::Error::other(format!(
-                "Failed to read container input: {err}"
-            )))
-        })?;
-        // Validates the payload actually is a recognized object container
-        // (clean `InvalidInput`/`Compilation` error otherwise) the same
-        // way every other container kind does, before lifting it.
-        let read = crate::container::ContainerRegistry::new()
-            .read_container(crate::container::ContainerInputKind::NativeObject, payload)?;
-        let artifact =
-            run_native_object_target(input, output, args, &read.payload, link_requested, exec)
-                .await?;
-        return Ok(Some(artifact));
-    }
-
+    // Native-object input (`ContainerInputKind::NativeObject`) is handled
+    // by `run_named_target`'s fallthrough below, the same as any other
+    // language — `resolve_input_package`/`provider_for_language` resolve
+    // it via `fp_native::NativeObjectPackageProvider` once `"object"` is
+    // detected as the source language, not a special case here.
     if let Some(artifact) = crate::container::maybe_transpile_container(
         input,
         output,
@@ -422,12 +401,17 @@ fn provider_and_package_for_input(
 }
 
 /// Runs a `--target <name>` compile — built-in (`backend_for_target`) or
-/// registered at runtime via `crate::languages::registry` — for either a
+/// registered at runtime via `crate::languages::backend_registry` — for either a
 /// whole directory/project or a single file, through the same package/
 /// workspace discovery, typecheck, and `TargetBackend::compile_package`/
 /// `write_workspace_files` pipeline either way. A single file is just the
 /// trivial one-package case of the same discovery a directory input goes
-/// through, not a separate code path.
+/// through, not a separate code path — including a native object file
+/// given directly as input (`"object"` resolves like any other language;
+/// see `fp_native::NativeObjectPackageProvider` and
+/// `compiler::resolve_input_package`), so `--exec` falls out of this
+/// function's existing `backend.exec()` call for free, no bespoke runner
+/// needed.
 async fn run_named_target(
     input: &Path,
     output: &Path,
@@ -450,24 +434,9 @@ async fn run_named_target(
         .and_then(|n| n.to_str())
         .unwrap_or("workspace")
         .to_string();
-    let backend_config = fp_core::backend::BackendConfig::new(output.to_path_buf())
-        .with_target_triple(args.target_triple.clone())
-        .with_target_cpu(args.target_cpu.clone())
-        .with_native_target(args.native_target.clone())
-        .with_target_features(args.target_features.clone())
-        .with_target_sysroot(args.target_sysroot.clone())
-        .with_linker(args.linker.clone())
-        .with_target_linker(args.target_linker.clone())
-        .with_release(args.release)
-        .with_debug_info(args.debug)
-        .with_save_intermediates(args.save_intermediates)
-        .with_type_defs(args.type_defs)
-        .with_single_world(args.single_world)
-        .with_root_name(root_name.clone());
-    let backend = backend_for_target(target_name, backend_config)?;
 
     use crate::languages::detect_project_language;
-    use crate::languages::discovery::provider_for_language;
+    use crate::languages::package_provider_registry::provider_for_language;
 
     let (provider, packages, lang): (
         std::sync::Arc<dyn fp_core::package::provider::PackageProvider>,
@@ -497,6 +466,33 @@ async fn run_named_target(
         (provider, vec![package_id], lang)
     };
 
+    // A container-input compile (e.g. a native object file given directly
+    // as input) can legitimately just retarget the object without linking
+    // it (`--link`/`--exec` both absent) — every ordinary source compile
+    // always wants a runnable executable regardless of `--link`, matching
+    // today's behavior.
+    let link_requested = if lang == crate::languages::NATIVE_OBJECT {
+        args.link || args.exec
+    } else {
+        true
+    };
+    let backend_config = fp_core::backend::BackendConfig::new(output.to_path_buf())
+        .with_target_triple(args.target_triple.clone())
+        .with_target_cpu(args.target_cpu.clone())
+        .with_native_target(args.native_target.clone())
+        .with_target_features(args.target_features.clone())
+        .with_target_sysroot(args.target_sysroot.clone())
+        .with_linker(args.linker.clone())
+        .with_target_linker(args.target_linker.clone())
+        .with_release(args.release)
+        .with_debug_info(args.debug)
+        .with_save_intermediates(args.save_intermediates)
+        .with_type_defs(args.type_defs)
+        .with_single_world(args.single_world)
+        .with_root_name(root_name.clone())
+        .with_link_requested(link_requested);
+    let backend = backend_for_target(target_name, backend_config)?;
+
     run_compile_pipeline(
         input,
         output,
@@ -507,103 +503,14 @@ async fn run_named_target(
         backend,
         &root_name,
         exec,
-        None,
     )
     .await
-}
-
-/// Native-object container input (`fp compile <file.o> --target native
-/// ...`): an already-compiled object, not FerroPhase source. Wraps it in a
-/// single-package, empty-source `PackageProvider`
-/// (`FixedPackageProvider::for_source`, since there's nothing to parse)
-/// and runs it through the exact same pipeline as any other target —
-/// `run_compile_pipeline` sets the lifted `AsmProgram` onto that one
-/// package's `CompiledPackage.precompiled_asm` right after typecheck
-/// (a no-op over the empty source), so `fp_native::NativeEmitter::
-/// compile_package` picks it up, and `--exec` falls out of the pipeline's
-/// existing `backend.exec()` call for free — no bespoke runner needed.
-async fn run_native_object_target(
-    input: &Path,
-    output: &Path,
-    args: &CompileArgs,
-    bytes: &[u8],
-    link_requested: bool,
-    exec: bool,
-) -> Result<PathBuf> {
-    if args.target != "native" {
-        return Err(CliError::InvalidInput(
-            "native object input currently requires `--target native`".to_string(),
-        ));
-    }
-
-    let asm = fp_native::binary::lift_object_to_asmir(bytes)
-        .map_err(|err| CliError::Compilation(format!("Failed to lift object file: {err}")))?;
-
-    let root_name = input
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("workspace")
-        .to_string();
-    // Bypasses `backend_for_target` (which always builds an executable
-    // config): a container-input compile can legitimately just retarget an
-    // object file without linking it (`--link`/`--exec` both absent), a
-    // distinction only this call site needs.
-    let native_config = if link_requested {
-        fp_native::config::NativeConfig::executable(output)
-    } else {
-        fp_native::config::NativeConfig::object(output)
-    }
-    .with_target_triple(args.target_triple.clone())
-    .with_target_cpu(args.target_cpu.clone())
-    .with_target_features(args.target_features.clone())
-    .with_sysroot(args.target_sysroot.clone())
-    .with_fuse_ld(args.target_linker.clone())
-    .with_linker_driver(Some(args.linker.clone()))
-    .with_release(args.release)
-    .with_save_intermediates(args.save_intermediates);
-    let backend: Box<dyn fp_core::backend::TargetBackend> =
-        Box::new(fp_native::NativeEmitter::new(native_config));
-
-    let package_id = PackageId::new(format!("{root_name}::native_object"));
-    let source = PackageSource::new(
-        package_id.clone(),
-        package_id.as_str().to_string(),
-        fp_core::package::graph::PackageGraph::new(Vec::new()),
-    );
-    let provider: std::sync::Arc<dyn fp_core::package::provider::PackageProvider> =
-        std::sync::Arc::new(fp_core::package::provider::FixedPackageProvider::for_source(
-            package_id.clone(),
-            source,
-        ));
-
-    run_compile_pipeline(
-        input,
-        output,
-        "native",
-        provider,
-        vec![package_id],
-        // Not real FerroPhase source (the package's `items` are empty —
-        // nothing to normalize/typecheck), but `build_workspace_session`
-        // unconditionally wants a std/libc provider keyed by language;
-        // `FerroPhaseProvider` is harmless here since it's never actually
-        // referenced by an empty package.
-        crate::languages::FERROPHASE,
-        backend,
-        &root_name,
-        exec,
-        Some(asm),
-    )
-    .await?;
-    Ok(output.to_path_buf())
 }
 
 /// Shared tail of every named-target compile: wraps `provider` with the
 /// target-language materialize/normalize transforms, typechecks every
 /// package in one `CompilerDriver::compile_workspace` call, hands each one
 /// to `backend.compile_package`, then `write_workspace_files`/`exec`.
-/// `precompiled_asm`, when set, is installed onto every package in
-/// `packages` right after typecheck (see `run_native_object_target`) —
-/// `None` for every ordinary source-compile target.
 async fn run_compile_pipeline(
     input: &Path,
     output: &Path,
@@ -614,7 +521,6 @@ async fn run_compile_pipeline(
     backend: Box<dyn fp_core::backend::TargetBackend>,
     root_name: &str,
     exec: bool,
-    precompiled_asm: Option<fp_core::asmir::AsmProgram>,
 ) -> Result<()> {
     info!(
         "Project: {} package(s), language: {} (target: {})",
@@ -675,14 +581,6 @@ async fn run_compile_pipeline(
         })?;
     compiler::drain_driver(session.driver())?;
     let workspace = session.driver().state.borrow().typing_ctx.env_ctx.clone();
-
-    if let Some(asm) = precompiled_asm {
-        for package_id in &packages {
-            if let Some(compiled) = workspace.compiled_package(package_id) {
-                compiled.borrow_mut().precompiled_asm = Some(asm.clone());
-            }
-        }
-    }
 
     let prepared: Vec<(PackageId, PackageSource)> = packages
         .iter()
@@ -748,7 +646,7 @@ fn disabled_feature_error(feature: &str, what: &str) -> CliError {
 
 /// Constructs the `TargetBackend` for `name` — every built-in target
 /// first, falling through to the runtime registry
-/// (`crate::languages::registry::find_registered_target_backend`) for
+/// (`crate::languages::backend_registry::find_registered_target_backend`) for
 /// anything it doesn't recognize.
 fn backend_for_target(
     name: &str,
@@ -768,7 +666,11 @@ fn backend_for_target(
             };
             match native_target.transpose() {
                 Ok(native_target) => {
-                    let cfg = fp_native::config::NativeConfig::executable(&output)
+                    let cfg = if config.link_requested {
+                        fp_native::config::NativeConfig::executable(&output)
+                    } else {
+                        fp_native::config::NativeConfig::object(&output)
+                    }
                         .with_target_triple(config.target_triple.clone())
                         .with_target_cpu(config.target_cpu.clone())
                         .with_native_target(native_target)
@@ -987,7 +889,7 @@ fn backend_for_target(
             }
         }
         "c" => Ok(Box::new(fp_c::codegen::CBackend::new(config))),
-        _ => crate::languages::registry::find_registered_target_backend(name)
+        _ => crate::languages::backend_registry::find_registered_target_backend(name)
             .map(|backend| -> Box<dyn fp_core::backend::TargetBackend> {
                 struct Shared(std::sync::Arc<dyn fp_core::backend::TargetBackend>);
                 impl fp_core::backend::TargetBackend for Shared {
@@ -1025,7 +927,7 @@ fn is_tsconfig(path: &Path) -> bool {
 /// discovery/typecheck/backend-construction pipeline runs.
 fn validate_compile_target(target: &str) -> Result<()> {
     if is_known_builtin_target(target)
-        || crate::languages::registry::find_registered_target_backend(target).is_some()
+        || crate::languages::backend_registry::find_registered_target_backend(target).is_some()
     {
         Ok(())
     } else {

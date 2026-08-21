@@ -64,7 +64,7 @@ pub fn materialize_item(
         | ast::ItemKind::Import(_)
         | ast::ItemKind::DefTrait(_)
         | ast::ItemKind::ConstBlock(_)
-        | ast::ItemKind::Any(_) => kind,
+        | ast::ItemKind::PrecompiledAsm(_) => kind,
     };
     Ok(ast::Item {
         id,
@@ -114,7 +114,6 @@ pub fn materialize_stmt(
             Ok(ast::BlockStmt::Defer(stmt_defer))
         }
         ast::BlockStmt::Noop => Ok(ast::BlockStmt::Noop),
-        ast::BlockStmt::Any(stmt) => Ok(ast::BlockStmt::Any(stmt)),
     }
 }
 
@@ -460,9 +459,6 @@ pub fn materialize_expr(
         // ever runs (mirrors `materialize_item`'s identical treatment of
         // `ItemKind::Macro`) — nothing left inside to materialize.
         ast::ExprKind::Macro(macro_expr) => ast::Expr::new(ast::ExprKind::Macro(macro_expr)),
-        // Opaque, dynamically-typed escape hatch — no known structure to
-        // recurse into.
-        ast::ExprKind::Any(any) => ast::Expr::new(ast::ExprKind::Any(any)),
     };
     new_expr.id = id;
     new_expr.span = span;

@@ -1616,19 +1616,6 @@ fn transform_expr_rejects_for_loop_non_binding_pattern() {
     );
 }
 
-#[test]
-fn transform_block_rejects_unsupported_statement_kind() {
-    let mut generator = HirGenerator::new();
-    let expr = ast::Expr::block(ast::ExprBlock::new_stmts(vec![ast::BlockStmt::any(
-        "unsupported statement payload".to_string(),
-    )]));
-
-    expect_lowering_diagnostic(
-        || generator.transform_expr_to_hir(&expr),
-        "unimplemented block statement type for HIR transformation",
-    );
-}
-
 /// Fast, targeted repro for the "unresolved type path `std::std::os::raw::
 /// c_int`"-shaped diagnostics seen in the full std typecheck run
 /// (`/tmp/typecheck7.log`) — a literal doubled package/sub-crate prefix

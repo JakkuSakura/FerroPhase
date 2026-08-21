@@ -17,18 +17,67 @@ use crate::project;
 /// Magnet-workspace layout — Magnet is FerroPhase's own package manager,
 /// the `.fp` analog of Cargo for real Rust projects (see `RustPackageProvider`
 /// in `fp-rust` for that side). Parses `.fp` sources via `FerroFrontend`.
+/// A member's own source root — either a real directory (walked via
+/// `project::list_sources`, the ordinary Magnet-workspace case) or a
+/// single standalone `.fp` file with no enclosing project (`fp compile
+/// foo.fp` with no `Magnet.toml` anywhere above it) — the degenerate
+/// one-module package case, always tagged as the crate root (empty
+/// module path) regardless of the file's own name.
+enum MemberRoot {
+    Dir(PathBuf),
+    File(PathBuf),
+}
+
+impl MemberRoot {
+    fn sources(&self) -> Vec<(String, PathBuf)> {
+        match self {
+            MemberRoot::Dir(dir) => project::list_sources(dir),
+            MemberRoot::File(path) => vec![(String::new(), path.clone())],
+        }
+    }
+
+    fn manifest_path(&self) -> PathBuf {
+        match self {
+            MemberRoot::Dir(dir) => dir.join("Cargo.toml"),
+            MemberRoot::File(path) => path.clone(),
+        }
+    }
+
+    fn root_path(&self) -> &Path {
+        match self {
+            MemberRoot::Dir(dir) => dir,
+            MemberRoot::File(path) => path,
+        }
+    }
+}
+
 pub struct MagnetWorkspaceProvider {
     #[allow(dead_code)]
     root: PathBuf,
-    members: Vec<(String, PathBuf)>,
+    members: Vec<(String, MemberRoot)>,
     cache: std::sync::RwLock<HashMap<String, Vec<PackageItem>>>,
 }
 
 impl MagnetWorkspaceProvider {
     pub fn discover(start: &Path) -> ProviderResult<Self> {
+        if start.is_file() {
+            let name = start
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("main")
+                .to_string();
+            return Ok(Self {
+                root: start.to_path_buf(),
+                members: vec![(name, MemberRoot::File(start.to_path_buf()))],
+                cache: Default::default(),
+            });
+        }
         let root = project::find_manifest(start)
             .ok_or_else(|| ProviderError::other("no Cargo.toml or Magnet.toml found"))?;
-        let members = project::list_members(&root);
+        let members = project::list_members(&root)
+            .into_iter()
+            .map(|(name, dir)| (name, MemberRoot::Dir(dir)))
+            .collect();
         Ok(Self {
             root,
             members,
@@ -51,9 +100,9 @@ impl PackageProvider for MagnetWorkspaceProvider {
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
-        let dir = self.resolve_dir(id)?;
+        let member_root = self.resolve_root(id)?;
         let mut module_ids = Vec::new();
-        for (rel, _) in project::list_sources(&dir) {
+        for (rel, _) in member_root.sources() {
             let path = module_path_from_relative(&rel);
             module_ids.push(ModuleId::new(&path.to_key()));
         }
@@ -61,8 +110,8 @@ impl PackageProvider for MagnetWorkspaceProvider {
             id: id.clone(),
             name: id.as_str().to_string(),
             version: None,
-            manifest_path: VirtualPath::from_path(&dir.join("Cargo.toml")),
-            root: VirtualPath::from_path(&dir),
+            manifest_path: VirtualPath::from_path(&member_root.manifest_path()),
+            root: VirtualPath::from_path(member_root.root_path()),
             metadata: Default::default(),
             modules: module_ids,
         }))
@@ -82,11 +131,11 @@ impl PackageProvider for MagnetWorkspaceProvider {
             }
         }
 
-        let dir = self.resolve_dir(id)?;
+        let member_root = self.resolve_root(id)?;
         let frontend = FerroFrontend::new();
         let mut items = Vec::new();
 
-        for (rel, abs) in project::list_sources(&dir) {
+        for (rel, abs) in member_root.sources() {
             let source = std::fs::read_to_string(&abs)
                 .map_err(|e| ProviderError::other(format!("read {}: {}", abs.display(), e)))?;
             let result = frontend
@@ -108,11 +157,11 @@ impl PackageProvider for MagnetWorkspaceProvider {
 }
 
 impl MagnetWorkspaceProvider {
-    fn resolve_dir(&self, id: &PackageId) -> ProviderResult<PathBuf> {
+    fn resolve_root(&self, id: &PackageId) -> ProviderResult<&MemberRoot> {
         self.members
             .iter()
             .find(|(name, _)| name == id.as_str())
-            .map(|(_, dir)| dir.clone())
+            .map(|(_, root)| root)
             .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))
     }
 }
@@ -122,6 +171,9 @@ impl MagnetWorkspaceProvider {
 /// Exported so callers outside this module can compute the same tag a
 /// discovered package's items are already tagged with.
 pub fn module_path_from_relative(rel: &str) -> QualifiedPath {
+    if rel.is_empty() {
+        return QualifiedPath::new(Vec::new());
+    }
     let stem = rel.trim_end_matches(".rs").trim_end_matches(".fp");
     let mut parts: Vec<String> = stem.split('/').map(|s| s.to_string()).collect();
     // Pre-2018-edition module file convention: `foo/mod.rs` *is* module

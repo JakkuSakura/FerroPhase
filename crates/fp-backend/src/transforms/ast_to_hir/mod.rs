@@ -2200,11 +2200,6 @@ impl HirGenerator {
             QueryKind::Prql(_prql) => {
                 return Err(fp_core::error::Error::from("PRQL query has no semantic IR"));
             }
-            QueryKind::Any(_) => {
-                return Err(fp_core::error::Error::from(
-                    "unsupported opaque query document in AST→HIR",
-                ));
-            }
         };
         let mut lowered = Vec::with_capacity(statements.len());
         for statement in &statements {
@@ -4237,7 +4232,6 @@ fn ty_contains_quote(ty: &ast::Ty) -> bool {
         | ast::Ty::Nothing(_)
         | ast::Ty::Type(_)
         | ast::Ty::RequestedType(_)
-        | ast::Ty::AnyBox(_)
         | ast::Ty::Wildcard(_) => false,
     }
 }
@@ -4285,7 +4279,6 @@ fn ty_contains_type_type(ty: &ast::Ty) -> bool {
         | ast::Ty::Unknown(_)
         | ast::Ty::Nothing(_)
         | ast::Ty::Quote(_)
-        | ast::Ty::AnyBox(_)
         | ast::Ty::Wildcard(_) => false,
     }
 }
@@ -5295,7 +5288,7 @@ impl ClosureLowering {
                 unreachable!("intrinsic collections should have been expanded")
             }
             ast::ExprKind::Name(_) | ast::ExprKind::Closured(_) => {}
-            ast::ExprKind::Closure(_) | ast::ExprKind::Any(_) | ast::ExprKind::Id(_) => {}
+            ast::ExprKind::Closure(_) | ast::ExprKind::Id(_) => {}
         }
         Ok(())
     }
@@ -5332,7 +5325,7 @@ impl ClosureLowering {
                 }
             }
             ast::BlockStmt::Item(item) => self.rewrite_in_item(item.as_mut())?,
-            ast::BlockStmt::Noop | ast::BlockStmt::Any(_) => {}
+            ast::BlockStmt::Noop => {}
         }
         Ok(())
     }
@@ -5617,7 +5610,7 @@ impl CaptureCollector {
                     self.visit(&kwarg.value);
                 }
             }
-            ast::ExprKind::Any(_) | ast::ExprKind::Id(_) => {}
+            ast::ExprKind::Id(_) => {}
         }
     }
 
@@ -5641,7 +5634,7 @@ impl CaptureCollector {
                 }
             }
             ast::BlockStmt::Item(item) => self.visit_item(item.as_ref()),
-            ast::BlockStmt::Noop | ast::BlockStmt::Any(_) => {}
+            ast::BlockStmt::Noop => {}
         }
     }
 
@@ -5943,8 +5936,7 @@ impl CaptureReplacer {
                 new_expr.id = expr.id();
                 *expr = new_expr;
             }
-            ast::ExprKind::Any(_)
-            | ast::ExprKind::Id(_)
+            ast::ExprKind::Id(_)
             | ast::ExprKind::Closure(_)
             | ast::ExprKind::Closured(_) => {}
         }
@@ -5963,7 +5955,7 @@ impl CaptureReplacer {
                 }
             }
             ast::BlockStmt::Item(item) => self.visit_item(item.as_mut()),
-            ast::BlockStmt::Noop | ast::BlockStmt::Any(_) => {}
+            ast::BlockStmt::Noop => {}
         }
     }
 

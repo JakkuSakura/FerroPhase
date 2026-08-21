@@ -3,7 +3,6 @@ use crate::ast::{
     get_threadlocal_serializer,
 };
 use crate::span::Span;
-use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -85,7 +84,6 @@ common_enum! {
         Macro(ExprMacro),
         /// for items in dynamic languages
         Item(BItem),
-        Any(AnyBox),
     }
 
 }
@@ -158,7 +156,6 @@ impl Expr {
     pub fn value(v: Value) -> Expr {
         match v {
             Value::Expr(expr) => *expr,
-            Value::Any(any) => ExprKind::Any(any).into(),
             Value::Type(Ty::Expr(expr)) => *expr,
             _ => ExprKind::Value(v.into()).into(),
         }
@@ -182,9 +179,6 @@ impl Expr {
             other => ExprBlock::new_expr(Expr::from_parts(id, span, other)),
         }
     }
-    pub fn any<T: AnyBoxable>(any: T) -> Self {
-        ExprKind::Any(AnyBox::new(any)).into()
-    }
     pub fn macro_invocation(invocation: MacroInvocation) -> Self {
         ExprKind::Macro(ExprMacro::new(invocation)).into()
     }
@@ -200,7 +194,6 @@ impl ExprKind {
             ExprKind::Id(_) => Span::null(),
             ExprKind::Name(name) => name.span(),
             ExprKind::Value(value) => value.span(),
-            ExprKind::Any(_) => Span::null(),
             ExprKind::Block(block) => block.span(),
             ExprKind::Match(match_expr) => match_expr.span(),
             ExprKind::If(expr_if) => expr_if.span(),

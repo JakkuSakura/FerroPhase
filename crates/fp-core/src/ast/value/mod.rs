@@ -10,12 +10,22 @@ use crate::ast::{BExpr, BlockStmt, Expr, ExprKind, Item, get_threadlocal_seriali
 use crate::common_enum;
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::span::Span;
-use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::utils::to_json::ToJson;
 use std::fmt::{Display, Formatter};
 
 pub type ValueId = u64;
 pub type BValue = Box<Value>;
+
+/// A borrowed FFI slice's backing values, referenced by index — see
+/// `fp_native::ffi`'s C ABI marshalling, the sole consumer. Lives here
+/// (not in `fp-native`) because `Value::FfiSliceRef` needs to embed it
+/// directly, and `fp-core` can't depend downward on `fp-native`.
+#[derive(Debug, Clone, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct FfiSliceRef {
+    pub values: Vec<Value>,
+    pub index: usize,
+}
+
 common_enum! {
     pub enum Value {
         Int(ValueInt),
@@ -48,7 +58,7 @@ common_enum! {
         Expr(BExpr),
         BinOpKind(BinOpKind),
         UnOpKind(UnOpKind),
-        Any(AnyBox),
+        FfiSliceRef(FfiSliceRef),
     }
 }
 impl Value {
@@ -102,9 +112,6 @@ impl Value {
             ExprKind::Value(v) => *v,
             other => Value::Expr(Expr::from_parts(id, span, other).into()),
         }
-    }
-    pub fn any<T: AnyBoxable>(any: T) -> Self {
-        Self::Any(AnyBox::new(any))
     }
     pub const fn undefined() -> Self {
         Self::Undefined(ValueUndefined)

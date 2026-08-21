@@ -18,7 +18,6 @@ pub use semantic::*;
 
 use crate::ast::AstSerializer;
 use crate::ast::sql as sql_ast;
-use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
 use sqlparser::dialect::GenericDialect;
 use sqlparser::tokenizer::{Token, Tokenizer};
@@ -120,7 +119,6 @@ impl QueryDocument {
                         .unwrap_or(true)
             }
             QueryKind::Prql(prql) => prql.pipeline.trim().is_empty(),
-            QueryKind::Any(_) => false,
         }
     }
 
@@ -132,7 +130,6 @@ impl QueryDocument {
         match &self.kind {
             QueryKind::Sql(sql) => sql.to_string(),
             QueryKind::Prql(prql) => prql.to_string(),
-            QueryKind::Any(any) => format!("{any:?}"),
         }
     }
 
@@ -145,7 +142,6 @@ impl QueryDocument {
                 .map(|raw| raw.len())
                 .unwrap_or_else(|| sql.to_string().len()),
             QueryKind::Prql(prql) => prql.pipeline.len(),
-            QueryKind::Any(_) => 0,
         };
         len.max(1)
     }
@@ -229,7 +225,6 @@ impl Display for QueryDocument {
         match &self.kind {
             QueryKind::Sql(sql) => write!(f, "{sql}"),
             QueryKind::Prql(prql) => write!(f, "{prql}"),
-            QueryKind::Any(any) => write!(f, "{any:?}"),
         }
     }
 }
@@ -248,7 +243,6 @@ common_enum! {
     pub enum QueryKind {
         Sql(SqlQuery),
         Prql(PrqlQuery),
-        Any(AnyBox),
     }
 }
 
@@ -267,9 +261,6 @@ impl QueryKind {
         }
     }
 
-    pub fn any<T: AnyBoxable>(value: T) -> Self {
-        QueryKind::Any(AnyBox::new(value))
-    }
 }
 
 // Individual SQL statement captured during lightweight parsing.

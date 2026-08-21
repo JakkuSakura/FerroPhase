@@ -371,10 +371,6 @@ impl CEmitter {
                 Ok(())
             }
             BlockStmt::Noop => Ok(()),
-            BlockStmt::Any(_) => {
-                w.write_line("/* unsupported: statement */");
-                Ok(())
-            }
         }
     }
 

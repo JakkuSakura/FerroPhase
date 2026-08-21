@@ -2031,7 +2031,7 @@ fn item_own_name(item: &Item) -> Option<&str> {
         | ItemKind::Import(_)
         | ItemKind::Expr(_)
         | ItemKind::ConstBlock(_)
-        | ItemKind::Any(_) => None,
+        | ItemKind::PrecompiledAsm(_) => None,
     }
 }
 

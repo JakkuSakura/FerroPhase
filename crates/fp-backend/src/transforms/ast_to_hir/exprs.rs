@@ -399,20 +399,6 @@ impl HirGenerator {
                 let ty = self.transform_type_to_hir(&cast_expr.ty)?;
                 hir::ExprKind::Cast(Box::new(operand), Box::new(ty))
             }
-            ExprKind::Any(any) => {
-                if let Some(expr) = any.downcast_ref::<ast::Expr>() {
-                    let lowered = self.transform_expr_to_hir(expr)?;
-                    lowered.kind
-                } else if let Some(value) = any.downcast_ref::<ast::Value>() {
-                    let boxed: ast::BValue = Box::new(value.clone());
-                    self.transform_value_to_hir(&boxed)?
-                } else {
-                    self.error_placeholder_expr_kind(
-                        "unsupported dynamic expression payload for `Any` node".to_string(),
-                        expr_span,
-                    )
-                }
-            }
             ExprKind::Macro(mac) => self.error_placeholder_expr_kind(
                 format!(
                     "macro `{}` was not lowered during normalization",

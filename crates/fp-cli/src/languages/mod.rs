@@ -1,13 +1,16 @@
 pub mod backend;
-pub mod discovery;
+pub mod backend_registry;
 pub mod frontend;
+pub mod in_memory;
 pub mod normalizer;
-pub mod registry;
-pub mod single_file;
+pub mod package_provider_registry;
 
 use std::path::Path;
 
 // Language identifier constants
+/// A pre-compiled native object file given directly as `fp compile`'s
+/// input (not FerroPhase source) — see `fp_native::NativeObjectPackageProvider`.
+pub const NATIVE_OBJECT: &str = "object";
 pub const TYPESCRIPT: &str = "typescript";
 pub const JAVASCRIPT: &str = "javascript";
 pub const CSHARP: &str = "csharp";
@@ -66,6 +69,11 @@ pub const SUPPORTED_LANGUAGES: &[Language] = &[
         name: RUST,
         extensions: &["rs"],
         ast_target_supported: true,
+    },
+    Language {
+        name: NATIVE_OBJECT,
+        extensions: &["o", "obj"],
+        ast_target_supported: false,
     },
     #[cfg(feature = "lang-typescript")]
     Language {

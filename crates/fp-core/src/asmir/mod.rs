@@ -38,6 +38,37 @@ pub struct AsmProgram {
     pub physical_register_types: HashMap<AsmVirtualRegId, Ty>,
 }
 
+/// `ItemKind::PrecompiledAsm` (see `fp_core::ast::item`) needs `AsmProgram`
+/// to satisfy the same derive bounds every other `ItemKind` payload gets
+/// via the `common_enum!` macro (`Hash`, `Serialize`, `Deserialize`) — none
+/// of which `AsmProgram` can derive itself (`physical_register_types`'s
+/// `HashMap` has no `Hash` impl, and nothing in this module round-trips
+/// through serde). These are trivial/error stand-ins, not real
+/// implementations: an already-compiled artifact is never meant to be
+/// hashed for deduplication or serialized to disk as AST — nothing in the
+/// compiler pipeline does either for this variant, so a constant hash and
+/// an explicit "not supported" serde impl are both safe no-ops in
+/// practice.
+impl std::hash::Hash for AsmProgram {
+    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
+}
+
+impl serde::Serialize for AsmProgram {
+    fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom(
+            "AsmProgram (ItemKind::PrecompiledAsm) does not support serialization",
+        ))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for AsmProgram {
+    fn deserialize<D: serde::Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "AsmProgram (ItemKind::PrecompiledAsm) does not support deserialization",
+        ))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AsmTarget {
     pub architecture: AsmArchitecture,

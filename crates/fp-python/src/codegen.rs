@@ -163,7 +163,7 @@ impl PythonEmitter {
             | ItemKind::DefStructural(_)
             | ItemKind::Macro(_)
             | ItemKind::ConstBlock(_)
-            | ItemKind::Any(_) => {
+            | ItemKind::PrecompiledAsm(_) => {
                 // Unsupported in Python output for now.
             }
         }
@@ -311,12 +311,6 @@ impl PythonEmitter {
                 self.push_line("# defer statements are not supported in Python output");
             }
             BlockStmt::Noop => {}
-            BlockStmt::Any(_) => {
-                return Err(eyre!(
-                    "Normalization cannot process placeholder statements during target emission"
-                )
-                .into());
-            }
         }
         Ok(())
     }
@@ -528,10 +522,6 @@ impl PythonEmitter {
             ExprKind::Reference(reference) => self.render_expr(reference.referee.as_ref()),
             ExprKind::Dereference(deref) => self.render_expr(deref.referee.as_ref()),
             ExprKind::Cast(cast) => self.render_expr(cast.expr.as_ref()),
-            ExprKind::Any(_) => Err(eyre!(
-                "Normalization cannot process placeholder expressions during target emission"
-            )
-            .into()),
             other => Err(eyre!("Unsupported expression in target emitter: {:?}", other).into()),
         }
     }
@@ -823,7 +813,6 @@ impl PythonEmitter {
             | Ty::Expr(_)
             | Ty::ConstBlock(_)
             | Ty::TypeBinaryOp(_)
-            | Ty::AnyBox(_)
             | Ty::Type(_) => {
                 self.needs_typing_any = true;
                 "Any".to_string()

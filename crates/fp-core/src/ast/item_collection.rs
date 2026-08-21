@@ -38,7 +38,7 @@ fn annotate_item(item: &mut Item, module_path: &QualifiedPath) {
         | ItemKind::DeclStatic(_)
         | ItemKind::DeclFunction(_)
         | ItemKind::Import(_)
-        | ItemKind::Any(_) => {}
+        | ItemKind::PrecompiledAsm(_) => {}
     }
 }
 
@@ -84,7 +84,7 @@ fn annotate_block(block: &mut ExprBlock, module_path: &QualifiedPath) {
                 }
             }
             BlockStmt::Defer(stmt) => annotate_expr(stmt.expr.as_mut(), module_path),
-            BlockStmt::Noop | BlockStmt::Any(_) => {}
+            BlockStmt::Noop => {}
         }
     }
 }
@@ -238,7 +238,7 @@ fn annotate_expr(expr: &mut Expr, module_path: &QualifiedPath) {
         | ExprKind::Continue(_)
         | ExprKind::FormatString(_)
         | ExprKind::Macro(_)
-        | ExprKind::Any(_) => {}
+        => {}
     }
 }
 
@@ -304,7 +304,7 @@ fn direct_block_items(block: &ExprBlock) -> ItemChunk {
         match stmt {
             BlockStmt::Item(item) => items.push(item.as_ref().clone()),
             BlockStmt::Expr(stmt) => items.extend(direct_expr_items(stmt.expr.as_ref())),
-            BlockStmt::Let(_) | BlockStmt::Defer(_) | BlockStmt::Noop | BlockStmt::Any(_) => {}
+            BlockStmt::Let(_) | BlockStmt::Defer(_) | BlockStmt::Noop => {}
         }
     }
     items

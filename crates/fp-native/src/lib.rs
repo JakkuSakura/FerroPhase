@@ -71,8 +71,11 @@ impl fp_core::backend::TargetBackend for NativeEmitter {
         workspace: &fp_core::workspace::WorkspaceContext,
         package_id: &fp_core::package::PackageId,
     ) -> Result<()> {
-        if let Some(compiled) = workspace.compiled_package(package_id) {
-            let asm = compiled.borrow().precompiled_asm.clone();
+        if let Ok(source) = workspace.package_source(package_id) {
+            let asm = source.items.iter().find_map(|pkg_item| match pkg_item.item.kind() {
+                fp_core::ast::ItemKind::PrecompiledAsm(asm) => Some(asm.clone()),
+                _ => None,
+            });
             if let Some(asm) = asm {
                 self.emit_precompiled(asm)?;
                 return Ok(());
@@ -326,6 +329,93 @@ fn plan_has_undefined_symbols(plan: &emit::EmitPlan) -> bool {
     plan.relocs
         .iter()
         .any(|reloc| !defined.contains(reloc.symbol.as_str()))
+}
+
+/// `PackageProvider` for a pre-compiled object file given directly as
+/// `fp compile`'s input (not FerroPhase source) — lifts it to
+/// `AsmProgram` once at construction (there's nothing to parse lazily)
+/// and embeds it directly as the package's one item
+/// (`fp_core::ast::ItemKind::PrecompiledAsm`), so `NativeEmitter::
+/// compile_package` picks it up from `workspace.package_source(id)` the
+/// same way every AST-emitting backend already reads its package's
+/// items — no side-channel field, no extra trait method.
+pub struct NativeObjectPackageProvider {
+    package_id: fp_core::package::PackageId,
+    descriptor: std::sync::Arc<fp_core::package::PackageDescriptor>,
+    source: fp_core::package::PackageSource,
+}
+
+impl NativeObjectPackageProvider {
+    pub fn new(package_id: fp_core::package::PackageId, bytes: &[u8]) -> Result<Self> {
+        let asm = crate::binary::lift_object_to_asmir(bytes)
+            .map_err(|err| Error::from(format!("Failed to lift object file: {err}")))?;
+        let mut source = fp_core::package::PackageSource::new(
+            package_id.clone(),
+            package_id.as_str().to_string(),
+            fp_core::package::graph::PackageGraph::new(Vec::new()),
+        );
+        source.items.push(fp_core::package::PackageItem {
+            path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+            item: fp_core::ast::Item::precompiled_asm(asm),
+        });
+        let descriptor = fp_core::package::PackageDescriptor {
+            id: package_id.clone(),
+            name: package_id.as_str().to_string(),
+            version: None,
+            manifest_path: fp_core::vfs::VirtualPath::new_relative(Vec::<String>::new()),
+            root: fp_core::vfs::VirtualPath::new_relative(Vec::<String>::new()),
+            metadata: fp_core::package::PackageMetadata::default(),
+            modules: Vec::new(),
+        };
+        Ok(Self {
+            package_id,
+            descriptor: std::sync::Arc::new(descriptor),
+            source,
+        })
+    }
+}
+
+impl fp_core::package::provider::PackageProvider for NativeObjectPackageProvider {
+    fn list_packages(
+        &self,
+    ) -> fp_core::package::provider::ProviderResult<Vec<fp_core::package::PackageId>> {
+        Ok(vec![self.package_id.clone()])
+    }
+
+    fn workspace_packages(
+        &self,
+    ) -> fp_core::package::provider::ProviderResult<Vec<fp_core::package::PackageId>> {
+        self.list_packages()
+    }
+
+    fn load_package_metadata(
+        &self,
+        id: &fp_core::package::PackageId,
+    ) -> fp_core::package::provider::ProviderResult<std::sync::Arc<fp_core::package::PackageDescriptor>>
+    {
+        if id != &self.package_id {
+            return Err(fp_core::package::provider::ProviderError::PackageNotFound(
+                id.clone(),
+            ));
+        }
+        Ok(self.descriptor.clone())
+    }
+
+    fn refresh(&self) -> fp_core::package::provider::ProviderResult<()> {
+        Ok(())
+    }
+
+    fn load_package_source(
+        &self,
+        id: &fp_core::package::PackageId,
+    ) -> fp_core::package::provider::ProviderResult<fp_core::package::PackageSource> {
+        if id != &self.package_id {
+            return Err(fp_core::package::provider::ProviderError::PackageNotFound(
+                id.clone(),
+            ));
+        }
+        Ok(self.source.clone())
+    }
 }
 
 pub type NativeCompiler = NativeEmitter;

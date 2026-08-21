@@ -1,6 +1,5 @@
 use crate::ast::*;
 use crate::span::Span;
-use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
@@ -147,7 +146,6 @@ common_enum! {
         ConstBlock(ExprConstBlock),
         Quote(TypeQuote),
         TypeBinaryOp(Box<TypeBinaryOp>),
-        AnyBox(AnyBox),
         InferVar(TypeInferVar),
         Wildcard(TypeWildcard),
     }
@@ -216,10 +214,6 @@ impl Ty {
             .into(),
         )
     }
-    pub fn any_box<T: AnyBoxable>(any: T) -> Self {
-        Self::AnyBox(AnyBox::new(any))
-    }
-
     pub fn impl_trait(name: Ident) -> Self {
         Self::ImplTraits(ImplTraits {
             bounds: TypeBounds::new(Expr::ident(name)),

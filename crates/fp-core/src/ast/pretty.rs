@@ -420,7 +420,6 @@ impl PrettyPrintable for ast::Expr {
                 ctx.write_line(format!("item_expr{}", suffix))?;
                 ctx.with_indent(|ctx| item.fmt_pretty(f, ctx))
             }
-            ast::ExprKind::Any(_) => ctx.write_line(format!("expr.any{}", suffix)),
         }
     }
 }
@@ -701,7 +700,9 @@ impl PrettyPrintable for ast::Item {
                 ctx.write_line(format!("const_block_item{}", suffix))?;
                 ctx.with_indent(|ctx| block.expr.fmt_pretty(f, ctx))
             }
-            ast::ItemKind::Any(_) => ctx.write_line(format!("item.any{}", suffix)),
+            ast::ItemKind::PrecompiledAsm(_) => {
+                ctx.write_line(format!("item.precompiled_asm{}", suffix))
+            }
         }
     }
 }
@@ -913,7 +914,6 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
             }
         }
         ast::Ty::TypeBinaryOp(_) => "TypeBinaryOp".into(),
-        ast::Ty::AnyBox(_) => "AnyBox".into(),
         ast::Ty::ErrorType(_) => "Error".into(),
         ast::Ty::InferVar(v) => format!("?{}", v.id),
         ast::Ty::Wildcard(_) => "_".into(),
@@ -960,9 +960,6 @@ impl PrettyPrintable for query::QueryDocument {
                     }
                     Ok(())
                 })
-            }
-            query::QueryKind::Any(any) => {
-                ctx.write_line(format!("query.any{} {:?}", name_suffix, any))
             }
         }
     }
@@ -1208,7 +1205,9 @@ fn summarize_value(value: &ast::Value) -> String {
         ast::Value::Expr(expr) => format!("expr({})", render_expr_inline(expr)),
         ast::Value::BinOpKind(kind) => format!("operator {}", kind),
         ast::Value::UnOpKind(kind) => format!("operator {}", kind),
-        ast::Value::Any(_) => "<any>".into(),
+        ast::Value::FfiSliceRef(slice_ref) => {
+            format!("ffi_slice_ref[{}](len={})", slice_ref.index, slice_ref.values.len())
+        }
     }
 }
 
@@ -1339,8 +1338,7 @@ fn render_expr_inline(expr: &ast::Expr) -> String {
         | ast::ExprKind::Item(_)
         | ast::ExprKind::Structural(_)
         | ast::ExprKind::Reference(_)
-        | ast::ExprKind::Dereference(_)
-        | ast::ExprKind::Any(_) => "<expr>".into(),
+        | ast::ExprKind::Dereference(_) => "<expr>".into(),
     }
 }
 
@@ -1379,7 +1377,6 @@ fn fmt_block_stmt(
             ctx.with_indent(|ctx| expr_stmt.expr.fmt_pretty(f, ctx))
         }
         ast::BlockStmt::Noop => ctx.write_line("noop"),
-        ast::BlockStmt::Any(_) => ctx.write_line("stmt.any"),
     }
 }
 

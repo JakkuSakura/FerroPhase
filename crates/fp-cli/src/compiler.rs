@@ -43,7 +43,8 @@ use crate::languages::frontend::TomlFrontend;
 use crate::languages::frontend::TypeScriptFrontend;
 #[cfg(feature = "lang-wit")]
 use crate::languages::frontend::WitFrontend;
-use crate::languages::single_file::{in_memory_provider, single_file_provider};
+use crate::languages::package_provider_registry::provider_for_language;
+use crate::languages::in_memory::in_memory_provider;
 use crate::languages::{self, detect_source_language};
 use crate::{CliError, Result};
 #[cfg(feature = "lang-typescript")]
@@ -191,6 +192,8 @@ fn std_provider_for(language: &str) -> Arc<dyn fp_core::package::provider::Packa
     match language {
         l if l == languages::FERROPHASE => Arc::new(fp_lang::provider::FerroPhaseProvider),
         l if l == languages::RUST => Arc::new(fp_rust::RustStdProvider),
+        // A native object package has no std/libc dependency at all.
+        l if l == languages::NATIVE_OBJECT => Arc::new(fp_core::package::provider::EmptyProvider),
         other => panic!("std_provider_for: no std/libc provider wired up for language {other:?}"),
     }
 }
@@ -216,7 +219,7 @@ pub fn find_manifest_package(
     let Some(root) = fp_lang::project::find_manifest(&input_abs) else {
         return Ok(None);
     };
-    let provider = crate::languages::discovery::provider_for_language(language, &root)
+    let provider = crate::languages::package_provider_registry::provider_for_language(language, &root)
         .ok_or_else(|| {
             CliError::Compilation(format!("no package provider for source language: {language}"))
         })?;
@@ -343,19 +346,31 @@ fn resolve_input_package(
                 let module_path = module_path_for_language(language, &package_root_abs, &input_abs)?;
                 Ok((provider, package_id, module_path))
             } else {
-                let package_id =
-                    PackageId::new(identity.path.path().head().ok_or_else(|| {
-                        CliError::Compilation("source file has no package identity".to_string())
-                    })?);
-                let module_path = identity.path.path().clone();
-                let frontend = frontend_for_language(language)?;
-                let provider = single_file_provider(
-                    package_id.clone(),
-                    module_path.clone(),
-                    path,
-                    frontend,
-                    FrontendParseMode::Strict,
-                );
+                // A standalone file with no discoverable enclosing
+                // project — each language's own provider treats it as a
+                // one-member package (e.g. `RustPackageProvider`/
+                // `MagnetWorkspaceProvider`'s `MemberRoot::File`,
+                // `NativeObjectPackageProvider` for a native object with
+                // no text to parse at all), so `resolve_input_package`
+                // itself doesn't need to know per-language parsing
+                // details — it just asks for that package's own id.
+                let provider = provider_for_language(language, &path).ok_or_else(|| {
+                    CliError::Compilation(format!(
+                        "no provider for language {language} (or it doesn't support single-file input)"
+                    ))
+                })?;
+                let package_id = provider
+                    .list_packages()
+                    .map_err(|e| CliError::Compilation(e.to_string()))?
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| {
+                        CliError::Compilation(format!(
+                            "provider for language {language} produced no packages for {}",
+                            path.display()
+                        ))
+                    })?;
+                let module_path = QualifiedPath::new(Vec::new());
                 Ok((provider, package_id, module_path))
             }
         }

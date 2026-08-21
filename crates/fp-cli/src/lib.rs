@@ -16,13 +16,13 @@ pub use fp_backend::*;
 pub use fp_core::{Error as CoreError, Result as CoreResult, ast, context, ops, span};
 
 // The generic external-compile-target extension point (see
-// `languages::registry`'s doc comment) — re-exported at the crate root so an
+// `languages::backend_registry`'s doc comment) — re-exported at the crate root so an
 // embedding binary (e.g. `skln-fp-graph`'s `fp-graph`) only needs `fp_cli::`,
-// not `fp_cli::languages::registry::`. A registered target is just an
+// not `fp_cli::languages::backend_registry::`. A registered target is just an
 // `fp_core::backend::TargetBackend` impl — the same trait every built-in
 // target implements — not a separate protocol.
 pub use fp_core::backend::TargetBackend;
-pub use languages::registry::{find_registered_target_backend, register_target_backend};
+pub use languages::backend_registry::{find_registered_target_backend, register_target_backend};
 
 // CLI-specific error handling
 pub mod error {
