@@ -162,6 +162,16 @@ impl NativeConfig {
         self
     }
 
+    /// When `save`, dumps the generated assembly next to `output_path`
+    /// (same stem, `.asm` extension) — the caller only needs to say
+    /// *whether* to keep intermediates, not derive the path itself.
+    pub fn with_save_intermediates(mut self, save: bool) -> Self {
+        if save {
+            self.asm_dump = Some(self.output_path.with_extension("asm"));
+        }
+        self
+    }
+
     pub fn with_native_target(mut self, target: Option<NativeTarget>) -> Self {
         self.native_target = target;
         self

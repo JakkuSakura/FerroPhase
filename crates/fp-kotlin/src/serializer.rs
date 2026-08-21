@@ -389,12 +389,36 @@ impl KotlinBackend {
 }
 
 impl TargetBackend for KotlinBackend {
+    fn materializer(&self) -> Option<std::sync::Arc<dyn fp_core::intrinsics::IntrinsicMaterializer>> {
+        Some(std::sync::Arc::new(crate::KotlinMaterializer))
+    }
+
     fn compile_package(
         &self,
         workspace: &fp_core::workspace::WorkspaceContext,
         package_id: &fp_core::package::PackageId,
     ) -> fp_core::error::Result<()> {
         let scan = self.ensure_scan(workspace)?;
+        // Materialize portable ops (`IntrinsicCall(CallKind::Op(_))`) into
+        // Kotlin's real shape (`Some(x)` -> `x`, `Vec::new()` -> an empty
+        // list literal, ...) directly on the compiled package's items in
+        // place, immediately before reading `package_source` below —
+        // `package_source` derives from the same `compiled_package`, so
+        // the mutation is visible to the read that follows.
+        {
+            let compiled = workspace.compiled_package(package_id).ok_or_else(|| {
+                fp_core::error::Error::from(format!(
+                    "package `{package_id}` is unavailable for materialization"
+                ))
+            })?;
+            let mut compiled = compiled.borrow_mut();
+            for pkg_item in &mut compiled.items {
+                pkg_item.item = fp_core::intrinsics::materialize_item(
+                    pkg_item.item.clone(),
+                    &crate::KotlinMaterializer,
+                )?;
+            }
+        }
         let package = workspace.package_source(package_id)?;
         let package = &package;
         let files = self

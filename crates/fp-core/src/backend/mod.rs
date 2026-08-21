@@ -152,6 +152,18 @@ pub trait TargetBackend: Send + Sync {
     /// from `workspace`.
     fn compile_package(&self, workspace: &WorkspaceContext, package_id: &PackageId) -> Result<()>;
 
+    /// This backend's portable-op materializer, if it needs one (turning
+    /// `IntrinsicCall(CallKind::Op(_))` nodes into this backend's real
+    /// idioms — e.g. Kotlin's `Some(x)` -> `x`). Exists only so fp-cli's
+    /// pre-typecheck source-loading pass can ask the backend for its own
+    /// materializer instead of keeping a second, parallel name->materializer
+    /// table of its own; `compile_package` itself is responsible for
+    /// actually applying it where needed, not a shared default here.
+    /// Default: none.
+    fn materializer(&self) -> Option<std::sync::Arc<dyn crate::intrinsics::IntrinsicMaterializer>> {
+        None
+    }
+
     /// Workspace-level side files not tied to a single package (e.g.
     /// Kotlin's `settings.gradle.kts`/`build.gradle.kts`). Default: no-op.
     fn write_workspace_files(&self, workspace: &WorkspaceContext) -> Result<()> {

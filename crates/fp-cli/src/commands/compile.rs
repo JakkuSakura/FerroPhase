@@ -426,6 +426,31 @@ async fn run_named_target(
         ));
     }
 
+    // Constructed up front (before package discovery/typecheck) so the
+    // pre-typecheck provider wrapping below can ask the backend for its own
+    // materializer (`backend.materializer()`) instead of fp-cli keeping a
+    // second, parallel name->materializer dispatch table.
+    let root_name = input
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("workspace")
+        .to_string();
+    let backend_config = fp_core::backend::BackendConfig::new(output.to_path_buf())
+        .with_target_triple(args.target_triple.clone())
+        .with_target_cpu(args.target_cpu.clone())
+        .with_native_target(args.native_target.clone())
+        .with_target_features(args.target_features.clone())
+        .with_target_sysroot(args.target_sysroot.clone())
+        .with_linker(args.linker.clone())
+        .with_target_linker(args.target_linker.clone())
+        .with_release(args.release)
+        .with_debug_info(args.debug)
+        .with_save_intermediates(args.save_intermediates)
+        .with_type_defs(args.type_defs)
+        .with_single_world(args.single_world)
+        .with_root_name(root_name.clone());
+    let backend = backend_for_target(target_name, backend_config)?;
+
     use crate::languages::detect_project_language;
     use crate::languages::discovery::provider_for_language;
 
@@ -468,7 +493,7 @@ async fn run_named_target(
     let mut file_count = 0;
 
     let normalizer = crate::languages::normalizer::normalizer_for_language(lang);
-    let materializer = crate::languages::materializer::materializer_for_language(target_name);
+    let materializer = backend.materializer();
 
     // Wrap the real provider so `load_package_source` also applies the
     // target-language materialize + normalize transforms. Registered
@@ -503,11 +528,6 @@ async fn run_named_target(
     // members the same way needs no special per-member recovery bookkeeping
     // in the shared driver.
     let capabilities = crate::languages::backend::capabilities_for_target(target_name);
-    let root_name = input
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("workspace")
-        .to_string();
     let root_id = PackageId::new(format!("{root_name}::__workspace_root__"));
     let (executor, mut session) =
         compiler::build_workspace_session(materializing_provider.clone(), lang, capabilities);
@@ -532,22 +552,6 @@ async fn run_named_target(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let backend_config = fp_core::backend::BackendConfig::new(output.to_path_buf())
-        .with_target_triple(args.target_triple.clone())
-        .with_target_cpu(args.target_cpu.clone())
-        .with_native_target(args.native_target.clone())
-        .with_target_features(args.target_features.clone())
-        .with_target_sysroot(args.target_sysroot.clone())
-        .with_linker(args.linker.clone())
-        .with_target_linker(args.target_linker.clone())
-        .with_release(args.release)
-        .with_debug_info(args.debug)
-        .with_save_intermediates(args.save_intermediates)
-        .with_type_defs(args.type_defs)
-        .with_single_world(args.single_world)
-        .with_root_name(root_name);
-    let backend = backend_for_target(target_name, backend_config)?;
-
     // Phase 2: serialize + write every package now that the workspace-wide
     // mutability set (and any other cross-package info) is complete.
     // Snapshotted so codegen-time diagnostics (e.g. a Kotlin function that
@@ -556,35 +560,9 @@ async fn run_named_target(
     // `DiagnosticManager` with nothing ever reading them back.
     let diagnostics_snapshot = fp_core::diagnostics::diagnostic_manager().snapshot();
     for (package_id, _source) in &prepared {
-        // Materialize portable ops (`IntrinsicCall(CallKind::Op(_))`) into
-        // this target's real shape (`Some(x)` -> `x`, `Vec::new()` -> an
-        // empty list literal, ...) *after* typechecked lifting produced
-        // them — the pre-typecheck `TranspileMaterializingPackageProvider`
-        // wrapping above only ever sees raw, pre-HIR source, so it never
-        // observes ops that `HirToAstLifter` classifies post-typecheck
-        // (`program.op_defs`, resolved by real `DefId`, not by name). The
-        // lifter's own job stops at producing the bare op node; turning it
-        // into this target's real code is this materializer's job.
-        //
-        // `prepared`'s own `PackageSource.items` must stay un-materialized
-        // — Kotlin's cross-package mutability scan (read lazily from the
-        // workspace by `KotlinBackend::ensure_scan`) needs the
-        // pre-materialize shape — so this mutates the compiled package's
-        // items in place instead of cloning into a throwaway workspace.
-        if let Some(mat) = &materializer {
-            let compiled_package = workspace.compiled_package(package_id).ok_or_else(|| {
-                CliError::Compilation(format!(
-                    "package `{package_id}` is unavailable for materialization"
-                ))
-            })?;
-            let mut compiled_package = compiled_package.borrow_mut();
-            for pkg_item in &mut compiled_package.items {
-                pkg_item.item =
-                    fp_core::intrinsics::materialize_item(pkg_item.item.clone(), mat.as_ref())
-                        .map_err(|e| CliError::Compilation(e.to_string()))?;
-            }
-        }
-
+        // Any post-typecheck op materialization the backend needs (e.g.
+        // Kotlin's portable-op -> Kotlin-idiom pass) happens inside
+        // `compile_package` itself now, not here.
         backend
             .compile_package(&workspace, package_id)
             .map_err(|e| CliError::Compilation(e.to_string()))?;
@@ -648,7 +626,7 @@ fn backend_for_target(
             };
             match native_target.transpose() {
                 Ok(native_target) => {
-                    let mut cfg = fp_native::config::NativeConfig::executable(&output)
+                    let cfg = fp_native::config::NativeConfig::executable(&output)
                         .with_target_triple(config.target_triple.clone())
                         .with_target_cpu(config.target_cpu.clone())
                         .with_native_target(native_target)
@@ -656,10 +634,8 @@ fn backend_for_target(
                         .with_sysroot(config.target_sysroot.clone())
                         .with_fuse_ld(config.target_linker.clone())
                         .with_linker_driver(Some(config.linker.clone()))
-                        .with_release(config.release);
-                    if config.save_intermediates {
-                        cfg = cfg.with_asm_dump(Some(output.with_extension("asm")));
-                    }
+                        .with_release(config.release)
+                        .with_save_intermediates(config.save_intermediates);
                     let emitter = fp_native::NativeEmitter::new(cfg);
                     Ok(Box::new(emitter) as Box<dyn fp_core::backend::TargetBackend>)
                 }
@@ -729,8 +705,11 @@ fn backend_for_target(
         }
         "bytecode" | "text-bytecode" => Ok(Box::new(fp_stackvm_bytecode::BytecodeBackend {
             output: output.clone(),
-            emit_text: name.eq_ignore_ascii_case("text-bytecode")
-                || output.extension().and_then(|ext| ext.to_str()) == Some("ftbc"),
+            // `emit_text` only forces text mode for the explicit
+            // "text-bytecode" target name — `compile_package`'s own
+            // `wants_text` already falls back to sniffing `.ftbc` off
+            // `output`, so fp-cli doesn't need to duplicate that here.
+            emit_text: name.eq_ignore_ascii_case("text-bytecode"),
             save_intermediates: config.save_intermediates,
         })),
         "jvm-bytecode" => Ok(Box::new(fp_jvm::JvmBackend {

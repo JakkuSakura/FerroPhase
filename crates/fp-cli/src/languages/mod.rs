@@ -1,7 +1,6 @@
 pub mod backend;
 pub mod discovery;
 pub mod frontend;
-pub mod materializer;
 pub mod normalizer;
 pub mod registry;
 pub mod single_file;
