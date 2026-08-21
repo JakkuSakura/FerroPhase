@@ -493,6 +493,29 @@ fn parse_fn_item_core(
     if skip_keyword(input, Keyword::Where).is_ok() {
         skip_where_clause(input)?;
     }
+    // A bodiless free-function/impl-method item statement ending in `;`
+    // instead of `{ .. }` — real `alloc::intrinsics`' own `#[rustc_intrinsic]
+    // pub fn write_box_via_move<T>(..) -> Box<MaybeUninit<T>>;` declares a
+    // compiler-builtin intrinsic with no Rust-level body at all, the same
+    // shape a trait method declaration or an extern fn already allows.
+    if !quoted && skip_symbol(input, ";").is_ok() {
+        let sig = FunctionSignature {
+            name: Some(name.clone()),
+            receiver,
+            params,
+            generics_params,
+            is_const,
+            abi,
+            quote_kind: None,
+            ret_ty,
+        };
+        return Ok(Item::from(ItemKind::DeclFunction(ItemDeclFunction {
+            attrs,
+            ty_annotation: None,
+            name,
+            sig,
+        })));
+    }
     // `quote fn f(..) -> item { <items> }` is sugar for
     // `const fn f(..) -> item { quote<item> { <items> } }` — the whole
     // body is implicitly quoted, so it must be parsed the same
@@ -782,6 +805,13 @@ fn parse_impl_item(input: &mut &[Token], file: FileId, attrs: Vec<Attribute>) ->
             parse_const_item(input, file, visibility, member_attrs)?
         } else if peek_keyword(*input, Keyword::Static) {
             parse_static_item(input, file, visibility, member_attrs)?
+        } else if looks_like_item_macro(*input) {
+            // An item-position macro invocation as an impl member (real
+            // `core::iter::adapters::MapWhile`'s own `impl_fold_via_try_fold!
+            // { fold -> try_fold }`, generating one or more real methods
+            // this checker never expands) — same treatment as any other
+            // unexpandable macro-generated item.
+            parse_item_macro(input, member_attrs)?
         } else {
             parse_fn_item_core(input, file, visibility, member_attrs, false)?
         };
