@@ -15,9 +15,12 @@ pub mod system_api;
 
 use crate::config::{EmitKind, NativeConfig};
 use crate::emit::{detect_target, resolve_native_target};
-use fp_core::error::Result;
+use fp_core::asmir::AsmProgram;
+use fp_core::error::{Error, Result};
 use fp_core::lir::LirProgram;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 pub use crate::intrinsic_materializer::NativeIntrinsicMaterializer;
 pub use crate::jit::{
@@ -68,6 +71,13 @@ impl fp_core::backend::TargetBackend for NativeEmitter {
         workspace: &fp_core::workspace::WorkspaceContext,
         package_id: &fp_core::package::PackageId,
     ) -> Result<()> {
+        if let Some(compiled) = workspace.compiled_package(package_id) {
+            let asm = compiled.borrow().precompiled_asm.clone();
+            if let Some(asm) = asm {
+                self.emit_precompiled(asm)?;
+                return Ok(());
+            }
+        }
         let lir = workspace.merged_lir_program(package_id)?;
         self.emit(lir, None)?;
         Ok(())
@@ -89,6 +99,194 @@ impl fp_core::backend::TargetBackend for NativeEmitter {
 }
 
 impl NativeEmitter {
+    /// Emits an already-lifted object file's `AsmProgram` (see
+    /// `crate::binary::lift_object_to_asmir`) — the object-transpile
+    /// counterpart to `emit_impl`, which starts from a `LirProgram`
+    /// instead. Retargets via `emit::emit_plan_from_asmir` rather than
+    /// `emit::emit_plan` (no LIR lowering involved — there's no LIR here),
+    /// then writes/links exactly the same way `emit_impl` does.
+    fn emit_precompiled(&self, asmir: AsmProgram) -> Result<PathBuf> {
+        let out = self.config.output_path.clone();
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let (format, arch) = detect_target(self.config.target_triple.as_deref())?;
+        let plan = emit::emit_plan_from_asmir(asmir, format, arch)?;
+        if let Some(path) = self.config.asm_dump.as_ref() {
+            emit::dump_asm(path, &plan)?;
+        }
+
+        match self.config.emit {
+            EmitKind::Executable => {
+                let needs_external_link = format == emit::TargetFormat::MachO
+                    && plan_has_undefined_symbols(&plan)
+                    && !self.config.linker_driver.as_deref().unwrap_or_default().is_empty();
+                if needs_external_link {
+                    self.link_with_clang(&out, &plan, format, arch)?;
+                } else if let Err(err) = emit::write_executable(&out, &plan) {
+                    if format == emit::TargetFormat::MachO {
+                        self.link_with_clang(&out, &plan, format, arch)?;
+                    } else {
+                        return Err(Error::from(format!(
+                            "Failed to write executable output: {err}"
+                        )));
+                    }
+                }
+            }
+            EmitKind::Object => emit::write_object(&out, &plan)?,
+            EmitKind::AssemblyText => {
+                return Err(Error::from(
+                    "fp-native does not support textual assembly emission",
+                ));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Links `plan` into `output_path` via an external `cc`/`clang` driver
+    /// (`self.config.linker_driver`, `--sysroot`/`-fuse-ld` from
+    /// `self.config.sysroot`/`fuse_ld`) — the fallback for object-transpile
+    /// inputs the in-process linker can't handle on its own (e.g. Mach-O
+    /// with relocations against undefined symbols the OS's dynamic linker
+    /// resolves at load time), and for a lifted Linux SysV `main` that
+    /// needs a small native wrapper to run under Darwin's CRT entrypoint.
+    fn link_with_clang(
+        &self,
+        output_path: &Path,
+        plan: &emit::EmitPlan,
+        format: emit::TargetFormat,
+        arch: emit::TargetArch,
+    ) -> Result<()> {
+        const DARWIN_LINUX_MAIN_WRAPPER: &str = r#"
+#include <stdint.h>
+
+// Minimal wrapper for lifted Linux SysV entrypoints.
+//
+// The lifted `fp_lifted_main` may contain x86_64 stack-realignment prologues
+// that read from the incoming stack pointer. Touch the stack in native code
+// first to ensure the mapping is fault-free.
+
+extern int fp_lifted_main(int argc, char **argv, char **envp);
+
+int main(int argc, char **argv, char **envp) {
+  volatile uint8_t probe[4096];
+  probe[0] = 0;
+  return fp_lifted_main(argc, argv, envp);
+}
+"#;
+
+        let linker = self.config.linker_driver.as_deref().unwrap_or("clang");
+        let tmp_dir = std::env::temp_dir().join(format!("fp-link-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp_dir)?;
+        let object_path = tmp_dir.join("input.o");
+        let wrapper_c_path = tmp_dir.join("wrapper.c");
+        let wrapper_object_path = tmp_dir.join("wrapper.o");
+
+        // Prefer reusing the emitted plan (it already includes relocations).
+        emit::write_object(&object_path, plan).map_err(|err| {
+            Error::from(format!(
+                "Failed to write temporary object for linking: {err}"
+            ))
+        })?;
+
+        if matches!(format, emit::TargetFormat::MachO)
+            && matches!(arch, emit::TargetArch::Aarch64 | emit::TargetArch::X86_64)
+        {
+            let needs_main_wrapper =
+                !plan.symbols.contains_key("main") && plan.symbols.contains_key("fp_lifted_main");
+            if needs_main_wrapper {
+                std::fs::write(&wrapper_c_path, DARWIN_LINUX_MAIN_WRAPPER)?;
+
+                let mut cc = Command::new(linker);
+                if let Some(sysroot) = &self.config.sysroot {
+                    cc.arg(format!("--sysroot={}", sysroot.display()));
+                }
+                if let Some(ld) = &self.config.fuse_ld {
+                    cc.arg(format!("-fuse-ld={}", ld.display()));
+                }
+                match arch {
+                    emit::TargetArch::Aarch64 => cc.args(["-arch", "arm64"]),
+                    emit::TargetArch::X86_64 => cc.args(["-arch", "x86_64"]),
+                };
+                cc.args(["-c", "-x", "c"]);
+                cc.arg(&wrapper_c_path);
+                cc.arg("-o").arg(&wrapper_object_path);
+
+                let output = cc
+                    .output()
+                    .map_err(|err| Error::from(format!("Failed to invoke compiler '{linker}': {err}")))?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    return Err(Error::from(format!(
+                        "Failed to compile Darwin main wrapper (status {:?}).\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                        output.status.code()
+                    )));
+                }
+            }
+        }
+
+        let mut cmd = Command::new(linker);
+        if let Some(sysroot) = &self.config.sysroot {
+            cmd.arg(format!("--sysroot={}", sysroot.display()));
+        }
+        if let Some(ld) = &self.config.fuse_ld {
+            cmd.arg(format!("-fuse-ld={}", ld.display()));
+        }
+
+        match (format, arch) {
+            (emit::TargetFormat::MachO, emit::TargetArch::Aarch64) => {
+                cmd.args(["-arch", "arm64"]);
+                cmd.arg("-Wl,-undefined,dynamic_lookup");
+                cmd.arg("-Wl,-no_dead_strip_inits_and_terms");
+            }
+            (emit::TargetFormat::MachO, emit::TargetArch::X86_64) => {
+                cmd.args(["-arch", "x86_64"]);
+                cmd.arg("-Wl,-undefined,dynamic_lookup");
+                cmd.arg("-Wl,-no_dead_strip_inits_and_terms");
+            }
+            _ => {}
+        }
+
+        // Use the platform CRT entrypoint so constructors and runtime init run.
+        // The transpiled object is expected to provide `_main`.
+        cmd.arg("-o").arg(output_path);
+        if wrapper_object_path.exists() {
+            cmd.arg(&wrapper_object_path);
+        }
+        cmd.arg(&object_path);
+
+        let output = cmd
+            .output()
+            .map_err(|err| Error::from(format!("Failed to invoke linker '{linker}': {err}")))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return Err(Error::from(format!(
+                "External linker failed (status {:?}).\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                output.status.code()
+            )));
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = std::fs::metadata(output_path) {
+                let mut perms = metadata.permissions();
+                perms.set_mode(0o755);
+                let _ = std::fs::set_permissions(output_path, perms);
+            }
+        }
+
+        // Best-effort cleanup.
+        let _ = std::fs::remove_file(&object_path);
+        let _ = std::fs::remove_file(&wrapper_object_path);
+        let _ = std::fs::remove_file(&wrapper_c_path);
+        let _ = std::fs::remove_dir(&tmp_dir);
+
+        Ok(())
+    }
+
     fn emit_impl(&self, lir_program: &LirProgram) -> Result<PathBuf> {
         let out = self.config.output_path.clone();
         resolve_native_target(
@@ -114,6 +312,20 @@ impl NativeEmitter {
         }
         Ok(out)
     }
+}
+
+/// True if any relocation in `plan` targets a symbol not defined anywhere
+/// in the plan itself — used to decide whether the in-process linker
+/// (which can't resolve external symbols) must fall back to an external
+/// `cc`/`clang` driver instead (see `NativeEmitter::link_with_clang`).
+fn plan_has_undefined_symbols(plan: &emit::EmitPlan) -> bool {
+    let mut defined = HashSet::new();
+    defined.extend(plan.symbols.keys().map(|name| name.as_str()));
+    defined.extend(plan.rodata_symbols.keys().map(|name| name.as_str()));
+
+    plan.relocs
+        .iter()
+        .any(|reloc| !defined.contains(reloc.symbol.as_str()))
 }
 
 pub type NativeCompiler = NativeEmitter;

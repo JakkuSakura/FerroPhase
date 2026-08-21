@@ -10,10 +10,9 @@ use fp_core::package::{PackageId, PackageSource};
 use fp_native::asm::{aarch64::AsmAarch64Program, x86_64::AsmX86_64Program};
 use fp_native::asmir::{lift_from_aarch64, lift_from_x86_64, lower_to_aarch64, lower_to_x86_64};
 use fp_native::emit::{self, TargetArch};
-use object::Object as _;
 use std::io;
 use std::path::{Path, PathBuf};
-use tokio::{fs as async_fs, process::Command};
+use tokio::fs as async_fs;
 use tracing::{info, warn};
 
 use clap::{ArgAction, Args};
@@ -270,13 +269,29 @@ async fn compile_file(
         return Ok(Some(artifact));
     }
 
+    if container_kind == Some(crate::container::ContainerInputKind::NativeObject) {
+        let payload = tokio::fs::read(input).await.map_err(|err| {
+            CliError::Io(std::io::Error::other(format!(
+                "Failed to read container input: {err}"
+            )))
+        })?;
+        // Validates the payload actually is a recognized object container
+        // (clean `InvalidInput`/`Compilation` error otherwise) the same
+        // way every other container kind does, before lifting it.
+        let read = crate::container::ContainerRegistry::new()
+            .read_container(crate::container::ContainerInputKind::NativeObject, payload)?;
+        let artifact =
+            run_native_object_target(input, output, args, &read.payload, link_requested, exec)
+                .await?;
+        return Ok(Some(artifact));
+    }
+
     if let Some(artifact) = crate::container::maybe_transpile_container(
         input,
         output,
         args,
         _config,
         container_kind,
-        link_requested,
         exec,
     )
     .await?
@@ -481,8 +496,126 @@ async fn run_named_target(
         let (provider, package_id, _tag) = provider_and_package_for_input(input, &lang)?;
         (provider, vec![package_id], lang)
     };
-    let lang = lang.as_str();
 
+    run_compile_pipeline(
+        input,
+        output,
+        target_name,
+        provider,
+        packages,
+        &lang,
+        backend,
+        &root_name,
+        exec,
+        None,
+    )
+    .await
+}
+
+/// Native-object container input (`fp compile <file.o> --target native
+/// ...`): an already-compiled object, not FerroPhase source. Wraps it in a
+/// single-package, empty-source `PackageProvider`
+/// (`FixedPackageProvider::for_source`, since there's nothing to parse)
+/// and runs it through the exact same pipeline as any other target —
+/// `run_compile_pipeline` sets the lifted `AsmProgram` onto that one
+/// package's `CompiledPackage.precompiled_asm` right after typecheck
+/// (a no-op over the empty source), so `fp_native::NativeEmitter::
+/// compile_package` picks it up, and `--exec` falls out of the pipeline's
+/// existing `backend.exec()` call for free — no bespoke runner needed.
+async fn run_native_object_target(
+    input: &Path,
+    output: &Path,
+    args: &CompileArgs,
+    bytes: &[u8],
+    link_requested: bool,
+    exec: bool,
+) -> Result<PathBuf> {
+    if args.target != "native" {
+        return Err(CliError::InvalidInput(
+            "native object input currently requires `--target native`".to_string(),
+        ));
+    }
+
+    let asm = fp_native::binary::lift_object_to_asmir(bytes)
+        .map_err(|err| CliError::Compilation(format!("Failed to lift object file: {err}")))?;
+
+    let root_name = input
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("workspace")
+        .to_string();
+    // Bypasses `backend_for_target` (which always builds an executable
+    // config): a container-input compile can legitimately just retarget an
+    // object file without linking it (`--link`/`--exec` both absent), a
+    // distinction only this call site needs.
+    let native_config = if link_requested {
+        fp_native::config::NativeConfig::executable(output)
+    } else {
+        fp_native::config::NativeConfig::object(output)
+    }
+    .with_target_triple(args.target_triple.clone())
+    .with_target_cpu(args.target_cpu.clone())
+    .with_target_features(args.target_features.clone())
+    .with_sysroot(args.target_sysroot.clone())
+    .with_fuse_ld(args.target_linker.clone())
+    .with_linker_driver(Some(args.linker.clone()))
+    .with_release(args.release)
+    .with_save_intermediates(args.save_intermediates);
+    let backend: Box<dyn fp_core::backend::TargetBackend> =
+        Box::new(fp_native::NativeEmitter::new(native_config));
+
+    let package_id = PackageId::new(format!("{root_name}::native_object"));
+    let source = PackageSource::new(
+        package_id.clone(),
+        package_id.as_str().to_string(),
+        fp_core::package::graph::PackageGraph::new(Vec::new()),
+    );
+    let provider: std::sync::Arc<dyn fp_core::package::provider::PackageProvider> =
+        std::sync::Arc::new(fp_core::package::provider::FixedPackageProvider::for_source(
+            package_id.clone(),
+            source,
+        ));
+
+    run_compile_pipeline(
+        input,
+        output,
+        "native",
+        provider,
+        vec![package_id],
+        // Not real FerroPhase source (the package's `items` are empty —
+        // nothing to normalize/typecheck), but `build_workspace_session`
+        // unconditionally wants a std/libc provider keyed by language;
+        // `FerroPhaseProvider` is harmless here since it's never actually
+        // referenced by an empty package.
+        crate::languages::FERROPHASE,
+        backend,
+        &root_name,
+        exec,
+        Some(asm),
+    )
+    .await?;
+    Ok(output.to_path_buf())
+}
+
+/// Shared tail of every named-target compile: wraps `provider` with the
+/// target-language materialize/normalize transforms, typechecks every
+/// package in one `CompilerDriver::compile_workspace` call, hands each one
+/// to `backend.compile_package`, then `write_workspace_files`/`exec`.
+/// `precompiled_asm`, when set, is installed onto every package in
+/// `packages` right after typecheck (see `run_native_object_target`) —
+/// `None` for every ordinary source-compile target.
+async fn run_compile_pipeline(
+    input: &Path,
+    output: &Path,
+    target_name: &str,
+    provider: std::sync::Arc<dyn fp_core::package::provider::PackageProvider>,
+    packages: Vec<PackageId>,
+    lang: &str,
+    backend: Box<dyn fp_core::backend::TargetBackend>,
+    root_name: &str,
+    exec: bool,
+    precompiled_asm: Option<fp_core::asmir::AsmProgram>,
+) -> Result<()> {
     info!(
         "Project: {} package(s), language: {} (target: {})",
         packages.len(),
@@ -542,6 +675,15 @@ async fn run_named_target(
         })?;
     compiler::drain_driver(session.driver())?;
     let workspace = session.driver().state.borrow().typing_ctx.env_ctx.clone();
+
+    if let Some(asm) = precompiled_asm {
+        for package_id in &packages {
+            if let Some(compiled) = workspace.compiled_package(package_id) {
+                compiled.borrow_mut().precompiled_asm = Some(asm.clone());
+            }
+        }
+    }
+
     let prepared: Vec<(PackageId, PackageSource)> = packages
         .iter()
         .map(|package_id| {
@@ -914,62 +1056,6 @@ fn is_known_builtin_target(name: &str) -> bool {
             | "wit"
             | "c"
     )
-}
-
-pub(crate) async fn exec_compiled_binary(path: &Path) -> Result<()> {
-    let extension_allows_exec = path
-        .extension()
-        .map_or(false, |ext| ext == "out" || ext == "exe")
-        || (cfg!(unix) && path.extension().is_none());
-
-    let header_allows_exec = if extension_allows_exec {
-        true
-    } else {
-        // Native transpilation supports emitting executables with arbitrary suffixes
-        // (e.g. `ls.aarch64`). Use header sniffing so `--exec` does not depend on
-        // naming conventions.
-        match tokio::fs::read(path).await {
-            Ok(bytes) => match object::File::parse(bytes.as_slice()) {
-                Ok(file) => file.kind() == object::ObjectKind::Executable,
-                Err(_) => false,
-            },
-            Err(_) => false,
-        }
-    };
-
-    if !header_allows_exec {
-        return Err(CliError::Compilation(format!(
-            "Refusing to execute '{}': unsupported binary extension",
-            path.display()
-        )));
-    }
-
-    info!("🚀 Executing compiled binary: {}", path.display());
-
-    let output = Command::new(path).output().await.map_err(|e| {
-        CliError::Compilation(format!("Failed to execute '{}': {}", path.display(), e))
-    })?;
-
-    if !output.stdout.is_empty() {
-        print!("{}", String::from_utf8_lossy(&output.stdout));
-    }
-    if !output.stderr.is_empty() {
-        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-    }
-
-    if !output.status.success() {
-        let code = output.status.code().unwrap_or(-1);
-        if std::env::var("FP_ALLOW_EXEC_FAILURE").as_deref() == Ok("1") {
-            warn!("Process exited with status {}", code);
-        } else {
-            return Err(CliError::Compilation(format!(
-                "Process exited with status {}",
-                code
-            )));
-        }
-    }
-
-    Ok(())
 }
 
 fn validate_inputs(args: &CompileArgs) -> Result<()> {

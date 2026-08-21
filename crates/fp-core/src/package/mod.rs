@@ -346,6 +346,18 @@ pub struct CompiledPackage {
     /// all" case, which otherwise has nothing to fall back to but an
     /// arbitrary placeholder).
     pub mir_resolved_const_values: HashMap<String, crate::mir::Constant>,
+
+    /// An already-compiled artifact this package carries instead of (not
+    /// alongside) real LIR — e.g. a native object file lifted straight to
+    /// `AsmProgram` by `fp_native::binary::lift_object_to_asmir`, with no
+    /// FerroPhase source to typecheck (`items` stays empty for such a
+    /// package). `lir_workspace` stays empty too; only a backend that
+    /// specifically knows how to consume this (today, only
+    /// `fp_native::NativeEmitter`) ever reads it — every other backend, and
+    /// `WorkspaceContext::merged_lir_program`, stay completely unaware of
+    /// it, so this needed no change to `LirArtifactKind` or any other
+    /// backend's codegen.
+    pub precompiled_asm: Option<crate::asmir::AsmProgram>,
 }
 
 impl CompiledPackage {
@@ -385,6 +397,7 @@ impl CompiledPackage {
             mir_struct_fields: HashMap::new(),
             mir_adt_defs: HashMap::new(),
             mir_resolved_const_values: HashMap::new(),
+            precompiled_asm: None,
         }
     }
 
