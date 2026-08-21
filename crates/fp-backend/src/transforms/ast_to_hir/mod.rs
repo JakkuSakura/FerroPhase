@@ -309,8 +309,29 @@ impl HirGenerator {
                 }
                 Ok(())
             }
+            // A bare `self` reached here only ever comes from a *group*
+            // member (`use path::Item::{self, Variant1, Variant2};`, real
+            // core::prelude::v1's own `pub use crate::option::Option::
+            // {self, None, Some};`/`crate::result::Result::{self, Err,
+            // Ok};`) — `self::` as the *first* segment of a path (`use
+            // self::foo;`, "current module") is consumed directly by
+            // `collect_imports_from_path`'s own per-segment loop and never
+            // delegates to this function for that segment. In the group
+            // position, `self` means "the enclosing path itself" (`Item`,
+            // not just its variants) — dropping it here (as a no-op)
+            // silently imported every variant but never the type/enum
+            // itself, so `use ...::Option::{self, ..}` never actually
+            // brought `Option` into scope, only `None`/`Some`.
+            ast::ItemImportTree::SelfMod => {
+                if !base.is_empty() {
+                    out.push(ImportBinding {
+                        target: base,
+                        alias: None,
+                    });
+                }
+                Ok(())
+            }
             ast::ItemImportTree::Root
-            | ast::ItemImportTree::SelfMod
             | ast::ItemImportTree::SuperMod
             | ast::ItemImportTree::Crate
             | ast::ItemImportTree::Glob => Ok(()),

@@ -1072,6 +1072,99 @@ fn transform_package_resolves_import_nested_inside_inline_module() -> Result<()>
     Ok(())
 }
 
+/// Real `core::prelude::v1` re-exports `Option`/`Result` via `pub use
+/// crate::option::Option::{self, None, Some};` / `pub use crate::result::
+/// Result::{self, Err, Ok};` — the `self` inside the group means "the
+/// enclosing path itself" (bind `Option`, not just its variants), a
+/// completely different meaning from `self::` as a path's own first
+/// segment ("current module"). `collect_imports` treated every `SelfMod`
+/// node as a no-op regardless of position, so `Option`/`Result`
+/// themselves were silently never imported by this exact (extremely
+/// common) idiom — only their variants were. This is the actual root
+/// cause behind the huge "unresolved type path `Option`"/`Result`" counts
+/// seen typechecking real std (hundreds of thousands of occurrences,
+/// since nearly every function signature in std touches one of them).
+#[test]
+fn transform_package_resolves_self_plus_variants_group_import() -> Result<()> {
+    let inner_item = make_struct("Foo", vec![("value", int_ty())]);
+
+    // `use crate::inner::Foo::{self, Variant};` — a simplified stand-in
+    // for real core::prelude::v1's own `pub use crate::option::Option::
+    // {self, None, Some};`/`crate::result::Result::{self, Err, Ok};`. Only
+    // the `self` member matters for this repro (binding `Foo` itself);
+    // `Variant` is just a second, unrelated group member establishing
+    // that this is genuinely a multi-item group, not a single-item one.
+    let prelude_use = ast::Item::from(ast::ItemKind::Import(ast::ItemImport {
+        attrs: Vec::new(),
+        visibility: ast::Visibility::Public,
+        style: ast::ItemImportStyle::Plain,
+        tree: ast::ItemImportTree::Path(ast::ItemImportPath {
+            segments: vec![
+                ast::ItemImportTree::Crate,
+                ast::ItemImportTree::Ident(ident("inner")),
+                ast::ItemImportTree::Ident(ident("Foo")),
+                ast::ItemImportTree::Group(ast::ItemImportGroup {
+                    items: vec![
+                        ast::ItemImportTree::SelfMod,
+                        ast::ItemImportTree::Ident(ident("Variant")),
+                    ],
+                }),
+            ],
+        }),
+    }));
+
+    // References the bare name `Foo` with no `use` of its own — relies
+    // entirely on the prelude re-export's `self` member actually binding
+    // `Foo` itself.
+    let make_fn_item = make_fn(
+        "make",
+        Vec::new(),
+        ty_ident("Foo"),
+        ast::Expr::from(ast::ExprKind::Struct(ast::ExprStruct::new_ident(
+            ident("Foo"),
+            vec![ast::ExprField::new(
+                ident("value"),
+                ast::Expr::value(ast::Value::int(1)),
+            )],
+        ))),
+    );
+
+    let items = vec![
+        (vec!["inner".to_string()], inner_item),
+        (
+            vec!["prelude".to_string(), "v1".to_string()],
+            prelude_use,
+        ),
+        (vec!["other".to_string()], make_fn_item),
+    ];
+    let package = package_from_items_with_paths(items)?;
+    let mut generator = HirGenerator::new();
+    let program = generator.transform_package(&package)?;
+
+    let make_fn_hir = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(func) if func.sig.name.as_str() == "make" => Some(func),
+            _ => None,
+        })
+        .expect("`make` function present");
+    let hir::TypeExprKind::Path(ret_path) = &make_fn_hir.sig.output.kind else {
+        panic!(
+            "expected `make`'s return type to lower to a path, got {:?}",
+            make_fn_hir.sig.output.kind
+        );
+    };
+    assert!(
+        ret_path.res.is_some(),
+        "bare `Foo` return type must resolve via the `Foo::{{self, \
+         Variant}}` group import's own `self` member — got unresolved \
+         path {ret_path:?}"
+    );
+
+    Ok(())
+}
+
 #[test]
 fn transform_scoped_block_name_resolution() -> Result<()> {
     let stmt_b = ast::BlockStmt::Let(ast::StmtLet::new_simple(
