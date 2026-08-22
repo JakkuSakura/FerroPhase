@@ -1073,6 +1073,15 @@ fn parse_fn_param_core(
     if is_context {
         let _ = ident_like(input)?;
     }
+    // `ref [mut] name: T` (real `core::iter::traits::iterator`'s own
+    // `ref mut predicate: P`) — a by-reference binding mode on the
+    // parameter's own name, same as a `let ref mut x = ..` pattern. This
+    // checker doesn't model binding modes beyond ordinary by-value
+    // params (already true of the bare `mut name` case just below), so
+    // `ref` is dropped the same way `mut` already is.
+    if peek_ident_like(*input) == Some("ref") {
+        let _ = ident_like(input);
+    }
     let _is_mut = skip_keyword(input, Keyword::Mut).is_ok();
     let name = parse_fn_param_name(input, destructures)?;
     skip_symbol(input, ":")?;
