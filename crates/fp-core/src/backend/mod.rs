@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use crate::error::Result;
 use crate::ast::package::PackageId;
-use crate::workspace::WorkspaceContext;
+use crate::ast::workspace::WorkspaceContext;
 
 /// Resolved once by `fp-cli` from `CompileArgs`, then handed to each
 /// backend's constructor — never threaded through trait methods afterward.

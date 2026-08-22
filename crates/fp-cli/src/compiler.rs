@@ -377,7 +377,7 @@ fn compile_source_file(
         vec![std_provider],
         input_provider,
     ));
-    let workspace = std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new(provider));
+    let workspace = std::rc::Rc::new(fp_core::ast::workspace::WorkspaceContext::new(provider));
     let mut session = CompilerSession::new(data_layout(), executor, workspace);
     session.driver().pipeline = pipeline;
     executor
@@ -475,7 +475,7 @@ pub fn compile_file_to_lir_bundle(
 /// compile.rs`) whole-workspace path, so a workspace compile builds this
 /// once for every member instead of once per member. Callers compile via
 /// `session.driver().compile_package`/`compile_workspace`, then read back
-/// each package's typed `PackageSource` via `WorkspaceContext::package_source`
+/// each package's typed `AstPackage` via `WorkspaceContext::package_source`
 /// — never by hand-extracting it themselves.
 pub fn build_workspace_session(
     provider: Arc<dyn PackageProvider>,
@@ -488,7 +488,7 @@ pub fn build_workspace_session(
         vec![std_provider],
         provider,
     ));
-    let workspace = std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new(combined));
+    let workspace = std::rc::Rc::new(fp_core::ast::workspace::WorkspaceContext::new(combined));
     let mut session = CompilerSession::new(data_layout(), &executor, workspace);
     session.driver().pipeline = PipelineMode::TypecheckedTranspile;
     session.driver().state.borrow_mut().set_capabilities(capabilities);
@@ -599,7 +599,7 @@ impl LoweredProgram {
     /// does — this path builds its own `LirProgram` straight from the
     /// workspace rather than going through `select_entrypoint`, so a
     /// mangled `main` needs the same rename here too. See
-    /// `fp_core::workspace::WorkspaceContext::merged_lir_program`, which
+    /// `fp_core::ast::workspace::WorkspaceContext::merged_lir_program`, which
     /// owns the actual merge/rename logic this delegates to (package-based,
     /// not module-based — see that method's doc comment).
     fn lir(&self) -> Result<fp_core::lir::LirProgram> {
@@ -629,7 +629,7 @@ impl LoweredProgram {
     /// Every package this run's driver state knows about (dependencies and
     /// this package itself), as a `WorkspaceContext` — the input every
     /// `TargetBackend` reads from.
-    fn compiled_workspace(&self) -> Result<std::rc::Rc<fp_core::workspace::WorkspaceContext>> {
+    fn compiled_workspace(&self) -> Result<std::rc::Rc<fp_core::ast::workspace::WorkspaceContext>> {
         Ok(self.driver.state.borrow().typing_ctx.env_ctx.clone())
     }
 

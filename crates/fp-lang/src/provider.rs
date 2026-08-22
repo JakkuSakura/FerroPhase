@@ -9,7 +9,7 @@ use fp_core::ast::package::graph::PackageGraph;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
     DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
-    PackageMetadata, PackageSource,
+    PackageMetadata, AstPackage,
 };
 use fp_core::vfs::{UnixFileSystem, VirtualPath};
 
@@ -65,7 +65,7 @@ fn load_embedded_package(
     root: std::path::PathBuf,
     module_paths: &'static [&'static str],
     read: fn(&std::path::Path) -> Option<&'static str>,
-) -> ProviderResult<PackageSource> {
+) -> ProviderResult<AstPackage> {
     let frontend = FerroFrontend::new();
     let package_id = PackageId::new(package_name);
     let mut descriptors = Vec::new();
@@ -113,7 +113,7 @@ fn load_embedded_package(
     for descriptor in descriptors {
         graph.insert_module(descriptor);
     }
-    let mut krate = PackageSource::new(PackageId::new(package_name), package_name, graph);
+    let mut krate = AstPackage::new(PackageId::new(package_name), package_name, graph);
     krate.items = items;
     Ok(krate)
 }
@@ -163,7 +163,7 @@ impl PackageProvider for FerroPhaseProvider {
         Ok(())
     }
 
-    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
         match id.as_str() {
             STD_PACKAGE_NAME => load_embedded_package(
                 STD_PACKAGE_NAME,
@@ -189,7 +189,7 @@ impl PackageProvider for FerroPhaseProvider {
 struct InputPackageProvider {
     package_id: PackageId,
     descriptor: Arc<PackageDescriptor>,
-    source: PackageSource,
+    source: AstPackage,
 }
 
 impl InputPackageProvider {
@@ -233,7 +233,7 @@ impl PackageProvider for InputPackageProvider {
         Ok(self.descriptor.clone())
     }
 
-    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
         if id != &self.package_id {
             return Err(ProviderError::PackageNotFound(id.clone()));
         }

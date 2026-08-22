@@ -158,7 +158,7 @@ pub struct HirGenerator {
     respect_cfg: bool,
     lowering_config: HirLoweringConfig,
     intrinsic_normalizer: Option<Box<dyn IntrinsicNormalizer>>,
-    workspace: Option<std::rc::Rc<fp_core::workspace::WorkspaceContext>>,
+    workspace: Option<std::rc::Rc<fp_core::ast::workspace::WorkspaceContext>>,
     /// `impl` items whose self-type didn't resolve on a *tolerant*
     /// `predeclare_items` pass because the name is only reachable through
     /// an import that hadn't been processed yet — see `transform_package`,
@@ -697,7 +697,7 @@ impl HirGenerator {
 
     pub fn with_workspace(
         mut self,
-        workspace: std::rc::Rc<fp_core::workspace::WorkspaceContext>,
+        workspace: std::rc::Rc<fp_core::ast::workspace::WorkspaceContext>,
     ) -> Self {
         self.workspace = Some(workspace);
         self
@@ -1912,7 +1912,7 @@ impl HirGenerator {
             return result;
         };
         for package in workspace.crates().values() {
-            for package_item in &package.borrow().items {
+            for package_item in &package.borrow().ast.items {
                 if let ItemKind::DefStruct(def) = package_item.item.kind() {
                     let fields = def
                         .value
@@ -1947,7 +1947,7 @@ impl HirGenerator {
         // relies on (a sub-crate root, e.g. `"core"`/`"std"` under the
         // vendored real Rust `std` package, is just a child of the
         // package-root node — no separate table needed).
-        for path in &package.module_paths {
+        for path in &package.ast.module_paths {
             self.package.module_tree.ensure_module(path);
         }
 
@@ -1959,7 +1959,7 @@ impl HirGenerator {
         // `__ClosureN`/`__closureN_call` items are synthetic and not tied to
         // any one source module, so they're scoped to the package root.
         let mut lowered_items: Vec<ast::Item> =
-            package.items.iter().map(|pi| pi.item.clone()).collect();
+            package.ast.items.iter().map(|pi| pi.item.clone()).collect();
         let original_len = lowered_items.len();
         // A closure argument's receiver (e.g. `node.stats` in
         // `node.stats.as_ref().map_or(..)`) is frequently a struct defined
@@ -1986,7 +1986,7 @@ impl HirGenerator {
                 let path = if i < generated_count {
                     root_path.clone()
                 } else {
-                    package.items[i - generated_count].module_path.clone()
+                    package.ast.items[i - generated_count].module_path.clone()
                 };
                 fp_core::ast::package::PackageItem { module_path: path, item }
             })
@@ -2131,7 +2131,7 @@ impl HirGenerator {
             }
             Ok(())
         }
-        for package_item in &package.items {
+        for package_item in &package.ast.items {
             collect_pending_imports_recursive(
                 self,
                 &package_item.module_path,

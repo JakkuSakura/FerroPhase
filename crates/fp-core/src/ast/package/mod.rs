@@ -154,12 +154,18 @@ pub struct PackageItem {
     pub item: Item,
 }
 
-/// Parsed source returned by a package provider.
-///
-/// This type intentionally contains no generated HIR identity or compiler
-/// registries. Providers describe source; the compiler owns compilation state.
+/// A package's own AST/source-level content — both what a `PackageProvider`
+/// hands back (raw parsed source: `items`/`module_paths`/`referenced_paths`)
+/// and, once typechecked, the definitions typechecking derives from it
+/// (`struct_defs`/`enum_defs`/`function_sigs`/...). One type across both
+/// stages rather than two near-identical ones: the typecheck-derived fields
+/// are simply empty until typechecking fills them in. Pairs with
+/// `hir::Package`/`mir::MirPackage`/`lir::LirPackage` as this layer's
+/// `XxxPackage` (there's no separate `AstProgram` — `items` is already the
+/// AST layer's un-lowered content, with no further flattening step the way
+/// HIR/MIR/LIR each need before backends consume them).
 #[derive(Clone, Debug)]
-pub struct PackageSource {
+pub struct AstPackage {
     pub package_id: PackageId,
     pub name: String,
     pub graph: graph::PackageGraph,
@@ -178,9 +184,45 @@ pub struct PackageSource {
     /// echoing whatever `use` items happened to already exist in the
     /// source file. Empty for untyped/fallback loads.
     pub referenced_paths: HashMap<Vec<String>, Vec<Vec<String>>>,
+
+    /// Compiled type and function definitions, keyed by
+    /// fully-qualified path (e.g. `["std","meta","TypeBuilder"]`). Empty
+    /// until typechecking populates them.
+    pub struct_defs: HashMap<QualifiedPath, TypeStruct>,
+    pub enum_defs: HashMap<QualifiedPath, TypeEnum>,
+    pub function_sigs: HashMap<QualifiedPath, FunctionSignature>,
+    /// The `ItemId` (see `ast::item::ItemId`'s doc comment) of the
+    /// `ItemDefFunction` node each locally-defined `function_sigs` entry
+    /// was registered from -- lets a later pass (generic monomorphization)
+    /// find that exact AST node again directly, instead of re-deriving a
+    /// location from the `QualifiedPath` key (which is a qualification
+    /// convention, not a record of real module nesting, and doesn't
+    /// generally correspond to a walkable path in a stored `File`). Not
+    /// merged into `FunctionSignature` itself: that type is also
+    /// constructed for synthetic/extern/builtin signatures with no
+    /// backing `Item` at all.
+    pub function_item_ids: HashMap<QualifiedPath, ItemId>,
+    pub trait_defs: HashSet<QualifiedPath>,
+
+    /// Inherent methods declared in an `impl SelfType { .. }` block, keyed
+    /// by `SelfType`'s own fully-qualified path -- deliberately not a field
+    /// on `TypeStruct`/`TypeEnum` themselves (nothing outside `fp-typing`
+    /// ever reads a struct/enum's methods, so embedding it in the shared
+    /// `Ty` representation every other crate also constructs would be
+    /// storage those crates never use). One shared table regardless of
+    /// whether `SelfType` resolves to a struct, an enum, or anything else
+    /// nominal -- registration and lookup don't need to branch on that.
+    pub method_sigs: HashMap<QualifiedPath, Vec<(String, MethodSignature)>>,
+
+    /// Fully-qualified `type X = Y;` aliases exported by this package (e.g.
+    /// `libc`'s `pub type char = u8;`) — consulted purely at AST-to-HIR
+    /// type-lowering time, before a HIR `Res` even exists, so they need
+    /// their own cross-package export/merge path (see
+    /// `seed_workspace_definitions`).
+    pub type_alias_exports: HashMap<String, crate::ast::Ty>,
 }
 
-impl PackageSource {
+impl AstPackage {
     pub fn new(package_id: PackageId, name: impl Into<String>, graph: graph::PackageGraph) -> Self {
         let module_paths = graph
             .modules()
@@ -195,6 +237,13 @@ impl PackageSource {
             module_paths,
             items: Vec::new(),
             referenced_paths: HashMap::new(),
+            struct_defs: HashMap::new(),
+            enum_defs: HashMap::new(),
+            function_sigs: HashMap::new(),
+            function_item_ids: HashMap::new(),
+            trait_defs: HashSet::new(),
+            method_sigs: HashMap::new(),
+            type_alias_exports: HashMap::new(),
         }
     }
 
@@ -235,7 +284,7 @@ impl PackageModule {
 /// reimplemented identically in `KotlinSerializer::serialize_package` and
 /// the CLI's per-module fallback loop). Returned in path-sorted order for
 /// stable output.
-pub fn split_package_into_modules(source: &PackageSource) -> Vec<PackageModule> {
+pub fn split_package_into_modules(source: &AstPackage) -> Vec<PackageModule> {
     let mut modules: BTreeMap<Vec<String>, Vec<Item>> = BTreeMap::new();
     for pkg_item in &source.items {
         modules
@@ -258,40 +307,17 @@ pub fn split_package_into_modules(source: &PackageSource) -> Vec<PackageModule> 
 /// query its definitions without re-parsing or re-type-checking it.
 #[derive(Clone, Debug)]
 pub struct CompiledPackage {
+    /// This package's identity within the HIR numbering space — distinct
+    /// from `ast.package_id` (the source-level `PackageId` a provider
+    /// names it by), and needed before `hir_program` exists (used as the
+    /// key into `WorkspaceContext::hir_packages` and in HIR `DefId`
+    /// construction).
     pub package_id: HirPackageId,
-    pub name: String,
-    pub graph: graph::PackageGraph,
 
-    /// Compiled type and function definitions, keyed by
-    /// fully-qualified path (e.g. `["std","meta","TypeBuilder"]`).
-    pub struct_defs: HashMap<QualifiedPath, TypeStruct>,
-    pub enum_defs: HashMap<QualifiedPath, TypeEnum>,
-    pub function_sigs: HashMap<QualifiedPath, FunctionSignature>,
-    /// The `ItemId` (see `ast::item::ItemId`'s doc comment) of the
-    /// `ItemDefFunction` node each locally-defined `function_sigs` entry
-    /// was registered from -- lets a later pass (generic monomorphization)
-    /// find that exact AST node again directly, instead of re-deriving a
-    /// location from the `QualifiedPath` key (which is a qualification
-    /// convention, not a record of real module nesting, and doesn't
-    /// generally correspond to a walkable path in a stored `File`). Not
-    /// merged into `FunctionSignature` itself: that type is also
-    /// constructed for synthetic/extern/builtin signatures with no
-    /// backing `Item` at all.
-    pub function_item_ids: HashMap<QualifiedPath, ItemId>,
-    pub trait_defs: HashSet<QualifiedPath>,
-
-    /// Inherent methods declared in an `impl SelfType { .. }` block, keyed
-    /// by `SelfType`'s own fully-qualified path -- deliberately not a field
-    /// on `TypeStruct`/`TypeEnum` themselves (nothing outside `fp-typing`
-    /// ever reads a struct/enum's methods, so embedding it in the shared
-    /// `Ty` representation every other crate also constructs would be
-    /// storage those crates never use). One shared table regardless of
-    /// whether `SelfType` resolves to a struct, an enum, or anything else
-    /// nominal -- registration and lookup don't need to branch on that.
-    pub method_sigs: HashMap<QualifiedPath, Vec<(String, MethodSignature)>>,
-
-    /// All known module paths within this crate.
-    pub module_paths: HashSet<QualifiedPath>,
+    /// This package's own AST/source-level content — also the source of
+    /// truth for its source-level identity (`ast.package_id`/`ast.name`/
+    /// `ast.graph`), so `CompiledPackage` doesn't duplicate them.
+    pub ast: AstPackage,
 
     /// This package's LIR content.
     pub lir: crate::lir::LirPackage,
@@ -319,49 +345,22 @@ pub struct CompiledPackage {
 
     /// Fully-qualified HIR lookup entries exported by this package.
     pub hir_exports: HashMap<String, crate::hir::Res>,
-
-    /// Fully-qualified `type X = Y;` aliases exported by this package (e.g.
-    /// `libc`'s `pub type char = u8;`) — unlike `hir_exports`, these are
-    /// consulted purely at AST-to-HIR type-lowering time, before a `Res` even
-    /// exists, so they need their own cross-package export/merge path (see
-    /// `seed_workspace_definitions`).
-    pub type_alias_exports: HashMap<String, crate::ast::Ty>,
-
-    /// All parsed source items with their fully qualified source paths.
-    pub items: Vec<PackageItem>,
 }
 
 impl CompiledPackage {
     pub fn new(
         package_id: HirPackageId,
-        name: impl Into<String>,
-        graph: graph::PackageGraph,
+        ast: AstPackage,
         data_layout: crate::lir::LirDataLayout,
     ) -> Self {
-        let module_paths: HashSet<QualifiedPath> = graph
-            .modules()
-            .filter(|m| !m.module_path.is_empty())
-            .map(|m| QualifiedPath::new(m.module_path.clone()))
-            .collect();
-
         Self {
             package_id,
-            name: name.into(),
-            graph,
-            struct_defs: HashMap::new(),
-            enum_defs: HashMap::new(),
-            function_sigs: HashMap::new(),
-            function_item_ids: HashMap::new(),
-            trait_defs: HashSet::new(),
-            method_sigs: HashMap::new(),
-            module_paths,
+            ast,
             lir: crate::lir::LirPackage::new(data_layout),
             hir_program: None,
             referenced_paths_by_path: None,
             mir: crate::mir::MirPackage::default(),
             hir_exports: HashMap::new(),
-            type_alias_exports: HashMap::new(),
-            items: Vec::new(),
         }
     }
 
@@ -373,40 +372,32 @@ impl CompiledPackage {
     }
 }
 
-/// Builds a `PackageSource` from a compiled package — the read-back
-/// conversion every consumer of a typechecked package (`WorkspaceContext`,
-/// `fp-cli`'s single-package and whole-workspace typecheck paths) needs the
-/// same way: typed/normalized content is already spliced onto
-/// `package.items` by `CompilerDriver::compile_package`, so there's nothing
-/// left to reconcile here beyond copying fields across.
+/// Builds an `AstPackage` read-back view from a compiled package — every
+/// consumer of a typechecked package (`WorkspaceContext`, `fp-cli`'s
+/// single-package and whole-workspace typecheck paths) needs the same way:
+/// typed/normalized content is already spliced onto `package.ast.items` by
+/// `CompilerDriver::compile_package`, so there's nothing left to reconcile
+/// here beyond cloning `ast` and overlaying the HIR-derived
+/// `referenced_paths_by_path` (a different, `DefPath`-keyed shape computed
+/// later than `ast.referenced_paths`) in its place.
 pub fn package_source_from_compiled(
     package_id: &PackageId,
     compiled: &std::rc::Rc<std::cell::RefCell<CompiledPackage>>,
-) -> PackageSource {
+) -> AstPackage {
     let package = compiled.borrow();
-    let items = package.items.clone();
-    let referenced_paths = package
-        .referenced_paths_by_path
-        .as_ref()
-        .map(|by_path| {
-            by_path
-                .iter()
-                .map(|(path, refs)| {
-                    let path = path.to_segments();
-                    let refs = refs.iter().map(|r| r.to_segments()).collect();
-                    (path, refs)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    PackageSource {
-        package_id: package_id.clone(),
-        name: package.name.clone(),
-        graph: package.graph.clone(),
-        module_paths: package.module_paths.clone(),
-        items,
-        referenced_paths,
+    let mut ast = package.ast.clone();
+    ast.package_id = package_id.clone();
+    if let Some(by_path) = package.referenced_paths_by_path.as_ref() {
+        ast.referenced_paths = by_path
+            .iter()
+            .map(|(path, refs)| {
+                let path = path.to_segments();
+                let refs = refs.iter().map(|r| r.to_segments()).collect();
+                (path, refs)
+            })
+            .collect();
     }
+    ast
 }
 
 /// Resolves the `DefId` of the function named `function_name` anywhere in

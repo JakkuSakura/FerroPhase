@@ -25,7 +25,7 @@ pub struct JvmBackend {
 impl fp_core::backend::TargetBackend for JvmBackend {
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::workspace::WorkspaceContext,
         package_id: &fp_core::ast::package::PackageId,
     ) -> fp_core::error::Result<()> {
         // A `.class`/`.jar` file given directly as input (see

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use fp_core::ast::package::provider::{PackageProvider, ProviderResult};
-use fp_core::ast::package::{PackageDescriptor, PackageId, PackageSource};
+use fp_core::ast::package::{PackageDescriptor, PackageId, AstPackage};
 
 /// Mirrors every other secondary-language `PackageProvider` in this
 /// workspace (`fp-toml`, `fp-golang`, ...), which are themselves currently
@@ -38,7 +38,7 @@ impl PackageProvider for LeanPackageProvider {
         todo!()
     }
 
-    fn load_package_source(&self, _id: &PackageId) -> ProviderResult<PackageSource> {
+    fn load_package_source(&self, _id: &PackageId) -> ProviderResult<AstPackage> {
         todo!()
     }
 

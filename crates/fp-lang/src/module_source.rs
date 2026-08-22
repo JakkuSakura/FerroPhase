@@ -7,7 +7,7 @@ use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
 use fp_core::ast::package::graph::PackageGraph;
 use fp_core::ast::package::provider::{ProviderError, ProviderResult};
-use fp_core::ast::package::{PackageDescriptor, PackageItem, PackageSource};
+use fp_core::ast::package::{PackageDescriptor, PackageItem, AstPackage};
 use fp_core::vfs::{VirtualFileSystem, VirtualPath};
 
 use crate::FerroFrontend;
@@ -49,7 +49,7 @@ impl FerroModuleSourceResolver {
         mut package: PackageDescriptor,
         root_module_path: QualifiedPath,
         root_file: File,
-    ) -> ProviderResult<PackageSource> {
+    ) -> ProviderResult<AstPackage> {
         if package.id.as_str() != package_name_from_path(&root_module_path)? {
             return Err(ProviderError::other(format!(
                 "root module {} does not belong to package {}",
@@ -87,7 +87,7 @@ impl FerroModuleSourceResolver {
             graph.insert_module(module);
         }
 
-        let mut source = PackageSource::new(package_id, package_name, graph);
+        let mut source = AstPackage::new(package_id, package_name, graph);
         source.items = items;
         source.module_paths = module_paths;
         Ok(source)

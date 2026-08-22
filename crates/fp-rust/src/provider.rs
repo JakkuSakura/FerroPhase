@@ -10,7 +10,7 @@ use fp_core::ast::package::graph::PackageGraph;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
     DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageItem,
-    PackageMetadata, PackageSource,
+    PackageMetadata, AstPackage,
 };
 use fp_core::vfs::VirtualPath;
 use fp_lang::{FerroFrontend, project};
@@ -167,7 +167,7 @@ impl PackageProvider for RustPackageProvider {
         Ok(())
     }
 
-    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
         if let Ok(c) = self.cache.read() {
             if let Some(items) = c.get(id.as_str()) {
                 return Ok(package_source_from_items(id, items));
@@ -296,7 +296,7 @@ pub fn rs_relative_to_module_path(rel: &str) -> QualifiedPath {
     QualifiedPath::new(parts)
 }
 
-fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> PackageSource {
+fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> AstPackage {
     use std::collections::HashSet;
     let paths: HashSet<_> = items.iter().map(|item| item.module_path.clone()).collect();
     let descriptors: Vec<ModuleDescriptor> = paths
@@ -325,7 +325,7 @@ fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> PackageSo
     for desc in descriptors {
         graph.insert_module(desc);
     }
-    let mut source = PackageSource::new(id.clone(), id.as_str(), graph);
+    let mut source = AstPackage::new(id.clone(), id.as_str(), graph);
     source.items = items.to_vec();
     source
 }
@@ -418,7 +418,7 @@ impl PackageProvider for RustStdProvider {
         Ok(())
     }
 
-    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
         match id.as_str() {
             CORE_PACKAGE_NAME => load_real_std_subcrate(CORE_PACKAGE_NAME),
             ALLOC_PACKAGE_NAME => load_real_std_subcrate(ALLOC_PACKAGE_NAME),
@@ -527,7 +527,7 @@ fn cached_std_items() -> HashMap<String, Vec<Item>> {
 /// never built from a possibly-stale cache) and writes the resulting
 /// per-file item map to that path afterward, for `build.rs` to bundle into
 /// the next build.
-fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<PackageSource> {
+fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage> {
     let package_id = PackageId::new(crate_name);
     let root = crate::embedded_std::root_dir();
     let mut descriptors = Vec::new();
@@ -668,7 +668,7 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<PackageSou
     for descriptor in descriptors {
         graph.insert_module(descriptor);
     }
-    let mut krate = PackageSource::new(package_id, crate_name, graph);
+    let mut krate = AstPackage::new(package_id, crate_name, graph);
     krate.items = items;
     Ok(krate)
 }
@@ -681,7 +681,7 @@ fn load_embedded_fp_package(
     root: PathBuf,
     module_paths: &'static [&'static str],
     read: fn(&std::path::Path) -> Option<&'static str>,
-) -> ProviderResult<PackageSource> {
+) -> ProviderResult<AstPackage> {
     let frontend = FerroFrontend::new();
     let package_id = PackageId::new(package_name);
     let mut descriptors = Vec::new();
@@ -730,7 +730,7 @@ fn load_embedded_fp_package(
     for descriptor in descriptors {
         graph.insert_module(descriptor);
     }
-    let mut krate = PackageSource::new(PackageId::new(package_name), package_name, graph);
+    let mut krate = AstPackage::new(PackageId::new(package_name), package_name, graph);
     krate.items = items;
     Ok(krate)
 }

@@ -7,8 +7,8 @@ use fp_core::lir::LirDataLayout;
 use fp_core::ops::BinOpKind;
 use fp_core::ast::package::graph::PackageGraph;
 use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
-use fp_core::ast::package::{PackageId, PackageItem, PackageSource};
-use fp_core::workspace::WorkspaceContext;
+use fp_core::ast::package::{PackageId, PackageItem, AstPackage};
+use fp_core::ast::workspace::WorkspaceContext;
 
 mod support;
 
@@ -59,13 +59,13 @@ fn make_fn(
 
 /// Wraps a file's items as a one-member package, obtained via a real
 /// `PackageProvider` (`FixedPackageProvider`, wrapping an already-built
-/// `PackageSource` — no real frontend/disk parsing involved here) followed
+/// `AstPackage` — no real frontend/disk parsing involved here) followed
 /// by `WorkspaceContext::begin_package`, then lowers it with
 /// `transform_package` — `ast::File`'s `path` field carries no information
 /// `transform_package` needs.
 fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::Program> {
     let package_id = PackageId::new("test");
-    let mut source = PackageSource::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
+    let mut source = AstPackage::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
     source.items = file
         .items
         .into_iter()

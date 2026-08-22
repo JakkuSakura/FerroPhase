@@ -37,7 +37,7 @@ pub struct HirToAstLifter<'a> {
     /// `WorkspaceContext::find_hir_enum_for_variant`, consulted by
     /// `lift_path`) — `None` for the roundtrip/test call sites that never
     /// go through a real multi-package workspace.
-    workspace: Option<&'a fp_core::workspace::WorkspaceContext>,
+    workspace: Option<&'a fp_core::ast::workspace::WorkspaceContext>,
     /// Target-language (Kotlin, ...) lexical scopes currently open during a
     /// lift, one frame per emitted block — tracks which surface names have
     /// already been declared directly in that block (not nested ones),
@@ -72,7 +72,7 @@ impl<'a> HirToAstLifter<'a> {
     pub fn new(
         program: &'a hir::Package,
         typeck: Option<&'a TypeckResults>,
-        workspace: Option<&'a fp_core::workspace::WorkspaceContext>,
+        workspace: Option<&'a fp_core::ast::workspace::WorkspaceContext>,
     ) -> Self {
         Self {
             program,

@@ -69,7 +69,7 @@ common_enum! {
         /// Opaque to HIR/MIR/LIR by design — skipped during HIR generation
         /// (`ast_to_hir::append_item`); a backend that knows how to
         /// consume it (today, only `fp_native::NativeEmitter`) reads it
-        /// straight off `PackageSource.items`/`CompiledPackage.items`, the
+        /// straight off `AstPackage.items`/`CompiledPackage.items`, the
         /// same way every AST-emitting backend already reads its
         /// package's items.
         PrecompiledAsm(crate::asmir::AsmProgram),

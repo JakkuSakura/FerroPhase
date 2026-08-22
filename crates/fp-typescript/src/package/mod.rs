@@ -8,7 +8,7 @@ use fp_core::ast::package::graph::PackageGraph;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
 use fp_core::ast::package::{
     DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageMetadata,
-    PackageSource, TargetFilter,
+    AstPackage, TargetFilter,
 };
 use fp_core::vfs::VirtualPath;
 use semver::{Version, VersionReq};
@@ -248,7 +248,7 @@ impl PackageProvider for TypeScriptPackageProvider {
         Ok(())
     }
 
-    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
         let descriptor = self.load_package_metadata(id)?;
         let modules = match self.modules.read() {
             Ok(g) => g,
@@ -261,7 +261,7 @@ impl PackageProvider for TypeScriptPackageProvider {
                 .ok_or_else(|| ProviderError::ModuleNotFound(module_id.clone()))?;
             graph.insert_module((**module).clone());
         }
-        Ok(PackageSource::new(
+        Ok(AstPackage::new(
             id.clone(),
             descriptor.name.clone(),
             graph,

@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use fp_core::lir::LirDataLayout;
-use fp_core::workspace::WorkspaceContext;
+use fp_core::ast::workspace::WorkspaceContext;
 
 use crate::{CompilerDriver, CompilerExecutor};
 

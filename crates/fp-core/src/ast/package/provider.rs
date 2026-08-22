@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::ast::module::ModuleId;
-use crate::ast::package::{PackageDescriptor, PackageId, PackageMetadata, PackageSource};
+use crate::ast::package::{PackageDescriptor, PackageId, PackageMetadata, AstPackage};
 use crate::vfs::VirtualPath;
 
 pub type ProviderResult<T> = Result<T, ProviderError>;
@@ -35,10 +35,10 @@ pub trait PackageProvider {
     fn refresh(&self) -> ProviderResult<()>;
 
     /// Load a package's modules. Discovery, parsing, and graph construction
-    /// are the implementor's job. The returned `PackageSource`'s `items`,
+    /// are the implementor's job. The returned `AstPackage`'s `items`,
     /// `module_paths`, and `graph` are populated; compiler-owned registries
     /// are left empty for the compiler to fill in.
-    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource>;
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage>;
 
     /// Packages this provider considers part of the *current workspace*,
     /// as opposed to packages it can merely also supply (e.g. `std`,
@@ -53,9 +53,9 @@ pub trait PackageProvider {
 }
 
 /// A `PackageProvider` that always hands back one already-built
-/// `PackageSource` — for tests that construct `ast::Item`s directly with
+/// `AstPackage` — for tests that construct `ast::Item`s directly with
 /// no real frontend/disk parsing involved. Every real provider still
-/// builds a `PackageSource` directly (e.g. `FerroPhaseProvider`'s
+/// builds a `AstPackage` directly (e.g. `FerroPhaseProvider`'s
 /// `load_embedded_package`); this just skips the "discover it from disk"
 /// step, while still requiring callers to obtain their `CompiledPackage`
 /// through the normal `PackageProvider` -> `WorkspaceContext::begin_package`
@@ -63,11 +63,11 @@ pub trait PackageProvider {
 pub struct FixedPackageProvider {
     package_id: PackageId,
     descriptor: Arc<PackageDescriptor>,
-    source: PackageSource,
+    source: AstPackage,
 }
 
 impl FixedPackageProvider {
-    pub fn new(descriptor: PackageDescriptor, source: PackageSource) -> Self {
+    pub fn new(descriptor: PackageDescriptor, source: AstPackage) -> Self {
         Self {
             package_id: descriptor.id.clone(),
             descriptor: Arc::new(descriptor),
@@ -78,7 +78,7 @@ impl FixedPackageProvider {
     /// Convenience constructor for tests that don't care about manifest
     /// metadata at all — builds a minimal descriptor with an empty root
     /// path.
-    pub fn for_source(package_id: PackageId, source: PackageSource) -> Self {
+    pub fn for_source(package_id: PackageId, source: AstPackage) -> Self {
         let descriptor = PackageDescriptor {
             id: package_id.clone(),
             name: package_id.as_str().to_string(),
@@ -112,7 +112,7 @@ impl PackageProvider for FixedPackageProvider {
         Ok(())
     }
 
-    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
         if id != &self.package_id {
             return Err(ProviderError::PackageNotFound(id.clone()));
         }
@@ -144,7 +144,7 @@ impl PackageProvider for EmptyProvider {
         Ok(())
     }
 
-    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
         Err(ProviderError::PackageNotFound(id.clone()))
     }
 }
@@ -218,7 +218,7 @@ impl PackageProvider for CompositeProvider {
         Ok(())
     }
 
-    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
         self.provider_for(id)
             .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))?
             .load_package_source(id)
@@ -227,7 +227,7 @@ impl PackageProvider for CompositeProvider {
 
 /// Reads `root` as text and lifts it via `parse` into a target-independent
 /// `crate::lir::LirProgram`, wrapping it as a one-package, one-item
-/// provider (`PackageSource::single_item` + `Item::precompiled_lir`) — the
+/// provider (`AstPackage::single_item` + `Item::precompiled_lir`) — the
 /// shared shape for any language whose input parses straight to LIR
 /// (goasm, urcl, ...), with no language-specific knowledge here.
 pub fn lir_from_text(
@@ -242,6 +242,6 @@ pub fn lir_from_text(
         .unwrap_or("main")
         .to_string();
     let package_id = PackageId::new(name);
-    let source = PackageSource::single_item(package_id.clone(), crate::ast::Item::precompiled_lir(lir));
+    let source = AstPackage::single_item(package_id.clone(), crate::ast::Item::precompiled_lir(lir));
     Some(Arc::new(FixedPackageProvider::for_source(package_id, source)) as Arc<dyn PackageProvider>)
 }

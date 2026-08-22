@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use fp_core::ast::package::provider::PackageProvider;
-use fp_core::ast::package::{PackageId, PackageSource};
+use fp_core::ast::package::{PackageId, AstPackage};
 
 fn package_name_for(root: &Path) -> String {
     root.file_stem()
@@ -22,7 +22,7 @@ pub fn bytecode_provider(root: &Path) -> Option<Arc<dyn PackageProvider>> {
     let is_jar = bytes.starts_with(b"PK\x03\x04");
     let package_id = PackageId::new(package_name_for(root));
     let mut source =
-        PackageSource::single_item(package_id.clone(), fp_core::ast::Item::precompiled_artifact(bytes.clone()));
+        AstPackage::single_item(package_id.clone(), fp_core::ast::Item::precompiled_artifact(bytes.clone()));
     let lir = if is_jar {
         crate::extract_class_files_from_jar(&bytes).ok().and_then(|classes| {
             let mut merged: Option<fp_core::lir::LirProgram> = None;
