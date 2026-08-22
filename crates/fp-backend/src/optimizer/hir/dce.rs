@@ -707,6 +707,8 @@ mod tests {
             op_defs: HashMap::new(),
             intrinsic_defs: HashMap::new(),
             type_alias_targets: HashMap::new(),
+            struct_defs_by_name: HashMap::new(),
+            impl_method_item_index: HashMap::new(),
         }
     }
 
