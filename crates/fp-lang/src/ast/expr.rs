@@ -15,6 +15,23 @@ pub(crate) fn parse_expr_winnow_no_struct(input: &mut &[Token], file: FileId) ->
 
 fn parse_assignment(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     let lhs = parse_range(input, file)?;
+    parse_assignment_tail(input, file, lhs, parse_assignment)
+}
+
+/// Continue a parsed left-hand side into a full assignment expression if an
+/// assignment operator follows, otherwise return `lhs` unchanged — shared by
+/// `parse_assignment`'s own top-level LHS and `parse_block_stmt_entry`'s
+/// block-like-statement branch (real `std::sys::pal::sgx::waitqueue::
+/// unsafe_list`'s own `unsafe { self.head_tail.as_mut() }.next = self.
+/// head_tail;`), whose LHS is built via `parse_primary` + postfix suffixes
+/// rather than through `parse_assignment`'s own `parse_range` entry point,
+/// so it would otherwise never get a chance to look for a trailing `=`.
+fn parse_assignment_tail(
+    input: &mut &[Token],
+    file: FileId,
+    lhs: Expr,
+    parse_rhs: fn(&mut &[Token], FileId) -> ModalResult<Expr>,
+) -> ModalResult<Expr> {
     let Some(op) = peek_symbol(input) else {
         return Ok(lhs);
     };
@@ -26,7 +43,7 @@ fn parse_assignment(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     }
     let op = op.to_string();
     skip_symbol(input, &op)?;
-    let rhs = parse_assignment(input, file)?;
+    let rhs = parse_rhs(input, file)?;
     if op == "=" {
         return Ok(ExprKind::Assign(ExprAssign {
             span: union_exprs(&lhs, &rhs),
@@ -1386,7 +1403,14 @@ pub(crate) fn parse_block_stmt_entry(input: &mut &[Token], file: FileId) -> Moda
                 parse_postfix_suffix(input, file)
             })
             .parse_next(input)?;
-            apply_postfixes(block_expr, suffixes)
+            let postfixed = apply_postfixes(block_expr, suffixes);
+            // The postfix chain may itself be an assignment target (real
+            // `std::sys::pal::sgx::waitqueue::unsafe_list`'s own `unsafe {
+            // self.head_tail.as_mut() }.next = self.head_tail;`) — give it
+            // the same chance a normal expression-statement's LHS gets to
+            // continue into a full assignment, or the trailing `=` is left
+            // unconsumed and mistaken for a missing statement terminator.
+            parse_assignment_tail(input, file, postfixed, parse_expr_winnow)?
         } else {
             block_expr
         }
