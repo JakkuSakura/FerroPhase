@@ -911,6 +911,7 @@ pub(crate) fn parse_type_bounds(input: &mut &[Token]) -> ModalResult<TypeBounds>
     let mut bounds = Vec::new();
     loop {
         skip_const_trait_modifier(input);
+        skip_hrtb_for_lifetimes(input);
         // A relaxed/"maybe" bound (`?Sized`, the only one stable today) —
         // this checker has no notion of the implicit `Sized` bound to
         // relax in the first place, so the leading `?` is dropped and the
@@ -940,6 +941,36 @@ fn skip_const_trait_modifier(input: &mut &[Token]) {
     {
         *input = probe;
     }
+}
+
+// A higher-ranked trait bound's `for<'a, 'b>` lifetime-binder prefix (real
+// `core::slice::cmp`'s own `impl for<'a> FnOnce(&'a usize, &'a usize) ->
+// ..`) — this checker doesn't model borrow-checking (lifetimes are
+// dropped everywhere else too), so the binder is skipped entirely,
+// leaving just the plain trait bound (`FnOnce(...) -> ..`) to parse
+// normally. Without this, `for` isn't recognized at all here and the
+// bound parse fails on the `for` keyword itself.
+fn skip_hrtb_for_lifetimes(input: &mut &[Token]) {
+    let mut probe = *input;
+    if skip_keyword(&mut probe, Keyword::For).is_err() {
+        return;
+    }
+    if skip_symbol(&mut probe, "<").is_err() {
+        return;
+    }
+    loop {
+        if ident_like(&mut probe).is_err() {
+            return;
+        }
+        if skip_symbol(&mut probe, ",").is_ok() {
+            continue;
+        }
+        break;
+    }
+    if skip_symbol(&mut probe, ">").is_err() {
+        return;
+    }
+    *input = probe;
 }
 
 fn type_to_expr(ty: &Ty) -> Expr {
