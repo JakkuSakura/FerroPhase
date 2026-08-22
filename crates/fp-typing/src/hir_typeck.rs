@@ -85,6 +85,30 @@ pub struct TypingShared {
     /// fixed once for `method_output` (see `impl_lookup_items`'s doc
     /// comment above) but left unaddressed here.
     function_signature_cache: RefCell<HashMap<hir::HirId, Ty>>,
+    /// Memoized `check_type_expr(&impl_item.self_ty)` results, keyed by
+    /// the impl's own `self_ty` `TypeExpr`'s `HirId` (stable per declared
+    /// impl, independent of any particular call site — same reasoning as
+    /// `function_signature_cache`: an impl's self-type declaration is
+    /// checked once against its own generics, never against a specific
+    /// receiver, so the result is call-site-independent and safe to
+    /// share). `method_output_at`/`method_declared_signature_at` both
+    /// re-checked the same impl's self-type from scratch on every single
+    /// method-call/UFCS-call expression before this cache existed — the
+    /// same O(workspace) blowup `function_signature_cache` already fixed
+    /// for a method's own signature, just not yet applied to the impl's
+    /// self-type check both functions do first.
+    checked_impl_self_ty_cache: RefCell<HashMap<hir::HirId, Ty>>,
+    /// Memoized `resolve_trait_def` results, keyed by the trait's own
+    /// `DefId`. A trait definition (its full `items: Vec<TraitItem>` —
+    /// every default method, potentially large for a trait like
+    /// `Iterator`) never changes once loaded, so — same reasoning as
+    /// `function_signature_cache`/`checked_impl_self_ty_cache` — cloning
+    /// it out of `program.def_map` is safe to do at most once per trait,
+    /// not once per method-call/UFCS-call expression that falls through
+    /// to a trait's default-method resolution. `Rc`, not owned, since the
+    /// whole point is for repeat callers to share one clone instead of
+    /// each paying for their own.
+    resolved_trait_defs: RefCell<HashMap<hir::DefId, Rc<hir::Trait>>>,
     /// Refinement-type hints for function parameters/return types,
     /// persisted across items — `HirTypeChecker::refinement_hints` (a
     /// per-instance field) only lives for the duration of whichever
@@ -123,6 +147,8 @@ impl TypingShared {
             impl_items_by_receiver_def: RefCell::new(None),
             member_to_owning_item: RefCell::new(None),
             function_signature_cache: RefCell::new(HashMap::new()),
+            checked_impl_self_ty_cache: RefCell::new(HashMap::new()),
+            resolved_trait_defs: RefCell::new(HashMap::new()),
             refinement_hints: RefCell::new(HashMap::new()),
         })
     }
@@ -424,7 +450,7 @@ impl HirTypeChecker {
             let typeck_results_snapshot = self.shared.results.borrow().clone();
             let value = context
                 .request_comptime(crate::ComptimeRequest {
-                    program: self.shared.program.as_ref().clone(),
+                    program: self.shared.program.clone(),
                     typeck_results: typeck_results_snapshot,
                     block: hir::Block {
                         hir_id,
@@ -488,7 +514,7 @@ impl HirTypeChecker {
                 }
                 hir::ItemKind::Impl(impl_item) => {
                     let mut scope = self.generic_scope(&impl_item.generics);
-                    let self_ty = scope.check_type_expr(&impl_item.self_ty)?;
+                    let self_ty = scope.checked_impl_self_ty(&impl_item.self_ty)?;
                     scope.self_types.push(self_ty);
                     // `impl_item.trait_ty`, when present, names the trait
                     // being implemented — a reference to a trait
@@ -684,8 +710,8 @@ impl HirTypeChecker {
                     if !integer_literal {
                         match op {
                             hir::BinOp::And | hir::BinOp::Or => {
-                                self.require_same(&lhs, &Ty::bool())?;
-                                self.require_same(&rhs, &Ty::bool())?;
+                                self.require_same_at(&lhs, &Ty::bool(), expr.span)?;
+                                self.require_same_at(&rhs, &Ty::bool(), expr.span)?;
                             }
                             hir::BinOp::Eq
                             | hir::BinOp::Ne
@@ -723,7 +749,7 @@ impl HirTypeChecker {
                     let value_ty = self.check_expr(value).await?;
                     match op {
                         hir::UnOp::Not => {
-                            self.require_same(&value_ty, &Ty::bool())?;
+                            self.require_same_at(&value_ty, &Ty::bool(), expr.span)?;
                             Ty::bool()
                         }
                         hir::UnOp::Deref => match value_ty.kind {
@@ -962,7 +988,7 @@ impl HirTypeChecker {
                     };
                     match &receiver_ty.kind {
                         TyKind::Array(inner, _) | TyKind::Slice(inner) => {
-                            self.require_same(&index_ty, &Ty::uint(ty::UintTy::Usize))?;
+                            self.require_same_at(&index_ty, &Ty::uint(ty::UintTy::Usize), expr.span)?;
                             (**inner).clone()
                         }
                         // `HashMap<K, V>` is a real struct (see
@@ -984,7 +1010,7 @@ impl HirTypeChecker {
                                     "HashMap index requires key and value type arguments",
                                 ));
                             };
-                            self.require_same(&index_ty, key_ty)?;
+                            self.require_same_at(&index_ty, key_ty, expr.span)?;
                             value_ty.clone()
                         }
                         // Any other nominal (struct) type — dispatch `x[i]`
@@ -1082,7 +1108,7 @@ impl HirTypeChecker {
                 }
                 hir::ExprKind::If(condition, then_expr, else_expr) => {
                     let condition = self.check_expr(condition).await?;
-                    self.require_same(&condition, &Ty::bool())?;
+                    self.require_same_at(&condition, &Ty::bool(), expr.span)?;
                     let then_ty = self.check_expr(then_expr).await?;
                     let mut result_ty = then_ty;
                     if let Some(else_expr) = else_expr {
@@ -1133,7 +1159,7 @@ impl HirTypeChecker {
                         let typeck_results_snapshot = self.shared.results.borrow().clone();
                         let value = context
                             .request_comptime(crate::ComptimeRequest {
-                                program: self.shared.program.as_ref().clone(),
+                                program: self.shared.program.clone(),
                                 typeck_results: typeck_results_snapshot,
                                 block: hir::Block {
                                     hir_id: expr.hir_id,
@@ -1150,7 +1176,7 @@ impl HirTypeChecker {
                 }
                 hir::ExprKind::While(condition, block) => {
                     let condition_ty = self.check_expr(condition).await?;
-                    self.require_same(&condition_ty, &Ty::bool())?;
+                    self.require_same_at(&condition_ty, &Ty::bool(), expr.span)?;
                     self.check_block(block).await?
                 }
                 hir::ExprKind::For(pat, iter, body) => {
@@ -1191,7 +1217,7 @@ impl HirTypeChecker {
                         let integer_element =
                             matches!(element.kind, TyKind::Int(_) | TyKind::Uint(_));
                         if !(integer_literal && integer_element) {
-                            self.require_same(&element, &value_ty)?;
+                            self.require_same_at(&element, &value_ty, expr.span)?;
                         }
                     }
                     Ty {
@@ -1268,7 +1294,7 @@ impl HirTypeChecker {
                     let hint = self.refinement_hints.remove(&target.hir_id);
                     if let Some(value) = value {
                         let value_ty = self.check_expr(value).await?;
-                        self.require_same(&ty, &value_ty)?;
+                        self.require_same_at(&ty, &value_ty, expr.span)?;
                         if let Some(hint) = &hint {
                             self.discharge_refinement(hint, value)?;
                         }
@@ -1289,11 +1315,11 @@ impl HirTypeChecker {
                             )?;
                         }
                         let catch_ty = self.check_expr(&catch.body).await?;
-                        self.require_same(&result_ty, &catch_ty)?;
+                        self.require_same_at(&result_ty, &catch_ty, expr.span)?;
                     }
                     if let Some(elze) = &value.elze {
                         let elze_ty = self.check_expr(elze).await?;
-                        self.require_same(&result_ty, &elze_ty)?;
+                        self.require_same_at(&result_ty, &elze_ty, expr.span)?;
                     }
                     if let Some(finally) = &value.finally {
                         self.check_expr(finally).await?;
@@ -1545,7 +1571,7 @@ impl HirTypeChecker {
         self.bind_pattern(&arm.pat, scrutinee_ty.clone())?;
         if let Some(guard) = &arm.guard {
             let guard_ty = self.check_expr(guard).await?;
-            self.require_same(&guard_ty, &Ty::bool())?;
+            self.require_same_at(&guard_ty, &Ty::bool(), guard.span)?;
         }
         let result = self.check_expr(&arm.body).await;
         self.locals.pop();
@@ -2328,6 +2354,24 @@ impl HirTypeChecker {
         Ok(signature)
     }
 
+    /// `check_type_expr(self_ty)` for an impl's own self-type declaration,
+    /// memoized by its `HirId` (see `TypingShared::checked_impl_self_ty_cache`'s
+    /// doc comment) — same caching shape as `function_signature`, just for
+    /// the self-type check `method_output_at`/`method_declared_signature_at`
+    /// both do before ever looking at a call site's actual receiver.
+    fn checked_impl_self_ty(&mut self, self_ty: &hir::TypeExpr) -> Result<Ty> {
+        let cache_key = self_ty.hir_id;
+        if let Some(cached) = self.shared.checked_impl_self_ty_cache.borrow().get(&cache_key) {
+            return Ok(cached.clone());
+        }
+        let checked = self.check_type_expr(self_ty)?;
+        self.shared
+            .checked_impl_self_ty_cache
+            .borrow_mut()
+            .insert(cache_key, checked.clone());
+        Ok(checked)
+    }
+
     fn instantiate_call(
         &self,
         callable: &Ty,
@@ -2798,7 +2842,7 @@ impl HirTypeChecker {
                 continue;
             };
             let mut scope = self.generic_scope(&impl_item.generics);
-            let checked_self_ty = scope.check_type_expr(&impl_item.self_ty)?;
+            let checked_self_ty = scope.checked_impl_self_ty(&impl_item.self_ty)?;
             let self_ty = match &checked_self_ty.kind {
                 TyKind::Ref(_, inner, _) => inner.as_ref(),
                 _ => &checked_self_ty,
@@ -2970,7 +3014,7 @@ impl HirTypeChecker {
                 continue;
             };
             let mut scope = self.generic_scope(&impl_item.generics);
-            let checked_self_ty = scope.check_type_expr(&impl_item.self_ty)?;
+            let checked_self_ty = scope.checked_impl_self_ty(&impl_item.self_ty)?;
             let self_ty = match &checked_self_ty.kind {
                 TyKind::Ref(_, inner, _) => inner.as_ref(),
                 _ => &checked_self_ty,
@@ -3077,18 +3121,26 @@ impl HirTypeChecker {
     /// (an unknown/erroring path) or if the resolved item isn't actually a
     /// trait (shouldn't happen for a well-formed `trait_ty`, but this is a
     /// read path, not a validator — fail open rather than panic).
-    fn resolve_trait_def(&self, trait_ty: &hir::TypeExpr) -> Option<hir::Trait> {
+    fn resolve_trait_def(&self, trait_ty: &hir::TypeExpr) -> Option<Rc<hir::Trait>> {
         let hir::TypeExprKind::Path(path) = &trait_ty.kind else {
             return None;
         };
         let hir::Res::Def(def_id) = path.res.clone()? else {
             return None;
         };
-        let item = self.shared.program.def_map.get(&def_id)?;
-        match &item.kind {
-            hir::ItemKind::Trait(tr) => Some(tr.clone()),
-            _ => None,
+        if let Some(cached) = self.shared.resolved_trait_defs.borrow().get(&def_id) {
+            return Some(cached.clone());
         }
+        let item = self.shared.program.def_map.get(&def_id)?;
+        let hir::ItemKind::Trait(tr) = &item.kind else {
+            return None;
+        };
+        let tr = Rc::new(tr.clone());
+        self.shared
+            .resolved_trait_defs
+            .borrow_mut()
+            .insert(def_id, tr.clone());
+        Some(tr)
     }
 
     /// The real `Deref` *trait*'s effect on method resolution (distinct
@@ -3126,7 +3178,7 @@ impl HirTypeChecker {
                 continue;
             }
             let mut scope = self.generic_scope(&impl_item.generics);
-            let Ok(checked_self_ty) = scope.check_type_expr(&impl_item.self_ty) else {
+            let Ok(checked_self_ty) = scope.checked_impl_self_ty(&impl_item.self_ty) else {
                 continue;
             };
             let self_ty = match &checked_self_ty.kind {
@@ -3164,7 +3216,7 @@ impl HirTypeChecker {
                         .env_ctx
                         .hir_definitions()
                         .into_iter()
-                        .flat_map(|(_, program, _)| program.items),
+                        .flat_map(|(_, program, _)| program.items.clone()),
                 );
             }
             *self.shared.impl_lookup_items.borrow_mut() = Some(Rc::new(items));
@@ -3751,6 +3803,23 @@ impl HirTypeChecker {
             Ok(())
         } else {
             self.record_error(format!("HIR type mismatch: {lhs} and {rhs}"));
+            Ok(())
+        }
+    }
+
+    /// `require_same`, but with a real span attached — use at any call site
+    /// that already has the offending expression's span in scope (e.g.
+    /// `check_expr`, which always holds `expr: &hir::Expr`) so the
+    /// diagnostic is locatable instead of a bare "HIR type mismatch: X and
+    /// Y" with no file/line. Call sites with no span reachable without
+    /// deeper plumbing (`unify_call_types`/`generic_args_compatible`, which
+    /// are `Ty`-only, and `check_pat`, whose `hir::Pat` carries no span)
+    /// still use the spanless `require_same` above.
+    fn require_same_at(&self, lhs: &Ty, rhs: &Ty, span: fp_core::span::Span) -> Result<()> {
+        if lhs == rhs || matches!(lhs.kind, TyKind::Never) || matches!(rhs.kind, TyKind::Never) {
+            Ok(())
+        } else {
+            self.record_error_with_span(format!("HIR type mismatch: {lhs} and {rhs}"), span);
             Ok(())
         }
     }

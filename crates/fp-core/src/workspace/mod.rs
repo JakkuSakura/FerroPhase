@@ -359,11 +359,17 @@ impl WorkspaceContext {
     /// behavior; a future single-shared-program redesign remains a real
     /// architectural option, but until that lands this is the only
     /// mechanism that makes cross-package references work at all.
+    ///
+    /// Returns each dependency's `Rc<hir::Package>` (matching
+    /// `CompiledPackage::hir_program`'s own storage) rather than an owned
+    /// `Package` — this used to deep-clone every dependency's whole HIR
+    /// program (every item, `def_map`, `def_paths`, `module_tree`) on
+    /// every single call; an `Rc` clone is O(1).
     pub fn hir_definitions(
         &self,
     ) -> Vec<(
         QualifiedPath,
-        crate::hir::Package,
+        std::rc::Rc<crate::hir::Package>,
         HashMap<String, crate::hir::Res>,
     )> {
         self.sorted_packages()

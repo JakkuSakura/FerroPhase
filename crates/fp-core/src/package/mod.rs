@@ -301,8 +301,12 @@ pub struct CompiledPackage {
     /// Fine-grained LIR artifacts owned by this package.
     pub lir_workspace: LirWorkspace,
 
-    /// HIR definitions published by this package.
-    pub hir_program: Option<crate::hir::Package>,
+    /// HIR definitions published by this package. `Rc`, not owned — every
+    /// dependent package's `WorkspaceContext::hir_definitions()` call
+    /// clones this once per package it depends on; cloning the `Rc` is
+    /// O(1), unlike cloning the whole `Package` it points to (every item,
+    /// `def_map`, `def_paths`, `module_tree`) on every single call.
+    pub hir_program: Option<std::rc::Rc<crate::hir::Package>>,
 
     /// Struct `DefId`s in `hir_program`, keyed by name — built once by
     /// `set_hir_program` alongside `hir_program` itself, so cross-package
@@ -426,7 +430,7 @@ impl CompiledPackage {
                 _ => {}
             }
         }
-        self.hir_program = Some(program);
+        self.hir_program = Some(std::rc::Rc::new(program));
     }
 }
 

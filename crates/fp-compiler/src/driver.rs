@@ -1182,7 +1182,9 @@ impl CompilerDriver {
         let module_path = QualifiedPath::new(vec!["__comptime_probe__".to_string()]);
         let hir_id = HirId::new(format!("hir:{}", self.module_state_key(&module_path)));
         let fqp = FullyQualifiedPath::new(module_path);
-        self.state.borrow_mut().insert_hir(hir_id.clone(), request.program.clone());
+        self.state
+            .borrow_mut()
+            .insert_hir(hir_id.clone(), request.program.as_ref().clone());
         self.state.borrow_mut()
             .insert_hir_typeck(hir_id.clone(), request.typeck_results.clone());
         let (mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes, resolved_const_values) =
@@ -1537,13 +1539,12 @@ impl CompilerDriver {
     }
 
     /// Same shape as `lower_to_mir_with`, but calls
-    /// `MirLowering::transform_comptime_request_async` instead of
-    /// `.transform_async` — item-scoped to exactly the one pending
-    /// `request` (see that method's own doc comment), never the whole
-    /// package. Everything downstream (diagnostics, layout extraction) is
-    /// identical and reused verbatim, since it only reads from `lowering`'s
-    /// accumulated state and the returned `mir::Program`, never from
-    /// `hir.items` directly.
+    /// `MirLowering::transform_comptime_request` instead of `.transform` —
+    /// item-scoped to exactly the one pending `request` (see that method's
+    /// own doc comment), never the whole package. Everything downstream
+    /// (diagnostics, layout extraction) is identical and reused verbatim,
+    /// since it only reads from `lowering`'s accumulated state and the
+    /// returned `mir::Program`, never from `hir.items` directly.
     async fn lower_to_mir_for_comptime_request_with(
         state: &Rc<RefCell<CompilerState>>,
         hir_id: &HirId,
@@ -1560,7 +1561,6 @@ impl CompilerDriver {
         ),
         CompilerDriverError,
     > {
-        let hir = state.borrow().hir(hir_id)?.clone();
         let typeck_results = state.borrow().hir_typeck(hir_id)?.clone();
         let mut lowering = MirLowering::new()
             .with_typeck_results(&typeck_results)
@@ -1573,7 +1573,18 @@ impl CompilerDriver {
         for (key, value) in state.borrow().resolved_const_values() {
             lowering.seed_resolved_const(key.to_string(), value.clone());
         }
-        let result = lowering.transform_comptime_request_async(hir, request).await;
+        // `transform_comptime_request_async` has no real internal
+        // `.await` (it just calls the synchronous version below) — call
+        // that directly instead, so the `state.borrow()` guard only needs
+        // to live for this one synchronous statement rather than forcing
+        // a full `hir::Package` clone (every item, `def_map`, `def_paths`,
+        // `module_tree`) just to produce an owned value to carry across
+        // an `.await` that never actually suspends.
+        let result = {
+            let state_ref = state.borrow();
+            let hir = state_ref.hir(hir_id)?;
+            lowering.transform_comptime_request(hir, request)
+        };
         let mir = match result {
             Ok(mir) => mir,
             Err(error) => {

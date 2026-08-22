@@ -567,7 +567,7 @@ impl LoweredProgram {
     fn hir(&self) -> Result<fp_core::hir::Package> {
         let package = self.compiled_package()?;
         let package = package.borrow();
-        package.hir_program.clone().ok_or_else(|| {
+        package.hir_program.as_deref().cloned().ok_or_else(|| {
             CliError::Compilation(format!(
                 "compiled package `{}` contains no HIR program",
                 self.package_id

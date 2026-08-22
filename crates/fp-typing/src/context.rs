@@ -11,7 +11,12 @@ use crate::TypingDiagnostic;
 use crate::types::{GenericMonorph, TypeckResults};
 
 pub struct ComptimeRequest {
-    pub program: fp_core::hir::Package,
+    /// `Rc`, not owned — the caller already holds this package as an
+    /// `Rc<hir::Package>` (`TypingShared::program`); cloning that `Rc` is
+    /// O(1), unlike cloning the `Package` it points to (every item, the
+    /// whole `def_map`/`def_paths`/`module_tree`), which used to happen
+    /// once per `const { .. }` block encountered during type-checking.
+    pub program: std::rc::Rc<fp_core::hir::Package>,
     pub typeck_results: TypeckResults,
     /// The exact HIR block encountered by the type checker. The driver may
     /// provide a backend entrypoint for it, but must not reconstruct the
@@ -227,7 +232,7 @@ mod tests {
             fp_core::executor::CompilerExecutor::new().handle(),
         );
         let request = ComptimeRequest {
-            program: fp_core::hir::Package::new(),
+            program: std::rc::Rc::new(fp_core::hir::Package::new()),
             typeck_results: TypeckResults::default(),
             block: fp_core::hir::Block {
                 hir_id: fp_core::hir::HirId::new(fp_core::hir::PackageId(0), 0),

@@ -717,7 +717,7 @@ impl MirLowering {
     /// `ensure_function_specialization`'s existing lazy mechanisms.
     pub fn transform_comptime_request(
         &mut self,
-        hir_program: hir::Package,
+        hir_program: &hir::Package,
         request: &fp_typing::ComptimeRequest,
     ) -> Result<mir::Program> {
         self.hir_def_map = hir_program.def_map.clone();
@@ -763,12 +763,20 @@ impl MirLowering {
             }
         }
         self.register_all_dependency_adts();
-        self.finalize_adt_definitions(&hir_program);
-        for item in &hir_program.items {
-            if let hir::ItemKind::Impl(impl_block) = &item.kind {
-                self.register_impl_signatures(impl_block);
-            }
-        }
+        self.finalize_adt_definitions(hir_program);
+        // Deliberately *not* an eager `register_impl_signatures` sweep
+        // over every impl in the package (as this used to be) — that
+        // cloned every method's `hir::Function` body, for every impl,
+        // regardless of whether this one synthetic comptime body actually
+        // calls it, and repeated that on every single comptime request.
+        // `ensure_method_info`/`ensure_generic_method_def` already lazily
+        // call this same per-item registration (`try_lazily_register_method`
+        // -> `register_impl_signature_for_item`, the identical function
+        // the eager sweep called) on demand, off the same `hir_def_map` —
+        // exactly the "whole-program-safe... none of this requires any
+        // item's body to be typed" registration this function's own doc
+        // comment already scopes itself to, just reached lazily instead
+        // of unconditionally for methods this request never references.
 
         let body = request.block.expr.as_ref().ok_or_else(|| {
             fp_core::error::Error::from(
@@ -792,14 +800,6 @@ impl MirLowering {
             ));
         }
         Ok(mir_program)
-    }
-
-    pub async fn transform_comptime_request_async(
-        &mut self,
-        hir_program: hir::Package,
-        request: &fp_typing::ComptimeRequest,
-    ) -> Result<mir::Program> {
-        self.transform_comptime_request(hir_program, request)
     }
 
     pub fn compute_adt_layout(&mut self, def_id: hir::DefId, substs: &[Ty], span: Span) {

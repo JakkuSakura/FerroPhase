@@ -16,8 +16,15 @@ fn remove_unreachable_blocks_in_function(function: &mut LirFunction) -> Result<u
         return Ok(0);
     };
 
-    let block_ids: HashSet<BasicBlockId> =
-        function.basic_blocks.iter().map(|block| block.id).collect();
+    // Id -> index, built once — replaces a linear `.find()` scan of every
+    // block per block visited (an O(n^2) reachability pass on a function
+    // with n blocks) with an O(1) lookup.
+    let block_index: HashMap<BasicBlockId, usize> = function
+        .basic_blocks
+        .iter()
+        .enumerate()
+        .map(|(index, block)| (block.id, index))
+        .collect();
     let mut reachable = HashSet::new();
     let mut queue = VecDeque::from([entry_block]);
 
@@ -25,15 +32,12 @@ fn remove_unreachable_blocks_in_function(function: &mut LirFunction) -> Result<u
         if !reachable.insert(block_id) {
             continue;
         }
-        let Some(block) = function
-            .basic_blocks
-            .iter()
-            .find(|block| block.id == block_id)
+        let Some(block) = block_index.get(&block_id).map(|&index| &function.basic_blocks[index])
         else {
             continue;
         };
         for successor in &block.successors {
-            if block_ids.contains(successor) && !reachable.contains(successor) {
+            if block_index.contains_key(successor) && !reachable.contains(successor) {
                 queue.push_back(*successor);
             }
         }
