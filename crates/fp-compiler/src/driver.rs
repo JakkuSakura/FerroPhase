@@ -182,7 +182,20 @@ impl CompilerDriver {
             .inject_globals(&resolved)
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         let entrypoint = self.state.borrow().runtime_entrypoint(lir_id)?;
-        let value = self.interpreter.run_entrypoint(&lir, entrypoint)?;
+        // `LirId`s are always built as `lir:{package_id}:{path}` (see the
+        // construction site below) — recovering the real package id here
+        // (rather than letting the interpreter default to an empty one)
+        // is what lets calls to any function other than the entrypoint
+        // itself resolve; see `run_entrypoint_with_package`'s doc comment.
+        let package_id = lir_id
+            .as_str()
+            .strip_prefix("lir:")
+            .and_then(|rest| rest.split_once(':'))
+            .map(|(package, _)| PackageId::new(package))
+            .unwrap_or_else(|| PackageId::new(""));
+        let value = self
+            .interpreter
+            .run_entrypoint_with_package(&lir, entrypoint, package_id)?;
         let value_id = RuntimeValueId::new(format!("runtime_value:{}", lir_id.as_str()));
         self.state.borrow_mut().insert_runtime_value(value_id, value.clone());
         Ok(value)

@@ -85,6 +85,27 @@ pub struct TypingShared {
     /// fixed once for `method_output` (see `impl_lookup_items`'s doc
     /// comment above) but left unaddressed here.
     function_signature_cache: RefCell<HashMap<hir::HirId, Ty>>,
+    /// Refinement-type hints for function parameters/return types,
+    /// persisted across items — `HirTypeChecker::refinement_hints` (a
+    /// per-instance field) only lives for the duration of whichever
+    /// item's check happens to populate it, but `function_signature`'s own
+    /// cache (above) means only the *first* call site to a given function
+    /// actually re-invokes `check_type_expr` on its parameter/output
+    /// `TypeExpr`s. Keyed the same way `function_signature_cache` is (the
+    /// function's own `output` `TypeExpr`'s `HirId`, stable per
+    /// declaration) plus a `ParamSlot` discriminating which
+    /// parameter/the output the hint belongs to, so every later call site
+    /// — even from a different item's `HirTypeChecker` instance — can
+    /// still discharge against it.
+    refinement_hints: RefCell<HashMap<(hir::HirId, ParamSlot), crate::refinement::RefinementHint>>,
+}
+
+/// Which part of a function's signature a persisted `RefinementHint`
+/// belongs to — see `TypingShared::refinement_hints`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ParamSlot {
+    Input(usize),
+    Output,
 }
 
 impl TypingShared {
@@ -102,6 +123,7 @@ impl TypingShared {
             impl_items_by_receiver_def: RefCell::new(None),
             member_to_owning_item: RefCell::new(None),
             function_signature_cache: RefCell::new(HashMap::new()),
+            refinement_hints: RefCell::new(HashMap::new()),
         })
     }
 
@@ -632,8 +654,14 @@ impl HirTypeChecker {
         // `check_block_with_expected_tail`) — not the whole body — so it
         // doesn't leak into unrelated statements earlier in the function.
         let output_ty = self.check_type_expr(output)?;
+        let refinement_hint = self.refinement_hints.remove(&output.hir_id);
         self.check_block_with_expected_tail(block, Some(output_ty))
             .await?;
+        if let Some(hint) = &refinement_hint {
+            if let Some(tail) = block.expr.as_ref() {
+                self.discharge_refinement(hint, tail)?;
+            }
+        }
         self.locals.pop();
         Ok(())
     }
@@ -728,6 +756,33 @@ impl HirTypeChecker {
                         TyKind::FnPtr(signature) => Some(signature.binder.value.inputs.clone()),
                         _ => None,
                     };
+                    // Refinement hints for this callee's own parameters,
+                    // if any were recorded when its signature was
+                    // resolved (possibly by an entirely different item's
+                    // check, possibly long ago — see `TypingShared::
+                    // refinement_hints`'s doc comment). Only resolvable
+                    // for a directly-named callee with a real `DefId`;
+                    // a call through a function pointer/closure value
+                    // simply has no hints to discharge, same as today.
+                    let callee_refinement_cache_key = if let hir::ExprKind::Path(path) =
+                        &callee.kind
+                    {
+                        path.res.as_ref().and_then(|res| match res {
+                            hir::Res::Def(def_id) => match self.shared.program.def_map.get(def_id)
+                            {
+                                Some(item) => match &item.kind {
+                                    hir::ItemKind::Function(function) => {
+                                        Some(function.sig.output.hir_id)
+                                    }
+                                    _ => None,
+                                },
+                                None => None,
+                            },
+                            _ => None,
+                        })
+                    } else {
+                        None
+                    };
                     let mut arg_types = Vec::with_capacity(args.len());
                     for (index, arg) in args.iter().enumerate() {
                         // Scope the expected-type hint to *this parameter's*
@@ -765,6 +820,17 @@ impl HirTypeChecker {
                             }
                             _ => actual,
                         };
+                        if let Some(cache_key) = callee_refinement_cache_key {
+                            let hint = self
+                                .shared
+                                .refinement_hints
+                                .borrow()
+                                .get(&(cache_key, ParamSlot::Input(index)))
+                                .cloned();
+                            if let Some(hint) = &hint {
+                                self.discharge_refinement(hint, &arg.value)?;
+                            }
+                        }
                         arg_types.push(actual);
                     }
                     let Some((mut substitutions, _)) =
@@ -2220,13 +2286,26 @@ impl HirTypeChecker {
             return Ok(cached.clone());
         }
         let mut scope = self.generic_scope(&function.sig.generics);
-        let inputs = function
-            .sig
-            .inputs
-            .iter()
-            .map(|input| scope.check_type_expr(&input.ty).map(Box::new))
-            .collect::<Result<Vec<_>>>()?;
+        let mut inputs = Vec::with_capacity(function.sig.inputs.len());
+        for (index, input) in function.sig.inputs.iter().enumerate() {
+            let ty = scope.check_type_expr(&input.ty)?;
+            if let Some(hint) = scope.refinement_hints.remove(&input.ty.hir_id) {
+                scope
+                    .shared
+                    .refinement_hints
+                    .borrow_mut()
+                    .insert((cache_key, ParamSlot::Input(index)), hint);
+            }
+            inputs.push(Box::new(ty));
+        }
         let output = Box::new(scope.check_type_expr(&function.sig.output)?);
+        if let Some(hint) = scope.refinement_hints.remove(&function.sig.output.hir_id) {
+            scope
+                .shared
+                .refinement_hints
+                .borrow_mut()
+                .insert((cache_key, ParamSlot::Output), hint);
+        }
         drop(scope);
         let signature = Ty {
             kind: TyKind::FnPtr(ty::PolyFnSig {

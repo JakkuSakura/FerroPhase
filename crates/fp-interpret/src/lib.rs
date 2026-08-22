@@ -80,8 +80,20 @@ impl LirInterpreter {
     }
 
     pub fn run_main(&mut self, program: &LirProgram) -> LirResult<Value> {
+        self.run_main_with_package(program, PackageId::new(""))
+    }
+
+    /// Like `run_main`, but registers this program's functions under the
+    /// real compiling package's id — see `run_entrypoint_with_package`'s
+    /// doc comment for why `run_main`'s hardcoded empty id is wrong for
+    /// any program that calls a function other than `main` itself.
+    pub fn run_main_with_package(
+        &mut self,
+        program: &LirProgram,
+        package_id: PackageId,
+    ) -> LirResult<Value> {
         self.populate_functions_from_program(program);
-        self.populate_functions_for_package(program, PackageId::new(""));
+        self.populate_functions_for_package(program, package_id);
         self.populate_globals_batch(&[program])?;
         let entry = program.functions.iter().find(|f| f.name.as_str() == "main");
         let func = entry.ok_or(VmError::Runtime("no entry point".into()))?;
@@ -93,8 +105,32 @@ impl LirInterpreter {
         program: &LirProgram,
         def_id: fp_core::hir::DefId,
     ) -> LirResult<Value> {
+        self.run_entrypoint_with_package(program, def_id, PackageId::new(""))
+    }
+
+    /// Like `run_entrypoint`, but registers this program's functions
+    /// under the real compiling package's id.
+    ///
+    /// `populate_functions_for_package` registers every function it finds
+    /// into `self.package_functions` keyed by `(package_id, name)`.
+    /// Ordinary calls are lowered (`mir_to_lir::instr::function_value`) to
+    /// reference `LirFunctionRef::Package { package_id, .. }` using the
+    /// *real* compiling package's id — never an empty one — so
+    /// `handle_call_named`'s lookup against that real id can never hit
+    /// anything registered under a hardcoded empty id. `run_main`/
+    /// `run_entrypoint` locate their own entry function by scanning
+    /// `program.functions` directly (never going through
+    /// `package_functions`), so this bug is invisible for a program with
+    /// only one function, and only surfaces once a second, separately
+    /// called top-level function exists.
+    pub fn run_entrypoint_with_package(
+        &mut self,
+        program: &LirProgram,
+        def_id: fp_core::hir::DefId,
+        package_id: PackageId,
+    ) -> LirResult<Value> {
         self.populate_functions_from_program(program);
-        self.populate_functions_for_package(program, PackageId::new(""));
+        self.populate_functions_for_package(program, package_id);
         self.populate_globals_batch(&[program])?;
         let func = program
             .functions
@@ -2701,7 +2737,7 @@ impl fp_core::backend::TargetBackend for InterpreterBackend {
         let lir = workspace.merged_lir_program(package_id)?;
         let mut interpreter = LirInterpreter::new();
         let value = interpreter
-            .run_main(&lir)
+            .run_main_with_package(&lir, package_id.clone())
             .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
         println!("{value:?}");
         Ok(())
