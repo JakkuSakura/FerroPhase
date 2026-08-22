@@ -1137,6 +1137,13 @@ impl<'a> HirToAstLifter<'a> {
                 inner: None,
             }),
             hir::TypeExprKind::Any => Ty::Any(ast::TypeAny),
+            hir::TypeExprKind::Refinement { base, binder, predicate } => Ty::Refinement(Box::new(
+                ast::TypeRefinement::new(
+                    self.lift_type(base)?,
+                    Ident::new(binder.as_str()),
+                    self.lift_expr(predicate)?,
+                ),
+            )),
         })
     }
 

@@ -596,6 +596,17 @@ pub enum TypeExprKind {
     /// concrete "erased" type, not an inference placeholder — see
     /// `TyKind::Any`'s own doc comment for why this must not reuse `Infer`.
     Any,
+    /// `{binder : base // predicate}` — a refinement/subtype type (Lean 4's
+    /// `Subtype`). Purely syntactic, like `ConstBlock`: the type checker
+    /// discharges `predicate` (via `decide`/`omega`, see `fp-typing`'s
+    /// `refinement` module) and resolves this to `base`'s `TyKind` directly.
+    /// There is deliberately no corresponding `TyKind::Refinement` — nothing
+    /// past typing ever needs to know this existed.
+    Refinement {
+        base: Box<TypeExpr>,
+        binder: Symbol,
+        predicate: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1309,6 +1320,9 @@ impl TypeExprKind {
             | TypeExprKind::Error
             | TypeExprKind::Type
             | TypeExprKind::Any => Span::null(),
+            TypeExprKind::Refinement { base, predicate, .. } => {
+                Span::union([base.span(), predicate.span()])
+            }
         }
     }
 }

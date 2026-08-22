@@ -970,6 +970,16 @@ fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
         TypeExprKind::Error => "<error>".into(),
         TypeExprKind::Type => "type".into(),
         TypeExprKind::Any => "any".into(),
+        TypeExprKind::Refinement {
+            base,
+            binder,
+            predicate,
+        } => format!(
+            "{{{}: {} // {}}}",
+            binder,
+            fmt_type_expr(base, ctx),
+            format_expr_inline(predicate, ctx)
+        ),
     }
 }
 

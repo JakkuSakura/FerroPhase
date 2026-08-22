@@ -148,6 +148,11 @@ common_enum! {
         TypeBinaryOp(Box<TypeBinaryOp>),
         InferVar(TypeInferVar),
         Wildcard(TypeWildcard),
+        /// A refinement/subtype type: `{binder : base // predicate}` (Lean 4's
+        /// `Subtype` notation). Kept purely syntactic at the AST level — the
+        /// type checker discharges `predicate` and erases this to `base`;
+        /// no downstream IR (HIR TyKind, MIR, LIR) ever needs to represent it.
+        Refinement(Box<TypeRefinement>),
     }
 
 }
@@ -265,6 +270,7 @@ impl Ty {
             Ty::ConstBlock(block) => block.span(),
             Ty::Quote(ty) => ty.span(),
             Ty::TypeBinaryOp(op) => op.span(),
+            Ty::Refinement(ty) => ty.span(),
             _ => Span::null(),
         }
     }
@@ -553,6 +559,28 @@ impl TypeBounds {
 
     pub fn span(&self) -> Span {
         Span::union(self.bounds.iter().map(Expr::span))
+    }
+}
+
+common_struct! {
+    /// `{binder : base // predicate}` — a refinement/subtype type.
+    pub struct TypeRefinement {
+        pub base: BType,
+        pub binder: Ident,
+        pub predicate: BExpr,
+    }
+}
+impl TypeRefinement {
+    pub fn new(base: Ty, binder: Ident, predicate: Expr) -> Self {
+        Self {
+            base: Box::new(base),
+            binder,
+            predicate: Box::new(predicate),
+        }
+    }
+
+    pub fn span(&self) -> Span {
+        Span::union([self.base.span(), self.predicate.span()])
     }
 }
 macro_rules! plain_type {

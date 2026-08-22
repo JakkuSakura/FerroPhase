@@ -1283,6 +1283,7 @@ dependencies = [
  "fp-jvm",
  "fp-kotlin",
  "fp-lang",
+ "fp-lean",
  "fp-llvm",
  "fp-native",
  "fp-prql",
@@ -1534,6 +1535,14 @@ dependencies = [
  "tracing",
  "unicode-normalization",
  "winnow 0.6.26",
+]
+
+[[package]]
+name = "fp-lean"
+version = "0.0.0"
+dependencies = [
+ "fp-core",
+ "thiserror 2.0.19",
 ]
 
 [[package]]

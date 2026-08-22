@@ -57,6 +57,10 @@ pub const TOML: &str = "toml";
 pub const HCL: &str = fp_hcl::HCL;
 #[cfg(not(feature = "lang-hcl"))]
 pub const HCL: &str = "hcl";
+#[cfg(feature = "lang-lean")]
+pub const LEAN: &str = fp_lean::LEAN;
+#[cfg(not(feature = "lang-lean"))]
+pub const LEAN: &str = "lean";
 
 /// Language information structure
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -209,6 +213,12 @@ pub const SUPPORTED_LANGUAGES: &[Language] = &[
         name: HCL,
         extensions: &["hcl"],
         ast_target_supported: false,
+    },
+    #[cfg(feature = "lang-lean")]
+    Language {
+        name: LEAN,
+        extensions: &["lean"],
+        ast_target_supported: true,
     },
 ];
 

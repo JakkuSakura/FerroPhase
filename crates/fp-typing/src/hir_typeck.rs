@@ -125,6 +125,13 @@ pub struct HirTypeChecker {
     /// types (which is synchronous). Resolved via comptime once this
     /// item's own check finishes; see `resolve_pending_type_const_blocks`.
     pending_type_const_blocks: Vec<(hir::HirId, hir::Expr)>,
+    /// Refinement (`{binder : base // predicate}`) annotations encountered
+    /// by `check_type_expr`, keyed by the `TypeExpr`'s own `hir_id` — a
+    /// caller that still has that same `TypeExpr` in hand (e.g. the `Let`
+    /// arm, right after calling `check_type_expr`) looks itself up here to
+    /// discharge the predicate against the value actually being coerced.
+    /// See `crate::refinement`.
+    refinement_hints: HashMap<hir::HirId, crate::refinement::RefinementHint>,
 }
 
 struct GenericScope<'a> {
@@ -324,6 +331,7 @@ pub async fn typecheck_item(shared: Rc<TypingShared>, def_id: hir::DefId) {
         assoc_types: Vec::new(),
         expected_expr_types: Vec::new(),
         pending_type_const_blocks: Vec::new(),
+        refinement_hints: HashMap::new(),
     };
     if let Err(error) = checker.check_item(&item).await {
         checker.record_item_check_failure(format!("{error}"));
@@ -1150,9 +1158,13 @@ impl HirTypeChecker {
                 hir::ExprKind::Continue => Ty::never(),
                 hir::ExprKind::Let(pattern, target, value) => {
                     let ty = self.check_type_expr(target)?;
+                    let hint = self.refinement_hints.remove(&target.hir_id);
                     if let Some(value) = value {
                         let value_ty = self.check_expr(value).await?;
                         self.require_same(&ty, &value_ty)?;
+                        if let Some(hint) = &hint {
+                            self.discharge_refinement(hint, value)?;
+                        }
                     }
                     self.bind_pattern(pattern, ty.clone())?;
                     ty
@@ -1536,6 +1548,22 @@ impl HirTypeChecker {
                 kind: TyKind::Type,
             },
             hir::TypeExprKind::Any => Ty { kind: TyKind::Any },
+            hir::TypeExprKind::Refinement {
+                base,
+                binder,
+                predicate,
+            } => {
+                let base_ty = self.check_type_expr(base)?;
+                self.refinement_hints.insert(
+                    expr.hir_id,
+                    crate::refinement::RefinementHint {
+                        binder: binder.clone(),
+                        predicate: (**predicate).clone(),
+                        base: base_ty.clone(),
+                    },
+                );
+                base_ty
+            }
         };
         self.shared.results.borrow_mut().record_type_expr_type(expr.hir_id, ty.clone());
         Ok(ty)
@@ -3603,6 +3631,39 @@ impl HirTypeChecker {
             self.record_error(format!("HIR type mismatch: {lhs} and {rhs}"));
             Ok(())
         }
+    }
+
+    /// Discharge a refinement type's predicate against the value actually
+    /// flowing into that position — `decide` (exact evaluation) first, then
+    /// `omega` (linear-arithmetic decision procedure) for symbolic values.
+    /// Like `require_same`, a failure is recorded as a diagnostic rather
+    /// than a hard `Err`, so one bad refinement doesn't abort the whole
+    /// item's check. See `crate::refinement` for the algorithm.
+    fn discharge_refinement(
+        &self,
+        hint: &crate::refinement::RefinementHint,
+        value_expr: &hir::Expr,
+    ) -> Result<()> {
+        let hypotheses = crate::refinement::implicit_hypotheses(&hint.base, &hint.binder);
+        match crate::refinement::discharge(&hint.binder, &hint.predicate, value_expr, &hypotheses)
+        {
+            crate::refinement::RefinementOutcome::ProvenTrue => {}
+            crate::refinement::RefinementOutcome::ProvenFalse => {
+                self.record_error(format!(
+                    "refinement predicate violated at compile time: value does not satisfy `{} : {} // ...`",
+                    hint.binder, hint.base
+                ));
+            }
+            crate::refinement::RefinementOutcome::Undecidable => {
+                self.record_error(
+                    "refinement predicate outside supported linear-arithmetic fragment \
+                     (only comparisons, `+ - * /`, `&&`, literals, and variable references \
+                     are supported)"
+                        .to_string(),
+                );
+            }
+        }
+        Ok(())
     }
 
     fn require_same_adt(&self, actual: &Ty, expected: &Ty, context: &str) -> Result<()> {

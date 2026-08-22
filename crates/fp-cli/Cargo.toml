@@ -35,6 +35,7 @@ fp-json = { path = "../fp-json", optional = true }
 fp-flatbuffers = { path = "../fp-flatbuffers", optional = true }
 fp-toml = { path = "../fp-toml", optional = true }
 fp-hcl = { path = "../fp-hcl", optional = true }
+fp-lean = { path = "../fp-lean", optional = true }
 fp-bytecode = { path = "../fp-bytecode" }
 fp-stackvm-bytecode = { path = "../fp-stackvm-bytecode" }
 fp-jvm = { path = "../fp-jvm" }
@@ -115,6 +116,7 @@ default = [
     "lang-flatbuffers",
     "lang-toml",
     "lang-hcl",
+    "lang-lean",
 ]
 
 llvm = ["dep:fp-llvm"]
@@ -137,3 +139,4 @@ lang-json = ["dep:fp-json"]
 lang-flatbuffers = ["dep:fp-flatbuffers"]
 lang-toml = ["dep:fp-toml"]
 lang-hcl = ["dep:fp-hcl"]
+lang-lean = ["dep:fp-lean"]

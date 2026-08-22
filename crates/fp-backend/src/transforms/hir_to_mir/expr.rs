@@ -4286,6 +4286,10 @@ impl MirLowering {
             hir::TypeExprKind::ConstBlock(_) => self.error_ty(),
             hir::TypeExprKind::Type => Ty { kind: TyKind::Type },
             hir::TypeExprKind::Any => Ty { kind: TyKind::Any },
+            // Erases to `base`'s `TyKind` directly — there is deliberately
+            // no corresponding `TyKind::Refinement` (see the doc comment on
+            // `hir::TypeExprKind::Refinement`).
+            hir::TypeExprKind::Refinement { base, .. } => self.lower_type_expr(base),
         }
     }
 
@@ -6029,6 +6033,9 @@ impl MirLowering {
                 .unwrap_or_else(|| self.error_ty()),
             hir::TypeExprKind::Type => Ty { kind: TyKind::Type },
             hir::TypeExprKind::Any => Ty { kind: TyKind::Any },
+            hir::TypeExprKind::Refinement { base, .. } => {
+                self.lower_type_expr_with_substs(base, substs)
+            }
         }
     }
 

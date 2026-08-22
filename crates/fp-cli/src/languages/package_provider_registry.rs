@@ -253,6 +253,15 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
         entries.push(("gd", godot));
     }
 
+    #[cfg(feature = "lang-lean")]
+    entries.push((
+        "lean",
+        factory(|root: &Path| {
+            Some(Arc::new(fp_lean::package::LeanPackageProvider::new(root.to_path_buf()))
+                as Arc<dyn PackageProvider>)
+        }),
+    ));
+
     entries
 }
 

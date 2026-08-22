@@ -1,0 +1,9 @@
+[package]
+name = "fp-lean"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+fp-core = { path = "../fp-core" }
+thiserror = "2"

@@ -12,6 +12,8 @@ pub use fp_json::JsonFrontend;
 #[cfg(feature = "lang-jsonschema")]
 pub use fp_jsonschema::JsonSchemaFrontend;
 pub use fp_lang::FerroFrontend;
+#[cfg(feature = "lang-lean")]
+pub use fp_lean::LeanFrontend;
 #[cfg(feature = "lang-prql")]
 pub use fp_prql::PrqlFrontend;
 #[cfg(feature = "lang-python")]

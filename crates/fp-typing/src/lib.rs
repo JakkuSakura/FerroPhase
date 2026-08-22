@@ -2,6 +2,7 @@ mod support;
 
 pub mod context;
 pub mod hir_typeck;
+pub mod refinement;
 pub mod types;
 
 pub use context::{ComptimeRequest, PendingComptimeRequest, TypingContext};
