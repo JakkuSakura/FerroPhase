@@ -30,7 +30,7 @@ impl fp_core::backend::TargetBackend for BytecodeBackend {
         let package = workspace.compiled_package(package_id).ok_or_else(|| {
             fp_core::error::Error::from(format!("package `{package_id}` is unavailable"))
         })?;
-        let mir = package.borrow().mir_program.clone().ok_or_else(|| {
+        let mir = package.borrow().mir.program.clone().ok_or_else(|| {
             fp_core::error::Error::from(format!("package `{package_id}` has no MIR program"))
         })?;
         let bytecode = fp_bytecode::lower_program(&mir)

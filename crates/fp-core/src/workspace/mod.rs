@@ -441,14 +441,17 @@ impl WorkspaceContext {
     /// package's *HIR* program rather than the AST-level `struct_defs`
     /// registry — used where the caller specifically needs a `hir::DefId`
     /// (the HIR type-checking pass). O(1) per package via
-    /// `hir_struct_defs_by_name`, built once when the package's HIR is
-    /// published (`CompiledPackage::set_hir_program`), unlike
+    /// `hir::Package::struct_defs_by_name`, built once when the package's
+    /// HIR is published (`CompiledPackage::set_hir_program`), unlike
     /// `hir_definitions()`, which clones every package's whole HIR
     /// `Program` on every call.
     pub fn find_hir_struct_def_id(&self, name: &str) -> Option<crate::hir::DefId> {
         for package in self.sorted_packages() {
-            if let Some(def_id) = package.borrow().hir_struct_defs_by_name.get(name) {
-                return Some(*def_id);
+            let package = package.borrow();
+            if let Some(hir_program) = package.hir_program.as_ref() {
+                if let Some(def_id) = hir_program.struct_defs_by_name.get(name) {
+                    return Some(*def_id);
+                }
             }
         }
         None
@@ -461,9 +464,9 @@ impl WorkspaceContext {
     /// rule's HIR-level consequence), so `def_id.package_id` already names
     /// the *only* package that could hold it — go straight to it via
     /// `hir_packages` instead of searching every loaded package. Within
-    /// that one package, `hir_impl_method_item_index` (built once when its
-    /// HIR is published, alongside `hir_struct_defs_by_name` above) gives
-    /// the enclosing impl item's index directly; only that impl's own
+    /// that one package, `hir::Package::impl_method_item_index` (built once
+    /// when its HIR is published, alongside `struct_defs_by_name` above)
+    /// gives the enclosing impl item's index directly; only that impl's own
     /// method list is then scanned to clone the specific
     /// generics/self-type/items/function the caller needs — instead of
     /// `hir_definitions()`'s full clone of every dependency package's
@@ -491,8 +494,8 @@ impl WorkspaceContext {
         }
         let package = self.hir_packages.borrow().get(&def_id.package_id)?.clone();
         let package = package.borrow();
-        let &item_index = package.hir_impl_method_item_index.get(&def_id)?;
         let program = package.hir_program.as_ref()?;
+        let &item_index = program.impl_method_item_index.get(&def_id)?;
         let item = program.items.get(item_index)?;
         let crate::hir::ItemKind::Impl(impl_item) = &item.kind else {
             return None;
@@ -827,22 +830,23 @@ impl WorkspaceContext {
             ))
         })?;
         let package = package.borrow();
-        if package.lir_workspace.artifacts().is_empty() {
+        if package.lir.own_artifacts.artifacts().is_empty() {
             return Err(crate::error::Error::from(format!(
                 "compiled package `{id}` contains no LIR artifacts"
             )));
         }
-        let mut combined = crate::lir::LirWorkspace::new(package.lir_workspace.data_layout.clone());
+        let mut combined =
+            crate::lir::LirWorkspace::new(package.lir.own_artifacts.data_layout.clone());
         for (dependency_id, dep_package) in self.crates.borrow().iter() {
             if dependency_id == id {
                 continue;
             }
             combined
-                .add_workspace(&dep_package.borrow().lir_workspace)
+                .add_workspace(&dep_package.borrow().lir.own_artifacts)
                 .map_err(|error| crate::error::Error::from(error.to_string()))?;
         }
         combined
-            .add_workspace(&package.lir_workspace)
+            .add_workspace(&package.lir.own_artifacts)
             .map_err(|error| crate::error::Error::from(error.to_string()))?;
         let mut lir = combined.to_program();
         if let Ok(def_id) = crate::ast::package::resolve_entrypoint_def_id(id, &package, "main") {
