@@ -330,13 +330,25 @@ fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> PackageSo
     source
 }
 
+const CORE_PACKAGE_NAME: &str = "core";
+const ALLOC_PACKAGE_NAME: &str = "alloc";
 const STD_PACKAGE_NAME: &str = "std";
 const LIBC_PACKAGE_NAME: &str = "libc";
 
-/// `PackageProvider` for the "std"/"libc" package IDs, backed by real rustc
-/// `core`/`alloc`/`std` source (`RustPackageProvider`'s counterpart to
-/// `fp_lang::provider::FerroPhaseProvider`). `libc` is delegated straight to
-/// `fp-lang`'s embedded copy — there's nothing Rust-specific about C ABI
+/// Real Rust sysroots vendor `core`/`alloc`/`std` as three independent
+/// crates — `alloc` depends on `core`, `std` depends on `core`+`alloc`
+/// (+`libc` here, standing in for `std`'s real platform `sys` bindings) —
+/// not one `std` package containing them as sub-modules. Wrapping them
+/// under a shared outer package used to produce a doubled `std::std::`
+/// crate root for the `std` facade crate itself, and gave every bare
+/// `core`/`alloc` absolute path real Rust source uses (`core::option::
+/// Option`, ...) a *different* qualified key than the one their actual
+/// definitions were stored under.
+///
+/// `PackageProvider` for the `core`/`alloc`/`std`/`libc` package IDs
+/// (`RustPackageProvider`'s counterpart to `fp_lang::provider::
+/// FerroPhaseProvider`). `libc` is delegated straight to `fp-lang`'s
+/// embedded copy — there's nothing Rust-specific about C ABI
 /// declarations, no need to duplicate them.
 ///
 /// Real std source is far more complex than anything `FerroFrontend` has been
@@ -346,9 +358,22 @@ const LIBC_PACKAGE_NAME: &str = "libc";
 /// whole package load, so whatever subset *does* parse is still usable.
 pub struct RustStdProvider;
 
+impl RustStdProvider {
+    fn dependencies_of(crate_name: &str) -> Vec<&'static str> {
+        match crate_name {
+            CORE_PACKAGE_NAME => vec![],
+            ALLOC_PACKAGE_NAME => vec![CORE_PACKAGE_NAME],
+            STD_PACKAGE_NAME => vec![CORE_PACKAGE_NAME, ALLOC_PACKAGE_NAME, LIBC_PACKAGE_NAME],
+            _ => vec![],
+        }
+    }
+}
+
 impl PackageProvider for RustStdProvider {
     fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
         Ok(vec![
+            PackageId::new(CORE_PACKAGE_NAME),
+            PackageId::new(ALLOC_PACKAGE_NAME),
             PackageId::new(STD_PACKAGE_NAME),
             PackageId::new(LIBC_PACKAGE_NAME),
         ])
@@ -360,15 +385,17 @@ impl PackageProvider for RustStdProvider {
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let root = match id.as_str() {
-            STD_PACKAGE_NAME => crate::embedded_std::root_dir(),
+            CORE_PACKAGE_NAME | ALLOC_PACKAGE_NAME | STD_PACKAGE_NAME => {
+                crate::embedded_std::root_dir().join(id.as_str())
+            }
             LIBC_PACKAGE_NAME => fp_lang::embedded_libc::root_dir(),
             _ => return Err(ProviderError::PackageNotFound(id.clone())),
         };
         let mut metadata = PackageMetadata::default();
-        if id.as_str() == STD_PACKAGE_NAME {
+        for dependency in Self::dependencies_of(id.as_str()) {
             metadata.dependencies.push(DependencyDescriptor {
-                package: LIBC_PACKAGE_NAME.to_string(),
-                resolved_package_id: Some(PackageId::new(LIBC_PACKAGE_NAME)),
+                package: dependency.to_string(),
+                resolved_package_id: Some(PackageId::new(dependency)),
                 constraint: None,
                 kind: DependencyKind::Normal,
                 features: Vec::new(),
@@ -393,7 +420,9 @@ impl PackageProvider for RustStdProvider {
 
     fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
         match id.as_str() {
-            STD_PACKAGE_NAME => load_real_std_package(),
+            CORE_PACKAGE_NAME => load_real_std_subcrate(CORE_PACKAGE_NAME),
+            ALLOC_PACKAGE_NAME => load_real_std_subcrate(ALLOC_PACKAGE_NAME),
+            STD_PACKAGE_NAME => load_real_std_subcrate(STD_PACKAGE_NAME),
             LIBC_PACKAGE_NAME => load_embedded_fp_package(
                 LIBC_PACKAGE_NAME,
                 fp_lang::embedded_libc::root_dir(),
@@ -498,8 +527,8 @@ fn cached_std_items() -> HashMap<String, Vec<Item>> {
 /// never built from a possibly-stale cache) and writes the resulting
 /// per-file item map to that path afterward, for `build.rs` to bundle into
 /// the next build.
-fn load_real_std_package() -> ProviderResult<PackageSource> {
-    let package_id = PackageId::new(STD_PACKAGE_NAME);
+fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<PackageSource> {
+    let package_id = PackageId::new(crate_name);
     let root = crate::embedded_std::root_dir();
     let mut descriptors = Vec::new();
     let mut items = Vec::new();
@@ -515,7 +544,19 @@ fn load_real_std_package() -> ProviderResult<PackageSource> {
     };
     let mut fresh_cache: HashMap<String, Vec<Item>> = HashMap::new();
 
+    // Real rustc's sysroot vendors `core`/`alloc`/`std` as independent
+    // crates (each its own crate root, `std`/`alloc` depending on `core`)
+    // rather than one `std` package containing them as sub-modules — this
+    // provider mirrors that instead of wrapping every sub-crate under an
+    // outer `std::` prefix (which produced a doubled `std::std::` crate
+    // root for the `std` facade crate itself, and made the bare
+    // `core`/`alloc` absolute paths real Rust code actually uses resolve
+    // to a different qualified key than where their definitions actually
+    // live).
     for relative_str in crate::embedded_std::module_paths() {
+        if relative_str.split('/').next() != Some(crate_name) {
+            continue;
+        }
         // A file named `tests.rs`/`test.rs` is only ever reachable through
         // its parent's `#[cfg(test)] mod tests;` declaration — real std
         // doesn't restate `#[cfg(test)]` on every item inside such a file,
@@ -537,7 +578,7 @@ fn load_real_std_package() -> ProviderResult<PackageSource> {
         let Some(source) = crate::embedded_std::read(&path) else {
             continue;
         };
-        let module_path = rs_relative_to_module_segments(relative_str);
+        let module_path = rs_relative_to_module_segments(crate_name, relative_str);
         if module_path.is_empty() {
             continue;
         }
@@ -597,29 +638,29 @@ fn load_real_std_package() -> ProviderResult<PackageSource> {
         });
     }
     eprintln!(
-        "fp-rust: real std parse result — {parsed} file(s) parsed, {cache_hits} from cache, {skipped} skipped (parse errors)"
+        "fp-rust: real {crate_name} parse result — {parsed} file(s) parsed, {cache_hits} from cache, {skipped} skipped (parse errors)"
     );
 
     if let Some(dump_path) = dump_path {
         match bincode::serialize(&fresh_cache) {
             Ok(bytes) => match std::fs::write(&dump_path, &bytes) {
                 Ok(()) => eprintln!(
-                    "fp-rust: wrote std parse cache ({} file(s)) to {dump_path}",
+                    "fp-rust: wrote {crate_name} parse cache ({} file(s)) to {dump_path}",
                     fresh_cache.len()
                 ),
-                Err(err) => eprintln!("fp-rust: failed to write std cache to {dump_path}: {err}"),
+                Err(err) => eprintln!("fp-rust: failed to write {crate_name} cache to {dump_path}: {err}"),
             },
-            Err(err) => eprintln!("fp-rust: failed to serialize std cache: {err}"),
+            Err(err) => eprintln!("fp-rust: failed to serialize {crate_name} cache: {err}"),
         }
     }
 
     let module_ids = descriptors.iter().map(|desc| desc.id.clone()).collect();
     let package = PackageDescriptor {
         id: package_id.clone(),
-        name: STD_PACKAGE_NAME.to_string(),
+        name: crate_name.to_string(),
         version: None,
-        manifest_path: VirtualPath::from_path(&root.join("Cargo.toml")),
-        root: VirtualPath::from_path(&root),
+        manifest_path: VirtualPath::from_path(&root.join(crate_name).join("Cargo.toml")),
+        root: VirtualPath::from_path(&root.join(crate_name)),
         metadata: Default::default(),
         modules: module_ids,
     };
@@ -627,7 +668,7 @@ fn load_real_std_package() -> ProviderResult<PackageSource> {
     for descriptor in descriptors {
         graph.insert_module(descriptor);
     }
-    let mut krate = PackageSource::new(package_id, STD_PACKAGE_NAME, graph);
+    let mut krate = PackageSource::new(package_id, crate_name, graph);
     krate.items = items;
     Ok(krate)
 }
@@ -694,24 +735,32 @@ fn load_embedded_fp_package(
     Ok(krate)
 }
 
-/// `core/option.rs` -> `["std", "core", "option"]`, `alloc/vec/mod.rs` ->
-/// `["std", "alloc", "vec"]`, `std/sync/mod.rs` -> `["std", "std", "sync"]`
-/// (the third segment is the real `std` facade crate re-exporting
-/// `core`/`alloc` — kept distinct from the outer `std` *package* name).
-fn rs_relative_to_module_segments(relative: &str) -> Vec<String> {
-    let mut segments: Vec<String> = vec![STD_PACKAGE_NAME.to_string()];
+/// `("core", "core/option.rs")` -> `["core", "option"]`,
+/// `("alloc", "alloc/vec/mod.rs")` -> `["alloc", "vec"]`,
+/// `("std", "std/sync/mod.rs")` -> `["std", "sync"]` — `relative`'s own
+/// leading path segment is always `crate_name` (the caller already
+/// filtered `module_paths()` down to that crate's own files), so it's
+/// dropped and replaced by `crate_name` itself as the qualified path's
+/// root, rather than nested a second time underneath it.
+fn rs_relative_to_module_segments(crate_name: &str, relative: &str) -> Vec<String> {
+    let mut segments: Vec<String> = vec![crate_name.to_string()];
     let stem = relative.trim_end_matches(".rs");
     let parts: Vec<&str> = stem.split('/').collect();
     // `<crate>/lib.rs` is the crate root, exactly like `<module>/mod.rs`
     // collapses to that module's own path — real Cargo semantics, and
     // the only place `lib.rs` legitimately appears in a crate at all.
     // Left uncollapsed, a top-level `pub use core::result;` in
-    // `std/std/lib.rs` registers under `std::std::lib::result` instead
-    // of `std::std::result`, making it unreachable by anything resolving
+    // `std/lib.rs` registers under `std::lib::result` instead of
+    // `std::result`, making it unreachable by anything resolving
     // `crate::result` from that crate (the exact gap that broke
     // `Ok`/`Err`/`Some`/`None` resolution for every consumer of `std`).
     let last_index = parts.len().saturating_sub(1);
     for (i, part) in parts.into_iter().enumerate() {
+        if i == 0 {
+            // The crate-root directory itself (`core`/`alloc`/`std`) —
+            // already accounted for by seeding `segments` with `crate_name`.
+            continue;
+        }
         if part.is_empty() || part == "mod" || (part == "lib" && i == last_index) {
             continue;
         }
