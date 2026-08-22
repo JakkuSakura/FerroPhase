@@ -844,8 +844,33 @@ impl MirLowering {
     fn register_all_dependency_adts(&mut self) {
         let diagnostics_before = self.diagnostics.len();
         let had_errors_before = self.has_errors;
-        let def_paths = self.hir_def_paths.clone();
-        let items: Vec<hir::Item> = self.hir_def_map.values().cloned().collect();
+        // `mem::take` instead of `.clone()` — `register_struct`/
+        // `register_enum` only ever read `def_paths` (never touch
+        // `self.hir_def_paths`), so there's no need to pay for cloning
+        // the whole workspace-wide def-path table just to satisfy the
+        // borrow checker; put it back once done.
+        let def_paths = std::mem::take(&mut self.hir_def_paths);
+        // Only `Struct`/`Enum` items are ever registered below — cloning
+        // every item regardless of kind (as this used to) paid for a
+        // full deep-clone of every dependency function/impl body in the
+        // workspace (by far the largest items) merely to inspect its
+        // `ItemKind` tag and then discard it. `register_struct`/
+        // `register_enum` themselves already early-return once a
+        // `def_id` is registered, so on a `MirLowering` instance that
+        // does span multiple registration passes, repeating this scan is
+        // cheap; on a *fresh* instance (as `transform_comptime_request`
+        // creates once per comptime request — see `MirLowering::new()`'s
+        // callers) every dependency struct/enum is still cloned once per
+        // request, since there is no cross-request cache today. Fully
+        // eliminating that repetition needs a cache that outlives a
+        // single `MirLowering` instance (e.g. on `CompilerState`), which
+        // is out of scope for this pass.
+        let items: Vec<hir::Item> = self
+            .hir_def_map
+            .values()
+            .filter(|item| matches!(&item.kind, hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_)))
+            .cloned()
+            .collect();
         for item in &items {
             match &item.kind {
                 hir::ItemKind::Struct(def) => {
@@ -857,6 +882,7 @@ impl MirLowering {
                 _ => {}
             }
         }
+        self.hir_def_paths = def_paths;
         self.diagnostics.truncate(diagnostics_before);
         self.has_errors = had_errors_before;
     }

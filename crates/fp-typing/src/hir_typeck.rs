@@ -59,6 +59,19 @@ pub struct TypingShared {
     /// `TyKind::Adt` with the same `did`), so this index lets that lookup
     /// skip straight to the real candidates.
     impl_items_by_receiver_def: RefCell<Option<Rc<HashMap<hir::DefId, Vec<usize>>>>>,
+    /// Lazily-built, memoized: a member `DefId` (an impl method/
+    /// assoc-const, or an enum variant) -> its enclosing *top-level*
+    /// item's own `DefId` (itself a key in `program.def_map`, unlike the
+    /// member). Same-package only — mirrors `resolve_top_level_def_id`'s
+    /// and `expr_path_ty`'s two associated-lookup fallbacks' original
+    /// scope, which never looked past `program.items` either (a
+    /// cross-package impl method has its own, separate fallback via
+    /// `typing_context.env_ctx.find_hir_impl_method`). Fixes the same
+    /// O(items) linear scan (with a nested per-impl/per-enum scan)
+    /// `impl_items_by_receiver_def` already fixed for `method_output` —
+    /// previously repeated once per same-package item/const reference
+    /// expression and once per unresolved value-path expression.
+    member_to_owning_item: RefCell<Option<Rc<HashMap<hir::DefId, hir::DefId>>>>,
     /// Memoized `function_signature` results, keyed by the function's own
     /// `output` type's `HirId` (stable per declared function, independent
     /// of any particular call site). `function_signature` only ever
@@ -87,6 +100,7 @@ impl TypingShared {
             executor,
             impl_lookup_items: RefCell::new(None),
             impl_items_by_receiver_def: RefCell::new(None),
+            member_to_owning_item: RefCell::new(None),
             function_signature_cache: RefCell::new(HashMap::new()),
         })
     }
@@ -95,6 +109,35 @@ impl TypingShared {
     /// resolving a stalled task's key back to a human-readable item path).
     pub fn program(&self) -> &hir::Package {
         &self.program
+    }
+
+    /// Lazily builds and memoizes `member_to_owning_item` (see its doc
+    /// comment) on first use, then returns a cheap `Rc` clone on every
+    /// later call.
+    fn member_to_owning_item(&self) -> Rc<HashMap<hir::DefId, hir::DefId>> {
+        if self.member_to_owning_item.borrow().is_none() {
+            let mut index = HashMap::new();
+            for item in &self.program.items {
+                match &item.kind {
+                    hir::ItemKind::Impl(impl_item) => {
+                        for member in &impl_item.items {
+                            index.insert(member.def_id, item.def_id);
+                        }
+                    }
+                    hir::ItemKind::Enum(enum_def) => {
+                        for variant in &enum_def.variants {
+                            index.insert(variant.def_id, item.def_id);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            *self.member_to_owning_item.borrow_mut() = Some(Rc::new(index));
+        }
+        self.member_to_owning_item
+            .borrow()
+            .clone()
+            .expect("just populated above")
     }
 }
 
@@ -233,19 +276,17 @@ impl Drop for GenericScope<'_> {
 /// impl member's `def_id` needs this extra step before it can be used as a
 /// `spawn_item_task`/`typecheck_item` key. Returns `def_id` unchanged if
 /// it's already a top-level item (the common case, checked first so this
-/// stays O(1) except for actual impl members).
-fn resolve_top_level_def_id(program: &hir::Package, def_id: hir::DefId) -> hir::DefId {
-    if program.def_map.contains_key(&def_id) {
+/// stays O(1) except for actual impl members) — an O(1) index lookup via
+/// `TypingShared::member_to_owning_item` otherwise (see its doc comment).
+fn resolve_top_level_def_id(shared: &TypingShared, def_id: hir::DefId) -> hir::DefId {
+    if shared.program.def_map.contains_key(&def_id) {
         return def_id;
     }
-    for item in &program.items {
-        if let hir::ItemKind::Impl(impl_item) = &item.kind {
-            if impl_item.items.iter().any(|member| member.def_id == def_id) {
-                return item.def_id;
-            }
-        }
-    }
-    def_id
+    shared
+        .member_to_owning_item()
+        .get(&def_id)
+        .copied()
+        .unwrap_or(def_id)
 }
 
 /// Spawn one type-checking task per top-level item in `program`, sharing
@@ -291,7 +332,7 @@ pub fn finish_package_typecheck(shared: &Rc<TypingShared>) -> (hir::Package, Typ
 /// per-package spawn loop) share the same in-flight/completed attempt
 /// instead of re-checking it.
 fn spawn_item_task(shared: &Rc<TypingShared>, def_id: hir::DefId) -> TaskHandle<()> {
-    let def_id = resolve_top_level_def_id(&shared.program, def_id);
+    let def_id = resolve_top_level_def_id(&shared, def_id);
     let key = format!("typecheck:{def_id:?}");
     let shared = shared.clone();
     shared
@@ -1955,14 +1996,20 @@ impl HirTypeChecker {
             )));
         };
         let Some(item) = self.shared.program.def_map.get(&def_id).cloned() else {
-            let associated = self.shared.program.items.iter().find_map(|item| {
-                let hir::ItemKind::Impl(impl_item) = &item.kind else {
-                    return None;
-                };
-                impl_item.items.iter().find_map(|impl_member| {
-                    if impl_member.def_id != def_id {
+            let associated = self
+                .shared
+                .member_to_owning_item()
+                .get(&def_id)
+                .copied()
+                .and_then(|owner_id| self.shared.program.def_map.get(&owner_id))
+                .and_then(|item| {
+                    let hir::ItemKind::Impl(impl_item) = &item.kind else {
                         return None;
-                    }
+                    };
+                    let impl_member = impl_item
+                        .items
+                        .iter()
+                        .find(|member| member.def_id == def_id)?;
                     let hir::ImplItemKind::Method(function) = &impl_member.kind else {
                         return None;
                     };
@@ -1972,8 +2019,7 @@ impl HirTypeChecker {
                         impl_item.items.clone(),
                         function.clone(),
                     ))
-                })
-            });
+                });
             if let Some((generics, self_ty, impl_items, function)) = associated {
                 let mut scope = self.generic_scope(&generics);
                 let self_ty = scope.check_type_expr(&self_ty)?;
@@ -2003,16 +2049,14 @@ impl HirTypeChecker {
                     return result;
                 }
             }
-            let matched_enum_item = self.shared.program.items.iter().find_map(|item| {
-                let hir::ItemKind::Enum(enum_def) = &item.kind else {
-                    return None;
-                };
-                enum_def
-                    .variants
-                    .iter()
-                    .any(|variant| variant.def_id == def_id)
-                    .then(|| item.clone())
-            });
+            let matched_enum_item = self
+                .shared
+                .member_to_owning_item()
+                .get(&def_id)
+                .copied()
+                .and_then(|owner_id| self.shared.program.def_map.get(&owner_id))
+                .filter(|item| matches!(&item.kind, hir::ItemKind::Enum(_)))
+                .cloned();
             if let Some(enum_item) = matched_enum_item {
                 let hir::ItemKind::Enum(enum_def) = &enum_item.kind else {
                     unreachable!("matched_enum_item only holds ItemKind::Enum items")
