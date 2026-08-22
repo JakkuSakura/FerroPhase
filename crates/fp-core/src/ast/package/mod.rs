@@ -136,7 +136,6 @@ pub mod provider;
 
 use crate::ast::{FunctionSignature, Item, ItemId, MethodSignature, TypeEnum, TypeStruct};
 use crate::hir::PackageId as HirPackageId;
-use crate::lir::{LirCompileUnit, LirWorkspace};
 use crate::ast::path::QualifiedPath;
 use std::collections::{HashMap, HashSet};
 
@@ -294,12 +293,8 @@ pub struct CompiledPackage {
     /// All known module paths within this crate.
     pub module_paths: HashSet<QualifiedPath>,
 
-    /// Compiled LIR modules for this crate — one unit per module.
-    /// The interpreter searches across all units for function definitions.
-    pub lir_units: Vec<LirCompileUnit>,
-
-    /// Fine-grained LIR artifacts owned by this package.
-    pub lir_workspace: LirWorkspace,
+    /// This package's LIR content.
+    pub lir: crate::lir::LirPackage,
 
     /// HIR definitions published by this package. `Rc`, not owned — every
     /// dependent package's `WorkspaceContext::hir_definitions()` call
@@ -307,22 +302,6 @@ pub struct CompiledPackage {
     /// O(1), unlike cloning the whole `Package` it points to (every item,
     /// `def_map`, `def_paths`, `module_tree`) on every single call.
     pub hir_program: Option<std::rc::Rc<crate::hir::Package>>,
-
-    /// Struct `DefId`s in `hir_program`, keyed by name — built once by
-    /// `set_hir_program` alongside `hir_program` itself, so cross-package
-    /// HIR struct lookups (`WorkspaceContext::find_hir_struct_def_id`) are
-    /// an O(1) hash lookup per package instead of a linear scan over every
-    /// item every time.
-    pub hir_struct_defs_by_name: HashMap<String, crate::hir::DefId>,
-
-    /// For every method `ImplItem` in `hir_program`, its own `DefId` mapped
-    /// to the index (in `hir_program.items`) of the enclosing `impl` item —
-    /// built once by `set_hir_program` alongside `hir_program` itself, so
-    /// cross-package HIR method lookups
-    /// (`WorkspaceContext::find_hir_impl_method`) are an O(1) hash lookup
-    /// per package instead of a linear scan over every impl block and its
-    /// members every time.
-    pub hir_impl_method_item_index: HashMap<crate::hir::DefId, usize>,
 
     /// For each item in `items` (keyed by its own qualified path), the
     /// qualified paths of every other definition it references
@@ -335,8 +314,8 @@ pub struct CompiledPackage {
     /// the raw lifted map.
     pub referenced_paths_by_path: Option<HashMap<crate::hir::DefPath, Vec<crate::hir::DefPath>>>,
 
-    /// MIR produced for this package.
-    pub mir_program: Option<crate::mir::Program>,
+    /// This package's MIR content.
+    pub mir: crate::mir::MirPackage,
 
     /// Fully-qualified HIR lookup entries exported by this package.
     pub hir_exports: HashMap<String, crate::hir::Res>,
@@ -350,20 +329,6 @@ pub struct CompiledPackage {
 
     /// All parsed source items with their fully qualified source paths.
     pub items: Vec<PackageItem>,
-
-    /// MIR struct field types keyed by DefId, computed during MIR lowering.
-    pub mir_struct_fields: HashMap<crate::mir::DefId, Vec<crate::mir::Ty>>,
-    pub mir_adt_defs: HashMap<crate::hir::DefId, crate::mir::ty::AdtDef>,
-    /// Top-level consts resolved by direct constant-folding during MIR
-    /// lowering (see `MirLowering::lower_const`'s fast path) — a
-    /// directly-foldable const (no `let`, no side effects requiring the
-    /// real interpreter) never becomes a comptime entry, so without this,
-    /// nothing would ever surface its value to a caller that only knows
-    /// how to ask "what did evaluating this package's comptime entries
-    /// produce" (e.g. `evaluate_comptime_lir`'s "no comptime entries at
-    /// all" case, which otherwise has nothing to fall back to but an
-    /// arbitrary placeholder).
-    pub mir_resolved_const_values: HashMap<String, crate::mir::Constant>,
 }
 
 impl CompiledPackage {
@@ -390,46 +355,20 @@ impl CompiledPackage {
             trait_defs: HashSet::new(),
             method_sigs: HashMap::new(),
             module_paths,
-            lir_units: Vec::new(),
-            lir_workspace: LirWorkspace::new(data_layout),
+            lir: crate::lir::LirPackage::new(data_layout),
             hir_program: None,
-            hir_struct_defs_by_name: HashMap::new(),
-            hir_impl_method_item_index: HashMap::new(),
             referenced_paths_by_path: None,
-            mir_program: None,
+            mir: crate::mir::MirPackage::default(),
             hir_exports: HashMap::new(),
             type_alias_exports: HashMap::new(),
             items: Vec::new(),
-            mir_struct_fields: HashMap::new(),
-            mir_adt_defs: HashMap::new(),
-            mir_resolved_const_values: HashMap::new(),
         }
     }
 
-    /// Publishes this package's HIR program, building
-    /// `hir_struct_defs_by_name`/`hir_impl_method_item_index` alongside it
-    /// in the same single pass over `program.items` — the one time this
-    /// data is walked, rather than once per cross-package lookup.
-    pub fn set_hir_program(&mut self, program: crate::hir::Package) {
-        self.hir_struct_defs_by_name.clear();
-        self.hir_impl_method_item_index.clear();
-        for (index, item) in program.items.iter().enumerate() {
-            match &item.kind {
-                crate::hir::ItemKind::Struct(def) => {
-                    self.hir_struct_defs_by_name
-                        .insert(def.name.as_str().to_string(), item.def_id);
-                }
-                crate::hir::ItemKind::Impl(impl_item) => {
-                    for impl_member in &impl_item.items {
-                        if matches!(impl_member.kind, crate::hir::ImplItemKind::Method(_)) {
-                            self.hir_impl_method_item_index
-                                .insert(impl_member.def_id, index);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
+    /// Publishes this package's HIR program, building its derived lookup
+    /// indices (`hir::Package::index_derived_lookups`) in the same pass.
+    pub fn set_hir_program(&mut self, mut program: crate::hir::Package) {
+        program.index_derived_lookups();
         self.hir_program = Some(std::rc::Rc::new(program));
     }
 }

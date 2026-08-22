@@ -149,7 +149,7 @@ impl CompilerDriver {
         package_id: &PackageId,
     ) -> Result<fp_bytecode::BytecodeProgram, CompilerDriverError> {
         let package = self.compile_package(package_id).await?;
-        let mir = package.borrow().mir_program.clone().ok_or_else(|| {
+        let mir = package.borrow().mir.program.clone().ok_or_else(|| {
             CompilerDriverError::InternalCompilerError(format!(
                 "package {package_id} has no MIR program"
             ))
@@ -285,7 +285,7 @@ impl CompilerDriver {
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
         let function = self.resolve_entrypoint_def_id(package_id, module_path, function_name)?;
         let lir_id = Self::package_module_lir_id(package_id, module_path);
-        let mut lir = package.borrow().lir_workspace.to_program();
+        let mut lir = package.borrow().lir.own_artifacts.to_program();
         Self::rename_lir_function(&mut lir, function, function_name);
         self.state.borrow_mut().insert_lir(lir_id.clone(), lir);
         self.state.borrow().lir(&lir_id)?;
@@ -441,7 +441,7 @@ impl CompilerDriver {
                     if !units.is_empty() {
                         Self::publish_lir_units(&package, package_id, &units)?;
 
-                        let lir = package.borrow().lir_workspace.to_program();
+                        let lir = package.borrow().lir.own_artifacts.to_program();
                         if !lir.comptime_entries.is_empty() {
                             let module_path = QualifiedPath::new(Vec::new());
                             let lir_id = Self::package_module_lir_id(package_id, &module_path);
@@ -542,7 +542,7 @@ impl CompilerDriver {
         package_id: &PackageId,
         units: &[fp_core::lir::LirCompileUnit],
     ) -> Result<(), CompilerDriverError> {
-        let layout = package.borrow().lir_workspace.data_layout.clone();
+        let layout = package.borrow().lir.own_artifacts.data_layout.clone();
         let mut workspace = fp_core::lir::LirWorkspace::new(layout);
         for unit in units {
             workspace
@@ -554,8 +554,7 @@ impl CompilerDriver {
                 .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         }
         let mut package = package.borrow_mut();
-        package.lir_units = units.to_vec();
-        package.lir_workspace = workspace;
+        package.lir.own_artifacts = workspace;
         Ok(())
     }
 
@@ -800,15 +799,15 @@ impl CompilerDriver {
                         .env_ctx
                         .compiled_package(&current_package_id)
                     {
-                        package.borrow_mut().mir_program = Some(self.state.borrow().mir(&mir_id)?.clone());
+                        package.borrow_mut().mir.program = Some(self.state.borrow().mir(&mir_id)?.clone());
                         package
                             .borrow_mut()
-                            .mir_struct_fields
+                            .mir.struct_fields
                             .extend(struct_layouts.clone());
-                        package.borrow_mut().mir_adt_defs.extend(adt_defs.clone());
+                        package.borrow_mut().mir.adt_defs.extend(adt_defs.clone());
                         package
                             .borrow_mut()
-                            .mir_resolved_const_values
+                            .mir.resolved_const_values
                             .extend(resolved_const_values);
                     }
                     match self.lower_to_lir(
@@ -858,15 +857,15 @@ impl CompilerDriver {
             .env_ctx
             .compiled_package(&current_package_id)
         {
-            package.borrow_mut().mir_program = Some(self.state.borrow().mir(&mir_id)?.clone());
+            package.borrow_mut().mir.program = Some(self.state.borrow().mir(&mir_id)?.clone());
             package
                 .borrow_mut()
-                .mir_struct_fields
+                .mir.struct_fields
                 .extend(struct_layouts);
-            package.borrow_mut().mir_adt_defs.extend(adt_defs.clone());
+            package.borrow_mut().mir.adt_defs.extend(adt_defs.clone());
             package
                 .borrow_mut()
-                .mir_resolved_const_values
+                .mir.resolved_const_values
                 .extend(resolved_const_values);
         }
         // `lower_to_lir` falls back to the workspace's other packages'
@@ -944,10 +943,10 @@ impl CompilerDriver {
             self.lower_to_mir(&hir_id, &fqp).await?;
         {
             let mut package = package.borrow_mut();
-            package.mir_program = Some(self.state.borrow().mir(&mir_id)?.clone());
-            package.mir_struct_fields.extend(struct_layouts);
-            package.mir_adt_defs.extend(adt_defs.clone());
-            package.mir_resolved_const_values.extend(resolved_const_values);
+            package.mir.program = Some(self.state.borrow().mir(&mir_id)?.clone());
+            package.mir.struct_fields.extend(struct_layouts);
+            package.mir.adt_defs.extend(adt_defs.clone());
+            package.mir.resolved_const_values.extend(resolved_const_values);
         }
         // See the identical comment in `compile_items_to_lir_units` —
         // `lower_to_lir` falls back to the workspace's other packages
@@ -1238,11 +1237,11 @@ impl CompilerDriver {
             .env_ctx
             .compiled_package(&package_id)
         {
-            package.borrow_mut().mir_struct_fields.extend(struct_layouts);
-            package.borrow_mut().mir_adt_defs.extend(adt_defs);
+            package.borrow_mut().mir.struct_fields.extend(struct_layouts);
+            package.borrow_mut().mir.adt_defs.extend(adt_defs);
             package
                 .borrow_mut()
-                .mir_resolved_const_values
+                .mir.resolved_const_values
                 .extend(resolved_const_values);
         }
         let lir_id = self.lower_to_lir(
@@ -1324,7 +1323,7 @@ impl CompilerDriver {
                 .typing_ctx
                 .env_ctx
                 .compiled_package(&package_id)
-                .map(|package| package.borrow().mir_resolved_const_values.clone())
+                .map(|package| package.borrow().mir.resolved_const_values.clone())
                 .unwrap_or_default();
             let mut last_value = None;
             for (key, constant) in &folded {
@@ -1353,7 +1352,7 @@ impl CompilerDriver {
         let dependency_borrows: Vec<_> = dependency_packages.iter().map(|p| p.borrow()).collect();
         let mut workspaces: Vec<&fp_core::lir::LirWorkspace> = dependency_borrows
             .iter()
-            .map(|package| &package.lir_workspace)
+            .map(|package| &package.lir.own_artifacts)
             .collect();
         // This package's own just-compiled `lir` may not be stored in any
         // package's `lir_workspace` yet — fall back to a small
@@ -1731,7 +1730,7 @@ impl CompilerDriver {
         // since `function_def_map` was previously only ever populated from
         // this package's own MIR.
         for (dep_id, dep_package) in &dependency_packages {
-            if let Some(dep_mir) = dep_package.borrow().mir_program.as_ref() {
+            if let Some(dep_mir) = dep_package.borrow().mir.program.as_ref() {
                 lowering.predeclare_dependency_function_signatures(dep_mir, dep_id.clone());
             }
         }
@@ -1847,7 +1846,7 @@ impl CompilerDriver {
     ) -> Option<mir::ty::AdtDef> {
         packages
             .iter()
-            .find_map(|p| p.borrow().mir_adt_defs.get(&def_id).cloned())
+            .find_map(|p| p.borrow().mir.adt_defs.get(&def_id).cloned())
     }
 
     fn value_to_mir_constant(

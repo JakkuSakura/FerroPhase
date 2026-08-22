@@ -174,7 +174,7 @@ impl LirGenerator {
 
     fn lookup_adt_def(&self, def_id: &mir::DefId) -> Option<mir::ty::AdtDef> {
         for package in &self.dependency_packages {
-            if let Some(def) = package.borrow().mir_adt_defs.get(def_id) {
+            if let Some(def) = package.borrow().mir.adt_defs.get(def_id) {
                 return Some(def.clone());
             }
         }

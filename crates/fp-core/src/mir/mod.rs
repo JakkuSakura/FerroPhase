@@ -22,6 +22,46 @@ pub struct Program {
     pub bodies: HashMap<BodyId, Body>,
 }
 
+/// One compiled package's MIR content — its lowered `Program` plus the
+/// derived tables `MirLowering` produces alongside it. Pairs with `Program`
+/// the same way `hir::Package` pairs with a package's HIR content; several
+/// of these live on `CompiledPackage`'s `mir` field, one per package.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MirPackage {
+    pub program: Option<Program>,
+    /// Struct field types keyed by `DefId`, computed during MIR lowering.
+    pub struct_fields: HashMap<DefId, Vec<Ty>>,
+    pub adt_defs: HashMap<crate::hir::DefId, ty::AdtDef>,
+    /// Top-level consts resolved by direct constant-folding during MIR
+    /// lowering (see `MirLowering::lower_const`'s fast path) — a
+    /// directly-foldable const (no `let`, no side effects requiring the
+    /// real interpreter) never becomes a comptime entry, so without this,
+    /// nothing would ever surface its value to a caller that only knows
+    /// how to ask "what did evaluating this package's comptime entries
+    /// produce" (e.g. `evaluate_comptime_lir`'s "no comptime entries at
+    /// all" case, which otherwise has nothing to fall back to but an
+    /// arbitrary placeholder).
+    pub resolved_const_values: HashMap<String, Constant>,
+}
+
+impl MirPackage {
+    pub fn set_program(&mut self, program: Program) {
+        self.program = Some(program);
+    }
+
+    pub fn extend_struct_fields(&mut self, entries: impl IntoIterator<Item = (DefId, Vec<Ty>)>) {
+        self.struct_fields.extend(entries);
+    }
+
+    pub fn extend_adt_defs(&mut self, entries: impl IntoIterator<Item = (crate::hir::DefId, ty::AdtDef)>) {
+        self.adt_defs.extend(entries);
+    }
+
+    pub fn extend_resolved_const_values(&mut self, entries: impl IntoIterator<Item = (String, Constant)>) {
+        self.resolved_const_values.extend(entries);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {
     pub mir_id: MirId,

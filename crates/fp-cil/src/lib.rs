@@ -19,7 +19,7 @@ fn package_mir(
     let package = workspace.compiled_package(package_id).ok_or_else(|| {
         fp_core::error::Error::from(format!("package `{package_id}` is unavailable"))
     })?;
-    package.borrow().mir_program.clone().ok_or_else(|| {
+    package.borrow().mir.program.clone().ok_or_else(|| {
         fp_core::error::Error::from(format!("package `{package_id}` has no MIR program"))
     })
 }

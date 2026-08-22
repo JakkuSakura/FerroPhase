@@ -149,6 +149,20 @@ pub struct Package {
     /// could never resolve at all: nothing else in the pipeline gives a
     /// non-materializing alias any HIR item to look up.
     pub type_alias_targets: HashMap<DefId, TypeExpr>,
+    /// Struct `DefId`s in `items`, keyed by name — built once by
+    /// `index_derived_lookups` alongside this package's other derived
+    /// tables, so cross-package HIR struct lookups
+    /// (`WorkspaceContext::find_hir_struct_def_id`) are an O(1) hash lookup
+    /// per package instead of a linear scan over every item every time.
+    pub struct_defs_by_name: HashMap<String, DefId>,
+    /// For every method `ImplItem` in `items`, its own `DefId` mapped to the
+    /// index (in `items`) of the enclosing `impl` item — built once by
+    /// `index_derived_lookups` alongside this package's other derived
+    /// tables, so cross-package HIR method lookups
+    /// (`WorkspaceContext::find_hir_impl_method`) are an O(1) hash lookup
+    /// per package instead of a linear scan over every impl block and its
+    /// members every time.
+    pub impl_method_item_index: HashMap<DefId, usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -813,6 +827,8 @@ impl Package {
             op_defs: HashMap::new(),
             intrinsic_defs: HashMap::new(),
             type_alias_targets: HashMap::new(),
+            struct_defs_by_name: HashMap::new(),
+            impl_method_item_index: HashMap::new(),
         }
     }
 
@@ -827,6 +843,31 @@ impl Package {
         let id = self.next_hir_id;
         self.next_hir_id += 1;
         HirId::new(package_id, id)
+    }
+
+    /// Builds `struct_defs_by_name`/`impl_method_item_index` in one pass
+    /// over `items` — the one time this data is walked, rather than once
+    /// per cross-package lookup. Called once, right after this package's
+    /// HIR is finalized (see `CompiledPackage::set_hir_program`).
+    pub fn index_derived_lookups(&mut self) {
+        self.struct_defs_by_name.clear();
+        self.impl_method_item_index.clear();
+        for (index, item) in self.items.iter().enumerate() {
+            match &item.kind {
+                ItemKind::Struct(def) => {
+                    self.struct_defs_by_name
+                        .insert(def.name.as_str().to_string(), item.def_id);
+                }
+                ItemKind::Impl(impl_item) => {
+                    for impl_member in &impl_item.items {
+                        if matches!(impl_member.kind, ImplItemKind::Method(_)) {
+                            self.impl_method_item_index.insert(impl_member.def_id, index);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 }
 

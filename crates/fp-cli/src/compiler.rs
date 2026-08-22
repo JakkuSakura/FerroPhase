@@ -578,7 +578,7 @@ impl LoweredProgram {
     fn mir(&self) -> Result<fp_core::mir::Program> {
         let package = self.compiled_package()?;
         let package = package.borrow();
-        package.mir_program.clone().ok_or_else(|| {
+        package.mir.program.clone().ok_or_else(|| {
             CliError::Compilation(format!(
                 "compiled package `{}` contains no MIR program",
                 self.package_id

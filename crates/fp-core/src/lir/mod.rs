@@ -128,6 +128,14 @@ pub enum LirArtifactKind {
 ///
 /// The workspace is deliberately artifact-oriented. A flattened `LirProgram`
 /// is produced only at a backend boundary that requires one.
+///
+/// Used in two conventions, both with this identical shape: **single-package**
+/// (holds exactly one `PackageId`'s own artifacts — this is what `LirPackage`
+/// embeds, one per package) and **merged** (a unioned view across every
+/// dependency, built only by `WorkspaceContext::merged_lir_program` via
+/// `add_workspace`). The `(PackageId, Name)`-keyed indices support both
+/// conventions the same way; nothing else distinguishes which mode a given
+/// instance is in beyond how it was constructed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirWorkspace {
     pub data_layout: LirDataLayout,
@@ -306,6 +314,24 @@ impl LirWorkspace {
             }
         }
         program
+    }
+}
+
+/// One compiled package's LIR content — pairs with `LirProgram` the same way
+/// `hir::Package`/`mir::MirPackage` pair with their own layer's `Program`
+/// type. `own_artifacts` is always single-package (see `LirWorkspace`'s doc
+/// comment) — built fresh from just this package's own compiled units by
+/// `CompilerDriver::publish_lir_units`, never merged with a dependency's.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LirPackage {
+    pub own_artifacts: LirWorkspace,
+}
+
+impl LirPackage {
+    pub fn new(data_layout: LirDataLayout) -> Self {
+        Self {
+            own_artifacts: LirWorkspace::new(data_layout),
+        }
     }
 }
 
