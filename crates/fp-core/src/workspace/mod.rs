@@ -242,6 +242,24 @@ pub struct WorkspaceContext {
     /// std was loaded. Cached alongside the total export count it was
     /// built from across all packages; rebuilt only when that total grows.
     export_suffix_index: RefCell<Option<(usize, HashMap<String, Vec<(String, crate::hir::Res)>>)>>,
+    /// Memoized `find_hir_impl_method` results, keyed by the method's own
+    /// `DefId` — that lookup used to clone the whole owning impl's
+    /// `items: Vec<ImplItem>` (every one of its sibling methods included)
+    /// on every single call, even though the same `DefId` always resolves
+    /// to the same impl (a package's published HIR never changes once
+    /// set). `Rc`, not owned, so a repeat caller gets a cheap `Rc` clone
+    /// instead of re-paying for that.
+    impl_method_cache: RefCell<
+        HashMap<
+            crate::hir::DefId,
+            Rc<(
+                crate::hir::Generics,
+                crate::hir::TypeExpr,
+                Vec<crate::hir::ImplItem>,
+                crate::hir::Function,
+            )>,
+        >,
+    >,
 }
 
 impl WorkspaceContext {
@@ -255,6 +273,7 @@ impl WorkspaceContext {
             hir_packages: RefCell::new(HashMap::new()),
             sorted_packages_cache: RefCell::new(None),
             export_suffix_index: RefCell::new(None),
+            impl_method_cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -286,6 +305,7 @@ impl WorkspaceContext {
             hir_packages: RefCell::new(HashMap::new()),
             sorted_packages_cache: RefCell::new(None),
             export_suffix_index: RefCell::new(None),
+            impl_method_cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -418,15 +438,27 @@ impl WorkspaceContext {
     /// generics/self-type/items/function the caller needs — instead of
     /// `hir_definitions()`'s full clone of every dependency package's
     /// whole HIR `Program`.
+    ///
+    /// Memoized by `def_id` in `impl_method_cache` (see its doc comment):
+    /// a package's published HIR never changes, so the same `def_id`
+    /// always resolves to the same impl — this used to re-clone the whole
+    /// owning impl's `items: Vec<ImplItem>` on every single call (once per
+    /// cross-package method-call/UFCS-call expression, e.g. every
+    /// `Vec::new()`/`String::from(..)` when compiling against std).
     pub fn find_hir_impl_method(
         &self,
         def_id: crate::hir::DefId,
-    ) -> Option<(
-        crate::hir::Generics,
-        crate::hir::TypeExpr,
-        Vec<crate::hir::ImplItem>,
-        crate::hir::Function,
-    )> {
+    ) -> Option<
+        Rc<(
+            crate::hir::Generics,
+            crate::hir::TypeExpr,
+            Vec<crate::hir::ImplItem>,
+            crate::hir::Function,
+        )>,
+    > {
+        if let Some(cached) = self.impl_method_cache.borrow().get(&def_id) {
+            return Some(cached.clone());
+        }
         let package = self.hir_packages.borrow().get(&def_id.package_id)?.clone();
         let package = package.borrow();
         let &item_index = package.hir_impl_method_item_index.get(&def_id)?;
@@ -444,12 +476,16 @@ impl WorkspaceContext {
                 _ => None,
             }
         })?;
-        Some((
+        let entry = Rc::new((
             impl_item.generics.clone(),
             impl_item.self_ty.clone(),
             impl_item.items.clone(),
             function,
-        ))
+        ));
+        self.impl_method_cache
+            .borrow_mut()
+            .insert(def_id, entry.clone());
+        Some(entry)
     }
 
     /// Cross-package counterpart to `hir_typeck::expr_path_ty`'s own

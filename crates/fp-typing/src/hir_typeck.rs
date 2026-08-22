@@ -2126,16 +2126,18 @@ impl HirTypeChecker {
             if let Some(context) = &self.shared.typing_context {
                 // Borrows each dependency package just long enough to scan
                 // its HIR items in place, instead of `hir_definitions()`'s
-                // full clone of every package's whole HIR `Program`.
-                if let Some((generics, self_ty, impl_items, function)) =
-                    context.env_ctx.find_hir_impl_method(def_id)
-                {
-                    let mut scope = self.generic_scope(&generics);
-                    let self_ty = scope.check_type_expr(&self_ty)?;
+                // full clone of every package's whole HIR `Program`. The
+                // `Rc` this returns is itself memoized by `def_id` (see
+                // `WorkspaceContext::impl_method_cache`'s doc comment), so
+                // everything below borrows out of it rather than cloning.
+                if let Some(cached) = context.env_ctx.find_hir_impl_method(def_id) {
+                    let (generics, self_ty, impl_items, function) = &*cached;
+                    let mut scope = self.generic_scope(generics);
+                    let self_ty = scope.check_type_expr(self_ty)?;
                     scope.self_types.push(self_ty);
-                    let assoc_types = scope.impl_assoc_types(&impl_items)?;
+                    let assoc_types = scope.impl_assoc_types(impl_items)?;
                     scope.assoc_types.push(assoc_types);
-                    let result = scope.function_signature(&function);
+                    let result = scope.function_signature(function);
                     scope.assoc_types.pop();
                     scope.self_types.pop();
                     return result;
@@ -2440,7 +2442,7 @@ impl HirTypeChecker {
                         .typing_context
                         .as_ref()
                         .and_then(|context| context.env_ctx.find_hir_impl_method(def_id))
-                        .map(|(_, _, _, function)| function)
+                        .map(|cached| cached.3.clone())
                 }),
         };
         let Some(function) = function else {
