@@ -35,7 +35,7 @@ impl GoAsmEmitter {
 }
 
 impl fp_core::backend::TargetBackend for GoAsmEmitter {
-    fn compile_package(
+    fn emit_package_artifact(
         &self,
         workspace: &fp_core::workspace::WorkspaceContext,
         package_id: &fp_core::package::PackageId,

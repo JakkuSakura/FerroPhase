@@ -22,7 +22,7 @@ pub struct JvmBackend {
 }
 
 impl fp_core::backend::TargetBackend for JvmBackend {
-    fn compile_package(
+    fn emit_package_artifact(
         &self,
         workspace: &fp_core::workspace::WorkspaceContext,
         package_id: &fp_core::package::PackageId,
@@ -100,7 +100,7 @@ impl fp_core::backend::TargetBackend for JvmBackend {
 impl JvmBackend {
     /// Writes an already-compiled `.class`/`.jar`'s raw bytes back out,
     /// repackaging class<->jar to match `self.output`'s requested
-    /// extension — the same decision `compile_package`'s normal path makes
+    /// extension — the same decision `emit_package_artifact`'s normal path makes
     /// from freshly-lowered bytes, just skipping straight to the bytes
     /// this package already carries.
     fn write_passthrough(&self, class_stem: &str, bytes: &[u8]) -> fp_core::error::Result<()> {

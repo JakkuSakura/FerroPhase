@@ -2687,13 +2687,13 @@ fn lir_ty_to_ffi(ty: &LirType) -> FfiType {
 /// `TargetBackend` for the `--target interpret` target — merges the
 /// package's LIR off the shared workspace exactly like `NativeEmitter`
 /// does, then runs it directly instead of emitting an artifact.
-/// `compile_package`'s `Result<()>` has no channel for the interpreted
+/// `emit_package_artifact`'s `Result<()>` has no channel for the interpreted
 /// `Value`, so it's printed as a side effect; the CLI previously discarded
 /// this value entirely, so this is new information, not a regression.
 pub struct InterpreterBackend;
 
 impl fp_core::backend::TargetBackend for InterpreterBackend {
-    fn compile_package(
+    fn emit_package_artifact(
         &self,
         workspace: &fp_core::workspace::WorkspaceContext,
         package_id: &PackageId,

@@ -149,7 +149,7 @@ pub fn sanitize_wit_component(raw: &str) -> String {
 /// on the *per-package* output path (`build_wit_options` derives
 /// `namespace`/`interface` from it), so — unlike the other AST backends —
 /// this can't precompute a single `WitSerializer` at construction; it
-/// rebuilds one per `compile_package` call instead.
+/// rebuilds one per `emit_package_artifact` call instead.
 pub struct WitBackend {
     single_world: bool,
     config: fp_core::backend::BackendConfig,
@@ -165,7 +165,7 @@ impl WitBackend {
 }
 
 impl fp_core::backend::TargetBackend for WitBackend {
-    fn compile_package(
+    fn emit_package_artifact(
         &self,
         workspace: &fp_core::workspace::WorkspaceContext,
         package_id: &fp_core::package::PackageId,

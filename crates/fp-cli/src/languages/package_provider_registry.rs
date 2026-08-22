@@ -336,7 +336,7 @@ enum NativeAsmDialect {
 /// `AsmProgram` (the same `fp_native::asmir` machinery `fp_native::binary::
 /// lift_object_to_asmir` uses for binary object files), and wraps it as a
 /// one-package provider the same way `NativeObjectPackageProvider::new`
-/// does for objects — `NativeEmitter::compile_package`/`emit_precompiled`
+/// does for objects — `NativeEmitter::emit_package_artifact`/`emit_precompiled`
 /// then retargets and emits it (as text, an object, or an executable,
 /// depending on `BackendConfig`) without knowing or caring that it came
 /// from text rather than a binary.

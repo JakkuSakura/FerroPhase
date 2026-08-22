@@ -342,7 +342,7 @@ struct KotlinScan {
 /// `TargetBackend` wrapper around [`KotlinSerializer`]. Kotlin needs
 /// workspace-wide context beyond what `BackendConfig` carries — the
 /// workspace-wide `KotlinScan` is read lazily from `&WorkspaceContext` on
-/// first `compile_package`/`write_workspace_files` call, same as every
+/// first `emit_package_artifact`/`write_workspace_files` call, same as every
 /// other backend gets its input. `config.root_name` (the *source* project
 /// directory's name, not `config.workspace_root`, the output directory)
 /// is read straight off `self.config` — `WorkspaceContext` has no way to
@@ -363,10 +363,10 @@ impl KotlinBackend {
     }
 
     /// Builds and caches the workspace-wide scan from `&WorkspaceContext`
-    /// on first call. Safe to call from any package's `compile_package` —
+    /// on first call. Safe to call from any package's `emit_package_artifact` —
     /// including the very first — since `run_named_target`'s typecheck
     /// phase already ran for every package in the workspace before any
-    /// `compile_package` call happens.
+    /// `emit_package_artifact` call happens.
     fn ensure_scan(&self, workspace: &fp_core::workspace::WorkspaceContext) -> fp_core::error::Result<&KotlinScan> {
         if let Some(scan) = self.scan.get() {
             return Ok(scan);
@@ -389,7 +389,7 @@ impl KotlinBackend {
 }
 
 impl TargetBackend for KotlinBackend {
-    fn compile_package(
+    fn emit_package_artifact(
         &self,
         workspace: &fp_core::workspace::WorkspaceContext,
         package_id: &fp_core::package::PackageId,

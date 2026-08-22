@@ -67,7 +67,7 @@ impl NativeEmitter {
 /// doesn't need a separate `BackendConfig` — the existing config already is
 /// the "where to write" state `TargetBackend`'s design calls for.
 impl fp_core::backend::TargetBackend for NativeEmitter {
-    fn compile_package(
+    fn emit_package_artifact(
         &self,
         workspace: &fp_core::workspace::WorkspaceContext,
         package_id: &fp_core::package::PackageId,
@@ -414,7 +414,7 @@ fn plan_has_undefined_symbols(plan: &emit::EmitPlan) -> bool {
 /// `AsmProgram` once at construction (there's nothing to parse lazily)
 /// and embeds it directly as the package's one item
 /// (`fp_core::ast::ItemKind::PrecompiledAsm`), so `NativeEmitter::
-/// compile_package` picks it up from `workspace.package_source(id)` the
+/// emit_package_artifact` picks it up from `workspace.package_source(id)` the
 /// same way every AST-emitting backend already reads its package's
 /// items — no side-channel field, no extra trait method.
 pub struct NativeObjectPackageProvider {
@@ -435,7 +435,7 @@ impl NativeObjectPackageProvider {
     /// foo.s`, lifted via `asmir::lift_from_x86_64`/`lift_from_aarch64`
     /// after `asm::x86_64::AsmX86_64Program::parse_text`/`asm::aarch64::
     /// AsmAarch64Program::parse_text`) rather than a binary object file.
-    /// The one item's path is empty — `NativeEmitter::compile_package`
+    /// The one item's path is empty — `NativeEmitter::emit_package_artifact`
     /// treats an empty-path single item as "one plain object/asm", not an
     /// archive (see `from_archive`, whose members are each tagged with
     /// their own non-empty path).
@@ -450,7 +450,7 @@ impl NativeObjectPackageProvider {
 
     /// A native archive (`.a`/`.lib`) given directly as `fp compile`'s
     /// input — one item per member, each tagged with the member's own
-    /// name as its `QualifiedPath` (so `NativeEmitter::compile_package`
+    /// name as its `QualifiedPath` (so `NativeEmitter::emit_package_artifact`
     /// can recover it when repacking the retargeted archive). A member
     /// recognized as an object file lifts to `PrecompiledAsm`, the same
     /// as a standalone object; anything else (e.g. a symbol-table member)

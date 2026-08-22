@@ -4,7 +4,7 @@ use crate::commands::setup_progress_bar;
 use crate::compiler;
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
-use fp_core::package::{PackageId, PackageSource};
+use fp_core::package::PackageId;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
@@ -88,8 +88,9 @@ pub struct CompileArgs {
 
     /// Link native object/binary inputs into an executable (without running it).
     ///
-    /// This is primarily useful for native container inputs such as ELF/PE/Mach-O,
-    /// where the default transpile output is an object file (`.o`).
+    /// This is primarily useful for foreign-artifact inputs such as
+    /// ELF/PE/Mach-O objects, where the default retargeted output is an
+    /// unlinked object file (`.o`).
     #[arg(long)]
     pub link: bool,
 
@@ -224,18 +225,14 @@ fn provider_and_package_for_input(
     compiler::resolve_source_package(input, language, "cli")
 }
 
-/// Runs a `--target <name>` compile — built-in (`backend_for_target`) or
-/// registered at runtime via `crate::languages::backend_registry` — for either a
-/// whole directory/project or a single file, through the same package/
-/// workspace discovery, typecheck, and `TargetBackend::compile_package`/
-/// `write_workspace_files` pipeline either way. A single file is just the
-/// trivial one-package case of the same discovery a directory input goes
-/// through, not a separate code path — including a native object file
-/// given directly as input (`"object"` resolves like any other language;
-/// see `fp_native::NativeObjectPackageProvider` and
-/// `compiler::resolve_input_package`), so `--exec` falls out of this
-/// function's existing `backend.exec()` call for free, no bespoke runner
-/// needed.
+/// Runs a `--target <name>` compile — built-in or runtime-registered
+/// (`crate::languages::backend_registry`) — for a directory or a single
+/// file, through the same discovery/typecheck/`TargetBackend::
+/// emit_package_artifact`/`write_workspace_files` pipeline either way. A
+/// single file (including a foreign artifact like a native object) is
+/// just the trivial one-package case of the same discovery, not a
+/// separate code path — so `--exec` falls out of `backend.exec()` for
+/// free.
 async fn run_named_target(
     input: &Path,
     output: &Path,
@@ -349,7 +346,7 @@ async fn run_named_target(
 
 /// Shared tail of every named-target compile: typechecks every package in
 /// one `CompilerDriver::compile_workspace` call, hands each one to
-/// `backend.compile_package`, then `write_workspace_files`/`exec`.
+/// `backend.emit_package_artifact`, then `write_workspace_files`/`exec`.
 async fn run_compile_pipeline(
     input: &Path,
     output: &Path,
@@ -367,8 +364,6 @@ async fn run_compile_pipeline(
         lang,
         target_name
     );
-
-    let mut file_count = 0;
 
     // Phase 1: load + typecheck every package before
     // serializing any of them. A struct's fields can be defined in one
@@ -406,16 +401,6 @@ async fn run_compile_pipeline(
     compiler::drain_driver(session.driver())?;
     let workspace = session.driver().state.borrow().typing_ctx.env_ctx.clone();
 
-    let prepared: Vec<(PackageId, PackageSource)> = packages
-        .iter()
-        .map(|package_id| {
-            workspace
-                .package_source(package_id)
-                .map(|source| (package_id.clone(), source))
-                .map_err(|e| CliError::Compilation(e.to_string()))
-        })
-        .collect::<Result<Vec<_>>>()?;
-
     // Phase 2: serialize + write every package now that the workspace-wide
     // mutability set (and any other cross-package info) is complete.
     // Snapshotted so codegen-time diagnostics (e.g. a Kotlin function that
@@ -423,14 +408,13 @@ async fn run_compile_pipeline(
     // get surfaced below instead of silently accumulating in the global
     // `DiagnosticManager` with nothing ever reading them back.
     let diagnostics_snapshot = fp_core::diagnostics::diagnostic_manager().snapshot();
-    for (package_id, _source) in &prepared {
-        // Any post-typecheck op materialization the backend needs (e.g.
-        // Kotlin's portable-op -> Kotlin-idiom pass) happens inside
-        // `compile_package` itself now, not here.
+    for package_id in &packages {
+        // Any op materialization the backend needs (e.g. Kotlin's
+        // portable-op -> Kotlin-idiom pass) happens inside
+        // emit_package_artifact itself, not here.
         backend
-            .compile_package(&workspace, package_id)
+            .emit_package_artifact(&workspace, package_id)
             .map_err(|e| CliError::Compilation(e.to_string()))?;
-        file_count += 1;
     }
 
     backend
@@ -452,8 +436,8 @@ async fn run_compile_pipeline(
     );
 
     info!(
-        "Transpiled {} package(s) to {}",
-        file_count,
+        "Compiled {} package(s) to {}",
+        packages.len(),
         output.display()
     );
     Ok(())
