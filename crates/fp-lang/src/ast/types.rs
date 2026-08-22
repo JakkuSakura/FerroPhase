@@ -131,17 +131,29 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         return parse_structural_type_body(input);
     }
     if skip_symbol(input, "!").is_ok() {
-        let mut probe = *input;
-        if let Ok(name) = parse_name(&mut probe) {
-            *input = probe;
-            return Ok(Ty::Expr(Box::new(
-                ExprKind::UnOp(ExprUnOp {
-                    span: Span::null(),
-                    op: UnOpKind::Not,
-                    val: Box::new(Expr::name(name)),
-                })
-                .into(),
-            )));
+        // The never type (`fn f() -> !`) is by far the more common shape
+        // this `!` starts — real `core::panicking`'s own `-> ! where T:
+        // ..` immediately follows it with a `where` clause, which
+        // `parse_name` below would otherwise happily consume as if it
+        // were a plain identifier (`where` is only a keyword in the
+        // handful of positions that specifically check for it, not a
+        // token `ident_like` itself excludes), turning the whole clause
+        // into a bogus `!where` "negative trait bound" and corrupting
+        // everything downstream. `where` is never a valid negative-bound
+        // name, so ruling it out here is exact, not a guess.
+        if peek_ident_like(*input) != Some("where") {
+            let mut probe = *input;
+            if let Ok(name) = parse_name(&mut probe) {
+                *input = probe;
+                return Ok(Ty::Expr(Box::new(
+                    ExprKind::UnOp(ExprUnOp {
+                        span: Span::null(),
+                        op: UnOpKind::Not,
+                        val: Box::new(Expr::name(name)),
+                    })
+                    .into(),
+                )));
+            }
         }
         return Ok(Ty::Nothing(TypeNothing));
     }
