@@ -634,6 +634,30 @@ fn parse_trait_item(
     skip_keyword(input, Keyword::Trait)?;
     let name = ident_like(input)?;
     let generics_params = parse_optional_generic_params(input)?;
+    // A trait *alias* (`trait Thin = Pointee<Metadata = ()> +
+    // PointeeSized;`, real core::ptr::metadata's own) — nightly-only,
+    // names a `+`-joined bound combination for reuse elsewhere as `T:
+    // Thin`. This checker has no notion of transparently substituting an
+    // alias's real bound list wherever the alias name is used as a bound
+    // (same category of thing already dropped for pattern-type validity/
+    // lifetimes) — it's parsed and modeled as an ordinary empty trait
+    // declaration with the alias's bounds attached as supertraits, which
+    // is enough for the alias name itself to resolve to a real trait
+    // `DefId` wherever it's later used as a bound, just without actually
+    // requiring an implementor to satisfy the aliased traits.
+    if skip_symbol(input, "=").is_ok() {
+        let bounds = parse_type_bounds(input)?;
+        skip_symbol(input, ";")?;
+        return Ok(Item::from(ItemKind::DefTrait(ItemDefTrait {
+            attrs,
+            name,
+            generics_params,
+            bounds,
+            collected_items: Vec::new(),
+            items: Vec::new(),
+            visibility,
+        })));
+    }
     let bounds = if skip_symbol(input, ":").is_ok() {
         parse_type_bounds(input)?
     } else {
@@ -1464,6 +1488,33 @@ pub(super) fn parse_extern_block_items(input: &mut &[Token], file: FileId) -> Mo
         // linker resolves it, not this compiler.
         if peek_keyword(*input, Keyword::Static) {
             items.push(parse_extern_static_decl(input)?);
+            continue;
+        }
+        // `type Name;` — an "extern type" (unstable `extern_types`,
+        // real core::ptr::metadata's own `unsafe extern "C" { type
+        // VTable; }`): an opaque, unsized foreign type with no
+        // representation this compiler ever needs to know (no fields,
+        // no size — the linker/foreign side owns it entirely). Modeled
+        // as a real, ordinary field-less struct so the name still
+        // resolves to a genuine type `DefId` wherever it's referenced
+        // (e.g. `NonNull<VTable>` just above it in the same file) —
+        // the same "give it a real definition, just an empty one"
+        // treatment already given to a trait alias's own dropped bound
+        // semantics.
+        if skip_keyword(input, Keyword::Type).is_ok() {
+            let name = ident_like(input)?;
+            skip_symbol(input, ";")?;
+            items.push(Item::from(ItemKind::DefStruct(ItemDefStruct {
+                attrs,
+                visibility,
+                name: name.clone(),
+                value: TypeStruct {
+                    name,
+                    generics_params: Vec::new(),
+                    repr: ReprOptions::default(),
+                    fields: Vec::new(),
+                },
+            })));
             continue;
         }
         return Err(ErrMode::Cut(ContextError::new()));
