@@ -11,6 +11,7 @@ use fp_core::package::{PackageDescriptor, PackageId, PackageSource};
 /// not a Lean-specific gap.
 #[derive(Debug)]
 pub struct LeanPackageProvider {
+    #[allow(dead_code)]
     root: PathBuf,
 }
 

@@ -117,15 +117,6 @@ pub fn is_known_target(name: &str) -> bool {
     find_registered_target_backend(name).is_some()
 }
 
-/// Error returned by a target factory whose crate is gated behind a
-/// disabled optional `lang-*` feature (see e.g. `lang-typescript` in this
-/// crate's `Cargo.toml`).
-fn disabled_feature_error(feature: &str, what: &str) -> CliError {
-    CliError::InvalidInput(format!(
-        "{what} requires the \"{feature}\" feature, which is disabled in this build"
-    ))
-}
-
 /// Every target `fp-cli` itself ships a backend for, as `(name, factory)`
 /// pairs — the initial contents of the shared target-backend registry.
 /// Feature-gated targets simply aren't pushed when their feature is off,

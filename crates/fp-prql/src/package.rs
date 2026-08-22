@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
+use fp_core::package::provider::{PackageProvider, ProviderResult};
 use fp_core::package::{PackageDescriptor, PackageId, PackageSource};
 
 #[derive(Debug)]
 pub struct PrqlPackageProvider {
+    #[allow(dead_code)]
     root: PathBuf,
 }
 

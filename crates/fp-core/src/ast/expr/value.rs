@@ -1162,7 +1162,6 @@ pub fn build_intrinsic_call(kind: CallKind, invoke: &ExprInvoke) -> Option<ExprI
             Some(ExprIntrinsicCall::new(kind, invoke.args.clone(), invoke.kwargs.clone()))
         }
         CallKind::Op(_) => None,
-        CallKind::Intrinsic(_) => None,
     }?;
     Some(call)
 }

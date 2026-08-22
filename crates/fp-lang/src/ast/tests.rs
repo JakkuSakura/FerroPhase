@@ -1,7 +1,7 @@
 use super::*;
 use fp_core::ast::{
     AttrMeta, AttrStyle, BlockStmt, ExprKind, ItemKind, MacroDelimiter, Name, PatternKind,
-    QuoteItemKind, Value, ValueBytes, ValueChar,
+    QuoteItemKind, Value,
 };
 use fp_core::ast::{QuoteFragmentKind, Ty};
 use fp_core::ast::path::PathPrefix;

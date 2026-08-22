@@ -39,9 +39,7 @@ impl LanguageFrontend for WitFrontend {
         let parse_path = path.unwrap_or_else(|| Path::new("<stdin.wit>"));
         let document = parse_str(parse_path, source).map_err(into_core_error)?;
 
-        let file = lower_document(&document, parse_path);
-        let last = file.clone();
-        let ast = file;
+        let ast = lower_document(&document, parse_path);
 
         let concrete_serializer = WitSerializer::new();
         let serialized = concrete_serializer.serialize_file(&ast).ok();

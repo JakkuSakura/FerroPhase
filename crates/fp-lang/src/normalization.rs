@@ -1,6 +1,6 @@
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprField, ExprIf, ExprIntrinsicCall,
-    ExprIntrinsicContainer, ExprInvoke, ExprLet, ExprMatch,
+    ExprIntrinsicContainer, ExprInvoke, ExprLet,
     ExprInvokeTarget, ExprKind, ExprReference, ExprSelect, ExprSelectType, ExprStringTemplate,
     ExprStruct, ExprUnOp,
     FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident, MacroTokenTree, Name,
@@ -691,7 +691,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             return Ok(NormalizeOutcome::Ignored(expr));
         }
         let (id, span, kind) = expr.into_parts();
-        let ExprKind::Match(mut m) = kind else {
+        let ExprKind::Match(m) = kind else {
             return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span, kind)));
         };
 
@@ -722,7 +722,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
 
         // Build: if (scrutinee != null) { val x = scrutinee!!; body }
         let binding = match_binding_name(pat);
-        let body = if let Some(b) = binding {
+        let body = if let Some(_b) = binding {
             let let_expr = Expr::from_parts(0, None,
                 ExprKind::Let(ExprLet {
                     span: Span::default(),

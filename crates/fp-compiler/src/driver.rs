@@ -1431,7 +1431,7 @@ impl CompilerDriver {
         // HIR has already passed type checking at this boundary. Lowering is
         // therefore strict: a failure is an internal compiler error, never a
         // recoverable source diagnostic.
-        let mut hir = state.borrow().hir(hir_id)?.clone();
+        let hir = state.borrow().hir(hir_id)?.clone();
         let typeck_results = state.borrow().hir_typeck(hir_id)?.clone();
         let mut lowering = MirLowering::new()
             .with_typeck_results(&typeck_results)

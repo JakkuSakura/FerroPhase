@@ -6,7 +6,7 @@ use fp_core::ast::{
     FunctionSignature, Ident, Item, ItemImpl, ItemKind, Name, Ty, TypeInt, TypePrimitive,
     TypeStructural, Value, Visibility,
 };
-use fp_core::error::{Error as CoreError, Result};
+use fp_core::error::Result;
 
 /// Serializes FerroPhase AST nodes into WIT source text.
 #[derive(Debug, Clone)]

@@ -1,11 +1,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
+use fp_core::package::provider::{PackageProvider, ProviderResult};
 use fp_core::package::{PackageDescriptor, PackageId, PackageSource};
 
 #[derive(Debug)]
 pub struct GoPackageProvider {
+    #[allow(dead_code)]
     root: PathBuf,
 }
 

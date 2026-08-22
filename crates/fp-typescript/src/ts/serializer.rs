@@ -4,7 +4,7 @@ use std::sync::RwLock;
 
 use eyre::eyre;
 use fp_core::ast::{
-    self, AstSerializer, BlockStmt, Expr, ExprBlock, ExprConstBlock, ExprIntrinsicCall, ExprInvoke,
+    AstSerializer, BlockStmt, Expr, ExprBlock, ExprConstBlock, ExprIntrinsicCall, ExprInvoke,
     ExprInvokeTarget, ExprKind, ExprStringTemplate, ExprStruct, File, FormatArgRef,
     FormatTemplatePart, FunctionParam, Ident, Item, Name, Pattern, Ty, TypeEnum, TypePrimitive,
     TypeStruct, TypeTuple, TypeVec, Value, ValueList, ValueMap, ValueMapEntry, ValueStruct,

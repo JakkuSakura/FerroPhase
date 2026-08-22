@@ -3,9 +3,8 @@ use fp_core::lir::{
     LirInstruction, LirInstructionKind, LirInteger, LirIntrinsicKind, LirProgram, LirRegister,
     LirTerminator, LirType, LirValue, Name,
 };
-use fp_native::emit::{self, RelocKind, RelocSection, Relocation, TargetArch, TargetFormat};
+use fp_native::emit::{self, RelocKind, TargetArch, TargetFormat};
 use fp_native::link::dump::dump_macho;
-use std::collections::HashMap;
 fn host_arch() -> TargetArch {
     if cfg!(target_arch = "x86_64") {
         TargetArch::X86_64

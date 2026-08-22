@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use std::sync::Arc;
 
 /// How a portable op's result type relates to its call arguments — the
@@ -490,6 +490,10 @@ impl From<IntrinsicKind> for CallKind {
     }
 }
 
+// Associated constants below are deliberately named to mirror `IntrinsicKind`'s
+// own PascalCase variant names 1:1 (e.g. `CallKind::Println`), not
+// SCREAMING_CASE, for call-site readability.
+#[allow(non_upper_case_globals)]
 impl CallKind {
     /// `Some(kind)` if this call is a genuine low-level intrinsic;
     /// `None` for a portable `Op` (portable ops never overlap with

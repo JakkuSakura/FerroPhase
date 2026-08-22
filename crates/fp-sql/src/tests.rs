@@ -1,7 +1,6 @@
 use super::*;
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::frontend::LanguageFrontend;
-use fp_core::query::QueryIrStmt;
 
 #[test]
 fn parses_basic_select() {

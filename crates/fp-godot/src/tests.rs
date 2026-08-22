@@ -1,5 +1,5 @@
 use fp_core::ast::{
-    AstSerializer, BlockStmt, EnumTypeVariant, Expr, ExprBlock, ExprField, ExprKind, ExprMatch,
+    BlockStmt, EnumTypeVariant, Expr, ExprBlock, ExprField, ExprKind, ExprMatch,
     ExprMatchCase, ExprStruct, File, Ident, Item, ItemDefConst, ItemDefEnum, ItemDefFunction,
     ItemDefStruct, ItemImpl, ItemKind, Name, Path, Pattern, PatternKind, PatternVariant,
     ReprOptions, StmtLet, StructuralField, Ty, TypeEnum, TypePrimitive, TypeStructural, Value,

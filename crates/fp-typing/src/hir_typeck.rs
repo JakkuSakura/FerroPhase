@@ -2587,11 +2587,6 @@ impl HirTypeChecker {
             // byte-slice representation already matches a C string's byte
             // layout at the FFI boundary.
             (TyKind::RawPtr(_), TyKind::Slice(_)) => Ok(()),
-            (TyKind::RawPtr(_), TyKind::Ref(_, inner, _))
-                if matches!(inner.kind, TyKind::Slice(_)) =>
-            {
-                Ok(())
-            }
             // `void*`/any-object-pointer decay, same as C: a raw pointer of
             // one pointee type may be passed where a raw pointer of another
             // is expected (e.g. `*mut u8` into `memcpy`'s `*mut void`
@@ -2823,7 +2818,7 @@ impl HirTypeChecker {
             if !matches_receiver {
                 continue;
             }
-            let mut find_signature = |scope: &mut Self, function: &hir::Function| -> Result<Option<Ty>> {
+            let find_signature = |scope: &mut Self, function: &hir::Function| -> Result<Option<Ty>> {
                 let signature = scope.function_signature(function)?;
                 let TyKind::FnPtr(sig) = &signature.kind else {
                     return Ok(None);

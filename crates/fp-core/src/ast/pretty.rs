@@ -933,7 +933,7 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
 }
 
 impl PrettyPrintable for query::QueryDocument {
-    fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+    fn fmt_pretty(&self, _f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
         let name_suffix = self
             .name
             .as_ref()
@@ -1404,7 +1404,7 @@ fn fmt_function_body(
 }
 
 fn render_pattern(pattern: &Pattern) -> String {
-    let mut base = match pattern.kind() {
+    let base = match pattern.kind() {
         PatternKind::Ident(ident) => {
             if ident.mutability.unwrap_or(false) {
                 format!("mut {}", ident.ident)

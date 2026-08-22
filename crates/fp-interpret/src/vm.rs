@@ -195,11 +195,6 @@ impl RegFile {
         Self { gpr }
     }
 
-    pub fn read(&self, reg: RegisterId) -> u64 {
-        let idx = reg as usize;
-        self.gpr.get(idx).copied().unwrap_or(0)
-    }
-
     pub fn write(&mut self, reg: RegisterId, value: u64) {
         let idx = reg as usize;
         if idx >= self.gpr.len() {

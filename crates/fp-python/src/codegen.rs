@@ -445,18 +445,6 @@ impl PythonEmitter {
             || stmt_if.elze.is_none()
     }
 
-    fn is_statement_expr(&self, expr: &Expr) -> bool {
-        match expr.kind() {
-            ExprKind::If(stmt_if) => self.is_statement_if(stmt_if),
-            ExprKind::While(_)
-            | ExprKind::For(_)
-            | ExprKind::Return(_)
-            | ExprKind::Break(_)
-            | ExprKind::Continue(_) => true,
-            _ => false,
-        }
-    }
-
     fn render_params(&mut self, params: &[FunctionParam]) -> Result<String> {
         if params.is_empty() {
             return Ok(String::new());
@@ -1090,7 +1078,6 @@ fn render_imported_names(import: &ItemImport) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use fp_core::ast::AstSerializer;
     use fp_core::frontend::LanguageFrontend;
 
     use crate::PythonFrontend;

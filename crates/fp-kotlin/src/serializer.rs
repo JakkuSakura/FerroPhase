@@ -1,15 +1,14 @@
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::fmt::Write as _;
 
 use fp_core::ast::{
     BlockStmt, Expr, ExprKind, File, Item,
-    ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemImport, ItemKind, ItemDefConst,
-    Ty, TypeInt, TypePrimitive, StructuralField, TySlot,
-    EnumTypeVariant, FunctionParam, FormatTemplatePart, FormatArgRef,
+    ItemDefEnum, ItemDefFunction, ItemDefStruct, ItemImport, ItemKind,
+    Ty, TypeInt, TypePrimitive,
+    FormatTemplatePart, FormatArgRef,
     Value, ExprInvokeTarget,
-    StmtLet, BExpr, Pattern, PatternKind,
+    BExpr, Pattern, PatternKind,
 };
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::intrinsics::calls::{CallKind, KnownClass, KnownPackage};
@@ -17,7 +16,7 @@ use fp_core::package::{PackageItem, PackageSource};
 use fp_core::diagnostics::report_warning_with_context;
 use fp_core::backend::{BackendConfig, PackageWriter, TargetBackend};
 use fp_core::writer::{IndentStyle, StyledWriter, WriterConfig};
-use eyre::{bail, Result};
+use eyre::Result;
 
 // ── Emitter context ──────────────────────────────────────────────────────────
 
@@ -146,11 +145,6 @@ impl KotlinEmitter {
 
     fn pop_scope(&mut self) {
         self.declared_names.pop();
-    }
-
-    /// True if `name` is already declared in any currently-open scope.
-    fn is_declared(&self, name: &str) -> bool {
-        self.declared_names.iter().any(|s| s.contains(name))
     }
 
     /// Record `name` as declared in the innermost currently-open scope. A no-op
@@ -3401,22 +3395,6 @@ fn render_match_pat(pat: &Option<fp_core::ast::BPattern>, e: &KotlinEmitter) -> 
             _ => "else".to_string(),
         },
         None => "else".to_string(),
-    }
-}
-
-/// Check if a pattern is a TupleStruct with a matching name (Some, Ok, Err).
-fn is_tuple_struct_binding(pat: &Option<fp_core::ast::BPattern>, names: &[&str]) -> bool {
-    match pat {
-        Some(p) => match &p.kind {
-            PatternKind::TupleStruct(ts) => {
-                let raw = ts.name.to_string();
-                let simple = raw.rsplit("::").next().unwrap_or(&raw);
-                names.contains(&simple) && ts.patterns.len() == 1
-                    && matches!(&ts.patterns[0].kind, PatternKind::Ident(_))
-            }
-            _ => false,
-        },
-        None => false,
     }
 }
 

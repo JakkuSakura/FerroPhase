@@ -1,9 +1,7 @@
 //! AST are trees, so Box<T> is fine
 
-use crate::query::QueryDocument;
 use crate::span::Span;
-use crate::workspace::WorkspaceDocument;
-use crate::{common_enum, common_struct};
+use crate::common_struct;
 use std::path::PathBuf;
 
 pub use deserialize::*;
@@ -150,13 +148,13 @@ impl std::fmt::Display for File {
     }
 }
 
-/// A block that can contain both items and statements, like Python's
-/// module/class bodies where `def`, `class`, assignments, and expressions
-/// are interleaved. One ordered list — same model as `ExprBlock`'s `stmts`
-/// (function/block bodies already support this exact mix via `BlockStmt`)
-/// — rather than separate item/statement lists, which would lose source
-/// order.
 common_struct! {
+    /// A block that can contain both items and statements, like Python's
+    /// module/class bodies where `def`, `class`, assignments, and expressions
+    /// are interleaved. One ordered list — same model as `ExprBlock`'s `stmts`
+    /// (function/block bodies already support this exact mix via `BlockStmt`)
+    /// — rather than separate item/statement lists, which would lose source
+    /// order.
     pub struct ScriptBlock {
         #[serde(default)]
         pub span: Span,

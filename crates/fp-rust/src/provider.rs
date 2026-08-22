@@ -65,7 +65,6 @@ impl MemberRoot {
 }
 
 pub struct RustPackageProvider {
-    root: PathBuf,
     members: Vec<(String, MemberRoot)>,
     cache: RwLock<HashMap<String, Vec<PackageItem>>>,
 }
@@ -82,7 +81,6 @@ impl RustPackageProvider {
                 .unwrap_or("main")
                 .to_string();
             return Self {
-                root: root.clone(),
                 members: vec![(name, MemberRoot::File(root))],
                 cache: RwLock::new(HashMap::new()),
             };
@@ -98,7 +96,6 @@ impl RustPackageProvider {
             .map(|(name, dir)| (name, MemberRoot::Dir(dir)))
             .collect();
         Self {
-            root,
             members,
             cache: RwLock::new(HashMap::new()),
         }

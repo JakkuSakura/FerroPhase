@@ -1,5 +1,5 @@
 use fp_core::ast::{
-    AstSerializer, Expr, ExprBlock, File, Ident, Item, ItemDefConst, ItemDefFunction,
+    Expr, ExprBlock, File, Ident, Item, ItemDefConst, ItemDefFunction,
     ItemDefStruct, ItemKind, StructuralField, Ty, TypePrimitive, Value,
 };
 

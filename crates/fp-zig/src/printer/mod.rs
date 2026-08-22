@@ -7,9 +7,6 @@ mod ty;
 mod utils;
 mod value;
 
-use eyre::Result;
-use fp_core::ast::File;
-
 pub use serializer::{ZigBackend, ZigSerializer};
 
 pub(crate) struct ZigEmitter {

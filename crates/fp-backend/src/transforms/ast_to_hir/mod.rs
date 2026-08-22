@@ -4530,7 +4530,6 @@ struct ClosureInfo {
     env_struct_ident: ast::Ident,
     env_struct_ty: ast::Ty,
     call_fn_ident: ast::Ident,
-    call_ret_ty: ast::Ty,
 }
 
 #[derive(Clone)]
@@ -4954,7 +4953,7 @@ impl ClosureLowering {
         };
         let env_struct_ty = ast::Ty::Struct(struct_decl.clone());
 
-        let mut struct_item = ast::Item::new(ast::ItemKind::DefStruct(ast::ItemDefStruct {
+        let struct_item = ast::Item::new(ast::ItemKind::DefStruct(ast::ItemDefStruct {
             attrs: Vec::new(),
             visibility: ast::Visibility::Private,
             name: struct_ident.clone(),
@@ -5072,7 +5071,6 @@ impl ClosureLowering {
             env_struct_ident: struct_ident,
             env_struct_ty,
             call_fn_ident: call_ident,
-            call_ret_ty: call_ret_ty.clone(),
         };
 
         Ok(Some(info))
@@ -5859,7 +5857,7 @@ impl CaptureReplacer {
                     ast::ExprInvokeTarget::Function(name) => {
                         if let Some(ident) = name.as_ident() {
                             if let Some(capture_ty) = self.captures.get(ident.as_str()) {
-                                let mut expr_struct =
+                                let expr_struct =
                                     ast::Expr::new(ast::ExprKind::Select(ast::ExprSelect {
                                         span: fp_core::span::Span::null(),
                                         obj: ast::Expr::ident(self.env_ident.clone()).into(),
