@@ -4,6 +4,7 @@ use crate::ast::{self, File, ItemKind};
 pub struct TargetEnv {
     pub os: String,
     pub lang: Option<String>,
+    pub pointer_width: String,
 }
 
 impl TargetEnv {
@@ -11,6 +12,7 @@ impl TargetEnv {
         Self {
             os: host_target_os(),
             lang: None,
+            pointer_width: host_pointer_width(),
         }
     }
 
@@ -18,6 +20,7 @@ impl TargetEnv {
         Self {
             os: target_os_from_triple(triple),
             lang: None,
+            pointer_width: pointer_width_from_triple(triple),
         }
     }
 }
@@ -105,6 +108,7 @@ pub fn cfg_meta_enabled(meta: &ast::AttrMeta, env: &TargetEnv) -> bool {
             match nv.name.last().as_str() {
                 "target_os" => value == env.os,
                 "target_lang" => env.lang.as_deref() == Some(value.as_str()),
+                "target_pointer_width" => value == env.pointer_width,
                 _ => false,
             }
         }
@@ -140,6 +144,33 @@ fn host_target_os() -> String {
         "windows".to_string()
     } else {
         "unknown".to_string()
+    }
+}
+
+fn host_pointer_width() -> String {
+    usize::BITS.to_string()
+}
+
+fn pointer_width_from_triple(triple: Option<&str>) -> String {
+    let Some(triple) = triple else {
+        return host_pointer_width();
+    };
+    let triple = triple.to_ascii_lowercase();
+    if triple.starts_with("i686")
+        || triple.starts_with("i386")
+        || triple.starts_with("arm-")
+        || triple.starts_with("armv7")
+        || triple.starts_with("thumbv7")
+        || triple.starts_with("wasm32")
+    {
+        "32".to_string()
+    } else if triple.starts_with("x86_64")
+        || triple.starts_with("aarch64")
+        || triple.starts_with("wasm64")
+    {
+        "64".to_string()
+    } else {
+        host_pointer_width()
     }
 }
 
