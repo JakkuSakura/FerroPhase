@@ -1964,3 +1964,86 @@ fn transform_package_resolves_crate_absolute_path_to_self_reexport_in_vendored_s
 
     Ok(())
 }
+
+/// Real `core::fmt`'s own shape: `use crate::{result};` (a whole-*module*
+/// import, brought in via a braced group with a single plain `Ident`
+/// member — not a glob, not a named-item import) followed by a bare
+/// relative reference to that module's own item (`result::Result`, no
+/// further `use` of `Result` itself) — mirrors `fmt/mod.rs`'s real `use
+/// crate::{iter, mem, result, str};` plus its own `pub type Result =
+/// result::Result<(), Error>;`. Inside the vendored real-`std` package's
+/// two-segment sub-crate module paths, so this also exercises whichever
+/// resolution path a *relative*, non-`crate::`-prefixed multi-segment name
+/// takes (distinct from the `crate::`-prefixed absolute-path fix above).
+#[test]
+fn transform_package_resolves_whole_module_import_then_relative_item_reference() -> Result<()> {
+    let result_item = make_struct("Result", vec![("value", int_ty())]);
+
+    let fmt_module_import = ast::Item::from(ast::ItemKind::Import(ast::ItemImport {
+        attrs: Vec::new(),
+        visibility: ast::Visibility::Private,
+        style: ast::ItemImportStyle::Plain,
+        tree: ast::ItemImportTree::Path(ast::ItemImportPath {
+            segments: vec![
+                ast::ItemImportTree::Crate,
+                ast::ItemImportTree::Group(ast::ItemImportGroup {
+                    items: vec![ast::ItemImportTree::Ident(ident("result"))],
+                }),
+            ],
+        }),
+    }));
+
+    let fmt_fn_item = make_fn(
+        "make",
+        Vec::new(),
+        ast::Ty::path(ast::Path::plain(vec![ident("result"), ident("Result")])),
+        ast::Expr::from(ast::ExprKind::Struct(ast::ExprStruct::new_ident(
+            ident("Result"),
+            vec![ast::ExprField::new(
+                ident("value"),
+                ast::Expr::value(ast::Value::int(1)),
+            )],
+        ))),
+    );
+
+    let items = vec![
+        (
+            vec!["std".to_string(), "core".to_string(), "result".to_string()],
+            result_item,
+        ),
+        (
+            vec!["std".to_string(), "core".to_string(), "fmt".to_string()],
+            fmt_module_import,
+        ),
+        (
+            vec!["std".to_string(), "core".to_string(), "fmt".to_string()],
+            fmt_fn_item,
+        ),
+    ];
+    let package = package_from_items_with_paths(items)?;
+    let mut generator = HirGenerator::new();
+    let program = generator.transform_package(&package)?;
+
+    let make_fn_hir = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(func) if func.sig.name.as_str() == "make" => Some(func),
+            _ => None,
+        })
+        .expect("`make` function present");
+    let hir::TypeExprKind::Path(ret_path) = &make_fn_hir.sig.output.kind else {
+        panic!(
+            "expected `make`'s return type to lower to a path, got {:?}",
+            make_fn_hir.sig.output.kind
+        );
+    };
+    assert!(
+        ret_path.res.is_some(),
+        "`result::Result` (referenced from `core::fmt` after `use crate::\
+         {{result}};` brings the `result` module itself into scope) must \
+         resolve — got unresolved path {ret_path:?}"
+    );
+
+    Ok(())
+}

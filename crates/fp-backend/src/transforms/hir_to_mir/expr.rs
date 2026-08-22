@@ -604,6 +604,17 @@ pub struct HirToMirLowerer {
     /// never to lower a body from here.
     current_package: std::rc::Rc<hir::HirPackage>,
     current_package_id: Option<hir::PackageId>,
+    /// Qualified path of whichever item's body/signature is currently
+    /// being lowered — set by `ensure_function_lowered`/
+    /// `ensure_method_lowered`/`lower_const` right before they start, and
+    /// appended to `emit_error`'s "unresolved ... path" diagnostics so a
+    /// misattributed root-cause investigation (like the one that found the
+    /// `super::super::` import bug, via `fp-typing`'s matching
+    /// `current_item_path`) doesn't have to run the whole corpus and
+    /// guess. Not exhaustive — lazily-triggered lowering from an unusual
+    /// call site may leave this stale or `None` — but covers the ordinary
+    /// top-level item-lowering loop in `lower_program`.
+    current_item_path: Option<String>,
 }
 
 impl HirToMirLowerer {
@@ -691,6 +702,7 @@ impl HirToMirLowerer {
             hir_program: std::rc::Rc::new(hir::HirProgram::new()),
             current_package: std::rc::Rc::new(hir::HirPackage::new()),
             current_package_id: None,
+            current_item_path: None,
         }
     }
 
@@ -1706,7 +1718,11 @@ impl HirToMirLowerer {
             self.register_generic_function(def_id, function);
             return Ok(());
         }
-        let (mir_item, body_id, body) = self.lower_function(&item, function)?;
+        let previous_item_path = self.current_item_path.take();
+        self.current_item_path = self.hir_def_path(def_id).map(|path| path.join("::"));
+        let result = self.lower_function(&item, function);
+        self.current_item_path = previous_item_path;
+        let (mir_item, body_id, body) = result?;
         self.extra_items.push(mir_item);
         self.extra_bodies.push((body_id, body));
         Ok(())
@@ -1749,12 +1765,16 @@ impl HirToMirLowerer {
                 return Ok(());
             }
         }
-        let (mir_item, body_id, body, _sig) = self.lower_method(
+        let previous_item_path = self.current_item_path.take();
+        self.current_item_path = self.hir_def_path(def_id).map(|path| path.join("::"));
+        let result = self.lower_method(
             def_id,
             &method_ref.function,
             method_ref.span,
             method_ref.method_context.as_ref(),
-        )?;
+        );
+        self.current_item_path = previous_item_path;
+        let (mir_item, body_id, body, _sig) = result?;
         self.extra_items.push(mir_item);
         self.extra_bodies.push((body_id, body));
         Ok(())
@@ -8054,7 +8074,11 @@ impl HirToMirLowerer {
 
     fn emit_error(&mut self, span: Span, message: impl Into<String>) {
         self.has_errors = true;
-        let diagnostic = Diagnostic::error(message.into())
+        let mut message = message.into();
+        if let Some(item) = &self.current_item_path {
+            message.push_str(&format!(" (in `{item}`)"));
+        }
+        let diagnostic = Diagnostic::error(message)
             .with_source_context(DIAGNOSTIC_CONTEXT)
             .with_span(span);
         self.diagnostics.push(diagnostic);
