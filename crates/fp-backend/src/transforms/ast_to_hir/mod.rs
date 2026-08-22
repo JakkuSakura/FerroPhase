@@ -366,16 +366,29 @@ impl AstToHirLowerer {
         out: &mut Vec<ImportBinding>,
     ) -> Result<()> {
         let mut prefix = base;
+        // Each `super` climbs one level *from wherever the previous
+        // segment left off* — a repeated `SuperMod` must pop from the
+        // already-adjusted `prefix`, not re-derive from `self.module_path`
+        // every time, or `super::super::X` collapses to the same result as
+        // a single `super::X` (confirmed: real `core::iter`'s own `use
+        // super::super::{Enumerate, Map, ...};` resolved one level too
+        // shallow because of this, leaving every adapter type unresolved).
+        let mut super_climbed = false;
         for seg in &path.segments {
             match seg {
                 ast::ItemImportTree::Root | ast::ItemImportTree::Crate => {
                     prefix.clear();
+                    super_climbed = false;
                 }
                 ast::ItemImportTree::SelfMod => {
                     prefix = self.module_path.segments.clone();
+                    super_climbed = false;
                 }
                 ast::ItemImportTree::SuperMod => {
-                    prefix = self.module_path.segments.clone();
+                    if !super_climbed {
+                        prefix = self.module_path.segments.clone();
+                        super_climbed = true;
+                    }
                     prefix.pop();
                 }
                 ast::ItemImportTree::Ident(ident) => {
