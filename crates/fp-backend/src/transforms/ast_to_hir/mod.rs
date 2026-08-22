@@ -1623,17 +1623,42 @@ impl AstToHirLowerer {
                             }
                         }
                         for impl_item in &impl_block.items {
-                            let ast::ItemKind::DefFunction(function) = impl_item.kind() else {
-                                continue;
-                            };
-                            let method_def_id = self.allocate_def_id_for_item(impl_item);
-                            method_path.push(function.name.name.clone());
-                            self.record_value_path(
-                                &fp_core::ast::path::QualifiedPath::new(method_path.clone()),
-                                hir::Res::Def(method_def_id),
-                                &function.visibility,
-                            );
-                            method_path.pop();
+                            match impl_item.kind() {
+                                ast::ItemKind::DefFunction(function) => {
+                                    let method_def_id = self.allocate_def_id_for_item(impl_item);
+                                    method_path.push(function.name.name.clone());
+                                    self.record_value_path(
+                                        &fp_core::ast::path::QualifiedPath::new(method_path.clone()),
+                                        hir::Res::Def(method_def_id),
+                                        &function.visibility,
+                                    );
+                                    method_path.pop();
+                                }
+                                // An inherent/trait-impl associated const
+                                // (`impl char { pub const MIN: char = ...;
+                                // }`) — until this arm existed, this loop's
+                                // exclusive `DefFunction` match silently
+                                // skipped every associated const, so
+                                // nothing outside the impl's own body
+                                // (predeclare_items runs before any body is
+                                // lowered) could ever resolve a reference
+                                // to it (`char::MIN`) — not a timing/
+                                // ordering issue an import retry could
+                                // paper over, since the symbol was never
+                                // registered *anywhere*, ever, regardless
+                                // of reference order.
+                                ast::ItemKind::DefConst(constant) => {
+                                    let const_def_id = self.allocate_def_id_for_item(impl_item);
+                                    method_path.push(constant.name.name.clone());
+                                    self.record_value_path(
+                                        &fp_core::ast::path::QualifiedPath::new(method_path.clone()),
+                                        hir::Res::Def(const_def_id),
+                                        &constant.visibility,
+                                    );
+                                    method_path.pop();
+                                }
+                                _ => continue,
+                            }
                         }
                     }
                 }
