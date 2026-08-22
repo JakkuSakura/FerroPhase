@@ -204,6 +204,16 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
                 if has_label {
                     *input = probe;
                 }
+                // A C-variadic marker (real `std::sys::pal::uefi::helpers`'s
+                // own `extern "efiapi" fn(_: *mut r_efi::efi::Handle, _:
+                // ...) -> r_efi::efi::Status`) — this checker has no
+                // notion of variadic fn-pointer types, so the trailing
+                // `...` is dropped like any other checker-inert construct;
+                // it's always last in a real parameter list, so stopping
+                // here is exactly equivalent to real Rust's own grammar.
+                if skip_symbol(input, "...").is_ok() {
+                    break;
+                }
                 params.push(parse_type_expr(input)?);
                 if skip_symbol(input, ",").is_err() {
                     break;
