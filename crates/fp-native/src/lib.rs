@@ -16,6 +16,7 @@ pub mod system_api;
 use crate::config::{EmitKind, NativeConfig};
 use crate::emit::{detect_target, resolve_native_target};
 use fp_core::asmir::AsmProgram;
+use fp_core::container::ContainerReader as _;
 use fp_core::error::{Error, Result};
 use fp_core::lir::LirProgram;
 use std::collections::HashSet;
@@ -72,6 +73,34 @@ impl fp_core::backend::TargetBackend for NativeEmitter {
         package_id: &fp_core::package::PackageId,
     ) -> Result<()> {
         if let Ok(source) = workspace.package_source(package_id) {
+            // A native archive (`NativeObjectPackageProvider::from_archive`)
+            // tags each member with its own name as a non-empty
+            // `QualifiedPath`. Every other precompiled provider (plain
+            // object/asm, or a foreign artifact like CIL/JVM that also
+            // carries a best-effort `PrecompiledLir` alongside its
+            // `PrecompiledArtifact`) always uses an empty path on every
+            // item — `items.len() > 1` alone isn't a safe signal, since
+            // those two-item CIL/JVM packages aren't archives at all.
+            let is_archive = source.items.iter().any(|pkg_item| !pkg_item.path.is_empty());
+            if is_archive {
+                let members: Vec<(fp_core::ast::path::QualifiedPath, PrecompiledMember)> = source
+                    .items
+                    .iter()
+                    .filter_map(|pkg_item| match pkg_item.item.kind() {
+                        fp_core::ast::ItemKind::PrecompiledAsm(asm) => {
+                            Some((pkg_item.path.clone(), PrecompiledMember::Asm(asm.clone())))
+                        }
+                        fp_core::ast::ItemKind::PrecompiledArtifact(bytes) => {
+                            Some((pkg_item.path.clone(), PrecompiledMember::Bytes(bytes.clone())))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if !members.is_empty() {
+                    self.emit_precompiled_archive(members)?;
+                    return Ok(());
+                }
+            }
             let asm = source.items.iter().find_map(|pkg_item| match pkg_item.item.kind() {
                 fp_core::ast::ItemKind::PrecompiledAsm(asm) => Some(asm.clone()),
                 _ => None,
@@ -101,7 +130,47 @@ impl fp_core::backend::TargetBackend for NativeEmitter {
     }
 }
 
+/// One `NativeObjectPackageProvider::from_archive` member: either a
+/// recognized object lifted to `AsmProgram` (retargeted like any other
+/// precompiled object) or opaque raw bytes (a non-object member, e.g. a
+/// symbol table, repacked verbatim).
+enum PrecompiledMember {
+    Asm(AsmProgram),
+    Bytes(Vec<u8>),
+}
+
 impl NativeEmitter {
+    /// Retargets and repacks a native archive's members — always writes a
+    /// plain retargeted archive regardless of `self.config.emit`
+    /// (`--link`/`--exec` don't apply to an archive; there's no single
+    /// entry point to link against), matching exactly what the bespoke
+    /// `container/pipeline.rs` archive transpile used to do.
+    fn emit_precompiled_archive(
+        &self,
+        members: Vec<(fp_core::ast::path::QualifiedPath, PrecompiledMember)>,
+    ) -> Result<PathBuf> {
+        let (format, arch) = detect_target(self.config.target_triple.as_deref())?;
+        let mut out_members = Vec::with_capacity(members.len());
+        for (path, payload) in members {
+            let name = path.head().unwrap_or("member").to_string();
+            let data = match payload {
+                PrecompiledMember::Asm(asm) => {
+                    let plan = emit::emit_plan_from_asmir(asm, format, arch)?;
+                    emit::write_object_bytes(&plan)?
+                }
+                PrecompiledMember::Bytes(bytes) => bytes,
+            };
+            out_members.push(crate::archive::ArchiveMember { name, data });
+        }
+        let archive_bytes = crate::archive::write_gnu_archive(&out_members)?;
+        let out = self.config.output_path.clone();
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&out, archive_bytes)?;
+        Ok(out)
+    }
+
     /// Emits an already-lifted object file's `AsmProgram` (see
     /// `crate::binary::lift_object_to_asmir`) — the object-transpile
     /// counterpart to `emit_impl`, which starts from a `LirProgram`
@@ -366,16 +435,62 @@ impl NativeObjectPackageProvider {
     /// foo.s`, lifted via `asmir::lift_from_x86_64`/`lift_from_aarch64`
     /// after `asm::x86_64::AsmX86_64Program::parse_text`/`asm::aarch64::
     /// AsmAarch64Program::parse_text`) rather than a binary object file.
+    /// The one item's path is empty — `NativeEmitter::compile_package`
+    /// treats an empty-path single item as "one plain object/asm", not an
+    /// archive (see `from_archive`, whose members are each tagged with
+    /// their own non-empty path).
     pub fn from_asm(package_id: fp_core::package::PackageId, asm: AsmProgram) -> Self {
-        let mut source = fp_core::package::PackageSource::new(
-            package_id.clone(),
-            package_id.as_str().to_string(),
-            fp_core::package::graph::PackageGraph::new(Vec::new()),
-        );
+        let mut source = Self::empty_source(&package_id);
         source.items.push(fp_core::package::PackageItem {
             path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
             item: fp_core::ast::Item::precompiled_asm(asm),
         });
+        Self::from_source(package_id, source)
+    }
+
+    /// A native archive (`.a`/`.lib`) given directly as `fp compile`'s
+    /// input — one item per member, each tagged with the member's own
+    /// name as its `QualifiedPath` (so `NativeEmitter::compile_package`
+    /// can recover it when repacking the retargeted archive). A member
+    /// recognized as an object file lifts to `PrecompiledAsm`, the same
+    /// as a standalone object; anything else (e.g. a symbol-table member)
+    /// carries its raw bytes as an opaque `PrecompiledArtifact` and is
+    /// repacked verbatim, unretargeted — this mirrors exactly what the
+    /// bespoke `container/pipeline.rs` archive transpile used to do.
+    pub fn from_archive(package_id: fp_core::package::PackageId, bytes: &[u8]) -> Result<Self> {
+        let members = crate::archive::read_archive_members(bytes)
+            .map_err(|err| Error::from(format!("Failed to parse archive input: {err}")))?;
+        let object_reader = crate::container::ObjectContainerReader::new();
+        let mut source = Self::empty_source(&package_id);
+        for member in members {
+            let item = if !member.data.is_empty() && object_reader.can_read(&member.data) {
+                let asm = crate::binary::lift_object_to_asmir(&member.data).map_err(|err| {
+                    Error::from(format!("Failed to lift archive member '{}': {err}", member.name))
+                })?;
+                fp_core::ast::Item::precompiled_asm(asm)
+            } else {
+                fp_core::ast::Item::precompiled_artifact(member.data)
+            };
+            source.items.push(fp_core::package::PackageItem {
+                path: fp_core::ast::path::QualifiedPath::new(vec![member.name]),
+                item,
+            });
+        }
+        Ok(Self::from_source(package_id, source))
+    }
+
+    fn empty_source(package_id: &fp_core::package::PackageId) -> fp_core::package::PackageSource {
+        fp_core::package::PackageSource::new(
+            package_id.clone(),
+            package_id.as_str().to_string(),
+            fp_core::package::graph::PackageGraph::new(Vec::new()),
+        )
+    }
+
+    fn from_source(
+        package_id: fp_core::package::PackageId,
+        source: fp_core::package::PackageSource,
+    ) -> Self {
         let descriptor = fp_core::package::PackageDescriptor {
             id: package_id.clone(),
             name: package_id.as_str().to_string(),

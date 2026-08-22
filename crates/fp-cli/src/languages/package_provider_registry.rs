@@ -64,6 +64,26 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
         }),
     ));
 
+    // A native archive (`.a`/`.lib`) — one package, one item per member
+    // (`NativeObjectPackageProvider::from_archive`).
+    entries.push((
+        "archive",
+        factory(|root: &Path| {
+            let bytes = std::fs::read(root).ok()?;
+            let name = root
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("main")
+                .to_string();
+            fp_native::NativeObjectPackageProvider::from_archive(
+                fp_core::package::PackageId::new(name),
+                &bytes,
+            )
+            .ok()
+            .map(|p| Arc::new(p) as Arc<dyn PackageProvider>)
+        }),
+    ));
+
     entries.push((
         "c",
         factory(|root: &Path| {

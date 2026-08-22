@@ -10,6 +10,9 @@ use std::path::Path;
 /// A pre-compiled native object file given directly as `fp compile`'s
 /// input (not FerroPhase source) — see `fp_native::NativeObjectPackageProvider`.
 pub const NATIVE_OBJECT: &str = "object";
+/// A native archive (`.a`/`.lib`) given directly as `fp compile`'s input —
+/// see `fp_native::NativeObjectPackageProvider::from_archive`.
+pub const NATIVE_ARCHIVE: &str = "archive";
 /// Raw native assembly text given directly as `fp compile`'s input (auto
 /// x86_64/aarch64 dialect detection) — see
 /// `fp_native::NativeObjectPackageProvider::from_asm`.
@@ -92,6 +95,11 @@ pub const SUPPORTED_LANGUAGES: &[Language] = &[
     Language {
         name: NATIVE_OBJECT,
         extensions: &["o", "obj"],
+        ast_target_supported: false,
+    },
+    Language {
+        name: NATIVE_ARCHIVE,
+        extensions: &["a", "lib"],
         ast_target_supported: false,
     },
     Language {

@@ -6,7 +6,6 @@
 pub mod cli;
 pub mod commands;
 pub mod compiler;
-pub mod container;
 pub mod diagnostics;
 pub mod languages;
 pub mod utils;

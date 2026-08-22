@@ -132,7 +132,7 @@ fn target_triple_matches_host(target_triple: &str) -> bool {
 
 
 /// Execute the compile command
-pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()> {
+pub async fn compile_command(args: CompileArgs, _config: &CliConfig) -> Result<()> {
     info!("Starting compilation with target: {}", args.target);
 
     let progress = setup_progress_bar(1);
@@ -156,17 +156,9 @@ pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()
             }
         };
 
-    let container_registry = crate::container::ContainerRegistry::new();
     let input_file = &args.input;
 
     progress.set_message(format!("Compiling {}", input_file.display()));
-
-    // Classified once, then threaded through both output-path derivation
-    // and the actual compile/transpile dispatch below — instead of each
-    // independently re-detecting (and, for the byte-sniffed case,
-    // re-reading) the same input.
-    let input_class =
-        container_registry.classify_input(input_file, args.source_language.as_deref());
 
     // Resolve `-o`'s effective path from pure user intent — no target
     // knowledge here. Extension defaulting (if any) is each target's own
@@ -184,7 +176,7 @@ pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()
         None => input_file.with_extension(""),
     };
 
-    compile_workspace_entrypoint(input_file, &output_file, &args, config, input_class, exec).await?;
+    compile_workspace_entrypoint(input_file, &output_file, &args, exec).await?;
     progress.inc(1);
 
     progress.finish_with_message(format!("{} Compiled successfully", style("✓").green()));
@@ -199,38 +191,18 @@ pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()
 /// single file resolves to a synthetic one-package workspace with that file
 /// as its sole member (see `run_named_target`'s own directory/file split).
 /// Either way this always ends up compiling a workspace, just picking a
-/// different entry package depending on what `input` was.
+/// different entry package depending on what `input` was — including a
+/// foreign artifact (native object/archive/asm text, goasm, URCL, JVM
+/// bytecode, CIL/.NET), which resolves like any other language through
+/// its own `PackageProvider` (`fp_native::NativeObjectPackageProvider`
+/// and friends), not a separate code path.
 async fn compile_workspace_entrypoint(
     input: &Path,
     output: &Path,
     args: &CompileArgs,
-    _config: &CliConfig,
-    input_class: crate::container::InputClass,
     exec: bool,
 ) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
-
-    // `run_named_target` already handles directory vs. single-file input
-    // itself (its own package discovery branches on it), so this only
-    // needs one thing to decide up front: is this a container format
-    // (archive/JVM/CIL/goasm/URCL) `maybe_transpile_container` still
-    // hand-rolls its own binary-to-binary rewrite for? Everything else —
-    // including native-object and native-asm-text input — flows through
-    // `run_named_target`'s ordinary language-provider pipeline, the same
-    // as any other language (`"object"`/`"native-asm"` resolve to
-    // `fp_native::NativeObjectPackageProvider` there, not a special case
-    // here).
-    let container_kind = match input_class {
-        crate::container::InputClass::Container(kind) => Some(kind),
-        _ => None,
-    };
-    if let Some(artifact) =
-        crate::container::maybe_transpile_container(input, output, args, _config, container_kind, exec)
-            .await?
-    {
-        return Ok(Some(artifact));
-    }
-
     run_named_target(input, output, args, &args.target, exec).await?;
     Ok(Some(output.to_path_buf()))
 }
@@ -326,6 +298,7 @@ async fn run_named_target(
     let is_foreign_artifact = matches!(
         lang.as_str(),
         l if l == crate::languages::NATIVE_OBJECT
+            || l == crate::languages::NATIVE_ARCHIVE
             || l == crate::languages::NATIVE_ASM
             || l == crate::languages::GOASM
             || l == crate::languages::URCL

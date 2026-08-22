@@ -145,9 +145,10 @@ fn std_provider_for(language: &str) -> Arc<dyn fp_core::package::provider::Packa
     match language {
         l if l == languages::FERROPHASE => Arc::new(fp_lang::provider::FerroPhaseProvider),
         l if l == languages::RUST => Arc::new(fp_rust::RustStdProvider),
-        // A native object/asm-text/goasm/URCL/JVM-bytecode/CIL package has
-        // no std/libc dependency at all.
+        // A native object/archive/asm-text/goasm/URCL/JVM-bytecode/CIL
+        // package has no std/libc dependency at all.
         l if l == languages::NATIVE_OBJECT
+            || l == languages::NATIVE_ARCHIVE
             || l == languages::NATIVE_ASM
             || l == languages::GOASM
             || l == languages::URCL
