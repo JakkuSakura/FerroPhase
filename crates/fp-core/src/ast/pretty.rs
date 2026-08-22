@@ -706,6 +706,9 @@ impl PrettyPrintable for ast::Item {
             ast::ItemKind::PrecompiledLir(_) => {
                 ctx.write_line(format!("item.precompiled_lir{}", suffix))
             }
+            ast::ItemKind::PrecompiledArtifact(_) => {
+                ctx.write_line(format!("item.precompiled_artifact{}", suffix))
+            }
         }
     }
 }

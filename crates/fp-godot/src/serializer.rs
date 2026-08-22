@@ -326,7 +326,8 @@ impl GdscriptEmitter {
             | ItemKind::Macro(_)
             | ItemKind::ConstBlock(_)
             | ItemKind::PrecompiledAsm(_)
-            | ItemKind::PrecompiledLir(_) => {
+            | ItemKind::PrecompiledLir(_)
+            | ItemKind::PrecompiledArtifact(_) => {
                 self.push_comment(&format!(
                     "unsupported item in gdscript output: {:?}",
                     item.kind()

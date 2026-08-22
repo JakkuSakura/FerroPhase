@@ -2040,7 +2040,8 @@ fn item_own_name(item: &Item) -> Option<&str> {
         | ItemKind::Expr(_)
         | ItemKind::ConstBlock(_)
         | ItemKind::PrecompiledAsm(_)
-        | ItemKind::PrecompiledLir(_) => None,
+        | ItemKind::PrecompiledLir(_)
+        | ItemKind::PrecompiledArtifact(_) => None,
     }
 }
 

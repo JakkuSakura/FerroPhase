@@ -388,6 +388,7 @@ impl WitEmitter {
             | ItemKind::ConstBlock(_)
             | ItemKind::PrecompiledAsm(_)
             | ItemKind::PrecompiledLir(_)
+            | ItemKind::PrecompiledArtifact(_)
             | ItemKind::Import(_)
             | ItemKind::DeclConst(_)
             | ItemKind::DeclStatic(_)

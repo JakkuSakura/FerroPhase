@@ -76,13 +76,29 @@ common_enum! {
         /// An already-compiled artifact carrying LIR directly (e.g. a
         /// goasm/URCL text input lifted by that language's own parser)
         /// instead of real FerroPhase source. Unlike `PrecompiledAsm`
-        /// (opaque past HIR/MIR/LIR), this one *is* LIR already — HIR
-        /// generation injects it straight into the package's `lir_workspace`
-        /// (`ast_to_hir::append_item`), so `WorkspaceContext::merged_lir_program`
-        /// picks it up transparently and every LIR-consuming backend
-        /// (native/goasm/urcl/cil/dotnet/jvm-bytecode) can retarget it with
-        /// no backend-specific handling at all.
+        /// (opaque past HIR/MIR/LIR), this one *is* LIR already —
+        /// `CompilerDriver::compile_package` installs it straight into the
+        /// package's `lir_workspace`, skipping HIR/MIR generation entirely,
+        /// so `WorkspaceContext::merged_lir_program` picks it up
+        /// transparently and every LIR-consuming backend (native/goasm/
+        /// urcl/cil/dotnet/jvm-bytecode) can retarget it with no
+        /// backend-specific handling at all.
         PrecompiledLir(crate::lir::LirProgram),
+        /// Raw bytes an already-compiled artifact carries for byte-identical
+        /// (or near-identical, e.g. class-to-jar repackaging) passthrough to
+        /// one specific target shape — e.g. a `.class`/`.jar` input compiled
+        /// back to `--target jvm-bytecode`, or a `.dll`/`.exe` input compiled
+        /// to `--target dotnet`, neither of which should be re-derived from
+        /// a lift-then-relower round trip through `PrecompiledLir` (not
+        /// guaranteed byte-identical). Opaque to every other backend —
+        /// unlike `PrecompiledLir`, nothing generic ever reads this; only
+        /// the one target whose own bytes these are (`fp_jvm::JvmBackend`,
+        /// `fp_cil::DotnetBackend`) checks for it in `compile_package`,
+        /// exactly the same shape `NativeEmitter` already has for
+        /// `PrecompiledAsm`. A package may carry both this and a
+        /// `PrecompiledLir` item side by side — one for same-target
+        /// passthrough, the other for retargeting to anything else.
+        PrecompiledArtifact(Vec<u8>),
     }
 }
 
@@ -147,6 +163,9 @@ impl Item {
     }
     pub fn precompiled_lir(lir: crate::lir::LirProgram) -> Self {
         Self::from(ItemKind::PrecompiledLir(lir))
+    }
+    pub fn precompiled_artifact(bytes: Vec<u8>) -> Self {
+        Self::from(ItemKind::PrecompiledArtifact(bytes))
     }
     pub fn as_expr(&self) -> Option<&Expr> {
         match self.kind() {
@@ -255,6 +274,7 @@ impl ItemKind {
             ItemKind::ConstBlock(block) => block.span(),
             ItemKind::PrecompiledAsm(_) => Span::null(),
             ItemKind::PrecompiledLir(_) => Span::null(),
+            ItemKind::PrecompiledArtifact(_) => Span::null(),
         }
     }
 }

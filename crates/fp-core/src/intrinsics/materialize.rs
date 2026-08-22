@@ -65,7 +65,8 @@ pub fn materialize_item(
         | ast::ItemKind::DefTrait(_)
         | ast::ItemKind::ConstBlock(_)
         | ast::ItemKind::PrecompiledAsm(_)
-        | ast::ItemKind::PrecompiledLir(_) => kind,
+        | ast::ItemKind::PrecompiledLir(_)
+        | ast::ItemKind::PrecompiledArtifact(_) => kind,
     };
     Ok(ast::Item {
         id,
