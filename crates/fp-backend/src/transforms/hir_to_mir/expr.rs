@@ -6309,6 +6309,15 @@ impl HirToMirLowerer {
                     } else {
                         return None;
                     }),
+                    // Enum-discriminant expressions routinely use bit
+                    // ops rather than plain arithmetic (real
+                    // `core::mem::alignment`'s own `AlignmentEnum`, whose
+                    // every variant's discriminant is `1 << N`).
+                    hir::BinOp::Shl => Some(left.wrapping_shl(right as u32)),
+                    hir::BinOp::Shr => Some(left.wrapping_shr(right as u32)),
+                    hir::BinOp::BitOr => Some(left | right),
+                    hir::BinOp::BitAnd => Some(left & right),
+                    hir::BinOp::BitXor => Some(left ^ right),
                     _ => None,
                 }
             }
