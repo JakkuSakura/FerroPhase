@@ -246,10 +246,9 @@ async fn run_named_target(
         ));
     }
 
-    // Constructed up front (before package discovery/typecheck) so the
-    // pre-typecheck provider wrapping below can ask the backend for its own
-    // materializer (`backend.materializer()`) instead of fp-cli keeping a
-    // second, parallel name->materializer dispatch table.
+    // The source project's own name — feeds both a synthetic root package
+    // id for typecheck (`root_id`, below) and, for Kotlin specifically,
+    // `settings.gradle.kts`'s `rootProject.name` (`BackendConfig::root_name`).
     let root_name = input
         .file_name()
         .and_then(|n| n.to_str())
