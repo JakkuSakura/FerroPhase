@@ -95,7 +95,13 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     if skip_symbol(input, "?").is_ok() {
         return parse_simple_type(input);
     }
-    if peek_symbol(*input) == Some("<") {
+    // A nested qualified path (`<<P as ops::Deref>::Target as Future>::
+    // Output`, real `core::future::future`'s own) lexes its two leading
+    // `<` as one `<<` token — the same ambiguity `parse_qualified_path_
+    // type`'s own `try_eat_symbol` already resolves *inside* itself, but
+    // this entry gate needs to recognize `<<` as "still a qualified path
+    // starts here" too, or it never even attempts the call.
+    if matches!(peek_symbol(*input), Some("<") | Some("<<")) {
         let mut probe = *input;
         if let Ok(ty) = parse_qualified_path_type(&mut probe) {
             *input = probe;
@@ -1077,7 +1083,17 @@ pub(crate) fn parse_optional_generic_params(
             };
             if skip_symbol(&mut probe, "=").is_ok() {
                 if is_const {
-                    let _ = parse_expr_winnow_no_struct(&mut probe, 0)?;
+                    // Same reasoning as `parse_type_arg`'s own
+                    // const-generic-argument case (`Foo<char, 3>`): full
+                    // expression precedence keeps going past a literal
+                    // hunting for a binary operator, and mistakes this
+                    // list's own closing `>` for a `{ 1 } > ..`
+                    // comparison (real `core::mem::transmutability`'s own
+                    // `const ASSUME: Assume = { Assume::NOTHING }`).
+                    // `parse_cast_no_struct` sits below every binary
+                    // operator, so it naturally stops right after the
+                    // default value.
+                    let _ = parse_cast_no_struct(&mut probe, 0)?;
                 } else {
                     let _ = parse_type_expr(&mut probe)?;
                 }
