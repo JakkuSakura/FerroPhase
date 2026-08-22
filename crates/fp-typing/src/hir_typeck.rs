@@ -111,6 +111,17 @@ pub struct HirTypeChecker {
     /// The ambient expected-type hint for the expression currently being
     /// checked, if any.
     expected_expr_type: Option<Ty>,
+    /// Cycle guard for `assoc_type_for_self`'s impl search: checking a
+    /// candidate impl's self-type/associated-type bindings can itself
+    /// trigger another `T::AssocName` projection lookup (e.g. two
+    /// primitive-int impls whose `Output`s reference each other through a
+    /// shared helper type) — without this, that recurses through
+    /// `assoc_type_for_self` indefinitely and overflows the stack instead
+    /// of failing the (rare, genuinely cyclic) lookup gracefully. Plain
+    /// state (not a scoped stack like `self_type`/`assoc_types`), so it
+    /// carries over unchanged through every `with_*` child the same way
+    /// `#[derive(Clone)]` already carries every other field.
+    resolving_assoc_projections: Vec<(String, hir::Symbol)>,
 }
 
 impl HirTypeChecker {
@@ -137,6 +148,7 @@ impl HirTypeChecker {
             self_type: None,
             assoc_types: None,
             expected_expr_type: None,
+            resolving_assoc_projections: Vec::new(),
         }))
     }
 
@@ -158,6 +170,7 @@ impl HirTypeChecker {
             self_type: None,
             assoc_types: None,
             expected_expr_type: None,
+            resolving_assoc_projections: Vec::new(),
         }
     }
 
@@ -477,7 +490,7 @@ impl HirTypeChecker {
                     let declared_ty = self.check_type_expr(&constant.ty).await?;
                     let mut scope = self.with_expected_expr_type(declared_ty.clone());
                     let body_ty = scope.check_body(&constant.body).await?;
-                    let package = self.program();
+                    let package = self.package();
                     package.record_type_expr_type(constant.ty.hir_id, body_ty.clone());
                     package.record_const_type(item.def_id, body_ty);
                 }
@@ -833,7 +846,7 @@ impl HirTypeChecker {
                                 .generic_call_args(*def_id, &substitutions)?
                                 .or_else(|| self.callable_output_args(&callee_ty, &substitutions));
                             if let Some(args) = args {
-                                self.program().record_generic_call_arg(
+                                self.package().record_generic_call_arg(
                                     expr.hir_id,
                                     GenericCallResolution {
                                         def_id: *def_id,
@@ -892,7 +905,7 @@ impl HirTypeChecker {
                     // one catch point covers all of them.
                     match self.method_output(&receiver_ty, method, &arg_types).await {
                         Ok((method_def_id, generic_args, output)) => {
-                            let package = self.program();
+                            let package = self.package();
                             package.record_method_resolution(expr.hir_id, method_def_id);
                             if let Some(args) = generic_args {
                                 package.record_generic_method_arg(
@@ -972,7 +985,7 @@ impl HirTypeChecker {
                                 .await
                             {
                                 Ok((method_def_id, generic_args, output)) => {
-                                    let package = self.program();
+                                    let package = self.package();
                                     package.record_method_resolution(expr.hir_id, method_def_id);
                                     if let Some(args) = generic_args {
                                         package.record_generic_method_arg(
@@ -1082,7 +1095,7 @@ impl HirTypeChecker {
                     // `hir_id` to find the checked type on `request.
                     // current` (the same `Rc<HirPackage>` this writes
                     // onto).
-                    self.program().record_expr_type(expr.hir_id, body_ty.clone());
+                    self.package().record_expr_type(expr.hir_id, body_ty.clone());
                     let def_id = const_block.def_id;
                     let request = crate::ComptimeRequest {
                         package_id: self.current_package(),
@@ -1337,7 +1350,7 @@ impl HirTypeChecker {
                     }
                 }
             };
-            self.program().record_expr_type(expr.hir_id, ty.clone());
+            self.package().record_expr_type(expr.hir_id, ty.clone());
             Ok(ty)
         })
     }
@@ -1450,7 +1463,7 @@ impl HirTypeChecker {
                                     "type mismatch: expected `{ty}`, found `{resolved_init}`"
                                 )));
                             }
-                            scope.program().record_expr_type(init.hir_id, resolved_init.clone());
+                            scope.package().record_expr_type(init.hir_id, resolved_init.clone());
                             resolved_init
                         }
                         (Some(annotation), None) => scope.check_type_expr(annotation).await?,
@@ -1609,7 +1622,7 @@ impl HirTypeChecker {
                     // body's actual checked type, now that it's known —
                     // matches expression-position const-blocks, whose own
                     // type is likewise the checked type of their body.
-                    self.program().record_type_expr_type(hir_id, body_ty.clone());
+                    self.package().record_type_expr_type(hir_id, body_ty.clone());
                     body_ty
                 }
                 hir::TypeExprKind::Error => self.error_ty("invalid type expression"),
@@ -1640,7 +1653,7 @@ impl HirTypeChecker {
                     base_ty
                 }
             };
-            self.program().record_type_expr_type(expr.hir_id, ty.clone());
+            self.package().record_type_expr_type(expr.hir_id, ty.clone());
             Ok(ty)
         })
     }
@@ -1663,7 +1676,7 @@ impl HirTypeChecker {
             // `const_block_values` entry, so this only fires for the
             // comptime-local case; everything else falls through to the
             // ordinary `def_map`-based resolution below.
-            if let Some(value) = self.program().const_block_value(def_id) {
+            if let Some(value) = self.package().const_block_value(def_id) {
                 return Ok(match value {
                     fp_core::ast::Value::Type(fp_core::ast::Ty::Struct(struct_ty)) => {
                         let fields: Vec<(hir::Symbol, Ty)> = struct_ty
@@ -1767,6 +1780,25 @@ impl HirTypeChecker {
                         mutbl: ty::Mutability::Not,
                     }),
                 });
+            }
+            // `<usize as Add>::Output`-style UFCS paths lower to a flat
+            // `usize::Output` (`parse_qualified_path_type` in fp-lang
+            // intentionally drops the `as Trait` disambiguator — its own
+            // doc comment explains why), which `ast_to_hir` never
+            // resolves (`usize` is a primitive, not a module/item, so no
+            // `Res` exists for it) — real rustc resolves an unqualified
+            // `T::AssocName` the same way, by searching `T`'s own trait
+            // impls for the one that declares `AssocName`. Reuse the
+            // same impl-matching machinery `method_output_at` already
+            // uses for `.method()` calls, just for an associated type
+            // instead of a method.
+            if path.segments.len() >= 2 {
+                if let Some(base_ty) = primitive_path_ty(path.segments[0].name.as_str()) {
+                    let assoc_name = path.segments.last().unwrap().name.clone();
+                    if let Some(ty) = self.assoc_type_for_self(&base_ty, &assoc_name).await? {
+                        return Ok(ty);
+                    }
+                }
             }
             return Ok(self.error_ty(format!(
                 "unresolved type path `{}`",
@@ -2148,10 +2180,11 @@ impl HirTypeChecker {
                 let mut scope = scope.with_assoc_types(assoc_types);
                 return scope.function_signature(&function).await;
             }
+            let program = self.program_rc();
             let matched_enum_item = self
-                .program()
+                .package()
                 .member_owner(def_id)
-                .and_then(|owner_id| self.program_rc().item(owner_id))
+                .and_then(|owner_id| program.item(owner_id))
                 .filter(|item| matches!(&item.kind, hir::ItemKind::Enum(_)))
                 .cloned();
             if let Some(enum_item) = matched_enum_item {
@@ -2230,11 +2263,11 @@ impl HirTypeChecker {
                 // needs `const A`) surfaces as a stalled executor, not a
                 // wrong answer — this `.await` just suspends like any
                 // other.
-                if self.program().const_type(def_id).is_none() {
+                if self.package().const_type(def_id).is_none() {
                     HirTypeChecker::spawn_item_task(&self.root_handle(), def_id).await;
                 }
                 Ok(self
-                    .program()
+                    .package()
                     .const_type(def_id)
                     .unwrap_or_else(|| self.error_ty("constant type was not recorded")))
             }
@@ -2973,6 +3006,88 @@ impl HirTypeChecker {
     /// ...) via `deref_target`. Bounded the same conservative way rustc
     /// bounds its own autoderef chain (a fixed small limit, not truly
     /// unbounded) — a real `Deref` chain this deep would be pathological.
+    /// Resolves an unqualified `T::AssocName` associated-type projection
+    /// (see `path_ty`'s call site) by searching every impl block for one
+    /// whose self-type structurally matches `target_ty` and that declares
+    /// an associated type named `assoc_name` — the same impl-candidate
+    /// walk `method_output_at` performs for `.method()` calls, minus the
+    /// method-signature matching (there is no `self`/argument list to
+    /// check for an associated *type*). Ported onto the `HirPackage`-
+    /// backed cache / `with_generics`-child architecture (this fix
+    /// predates that rewrite; the original used the retired
+    /// `TypingShared::assoc_type_for_self_cache` and a sync closure to
+    /// guarantee `resolving_assoc_projections.pop()` ran on every return
+    /// path — replaced here with a labeled block, since an async closure
+    /// capturing `&mut self` across `.await` points isn't viable).
+    async fn assoc_type_for_self(
+        &mut self,
+        target_ty: &Ty,
+        assoc_name: &hir::Symbol,
+    ) -> Result<Option<Ty>> {
+        let key = (format!("{:?}", target_ty.kind), assoc_name.clone());
+        if let Some(cached) = self.package().assoc_type_for_self(&key) {
+            return Ok(cached);
+        }
+        if self.resolving_assoc_projections.contains(&key) {
+            return Ok(None);
+        }
+        self.resolving_assoc_projections.push(key.clone());
+        // An ADT target can only ever match an impl whose self-type also
+        // resolves to `TyKind::Adt` with the same `did` — same fast-reject
+        // reasoning as `method_output_at`'s own `impls_for_adt`/`all_impls`
+        // split.
+        let receiver_def = match &target_ty.kind {
+            TyKind::Adt(receiver, _) => Some(receiver.did),
+            _ => None,
+        };
+        let program = self.program_rc();
+        let candidates: Vec<hir::Item> = match receiver_def {
+            Some(def_id) => program.impls_for_adt(def_id).cloned().collect(),
+            None => program.all_impls().cloned().collect(),
+        };
+        let result: Result<Option<Ty>> = 'search: {
+            for item in &candidates {
+                let hir::ItemKind::Impl(impl_item) = &item.kind else {
+                    continue;
+                };
+                let mut scope = self.with_generics(&impl_item.generics);
+                let checked_self_ty = match scope.checked_impl_self_ty(&impl_item.self_ty).await {
+                    Ok(ty) => ty,
+                    Err(error) => break 'search Err(error),
+                };
+                let self_ty = match &checked_self_ty.kind {
+                    TyKind::Ref(_, inner, _) => inner.as_ref(),
+                    _ => &checked_self_ty,
+                };
+                let matches = Self::ty_shapes_compatible(&self_ty.kind, &target_ty.kind)
+                    && scope
+                        .unify_call_types(self_ty, target_ty, &mut HashMap::new())
+                        .is_ok();
+                if !matches {
+                    continue;
+                }
+                let assoc_types = match scope.impl_assoc_types(&impl_item.items).await {
+                    Ok(types) => types,
+                    Err(error) => break 'search Err(error),
+                };
+                if let Some(ty) = assoc_types.get(assoc_name) {
+                    break 'search Ok(Some(ty.clone()));
+                }
+            }
+            Ok(None)
+        };
+        // Popped unconditionally (the labeled block above only ever
+        // *breaks out* to here, on every path — found, not found, or
+        // errored — never returns past it), matching the original
+        // closure's guarantee.
+        self.resolving_assoc_projections.pop();
+        if let Ok(resolved) = &result {
+            self.package()
+                .cache_assoc_type_for_self(key, resolved.clone());
+        }
+        result
+    }
+
     async fn method_output(
         &mut self,
         receiver_ty: &Ty,
@@ -3135,7 +3250,8 @@ impl HirTypeChecker {
         if let Some(cached) = self.program_rc().resolved_trait_def(def_id) {
             return Some(cached);
         }
-        let item = self.program_rc().item(def_id)?;
+        let program = self.program_rc();
+        let item = program.item(def_id)?;
         let hir::ItemKind::Trait(tr) = &item.kind else {
             return None;
         };
@@ -3258,7 +3374,7 @@ impl HirTypeChecker {
         ty: Ty,
     ) -> crate::BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            self.program().record_pat_type(pattern.hir_id, ty.clone());
+            self.package().record_pat_type(pattern.hir_id, ty.clone());
             // Match ergonomics: an ADT-shaped pattern (`Value::Null`, `Point {
             // x, y }`, a tuple) matches against a `&Value`/`&(A, B)` scrutinee
             // the same way it matches a bare one — e.g. matching on `self`

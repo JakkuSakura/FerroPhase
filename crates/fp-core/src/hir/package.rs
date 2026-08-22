@@ -151,6 +151,18 @@ pub struct HirPackage {
     /// their own. Lazily filled by `fp_typing`, same reasoning as
     /// `checked_impl_self_ty_cache`.
     resolved_trait_defs: RefCell<HashMap<DefId, Rc<Trait>>>,
+    /// Memoized `fp_typing::assoc_type_for_self` results, keyed by
+    /// `(target type's debug repr, assoc name)`. Without this, a single
+    /// unqualified `T::AssocName` projection (e.g. `usize::Output`, from a
+    /// `<usize as Add>::Output` UFCS path that `parse_qualified_path_type`
+    /// flattens, dropping the `as Trait` disambiguator) pays a full
+    /// O(impls in workspace) scan *every time it's referenced* — tens of
+    /// thousands of times over for a macro-generated `add_impl! { usize u8
+    /// u16 .. }`-style block in the vendored std, the same O(workspace)
+    /// blowup class `checked_impl_self_ty_cache`/`function_signature_cache`
+    /// already guard against. Lazily filled by `fp_typing`, same reasoning
+    /// as `checked_impl_self_ty_cache`.
+    assoc_type_for_self_cache: RefCell<HashMap<(String, Symbol), Option<Ty>>>,
     /// Refinement-type hints for function parameters/return types,
     /// persisted across items — a per-item `HirTypeChecker`'s own transient
     /// hint bookkeeping only lives for the duration of whichever item's
@@ -252,6 +264,7 @@ impl HirPackage {
             checked_impl_self_ty_cache: RefCell::new(HashMap::new()),
             function_signature_cache: RefCell::new(HashMap::new()),
             resolved_trait_defs: RefCell::new(HashMap::new()),
+            assoc_type_for_self_cache: RefCell::new(HashMap::new()),
             refinement_hints: RefCell::new(HashMap::new()),
             raw_refinement_hints: RefCell::new(HashMap::new()),
             local_struct_fields: RefCell::new(HashMap::new()),
@@ -413,6 +426,20 @@ impl HirPackage {
 
     pub fn cache_resolved_trait_def(&self, def_id: DefId, trait_def: Rc<Trait>) {
         self.resolved_trait_defs.borrow_mut().insert(def_id, trait_def);
+    }
+
+    /// See `assoc_type_for_self_cache`'s doc comment. The outer `Option`
+    /// distinguishes "not cached yet" from the inner `Option`, "cached and
+    /// confirmed unresolvable" (a real, storable answer — not every
+    /// `T::AssocName` projection resolves, and re-scanning every impl again
+    /// for a projection already confirmed absent would defeat the point of
+    /// caching at all).
+    pub fn assoc_type_for_self(&self, key: &(String, Symbol)) -> Option<Option<Ty>> {
+        self.assoc_type_for_self_cache.borrow().get(key).cloned()
+    }
+
+    pub fn cache_assoc_type_for_self(&self, key: (String, Symbol), result: Option<Ty>) {
+        self.assoc_type_for_self_cache.borrow_mut().insert(key, result);
     }
 
     /// See `refinement_hints`'s doc comment.
