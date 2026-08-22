@@ -1824,7 +1824,7 @@ fn parse_opaque_type_item(
 /// `parse_item_macro` already handle via the generic `ident!` shape).
 /// `macro` isn't a lexer keyword (tokenizes as a plain `Ident`), so this
 /// needs its own lookahead rather than a `Keyword::Macro` dispatch arm.
-fn starts_macro_2_def(input: &[Token]) -> bool {
+pub(super) fn starts_macro_2_def(input: &[Token]) -> bool {
     matches!(
         input,
         [first, second, third, ..]

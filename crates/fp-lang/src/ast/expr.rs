@@ -1502,6 +1502,11 @@ fn starts_block_item(input: &[Token]) -> bool {
         {
             true
         }
+        // A local `macro name(..) { .. }` "macro 2.0" definition as a
+        // function-local statement (real `std::ffi::os_str`'s own `fn
+        // push(..) { .. macro spec_str($T:ty) { .. } .. }`) — same
+        // narrower-than-any-macro-call reasoning as `macro_rules!` above.
+        _ if crate::ast::items::starts_macro_2_def(input) => true,
         _ => false,
     }
 }
