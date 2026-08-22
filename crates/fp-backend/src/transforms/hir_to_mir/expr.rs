@@ -508,7 +508,14 @@ pub struct MirLowering {
     /// item's own top-level `DefId` is), so resolving one requires this
     /// one-time scan first — mirrors `hir_def_map` itself being a
     /// one-time whole-workspace snapshot.
-    method_owner_index: Option<HashMap<hir::DefId, (hir::Item, usize)>>,
+    /// `Rc`, not owned — the index is built by iterating an impl's own
+    /// `items` once per *method*, so a naive owned clone here would
+    /// re-clone the same enclosing `Item` (every method's own body
+    /// included) once per method in that impl, an O(methods^2)-bytes-
+    /// copied blowup for any impl with more than one method. One `Rc`
+    /// clone per method key instead, sharing the single real clone the
+    /// index's build loop makes once per distinct impl.
+    method_owner_index: Option<HashMap<hir::DefId, (std::rc::Rc<hir::Item>, usize)>>,
     /// Reverse index from `(self_def, method_name)` to the method's key in
     /// `method_defs_by_def` — lets `real_indexable_struct_def_id`/
     /// `call_real_method_into_place` find a struct's `index`/`index_set`
@@ -6308,9 +6315,15 @@ impl MirLowering {
             let mut index = HashMap::new();
             for item in self.hir_def_map.values() {
                 if let hir::ItemKind::Impl(impl_block) = &item.kind {
+                    // One real clone per impl, shared via `Rc` across
+                    // every one of its method keys below — an owned
+                    // clone inside the per-method loop would instead
+                    // re-clone this same `Item` (every one of its
+                    // methods' own bodies included) once per method.
+                    let owning_item = std::rc::Rc::new(item.clone());
                     for (item_idx, impl_item) in impl_block.items.iter().enumerate() {
                         if matches!(impl_item.kind, hir::ImplItemKind::Method(_)) {
-                            index.insert(impl_item.def_id, (item.clone(), item_idx));
+                            index.insert(impl_item.def_id, (owning_item.clone(), item_idx));
                         }
                     }
                 }
@@ -6325,7 +6338,7 @@ impl MirLowering {
         else {
             return;
         };
-        let hir::ItemKind::Impl(impl_block) = owning_item.kind else {
+        let hir::ItemKind::Impl(impl_block) = &owning_item.kind else {
             return;
         };
         let impl_item = impl_block.items[item_idx].clone();
@@ -6337,7 +6350,7 @@ impl MirLowering {
         self.register_impl_signature_for_item(
             struct_name.as_deref(),
             method_context.as_ref(),
-            &impl_block,
+            impl_block,
             &impl_item,
         );
     }
