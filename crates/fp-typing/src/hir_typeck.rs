@@ -122,6 +122,13 @@ pub struct TypingShared {
     /// — even from a different item's `HirTypeChecker` instance — can
     /// still discharge against it.
     refinement_hints: RefCell<HashMap<(hir::HirId, ParamSlot), crate::refinement::RefinementHint>>,
+    /// Field shapes for a `type X = const { .. };` whose RHS resolves via
+    /// `Res::Local(hir_id)` rather than a real `def_map` item (see
+    /// `path_ty`'s `Res::Local` arm) — keyed by that same `hir_id`, which
+    /// `field_ty` recovers from the `Ty`'s own `AdtDef.did` (constructed
+    /// with identical `package_id`/`index`) whenever `AdtFlags::
+    /// IS_COMPTIME_LOCAL` is set, instead of consulting `def_map`.
+    local_struct_fields: RefCell<HashMap<hir::HirId, Vec<(hir::Symbol, Ty)>>>,
 }
 
 /// Which part of a function's signature a persisted `RefinementHint`
@@ -150,6 +157,7 @@ impl TypingShared {
             checked_impl_self_ty_cache: RefCell::new(HashMap::new()),
             resolved_trait_defs: RefCell::new(HashMap::new()),
             refinement_hints: RefCell::new(HashMap::new()),
+            local_struct_fields: RefCell::new(HashMap::new()),
         })
     }
 
@@ -1142,12 +1150,20 @@ impl HirTypeChecker {
                     self.check_block(block).await?
                 }
                 hir::ExprKind::ConstBlock(const_block) => {
-                    let declared_ty = self.check_type_expr(&const_block.ty)?;
-                    self.expected_expr_types.push(declared_ty.clone());
-                    let body_result = self.check_expr(&const_block.body).await;
-                    self.expected_expr_types.pop();
-                    let body_ty = body_result?;
+                    let body_ty = self.check_expr(&const_block.body).await?;
                     if let Some(context) = self.shared.typing_context.clone() {
+                        // Record the outer const-block expression's own type
+                        // under its own `hir_id` *before* snapshotting below —
+                        // `check_expr`'s generic post-match recording (this
+                        // function's tail call) hasn't run yet for `expr`
+                        // itself at this point, and the driver-side comptime
+                        // entry (`register_const_block_comptime_entry`/
+                        // `transform_comptime_request`) needs this exact
+                        // `hir_id` to find the checked type in the snapshot.
+                        self.shared
+                            .results
+                            .borrow_mut()
+                            .record_expr_type(expr.hir_id, body_ty.clone());
                         // Snapshot and drop the `Ref` guard *before*
                         // constructing the request, not inline inside its
                         // field list — a temporary borrow created there
@@ -1167,7 +1183,18 @@ impl HirTypeChecker {
                                     expr: Some(const_block.body.clone()),
                                 },
                                 expression_id: expr.hir_id,
-                                expected_ty: (*const_block.ty).clone(),
+                                // Matches `resolve_pending_type_const_blocks`'s
+                                // own placeholder below — no declared type is
+                                // carried on the HIR node itself any more (it
+                                // was pure redundancy with `body_ty`, checked
+                                // just above); the driver-side consumer reads
+                                // the real checked type out of
+                                // `typeck_results.expr_types` instead.
+                                expected_ty: hir::TypeExpr {
+                                    hir_id: expr.hir_id,
+                                    kind: hir::TypeExprKind::Infer,
+                                    span: fp_core::span::Span::null(),
+                                },
                             })
                             .await?;
                         self.shared.results.borrow_mut().const_block_values.insert(expr.hir_id, value);
@@ -1713,7 +1740,76 @@ impl HirTypeChecker {
             }
         }
         if let Some(hir::Res::Local(local)) = path.res {
-            return Ok(self.error_ty(format!("local `{local}` is not a type")));
+            // A local `type X = const { .. };` (`ast_to_hir`'s
+            // `comptime_type_alias_rhs` lowering) — its shape is whatever
+            // the tagged expression comptime-evaluated to, already
+            // resolved by the time any later statement's `path_ty` call
+            // runs (the expression-position `ConstBlock` arm checks it
+            // eagerly, in-sequence). No other kind of local ever resolves
+            // through this `Res` variant in type position, so a missing or
+            // non-`Type` value here is a genuine error, not a probe.
+            let value = self
+                .shared
+                .results
+                .borrow()
+                .const_block_values
+                .get(&local)
+                .cloned();
+            return Ok(match value {
+                Some(fp_core::ast::Value::Type(fp_core::ast::Ty::Struct(struct_ty))) => {
+                    let fields: Vec<(hir::Symbol, Ty)> = struct_ty
+                        .fields
+                        .iter()
+                        .map(|field| {
+                            let field_ty = ast_value_ty_to_hir_ty(&field.value)
+                                .unwrap_or_else(|| self.error_ty(format!(
+                                    "field `{}`'s comptime-constructed type is not supported here",
+                                    field.name.name
+                                )));
+                            (hir::Symbol::new(field.name.name.clone()), field_ty)
+                        })
+                        .collect();
+                    self.shared
+                        .local_struct_fields
+                        .borrow_mut()
+                        .insert(local, fields.clone());
+                    let variant = ty::VariantDef {
+                        def_id: local_did(local),
+                        ctor_def_id: None,
+                        ident: hir::Symbol::new(struct_ty.name.name.clone()),
+                        discr: ty::VariantDiscr::Relative(0),
+                        fields: fields
+                            .iter()
+                            .map(|(name, _)| ty::FieldDef {
+                                did: local_did(local),
+                                ident: name.clone(),
+                                vis: ty::TyVisibility::Public,
+                            })
+                            .collect(),
+                        ctor_kind: ty::CtorKind::Fn,
+                        is_recovered: false,
+                    };
+                    Ty {
+                        kind: TyKind::Adt(
+                            AdtDef {
+                                did: local_did(local),
+                                variants: vec![variant],
+                                flags: AdtFlags::IS_STRUCT | AdtFlags::IS_COMPTIME_LOCAL,
+                                repr: ReprOptions {
+                                    int: None,
+                                    align: None,
+                                    pack: None,
+                                    flags: ReprFlags::empty(),
+                                    field_shuffle_seed: 0,
+                                },
+                            },
+                            Vec::new(),
+                        ),
+                    }
+                }
+                Some(_) => self.error_ty(format!("local `{local}` is not a type")),
+                None => self.error_ty(format!("local `{local}` is not a type")),
+            });
         }
         if matches!(path.res, Some(hir::Res::SelfTy)) {
             if self.self_types.is_empty() {
@@ -3410,6 +3506,22 @@ impl HirTypeChecker {
                 receiver.kind
             )));
         };
+        if adt.flags.contains(AdtFlags::IS_COMPTIME_LOCAL) {
+            // `path_ty`'s `Res::Local` arm set this bit itself, on this
+            // exact `Ty`, when it built it from a comptime-evaluated
+            // local type alias — the field shapes it recorded then are
+            // the only source of truth here, `def_map` was never involved
+            // in producing this `Ty` at all.
+            let hir_id = hir::HirId::new(adt.did.package_id, adt.did.index);
+            let fields = self.shared.local_struct_fields.borrow();
+            let Some(fields) = fields.get(&hir_id) else {
+                return Ok(self.error_ty("comptime-constructed struct's field shape was not found"));
+            };
+            let Some((_, field_ty)) = fields.iter().find(|(name, _)| name == field) else {
+                return Ok(self.error_ty(format!("field `{field}` was not found")));
+            };
+            return Ok(field_ty.clone());
+        }
         let Some(item) = self.shared.program.def_map.get(&adt.did).cloned() else {
             return Ok(self.error_ty("struct definition was not found"));
         };
@@ -4018,6 +4130,37 @@ fn primitive_path_ty(name: &str) -> Option<Ty> {
         },
         _ => return None,
     })
+}
+
+/// A `hir::DefId` sharing the same `(package_id, index)` as `hir_id` — used
+/// only as `AdtDef`/`FieldDef::did`'s internal identity for a comptime-
+/// local struct type (see `path_ty`'s `Res::Local` arm), never inserted
+/// into `def_map` or any other real `DefId`-keyed table, so it can't
+/// collide with a genuine definition's id.
+fn local_did(hir_id: hir::HirId) -> hir::DefId {
+    hir::DefId::new(hir_id.package_id, hir_id.index)
+}
+
+/// Converts the subset of `ast::Ty` that `TypeBuilder`'s intrinsics
+/// (`ComptimeOp::CreateStruct`/`AddField`, `fp-interpret`) can actually
+/// produce for a field's type — primitives and references to them — into
+/// the checked `hir::ty::Ty` shape `field_ty` needs. Anything else (a
+/// nested/generic comptime-constructed field type) is out of scope, per
+/// this feature's stated scope, and returns `None` rather than guessing.
+fn ast_value_ty_to_hir_ty(ty: &fp_core::ast::Ty) -> Option<Ty> {
+    match ty {
+        fp_core::ast::Ty::Primitive(primitive) => Some(primitive_ty(*primitive)),
+        fp_core::ast::Ty::Reference(reference) => {
+            ast_value_ty_to_hir_ty(&reference.ty).map(|inner| Ty {
+                kind: TyKind::Ref(
+                    ty::Region::ReStatic,
+                    Box::new(inner),
+                    ty::Mutability::Not,
+                ),
+            })
+        }
+        _ => None,
+    }
 }
 
 fn primitive_ty(primitive: TypePrimitive) -> Ty {

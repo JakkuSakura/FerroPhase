@@ -801,6 +801,21 @@ impl HirGenerator {
             .insert(name.to_string(), hir::Res::Local(hir_id));
     }
 
+    /// Type-namespace counterpart of `register_value_local` — binds `name`
+    /// (lexically, this scope only) to the `HirId` of the expression whose
+    /// checked/comptime-resolved value defines its shape, instead of a real
+    /// `DefId`/`def_map` entry. Used for a local `type X = const { .. };`
+    /// whose RHS needs compile-time evaluation to produce a concrete type
+    /// (e.g. a `TypeBuilder`-constructed struct) — unlike a real
+    /// `struct`/`enum` item (`register_type_def`, backed by `Res::Def` and a
+    /// `def_map` entry known up front), the shape here is only known once
+    /// the checker actually evaluates the tagged expression, so `path_ty`
+    /// reads it out of `TypeckResults` via this `HirId` instead.
+    fn register_type_local(&mut self, name: &str, hir_id: hir::HirId) {
+        self.current_type_scope()
+            .insert(name.to_string(), hir::Res::Local(hir_id));
+    }
+
     fn record_module_def(&mut self, name: &str) {
         let path = self.module_path.with_segment(name.to_string());
         self.package.module_tree.ensure_module(&path);
@@ -2424,6 +2439,31 @@ impl HirGenerator {
                 self.register_type_alias(&def_type.name.name, &def_type.value);
                 if let Some(hir_item) = self.materialize_def_type_item(item.as_ref(), def_type)? {
                     Ok(hir::StmtKind::Item(hir_item))
+                } else if let Some(inner) = comptime_type_alias_rhs(&def_type.value) {
+                    // `type X = const { .. };` / `type X = EXPR;` (where
+                    // `EXPR` needs compile-time evaluation to produce a
+                    // concrete type, e.g. a `TypeBuilder`-constructed
+                    // struct) has no `DefId`/`def_map` entry to give — a
+                    // real struct/enum's shape is known up front, this
+                    // one only once the checker evaluates `inner`. Lower it
+                    // as an ordinary, eagerly-checked expression-position
+                    // `ConstBlock` statement (per Part B: `const { .. }` in
+                    // this position is transparent sugar, so both syntaxes
+                    // collapse to the same node here), and bind `X`'s name
+                    // to that expression's own `HirId` via `Res::Local`
+                    // rather than a `DefId` — `path_ty`/`field_ty` read the
+                    // resolved shape straight out of `TypeckResults` by
+                    // that `HirId` once this statement has been checked,
+                    // no `def_map` involved at all.
+                    let body = Box::new(self.transform_expr_to_hir(inner)?);
+                    let const_block_expr = hir::Expr {
+                        hir_id: self.next_id(),
+                        kind: hir::ExprKind::ConstBlock(hir::ExprConstBlock { body }),
+                        span: item.span(),
+                    };
+                    self.register_value_local(&def_type.name.name, const_block_expr.hir_id);
+                    self.register_type_local(&def_type.name.name, const_block_expr.hir_id);
+                    Ok(hir::StmtKind::Expr(const_block_expr))
                 } else {
                     let unit_block = hir::Block {
                         hir_id: self.next_id(),
@@ -2893,7 +2933,20 @@ impl HirGenerator {
             self.create_unit_type()
         };
 
-        let value = self.transform_expr_to_hir(&const_def.value)?;
+        // A `const` item's initializer is already an implicitly const-
+        // evaluated position — an explicit `const { EXPR }` wrapper here
+        // is redundant sugar for `EXPR` itself, not a distinct construct
+        // (unlike inside a `fn` body, where it's the one place `const {
+        // .. }` carves out a compile-time-evaluated island in otherwise-
+        // runtime code, and keeps its own `hir::ExprKind::ConstBlock`
+        // handling untouched). Unwrapping here means `lower_const_expr`
+        // only ever needs to constant-fold "an expression in const
+        // position," never a `ConstBlock` shape on top of that.
+        let value_expr = match const_def.value.kind() {
+            ast::ExprKind::ConstBlock(const_block) => const_block.expr.as_ref(),
+            _ => &const_def.value,
+        };
+        let value = self.transform_expr_to_hir(value_expr)?;
         let body = hir::Body {
             hir_id: self.next_id(),
             params: Vec::new(),
@@ -4198,6 +4251,20 @@ fn should_drop_quote_item(item: &ast::Item) -> bool {
 fn should_drop_const_type_item(item: &ast::Item) -> bool {
     let _ = item;
     false
+}
+
+/// A type alias's RHS that needs compile-time evaluation to produce a
+/// concrete type (`type X = const { .. };` or the bare-expression form
+/// `type X = EXPR;`) — the one case `materialized_type_alias` returns
+/// `None` for. Returns the inner expression to check/comptime-evaluate,
+/// unwrapping an explicit `const { .. }` wrapper (redundant sugar in this
+/// position, per Part B) so both syntaxes lower identically.
+fn comptime_type_alias_rhs(ty: &ast::Ty) -> Option<&ast::Expr> {
+    match ty {
+        ast::Ty::ConstBlock(const_block) => Some(const_block.expr.as_ref()),
+        ast::Ty::Expr(expr) => Some(expr.as_ref()),
+        _ => None,
+    }
 }
 
 /// Shared with `canonical_type_path`'s own primitive-name check, and with

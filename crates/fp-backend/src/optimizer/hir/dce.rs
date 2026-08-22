@@ -221,8 +221,7 @@ fn expr_has_unresolved_paths(expr: &hir::Expr) -> bool {
             expr_has_unresolved_paths(elem) || expr_has_unresolved_paths(len)
         }
         hir::ExprKind::ConstBlock(const_block) => {
-            type_has_unresolved_paths(&const_block.ty)
-                || expr_has_unresolved_paths(&const_block.body)
+            expr_has_unresolved_paths(&const_block.body)
         }
         hir::ExprKind::Closure(closure) => {
             closure
@@ -484,7 +483,6 @@ fn collect_expr_refs(
             collect_expr_refs(len, tail_map, work);
         }
         hir::ExprKind::ConstBlock(const_block) => {
-            collect_type_refs(&const_block.ty, tail_map, work);
             collect_expr_refs(&const_block.body, tail_map, work);
         }
         hir::ExprKind::Closure(closure) => {

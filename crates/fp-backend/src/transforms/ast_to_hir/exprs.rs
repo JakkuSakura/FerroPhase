@@ -429,7 +429,7 @@ impl HirGenerator {
             }
             ExprKind::Continue(_) => hir::ExprKind::Continue,
             ExprKind::ConstBlock(const_block) => {
-                self.transform_const_block_to_hir(ast_expr, const_block)?
+                self.transform_const_block_to_hir(const_block)?
             }
             ExprKind::IntrinsicContainer(container) => {
                 self.transform_intrinsic_container_to_hir(container)?
@@ -465,18 +465,10 @@ impl HirGenerator {
 
     fn transform_const_block_to_hir(
         &mut self,
-        ast_expr: &ast::Expr,
         const_block: &ast::ExprConstBlock,
     ) -> Result<hir::ExprKind> {
         let body = Box::new(self.transform_expr_to_hir(const_block.expr.as_ref())?);
-        let ty = fp_core::ast::resolved_expr_type(ast_expr.id())
-            .map(|ty| self.transform_type_to_hir(&ty))
-            .transpose()?
-            .unwrap_or_else(|| self.create_unit_type());
-        Ok(hir::ExprKind::ConstBlock(hir::ExprConstBlock {
-            ty: Box::new(ty),
-            body,
-        }))
+        Ok(hir::ExprKind::ConstBlock(hir::ExprConstBlock { body }))
     }
 
     // create_main_function moved to items.rs

@@ -790,9 +790,28 @@ impl MirLowering {
                 "internal compiler error: comptime request block has no body expression",
             )
         })?;
+        // `request.expected_ty` is only ever a placeholder (`Infer`) these
+        // days — the real, checked type lives in the request's own
+        // `typeck_results` snapshot, keyed by `expression_id`, exactly like
+        // `register_const_block_comptime_entry` reads it out of `self.
+        // typeck_exprs` for the whole-package walk. The type checker
+        // unconditionally records this entry before ever building the
+        // request, so a missing/unlowerable entry here is an internal
+        // compiler error, not a normal "might not be there" case.
+        let ty = request
+            .typeck_results
+            .expr_types
+            .get(&request.expression_id)
+            .ok_or_else(|| {
+                fp_core::error::Error::from(format!(
+                    "internal compiler error: comptime request for {:?} has no checked type in typeck_results",
+                    request.expression_id
+                ))
+            })
+            .and_then(|ty| lower_hir_ty(ty))?;
         self.register_const_block_comptime_entry_direct(
             request.expression_id,
-            &request.expected_ty,
+            ty,
             body,
             body.span,
         );
@@ -4139,35 +4158,60 @@ impl MirLowering {
         const_block: &hir::ExprConstBlock,
         span: Span,
     ) {
+        // `hir::ExprConstBlock` carries no declared type of its own (see
+        // `hir::ExprConstBlock`'s doc comment) — the real, checked type is
+        // whatever the type checker recorded for this expression's own
+        // `hir_id` in `TypeckResults::expr_types`, already loaded here via
+        // `with_typeck_results`/`typeck_exprs`. Every `ConstBlock` expr is
+        // checked (and its type recorded) before MIR lowering ever runs —
+        // a missing entry means typing skipped this node, an internal
+        // compiler error, not a case to paper over with a made-up type.
+        let lowered_ty = self
+            .typeck_exprs
+            .get(&expr_hir_id)
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!(
+                    "internal compiler error: const block {expr_hir_id:?} has no checked type in TypeckResults"
+                )
+            });
         self.register_const_block_comptime_entry_direct(
             expr_hir_id,
-            &const_block.ty,
+            lowered_ty,
             &const_block.body,
             span,
         );
     }
 
     /// Shared by `register_const_block_comptime_entry` (found incidentally
-    /// while walking a body that contains a `const { .. }` block) and
-    /// `transform_comptime_request` (fed directly from a
-    /// `fp_typing::ComptimeRequest`'s own `expected_ty`/`block.expr`, with
-    /// no body walk at all) — both just need `ty`/`body` unboxed, not an
-    /// `hir::ExprConstBlock` specifically.
+    /// while walking a body that contains a `const { .. }` block, `ty`
+    /// already resolved from `TypeckResults`) and `transform_comptime_
+    /// request` (fed directly from a `fp_typing::ComptimeRequest`'s own
+    /// `typeck_results`/`block.expr`, with no body walk at all) — both just
+    /// need the already-checked `ty`/`body` unboxed, not an `hir::
+    /// ExprConstBlock` specifically.
     fn register_const_block_comptime_entry_direct(
         &mut self,
         expr_hir_id: hir::HirId,
-        ty: &hir::TypeExpr,
+        ty: Ty,
         body: &hir::Expr,
         span: Span,
     ) {
-        let lowered_ty = self.lower_type_expr(ty);
         let name = hir::Symbol::new(format!(
             "__const_block_{}_{}",
             expr_hir_id.package_id.0, expr_hir_id.index
         ));
         let konst = hir::Const {
             name: name.clone(),
-            ty: ty.clone(),
+            // No real declared `TypeExpr` exists for this synthetic item —
+            // the real type is `ty` above, already threaded straight into
+            // `mir::FunctionSig`/`mir::ExecutableConst` by
+            // `lower_executable_const`, not read back off this field.
+            ty: hir::TypeExpr {
+                hir_id: expr_hir_id,
+                kind: hir::TypeExprKind::Infer,
+                span,
+            },
             body: hir::Body {
                 hir_id: expr_hir_id,
                 params: Vec::new(),
@@ -4176,7 +4220,7 @@ impl MirLowering {
         };
         let key = self.const_key(name.as_str(), span);
         let def_id = self.next_synthetic_def_id();
-        match self.lower_executable_const(def_id, &konst, lowered_ty, key, Some(expr_hir_id)) {
+        match self.lower_executable_const(def_id, &konst, ty, key, Some(expr_hir_id)) {
             Ok(mir_item) => self.extra_items.push(mir_item),
             Err(error) => self.emit_warning(
                 span,

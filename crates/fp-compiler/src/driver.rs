@@ -431,11 +431,10 @@ impl CompilerDriver {
                 } else if matches!(self.pipeline, PipelineMode::Native | PipelineMode::TypecheckedTranspile) {
                     // `TypecheckedTranspile` needs HIR generation + typing too (it lifts the
                     // typed HIR back to AST inside `compile_items_to_lir_units`) — it now also
-                    // attempts MIR/LIR lowering there, best-effort, purely so any comptime
-                    // entries (e.g. `const { .. }` blocks) can be validated below through the
-                    // real interpreter; unlike Native, a comptime failure here is reported,
-                    // not propagated, since the Kotlin backend never consumes the resolved
-                    // value (only the block's type, already known independent of this).
+                    // attempts MIR/LIR lowering there so any comptime entries (e.g. `const
+                    // { .. }` blocks) get resolved and relowered the same way `Native` does,
+                    // below — every target needs the resolved value, not just the block's
+                    // type, so both pipeline modes handle a comptime failure identically.
                     let mut units = self
                         .compile_items_to_lir_units(&package)
                         .await?;
@@ -450,26 +449,11 @@ impl CompilerDriver {
                             let fqp = FullyQualifiedPath::new(module_path);
                             // Both pipeline modes need the resolved value
                             // relowered back into a real `LirGlobal` (see
-                            // this arm's own doc comment above) — only the
-                            // error-handling behavior stays pipeline-
-                            // dependent: `Native` hard-fails via `?`,
-                            // `TypecheckedTranspile` just warns and treats
-                            // a failed comptime block as if it had
-                            // resolved nothing.
-                            let block_values = if self.pipeline == PipelineMode::Native {
-                                self.evaluate_comptime_lir(&lir_id, &fqp).await?
-                            } else {
-                                match self.evaluate_comptime_lir(&lir_id, &fqp).await {
-                                    Ok(values) => values,
-                                    Err(error) => {
-                                        fp_core::diagnostics::report_warning_with_context(
-                                            "const-eval".to_string(),
-                                            format!("comptime validation failed: {error}"),
-                                        );
-                                        HashMap::new()
-                                    }
-                                }
-                            };
+                            // this arm's own doc comment above) — a failed
+                            // comptime block is a genuine compile error in
+                            // either mode, not something to downgrade to a
+                            // warning in one and not the other.
+                            let block_values = self.evaluate_comptime_lir(&lir_id, &fqp).await?;
                             if !block_values.is_empty() {
                                 self.apply_resolved_comptime_block_values(&block_values)?;
                                 units = self.relower_cached_lir_units(&package).await?;

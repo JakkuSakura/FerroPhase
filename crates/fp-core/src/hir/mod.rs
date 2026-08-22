@@ -398,7 +398,6 @@ pub enum ExprKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExprConstBlock {
-    pub ty: Box<TypeExpr>,
     pub body: Box<Expr>,
 }
 
@@ -1202,9 +1201,7 @@ impl ExprKind {
             ExprKind::Array(exprs) => Span::union(exprs.iter().map(Expr::span)),
             ExprKind::ArrayRepeat { elem, len } => Span::union([elem.span(), len.span()]),
             ExprKind::Tuple(exprs) => Span::union(exprs.iter().map(Expr::span)),
-            ExprKind::ConstBlock(const_block) => {
-                Span::union([const_block.ty.span(), const_block.body.span()])
-            }
+            ExprKind::ConstBlock(const_block) => const_block.body.span(),
             ExprKind::Closure(closure) => Span::union(
                 closure
                     .params

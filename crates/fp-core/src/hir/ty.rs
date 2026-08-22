@@ -469,6 +469,14 @@ bitflags::bitflags! {
         const IS_FUNDAMENTAL      = 1 << 5;
         const IS_BOX              = 1 << 6;
         const IS_MANUALLY_DROP    = 1 << 7;
+        /// Set only by `fp_typing::hir_typeck::path_ty`'s `Res::Local` arm,
+        /// for a `type X = const { .. };` whose shape came from comptime
+        /// evaluation rather than a real `def_map` item (no such item
+        /// exists for this `did` at all). `field_ty` reads this bit to
+        /// decide, once and directly off the `Ty` it was handed, which of
+        /// the two field-shape sources applies — never by probing `def_map`
+        /// and falling back to a second table.
+        const IS_COMPTIME_LOCAL  = 1 << 8;
     }
 }
 
