@@ -1,0 +1,50 @@
+use std::path::Path;
+use std::sync::Arc;
+
+use fp_core::package::provider::PackageProvider;
+use fp_core::package::{PackageId, PackageSource};
+
+fn package_name_for(root: &Path) -> String {
+    root.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("main")
+        .to_string()
+}
+
+/// A `.class`/`.jar` file carries both a `PrecompiledArtifact` (raw bytes,
+/// for byte-identical passthrough back to `--target jvm-bytecode` —
+/// `fp_jvm::JvmBackend` checks for it before its normal MIR-based path)
+/// and, best-effort, a `PrecompiledLir` (so retargeting to
+/// native/goasm/urcl/cil works the same generic way goasm/URCL input
+/// already does).
+pub fn bytecode_provider(root: &Path) -> Option<Arc<dyn PackageProvider>> {
+    let bytes = std::fs::read(root).ok()?;
+    let is_jar = bytes.starts_with(b"PK\x03\x04");
+    let package_id = PackageId::new(package_name_for(root));
+    let mut source =
+        PackageSource::single_item(package_id.clone(), fp_core::ast::Item::precompiled_artifact(bytes.clone()));
+    let lir = if is_jar {
+        crate::extract_class_files_from_jar(&bytes).ok().and_then(|classes| {
+            let mut merged: Option<fp_core::lir::LirProgram> = None;
+            for class in classes {
+                let program = crate::parse_class_to_lir(&class.bytes).ok()?;
+                match merged.as_mut() {
+                    Some(merged_program) => merged_program.extend(program).ok()?,
+                    None => merged = Some(program),
+                }
+            }
+            merged
+        })
+    } else {
+        crate::parse_class_to_lir(&bytes).ok()
+    };
+    if let Some(lir) = lir {
+        source.items.push(fp_core::package::PackageItem {
+            module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+            item: fp_core::ast::Item::precompiled_lir(lir),
+        });
+    }
+    Some(Arc::new(fp_core::package::provider::FixedPackageProvider::for_source(
+        package_id, source,
+    )) as Arc<dyn PackageProvider>)
+}

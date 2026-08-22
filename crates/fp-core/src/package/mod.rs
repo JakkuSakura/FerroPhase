@@ -198,6 +198,20 @@ impl PackageSource {
             referenced_paths: HashMap::new(),
         }
     }
+
+    /// A one-item package wrapping a single opaque `Item` (e.g.
+    /// `Item::precompiled_asm`/`precompiled_lir`/`precompiled_artifact`) —
+    /// the shape every foreign-artifact `PackageProvider` (native object/
+    /// asm, goasm, urcl, jvm-bytecode, cil, ...) needs, with no real module
+    /// graph behind it.
+    pub fn single_item(package_id: PackageId, item: Item) -> Self {
+        let mut source = Self::new(package_id.clone(), package_id.as_str(), graph::PackageGraph::new(Vec::new()));
+        source.items.push(PackageItem {
+            module_path: QualifiedPath::new(Vec::new()),
+            item,
+        });
+        source
+    }
 }
 
 /// One module's worth of items within a package, grouped by module path.

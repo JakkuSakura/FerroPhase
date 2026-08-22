@@ -1,4 +1,5 @@
 mod cil;
+pub mod package;
 mod parse;
 
 pub use cil::assemble_cil_text;

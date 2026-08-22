@@ -3,6 +3,7 @@ mod error;
 mod jar;
 mod jir;
 mod lower;
+pub mod package;
 mod parse;
 
 pub use classfile::{EmittedClass, emit_class_files};

@@ -11,6 +11,7 @@ pub mod intrinsic_materializer;
 pub mod jit;
 pub mod libc;
 pub mod link;
+pub mod package;
 pub mod system_api;
 
 use crate::config::{EmitKind, NativeConfig};

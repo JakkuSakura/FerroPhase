@@ -1,4 +1,5 @@
 mod emit;
+pub mod package;
 mod parse;
 
 use fp_core::error::Result;

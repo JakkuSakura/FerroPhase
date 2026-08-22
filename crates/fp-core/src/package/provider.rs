@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::ast::module::ModuleId;
@@ -222,4 +223,25 @@ impl PackageProvider for CompositeProvider {
             .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))?
             .load_package_source(id)
     }
+}
+
+/// Reads `root` as text and lifts it via `parse` into a target-independent
+/// `crate::lir::LirProgram`, wrapping it as a one-package, one-item
+/// provider (`PackageSource::single_item` + `Item::precompiled_lir`) — the
+/// shared shape for any language whose input parses straight to LIR
+/// (goasm, urcl, ...), with no language-specific knowledge here.
+pub fn lir_from_text(
+    root: &Path,
+    parse: impl FnOnce(&str) -> crate::error::Result<crate::lir::LirProgram>,
+) -> Option<Arc<dyn PackageProvider>> {
+    let text = std::fs::read_to_string(root).ok()?;
+    let lir = parse(&text).ok()?;
+    let name = root
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("main")
+        .to_string();
+    let package_id = PackageId::new(name);
+    let source = PackageSource::single_item(package_id.clone(), crate::ast::Item::precompiled_lir(lir));
+    Some(Arc::new(FixedPackageProvider::for_source(package_id, source)) as Arc<dyn PackageProvider>)
 }
