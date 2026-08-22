@@ -1976,7 +1976,27 @@ fn parse_match_expr(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     if skip_keyword(&mut probe, Keyword::Match).is_err() {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
-    let scrutinee = parse_expr_winnow_no_struct(&mut probe, file)?;
+    let scrutinee_start = probe;
+    // A bare scrutinee that's just a real-Rust identifier colliding with
+    // this checker's own `quote`/`splice` metaprogramming keywords (real
+    // `std::sys::args::windows`'s own `match quote { .. }`, naming a
+    // local `quote: Quote` variable) gets greedily swallowed whole by
+    // `parse_quote_expr`'s bare-`quote { .. }` fallback, which either
+    // consumes the match's own arm-list brace as its quote block's body
+    // (when that body happens to parse as a valid block on its own) or
+    // hard-errors trying to (when it doesn't, e.g. `1 => 10` isn't a
+    // valid block statement) — either way leaving nothing usable here.
+    // `if let`'s scrutinee parsing already has this exact retry (see its
+    // own `parse_keyword_name_expr_no_struct` fallback, used the same
+    // way below); reuse the same recovery here, on both the hard-error
+    // and the leftover-tokens outcome.
+    let scrutinee = match parse_expr_winnow_no_struct(&mut probe, file) {
+        Ok(scrutinee) if peek_symbol(probe) == Some("{") => scrutinee,
+        _ => {
+            probe = scrutinee_start;
+            parse_keyword_name_expr_no_struct(&mut probe, file)?
+        }
+    };
     skip_symbol(&mut probe, "{")?;
     let mut cases = Vec::new();
     while peek_symbol(probe) != Some("}") {
@@ -2811,7 +2831,19 @@ fn parse_if_expr_no_struct_condition<'a>(
     cond_start: &'a [Token],
 ) -> ModalResult<Expr> {
     let mut probe = cond_start;
-    let cond = parse_expr_winnow_no_struct(&mut probe, file)?;
+    // Same `quote`/`splice`-keyword-vs-real-identifier collision
+    // `parse_match_expr` retries around (see its own comment) — a plain
+    // `if quote { .. }` condition (real `std::sys::args::windows`'s own
+    // `if quote { cmd.push('"' as u16); }`) hits it identically: the
+    // condition parse either swallows the if's own body as a bare
+    // `quote { .. }` block or hard-errors trying to.
+    let cond = match parse_expr_winnow_no_struct(&mut probe, file) {
+        Ok(cond) if peek_symbol(probe) == Some("{") => cond,
+        _ => {
+            probe = cond_start;
+            parse_keyword_name_expr_no_struct(&mut probe, file)?
+        }
+    };
     let then_expr = parse_block_expr(&mut probe, file)?;
     let mut elze = None;
     let mut else_probe = probe;
