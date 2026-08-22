@@ -400,6 +400,41 @@ impl AstToHirLowerer {
                     res: Some(res),
                 });
             }
+            // A path may also already BE its own real global key exactly
+            // as written, with no module prefix at all — the case for a
+            // primitive type's own inherent-impl item (`char::MAX`,
+            // referenced from inside the *module* `core::char`, whose own
+            // canonical impl path is the bare `["char"]` singleton — see
+            // `canonical_type_path`'s `is_primitive_type_name` branch, not
+            // `core::char`). Without this check, the crate-root guess
+            // below fires first: since `core::char` (the module) really
+            // does have a child named `char`... no it doesn't, but this
+            // module's OWN name is `char`, so prepending the crate root
+            // to `first_name` (`"char"`) below reconstructs `core::char::
+            // MAX` — this exact const's own module-level sibling, i.e.
+            // itself — instead of the primitive's unrelated inherent
+            // constant, silently turning `char::MAX = char::MAX;` into a
+            // self-referential cycle. A literal, unprefixed lookup is
+            // strictly more specific than either the relative-module or
+            // crate-root-guess candidates, so it takes precedence over
+            // both.
+            let literal_path = QualifiedPath::new(
+                segments
+                    .iter()
+                    .map(|segment| segment.name.as_str().to_string())
+                    .collect::<Vec<_>>(),
+            );
+            if let Some(res) = self.lookup_global_res(&literal_path, scope) {
+                return Ok(hir::Path {
+                    segments: literal_path
+                        .segments
+                        .iter()
+                        .zip(segments.iter())
+                        .map(|(name, original)| self.make_path_segment(name, original.args.clone()))
+                        .collect(),
+                    res: Some(res),
+                });
+            }
             // The relative-to-current-module lookup above is the ordinary
             // case (a `foo::bar` reference where `foo` is a sibling
             // module). A plain path may also be an *absolute* reference
