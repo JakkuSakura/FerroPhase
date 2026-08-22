@@ -20,6 +20,12 @@ pub const GOASM: &str = "goasm";
 /// URCL text given directly as `fp compile`'s input — see
 /// `fp_core::ast::ItemKind::PrecompiledLir`.
 pub const URCL: &str = "urcl";
+/// A JVM `.class`/`.jar` file given directly as `fp compile`'s input —
+/// see `fp_core::ast::ItemKind::PrecompiledArtifact`.
+pub const JVM_BYTECODE: &str = "jvm-bytecode";
+/// CIL text or an assembled .NET `.dll`/`.exe` given directly as
+/// `fp compile`'s input — see `fp_core::ast::ItemKind::PrecompiledArtifact`.
+pub const CIL: &str = "cil";
 pub const TYPESCRIPT: &str = "typescript";
 pub const JAVASCRIPT: &str = "javascript";
 pub const CSHARP: &str = "csharp";
@@ -101,6 +107,19 @@ pub const SUPPORTED_LANGUAGES: &[Language] = &[
     Language {
         name: URCL,
         extensions: &["urcl"],
+        ast_target_supported: false,
+    },
+    Language {
+        name: JVM_BYTECODE,
+        extensions: &["class", "jar"],
+        ast_target_supported: false,
+    },
+    Language {
+        name: CIL,
+        // `.exe` could also be a native PE, but this codebase's existing
+        // convention (see the container classifier this replaces) is to
+        // default to the .NET ecosystem unless overridden via `--lang`.
+        extensions: &["il", "dll", "exe"],
         ast_target_supported: false,
     },
     #[cfg(feature = "lang-typescript")]

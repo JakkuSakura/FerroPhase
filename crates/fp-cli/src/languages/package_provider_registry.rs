@@ -64,11 +64,12 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
         }),
     ));
 
-    let c = factory(|root: &Path| {
-        Some(Arc::new(fp_c::package::CPackageProvider::new(root.to_path_buf())) as Arc<dyn PackageProvider>)
-    });
-    entries.push(("c", c.clone()));
-    entries.push(("cil", c));
+    entries.push((
+        "c",
+        factory(|root: &Path| {
+            Some(Arc::new(fp_c::package::CPackageProvider::new(root.to_path_buf())) as Arc<dyn PackageProvider>)
+        }),
+    ));
 
     // Raw asm text has no manifest/project shape either — same one-file,
     // one-package treatment as `object`, just lifted from a parsed
@@ -117,6 +118,22 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
         "urcl",
         factory(|root: &Path| precompiled_lir_provider(root, fp_urcl::parse_program)),
     ));
+
+    // A `.class`/`.jar` file carries both a `PrecompiledArtifact` (raw
+    // bytes, for byte-identical passthrough back to `--target
+    // jvm-bytecode` — `fp_jvm::JvmBackend` checks for it before its
+    // normal MIR-based path) and, best-effort, a `PrecompiledLir` (so
+    // retargeting to native/goasm/urcl/cil/dotnet works the same generic
+    // way goasm/URCL input already does).
+    entries.push(("jvm-bytecode", factory(jvm_bytecode_provider)));
+
+    // CIL text or an assembled `.dll`/`.exe` — same two-item shape:
+    // `PrecompiledArtifact` for passthrough (`fp_cil::CilBackend` checks
+    // for it, in both its `assemble: false`/`true` modes), plus a
+    // best-effort `PrecompiledLir` when the input is text (binary PE
+    // input has no lift path today, matching the previous pipeline's own
+    // limitation).
+    entries.push(("cil", factory(cil_provider)));
 
     #[cfg(feature = "lang-typescript")]
     {
@@ -355,6 +372,98 @@ fn precompiled_lir_provider(
         path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
         item: fp_core::ast::Item::precompiled_lir(lir),
     });
+    Some(Arc::new(fp_core::package::provider::FixedPackageProvider::for_source(
+        package_id, source,
+    )) as Arc<dyn PackageProvider>)
+}
+
+fn package_name_for(root: &Path) -> String {
+    root.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("main")
+        .to_string()
+}
+
+/// `.class`/`.jar` input: always carries the raw bytes as a
+/// `PrecompiledArtifact` (`JvmBackend`'s passthrough path needs the
+/// original bytes verbatim, not a lift-then-relower round trip); also
+/// best-effort lifts to a `PrecompiledLir` — a single class parses
+/// directly, a jar merges every member class's LIR into one program — so
+/// retargeting to any other LIR-consuming backend works too. The lift is
+/// best-effort: if it fails, the package still has its `PrecompiledArtifact`
+/// item, so `--target jvm-bytecode` (the only thing tested against a
+/// non-liftable class today) still works.
+fn jvm_bytecode_provider(root: &Path) -> Option<Arc<dyn PackageProvider>> {
+    let bytes = std::fs::read(root).ok()?;
+    let is_jar = bytes.starts_with(b"PK\x03\x04");
+    let package_id = fp_core::package::PackageId::new(package_name_for(root));
+    let mut source = fp_core::package::PackageSource::new(
+        package_id.clone(),
+        package_id.as_str().to_string(),
+        fp_core::package::graph::PackageGraph::new(Vec::new()),
+    );
+    source.items.push(fp_core::package::PackageItem {
+        path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+        item: fp_core::ast::Item::precompiled_artifact(bytes.clone()),
+    });
+    let lir = if is_jar {
+        fp_jvm::extract_class_files_from_jar(&bytes).ok().and_then(|classes| {
+            let mut merged: Option<fp_core::lir::LirProgram> = None;
+            for class in classes {
+                let program = fp_jvm::parse_class_to_lir(&class.bytes).ok()?;
+                match merged.as_mut() {
+                    Some(merged_program) => merged_program.extend(program).ok()?,
+                    None => merged = Some(program),
+                }
+            }
+            merged
+        })
+    } else {
+        fp_jvm::parse_class_to_lir(&bytes).ok()
+    };
+    if let Some(lir) = lir {
+        source.items.push(fp_core::package::PackageItem {
+            path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+            item: fp_core::ast::Item::precompiled_lir(lir),
+        });
+    }
+    Some(Arc::new(fp_core::package::provider::FixedPackageProvider::for_source(
+        package_id, source,
+    )) as Arc<dyn PackageProvider>)
+}
+
+/// CIL text or an assembled `.dll`/`.exe`: always carries the raw bytes as
+/// a `PrecompiledArtifact` (`CilBackend`'s passthrough path, both
+/// `assemble: false`/`true`, needs the original text/PE bytes verbatim);
+/// text input also best-effort lifts to a `PrecompiledLir` for retargeting
+/// to any other LIR-consuming backend. Binary PE input has no lift path —
+/// matches the previous bespoke pipeline's own "binary -> native
+/// transpilation is not implemented yet" limitation, just without a
+/// bespoke error message for it (`merged_lir_program` errors naturally
+/// instead when nothing retargets it).
+fn cil_provider(root: &Path) -> Option<Arc<dyn PackageProvider>> {
+    let bytes = std::fs::read(root).ok()?;
+    let is_pe = bytes.starts_with(b"MZ");
+    let package_id = fp_core::package::PackageId::new(package_name_for(root));
+    let mut source = fp_core::package::PackageSource::new(
+        package_id.clone(),
+        package_id.as_str().to_string(),
+        fp_core::package::graph::PackageGraph::new(Vec::new()),
+    );
+    source.items.push(fp_core::package::PackageItem {
+        path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+        item: fp_core::ast::Item::precompiled_artifact(bytes.clone()),
+    });
+    if !is_pe {
+        if let Ok(text) = String::from_utf8(bytes) {
+            if let Ok(lir) = fp_cil::parse_cil_program(&text) {
+                source.items.push(fp_core::package::PackageItem {
+                    path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+                    item: fp_core::ast::Item::precompiled_lir(lir),
+                });
+            }
+        }
+    }
     Some(Arc::new(fp_core::package::provider::FixedPackageProvider::for_source(
         package_id, source,
     )) as Arc<dyn PackageProvider>)

@@ -9,8 +9,6 @@ use crate::error::{CliError, Result};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ContainerInputKind {
     NativeArchive,
-    JvmBytecode,
-    Cil,
 }
 
 /// What `classify_input` decided a path is, computed exactly once per input
@@ -20,18 +18,20 @@ pub(crate) enum ContainerInputKind {
 /// than once each — re-deriving the same answer (and, for the byte-sniffed
 /// case, re-reading the file) every time.
 ///
-/// Native objects and native asm text are *not* represented here even
-/// though they're foreign artifacts too — both are real, registered
-/// languages (`languages::NATIVE_OBJECT`/`NATIVE_ASM`, see
-/// `fp_native::NativeObjectPackageProvider`), so they already flow through
-/// `InputClass::Source`'s ordinary language-registry path with no
+/// Native objects/asm text, goasm, URCL, JVM bytecode, and CIL/.NET are
+/// *not* represented here even though they're foreign artifacts too —
+/// all are real, registered languages (`languages::NATIVE_OBJECT`/
+/// `NATIVE_ASM`/`GOASM`/`URCL`/`JVM_BYTECODE`/`CIL`), so they already flow
+/// through `InputClass::Source`'s ordinary language-registry path with no
 /// container-specific branch anywhere in `compile.rs`/`pipeline.rs`.
+/// `NativeArchive` is the one kind still on the bespoke pipeline (no
+/// `PackageProvider` migration for it yet).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InputClass {
     Container(ContainerInputKind),
     /// Not a recognized bespoke-pipeline container — the source-language
     /// registry (`languages::detect_source_language`/`provider_for_language`)
-    /// owns this input instead (this also covers native objects/asm text).
+    /// owns this input instead.
     Source,
 }
 
@@ -51,9 +51,7 @@ impl ContainerRegistry {
     /// override wins outright (container keywords), else
     /// the extension decides, else (only for inputs with neither) a shallow
     /// magic-byte sniff of the first 4KiB — matching `inspect`'s behavior —
-    /// decides among the container kinds. Never sniffs for asm: unlike a
-    /// container format, plain assembly text has no header to recognize
-    /// without an extension or an explicit override.
+    /// decides among the container kinds.
     pub(crate) fn classify_input(
         &self,
         input: &std::path::Path,
@@ -64,17 +62,12 @@ impl ContainerRegistry {
                 "archive" | "ar" | "native-archive" | "a" | "lib" => {
                     return InputClass::Container(ContainerInputKind::NativeArchive);
                 }
-                "jvm" | "jvm-bytecode" | "bytecode-jvm" | "class" | "jar" => {
-                    return InputClass::Container(ContainerInputKind::JvmBytecode);
-                }
-                "cil" | "msil" | "dotnet-cil" => {
-                    return InputClass::Container(ContainerInputKind::Cil);
-                }
-                // Native objects/asm text, goasm, and URCL (including all
-                // their dialect aliases, e.g. "x86_64-asm") are real
-                // registered languages now (`languages::NATIVE_OBJECT`/
-                // `NATIVE_ASM`/`GOASM`/`URCL`) — the override string is
-                // handed straight to the language registry as-is, not
+                // Native objects/asm text, goasm, URCL, JVM bytecode, and
+                // CIL/.NET (including all their dialect aliases, e.g.
+                // "x86_64-asm") are real registered languages now
+                // (`languages::NATIVE_OBJECT`/`NATIVE_ASM`/`GOASM`/`URCL`/
+                // `JVM_BYTECODE`/`CIL`) — the override string is handed
+                // straight to the language registry as-is, not
                 // reclassified here.
                 _ => return InputClass::Source,
             }
@@ -87,8 +80,6 @@ impl ContainerRegistry {
 
         match extension.as_deref() {
             Some("a" | "lib") => InputClass::Container(ContainerInputKind::NativeArchive),
-            Some("class" | "jar") => InputClass::Container(ContainerInputKind::JvmBytecode),
-            Some("il" | "dll" | "exe") => InputClass::Container(ContainerInputKind::Cil),
             _ => self
                 .sniff_container_kind(input)
                 .map(InputClass::Container)
@@ -97,8 +88,9 @@ impl ContainerRegistry {
     }
 
     /// Magic-sniff fallback for container inputs with no canonical
-    /// extension (e.g. `/tmp/ls`) — intentionally shallow (header-based),
-    /// matching `inspect`'s own behavior. Reads at most 4KiB, once.
+    /// extension (e.g. `/tmp/libfoo`) — intentionally shallow
+    /// (header-based), matching `inspect`'s own behavior. Reads at most
+    /// 4KiB, once.
     fn sniff_container_kind(&self, input: &std::path::Path) -> Option<ContainerInputKind> {
         let prefix = {
             use std::io::Read;
@@ -112,14 +104,6 @@ impl ContainerRegistry {
 
         if fp_native::archive::can_read_archive(&prefix) {
             return Some(ContainerInputKind::NativeArchive);
-        }
-        if prefix.starts_with(b"PK\x03\x04") || prefix.starts_with(b"\xCA\xFE\xBA\xBE") {
-            return Some(ContainerInputKind::JvmBytecode);
-        }
-        if prefix.starts_with(b"MZ") {
-            // This could also be a native PE, but we default to the .NET ecosystem
-            // container unless explicitly overridden via `--source-language`.
-            return Some(ContainerInputKind::Cil);
         }
         None
     }
@@ -141,49 +125,6 @@ impl ContainerRegistry {
                     ContainerKind::Archive,
                     AsmObjectFormat::Custom("archive(ar)".to_string()),
                     ContainerArchitecture::Other("native".to_string()),
-                    ContainerEndianness::Little,
-                );
-                file.sections.push(ContainerSection {
-                    name: ".container".to_string(),
-                    kind: ContainerSectionKind::Other,
-                    align: 1,
-                    data: payload.clone(),
-                });
-                file
-            }
-            ContainerInputKind::JvmBytecode => {
-                // Keep this container representation lossless by storing raw bytes.
-                let format = if payload.starts_with(b"PK\x03\x04") {
-                    AsmObjectFormat::Custom("jar".to_string())
-                } else {
-                    AsmObjectFormat::Custom("class".to_string())
-                };
-                let mut file = ContainerFile::new(
-                    ContainerKind::Other,
-                    format,
-                    ContainerArchitecture::Other("jvm".to_string()),
-                    ContainerEndianness::Little,
-                );
-                file.sections.push(ContainerSection {
-                    name: ".container".to_string(),
-                    kind: ContainerSectionKind::Other,
-                    align: 1,
-                    data: payload.clone(),
-                });
-                file
-            }
-            ContainerInputKind::Cil => {
-                // `.il` is textual; `.dll/.exe` is PE. We keep both lossless.
-                let is_pe = payload.starts_with(b"MZ");
-                let format = if is_pe {
-                    AsmObjectFormat::Pe
-                } else {
-                    AsmObjectFormat::Custom("cil".to_string())
-                };
-                let mut file = ContainerFile::new(
-                    ContainerKind::Other,
-                    format,
-                    ContainerArchitecture::Other("cil".to_string()),
                     ContainerEndianness::Little,
                 );
                 file.sections.push(ContainerSection {

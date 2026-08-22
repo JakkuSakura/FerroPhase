@@ -27,6 +27,21 @@ impl fp_core::backend::TargetBackend for JvmBackend {
         workspace: &fp_core::workspace::WorkspaceContext,
         package_id: &fp_core::package::PackageId,
     ) -> fp_core::error::Result<()> {
+        // A `.class`/`.jar` file given directly as input (see
+        // `fp_core::ast::ItemKind::PrecompiledArtifact`'s doc comment)
+        // writes itself back out (repackaging class<->jar as the output
+        // extension asks) instead of going through MIR — those raw bytes
+        // aren't derivable from a lift-then-relower round trip.
+        if let Ok(source) = workspace.package_source(package_id) {
+            let artifact = source.items.iter().find_map(|pkg_item| match pkg_item.item.kind() {
+                fp_core::ast::ItemKind::PrecompiledArtifact(bytes) => Some(bytes.clone()),
+                _ => None,
+            });
+            if let Some(bytes) = artifact {
+                return self.write_passthrough(package_id.as_str(), &bytes);
+            }
+        }
+
         let package = workspace.compiled_package(package_id).ok_or_else(|| {
             fp_core::error::Error::from(format!("package `{package_id}` is unavailable"))
         })?;
@@ -78,6 +93,44 @@ impl fp_core::backend::TargetBackend for JvmBackend {
             std::fs::write(&output_path, class_bytes)?;
         }
 
+        Ok(())
+    }
+}
+
+impl JvmBackend {
+    /// Writes an already-compiled `.class`/`.jar`'s raw bytes back out,
+    /// repackaging class<->jar to match `self.output`'s requested
+    /// extension — the same decision `compile_package`'s normal path makes
+    /// from freshly-lowered bytes, just skipping straight to the bytes
+    /// this package already carries.
+    fn write_passthrough(&self, class_stem: &str, bytes: &[u8]) -> fp_core::error::Result<()> {
+        let is_jar = bytes.starts_with(b"PK\x03\x04");
+        if let Some(parent) = self.output.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let wants_jar = self.output.extension().and_then(|ext| ext.to_str()) == Some("jar");
+        match (is_jar, wants_jar) {
+            (true, true) | (false, false) => {
+                std::fs::write(&self.output, bytes)?;
+            }
+            (false, true) => {
+                let jar = emit_executable_jar(
+                    &[EmittedClass {
+                        internal_name: class_stem.to_string(),
+                        bytes: bytes.to_vec(),
+                    }],
+                    class_stem,
+                )
+                .map_err(|e| fp_core::error::Error::from(format!("JAR packaging failed: {e}")))?;
+                std::fs::write(&self.output, jar)?;
+            }
+            (true, false) => {
+                return Err(fp_core::error::Error::from(
+                    "JAR input requires output extension `.jar` when using `--target jvm-bytecode`"
+                        .to_string(),
+                ));
+            }
+        }
         Ok(())
     }
 }

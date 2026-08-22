@@ -329,6 +329,8 @@ async fn run_named_target(
             || l == crate::languages::NATIVE_ASM
             || l == crate::languages::GOASM
             || l == crate::languages::URCL
+            || l == crate::languages::JVM_BYTECODE
+            || l == crate::languages::CIL
     );
     let link_requested = if is_foreign_artifact {
         args.link || args.exec

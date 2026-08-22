@@ -45,6 +45,19 @@ impl fp_core::backend::TargetBackend for CilBackend {
         workspace: &fp_core::workspace::WorkspaceContext,
         package_id: &fp_core::package::PackageId,
     ) -> fp_core::error::Result<()> {
+        // CIL text or an assembled PE given directly as input (see
+        // `fp_core::ast::ItemKind::PrecompiledArtifact`'s doc comment)
+        // writes/assembles itself back out instead of going through MIR.
+        if let Ok(source) = workspace.package_source(package_id) {
+            let artifact = source.items.iter().find_map(|pkg_item| match pkg_item.item.kind() {
+                fp_core::ast::ItemKind::PrecompiledArtifact(bytes) => Some(bytes.clone()),
+                _ => None,
+            });
+            if let Some(bytes) = artifact {
+                return self.write_passthrough(&bytes);
+            }
+        }
+
         let mir = package_mir(workspace, package_id)?;
         if self.assemble {
             emit_assembly(&mir, &self.output, self.save_intermediates).map_err(|e| {
@@ -99,6 +112,40 @@ impl fp_core::backend::TargetBackend for CilBackend {
             return Err(fp_core::error::Error::from(format!(
                 ".NET process exited with status {code}"
             )));
+        }
+        Ok(())
+    }
+}
+
+impl CilBackend {
+    /// Writes an already-compiled CIL text/PE's raw bytes back out —
+    /// `assemble: false` (`--target cil`) writes textual CIL verbatim and
+    /// rejects binary PE input (no disassembler); `assemble: true`
+    /// (`--target dotnet`) writes a PE verbatim, or assembles textual CIL
+    /// via `ilasm`, matching the previous bespoke pipeline's exact
+    /// per-target behavior.
+    fn write_passthrough(&self, bytes: &[u8]) -> fp_core::error::Result<()> {
+        let is_pe = bytes.starts_with(b"MZ");
+        if let Some(parent) = self.output.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if !self.assemble {
+            if is_pe {
+                return Err(fp_core::error::Error::from(
+                    "`--target cil` currently expects textual `.il` input".to_string(),
+                ));
+            }
+            std::fs::write(&self.output, bytes)?;
+            return Ok(());
+        }
+        if is_pe {
+            std::fs::write(&self.output, bytes)?;
+        } else {
+            let text = String::from_utf8(bytes.to_vec()).map_err(|_| {
+                fp_core::error::Error::from("CIL input must be valid UTF-8".to_string())
+            })?;
+            assemble_cil_text(&text, &self.output)
+                .map_err(|e| fp_core::error::Error::from(format!("Failed to assemble CIL: {e}")))?;
         }
         Ok(())
     }
