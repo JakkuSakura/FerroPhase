@@ -5,6 +5,7 @@ use fp_core::hir;
 use fp_core::hir::ty::{self, AdtDef, AdtFlags, GenericArg, ReprFlags, ReprOptions, Ty, TyKind};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::future::Future;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
@@ -3232,11 +3233,8 @@ impl HirTypeChecker {
             let hir::ItemKind::Trait(trait_def) = &item.kind else {
                 continue;
             };
-            let declares_assoc_type = trait_def.items.iter().any(|trait_item| {
-                trait_item.name == *assoc_name
-                    && matches!(trait_item.kind, hir::TraitItemKind::AssocType(_))
-            });
-            if declares_assoc_type {
+            let mut seen = HashSet::new();
+            if self.trait_declares_assoc_type(trait_def, assoc_name, &mut seen) {
                 return Ok(Some(Ty {
                     kind: TyKind::Param(ty::ParamTy {
                         index: u32::MAX,
@@ -3246,6 +3244,42 @@ impl HirTypeChecker {
             }
         }
         Ok(None)
+    }
+
+    /// Whether `trait_def` (or one of its supertraits, transitively —
+    /// real `core::ops::function`'s own `Fn<Args>: FnMut<Args>: FnOnce
+    /// <Args>` chain, where only `FnOnce` actually declares `type
+    /// Output;`) declares an associated type named `assoc_name`. `seen`
+    /// guards against a cyclic supertrait chain (never valid Rust, but
+    /// this checker shouldn't hang on one anyway).
+    fn trait_declares_assoc_type(
+        &self,
+        trait_def: &hir::Trait,
+        assoc_name: &hir::Symbol,
+        seen: &mut HashSet<hir::DefId>,
+    ) -> bool {
+        let declares_directly = trait_def.items.iter().any(|trait_item| {
+            trait_item.name == *assoc_name
+                && matches!(trait_item.kind, hir::TraitItemKind::AssocType(_))
+        });
+        if declares_directly {
+            return true;
+        }
+        trait_def.supertraits.iter().any(|supertrait| {
+            let Some(hir::Res::Def(supertrait_def_id)) = &supertrait.res else {
+                return false;
+            };
+            if !seen.insert(*supertrait_def_id) {
+                return false;
+            }
+            let Some(item) = self.package().def_map.get(supertrait_def_id).cloned() else {
+                return false;
+            };
+            let hir::ItemKind::Trait(supertrait_def) = &item.kind else {
+                return false;
+            };
+            self.trait_declares_assoc_type(supertrait_def, assoc_name, seen)
+        })
     }
 
     /// Ported onto the `HirPackage`-backed cache / `with_generics`-child

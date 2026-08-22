@@ -224,6 +224,14 @@ pub enum ImplItemKind {
 pub struct Trait {
     pub generics: Generics,
     pub items: Vec<TraitItem>,
+    /// This trait's own supertrait bounds (`trait Fn<Args>: FnMut<Args>`)
+    /// — real `core::ops::function`'s own `Fn`/`FnMut` declare no
+    /// associated types of their own at all; `Output` is declared only on
+    /// `FnOnce`, reached solely through this chain. Needed so a still-
+    /// generic `F::Output` projection (`F: Fn<A>`) can find `Output` by
+    /// walking supertraits, the same way real Rust's own associated-type
+    /// lookup does.
+    pub supertraits: Vec<Path>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

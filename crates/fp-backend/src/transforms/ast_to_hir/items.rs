@@ -611,7 +611,24 @@ impl AstToHirLowerer {
                 }
             }
 
-            Ok(hir::Trait { generics, items })
+            // Supertrait bounds (`trait Fn<Args>: FnMut<Args>`) — see
+            // `hir::Trait::supertraits`'s own doc comment for why a
+            // still-generic `F::Output` projection needs this chain.
+            // Dropped (not an error) if a bound doesn't resolve to a real
+            // path, same tolerant treatment as everywhere else a bound
+            // this checker doesn't act on further is simply skipped.
+            let supertraits = def_trait
+                .bounds
+                .bounds
+                .iter()
+                .filter_map(|bound| self.ast_expr_to_hir_path(bound, PathResolutionScope::Type).ok())
+                .collect();
+
+            Ok(hir::Trait {
+                generics,
+                items,
+                supertraits,
+            })
         })();
 
         self.pop_value_scope();
