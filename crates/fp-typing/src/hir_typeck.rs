@@ -2508,6 +2508,37 @@ impl HirTypeChecker {
         if let Some(cached) = self.program_rc().function_signature(cache_key) {
             return Ok(cached);
         }
+        // A genuine `Err` from checking this function's own declared
+        // inputs/output (as opposed to `check_type_expr`'s far more
+        // common "record a diagnostic, return an error-placeholder `Ty`"
+        // recovery) must still populate the cache — this function is
+        // reached from candidate search over every impl in the workspace
+        // (`method_output_at`/`assoc_type_for_self`'s trait-default-
+        // method fallback), so an uncached hard failure here means this
+        // exact same real, once-legitimate error gets independently
+        // re-triggered (and re-recorded as a diagnostic) once per
+        // candidate-search caller across the whole corpus instead of
+        // once — the same O(workspace) blowup class already fixed for
+        // `checked_impl_self_ty`/`impl_assoc_types` above, just reached
+        // through the genuinely-`Err` path instead of the record-and-
+        // recover one.
+        let signature = match self.function_signature_uncached(function, cache_key).await {
+            Ok(signature) => signature,
+            Err(error) => {
+                self.program_rc().cache_function_signature(cache_key, Ty::error());
+                return Err(error);
+            }
+        };
+        self.program_rc()
+            .cache_function_signature(cache_key, signature.clone());
+        Ok(signature)
+    }
+
+    async fn function_signature_uncached(
+        &mut self,
+        function: &hir::Function,
+        cache_key: hir::HirId,
+    ) -> Result<Ty> {
         let mut scope = self.with_generics(&function.sig.generics);
         let mut inputs = Vec::with_capacity(function.sig.inputs.len());
         for (index, input) in function.sig.inputs.iter().enumerate() {
@@ -2529,7 +2560,7 @@ impl HirTypeChecker {
                 .insert_refinement_hint(cache_key, hir::ParamSlot::Output, hint);
         }
         drop(scope);
-        let signature = Ty {
+        Ok(Ty {
             kind: TyKind::FnPtr(ty::PolyFnSig {
                 binder: ty::Binder {
                     value: ty::FnSig {
@@ -2542,10 +2573,7 @@ impl HirTypeChecker {
                     bound_vars: Vec::new(),
                 },
             }),
-        };
-        self.program_rc()
-            .cache_function_signature(cache_key, signature.clone());
-        Ok(signature)
+        })
     }
 
     /// `check_type_expr(self_ty)` for an impl's own self-type declaration,
