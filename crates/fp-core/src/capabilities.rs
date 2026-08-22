@@ -6,7 +6,7 @@
 /// because the eventual target already has native syntax/stdlib support
 /// for it.
 ///
-/// Each target-emitting crate (`fp-kotlin`, `fp-dotnet`, ...) that wants
+/// Each target-emitting crate (`fp-kotlin`, `fp-cil`, ...) that wants
 /// anything other than the conservative default declares its own `const`
 /// of this type (see `fp-kotlin`'s `CAPABILITIES`); `fp-cli` is the only
 /// place that maps a requested output language to the right one

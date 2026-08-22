@@ -1235,6 +1235,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fp-cil"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "fp-core",
+ "tempfile",
+]
+
+[[package]]
 name = "fp-clang"
 version = "0.1.0"
 dependencies = [
@@ -1265,11 +1274,11 @@ dependencies = [
  "fp-backend",
  "fp-bytecode",
  "fp-c",
+ "fp-cil",
  "fp-compiler",
  "fp-core",
  "fp-cranelift",
  "fp-csharp",
- "fp-dotnet",
  "fp-ebpf",
  "fp-flatbuffers",
  "fp-goasm",
@@ -1396,15 +1405,6 @@ dependencies = [
  "fp-core",
  "itertools 0.13.0",
  "tracing",
-]
-
-[[package]]
-name = "fp-dotnet"
-version = "0.1.0"
-dependencies = [
- "eyre",
- "fp-core",
- "tempfile",
 ]
 
 [[package]]

@@ -238,7 +238,7 @@ async fn transpile_jvm_bytecode(
     Ok(Some(output_path))
 }
 
-#[cfg(feature = "lang-dotnet")]
+#[cfg(feature = "lang-cil")]
 async fn transpile_cil(
     input: &Path,
     output: &Path,
@@ -296,7 +296,7 @@ async fn transpile_cil(
                     )))
                 })?;
             } else {
-                fp_dotnet::assemble_cil_text(&text, &output_path).map_err(|err| {
+                fp_cil::assemble_cil_text(&text, &output_path).map_err(|err| {
                     CliError::Compilation(format!("Failed to assemble CIL: {err}"))
                 })?;
             }
@@ -308,7 +308,7 @@ async fn transpile_cil(
                     "binary .dll/.exe -> native transpilation is not implemented yet".to_string(),
                 ));
             }
-            let lir_program = fp_dotnet::parse_cil_program(&text)
+            let lir_program = fp_cil::parse_cil_program(&text)
                 .map_err(|err| CliError::Compilation(format!("Failed to parse CIL: {err}")))?;
 
             let output_path = if args.output.is_none() {
@@ -332,7 +332,7 @@ async fn transpile_cil(
     }
 }
 
-#[cfg(not(feature = "lang-dotnet"))]
+#[cfg(not(feature = "lang-cil"))]
 async fn transpile_cil(
     _input: &Path,
     _output: &Path,
@@ -340,7 +340,7 @@ async fn transpile_cil(
     _bytes: &[u8],
 ) -> Result<Option<PathBuf>> {
     Err(CliError::MissingDependency(
-        "Feature 'lang-dotnet' is disabled; CIL/NET transpilation is unavailable.".to_string(),
+        "Feature 'lang-cil' is disabled; CIL/NET transpilation is unavailable.".to_string(),
     ))
 }
 

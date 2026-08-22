@@ -17,7 +17,7 @@ fp-compiler = { path = "../fp-compiler" }
 fp-typing = { path = "../fp-typing" }
 fp-typescript = { path = "../fp-typescript", optional = true }
 fp-csharp = { path = "../fp-csharp", optional = true }
-fp-dotnet = { path = "../fp-dotnet", optional = true }
+fp-cil = { path = "../fp-cil", optional = true }
 fp-python = { path = "../fp-python", optional = true }
 fp-golang = { path = "../fp-golang", optional = true }
 fp-godot = { path = "../fp-godot", optional = true }
@@ -104,7 +104,7 @@ default = [
     "lang-golang",
     "lang-zig",
     "lang-csharp",
-    "lang-dotnet",
+    "lang-cil",
     "lang-godot",
     "lang-sycl",
     "lang-wit",
@@ -127,7 +127,7 @@ lang-python = ["dep:fp-python"]
 lang-golang = ["dep:fp-golang"]
 lang-zig = ["dep:fp-zig"]
 lang-csharp = ["dep:fp-csharp"]
-lang-dotnet = ["dep:fp-dotnet"]
+lang-cil = ["dep:fp-cil"]
 lang-godot = ["dep:fp-godot"]
 lang-sycl = ["dep:fp-sycl"]
 lang-wit = ["dep:fp-wit"]
