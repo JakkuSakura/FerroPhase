@@ -1268,11 +1268,25 @@ pub(super) fn starts_unsafe_impl(input: &[Token]) -> bool {
 }
 
 fn starts_restricted_trait(input: &[Token]) -> bool {
-    matches!(
+    if !matches!(
         input,
         [first, second, ..]
             if first.kind == TokenKind::Keyword(Keyword::Impl) && second.lexeme == "("
-    )
+    ) {
+        return false;
+    }
+    // `impl(restriction) trait Foo { .. }` and an ordinary inherent impl
+    // of the unit type (`impl () {}`, real `core::primitive_docs`'s own,
+    // undocumented but real syntax for "here's where `()`'s own docs
+    // live") both start with `impl` immediately followed by `(` — the
+    // restricted-trait form is only real when the balanced `(...)` is
+    // itself followed by the `trait` keyword; `impl ()`'s `(` is the
+    // self-type's own empty tuple, followed directly by `{`.
+    let mut probe = &input[1..];
+    if skip_balanced_delimiters(&mut probe, "(", ")").is_err() {
+        return false;
+    }
+    peek_keyword(probe, Keyword::Trait)
 }
 
 fn starts_const_impl(input: &[Token]) -> bool {
