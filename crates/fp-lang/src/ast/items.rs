@@ -273,9 +273,9 @@ fn parse_type_alias_item(
 ) -> ModalResult<Item> {
     skip_keyword(input, Keyword::Type)?;
     let name = ident_like(input)?;
-    let generics_params = parse_optional_generic_params(input)?;
+    let mut generics_params = parse_optional_generic_params(input)?;
     if skip_keyword(input, Keyword::Where).is_ok() {
-        skip_where_clause(input)?;
+        parse_where_clause_and_merge(input, &mut generics_params)?;
     }
     skip_symbol(input, "=")?;
     let value = parse_type_expr(input)?;
@@ -284,7 +284,7 @@ fn parse_type_alias_item(
     // before the equals" position) — real `alloc::boxed`'s own `type
     // CallRefFuture<'a> = F::CallRefFuture<'a> where Self: 'a;`.
     if skip_keyword(input, Keyword::Where).is_ok() {
-        skip_where_clause(input)?;
+        parse_where_clause_and_merge(input, &mut generics_params)?;
     }
     skip_symbol(input, ";")?;
     Ok(Item::from(ItemKind::DefType(ItemDefType {
@@ -303,9 +303,9 @@ fn parse_struct_item(
 ) -> ModalResult<Item> {
     skip_keyword(input, Keyword::Struct)?;
     let name = ident_like(input)?;
-    let generics_params = parse_optional_generic_params(input)?;
+    let mut generics_params = parse_optional_generic_params(input)?;
     if skip_keyword(input, Keyword::Where).is_ok() {
-        skip_where_clause(input)?;
+        parse_where_clause_and_merge(input, &mut generics_params)?;
     }
     let mut fields = Vec::new();
     if skip_symbol(input, ";").is_ok() {
@@ -341,7 +341,7 @@ fn parse_struct_item(
         // `where`-before-generics check above only covers a brace-bodied
         // struct's placement.
         if skip_keyword(input, Keyword::Where).is_ok() {
-            skip_where_clause(input)?;
+            parse_where_clause_and_merge(input, &mut generics_params)?;
         }
         skip_symbol(input, ";")?;
         return Ok(Item::from(ItemKind::DefStruct(ItemDefStruct {
@@ -407,9 +407,9 @@ fn parse_union_item(
 ) -> ModalResult<Item> {
     skip_keyword(input, Keyword::Union)?;
     let name = ident_like(input)?;
-    let generics_params = parse_optional_generic_params(input)?;
+    let mut generics_params = parse_optional_generic_params(input)?;
     if skip_keyword(input, Keyword::Where).is_ok() {
-        skip_where_clause(input)?;
+        parse_where_clause_and_merge(input, &mut generics_params)?;
     }
     let mut fields = Vec::new();
     skip_symbol(input, "{")?;
@@ -505,7 +505,7 @@ fn parse_fn_item_core(
     }
     skip_keyword(input, Keyword::Fn)?;
     let name = ident_like(input)?;
-    let generics_params = parse_optional_generic_params(input)?;
+    let mut generics_params = parse_optional_generic_params(input)?;
     skip_symbol(input, "(")?;
     let mut destructures = Vec::new();
     let (receiver, params) = parse_fn_params_with_receiver(input, &mut destructures)?;
@@ -516,7 +516,7 @@ fn parse_fn_item_core(
         None
     };
     if skip_keyword(input, Keyword::Where).is_ok() {
-        skip_where_clause(input)?;
+        parse_where_clause_and_merge(input, &mut generics_params)?;
     }
     // A bodiless free-function/impl-method item statement ending in `;`
     // instead of `{ .. }` — real `alloc::intrinsics`' own `#[rustc_intrinsic]
@@ -633,7 +633,7 @@ fn parse_trait_item(
     skip_trait_modifiers(input);
     skip_keyword(input, Keyword::Trait)?;
     let name = ident_like(input)?;
-    let generics_params = parse_optional_generic_params(input)?;
+    let mut generics_params = parse_optional_generic_params(input)?;
     // A trait *alias* (`trait Thin = Pointee<Metadata = ()> +
     // PointeeSized;`, real core::ptr::metadata's own) — nightly-only,
     // names a `+`-joined bound combination for reuse elsewhere as `T:
@@ -664,7 +664,7 @@ fn parse_trait_item(
         TypeBounds::any()
     };
     if skip_keyword(input, Keyword::Where).is_ok() {
-        skip_where_clause(input)?;
+        parse_where_clause_and_merge(input, &mut generics_params)?;
     }
     skip_symbol(input, "{")?;
     let mut items = Vec::new();
@@ -801,7 +801,7 @@ fn parse_trait_fn_member(
         skip_keyword(input, Keyword::Fn)?;
     }
     let name = ident_like(input)?;
-    let generics_params = parse_optional_generic_params(input)?;
+    let mut generics_params = parse_optional_generic_params(input)?;
     skip_symbol(input, "(")?;
     let mut destructures = Vec::new();
     let (receiver, params) = parse_fn_params_with_receiver(input, &mut destructures)?;
@@ -812,7 +812,7 @@ fn parse_trait_fn_member(
         None
     };
     if skip_keyword(input, Keyword::Where).is_ok() {
-        skip_where_clause(input)?;
+        parse_where_clause_and_merge(input, &mut generics_params)?;
     }
     let mut sig = FunctionSignature {
         name: Some(name.clone()),
@@ -871,7 +871,7 @@ fn parse_impl_item(input: &mut &[Token], file: FileId, attrs: Vec<Attribute>) ->
     let _is_const = skip_keyword(input, Keyword::Const).is_ok();
     let _is_unsafe = skip_keyword(input, Keyword::Unsafe).is_ok();
     skip_keyword(input, Keyword::Impl)?;
-    let generics_params = parse_optional_generic_params(input)?;
+    let mut generics_params = parse_optional_generic_params(input)?;
     let first_ty = parse_type_expr(input)?;
     let (trait_ty, self_ty) = if skip_keyword(input, Keyword::For).is_ok() {
         let self_ty = parse_type_expr(input)?;
@@ -880,7 +880,7 @@ fn parse_impl_item(input: &mut &[Token], file: FileId, attrs: Vec<Attribute>) ->
         (None, type_to_expr(&first_ty))
     };
     if skip_keyword(input, Keyword::Where).is_ok() {
-        skip_where_clause(input)?;
+        parse_where_clause_and_merge(input, &mut generics_params)?;
     }
     skip_symbol(input, "{")?;
     let mut items = Vec::new();
@@ -1331,6 +1331,124 @@ fn starts_const_impl(input: &[Token]) -> bool {
     )
 }
 
+/// A `where` clause's own predicate list, parsed for real (rather than
+/// merely skipped — see `skip_where_clause` below, still used at every
+/// call site that has nowhere to put a parsed bound) — real `std` code
+/// overwhelmingly spells a generic parameter's trait bounds this way
+/// (`fn foo<F, R>(...) where F: FnOnce() -> R`) rather than inline
+/// (`fn foo<F: FnOnce() -> R, R>(...)`), so a checker that only reads
+/// inline bounds (`GenericParam::bounds`) almost never actually sees one.
+/// Only the common `Name: Bound1 + Bound2` predicate shape is extracted;
+/// anything else (a lifetime bound, a qualified-path bounded type like
+/// `<T as Trait>::Assoc: Bound`, ...) is skipped exactly like
+/// `skip_where_clause` already treats every predicate, carrying no
+/// meaning this checker models beyond that one shape.
+fn parse_where_clause_predicates(input: &mut &[Token]) -> ModalResult<Vec<(Ident, TypeBounds)>> {
+    let mut predicates = Vec::new();
+    loop {
+        if input.is_empty() || matches!(peek_symbol(*input), Some("{") | Some(";")) {
+            break;
+        }
+        let mut probe = *input;
+        let parsed = (|| -> ModalResult<(Ident, TypeBounds)> {
+            skip_hrtb_for_lifetimes_in_predicate(&mut probe);
+            let name = ident_like(&mut probe)?;
+            skip_symbol(&mut probe, ":")?;
+            let bounds = parse_type_bounds(&mut probe)?;
+            Ok((name, bounds))
+        })();
+        match parsed {
+            Ok(predicate) => {
+                predicates.push(predicate);
+                *input = probe;
+            }
+            Err(_) => {
+                skip_one_where_predicate(input)?;
+            }
+        }
+        if skip_symbol(input, ",").is_err() {
+            break;
+        }
+    }
+    Ok(predicates)
+}
+
+/// A higher-ranked predicate's own `for<'a>` binder (`where for<'a> &'a
+/// T: Trait`) — dropped the same way `skip_hrtb_for_lifetimes` (types.rs)
+/// already drops one on an ordinary trait bound, just reachable from
+/// `parse_where_clause_predicates`'s own module instead.
+fn skip_hrtb_for_lifetimes_in_predicate(input: &mut &[Token]) {
+    let mut probe = *input;
+    if skip_keyword(&mut probe, Keyword::For).is_err() {
+        return;
+    }
+    if skip_symbol(&mut probe, "<").is_err() {
+        return;
+    }
+    loop {
+        if ident_like(&mut probe).is_err() {
+            return;
+        }
+        if skip_symbol(&mut probe, ",").is_ok() {
+            continue;
+        }
+        break;
+    }
+    if skip_symbol(&mut probe, ">").is_err() {
+        return;
+    }
+    *input = probe;
+}
+
+/// Skip exactly one where-predicate this checker doesn't model (a
+/// lifetime bound, a qualified-path bounded type, ...) — stops at the
+/// next depth-0 `,`/`{`/`;` without consuming it, mirroring
+/// `skip_where_clause`'s own depth-tracking (see its doc comment for why
+/// angle-bracket depth must be tracked alongside bracket/paren/brace
+/// depth) but scoped to a single predicate instead of the whole clause.
+fn skip_one_where_predicate(input: &mut &[Token]) -> ModalResult<()> {
+    let mut depth: i32 = 0;
+    while !input.is_empty() {
+        if depth == 0 && matches!(peek_symbol(input), Some(",") | Some("{") | Some(";")) {
+            return Ok(());
+        }
+        match peek_symbol(input) {
+            Some("(" | "[" | "{" | "<") => depth += 1,
+            Some(")" | "]" | "}" | ">") => depth -= 1,
+            Some("<<") => depth += 2,
+            Some(">>") => depth -= 2,
+            _ => {}
+        }
+        *input = &input[1..];
+    }
+    Err(ErrMode::Cut(ContextError::new()))
+}
+
+/// `parse_where_clause_predicates`, folding each predicate straight into
+/// the matching entry of an already-parsed generic parameter list by
+/// name — the call-site convenience every `skip_where_clause` call site
+/// with a real `generics_params` in scope actually wants, so a bound
+/// spelled in a `where` clause (the overwhelmingly common real-world
+/// spelling) reaches `GenericParam::bounds` exactly like an inline one
+/// already does. A predicate naming something other than one of
+/// `generics_params` (`Self`, a qualified-path bounded type, ...) simply
+/// has nowhere to go and is dropped, same as it always was.
+fn parse_where_clause_and_merge(
+    input: &mut &[Token],
+    generics_params: &mut [fp_core::ast::GenericParam],
+) -> ModalResult<()> {
+    let predicates = parse_where_clause_predicates(input)?;
+    for (name, bounds) in predicates {
+        if let Some(param) = generics_params
+            .iter_mut()
+            .find(|param| param.name.as_str() == name.as_str())
+        {
+            param.bounds.bounds.extend(bounds.bounds);
+        }
+    }
+    Ok(())
+}
+
 fn skip_where_clause(input: &mut &[Token]) -> ModalResult<()> {
     // A `where` clause is followed by either a body (`{`, an item
     // definition) or, for a bodiless declaration (a trait method/type
@@ -1662,9 +1780,9 @@ fn parse_enum_item(
 ) -> ModalResult<Item> {
     skip_keyword(input, Keyword::Enum)?;
     let name = ident_like(input)?;
-    let generics_params = parse_optional_generic_params(input)?;
+    let mut generics_params = parse_optional_generic_params(input)?;
     if skip_keyword(input, Keyword::Where).is_ok() {
-        skip_where_clause(input)?;
+        parse_where_clause_and_merge(input, &mut generics_params)?;
     }
     skip_symbol(input, "{")?;
     let mut variants = Vec::new();
