@@ -301,8 +301,34 @@ impl CompilerDriver {
         function_name: &str,
     ) -> Result<(), CompilerDriverError> {
         let lir_id = self.select_entrypoint(package_id, module_path, function_name)?;
-        self.evaluate_comptime_lir(&lir_id, &FullyQualifiedPath::new(module_path.clone()))
-            .await?;
+        let fqp = FullyQualifiedPath::new(module_path.clone());
+        let block_values = self.evaluate_comptime_lir(&lir_id, &fqp).await?;
+        // Mirrors `compile_package`'s dependency-loading branch (see its
+        // identical three-call sequence): `evaluate_comptime_lir` computes
+        // each `const { .. }` block's real value into `block_values`, but
+        // that alone never reaches the `LirProgram` actually executed —
+        // the block's owning item (e.g. a `const X = const { .. };`) was
+        // already lowered to an `ExecutableConst`/`LirComptimeEntry`
+        // *before* its value was known, not a `LirGlobal`. Re-lowering
+        // HIR->MIR->LIR now that `apply_resolved_comptime_block_values`
+        // has recorded the answer lets `lower_const_expr` constant-fold
+        // the const item for real this time, materializing the missing
+        // global. Without this, the const item's global is simply absent
+        // from `program.globals`, and running it fails at runtime with
+        // "missing global" — never a compile-time error, since nothing
+        // upstream of execution ever notices the gap.
+        if !block_values.is_empty() {
+            self.apply_resolved_comptime_block_values(&block_values)?;
+            let package = self
+                .state
+                .borrow()
+                .typing_ctx
+                .env_ctx
+                .compiled_package(package_id)
+                .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
+            let units = self.relower_cached_lir_units(&package).await?;
+            Self::publish_lir_units(&package, package_id, &units)?;
+        }
         Ok(())
     }
 
@@ -422,20 +448,32 @@ impl CompilerDriver {
                             let lir_id = Self::package_module_lir_id(package_id, &module_path);
                             self.state.borrow_mut().insert_lir(lir_id.clone(), lir);
                             let fqp = FullyQualifiedPath::new(module_path);
-                            if self.pipeline == PipelineMode::Native {
-                                let block_values = self.evaluate_comptime_lir(&lir_id, &fqp).await?;
-                                if !block_values.is_empty() {
-                                    self.apply_resolved_comptime_block_values(&block_values)?;
+                            // Both pipeline modes need the resolved value
+                            // relowered back into a real `LirGlobal` (see
+                            // this arm's own doc comment above) — only the
+                            // error-handling behavior stays pipeline-
+                            // dependent: `Native` hard-fails via `?`,
+                            // `TypecheckedTranspile` just warns and treats
+                            // a failed comptime block as if it had
+                            // resolved nothing.
+                            let block_values = if self.pipeline == PipelineMode::Native {
+                                self.evaluate_comptime_lir(&lir_id, &fqp).await?
+                            } else {
+                                match self.evaluate_comptime_lir(&lir_id, &fqp).await {
+                                    Ok(values) => values,
+                                    Err(error) => {
+                                        fp_core::diagnostics::report_warning_with_context(
+                                            "const-eval".to_string(),
+                                            format!("comptime validation failed: {error}"),
+                                        );
+                                        HashMap::new()
+                                    }
                                 }
+                            };
+                            if !block_values.is_empty() {
+                                self.apply_resolved_comptime_block_values(&block_values)?;
                                 units = self.relower_cached_lir_units(&package).await?;
                                 Self::publish_lir_units(&package, package_id, &units)?;
-                            } else if let Err(error) =
-                                self.evaluate_comptime_lir(&lir_id, &fqp).await
-                            {
-                                fp_core::diagnostics::report_warning_with_context(
-                                    "const-eval".to_string(),
-                                    format!("comptime validation failed: {error}"),
-                                );
                             }
                         }
                     }
