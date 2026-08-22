@@ -1706,3 +1706,168 @@ fn transform_package_plain_absolute_path_into_vendored_subcrate() -> Result<()> 
 
     Ok(())
 }
+
+/// Combines the two previously-isolated shapes
+/// (`transform_package_resolves_import_nested_inside_inline_module`'s
+/// nested-`mod`-scoped `use`, and
+/// `transform_package_resolves_self_plus_variants_group_import`'s
+/// `Foo::{self, Variant}` group import) with the one thing neither tested
+/// alone: a *third*, unrelated sibling module referencing the bare name
+/// with no `use` of its own — real std's actual consumer shape, which
+/// relies entirely on `load_default_prelude_defs`'s automatic
+/// prelude-injection tier, not an explicit import. If `Option`/`Result`
+/// are still showing up unresolved in the full std run after both prior
+/// fixes landed, this is the next shape to isolate — this repro exists to
+/// find out whether it does or doesn't, not to assume either way.
+#[test]
+fn transform_package_resolves_self_group_import_nested_in_module_via_default_prelude() -> Result<()>
+{
+    let inner_item = make_struct("Foo", vec![("value", int_ty())]);
+
+    // `pub use crate::inner::Foo::{self, Variant};` nested inside `mod
+    // ambiguous_macros_only { .. }`, itself nested inside `prelude::v1` —
+    // exactly `core::prelude::v1`'s real shape for `Option`/`Result`.
+    let prelude_use = ast::Item::from(ast::ItemKind::Import(ast::ItemImport {
+        attrs: Vec::new(),
+        visibility: ast::Visibility::Public,
+        style: ast::ItemImportStyle::Plain,
+        tree: ast::ItemImportTree::Path(ast::ItemImportPath {
+            segments: vec![
+                ast::ItemImportTree::Crate,
+                ast::ItemImportTree::Ident(ident("inner")),
+                ast::ItemImportTree::Ident(ident("Foo")),
+                ast::ItemImportTree::Group(ast::ItemImportGroup {
+                    items: vec![
+                        ast::ItemImportTree::SelfMod,
+                        ast::ItemImportTree::Ident(ident("Variant")),
+                    ],
+                }),
+            ],
+        }),
+    }));
+    let nested_inline_module = ast::Item::from(ast::ItemKind::Module(ast::Module {
+        attrs: Vec::new(),
+        name: ident("ambiguous_macros_only"),
+        collected_items: Vec::new(),
+        items: vec![prelude_use],
+        visibility: ast::Visibility::Public,
+        is_external: false,
+    }));
+
+    // A third, unrelated module — no `use` of its own, relying entirely on
+    // the default-prelude mechanism to see the bare name.
+    let make_fn_item = make_fn(
+        "make",
+        Vec::new(),
+        ty_ident("Foo"),
+        ast::Expr::from(ast::ExprKind::Struct(ast::ExprStruct::new_ident(
+            ident("Foo"),
+            vec![ast::ExprField::new(
+                ident("value"),
+                ast::Expr::value(ast::Value::int(1)),
+            )],
+        ))),
+    );
+
+    let items = vec![
+        (vec!["inner".to_string()], inner_item),
+        (
+            vec!["prelude".to_string(), "v1".to_string()],
+            nested_inline_module,
+        ),
+        (vec!["other".to_string()], make_fn_item),
+    ];
+    let package = package_from_items_with_paths(items)?;
+    let mut generator = HirGenerator::new();
+    let program = generator.transform_package(&package)?;
+
+    let make_fn_hir = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(func) if func.sig.name.as_str() == "make" => Some(func),
+            _ => None,
+        })
+        .expect("`make` function present");
+    let hir::TypeExprKind::Path(ret_path) = &make_fn_hir.sig.output.kind else {
+        panic!(
+            "expected `make`'s return type to lower to a path, got {:?}",
+            make_fn_hir.sig.output.kind
+        );
+    };
+    assert!(
+        ret_path.res.is_some(),
+        "bare `Foo` return type in a third, unrelated module must resolve \
+         via the nested-`mod`-scoped `Foo::{{self, Variant}}` group import's \
+         `self` member, through the default-prelude tier — got unresolved \
+         path {ret_path:?}"
+    );
+
+    Ok(())
+}
+
+/// Real vendored std generates a batch of C-FFI type aliases via an
+/// item-position `macro_rules!` invocation (`std/os/raw/mod.rs`'s
+/// `alias_core_ffi! { c_char c_int .. }`, expanding to `pub type c_int =
+/// core::ffi::c_int;` per name). `predeclare_items`'s `ItemKind::Macro` arm
+/// previously just warned and dropped any such invocation unconditionally
+/// — meaning every item it would have generated was never defined at all
+/// (not a name-resolution gap, a missing-expansion one). This confirms the
+/// real fp-lang macro engine (wired in via `IntrinsicNormalizer::
+/// expand_item_macro`/`collect_macro_rules_defs`, mirroring how
+/// expression-position macros already flow through the same normalizer)
+/// now actually expands it into a real, resolvable item.
+#[test]
+fn transform_package_expands_item_position_macro_rules_invocation() -> Result<()> {
+    let parser = fp_lang::ast::FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let source = r#"
+        struct Marker { value: i64 }
+
+        macro_rules! alias_marker {
+            ($($t:ident)*) => {$(
+                pub type $t = Marker;
+            )*}
+        }
+
+        alias_marker! { c_int }
+
+        fn make() -> c_int {
+            Marker { value: 1 }
+        }
+    "#;
+    let items = parser
+        .parse_items_ast(source)
+        .map_err(|e| crate::error::optimization_error(format!("{e:?}")))?;
+
+    let package = package_from_items(items)?;
+    let mut generator = HirGenerator::new().with_intrinsic_normalizer(
+        fp_lang::FerroIntrinsicNormalizer::new(
+            fp_core::intrinsics::IntrinsicNormalizationMode::Compile,
+        ),
+    );
+    let program = generator.transform_package(&package)?;
+
+    let make_fn_hir = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(func) if func.sig.name.as_str() == "make" => Some(func),
+            _ => None,
+        })
+        .expect("`make` function present");
+    let hir::TypeExprKind::Path(ret_path) = &make_fn_hir.sig.output.kind else {
+        panic!(
+            "expected `make`'s return type to lower to a path, got {:?}",
+            make_fn_hir.sig.output.kind
+        );
+    };
+    assert!(
+        ret_path.res.is_some(),
+        "`c_int` generated by `alias_marker! {{ c_int }}` must resolve to \
+         the real `Marker` struct via the macro's own `pub type $t = \
+         Marker;` expansion — got unresolved path {ret_path:?}"
+    );
+
+    Ok(())
+}

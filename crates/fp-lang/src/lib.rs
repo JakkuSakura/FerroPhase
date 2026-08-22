@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::ast::FerroPhaseParser;
 mod macro_parser;
-pub use macro_parser::collect_macro_rules_defs;
+pub use macro_parser::{collect_macro_rules_defs, expand_item_macro_invocation};
 pub use normalization::FerroIntrinsicNormalizer;
 pub mod embedded_libc;
 pub mod module_path;

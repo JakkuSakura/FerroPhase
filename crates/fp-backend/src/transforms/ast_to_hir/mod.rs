@@ -1904,6 +1904,19 @@ impl HirGenerator {
                 fp_core::package::PackageItem { module_path: path, item }
             })
             .collect();
+        // Item-position `macro_rules!` invocations (real std's own idiom for
+        // generating a batch of items — e.g. `std/os/raw/mod.rs`'s
+        // `alias_core_ffi! { c_int c_uint .. }`, expanding to `pub type
+        // c_int = core::ffi::c_int;` etc.) previously reached
+        // `predeclare_items`'s `ItemKind::Macro` arm unexpanded and were
+        // silently dropped with a warning — meaning every item such a
+        // macro generates (across real std, primarily C-FFI type aliases)
+        // was simply never defined at all, not a resolution gap. Expand
+        // them for real here, before any definition/import pass runs, the
+        // same way `normalize_macro` (`fp_lang::normalization`) already
+        // expands an *expression*-position invocation: match each rule in
+        // declaration order, substitute the bindings, re-parse the result.
+        let package_items = self.expand_item_macros(package_items);
 
         let mut program = hir::Program::new();
         self.seed_workspace_definitions(&mut program);
@@ -4336,6 +4349,78 @@ fn value_contains_type_type(value: &ast::Value) -> bool {
 impl Default for HirGenerator {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Expands every item-position `macro_rules!` invocation reachable in
+/// `items` (recursing into inline `mod { .. }` bodies) against every
+/// `macro_rules!` definition collected from the same item list — real
+/// std's own idiom for batch-generating items (e.g. `alias_core_ffi! {
+/// c_int c_uint .. }` expanding to a `pub type X = core::ffi::X;` per
+/// name). An expanded item inherits its originating macro invocation's own
+/// `module_path` (it's generated *at* that source location, not at the
+/// package root — unlike closure-lowering's synthetic items). An
+/// invocation matching no known macro (a real compiler builtin, or one this
+/// package doesn't define) is left as an unexpanded `ItemKind::Macro`,
+/// exactly as before — still reaches `predeclare_items`'s existing "drop
+/// with a warning" handling unchanged.
+impl HirGenerator {
+    fn expand_item_macros(
+        &self,
+        items: Vec<fp_core::package::PackageItem>,
+    ) -> Vec<fp_core::package::PackageItem> {
+        let Some(normalizer) = self.intrinsic_normalizer.as_deref() else {
+            return items;
+        };
+        let all_items: Vec<ast::Item> = items.iter().map(|pi| pi.item.clone()).collect();
+        let defs = normalizer.collect_macro_rules_defs(&all_items);
+        if defs.is_empty() {
+            return items;
+        }
+        items
+            .into_iter()
+            .flat_map(|package_item| {
+                let module_path = package_item.module_path;
+                self.expand_item_macros_in_item(package_item.item, normalizer, &defs)
+                    .into_iter()
+                    .map(move |item| fp_core::package::PackageItem {
+                        module_path: module_path.clone(),
+                        item,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    fn expand_item_macros_in_item(
+        &self,
+        item: ast::Item,
+        normalizer: &dyn IntrinsicNormalizer,
+        defs: &HashMap<String, fp_core::ast::MacroRulesDef>,
+    ) -> Vec<ast::Item> {
+        match item.kind {
+            ItemKind::Macro(ref item_macro) if item_macro.declared_name.is_none() => {
+                match normalizer.expand_item_macro(&item_macro.invocation, defs) {
+                    Some(expanded) => expanded
+                        .into_iter()
+                        .flat_map(|expanded_item| {
+                            self.expand_item_macros_in_item(expanded_item, normalizer, defs)
+                        })
+                        .collect(),
+                    None => vec![item],
+                }
+            }
+            ItemKind::Module(module) => {
+                let mut module = module;
+                module.items = module
+                    .items
+                    .into_iter()
+                    .flat_map(|inner| self.expand_item_macros_in_item(inner, normalizer, defs))
+                    .collect();
+                vec![ast::Item::from(ItemKind::Module(module))]
+            }
+            kind => vec![ast::Item { kind, ..item }],
+        }
     }
 }
 

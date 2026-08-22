@@ -760,6 +760,21 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
         );
         Ok(NormalizeOutcome::Normalized(if_expr))
     }
+
+    fn expand_item_macro(
+        &self,
+        invocation: &fp_core::ast::MacroInvocation,
+        defs: &std::collections::HashMap<String, fp_core::ast::MacroRulesDef>,
+    ) -> Option<Vec<fp_core::ast::Item>> {
+        crate::macro_parser::expand_item_macro_invocation(invocation, defs)
+    }
+
+    fn collect_macro_rules_defs(
+        &self,
+        items: &[fp_core::ast::Item],
+    ) -> std::collections::HashMap<String, fp_core::ast::MacroRulesDef> {
+        crate::macro_parser::collect_macro_rules_defs(items)
+    }
 }
 
 

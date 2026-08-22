@@ -159,6 +159,40 @@ pub trait IntrinsicNormalizer {
     fn normalize_macro(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
         Ok(NormalizeOutcome::Ignored(expr))
     }
+
+    /// Language-specific *item*-position macro expansion hook (e.g. real
+    /// Rust std's own `macro_rules! alias_core_ffi { ($($t:ident)*) => {$(
+    /// pub type $t = core::ffi::$t; )*} }` idiom for batch-generating C-FFI
+    /// type aliases). `defs` is every `macro_rules!` definition reachable in
+    /// the same package (see `ast_to_hir`'s `expand_item_macros`, the only
+    /// caller); `invocation` is one item-position macro call site. Returns
+    /// `Some(items)` when a frontend's real macro engine (fp-lang's
+    /// `expand_item_macro_invocation`) matched a rule and re-parsed its
+    /// substituted output into real items; `None` when the name is unknown
+    /// or no rule matched, in which case the caller leaves the invocation
+    /// as an unexpanded item (unchanged from this hook's absence).
+    fn expand_item_macro(
+        &self,
+        _invocation: &crate::ast::MacroInvocation,
+        _defs: &std::collections::HashMap<String, crate::ast::MacroRulesDef>,
+    ) -> Option<Vec<Item>> {
+        None
+    }
+
+    /// Collects every `macro_rules! name { .. }` definition reachable in
+    /// `items` (recursing into nested modules), parsed into structured
+    /// `MacroRulesDef`s ready for `expand_item_macro`. Paired with that
+    /// method since parsing a macro's own matcher/transcriber syntax needs
+    /// the same frontend-specific engine (fp-lang's
+    /// `collect_macro_rules_defs`); the default no-op keeps a caller with
+    /// no normalizer wired in behaving exactly as before (no item macros
+    /// ever expand).
+    fn collect_macro_rules_defs(
+        &self,
+        _items: &[Item],
+    ) -> std::collections::HashMap<String, crate::ast::MacroRulesDef> {
+        std::collections::HashMap::new()
+    }
 }
 
 impl IntrinsicNormalizer for NoopIntrinsicNormalizer {}

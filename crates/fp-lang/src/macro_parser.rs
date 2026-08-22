@@ -658,6 +658,38 @@ pub fn collect_macro_rules_defs<'a>(
     defs
 }
 
+/// Expands an *item-position* macro invocation (e.g. `alias_core_ffi! { c_int
+/// c_uint }`, real std's own idiom for generating a batch of `pub type X =
+/// path::X;` aliases) against a real `macro_rules!` definition collected via
+/// `collect_macro_rules_defs`, the same way `normalize_macro`
+/// (`fp_lang::normalization`) already expands an *expression*-position macro
+/// invocation — matching each rule in declaration order, substituting the
+/// bindings into the transcriber, then re-parsing the result, just as real
+/// `macro_rules!` expansion does. Returns `None` if the name isn't a known
+/// macro or no rule's matcher matches this invocation's actual tokens (the
+/// caller then leaves the invocation as an unexpanded `ItemKind::Macro`,
+/// exactly as it already did before this function existed).
+pub fn expand_item_macro_invocation(
+    invocation: &fp_core::ast::MacroInvocation,
+    defs: &HashMap<String, MacroRulesDef>,
+) -> Option<Vec<Item>> {
+    let macro_name = invocation.path.segments.last()?.name.as_str();
+    let def = defs.get(macro_name)?;
+    let file_id = macro_rules_def_file_id(def);
+    for rule in &def.rules {
+        let Some(bindings) = match_macro_rule(&rule.matcher, &invocation.token_trees, file_id)
+        else {
+            continue;
+        };
+        let substituted = substitute_template(&rule.transcriber, &bindings);
+        let flat = macro_token_trees_to_tokens(&substituted);
+        if let Ok(items) = crate::ast::parse_items_tokens(&flat, file_id) {
+            return Some(items);
+        }
+    }
+    None
+}
+
 fn collect_macro_rules_defs_into<'a>(
     items: impl IntoIterator<Item = &'a Item>,
     out: &mut HashMap<String, MacroRulesDef>,
