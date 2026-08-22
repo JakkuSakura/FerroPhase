@@ -2162,12 +2162,9 @@ impl HirTypeChecker {
                     .items
                     .iter()
                     .find(|member| member.def_id == def_id)?;
-                let hir::ImplItemKind::Method(function) = &impl_member.kind else {
-                    return None;
-                };
-                Some((impl_item, function))
+                Some((impl_item, &impl_member.kind))
             });
-            if let Some((impl_item, function)) = found {
+            if let Some((impl_item, hir::ImplItemKind::Method(function))) = found {
                 let mut scope = self.with_generics(&impl_item.generics);
                 let self_ty = scope.check_type_expr(&impl_item.self_ty).await?;
                 let mut scope = scope.with_self_type(self_ty);
@@ -2175,13 +2172,41 @@ impl HirTypeChecker {
                 let mut scope = scope.with_assoc_types(assoc_types);
                 return scope.function_signature(function).await;
             }
+            // An impl's own associated const (`impl char { pub const MIN:
+            // char = '\0'; }`) — its *declared* type annotation is all a
+            // value-position reference elsewhere needs (exactly like a
+            // top-level `const`'s `ItemKind::Const` arm below, which also
+            // never needs the const's initializer body/value to know its
+            // type). Deliberately does NOT route through `ensure_item_
+            // checked`/`spawn_item_task` the way a top-level const does:
+            // those are keyed per *top-level* item, so awaiting one would
+            // mean awaiting this whole impl block's task — every other
+            // method in it too — before this one const's type is even
+            // available. For an impl with many methods (`impl char`) that
+            // reference each other across a mutually-recursive type
+            // (`char` <-> `core::wtf8::CodePoint`, say), that
+            // whole-impl-granularity wait is exactly what the executor's
+            // "genuine dependency cycle" stall detector was catching —
+            // not a real cycle in the *types* (a const's declared type
+            // never needs another item's body), only in this
+            // coarser-than-necessary task granularity.
+            if let Some((impl_item, hir::ImplItemKind::AssocConst(constant))) = found {
+                let mut scope = self.with_generics(&impl_item.generics);
+                let self_ty = scope.check_type_expr(&impl_item.self_ty).await?;
+                let mut scope = scope.with_self_type(self_ty);
+                return scope.check_type_expr(&constant.ty).await;
+            }
             // Any package's own `impl_method_item_index` (built once per
             // package, see `hir::HirPackage::index_derived_lookups`) gives the
             // enclosing impl's item index directly — same-package or
             // cross-package alike, since `def_id` already carries the
             // owning `package_id` and `self.program_rc()` now holds
-            // every package uniformly.
-            let cross_package_method = self
+            // every package uniformly. Matches both `Method` and
+            // `AssocConst` members the same way the same-package `found`
+            // lookup just above does — see its own doc comment for why
+            // an associated const only ever needs its declared type, never
+            // a whole-impl wait.
+            let cross_package_member = self
                 .program_rc()
                 .package(def_id.package_id)
                 .and_then(|package| {
@@ -2196,22 +2221,27 @@ impl HirTypeChecker {
                         if member.def_id != def_id {
                             return None;
                         }
-                        match &member.kind {
-                            hir::ImplItemKind::Method(function) => {
-                                Some((impl_item.generics.clone(), impl_item.self_ty.clone(), impl_item.items.clone(), function.clone()))
-                            }
-                            _ => None,
-                        }
+                        Some((impl_item.generics.clone(), impl_item.self_ty.clone(), impl_item.items.clone(), member.kind.clone()))
                     })
                 });
-            if let Some((generics, self_ty, impl_items, function)) = cross_package_method {
-                let mut scope = self.with_generics(&generics);
-                let self_ty = scope.check_type_expr(&self_ty).await?;
-                let mut scope = scope.with_self_type(self_ty);
-                let assoc_types = scope.impl_assoc_types(&impl_items).await?;
-                let mut scope = scope.with_assoc_types(assoc_types);
-                return scope.function_signature(&function).await;
-            }
+            if let Some((generics, self_ty, impl_items, member_kind)) = cross_package_member {
+                match member_kind {
+                    hir::ImplItemKind::Method(function) => {
+                        let mut scope = self.with_generics(&generics);
+                        let self_ty = scope.check_type_expr(&self_ty).await?;
+                        let mut scope = scope.with_self_type(self_ty);
+                        let assoc_types = scope.impl_assoc_types(&impl_items).await?;
+                        let mut scope = scope.with_assoc_types(assoc_types);
+                        return scope.function_signature(&function).await;
+                    }
+                    hir::ImplItemKind::AssocConst(constant) => {
+                        let mut scope = self.with_generics(&generics);
+                        let self_ty = scope.check_type_expr(&self_ty).await?;
+                        let mut scope = scope.with_self_type(self_ty);
+                        return scope.check_type_expr(&constant.ty).await;
+                    }
+                    _ => {}
+                }
             let program = self.program_rc();
             let matched_enum_item = self
                 .package()

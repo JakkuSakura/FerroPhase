@@ -316,8 +316,18 @@ impl AstToHirLowerer {
                     }
                     ast::ItemKind::DefConst(const_item) => {
                         let assoc_const = self.transform_const_def(const_item)?;
+                        // Must reuse the same `DefId` `predeclare_items`
+                        // already allocated and registered this const's
+                        // value-path under (`self.def_id_for_item`, same
+                        // as the `DefFunction` arm above does for
+                        // methods) — a fresh `next_def_id()` here mints an
+                        // unrelated number, so any reference resolved
+                        // during predeclare (e.g. `char::MIN` elsewhere)
+                        // would point at a `DefId` this `ImplItem` never
+                        // actually carries.
+                        let const_def_id = self.def_id_for_item(item);
                         items.push(hir::ImplItem {
-                            def_id: self.next_def_id(),
+                            def_id: const_def_id,
                             hir_id: self.next_id(),
                             name: const_item.name.clone().into(),
                             kind: hir::ImplItemKind::AssocConst(assoc_const),
