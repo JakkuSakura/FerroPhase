@@ -629,6 +629,39 @@ impl HirGenerator {
                     ast::ExprInvokeTarget::Expr(expr) => {
                         self.ast_expr_to_hir_path(expr.as_ref(), scope)?
                     }
+                    // A generic-argumented reference to a *type* target
+                    // (e.g. a qualified path's base type, or a bare type
+                    // reused as a callable-position expression) parses its
+                    // base as `ExprInvokeTarget::Type(ty)` rather than
+                    // `Function(name)` — previously fell straight through
+                    // to the generic "not path-like" error below and got
+                    // replaced with a `__fp_error` placeholder path, even
+                    // when the type itself resolves to a perfectly real
+                    // path (the overwhelmingly common real case). Lower it
+                    // the same way any other type reference is lowered,
+                    // reusing its own already-resolved path when it has
+                    // one; only genuinely non-path-shaped types (a tuple,
+                    // a slice, `dyn Trait`, ...) still fall through.
+                    ast::ExprInvokeTarget::Type(ty) => {
+                        let type_expr = self.transform_type_to_hir(ty)?;
+                        match type_expr.kind {
+                            hir::TypeExprKind::Path(path) => path,
+                            _ => {
+                                self.add_error(
+                                    Diagnostic::error(format!(
+                                        "expected path-like expression for type path, found type target {:?}",
+                                        ty
+                                    ))
+                                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                                    .with_span(expr.span()),
+                                );
+                                hir::Path {
+                                    segments: vec![self.make_path_segment("__fp_error", None)],
+                                    res: None,
+                                }
+                            }
+                        }
+                    }
                     ast::ExprInvokeTarget::Method(select) => {
                         let mut base = self.ast_expr_to_hir_path(&select.obj, scope)?;
                         let seg = self.make_path_segment(&select.field.name, None);

@@ -1585,6 +1585,21 @@ impl HirTypeChecker {
             if path.segments.len() == 1 && path.segments[0].name.as_str() == "void" {
                 return Ok(hir::Ty { kind: hir::ty::TyKind::Tuple(vec![]) });
             }
+            // `create_null_type` (`ast_to_hir::mod.rs`) deliberately builds
+            // this exact shape — an unresolved `Res::None` path literally
+            // named `null` — for the never type (`!`)/`ast::Ty::Nothing`,
+            // matching how `hir_to_mir::lower_path_type`'s own "null" case
+            // already treats it (a raw byte pointer, `*const i8`). Not a
+            // laundering fallback: it's the same internal synthetic-type
+            // convention already used downstream, just missing here too.
+            if path.segments.len() == 1 && path.segments[0].name.as_str() == "null" {
+                return Ok(Ty {
+                    kind: TyKind::RawPtr(ty::TypeAndMut {
+                        ty: Box::new(Ty::int(ty::IntTy::I8)),
+                        mutbl: ty::Mutability::Not,
+                    }),
+                });
+            }
             return Ok(self.error_ty(format!(
                 "unresolved type path `{}`",
                 path.segments
