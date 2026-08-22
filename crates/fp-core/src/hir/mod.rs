@@ -630,6 +630,19 @@ pub struct GenericParam {
     /// explicit associated-type binding like `Item = U` — carried on it
     /// exactly as an ordinary trait-bound expression already is).
     pub bounds: Vec<TypeExpr>,
+    /// Explicit associated-type bindings carried by one of `bounds`'
+    /// own trait-bound generic-arg lists (`I: Iterator<Item = U>` binds
+    /// `Item` to `U` directly, as opposed to merely bounding `I` by the
+    /// `Iterator` trait with no committed value for `Item`) — kept
+    /// separate from `bounds` itself since `TypeExprKind::Path`'s own
+    /// `GenericArgs` has no slot for "this arg is actually a `name =
+    /// type` binding, not a positional type argument" (see
+    /// `GenericParam::bounds`'s own doc comment on why `Ident = Type`
+    /// generic args are otherwise dropped entirely). Checked before
+    /// falling back to a supertrait-declares-it-but-doesn't-bind-it
+    /// opaque placeholder — an explicit binding gives a real, concrete
+    /// answer.
+    pub explicit_bindings: Vec<(Symbol, TypeExpr)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

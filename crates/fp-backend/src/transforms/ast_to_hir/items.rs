@@ -220,12 +220,66 @@ impl AstToHirLowerer {
                     ))
                 })
                 .collect();
+            // Explicit associated-type bindings on one of this
+            // parameter's own trait bounds (`I: Iterator<Item = U>`) —
+            // extracted straight from the original AST bound expression
+            // (a `Name::ParameterPath`, per-segment `args: Vec<Ty>`,
+            // fp-lang's own `parse_type_arg` already turning `Item = U`
+            // into a `Ty::Expr(Assign { target: Item, value: U })` entry
+            // there) rather than re-derived from the just-lowered `Path`
+            // above, whose ordinary `GenericArgs` has nowhere to carry a
+            // binding as such. See `GenericParam::explicit_bindings`'s
+            // own doc comment for why this needs its own field.
+            let explicit_bindings = param
+                .bounds
+                .bounds
+                .iter()
+                .flat_map(|bound| {
+                    let ast::ExprKind::Name(fp_core::ast::Name::ParameterPath(parameter_path)) =
+                        bound.kind()
+                    else {
+                        return Vec::new();
+                    };
+                    let Some(last_segment) = parameter_path.segments.last() else {
+                        return Vec::new();
+                    };
+                    last_segment
+                        .args
+                        .iter()
+                        .filter_map(|arg| {
+                            let ast::Ty::Expr(arg_expr) = arg else {
+                                return None;
+                            };
+                            let ast::ExprKind::Assign(assign) = arg_expr.kind() else {
+                                return None;
+                            };
+                            let ast::ExprKind::Name(fp_core::ast::Name::Ident(binding_name)) =
+                                assign.target.kind()
+                            else {
+                                return None;
+                            };
+                            let value_path = self
+                                .ast_expr_to_hir_path(&assign.value, PathResolutionScope::Type)
+                                .ok()?;
+                            Some((
+                                binding_name.name.clone().into(),
+                                hir::TypeExpr::new(
+                                    self.next_id(),
+                                    hir::TypeExprKind::Path(value_path),
+                                    assign.value.span(),
+                                ),
+                            ))
+                        })
+                        .collect()
+                })
+                .collect();
             hir_params.push(hir::GenericParam {
                 hir_id,
                 def_id,
                 name: param.name.clone().into(),
                 kind: hir::GenericParamKind::Type { default: None },
                 bounds,
+                explicit_bindings,
             });
         }
 

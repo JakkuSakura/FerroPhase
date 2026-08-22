@@ -110,6 +110,11 @@ pub struct HirTypeChecker {
     /// <Item = T>`) instead of only ever resolving `T::AssocName` once `T`
     /// is a concrete type.
     generic_param_bounds: HashMap<hir::Symbol, Vec<hir::TypeExpr>>,
+    /// Each in-scope generic parameter's own explicit associated-type
+    /// bindings (`I: Iterator<Item = U>` binds `Item` to `U`), keyed and
+    /// merged identically to `generic_param_bounds` — see
+    /// `hir::GenericParam::explicit_bindings`'s own doc comment.
+    generic_param_bindings: HashMap<hir::Symbol, Vec<(hir::Symbol, hir::TypeExpr)>>,
     /// `Self`'s type for the impl candidate currently being resolved
     /// against, if any. A child overrides this to try one candidate; once
     /// it's dropped, the parent's own value (never touched) is live again.
@@ -159,6 +164,7 @@ impl HirTypeChecker {
             locals: HashMap::new(),
             generic_scope: HashMap::new(),
             generic_param_bounds: HashMap::new(),
+            generic_param_bindings: HashMap::new(),
             self_type: None,
             assoc_types: None,
             expected_expr_type: None,
@@ -182,6 +188,7 @@ impl HirTypeChecker {
             locals: HashMap::new(),
             generic_scope: HashMap::new(),
             generic_param_bounds: HashMap::new(),
+            generic_param_bindings: HashMap::new(),
             self_type: None,
             assoc_types: None,
             expected_expr_type: None,
@@ -235,6 +242,11 @@ impl HirTypeChecker {
                     child
                         .generic_param_bounds
                         .insert(parameter.name.clone(), parameter.bounds.clone());
+                }
+                if !parameter.explicit_bindings.is_empty() {
+                    child
+                        .generic_param_bindings
+                        .insert(parameter.name.clone(), parameter.explicit_bindings.clone());
                 }
             }
         }
@@ -616,6 +628,13 @@ impl HirTypeChecker {
     /// doc comment for why this is name-keyed rather than `DefId`-keyed.
     fn generic_param_bounds(&self, name: &hir::Symbol) -> Option<&[hir::TypeExpr]> {
         self.generic_param_bounds.get(name).map(Vec::as_slice)
+    }
+
+    /// The explicit associated-type bindings for a still-generic type
+    /// parameter named `name`, if any are currently in scope — see
+    /// `generic_param_bindings`'s own doc comment.
+    fn generic_param_bindings(&self, name: &hir::Symbol) -> Option<&[(hir::Symbol, hir::TypeExpr)]> {
+        self.generic_param_bindings.get(name).map(Vec::as_slice)
     }
 
     async fn check_signature(&mut self, signature: &hir::FunctionSig) -> Result<()> {
@@ -3209,6 +3228,13 @@ impl HirTypeChecker {
         param_name: &hir::Symbol,
         assoc_name: &hir::Symbol,
     ) -> Result<Option<Ty>> {
+        if let Some(bound_ty) = self
+            .generic_param_bindings(param_name)
+            .and_then(|bindings| bindings.iter().find(|(name, _)| name == assoc_name))
+            .map(|(_, ty)| ty.clone())
+        {
+            return Ok(Some(self.check_type_expr(&bound_ty).await?));
+        }
         let Some(bounds) = self.generic_param_bounds(param_name).map(<[_]>::to_vec) else {
             return Ok(None);
         };
