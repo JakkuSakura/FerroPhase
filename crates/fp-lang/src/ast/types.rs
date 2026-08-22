@@ -853,8 +853,14 @@ fn parse_type_arg(input: &mut &[Token]) -> ModalResult<Ty> {
         // above, this constrains the associated type without naming it
         // concretely. This checker has no separate slot for it, so it's
         // parsed and dropped, same treatment already given to any other
-        // bound this checker doesn't act on further.
+        // bound this checker doesn't act on further. The associated type
+        // itself can carry its own generic/lifetime args before the `:`
+        // (real `core::str::pattern`'s own `Pattern<Searcher<'a>: fmt::
+        // Debug>>` — bounding `Searcher<'a>` specifically, not a bare
+        // `Searcher`) — `parse_optional_type_args` already knows how to
+        // skip a lifetime-only argument list like this.
         let mut bound_probe = probe;
+        let _ = parse_optional_type_args(&mut bound_probe)?;
         if skip_symbol(&mut bound_probe, ":").is_ok() && parse_type_bounds(&mut bound_probe).is_ok() {
             *input = bound_probe;
             return Ok(Ty::Expr(Box::new(Expr::name(Name::path(Path::plain(vec![

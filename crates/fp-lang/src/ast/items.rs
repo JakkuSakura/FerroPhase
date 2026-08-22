@@ -334,6 +334,15 @@ fn parse_struct_item(
             }
         }
         skip_symbol(input, ")")?;
+        // A tuple struct's `where` clause trails its field list, not its
+        // generic params (real `core::str::pattern`'s own `pub struct
+        // CharPredicateSearcher<'a, F>(<MultiCharEqPattern<F> as
+        // Pattern>::Searcher<'a>) where F: FnMut(char) -> bool;`) — the
+        // `where`-before-generics check above only covers a brace-bodied
+        // struct's placement.
+        if skip_keyword(input, Keyword::Where).is_ok() {
+            skip_where_clause(input)?;
+        }
         skip_symbol(input, ";")?;
         return Ok(Item::from(ItemKind::DefStruct(ItemDefStruct {
             attrs,
