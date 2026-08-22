@@ -6,6 +6,7 @@ use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::ast::path::QualifiedPath;
 use fp_core::package::{DependencyDescriptor, DependencyKind, PackageId};
 use fp_core::span::Span;
+use fp_core::diagnostics::{Diagnostic, DiagnosticLevel};
 use fp_interpret::LirInterpreter;
 use fp_lang::FerroIntrinsicNormalizer;
 use fp_typing::TypingContext;
@@ -18,6 +19,34 @@ use crate::{
     CompilerDriverError, CompilerState, ConstValueId, ExecutorHandle, FullyQualifiedPath, HirId,
     LirId, MirId, RuntimeValueId,
 };
+
+/// Real Rust source over an entire vendored `std`/`core`/`alloc` package
+/// legitimately produces tens of thousands of "skipping unresolvable
+/// type"-style *warnings* from `MirLowering` (one per HIR node whose type
+/// couldn't be lowered) — joining every one of those into a single
+/// `InternalCompilerError` message (as this used to) built a single
+/// multi-hundred-megabyte string per failed package, which is what real
+/// compilers never do (diagnostics are reported through their own channel,
+/// not embedded whole into a top-level error's `Display`). Only genuine
+/// `Error`-level diagnostics belong in the error text, and even those are
+/// capped — a caller wants "what broke", not a full warning transcript.
+fn diagnostics_summary(diagnostics: &[Diagnostic]) -> String {
+    const MAX_SHOWN: usize = 10;
+    let errors: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.level == DiagnosticLevel::Error)
+        .map(|d| d.message.as_str())
+        .collect();
+    if errors.is_empty() {
+        return String::new();
+    }
+    let shown = errors.iter().take(MAX_SHOWN).cloned().collect::<Vec<_>>().join("; ");
+    if errors.len() > MAX_SHOWN {
+        format!("{shown}; ... and {} more error(s)", errors.len() - MAX_SHOWN)
+    } else {
+        shown
+    }
+}
 
 pub struct CompilerDriver {
     /// `Rc<RefCell<_>>`, not owned: a spawned comptime-resolution task (see
@@ -1449,11 +1478,7 @@ impl CompilerDriver {
             Ok(mir) => mir,
             Err(error) => {
                 let (diagnostics, _) = lowering.take_diagnostics();
-                let details = diagnostics
-                    .iter()
-                    .map(|diagnostic| diagnostic.message.as_str())
-                    .collect::<Vec<_>>()
-                    .join("; ");
+                let details = diagnostics_summary(&diagnostics);
                 return Err(CompilerDriverError::InternalCompilerError(if details.is_empty() {
                     format!("HIR-to-MIR lowering failed: {error}")
                 } else {
@@ -1468,11 +1493,7 @@ impl CompilerDriver {
         lowering.walk_program_types_for_layouts(&mir);
         let (diagnostics, had_errors) = lowering.take_diagnostics();
         if had_errors {
-            let details = diagnostics
-                .iter()
-                .map(|diagnostic| diagnostic.message.as_str())
-                .collect::<Vec<_>>()
-                .join("; ");
+            let details = diagnostics_summary(&diagnostics);
             return Err(CompilerDriverError::InternalCompilerError(format!(
                 "HIR-to-MIR lowering reported diagnostics: {details}"
             )));
@@ -1557,11 +1578,7 @@ impl CompilerDriver {
             Ok(mir) => mir,
             Err(error) => {
                 let (diagnostics, _) = lowering.take_diagnostics();
-                let details = diagnostics
-                    .iter()
-                    .map(|diagnostic| diagnostic.message.as_str())
-                    .collect::<Vec<_>>()
-                    .join("; ");
+                let details = diagnostics_summary(&diagnostics);
                 return Err(CompilerDriverError::InternalCompilerError(if details.is_empty() {
                     format!("HIR-to-MIR lowering failed: {error}")
                 } else {
@@ -1572,11 +1589,7 @@ impl CompilerDriver {
         lowering.walk_program_types_for_layouts(&mir);
         let (diagnostics, had_errors) = lowering.take_diagnostics();
         if had_errors {
-            let details = diagnostics
-                .iter()
-                .map(|diagnostic| diagnostic.message.as_str())
-                .collect::<Vec<_>>()
-                .join("; ");
+            let details = diagnostics_summary(&diagnostics);
             return Err(CompilerDriverError::InternalCompilerError(format!(
                 "HIR-to-MIR lowering reported diagnostics: {details}"
             )));
