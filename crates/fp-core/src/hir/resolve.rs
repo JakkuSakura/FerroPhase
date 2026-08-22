@@ -56,6 +56,20 @@ struct ModuleNode {
     name: String,
     children: HashMap<String, ModuleId>,
     bindings: [HashMap<String, SymbolEntry>; 2],
+    /// True only for a node reached via `ensure_module` (a genuine `mod
+    /// X { .. }`/file-based module) — false for a node that exists purely
+    /// because `bind_symbol` needed *somewhere* to hang a struct/enum's own
+    /// associated items (impl methods, variants) under its name, via
+    /// `ensure_namespace`. Without this distinction, a struct/enum with any
+    /// associated item at all (i.e. almost every real one) makes its own
+    /// qualified path satisfy `module_exists`, so `register_import_binding`'s
+    /// "is this name a module?" check wrongly wins over an ordinary item
+    /// import — e.g. `use core::marker::PhantomData;` resolving `PhantomData`
+    /// to `Res::Module(["core","marker","PhantomData"])` instead of the
+    /// struct's own `Res::Def`, because `PhantomData::new()` (or any other
+    /// associated item) had already caused `ensure_namespace` to create a
+    /// node at that exact path.
+    is_module: bool,
 }
 
 impl ModuleNode {
@@ -65,6 +79,7 @@ impl ModuleNode {
             name: String::new(),
             children: HashMap::new(),
             bindings: [HashMap::new(), HashMap::new()],
+            is_module: true,
         }
     }
 }
@@ -113,8 +128,36 @@ impl ModuleTree {
     }
 
     /// Ensures every segment of `path` exists as a node, creating any
-    /// missing ones, and returns the id of the final segment's node.
+    /// missing ones, and returns the id of the final segment's node —
+    /// for a **genuine** module (a literal `mod X { .. }` item, or a
+    /// file-based provider's own per-file module path): every node
+    /// walked is marked `is_module = true` (a nested real module implies
+    /// every ancestor segment is a real module too), so `module_exists`
+    /// answers correctly. Callers that need a node purely to hang a
+    /// struct/enum's own associated items under (not a real module) must
+    /// use `ensure_namespace` instead, or `module_exists` would wrongly
+    /// start reporting every struct/enum with any associated item as if
+    /// it were also a module.
     pub fn ensure_module(&mut self, path: &QualifiedPath) -> ModuleId {
+        let id = self.ensure_namespace(path);
+        let mut current = self.root();
+        self.nodes[current.0 as usize].is_module = true;
+        for segment in &path.segments {
+            current = self.nodes[current.0 as usize].children[segment];
+            self.nodes[current.0 as usize].is_module = true;
+        }
+        id
+    }
+
+    /// Same node-creation walk as `ensure_module`, but never marks any
+    /// node `is_module` — for a caller that just needs *somewhere* to
+    /// bind a definition's own child namespace (an impl method, an enum
+    /// variant) and doesn't know or care whether `path` also happens to
+    /// be a real module's path (see `ModuleNode::is_module`'s doc
+    /// comment). Reuses whatever's already there either way, so calling
+    /// this after `ensure_module` already marked the same path real is a
+    /// harmless no-op, not a downgrade.
+    pub fn ensure_namespace(&mut self, path: &QualifiedPath) -> ModuleId {
         let mut current = self.root();
         let mut prefix = Vec::with_capacity(path.segments.len());
         for segment in &path.segments {
@@ -134,6 +177,7 @@ impl ModuleTree {
             name: name.to_string(),
             children: HashMap::new(),
             bindings: [HashMap::new(), HashMap::new()],
+            is_module: false,
         });
         self.nodes[parent.0 as usize]
             .children
@@ -143,8 +187,14 @@ impl ModuleTree {
         id
     }
 
+    /// True only for a **genuine** module at `path` (see `ModuleNode::
+    /// is_module`'s doc comment) — a struct/enum's own associated-item
+    /// namespace at the same path (from `ensure_namespace`) doesn't count,
+    /// even though a tree node exists there too.
     pub fn module_exists(&self, path: &QualifiedPath) -> bool {
-        self.by_path.contains_key(path)
+        self.by_path
+            .get(path)
+            .is_some_and(|id| self.nodes[id.0 as usize].is_module)
     }
 
     pub fn module_id(&self, path: &QualifiedPath) -> Option<ModuleId> {

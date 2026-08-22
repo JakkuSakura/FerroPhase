@@ -796,11 +796,25 @@ impl HirGenerator {
     }
 
     /// Binds `path`'s last segment as `res` in namespace `ns`, at the
-    /// module node for `path`'s remaining prefix (created via
-    /// `ensure_module` if it doesn't exist yet) — the module tree's
+    /// tree node for `path`'s remaining prefix (created via
+    /// `ensure_namespace` if it doesn't exist yet) — the module tree's
     /// equivalent of the old flat `global_type_defs`/`global_value_defs`
     /// insertion, now carrying the same `SymbolEntry` shape directly on
     /// the tree node instead of a second, parallel lookup table.
+    ///
+    /// `ensure_namespace`, not `ensure_module`: `path`'s prefix is often
+    /// a real module (an ordinary item's own enclosing module, already
+    /// marked real by `transform_package`'s file-based `ensure_module`
+    /// pass), but just as often isn't — a struct/enum's own qualified
+    /// path, here purely as the parent for one of *its* associated items
+    /// (an impl method, an enum variant). Marking that non-module prefix
+    /// `is_module = true` would make `module_exists` — and therefore
+    /// `register_import_binding`'s "is this name actually a module?"
+    /// check — treat `use crate::marker::PhantomData;` as importing a
+    /// module instead of the struct itself, resolving to
+    /// `Res::Module(["core","marker","PhantomData"])` rather than the
+    /// struct's own `Res::Def`, the moment `PhantomData` gained even one
+    /// associated item (which every real one does).
     fn bind_symbol(
         &mut self,
         path: &fp_core::ast::path::QualifiedPath,
@@ -812,7 +826,7 @@ impl HirGenerator {
             return;
         };
         let prefix = fp_core::ast::path::QualifiedPath::new(segments);
-        let module_id = self.package.module_tree.ensure_module(&prefix);
+        let module_id = self.package.module_tree.ensure_namespace(&prefix);
         self.package.module_tree.bind(module_id, ns, &leaf, entry);
     }
 
@@ -1209,13 +1223,15 @@ impl HirGenerator {
             for item in &hir_program.items {
                 program.def_map.insert(item.def_id, item.clone());
             }
-            program.def_map.extend(hir_program.def_map);
-            program.def_paths.extend(hir_program.def_paths);
-            program.op_defs.extend(hir_program.op_defs);
-            program.intrinsic_defs.extend(hir_program.intrinsic_defs);
+            program.def_map.extend(hir_program.def_map.clone());
+            program.def_paths.extend(hir_program.def_paths.clone());
+            program.op_defs.extend(hir_program.op_defs.clone());
+            program
+                .intrinsic_defs
+                .extend(hir_program.intrinsic_defs.clone());
             program
                 .type_alias_targets
-                .extend(hir_program.type_alias_targets);
+                .extend(hir_program.type_alias_targets.clone());
             // Cross-package exported value/type symbols (`_exports`) are
             // *not* eagerly copied into this package's own module tree
             // here — `resolve_type_symbol`/`resolve_value_symbol`/
