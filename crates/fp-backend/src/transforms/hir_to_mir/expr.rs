@@ -6262,7 +6262,41 @@ impl MirLowering {
                     value: constant,
                 },
             );
+            return;
         }
+        // `lower_const_expr` only folds a fixed, directly-computable set
+        // of shapes (literals, arrays, structs, plain paths, ...) — an
+        // arbitrary call (to an ordinary function, or a `#[intrinsic =
+        // "..."]`-tagged one like `std::intrinsics::primitive_type`) needs
+        // real execution, the same way an expression-position `const {
+        // .. }` block already does (`register_const_block_comptime_entry`
+        // just above `lower_type_expr`). Reuse that exact two-pass
+        // protocol, keyed by this const's own body `hir_id` instead of a
+        // fresh synthetic one: on relower (after `CompilerDriver::
+        // evaluate_comptime_lir` has run this package's own comptime
+        // entries through the real interpreter and `apply_resolved_
+        // comptime_block_values` fed the answer back into `TypeckResults`
+        // via `with_typeck_results`), the resolved value is already
+        // sitting in `typeck_const_block_values` under this same `hir_id`
+        // — consult it here, the same way an inline `ConstBlock` operand
+        // does (`lower_operand`'s `ConstBlock` arm) — before falling back
+        // to registering a comptime entry for the *next* pass to resolve.
+        // Without this, a non-foldable top-level const's initializer is
+        // silently dropped: no MIR item, no LIR global, no compile-time
+        // error — only a runtime "missing global" once something actually
+        // reads it.
+        if let Some(value) = self.typeck_const_block_values.get(&konst.body.hir_id).cloned() {
+            if let Some(constant) = self.const_block_value_to_mir_constant(&value, konst.body.value.span) {
+                self.const_values.insert(def_id, ConstInfo { ty, value: constant });
+                return;
+            }
+        }
+        self.register_const_block_comptime_entry_direct(
+            konst.body.hir_id,
+            ty,
+            &konst.body.value,
+            konst.body.value.span,
+        );
     }
 
     fn struct_name_from_type(&self, ty: &hir::TypeExpr) -> Option<String> {
