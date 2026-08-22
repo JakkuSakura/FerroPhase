@@ -97,6 +97,18 @@ pub struct HirTypeChecker {
     /// unique, so a flat merged map is equivalent to searching a stack of
     /// nested generic scopes.
     generic_scope: HashMap<hir::DefId, Ty>,
+    /// Each in-scope generic parameter's own trait bounds, keyed by name
+    /// (not `DefId` — `path_ty`'s `T::AssocName` fallback only ever has
+    /// `T`'s bare name from the unresolved path's own first segment, never
+    /// a resolved `DefId`, since the path as a whole failed to resolve in
+    /// the first place). Merged the same way `generic_scope` is: a child
+    /// entering a new generics scope (`with_generics`) clones this map and
+    /// inserts its own parameters' bounds into the clone. Lets a still-
+    /// generic `F::Output`/`I::Item`-style projection resolve from the
+    /// bound that actually declares it (`F: FnOnce() -> R`, `I: Iterator
+    /// <Item = T>`) instead of only ever resolving `T::AssocName` once `T`
+    /// is a concrete type.
+    generic_param_bounds: HashMap<hir::Symbol, Vec<hir::TypeExpr>>,
     /// `Self`'s type for the impl candidate currently being resolved
     /// against, if any. A child overrides this to try one candidate; once
     /// it's dropped, the parent's own value (never touched) is live again.
@@ -145,6 +157,7 @@ impl HirTypeChecker {
             root: None,
             locals: HashMap::new(),
             generic_scope: HashMap::new(),
+            generic_param_bounds: HashMap::new(),
             self_type: None,
             assoc_types: None,
             expected_expr_type: None,
@@ -167,6 +180,7 @@ impl HirTypeChecker {
             root: Some(Rc::downgrade(root)),
             locals: HashMap::new(),
             generic_scope: HashMap::new(),
+            generic_param_bounds: HashMap::new(),
             self_type: None,
             assoc_types: None,
             expected_expr_type: None,
@@ -216,6 +230,11 @@ impl HirTypeChecker {
                         }),
                     },
                 );
+                if !parameter.bounds.is_empty() {
+                    child
+                        .generic_param_bounds
+                        .insert(parameter.name.clone(), parameter.bounds.clone());
+                }
             }
         }
         child
@@ -589,6 +608,13 @@ impl HirTypeChecker {
             }
             Ok(())
         })
+    }
+
+    /// The trait-bound list for a still-generic type parameter named
+    /// `name`, if one is currently in scope — see `generic_param_bounds`'s
+    /// doc comment for why this is name-keyed rather than `DefId`-keyed.
+    fn generic_param_bounds(&self, name: &hir::Symbol) -> Option<&[hir::TypeExpr]> {
+        self.generic_param_bounds.get(name).map(Vec::as_slice)
     }
 
     async fn check_signature(&mut self, signature: &hir::FunctionSig) -> Result<()> {
@@ -1830,6 +1856,21 @@ impl HirTypeChecker {
                     if let Some(ty) = self.assoc_type_for_self(&base_ty, &assoc_name).await? {
                         return Ok(ty);
                     }
+                }
+                // `T::AssocName` where `T` still names an in-scope generic
+                // parameter (real closures' `F::Output` for `F: FnOnce()
+                // -> R`, or `I::Item` for `I: Iterator<Item = U>`) — no
+                // concrete `base_ty` exists yet to search impls for, but
+                // the parameter's own bound already declares the
+                // projection directly.
+                if let Some(ty) = self
+                    .assoc_type_from_generic_param_bounds(
+                        &path.segments[0].name,
+                        &path.segments.last().unwrap().name,
+                    )
+                    .await?
+                {
+                    return Ok(ty);
                 }
             }
             return Ok(self.error_ty(format!(
@@ -3133,11 +3174,46 @@ impl HirTypeChecker {
     /// an associated type named `assoc_name` — the same impl-candidate
     /// walk `method_output_at` performs for `.method()` calls, minus the
     /// method-signature matching (there is no `self`/argument list to
-    /// check for an associated *type*). Ported onto the `HirPackage`-
-    /// backed cache / `with_generics`-child architecture (this fix
-    /// predates that rewrite; the original used the retired
-    /// `TypingShared::assoc_type_for_self_cache` and a sync closure to
-    /// guarantee `resolving_assoc_projections.pop()` ran on every return
+    /// check for an associated *type*).
+    /// Resolves `T::AssocName` when `T` is still a bare, uninstantiated
+    /// generic parameter (see `path_ty`'s call site) by consulting `T`'s
+    /// own trait bounds directly, rather than searching for an impl on a
+    /// concrete self-type (there isn't one yet). Currently only handles
+    /// the one bound shape that's structurally unambiguous without a real
+    /// trait-declaration registry to consult: `Fn`/`FnOnce`/`FnMut(..) ->
+    /// R` sugar's own `Output` (fp-lang's parser already folds this
+    /// straight into a `TypeExprKind::FnPtr`, discarding the trait name —
+    /// see `GenericParam::bounds`'s own doc comment). An explicit
+    /// associated-type binding in an ordinary trait bound (`I: Iterator
+    /// <Item = U>`) is a separate, still-open gap — the binding survives
+    /// parsing as an `Ident = Type` generic arg, but `transform_type_to_
+    /// hir`'s general `ast::Ty::Expr` case has no `ExprKind::Assign` arm
+    /// to carry it into HIR in the first place, so there's nothing yet
+    /// for this function to read it back out of.
+    async fn assoc_type_from_generic_param_bounds(
+        &mut self,
+        param_name: &hir::Symbol,
+        assoc_name: &hir::Symbol,
+    ) -> Result<Option<Ty>> {
+        let Some(bounds) = self.generic_param_bounds(param_name).map(<[_]>::to_vec) else {
+            return Ok(None);
+        };
+        if assoc_name.as_str() != "Output" {
+            return Ok(None);
+        }
+        let Some(fn_ptr) = bounds.iter().find_map(|bound| match &bound.kind {
+            hir::TypeExprKind::FnPtr(fn_ptr) => Some(fn_ptr.clone()),
+            _ => None,
+        }) else {
+            return Ok(None);
+        };
+        Ok(Some(self.check_type_expr(&fn_ptr.output).await?))
+    }
+
+    /// Ported onto the `HirPackage`-backed cache / `with_generics`-child
+    /// architecture (this fix predates that rewrite; the original used the
+    /// retired `TypingShared::assoc_type_for_self_cache` and a sync closure
+    /// to guarantee `resolving_assoc_projections.pop()` ran on every return
     /// path — replaced here with a labeled block, since an async closure
     /// capturing `&mut self` across `.await` points isn't viable).
     async fn assoc_type_for_self(

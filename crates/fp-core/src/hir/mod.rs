@@ -609,6 +609,19 @@ pub struct GenericParam {
     pub def_id: DefId,
     pub name: Symbol,
     pub kind: GenericParamKind,
+    /// This parameter's own trait bounds (`T: Iterator<Item = U>`, `F:
+    /// FnOnce() -> R`, ...) so `path_ty` can resolve a still-generic
+    /// `T::AssocName` projection (`F::Output`, `I::Item`, ...) from the
+    /// bound that actually declares it, instead of only ever resolving
+    /// `T::AssocName` once `T` is a concrete type. A `Fn`/`FnOnce`/
+    /// `FnMut(..) -> R` bound (fp-lang's own parser folds this sugar
+    /// straight into a `TypeExprKind::FnPtr`, discarding the trait name —
+    /// see `parse_simple_type`'s `name(...)` branch) carries its `Output`
+    /// as `FnPtr`'s own `output`; any other bound is a real `Path` (a
+    /// named trait, with the bound's own generic args — including an
+    /// explicit associated-type binding like `Item = U` — carried on it
+    /// exactly as an ordinary trait-bound expression already is).
+    pub bounds: Vec<TypeExpr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

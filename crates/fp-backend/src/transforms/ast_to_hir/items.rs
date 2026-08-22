@@ -183,13 +183,50 @@ impl AstToHirLowerer {
         for param in params {
             let hir_id = self.next_id();
             let def_id = self.next_def_id();
+            self.register_type_generic(&param.name.name, def_id);
+            // A generic parameter's own trait bounds (`F: FnOnce() -> R`,
+            // `I: Iterator<Item = T>`, ...) so `path_ty` can resolve a
+            // still-generic `F::Output`/`I::Item`-style associated-type
+            // projection from the bound that actually declares it,
+            // instead of only ever resolving `T::AssocName` once `T` is a
+            // concrete type. `parse_type_bounds` (fp-lang) already folds
+            // `Fn`/`FnOnce`/`FnMut(..) -> R` sugar into a bare `Ty::
+            // Function`, wrapped as `Expr::Value(Value::Type(..))` by
+            // `type_to_expr` — lower that case through the ordinary type
+            // path (preserving the return type as `FnPtr`'s `output`);
+            // every other bound is a real trait-bound expression, lowered
+            // to a `Path` the same way any other one is. A bound that
+            // fails to resolve here (e.g. one naming a trait this checker
+            // hasn't seen yet) is simply dropped from the list — the
+            // parameter is still usable structurally, it just won't help
+            // resolve that one associated-type projection.
+            let bounds = param
+                .bounds
+                .bounds
+                .iter()
+                .filter_map(|bound| {
+                    if let ast::ExprKind::Value(value) = bound.kind() {
+                        if let ast::Value::Type(ty) = &**value {
+                            return self.transform_type_to_hir(ty).ok();
+                        }
+                    }
+                    let path = self
+                        .ast_expr_to_hir_path(bound, PathResolutionScope::Type)
+                        .ok()?;
+                    Some(hir::TypeExpr::new(
+                        self.next_id(),
+                        hir::TypeExprKind::Path(path),
+                        bound.span(),
+                    ))
+                })
+                .collect();
             hir_params.push(hir::GenericParam {
                 hir_id,
                 def_id,
                 name: param.name.clone().into(),
                 kind: hir::GenericParamKind::Type { default: None },
+                bounds,
             });
-            self.register_type_generic(&param.name.name, def_id);
         }
 
         hir::Generics {
