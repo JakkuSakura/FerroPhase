@@ -166,7 +166,6 @@ fn type_variant_name(ty: &Ty) -> &'static str {
         Ty::ConstBlock(_) => "const",
         Ty::Quote(_) => "quote",
         Ty::TypeBinaryOp(_) => "binop",
-        Ty::AnyBox(_) => "anybox",
         _ => "?",
     }
 }

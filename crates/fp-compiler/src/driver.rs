@@ -346,7 +346,7 @@ impl CompilerDriver {
                         fp_core::ast::ItemKind::PrecompiledLir(lir) => {
                             Some(fp_core::lir::LirCompileUnit {
                                 package_id: fp_core::hir::PackageId::default(),
-                                module_path: pkg_item.path.clone(),
+                                module_path: pkg_item.module_path.clone(),
                                 program: lir.clone(),
                             })
                         }

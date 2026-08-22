@@ -901,14 +901,22 @@ impl Program {
     /// package's own module tree when `path`'s root names a different
     /// package (mirrors how a real cross-crate path resolves — the target
     /// package's own tree, not the caller's).
+    /// Resolves `name` (in namespace `ns`) as seen from `from_module` in
+    /// package `from` — takes a plain module path, not a `ModuleId`:
+    /// `ModuleId` is `ModuleTree`'s own internal node handle, never meant
+    /// to leak past this API to a caller (fp-typing, hir_to_ast, ...) that
+    /// has no reason to know the tree exists at all, only that it can ask
+    /// the program a question about a path.
     pub fn resolve(
         &self,
         from: PackageId,
-        from_module: resolve::ModuleId,
+        from_module: &crate::ast::path::QualifiedPath,
         ns: resolve::Namespace,
         name: &str,
     ) -> Option<&Res> {
-        self.package(from)?.module_tree.lookup(from_module, ns, name)
+        let package = self.package(from)?;
+        let module = package.module_tree.module_id(from_module)?;
+        package.module_tree.lookup(module, ns, name)
     }
 }
 

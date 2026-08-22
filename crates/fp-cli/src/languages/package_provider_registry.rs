@@ -389,7 +389,7 @@ fn precompiled_lir_provider(
         fp_core::package::graph::PackageGraph::new(Vec::new()),
     );
     source.items.push(fp_core::package::PackageItem {
-        path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+        module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
         item: fp_core::ast::Item::precompiled_lir(lir),
     });
     Some(Arc::new(fp_core::package::provider::FixedPackageProvider::for_source(
@@ -423,7 +423,7 @@ fn jvm_bytecode_provider(root: &Path) -> Option<Arc<dyn PackageProvider>> {
         fp_core::package::graph::PackageGraph::new(Vec::new()),
     );
     source.items.push(fp_core::package::PackageItem {
-        path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+        module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
         item: fp_core::ast::Item::precompiled_artifact(bytes.clone()),
     });
     let lir = if is_jar {
@@ -443,7 +443,7 @@ fn jvm_bytecode_provider(root: &Path) -> Option<Arc<dyn PackageProvider>> {
     };
     if let Some(lir) = lir {
         source.items.push(fp_core::package::PackageItem {
-            path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+            module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
             item: fp_core::ast::Item::precompiled_lir(lir),
         });
     }
@@ -471,14 +471,14 @@ fn cil_provider(root: &Path) -> Option<Arc<dyn PackageProvider>> {
         fp_core::package::graph::PackageGraph::new(Vec::new()),
     );
     source.items.push(fp_core::package::PackageItem {
-        path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+        module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
         item: fp_core::ast::Item::precompiled_artifact(bytes.clone()),
     });
     if !is_pe {
         if let Ok(text) = String::from_utf8(bytes) {
             if let Ok(lir) = fp_cil::parse_cil_program(&text) {
                 source.items.push(fp_core::package::PackageItem {
-                    path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+                    module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
                     item: fp_core::ast::Item::precompiled_lir(lir),
                 });
             }

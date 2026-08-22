@@ -736,15 +736,15 @@ pub fn expand_item_macros(
     items
         .into_iter()
         .map(|package_item| {
-            let fp_core::package::PackageItem { path, item } = package_item;
+            let fp_core::package::PackageItem { module_path, item } = package_item;
             let expanded = expand_items(vec![item], defs, 0);
-            (path, expanded)
+            (module_path, expanded)
         })
-        .flat_map(|(path, expanded)| {
+        .flat_map(|(module_path, expanded)| {
             expanded
                 .into_iter()
                 .map(move |item| fp_core::package::PackageItem {
-                    path: path.clone(),
+                    module_path: module_path.clone(),
                     item,
                 })
         })

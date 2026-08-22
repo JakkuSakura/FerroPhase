@@ -424,14 +424,14 @@ pub struct FrontendBundle {
 #[derive(Debug, Clone)]
 pub struct MirBundle {
     pub frontend: FrontendBundle,
-    pub hir_program: fp_core::hir::Program,
+    pub hir_program: fp_core::hir::Package,
     pub mir_program: fp_core::mir::Program,
 }
 
 #[derive(Debug, Clone)]
 pub struct LirBundle {
     pub frontend: FrontendBundle,
-    pub hir_program: fp_core::hir::Program,
+    pub hir_program: fp_core::hir::Package,
     pub mir_program: fp_core::mir::Program,
     pub lir_program: fp_core::lir::LirProgram,
 }

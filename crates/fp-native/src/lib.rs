@@ -81,17 +81,17 @@ impl fp_core::backend::TargetBackend for NativeEmitter {
             // `PrecompiledArtifact`) always uses an empty path on every
             // item — `items.len() > 1` alone isn't a safe signal, since
             // those two-item CIL/JVM packages aren't archives at all.
-            let is_archive = source.items.iter().any(|pkg_item| !pkg_item.path.is_empty());
+            let is_archive = source.items.iter().any(|pkg_item| !pkg_item.module_path.is_empty());
             if is_archive {
                 let members: Vec<(fp_core::ast::path::QualifiedPath, PrecompiledMember)> = source
                     .items
                     .iter()
                     .filter_map(|pkg_item| match pkg_item.item.kind() {
                         fp_core::ast::ItemKind::PrecompiledAsm(asm) => {
-                            Some((pkg_item.path.clone(), PrecompiledMember::Asm(asm.clone())))
+                            Some((pkg_item.module_path.clone(), PrecompiledMember::Asm(asm.clone())))
                         }
                         fp_core::ast::ItemKind::PrecompiledArtifact(bytes) => {
-                            Some((pkg_item.path.clone(), PrecompiledMember::Bytes(bytes.clone())))
+                            Some((pkg_item.module_path.clone(), PrecompiledMember::Bytes(bytes.clone())))
                         }
                         _ => None,
                     })
@@ -442,7 +442,7 @@ impl NativeObjectPackageProvider {
     pub fn from_asm(package_id: fp_core::package::PackageId, asm: AsmProgram) -> Self {
         let mut source = Self::empty_source(&package_id);
         source.items.push(fp_core::package::PackageItem {
-            path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+            module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
             item: fp_core::ast::Item::precompiled_asm(asm),
         });
         Self::from_source(package_id, source)
@@ -472,7 +472,7 @@ impl NativeObjectPackageProvider {
                 fp_core::ast::Item::precompiled_artifact(member.data)
             };
             source.items.push(fp_core::package::PackageItem {
-                path: fp_core::ast::path::QualifiedPath::new(vec![member.name]),
+                module_path: fp_core::ast::path::QualifiedPath::new(vec![member.name]),
                 item,
             });
         }
