@@ -305,7 +305,12 @@ fn parse_cast(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     Ok(expr)
 }
 
-fn parse_cast_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
+/// `pub(crate)`, not module-private: `types.rs`'s `parse_type_arg` needs
+/// this exact precedence level (unary/postfix/`as`-cast, below any binary
+/// operator) to parse a const-generic type argument's value (`Foo<char,
+/// 3>`) without also trying to continue past it into a binary comparison
+/// — see that call site's own doc comment.
+pub(crate) fn parse_cast_no_struct(input: &mut &[Token], file: FileId) -> ModalResult<Expr> {
     let mut expr = parse_prefix_no_struct(input, file)?;
     loop {
         let mut probe = *input;

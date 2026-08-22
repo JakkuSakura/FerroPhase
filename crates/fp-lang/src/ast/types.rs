@@ -774,6 +774,30 @@ fn parse_type_arg(input: &mut &[Token]) -> ModalResult<Ty> {
             ]))))));
         }
     }
+    // A const-generic argument's own *value* (real `core::array`'s own
+    // `IntoIter<char, 3>`, a plain integer, as opposed to `N` naming a
+    // const-generic *parameter*, which the ordinary `parse_type_expr`
+    // fallback below already handles as a ident-shaped type path) needs
+    // `parse_cast_no_struct`, not the full `parse_type_expr` → ... →
+    // `parse_simple_type`'s own const-literal branch: that branch parses
+    // via `parse_expr_winnow_no_struct` at full expression precedence,
+    // which happily continues past the literal looking for a binary
+    // operator — and mistakes the generic-argument list's own closing
+    // `>` for the start of a `3 > ..` comparison, consuming it and
+    // leaving the parser looking for a right-hand side at whatever
+    // follows (usually `)`/`;`), which then fails far downstream with a
+    // confusing "expected expression" error with no trace back to this
+    // `<...>` list at all. `parse_cast_no_struct` sits below every
+    // binary operator in the precedence chain, so it naturally stops
+    // right after the literal.
+    if input
+        .first()
+        .is_some_and(|token| token.kind == TokenKind::Number || token.kind == TokenKind::StringLiteral)
+        || matches!(peek_ident_like(*input), Some("true" | "false" | "null"))
+    {
+        let expr = parse_cast_no_struct(input, 0)?;
+        return Ok(Ty::Expr(Box::new(expr)));
+    }
     parse_type_expr(input)
 }
 
