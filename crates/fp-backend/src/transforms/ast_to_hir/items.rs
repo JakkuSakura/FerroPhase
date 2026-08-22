@@ -303,7 +303,7 @@ impl HirGenerator {
                                 .as_deref()
                                 .and_then(|class| fp_core::lang::class_and_member_to_portable_op(class, &tag));
                             if let Some(op) = op {
-                                self.op_defs.insert(method_def_id, op);
+                                self.package.op_defs.insert(method_def_id, op);
                             }
                         }
                         method_names.insert(method.sig.name.as_str().to_string());
@@ -456,7 +456,7 @@ impl HirGenerator {
                                 .as_deref()
                                 .and_then(|class| fp_core::lang::class_and_member_to_portable_op(class, &tag));
                             if let Some(op) = op {
-                                self.op_defs.insert(method_def_id, op);
+                                self.package.op_defs.insert(method_def_id, op);
                             }
                         }
                         items.push(hir::TraitItem {

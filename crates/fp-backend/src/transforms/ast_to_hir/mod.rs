@@ -90,12 +90,6 @@ pub struct HirGenerator {
     /// entry in `global_type_defs` (potentially thousands once vendored
     /// std is loaded) with a `format!` allocation per candidate.
     global_type_defs_by_def_id: HashMap<hir::DefId, Vec<String>>,
-    /// `DefId -> qualified path` table mirrored into the final
-    /// `hir::Package::def_paths` (see its doc comment). Populated
-    /// centrally by `record_def_path`, called from every symbol
-    /// registration helper; never cleared per-file since `DefId`s are
-    /// unique for the lifetime of this generator.
-    def_paths: HashMap<hir::DefId, hir::DefPath>,
     prelude_value_defs: HashMap<String, hir::Res>,
     prelude_type_defs: HashMap<String, hir::Res>,
     preassigned_def_ids: HashMap<u64, hir::DefId>,
@@ -106,20 +100,28 @@ pub struct HirGenerator {
     structural_value_defs: HashMap<String, StructuralValueDef>,
     const_list_length_scopes: Vec<HashMap<String, usize>>,
     synthetic_items: Vec<hir::Item>,
-    module_defs: HashSet<fp_core::ast::path::QualifiedPath>,
-    /// The real "extern prelude": each distinct real crate name a plain
-    /// absolute path may name itself after, mapped to its own root path.
-    /// Populated once per package, straight from the loader's own
-    /// ground-truth module-path metadata (`transform_package`, right
-    /// alongside `module_defs`'s seeding) — never inferred or guessed at
-    /// resolution time. For an ordinary single-crate package every module
-    /// path is exactly one segment deep (`[package_name, ...]`), so this
-    /// stays empty. Only the vendored real Rust `std`'s loader
-    /// (`rs_relative_to_module_segments`) ever produces a two-segment
-    /// root (`[package_name, sub_crate_name, ...]` — e.g. `"core"` ->
-    /// `["std", "core"]`, `"std"` -> `["std", "std"]`), one entry per real
-    /// bundled crate (`core`/`alloc`/`std`).
-    crate_roots: HashMap<String, Vec<String>>,
+    /// This package's own HIR content — `items`/`def_map`/`def_paths`/
+    /// `op_defs`/`intrinsic_defs`/`type_alias_targets`/`placeholder_defs`,
+    /// plus `module_tree` (see `fp_core::hir::resolve::ModuleTree`'s doc
+    /// comment). Written into directly throughout lowering — no private
+    /// scratch copy, no mirror/extend step at `transform_package`'s return
+    /// points (the earlier design this replaced kept separate `def_paths`/
+    /// `op_defs`/`intrinsic_defs`/`type_alias_targets`/`placeholder_defs`
+    /// fields here and copied them into a freshly-built `hir::Package` at
+    /// several return points instead).
+    ///
+    /// `module_tree` specifically replaces the old `module_defs:
+    /// HashSet<QualifiedPath>` (module *existence*, `module_exists`/
+    /// `ensure_module`) and `crate_roots: HashMap<String, Vec<String>>`
+    /// (this session's own earlier addition — a sub-crate root is now
+    /// just a child of the tree's crate-root node, not a separate table).
+    /// `global_type_defs`/`global_value_defs`/`prelude_type_defs`/
+    /// `prelude_value_defs` (symbol *lookup*, carrying visibility/def-path
+    /// metadata `ModuleTree`'s bindings don't yet model) deliberately stay
+    /// as their own flat maps below — folding those in too needs
+    /// `ModuleTree` to carry that richer `SymbolEntry` shape, a separate,
+    /// not-yet-designed step flagged in `docs/Resolution.md`.
+    package: hir::Package,
     program_def_map: HashMap<hir::DefId, hir::Item>,
     /// Nonzero while lowering a function-local item statement (an
     /// `ast::BlockStmt::Item` — e.g. a `const`/`struct` declared inside a
@@ -156,33 +158,6 @@ pub struct HirGenerator {
     /// is never part of any actual name-resolution decision.
     local_item_debug_labels: HashMap<hir::DefId, String>,
     unimplemented_type_def_ids: HashSet<hir::DefId>,
-    /// Mirrored into the final `hir::Package::placeholder_defs` (see its
-    /// doc comment) the same way `def_paths` is — `DefId`s whose HIR item
-    /// is a structural stand-in (currently: trait declarations, which HIR
-    /// has no first-class representation for) rather than a real lowering.
-    placeholder_defs: HashSet<hir::DefId>,
-    /// Mirrored into the final `hir::Package::op_defs` (see its doc
-    /// comment) the same way `def_paths` is — a definition's portable op,
-    /// keyed by that definition's own real `DefId`, populated here from its
-    /// own `#[op(func = "...")]`/`#[op(method = "...")]` source attribute
-    /// at the point its `DefId` is assigned (free functions in
-    /// `transform_item_to_hir`, impl methods in `items.rs`'s
-    /// `transform_impl`).
-    op_defs: HashMap<hir::DefId, fp_core::intrinsics::PortableOp>,
-    /// Mirrored into the final `hir::Package::intrinsic_defs` the same way
-    /// `op_defs` is — a free function's compiler intrinsic, keyed by that
-    /// definition's own real `DefId`, populated from its own
-    /// `#[intrinsic = "..."]` source attribute at the same point `op_defs`
-    /// is (free functions in `transform_item_to_hir`).
-    intrinsic_defs: HashMap<hir::DefId, fp_core::intrinsics::CallKind>,
-    /// Mirrored into the final `hir::Package::type_alias_targets` the
-    /// same way `op_defs` is — a transparent type alias's own `DefId`
-    /// (allocated so `type X = Y;` resolves at all, even though HIR has
-    /// no first-class item shape for a non-materializing alias) mapped
-    /// to its already-lowered target `hir::TypeExpr`, populated at the
-    /// same point `predeclare_items`'s `ItemKind::DefType` arm decides
-    /// the alias doesn't materialize into a fresh struct/enum/structural.
-    type_alias_targets: HashMap<hir::DefId, hir::TypeExpr>,
     resolving_type_aliases: HashSet<String>,
     resolved_names: ResolvedNameTable,
     target_env: TargetEnv,
@@ -423,10 +398,14 @@ impl HirGenerator {
             }
         }
         for candidate in candidates {
-            if !self.module_defs.contains(&candidate) {
+            let Some(module_id) = self.package.module_tree.module_id(&candidate) else {
                 continue;
-            }
+            };
             let mut seen = HashSet::new();
+            // Item children (values/types) aren't yet modeled by
+            // `ModuleTree` (see `HirGenerator::package`'s doc comment) —
+            // still a scan over the flat symbol maps, filtered by key
+            // prefix.
             for key in self
                 .global_value_defs
                 .keys()
@@ -455,19 +434,14 @@ impl HirGenerator {
                     alias: None,
                 });
             }
-            for module in &self.module_defs {
-                if module.segments.len() != candidate.segments.len() + 1 {
-                    continue;
-                }
-                if module.segments[..candidate.segments.len()] != candidate.segments[..] {
-                    continue;
-                }
-                let child = module.segments[candidate.segments.len()].clone();
-                if !seen.insert(child.clone()) {
+            // Module children — a direct tree lookup instead of the old
+            // linear scan over every module path in the package.
+            for (child_name, _) in self.package.module_tree.children(module_id) {
+                if !seen.insert(child_name.to_string()) {
                     continue;
                 }
                 let mut full = candidate.segments.clone();
-                full.push(child);
+                full.push(child_name.to_string());
                 out.push(ImportBinding {
                     target: full,
                     alias: None,
@@ -543,7 +517,7 @@ impl HirGenerator {
 
             // Whole-module import (`use std::json;`) — the last segment
             // itself names a module, not an item within one.
-            if self.module_defs.contains(&candidate) {
+            if self.package.module_tree.module_exists(&candidate) {
                 let res = hir::Res::Module(candidate.segments.clone());
                 self.current_value_scope().insert(alias.clone(), res.clone());
                 self.current_type_scope().insert(alias.clone(), res.clone());
@@ -618,7 +592,7 @@ impl HirGenerator {
         let mut current = start.clone();
         for segment in segments {
             let candidate = current.with_segment(segment.clone());
-            if self.module_defs.contains(&candidate) {
+            if self.package.module_tree.module_exists(&candidate) {
                 current = candidate;
                 continue;
             }
@@ -667,7 +641,6 @@ impl HirGenerator {
             global_value_defs: HashMap::new(),
             global_type_defs: HashMap::new(),
             global_type_defs_by_def_id: HashMap::new(),
-            def_paths: HashMap::new(),
             prelude_value_defs: HashMap::new(),
             prelude_type_defs: HashMap::new(),
             preassigned_def_ids: HashMap::new(),
@@ -678,16 +651,11 @@ impl HirGenerator {
             structural_value_defs: HashMap::new(),
             const_list_length_scopes: vec![HashMap::new()],
             synthetic_items: Vec::new(),
-            module_defs: HashSet::new(),
-            crate_roots: HashMap::new(),
+            package: hir::Package::new(),
             program_def_map: HashMap::new(),
             suppress_global_registration_depth: 0,
             local_item_debug_labels: HashMap::new(),
             unimplemented_type_def_ids: HashSet::new(),
-            placeholder_defs: HashSet::new(),
-            op_defs: HashMap::new(),
-            intrinsic_defs: HashMap::new(),
-            type_alias_targets: HashMap::new(),
             resolving_type_aliases: HashSet::new(),
             resolved_names: ResolvedNameTable::new(),
             target_env: TargetEnv::host(),
@@ -703,6 +671,7 @@ impl HirGenerator {
 
     pub fn with_package_id(mut self, package_id: hir::PackageId) -> Self {
         self.package_id = package_id;
+        self.package.id = package_id;
         self
     }
 
@@ -793,7 +762,7 @@ impl HirGenerator {
         self.global_type_defs.clear();
         self.enum_variant_def_ids.clear();
         self.struct_field_defs.clear();
-        self.module_defs.clear();
+        self.package.module_tree = hir::resolve::ModuleTree::new();
         self.unimplemented_type_def_ids.clear();
         self.resolving_type_aliases.clear();
     }
@@ -829,7 +798,7 @@ impl HirGenerator {
 
     fn record_module_def(&mut self, name: &str) {
         let path = self.module_path.with_segment(name.to_string());
-        self.module_defs.insert(path);
+        self.package.module_tree.ensure_module(&path);
     }
 
     fn register_type_def(&mut self, name: &str, def_id: hir::DefId, visibility: &ast::Visibility) {
@@ -913,7 +882,7 @@ impl HirGenerator {
     /// never clobber a def's one true canonical path.
     fn record_def_path(&mut self, res: &hir::Res, path: &fp_core::ast::path::QualifiedPath) {
         if let hir::Res::Def(def_id) = res {
-            self.def_paths
+            self.package.def_paths
                 .entry(*def_id)
                 .or_insert_with(|| hir::DefPath::from_qualified_path(path));
         }
@@ -1065,7 +1034,7 @@ impl HirGenerator {
         self.const_list_length_scopes.clear();
         self.const_list_length_scopes.push(HashMap::new());
         self.synthetic_items.clear();
-        self.module_defs.clear();
+        self.package.module_tree = hir::resolve::ModuleTree::new();
         self.prelude_value_defs.clear();
         self.prelude_type_defs.clear();
         self.pending_impls.clear();
@@ -1197,8 +1166,9 @@ impl HirGenerator {
             // fall back to `workspace.find_export` lazily on a
             // local-lookup miss instead.
         }
-        self.module_defs
-            .extend(workspace.module_paths().into_iter());
+        for path in workspace.module_paths() {
+            self.package.module_tree.ensure_module(&path);
+        }
         // Cross-package `type X = Y;` aliases (e.g. `libc::char`) are
         // *not* eagerly copied in here either — `lookup_type_alias`/
         // `lookup_type_alias_with_key` fall back to `workspace.
@@ -1276,7 +1246,7 @@ impl HirGenerator {
                                 .as_deref()
                                 .and_then(|class| fp_core::lang::class_and_member_to_portable_op(class, &tag));
                             if let Some(op) = op {
-                                self.op_defs.insert(variant_def_id, op);
+                                self.package.op_defs.insert(variant_def_id, op);
                             }
                         }
 
@@ -1399,7 +1369,7 @@ impl HirGenerator {
                         let def_id = self.allocate_def_id_for_item(item);
                         self.register_type_def(&def_type.name.name, def_id, &def_type.visibility);
                         let target = self.transform_type_to_hir(&def_type.value)?;
-                        self.type_alias_targets.insert(def_id, target);
+                        self.package.type_alias_targets.insert(def_id, target);
                     }
                 }
                 ItemKind::Impl(_) => {
@@ -1619,7 +1589,7 @@ impl HirGenerator {
             .or_else(|| self.resolve_global_value_symbol(name))
     }
 
-    /// `self.op_defs` only ever holds THIS package's own tagged ops until
+    /// `self.package.op_defs` only ever holds THIS package's own tagged ops until
     /// `seed_workspace_definitions` merges every workspace dependency's
     /// `op_defs` into the final output `hir::Package` — which happens only
     /// at the very end of `transform_package`, after all items/patterns
@@ -1628,7 +1598,7 @@ impl HirGenerator {
     /// tagged op can't wait for that; it has to check the dependency's own
     /// `hir_program.op_defs` directly.
     fn op_kind_for_def(&self, def_id: hir::DefId) -> Option<fp_core::intrinsics::PortableOp> {
-        if let Some(op) = self.op_defs.get(&def_id).cloned() {
+        if let Some(op) = self.package.op_defs.get(&def_id).cloned() {
             return Some(op);
         }
         let workspace = self.workspace.as_ref()?;
@@ -1832,7 +1802,7 @@ impl HirGenerator {
     ) -> Result<hir::Package> {
         self.reset_file_context("<package>");
         self.prepare_lowering_state();
-        // `module_defs` otherwise only ever gains an entry via an explicit
+        // The module tree otherwise only ever gains a node via an explicit
         // `mod X { .. }` AST node (`record_module_def`, common for
         // `.fp`-dialect source) or another package's own tree
         // (`seed_workspace_definitions`, below) — never *this* package's
@@ -1841,27 +1811,13 @@ impl HirGenerator {
         // all (e.g. `fp-rust`'s real-std provider). Without this, a bare
         // `use crate::sibling_module;`-style import can never resolve as
         // a module alias for such a package, no matter how its target
-        // path is computed.
-        self.module_defs.extend(package.module_paths.iter().cloned());
-
-        // Real "extern prelude": a module path with >= 2 segments sharing
-        // this package's own root names its second segment as a distinct
-        // bundled crate's own root (ground truth from the loader — see
-        // `crate_roots`'s doc comment). An ordinary single-crate package's
-        // module paths are always exactly one segment deep, so this is a
-        // no-op for it.
-        if let Some(package_root) = package
-            .module_paths
-            .iter()
-            .find_map(|path| path.segments.first().cloned())
-        {
-            for path in &package.module_paths {
-                if path.segments.len() >= 2 && path.segments[0] == package_root {
-                    self.crate_roots
-                        .entry(path.segments[1].clone())
-                        .or_insert_with(|| path.segments[..2].to_vec());
-                }
-            }
+        // path is computed. This also seeds every real "extern prelude"
+        // entry `name_to_hir_path_with_scope`'s plain-multi-segment branch
+        // relies on (a sub-crate root, e.g. `"core"`/`"std"` under the
+        // vendored real Rust `std` package, is just a child of the
+        // package-root node — no separate table needed).
+        for path in &package.module_paths {
+            self.package.module_tree.ensure_module(path);
         }
 
         // Unlike `transform_file` (the single-file path), `transform_package`
@@ -1980,13 +1936,13 @@ impl HirGenerator {
             program.items.extend(synthetic.drain(..));
         }
         program.def_map = self.program_def_map.clone();
-        program.def_paths = self.def_paths.clone();
-        program.placeholder_defs = self.placeholder_defs.clone();
-        program.op_defs.extend(self.op_defs.clone());
-        program.intrinsic_defs.extend(self.intrinsic_defs.clone());
+        program.def_paths = self.package.def_paths.clone();
+        program.placeholder_defs = self.package.placeholder_defs.clone();
+        program.op_defs.extend(self.package.op_defs.clone());
+        program.intrinsic_defs.extend(self.package.intrinsic_defs.clone());
         program
             .type_alias_targets
-            .extend(self.type_alias_targets.clone());
+            .extend(self.package.type_alias_targets.clone());
         Ok(program)
     }
 
@@ -2100,13 +2056,13 @@ impl HirGenerator {
         program.def_map.insert(item.def_id, item.clone());
         self.program_def_map.insert(item.def_id, item.clone());
         program.items.push(item);
-        program.def_paths = self.def_paths.clone();
-        program.placeholder_defs = self.placeholder_defs.clone();
-        program.op_defs.extend(self.op_defs.clone());
-        program.intrinsic_defs.extend(self.intrinsic_defs.clone());
+        program.def_paths = self.package.def_paths.clone();
+        program.placeholder_defs = self.package.placeholder_defs.clone();
+        program.op_defs.extend(self.package.op_defs.clone());
+        program.intrinsic_defs.extend(self.package.intrinsic_defs.clone());
         program
             .type_alias_targets
-            .extend(self.type_alias_targets.clone());
+            .extend(self.package.type_alias_targets.clone());
         Ok(program)
     }
 
@@ -2154,13 +2110,13 @@ impl HirGenerator {
         // Keep them in the program index even though they are not top-level
         // program items.
         program.def_map = self.program_def_map.clone();
-        program.def_paths = self.def_paths.clone();
-        program.placeholder_defs = self.placeholder_defs.clone();
-        program.op_defs.extend(self.op_defs.clone());
-        program.intrinsic_defs.extend(self.intrinsic_defs.clone());
+        program.def_paths = self.package.def_paths.clone();
+        program.placeholder_defs = self.package.placeholder_defs.clone();
+        program.op_defs.extend(self.package.op_defs.clone());
+        program.intrinsic_defs.extend(self.package.intrinsic_defs.clone());
         program
             .type_alias_targets
-            .extend(self.type_alias_targets.clone());
+            .extend(self.package.type_alias_targets.clone());
 
         Ok(program)
     }
@@ -2626,14 +2582,14 @@ impl HirGenerator {
                 self.register_value_def(&func_def.name.name, def_id, &func_def.visibility);
                 if let Some(tag) = fp_core::intrinsics::extract_op_attr(&func_def.attrs, "func") {
                     if let Some(op) = fp_core::lang::resolve_portable_op_tag(&tag) {
-                        self.op_defs.insert(def_id, op);
+                        self.package.op_defs.insert(def_id, op);
                     }
                 }
                 if let Some(tag) = fp_core::lang::extract_intrinsic_item(&func_def.attrs) {
                     if let Some(kind) = fp_core::intrinsics::lang_intrinsic_for_lang_item(&tag)
                         .and_then(fp_core::intrinsics::lang_intrinsic_call_kind)
                     {
-                        self.intrinsic_defs.insert(def_id, kind);
+                        self.package.intrinsic_defs.insert(def_id, kind);
                     }
                 }
                 let lower_body = !attrs_has_name(&func_def.attrs, "unimplemented");
@@ -2731,7 +2687,7 @@ impl HirGenerator {
                 // somewhere to find a trait's default-method signatures
                 // and associated-type declarations — see that function's
                 // doc comment.
-                self.placeholder_defs.insert(def_id);
+                self.package.placeholder_defs.insert(def_id);
                 let hir_trait = self.transform_trait(def_trait)?;
                 (
                     hir::ItemKind::Trait(hir_trait),

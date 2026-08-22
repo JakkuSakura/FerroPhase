@@ -112,6 +112,14 @@ impl ModuleTree {
         self.by_path.get(path).copied()
     }
 
+    /// Every registered module path, at any depth — for callers that
+    /// genuinely need the full set (e.g. an external helper's own
+    /// `&HashSet<QualifiedPath>` parameter) rather than a single
+    /// existence check or one level of children.
+    pub fn all_paths(&self) -> impl Iterator<Item = &QualifiedPath> {
+        self.by_path.keys()
+    }
+
     /// Direct child lookup — replaces a flat-map `module_defs.contains(&candidate)`
     /// per-segment check with a single `HashMap` lookup on the parent node.
     pub fn child(&self, module: ModuleId, name: &str) -> Option<ModuleId> {

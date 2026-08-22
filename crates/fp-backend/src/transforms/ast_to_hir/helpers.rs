@@ -49,7 +49,7 @@ impl HirGenerator {
             })
             .collect();
         let mut res = self.lookup_global_res(&resolved_name.path, scope);
-        if res.is_none() && self.module_defs.contains(&resolved_name.path) {
+        if res.is_none() && self.package.module_tree.module_exists(&resolved_name.path) {
             res = Some(hir::Res::Module(resolved_name.path.segments.clone()));
         }
         Ok(Some(hir::Path { segments, res }))
@@ -95,8 +95,9 @@ impl HirGenerator {
     /// (and rebuilt) only when one of them has actually grown since the
     /// last call.
     fn cached_root_modules(&mut self) -> HashSet<String> {
+        let root = self.package.module_tree.root();
         let sizes = (
-            self.module_defs.len(),
+            self.package.module_tree.children(root).count(),
             self.global_type_defs.len(),
             self.global_value_defs.len(),
         );
@@ -106,10 +107,8 @@ impl HirGenerator {
             }
         }
         let mut root_modules = HashSet::new();
-        for path in &self.module_defs {
-            if let Some(first) = path.head() {
-                root_modules.insert(first.to_string());
-            }
+        for (name, _) in self.package.module_tree.children(root) {
+            root_modules.insert(name.to_string());
         }
         for key in self
             .global_type_defs
@@ -277,21 +276,29 @@ impl HirGenerator {
             // edition style, e.g. `std::os::raw::c_int` written from
             // inside `std` itself) — real rustc resolves this through the
             // extern prelude, an exact name -> crate-root mapping, not by
-            // guessing. `crate_roots` is exactly that table, built once
-            // from ground-truth loader metadata (see its doc comment) —
-            // a single deterministic lookup, no candidate trial-and-error.
-            if let Some(first_name) = segments.first().map(|s| s.name.as_str()) {
-                if let Some(root) = self.crate_roots.get(first_name).cloned() {
-                    let mut absolute_segments = root;
-                    absolute_segments.extend(
-                        segments
-                            .iter()
-                            .skip(1)
-                            .map(|segment| segment.name.as_str().to_string()),
-                    );
-                    let absolute = QualifiedPath::new(absolute_segments);
-                    if let Some(res) = self.lookup_global_res(&absolute, scope) {
-                        return Ok(hir::Path { segments, res: Some(res) });
+            // guessing. A sub-crate root is a child of the package-root
+            // node in `self.package.module_tree` (ground truth from the
+            // loader — every real module path was `ensure_module`d at the
+            // start of `transform_package`) — a single deterministic tree
+            // descent, no candidate trial-and-error.
+            if let (Some(first_name), Some(package_root)) = (
+                segments.first().map(|s| s.name.as_str().to_string()),
+                self.module_path.segments.first().cloned(),
+            ) {
+                let tree = &self.package.module_tree;
+                if let Some(root_module) = tree.child(tree.root(), &package_root) {
+                    if tree.child(root_module, &first_name).is_some() {
+                        let mut absolute_segments = vec![package_root, first_name];
+                        absolute_segments.extend(
+                            segments
+                                .iter()
+                                .skip(1)
+                                .map(|segment| segment.name.as_str().to_string()),
+                        );
+                        let absolute = QualifiedPath::new(absolute_segments);
+                        if let Some(res) = self.lookup_global_res(&absolute, scope) {
+                            return Ok(hir::Path { segments, res: Some(res) });
+                        }
                     }
                 }
             }
@@ -406,7 +413,7 @@ impl HirGenerator {
                     }
                     let canonical_path = QualifiedPath::new(canonical.clone());
                     let mut canonical_res = self.lookup_global_res(&canonical_path, scope);
-                    if canonical_res.is_none() && self.module_defs.contains(&canonical_path) {
+                    if canonical_res.is_none() && self.package.module_tree.module_exists(&canonical_path) {
                         canonical_res = Some(hir::Res::Module(canonical.clone()));
                     }
                     return Ok(hir::Path {
@@ -456,12 +463,14 @@ impl HirGenerator {
                 PathResolutionScope::Value => self.resolve_value_symbol(name).is_some(),
                 PathResolutionScope::Type => self.resolve_type_symbol(name).is_some(),
             };
+            let module_defs: HashSet<QualifiedPath> =
+                self.package.module_tree.all_paths().cloned().collect();
             if let Some(canonical) = resolve_item_path(
                 &parsed,
                 &self.module_path,
                 &root_modules,
                 &extern_prelude,
-                &self.module_defs,
+                &module_defs,
                 item_exists,
                 scope_contains,
             ) {
@@ -498,7 +507,7 @@ impl HirGenerator {
                     resolved.clone()
                 } else {
                     let mut canonical_res = self.lookup_global_res(&canonical, scope);
-                    if canonical_res.is_none() && self.module_defs.contains(&canonical) {
+                    if canonical_res.is_none() && self.package.module_tree.module_exists(&canonical) {
                         canonical_res = Some(hir::Res::Module(canonical.segments.clone()));
                     }
                     canonical_res
