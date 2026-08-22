@@ -140,6 +140,20 @@ pub struct HirPackage {
     /// to share). Lazily filled by `fp_typing`, same reasoning as
     /// `checked_impl_self_ty_cache`.
     function_signature_cache: RefCell<HashMap<HirId, Ty>>,
+    /// Memoized `fp_typing::impl_assoc_types` results, keyed the same way
+    /// as `checked_impl_self_ty_cache` (the impl's own `self_ty` `HirId` —
+    /// there's no separate stable id on `hir::Impl` itself, and this one
+    /// is already unique per declared impl). `assoc_type_for_self`'s own
+    /// candidate search calls this for every candidate whose self-type
+    /// shape merely *might* match, not just the one that's ultimately
+    /// used — an impl whose own associated-type binding happens to be a
+    /// genuinely broken/unresolvable one (a real bug in that impl, not in
+    /// whatever unrelated item's own type-check first reaches it as a
+    /// candidate) would otherwise have its diagnostic re-recorded once
+    /// per candidate-search call site across the whole workspace instead
+    /// of once, the same O(workspace) blowup class already fixed for
+    /// `checked_impl_self_ty`/`function_signature` above.
+    impl_assoc_types_cache: RefCell<HashMap<HirId, HashMap<Symbol, Ty>>>,
     /// Memoized `resolve_trait_def` results, keyed by the trait's own
     /// `DefId`. A trait definition (its full `items: Vec<TraitItem>` —
     /// every default method, potentially large for a trait like
@@ -262,6 +276,7 @@ impl HirPackage {
             member_to_owning_item: HashMap::new(),
             hir_exports: HashMap::new(),
             checked_impl_self_ty_cache: RefCell::new(HashMap::new()),
+            impl_assoc_types_cache: RefCell::new(HashMap::new()),
             function_signature_cache: RefCell::new(HashMap::new()),
             resolved_trait_defs: RefCell::new(HashMap::new()),
             assoc_type_for_self_cache: RefCell::new(HashMap::new()),
@@ -408,6 +423,15 @@ impl HirPackage {
 
     pub fn cache_checked_impl_self_ty(&self, hir_id: HirId, ty: Ty) {
         self.checked_impl_self_ty_cache.borrow_mut().insert(hir_id, ty);
+    }
+
+    /// See `impl_assoc_types_cache`'s doc comment.
+    pub fn impl_assoc_types(&self, hir_id: HirId) -> Option<HashMap<Symbol, Ty>> {
+        self.impl_assoc_types_cache.borrow().get(&hir_id).cloned()
+    }
+
+    pub fn cache_impl_assoc_types(&self, hir_id: HirId, types: HashMap<Symbol, Ty>) {
+        self.impl_assoc_types_cache.borrow_mut().insert(hir_id, types);
     }
 
     /// See `function_signature_cache`'s doc comment.

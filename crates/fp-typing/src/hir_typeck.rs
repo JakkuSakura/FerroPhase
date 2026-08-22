@@ -140,6 +140,13 @@ pub struct HirTypeChecker {
     /// carries over unchanged through every `with_*` child the same way
     /// `#[derive(Clone)]` already carries every other field.
     resolving_assoc_projections: Vec<(String, hir::Symbol)>,
+    /// Fully-qualified path of the item currently being checked, if
+    /// known — purely diagnostic (see `typecheck_item`'s own doc comment
+    /// on why: an otherwise file/line-less error like `path_ty`'s
+    /// "unresolved type path" needs *some* lead back to its real source,
+    /// or it's nearly untraceable once the same message recurs across a
+    /// large real corpus).
+    current_item_path: Option<String>,
 }
 
 impl HirTypeChecker {
@@ -169,6 +176,7 @@ impl HirTypeChecker {
             assoc_types: None,
             expected_expr_type: None,
             resolving_assoc_projections: Vec::new(),
+            current_item_path: None,
         }))
     }
 
@@ -193,6 +201,7 @@ impl HirTypeChecker {
             assoc_types: None,
             expected_expr_type: None,
             resolving_assoc_projections: Vec::new(),
+            current_item_path: None,
         }
     }
 
@@ -501,7 +510,11 @@ impl HirTypeChecker {
     async fn impl_assoc_types(
         &mut self,
         impl_items: &[hir::ImplItem],
+        cache_key: hir::HirId,
     ) -> Result<HashMap<hir::Symbol, Ty>> {
+        if let Some(cached) = self.package().impl_assoc_types(cache_key) {
+            return Ok(cached);
+        }
         let mut out = HashMap::new();
         for item in impl_items {
             if let hir::ImplItemKind::AssocType(assoc) = &item.kind {
@@ -509,6 +522,7 @@ impl HirTypeChecker {
                 out.insert(assoc.name.clone(), ty);
             }
         }
+        self.package().cache_impl_assoc_types(cache_key, out.clone());
         Ok(out)
     }
 
@@ -543,7 +557,9 @@ impl HirTypeChecker {
                     // "definition `{def_id}` is not a type" — this
                     // position was never meant to type-check as a
                     // concrete type in the first place.
-                    let assoc_types = scope.impl_assoc_types(&impl_item.items).await?;
+                    let assoc_types = scope
+                        .impl_assoc_types(&impl_item.items, impl_item.self_ty.hir_id)
+                        .await?;
                     let mut scope = scope.with_assoc_types(assoc_types);
                     for item in &impl_item.items {
                         match &item.kind {
@@ -1894,12 +1910,16 @@ impl HirTypeChecker {
                 }
             }
             return Ok(self.error_ty(format!(
-                "unresolved type path `{}`",
+                "unresolved type path `{}`{}",
                 path.segments
                     .iter()
                     .map(|segment| segment.name.as_str())
                     .collect::<Vec<_>>()
-                    .join("::")
+                    .join("::"),
+                self.current_item_path
+                    .as_deref()
+                    .map(|item| format!(" (in `{item}`)"))
+                    .unwrap_or_default()
             )));
         };
         if let Some(generic) = self.generic_ty(def_id) {
@@ -2229,7 +2249,9 @@ impl HirTypeChecker {
                 let mut scope = self.with_generics(&impl_item.generics);
                 let self_ty = scope.check_type_expr(&impl_item.self_ty).await?;
                 let mut scope = scope.with_self_type(self_ty);
-                let assoc_types = scope.impl_assoc_types(&impl_item.items).await?;
+                let assoc_types = scope
+                    .impl_assoc_types(&impl_item.items, impl_item.self_ty.hir_id)
+                    .await?;
                 let mut scope = scope.with_assoc_types(assoc_types);
                 return scope.function_signature(function).await;
             }
@@ -2288,10 +2310,13 @@ impl HirTypeChecker {
             if let Some((generics, self_ty, impl_items, member_kind)) = cross_package_member {
                 match member_kind {
                     hir::ImplItemKind::Method(function) => {
+                        let self_ty_hir_id = self_ty.hir_id;
                         let mut scope = self.with_generics(&generics);
                         let self_ty = scope.check_type_expr(&self_ty).await?;
                         let mut scope = scope.with_self_type(self_ty);
-                        let assoc_types = scope.impl_assoc_types(&impl_items).await?;
+                        let assoc_types = scope
+                            .impl_assoc_types(&impl_items, self_ty_hir_id)
+                            .await?;
                         let mut scope = scope.with_assoc_types(assoc_types);
                         return scope.function_signature(&function).await;
                     }
@@ -2303,6 +2328,7 @@ impl HirTypeChecker {
                     }
                     _ => {}
                 }
+            }
             let program = self.program_rc();
             let matched_enum_item = self
                 .package()
@@ -3139,7 +3165,9 @@ impl HirTypeChecker {
                         };
                         if trait_item.name == *method && function.body.is_some() {
                             let mut scope = scope.with_self_type(checked_self_ty.clone());
-                            let assoc_types = scope.impl_assoc_types(&impl_item.items).await?;
+                            let assoc_types = scope
+                                .impl_assoc_types(&impl_item.items, impl_item.self_ty.hir_id)
+                                .await?;
                             let mut scope = scope.with_assoc_types(assoc_types);
                             return Self::method_declared_signature_apply_receiver(
                                 &mut scope,
@@ -3346,9 +3374,21 @@ impl HirTypeChecker {
                     continue;
                 };
                 let mut scope = self.with_generics(&impl_item.generics);
-                let checked_self_ty = match scope.checked_impl_self_ty(&impl_item.self_ty).await {
-                    Ok(ty) => ty,
-                    Err(error) => break 'search Err(error),
+                // A candidate whose *own* self-type fails to check at all
+                // is not this projection's answer — skip it and keep
+                // searching, the same "a rejected candidate is not a real
+                // error" principle `unify_call_types_probe` already
+                // applies to the compatibility check just below. Without
+                // this, a `?` here would let one broken/irrelevant impl
+                // elsewhere in the workspace (e.g. one whose own `type
+                // Item = S::Item;` binding fails to resolve for unrelated
+                // reasons) hard-fail *every other* unrelated item's own
+                // typecheck the first time this search happens to reach
+                // it, misattributing that impl's real problem to whatever
+                // completely unrelated item triggered this search first.
+                let Ok(checked_self_ty) = scope.checked_impl_self_ty(&impl_item.self_ty).await
+                else {
+                    continue;
                 };
                 let self_ty = match &checked_self_ty.kind {
                     TyKind::Ref(_, inner, _) => inner.as_ref(),
@@ -3361,9 +3401,17 @@ impl HirTypeChecker {
                 if !matches {
                     continue;
                 }
-                let assoc_types = match scope.impl_assoc_types(&impl_item.items).await {
-                    Ok(types) => types,
-                    Err(error) => break 'search Err(error),
+                // Same reasoning as `checked_impl_self_ty` above — a
+                // matching candidate whose own associated-type bindings
+                // fail to check isn't necessarily *this* projection's
+                // fault; move on rather than hard-failing the whole
+                // search (and misattributing the failure to whatever
+                // unrelated item happened to trigger it).
+                let Ok(assoc_types) = scope
+                    .impl_assoc_types(&impl_item.items, impl_item.self_ty.hir_id)
+                    .await
+                else {
+                    continue;
                 };
                 if let Some(ty) = assoc_types.get(assoc_name) {
                     break 'search Ok(Some(ty.clone()));
@@ -3468,7 +3516,9 @@ impl HirTypeChecker {
                 continue;
             }
             let mut scope = scope.with_self_type(checked_self_ty);
-            let assoc_types = scope.impl_assoc_types(&impl_item.items).await?;
+            let assoc_types = scope
+                .impl_assoc_types(&impl_item.items, impl_item.self_ty.hir_id)
+                .await?;
             let mut scope = scope.with_assoc_types(assoc_types);
             let impl_generics = impl_item.generics.clone();
             for impl_item in &impl_item.items {
@@ -3599,7 +3649,10 @@ impl HirTypeChecker {
             {
                 continue;
             }
-            let Ok(assoc_types) = scope.impl_assoc_types(&impl_item.items).await else {
+            let Ok(assoc_types) = scope
+                .impl_assoc_types(&impl_item.items, impl_item.self_ty.hir_id)
+                .await
+            else {
                 continue;
             };
             let Some(target) = assoc_types.get(&hir::Symbol::new("Target")) else {
