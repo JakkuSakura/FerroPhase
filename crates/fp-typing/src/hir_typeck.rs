@@ -2184,37 +2184,36 @@ impl HirTypeChecker {
             )));
         };
         let Some(item) = self.shared.program.def_map.get(&def_id).cloned() else {
-            let associated = self
-                .shared
-                .member_to_owning_item()
-                .get(&def_id)
-                .copied()
-                .and_then(|owner_id| self.shared.program.def_map.get(&owner_id))
-                .and_then(|item| {
-                    let hir::ItemKind::Impl(impl_item) = &item.kind else {
-                        return None;
-                    };
-                    let impl_member = impl_item
-                        .items
-                        .iter()
-                        .find(|member| member.def_id == def_id)?;
-                    let hir::ImplItemKind::Method(function) = &impl_member.kind else {
-                        return None;
-                    };
-                    Some((
-                        impl_item.generics.clone(),
-                        impl_item.self_ty.clone(),
-                        impl_item.items.clone(),
-                        function.clone(),
-                    ))
-                });
-            if let Some((generics, self_ty, impl_items, function)) = associated {
-                let mut scope = self.generic_scope(&generics);
-                let self_ty = scope.check_type_expr(&self_ty)?;
+            // `shared` is an owned `Rc` clone (cheap — it's the same
+            // `Rc<TypingShared>` `self.shared` already is), not a borrow
+            // of `self` — so `item`/`impl_item` below can stay borrowed
+            // from it across the `self.generic_scope(..)` call afterward
+            // (which needs `&mut self`) with no conflict, and this whole
+            // fallback no longer needs to clone the owning impl's
+            // `generics`/`self_ty`/`items`/`function` just to escape a
+            // borrow of `self` that was never actually necessary.
+            let shared = self.shared.clone();
+            let owner_id = shared.member_to_owning_item().get(&def_id).copied();
+            let found = owner_id.and_then(|owner_id| shared.program.def_map.get(&owner_id)).and_then(|item| {
+                let hir::ItemKind::Impl(impl_item) = &item.kind else {
+                    return None;
+                };
+                let impl_member = impl_item
+                    .items
+                    .iter()
+                    .find(|member| member.def_id == def_id)?;
+                let hir::ImplItemKind::Method(function) = &impl_member.kind else {
+                    return None;
+                };
+                Some((impl_item, function))
+            });
+            if let Some((impl_item, function)) = found {
+                let mut scope = self.generic_scope(&impl_item.generics);
+                let self_ty = scope.check_type_expr(&impl_item.self_ty)?;
                 scope.self_types.push(self_ty);
-                let assoc_types = scope.impl_assoc_types(&impl_items)?;
+                let assoc_types = scope.impl_assoc_types(&impl_item.items)?;
                 scope.assoc_types.push(assoc_types);
-                let result = scope.function_signature(&function);
+                let result = scope.function_signature(function);
                 scope.assoc_types.pop();
                 scope.self_types.pop();
                 return result;
