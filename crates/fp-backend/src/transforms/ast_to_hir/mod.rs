@@ -2269,7 +2269,26 @@ impl AstToHirLowerer {
             )?;
         }
 
+        // A named import is only ever retried while it keeps making
+        // progress and is removed from `pending` the moment it resolves,
+        // so it can never itself loop forever. A glob is different (see
+        // its branch below): it's deliberately never removed, since its
+        // expansion can keep growing as sibling imports resolve. Both are
+        // bounded by the same real invariant — a finite crate has a finite
+        // number of (module, namespace, name) bindings, so genuine
+        // progress can only happen finitely many times — but a defensive
+        // cap still guards against a resolver bug (or a pathological
+        // re-export cycle this fixed point doesn't actually converge on)
+        // turning into a silent hang instead of a loud failure.
+        const MAX_SWEEPS: usize = 1000;
+        let mut sweeps = 0usize;
         loop {
+            sweeps += 1;
+            if sweeps > MAX_SWEEPS {
+                return Err(fp_core::error::Error::from(format!(
+                    "internal compiler error: import resolution did not reach a fixed point after {MAX_SWEEPS} sweeps (likely an unbounded re-export cycle)"
+                )));
+            }
             let mut progressed = false;
             let mut still_pending = Vec::with_capacity(pending.len());
             for (module_path, binding, visibility) in pending {
