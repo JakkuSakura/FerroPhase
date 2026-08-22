@@ -191,7 +191,7 @@ pub fn resolve_item_path<F>(
     module_path: &QualifiedPath,
     root_modules: &HashSet<String>,
     extern_prelude: &HashSet<String>,
-    module_defs: &HashSet<QualifiedPath>,
+    module_exists: impl Fn(&QualifiedPath) -> bool,
     item_exists: F,
     scope_contains: impl Fn(&str) -> bool,
 ) -> Option<QualifiedPath>
@@ -221,7 +221,7 @@ where
                 }
                 if !base.is_empty() {
                     let local = base.with_segment(first.clone());
-                    if item_exists(&local) || module_defs.contains(&local) {
+                    if item_exists(&local) || module_exists(&local) {
                         return Some(local);
                     }
                 } else {
@@ -242,7 +242,7 @@ where
                     return Some(local);
                 }
                 let module_candidate = base.with_segment(first.clone());
-                if module_defs.contains(&module_candidate) {
+                if module_exists(&module_candidate) {
                     return Some(local);
                 }
             } else {
@@ -251,7 +251,7 @@ where
                     return Some(local);
                 }
                 let module_candidate = QualifiedPath::new(vec![first.clone()]);
-                if module_defs.contains(&module_candidate) {
+                if module_exists(&module_candidate) {
                     return Some(local);
                 }
             }
@@ -318,7 +318,7 @@ mod tests {
             &module_path,
             &HashSet::new(),
             &HashSet::new(),
-            &HashSet::new(),
+            |_| false,
             |segments| segments == &expected,
             |_| false,
         )
@@ -338,7 +338,7 @@ mod tests {
             &module_path,
             &HashSet::new(),
             &HashSet::new(),
-            &HashSet::new(),
+            |_| false,
             |_segments| true,
             |name| name == "TypeBuilder",
         )
@@ -365,7 +365,7 @@ mod tests {
             &QualifiedPath::new(vec!["std".to_string()]),
             &HashSet::new(),
             &["net".to_string()].into_iter().collect(),
-            &module_defs,
+            |p| module_defs.contains(p),
             |_segments| false,
             |_| false,
         )

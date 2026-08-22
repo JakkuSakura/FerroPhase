@@ -428,14 +428,19 @@ impl HirGenerator {
                 PathResolutionScope::Value => self.resolve_value_symbol(name).is_some(),
                 PathResolutionScope::Type => self.resolve_type_symbol(name).is_some(),
             };
-            let module_defs: HashSet<QualifiedPath> =
-                self.package.module_tree.all_paths().cloned().collect();
+            // A closure straight into `module_tree`, not a materialized
+            // `HashSet` — `name_to_hir_path_with_scope` reaches this
+            // fallback for every still-unresolved path, and cloning every
+            // module path in the package on each such call turned a
+            // single compile into an O(paths × unresolved-references)
+            // blowup (confirmed: a real std compile ballooned to tens of
+            // gigabytes before this fix).
             if let Some(canonical) = resolve_item_path(
                 &parsed,
                 &self.module_path,
                 &root_modules,
                 &extern_prelude,
-                &module_defs,
+                |p| self.package.module_tree.module_exists(p),
                 item_exists,
                 scope_contains,
             ) {
