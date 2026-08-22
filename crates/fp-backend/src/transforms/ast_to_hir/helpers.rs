@@ -270,6 +270,31 @@ impl HirGenerator {
                     res: Some(res),
                 });
             }
+            // The relative-to-current-module lookup above is the ordinary
+            // case (a `foo::bar` reference where `foo` is a sibling
+            // module). A plain path may also be an *absolute* reference
+            // naming a real crate's own root as its first segment (2018+
+            // edition style, e.g. `std::os::raw::c_int` written from
+            // inside `std` itself) — real rustc resolves this through the
+            // extern prelude, an exact name -> crate-root mapping, not by
+            // guessing. `crate_roots` is exactly that table, built once
+            // from ground-truth loader metadata (see its doc comment) —
+            // a single deterministic lookup, no candidate trial-and-error.
+            if let Some(first_name) = segments.first().map(|s| s.name.as_str()) {
+                if let Some(root) = self.crate_roots.get(first_name).cloned() {
+                    let mut absolute_segments = root;
+                    absolute_segments.extend(
+                        segments
+                            .iter()
+                            .skip(1)
+                            .map(|segment| segment.name.as_str().to_string()),
+                    );
+                    let absolute = QualifiedPath::new(absolute_segments);
+                    if let Some(res) = self.lookup_global_res(&absolute, scope) {
+                        return Ok(hir::Path { segments, res: Some(res) });
+                    }
+                }
+            }
             if let Some(first) = segments.first() {
                 let debug = std::env::var("FP_DEBUG_ASSOC").is_ok() && first.name.as_str() == "String";
                 if debug {

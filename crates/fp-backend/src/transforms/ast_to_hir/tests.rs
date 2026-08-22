@@ -1628,3 +1628,81 @@ fn transform_block_rejects_unsupported_statement_kind() {
         "unimplemented block statement type for HIR transformation",
     );
 }
+
+/// Fast, targeted repro for the "unresolved type path `std::std::os::raw::
+/// c_int`"-shaped diagnostics seen in the full std typecheck run
+/// (`/tmp/typecheck7.log`) — a literal doubled package/sub-crate prefix
+/// baked into the *reported* path segments. Mirrors real vendored std's own
+/// two-segment-root convention (`rs_relative_to_module_segments`: `std/os/
+/// raw.rs` -> `["std", "std", "os", "raw"]`) and a sibling module
+/// referencing it via a plain absolute path spelled with the crate's own
+/// name (`std::os::raw::c_int`, as real `std/sys/pal/itron/abi.rs` does via
+/// `crate::os::raw::c_int` — `crate::` and a literal `std::` prefix
+/// normalize to the same absolute reference once the crate's own name is
+/// `std`). Before any fix, this asserts on whatever actually comes out
+/// (documenting the real, traced behavior) rather than guessing.
+#[test]
+fn transform_package_plain_absolute_path_into_vendored_subcrate() -> Result<()> {
+    let c_int_item = make_struct("c_int", vec![("value", int_ty())]);
+
+    let f_item = make_fn(
+        "f",
+        Vec::new(),
+        ast::Ty::path(ast::Path::plain(vec![
+            ident("std"),
+            ident("os"),
+            ident("raw"),
+            ident("c_int"),
+        ])),
+        ast::Expr::value(ast::Value::unit()),
+    );
+
+    let items = vec![
+        (
+            vec![
+                "std".to_string(),
+                "std".to_string(),
+                "os".to_string(),
+                "raw".to_string(),
+            ],
+            c_int_item,
+        ),
+        (
+            vec![
+                "std".to_string(),
+                "std".to_string(),
+                "sys".to_string(),
+                "pal".to_string(),
+                "itron".to_string(),
+            ],
+            f_item,
+        ),
+    ];
+    let package = package_from_items_with_paths(items)?;
+    let mut generator = HirGenerator::new();
+    let program = generator.transform_package(&package)?;
+
+    let f_hir = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(func) if func.sig.name.as_str() == "f" => Some(func),
+            _ => None,
+        })
+        .expect("`f` function present");
+    let hir::TypeExprKind::Path(ret_path) = &f_hir.sig.output.kind else {
+        panic!(
+            "expected `f`'s return type to lower to a path, got {:?}",
+            f_hir.sig.output.kind
+        );
+    };
+    assert!(
+        ret_path.res.is_some(),
+        "plain absolute reference `std::os::raw::c_int` (written from \
+         within the vendored `std` sub-crate itself) must resolve to the \
+         real `c_int` struct at [\"std\",\"std\",\"os\",\"raw\",\"c_int\"] — \
+         got unresolved path {ret_path:?}"
+    );
+
+    Ok(())
+}

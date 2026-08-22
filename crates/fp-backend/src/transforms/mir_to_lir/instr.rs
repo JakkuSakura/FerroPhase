@@ -6378,8 +6378,16 @@ impl LirGenerator {
                 UintTy::Usize => lir::LirType::I64,
             },
             TyKind::Float(float_ty) => match float_ty {
+                // `LirType`/downstream backends (LLVM, JVM, bytecode) only
+                // model f32/f64 storage; f16/f128 lower lossily to their
+                // nearest supported width rather than failing codegen.
+                // Full native f16/f128 codegen is out of scope here — see
+                // HIR-level `hir::ty::FloatTy`, which keeps the precise
+                // width through typechecking.
+                FloatTy::F16 => lir::LirType::F32,
                 FloatTy::F32 => lir::LirType::F32,
                 FloatTy::F64 => lir::LirType::F64,
+                FloatTy::F128 => lir::LirType::F64,
             },
             TyKind::Tuple(elements) if elements.is_empty() => lir::LirType::Void,
             TyKind::Tuple(elements) => lir::LirType::Struct {

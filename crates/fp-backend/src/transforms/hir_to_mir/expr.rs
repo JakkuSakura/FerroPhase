@@ -112,8 +112,10 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
             hir::ty::UintTy::U128 => UintTy::U128,
         }),
         hir::ty::TyKind::Float(value) => TyKind::Float(match value {
+            hir::ty::FloatTy::F16 => FloatTy::F16,
             hir::ty::FloatTy::F32 => FloatTy::F32,
             hir::ty::FloatTy::F64 => FloatTy::F64,
+            hir::ty::FloatTy::F128 => FloatTy::F128,
         }),
         hir::ty::TyKind::Adt(def, args) => TyKind::Adt(
             AdtDef {
@@ -4133,8 +4135,10 @@ impl MirLowering {
                         | "u64"
                         | "u128"
                         | "usize"
+                        | "f16"
                         | "f32"
                         | "f64"
+                        | "f128"
                 )
             }) {
                 return self.lower_path_type(path, ty_expr.span);
@@ -5085,6 +5089,11 @@ impl MirLowering {
                 }
                 "bool" => return Ty { kind: TyKind::Bool },
                 "char" => return Ty { kind: TyKind::Char },
+                "f16" => {
+                    return Ty {
+                        kind: TyKind::Float(FloatTy::F16),
+                    };
+                }
                 "f32" => {
                     return Ty {
                         kind: TyKind::Float(FloatTy::F32),
@@ -5093,6 +5102,11 @@ impl MirLowering {
                 "f64" => {
                     return Ty {
                         kind: TyKind::Float(FloatTy::F64),
+                    };
+                }
+                "f128" => {
+                    return Ty {
+                        kind: TyKind::Float(FloatTy::F128),
                     };
                 }
                 "str" => {
@@ -7987,8 +8001,10 @@ impl MirLowering {
                 UintTy::Usize => 8,
             }),
             TyKind::Float(float_ty) => Some(match float_ty {
+                FloatTy::F16 => 2,
                 FloatTy::F32 => 4,
                 FloatTy::F64 => 8,
+                FloatTy::F128 => 16,
             }),
             TyKind::Tuple(elements) => {
                 let mut total = 0u64;
@@ -9445,8 +9461,10 @@ impl<'a> BodyBuilder<'a> {
                 | "u64"
                 | "u128"
                 | "usize"
+                | "f16"
                 | "f32"
                 | "f64"
+                | "f128"
         )
     }
 
@@ -18837,8 +18855,10 @@ impl<'a> BodyBuilder<'a> {
                 UintTy::Usize => 8,
             }),
             TyKind::Float(float_ty) => Some(match float_ty {
+                FloatTy::F16 => 2,
                 FloatTy::F32 => 4,
                 FloatTy::F64 => 8,
+                FloatTy::F128 => 16,
             }),
             TyKind::Tuple(elements) => {
                 let mut total = 0u64;
@@ -21669,8 +21689,10 @@ fn is_known_type_name(name: &str) -> bool {
             | "u64"
             | "u128"
             | "usize"
+            | "f16"
             | "f32"
             | "f64"
+            | "f128"
             | "bool"
             | "char"
             | "str"

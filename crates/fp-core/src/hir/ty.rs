@@ -140,8 +140,10 @@ pub enum UintTy {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FloatTy {
+    F16,
     F32,
     F64,
+    F128,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -834,8 +836,10 @@ impl fmt::Display for UintTy {
 impl fmt::Display for FloatTy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            FloatTy::F16 => write!(f, "f16"),
             FloatTy::F32 => write!(f, "f32"),
             FloatTy::F64 => write!(f, "f64"),
+            FloatTy::F128 => write!(f, "f128"),
         }
     }
 }

@@ -1261,8 +1261,16 @@ impl<'a> HirToAstLifter<'a> {
                 hir::ty::UintTy::Usize => TypeInt::U64,
             }))),
             TyKind::Float(float_ty) => Some(Ty::Primitive(TypePrimitive::Decimal(match float_ty {
+                // `ast::DecimalType` has no narrower/wider variants than
+                // f32/f64, so f16/f128 are lossily folded into their
+                // nearest ast-representable width. This only affects
+                // codegen backends that go through the ast layer; HIR
+                // typechecking (the primary target for f16/f128 support)
+                // keeps the precise width via `hir::ty::FloatTy`.
+                hir::ty::FloatTy::F16 => DecimalType::F32,
                 hir::ty::FloatTy::F32 => DecimalType::F32,
                 hir::ty::FloatTy::F64 => DecimalType::F64,
+                hir::ty::FloatTy::F128 => DecimalType::F64,
             }))),
             TyKind::Never => Some(Ty::Nothing(ast::TypeNothing)),
             TyKind::Tuple(items) => {

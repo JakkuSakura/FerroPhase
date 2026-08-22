@@ -3736,8 +3736,10 @@ fn primitive_path_ty(name: &str) -> Option<Ty> {
         "u64" => Ty::uint(ty::UintTy::U64),
         "u128" => Ty::uint(ty::UintTy::U128),
         "usize" => Ty::uint(ty::UintTy::Usize),
+        "f16" => Ty::float(ty::FloatTy::F16),
         "f32" => Ty::float(ty::FloatTy::F32),
         "f64" => Ty::float(ty::FloatTy::F64),
+        "f128" => Ty::float(ty::FloatTy::F128),
         "str" => Ty {
             kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
         },
@@ -3968,5 +3970,78 @@ mod tests {
 
         let (_, results) = typecheck_program_sync(program).expect("HIR type check");
         assert_eq!(results.pat_types.get(&hid(8)), Some(&Ty::int(ty::IntTy::I64)));
+    }
+
+    /// `f16`/`f128` are real, stabilized Rust primitive float types (same
+    /// family as `f32`/`f64`), not name-resolution gaps — a bare `f16`/
+    /// `f128` type path must resolve straight to `Ty::Float`, never fall
+    /// through to `path_ty`'s "unresolved type path" `error_ty` branch the
+    /// way an actually-undeclared name would.
+    #[test]
+    fn f16_and_f128_type_paths_resolve_as_primitive_floats() {
+        // `let value: f16/f128;` with no initializer — `ExprKind::Let`'s
+        // declared-type slot (`check_type_expr(target)`) is recorded into
+        // `pat_types` verbatim, unlike a `Const`'s slot (which gets
+        // overwritten by the body's own inferred type), so this isolates
+        // exactly what `path_ty`/`primitive_path_ty` resolve a bare
+        // `f16`/`f128` path to.
+        fn let_item(def_id: hir::DefId, hir_id_base: u32, pat_name: &str, path_name: &str) -> hir::Item {
+            let pattern = hir::Pat {
+                hir_id: hid(hir_id_base + 1),
+                kind: hir::PatKind::Binding {
+                    name: pat_name.into(),
+                    mutable: false,
+                },
+            };
+            let expr = hir::Expr {
+                hir_id: hid(hir_id_base + 2),
+                kind: hir::ExprKind::Let(
+                    pattern,
+                    Box::new(hir::TypeExpr {
+                        hir_id: hid(hir_id_base + 3),
+                        kind: hir::TypeExprKind::Path(hir::Path {
+                            segments: vec![hir::PathSegment {
+                                name: path_name.into(),
+                                args: None,
+                            }],
+                            res: None,
+                        }),
+                        span: fp_core::span::Span::null(),
+                    }),
+                    None,
+                ),
+                span: fp_core::span::Span::null(),
+            };
+            hir::Item {
+                hir_id: hid(hir_id_base),
+                def_id,
+                visibility: hir::Visibility::Private,
+                kind: hir::ItemKind::Expr(expr),
+                span: fp_core::span::Span::null(),
+            }
+        }
+
+        let f16_def_id = hir::DefId::local(1);
+        let f128_def_id = hir::DefId::local(2);
+        let f16_item = let_item(f16_def_id, 10, "f16_value", "f16");
+        let f128_item = let_item(f128_def_id, 20, "f128_value", "f128");
+
+        let mut program = hir::Program::new();
+        program.items.push(f16_item.clone());
+        program.items.push(f128_item.clone());
+        program.def_map.insert(f16_def_id, f16_item);
+        program.def_map.insert(f128_def_id, f128_item);
+
+        let (_, results) = typecheck_program_sync(program).expect("HIR type check");
+        assert_eq!(
+            results.pat_types.get(&hid(11)),
+            Some(&Ty::float(ty::FloatTy::F16)),
+            "bare `f16` type path must resolve to the f16 primitive, not an unresolved-path error type"
+        );
+        assert_eq!(
+            results.pat_types.get(&hid(21)),
+            Some(&Ty::float(ty::FloatTy::F128)),
+            "bare `f128` type path must resolve to the f128 primitive, not an unresolved-path error type"
+        );
     }
 }

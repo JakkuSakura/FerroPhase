@@ -107,6 +107,19 @@ pub struct HirGenerator {
     const_list_length_scopes: Vec<HashMap<String, usize>>,
     synthetic_items: Vec<hir::Item>,
     module_defs: HashSet<fp_core::ast::path::QualifiedPath>,
+    /// The real "extern prelude": each distinct real crate name a plain
+    /// absolute path may name itself after, mapped to its own root path.
+    /// Populated once per package, straight from the loader's own
+    /// ground-truth module-path metadata (`transform_package`, right
+    /// alongside `module_defs`'s seeding) — never inferred or guessed at
+    /// resolution time. For an ordinary single-crate package every module
+    /// path is exactly one segment deep (`[package_name, ...]`), so this
+    /// stays empty. Only the vendored real Rust `std`'s loader
+    /// (`rs_relative_to_module_segments`) ever produces a two-segment
+    /// root (`[package_name, sub_crate_name, ...]` — e.g. `"core"` ->
+    /// `["std", "core"]`, `"std"` -> `["std", "std"]`), one entry per real
+    /// bundled crate (`core`/`alloc`/`std`).
+    crate_roots: HashMap<String, Vec<String>>,
     program_def_map: HashMap<hir::DefId, hir::Item>,
     /// Nonzero while lowering a function-local item statement (an
     /// `ast::BlockStmt::Item` — e.g. a `const`/`struct` declared inside a
@@ -666,6 +679,7 @@ impl HirGenerator {
             const_list_length_scopes: vec![HashMap::new()],
             synthetic_items: Vec::new(),
             module_defs: HashSet::new(),
+            crate_roots: HashMap::new(),
             program_def_map: HashMap::new(),
             suppress_global_registration_depth: 0,
             local_item_debug_labels: HashMap::new(),
@@ -1829,6 +1843,26 @@ impl HirGenerator {
         // a module alias for such a package, no matter how its target
         // path is computed.
         self.module_defs.extend(package.module_paths.iter().cloned());
+
+        // Real "extern prelude": a module path with >= 2 segments sharing
+        // this package's own root names its second segment as a distinct
+        // bundled crate's own root (ground truth from the loader — see
+        // `crate_roots`'s doc comment). An ordinary single-crate package's
+        // module paths are always exactly one segment deep, so this is a
+        // no-op for it.
+        if let Some(package_root) = package
+            .module_paths
+            .iter()
+            .find_map(|path| path.segments.first().cloned())
+        {
+            for path in &package.module_paths {
+                if path.segments.len() >= 2 && path.segments[0] == package_root {
+                    self.crate_roots
+                        .entry(path.segments[1].clone())
+                        .or_insert_with(|| path.segments[..2].to_vec());
+                }
+            }
+        }
 
         // Unlike `transform_file` (the single-file path), `transform_package`
         // never ran the `lower_closures_in_file` pre-pass that decomposes a
@@ -4088,8 +4122,10 @@ fn is_primitive_type_name(name: &str) -> bool {
             | "u64"
             | "u128"
             | "usize"
+            | "f16"
             | "f32"
             | "f64"
+            | "f128"
     )
 }
 
