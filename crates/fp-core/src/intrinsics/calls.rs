@@ -49,7 +49,7 @@ pub struct PortableOpDef {
 }
 
 /// A resolved portable-op identity, carried on
-/// `CallKind::Op`/`hir::Program::op_defs`/etc. Deliberately NOT a bare
+/// `CallKind::Op`/`hir::Package::op_defs`/etc. Deliberately NOT a bare
 /// string: the only way to construct one is `PortableOpRegistry::resolve`,
 /// which looks the name up against the central registry and hands back the
 /// full definition — so every `PortableOp` in flight already carries its

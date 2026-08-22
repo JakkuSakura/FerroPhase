@@ -911,8 +911,8 @@ impl CompilerDriver {
     /// all — and the whole type-check fails.
     async fn type_check_program(
         &mut self,
-        program: hir::Program,
-    ) -> fp_core::Result<(hir::Program, fp_typing::TypeckResults)> {
+        program: hir::Package,
+    ) -> fp_core::Result<(hir::Package, fp_typing::TypeckResults)> {
         let context = self.state.borrow().typing_ctx.clone();
         let (shared, mut future) =
             fp_typing::spawn_package_typecheck(program, Some(context.clone()));
@@ -1052,7 +1052,7 @@ impl CompilerDriver {
     /// lives) looking for a matching `DefId`, and reports it by its own
     /// `HirId`/kind — not a real qualified path (there isn't one), just
     /// enough to identify which declaration is stuck.
-    fn find_item_label_by_key(program: &hir::Program, key: &str) -> Option<String> {
+    fn find_item_label_by_key(program: &hir::Package, key: &str) -> Option<String> {
         fn scan_block(block: &hir::Block, target: &str, found: &mut Option<String>) {
             if found.is_some() {
                 return;

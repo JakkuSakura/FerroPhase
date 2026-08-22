@@ -1,4 +1,4 @@
-hir::Program {
+hir::Package {
     pub struct std::bench::BenchCase {
         pub name: str,
         pub run: fn() -> (),

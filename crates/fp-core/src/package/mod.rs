@@ -288,7 +288,7 @@ pub struct CompiledPackage {
     pub lir_workspace: LirWorkspace,
 
     /// HIR definitions published by this package.
-    pub hir_program: Option<crate::hir::Program>,
+    pub hir_program: Option<crate::hir::Package>,
 
     /// Struct `DefId`s in `hir_program`, keyed by name — built once by
     /// `set_hir_program` alongside `hir_program` itself, so cross-package
@@ -392,7 +392,7 @@ impl CompiledPackage {
     /// `hir_struct_defs_by_name`/`hir_impl_method_item_index` alongside it
     /// in the same single pass over `program.items` — the one time this
     /// data is walked, rather than once per cross-package lookup.
-    pub fn set_hir_program(&mut self, program: crate::hir::Program) {
+    pub fn set_hir_program(&mut self, program: crate::hir::Package) {
         self.hir_struct_defs_by_name.clear();
         self.hir_impl_method_item_index.clear();
         for (index, item) in program.items.iter().enumerate() {
@@ -459,7 +459,10 @@ pub fn package_source_from_compiled(
 /// already-borrowed `CompiledPackage` so both `CompilerDriver` (which owns
 /// the driver-state lookup that produces the `CompiledPackage` in the
 /// first place) and `WorkspaceContext` (which already holds one) can
-/// share this without either depending on the other.
+/// share this without either depending on the other. See
+/// `crate::hir::Package::def_paths`'s doc comment for why `sig.name` is
+/// always the bare, local identifier and disambiguation instead relies on
+/// the recorded def path.
 ///
 /// This is deliberately name-only, not module/class-qualified — every
 /// current backend just needs "the function named `main`" and a

@@ -569,7 +569,7 @@ pub struct MirLowering {
     typeck_generic_call_args: HashMap<hir::HirId, Vec<Ty>>,
     typeck_generic_method_args: HashMap<hir::HirId, Vec<Ty>>,
     adt_defs: HashMap<hir::DefId, mir::ty::AdtDef>,
-    /// Snapshot of the whole-workspace `hir::Program.def_map`/`def_paths`
+    /// Snapshot of the whole-workspace `hir::Package.def_map`/`def_paths`
     /// (local items + every dependency's, via `seed_workspace_definitions`),
     /// taken once at the top of `lower_program`/`transform`. Lets
     /// `compute_adt_layout` look up and lazily register a foreign
@@ -682,7 +682,7 @@ impl MirLowering {
         }
     }
 
-    pub fn transform(&mut self, hir_program: hir::Program) -> Result<mir::Program> {
+    pub fn transform(&mut self, hir_program: hir::Package) -> Result<mir::Program> {
         let program = self.lower_program(&hir_program)?;
         if self.has_errors {
             return Err(fp_core::error::Error::from(
@@ -698,7 +698,7 @@ impl MirLowering {
     /// cached by their typed `(DefId, SubstsRef)` identity. Keeping this boundary
     /// async lets the compiler driver own executor progress without making
     /// every recursive expression operation an artificial future.
-    pub async fn transform_async(&mut self, hir_program: hir::Program) -> Result<mir::Program> {
+    pub async fn transform_async(&mut self, hir_program: hir::Package) -> Result<mir::Program> {
         self.transform(hir_program)
     }
 
@@ -717,7 +717,7 @@ impl MirLowering {
     /// `ensure_function_specialization`'s existing lazy mechanisms.
     pub fn transform_comptime_request(
         &mut self,
-        hir_program: hir::Program,
+        hir_program: hir::Package,
         request: &fp_typing::ComptimeRequest,
     ) -> Result<mir::Program> {
         self.hir_def_map = hir_program.def_map.clone();
@@ -796,7 +796,7 @@ impl MirLowering {
 
     pub async fn transform_comptime_request_async(
         &mut self,
-        hir_program: hir::Program,
+        hir_program: hir::Package,
         request: &fp_typing::ComptimeRequest,
     ) -> Result<mir::Program> {
         self.transform_comptime_request(hir_program, request)
@@ -1245,7 +1245,7 @@ impl MirLowering {
         format!("__fp_comptime_const_{}_{}", name.as_str(), hash)
     }
 
-    fn lower_program(&mut self, program: &hir::Program) -> Result<mir::Program> {
+    fn lower_program(&mut self, program: &hir::Package) -> Result<mir::Program> {
         // Snapshot for `compute_adt_layout`'s lazy foreign-struct/enum
         // lookup — see the fields' doc comment. One clone per package
         // compile, not per lookup.
@@ -5180,13 +5180,13 @@ impl MirLowering {
     }
 
     /// Qualified display name for a definition, sourced from
-    /// `hir::Program::def_paths` (the item's `name` field is always bare —
+    /// `hir::Package::def_paths` (the item's `name` field is always bare —
     /// see that table's doc comment). Falls back to the bare name itself
     /// when no path is recorded (e.g. synthetic items). Takes the
-    /// `def_paths` table directly (not the whole `&hir::Program`) so
+    /// `def_paths` table directly (not the whole `&hir::Package`) so
     /// `register_struct`/`register_enum` can be called from a context that
     /// only has `def_paths` on hand (`compute_adt_layout`'s lazy foreign-type
-    /// lookup, which runs after the original `hir::Program` is out of scope).
+    /// lookup, which runs after the original `hir::Package` is out of scope).
     fn def_path_str(
         def_paths: &HashMap<hir::DefId, hir::DefPath>,
         def_id: hir::DefId,
@@ -5347,7 +5347,7 @@ impl MirLowering {
 
     // Resolve field types and layouts only after every canonical ADT identity
     // has been registered; dependency definitions arrive in hash-map order.
-    fn finalize_adt_definitions(&mut self, program: &hir::Program) {
+    fn finalize_adt_definitions(&mut self, program: &hir::Package) {
         for item in &program.items {
             match &item.kind {
                 hir::ItemKind::Struct(strukt) => {

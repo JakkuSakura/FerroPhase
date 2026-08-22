@@ -97,7 +97,6 @@ pub fn interpret_file(path: &Path, package: &str) -> Result<Value> {
     )
 }
 
-
 fn execute_ast(
     input: SourceInput,
     language: &str,
@@ -565,7 +564,7 @@ struct LoweredProgram {
 
 
 impl LoweredProgram {
-    fn hir(&self) -> Result<fp_core::hir::Program> {
+    fn hir(&self) -> Result<fp_core::hir::Package> {
         let package = self.compiled_package()?;
         let package = package.borrow();
         package.hir_program.clone().ok_or_else(|| {

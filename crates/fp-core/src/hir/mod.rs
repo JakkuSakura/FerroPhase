@@ -7,9 +7,11 @@ use std::fmt;
 pub mod ident;
 pub mod place;
 pub mod pretty;
+pub mod resolve;
 pub mod ty;
 
 pub use ident::{DefPath, Symbol};
+pub use resolve::{ModuleId, ModuleTree, Namespace};
 pub use ty::{Abi, Ty};
 
 pub type NodeId = u32;
@@ -78,8 +80,14 @@ impl fmt::Display for DefId {
 // Remove the old type alias
 // pub type Symbol = String;
 
+/// One compiled package's HIR content — items, definitions, and (as of the
+/// `ModuleTree` migration) its own module/name-resolution tree. Several of
+/// these live inside a `Program`, which owns the whole multi-package
+/// compiled result (see `Program`'s own doc comment).
 #[derive(Debug, Clone, PartialEq)]
-pub struct Program {
+pub struct Package {
+    pub id: PackageId,
+    pub module_tree: resolve::ModuleTree,
     pub items: Vec<Item>,
     pub def_map: HashMap<DefId, Item>,
     pub next_hir_id: u32,
@@ -793,9 +801,11 @@ impl Default for Generics {
     }
 }
 
-impl Program {
+impl Package {
     pub fn new() -> Self {
         Self {
+            id: PackageId::default(),
+            module_tree: resolve::ModuleTree::new(),
             items: Vec::new(),
             def_map: HashMap::new(),
             next_hir_id: 0,
@@ -807,10 +817,98 @@ impl Program {
         }
     }
 
+    pub fn with_id(id: PackageId) -> Self {
+        Self {
+            id,
+            ..Self::new()
+        }
+    }
+
     pub fn next_id(&mut self, package_id: PackageId) -> HirId {
         let id = self.next_hir_id;
         self.next_hir_id += 1;
         HirId::new(package_id, id)
+    }
+}
+
+impl Default for Package {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The whole compiled result — every package involved, keyed by
+/// `PackageId`. `HirGenerator` owns one of these and works package-by-package
+/// against it (see `docs/Resolution.md`); resolution across an
+/// already-compiled dependency package is a lookup into this same
+/// structure, not a separate clone-and-merge pass.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Program {
+    pub packages: HashMap<PackageId, Package>,
+}
+
+impl Program {
+    pub fn new() -> Self {
+        Self {
+            packages: HashMap::new(),
+        }
+    }
+
+    pub fn package(&self, id: PackageId) -> Option<&Package> {
+        self.packages.get(&id)
+    }
+
+    pub fn package_mut(&mut self, id: PackageId) -> Option<&mut Package> {
+        self.packages.get_mut(&id)
+    }
+
+    /// A definition's fully-qualified path, wherever its owning package
+    /// lives — routes to that package's own `def_paths` via the `DefId`'s
+    /// own `package_id`, so a caller never has to know or track which
+    /// package a `DefId` came from before asking this question.
+    pub fn def_path(&self, def_id: DefId) -> Option<&DefPath> {
+        self.package(def_id.package_id)?.def_paths.get(&def_id)
+    }
+
+    /// A transparent type alias's expansion target — see
+    /// `Package::type_alias_targets`'s doc comment for why this table
+    /// exists at all.
+    pub fn type_alias_target(&self, def_id: DefId) -> Option<&TypeExpr> {
+        self.package(def_id.package_id)?
+            .type_alias_targets
+            .get(&def_id)
+    }
+
+    pub fn item(&self, def_id: DefId) -> Option<&Item> {
+        self.package(def_id.package_id)?.def_map.get(&def_id)
+    }
+
+    pub fn op_def(&self, def_id: DefId) -> Option<&crate::intrinsics::PortableOp> {
+        self.package(def_id.package_id)?.op_defs.get(&def_id)
+    }
+
+    pub fn intrinsic_def(&self, def_id: DefId) -> Option<&CallKind> {
+        self.package(def_id.package_id)?.intrinsic_defs.get(&def_id)
+    }
+
+    pub fn is_placeholder_def(&self, def_id: DefId) -> bool {
+        self.package(def_id.package_id)
+            .is_some_and(|package| package.placeholder_defs.contains(&def_id))
+    }
+
+    /// Resolves `path` (in namespace `ns`) starting from `from_module` in
+    /// package `from`, falling through to another already-compiled
+    /// package's own module tree when `path`'s root names a different
+    /// package (mirrors how a real cross-crate path resolves — the target
+    /// package's own tree, not the caller's).
+    pub fn resolve(
+        &self,
+        from: PackageId,
+        from_module: resolve::ModuleId,
+        ns: resolve::Namespace,
+        name: &str,
+    ) -> Option<&Res> {
+        self.package(from)?.module_tree.lookup(from_module, ns, name)
     }
 }
 
@@ -839,7 +937,7 @@ impl TypeExpr {
     }
 }
 
-impl Program {
+impl Package {
     pub fn span(&self) -> Span {
         Span::union(self.items.iter().map(Item::span))
     }

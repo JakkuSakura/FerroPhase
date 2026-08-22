@@ -9,7 +9,7 @@ use fp_core::hir;
 /// whatever `CompilerDriver::select_entrypoint` already resolved (e.g.
 /// for a package with several nested modules each defining their own
 /// `main`). Pass `None` to fall back to that by-name scan.
-pub fn eliminate_dead_code(program: &mut hir::Program, entrypoint: Option<hir::DefId>) -> usize {
+pub fn eliminate_dead_code(program: &mut hir::Package, entrypoint: Option<hir::DefId>) -> usize {
     if has_unresolved_paths(program) {
         return 0;
     }
@@ -65,7 +65,7 @@ pub fn eliminate_dead_code(program: &mut hir::Program, entrypoint: Option<hir::D
     before.saturating_sub(program.items.len())
 }
 
-fn has_unresolved_paths(program: &hir::Program) -> bool {
+fn has_unresolved_paths(program: &hir::Package) -> bool {
     program.items.iter().any(item_has_unresolved_paths)
 }
 
@@ -291,7 +291,7 @@ fn path_has_unresolved_segments(path: &hir::Path) -> bool {
     path.res.is_none() && path.segments.len() > 1
 }
 
-fn build_tail_name_map(program: &hir::Program) -> HashMap<String, hir::DefId> {
+fn build_tail_name_map(program: &hir::Package) -> HashMap<String, hir::DefId> {
     let mut names = HashMap::new();
     for item in &program.items {
         if let Some(name) = item_name(item) {
@@ -595,7 +595,7 @@ fn collect_path_refs(
 mod tests {
     use super::*;
     use fp_core::hir::{
-        self, Expr, ExprKind, Function, FunctionSig, Item, ItemKind, Path, PathSegment, Program,
+        self, Expr, ExprKind, Function, FunctionSig, Item, ItemKind, Package, Path, PathSegment,
         Symbol, TypeExpr, TypeExprKind, Visibility,
     };
     use fp_core::span::Span;
@@ -693,12 +693,14 @@ mod tests {
         }
     }
 
-    fn program(items: Vec<Item>) -> Program {
+    fn program(items: Vec<Item>) -> Package {
         let def_map = items
             .iter()
             .map(|item| (item.def_id, item.clone()))
             .collect();
-        Program {
+        Package {
+            id: hir::PackageId::default(),
+            module_tree: hir::ModuleTree::new(),
             items,
             def_map,
             next_hir_id: 100,

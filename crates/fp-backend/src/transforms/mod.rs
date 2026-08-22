@@ -13,7 +13,7 @@ pub use mir_to_lir::*;
 /// A call's callee is only ever a compiler intrinsic/portable op because
 /// its *own resolved declaration* was tagged `#[intrinsic = "..."]`/
 /// `#[op(func = "...")]`/`#[op(method = "...")]`/`#[op(variant = "...")]`
-/// (`hir::Program::op_defs`/`intrinsic_defs`, populated once during
+/// (`hir::Package::op_defs`/`intrinsic_defs`, populated once during
 /// `ast_to_hir` lowering) — resolved here by the callee's real `DefId`,
 /// never by re-deriving it from the call site's own name/path, which
 /// can't tell a builtin/portable-op declaration apart from a same-named

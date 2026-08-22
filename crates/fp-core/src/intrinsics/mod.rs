@@ -48,7 +48,7 @@ pub enum IntrinsicNormalizationMode {
     Transpile,
     /// `PipelineMode::TypecheckedTranspile` specifically — plain-call/
     /// method-call portable-op detection is handled post-typecheck by
-    /// `HirToAstLifter` directly consulting `hir::Program.op_defs` instead
+    /// `HirToAstLifter` directly consulting `hir::Package.op_defs` instead
     /// (real resolved callee/method `DefId`s available there, so a
     /// same-named user function/method is never misclassified).
     /// `normalize_invoke` skips its own name-based

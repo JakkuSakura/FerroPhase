@@ -5,7 +5,7 @@ use std::fmt::{self, Formatter};
 use super::{
     AssocType, BinOp, Block, Body, Const, Enum, Expr, ExprKind, FormatArgRef, FormatTemplatePart,
     Function, GenericArg, GenericParamKind, Generics, Impl, ImplItemKind, Item, ItemKind, Lit, Pat,
-    PatKind, Path, Program, Query, Stmt, StmtKind, Struct, Trait, TraitItemKind, TypeExpr,
+    Package, PatKind, Path, Query, Stmt, StmtKind, Struct, Trait, TraitItemKind, TypeExpr,
     TypeExprKind, UnOp, Visibility,
 };
 
@@ -20,9 +20,9 @@ fn query_statement_lines(ir: &crate::query::QueryIrDocument) -> Vec<String> {
         .unwrap_or_default()
 }
 
-impl PrettyPrintable for Program {
+impl PrettyPrintable for Package {
     fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
-        ctx.writeln(f, "hir::Program {")?;
+        ctx.writeln(f, "hir::Package {")?;
         ctx.with_indent(|ctx| {
             for (idx, item) in self.items.iter().enumerate() {
                 write_item(item, f, ctx)?;

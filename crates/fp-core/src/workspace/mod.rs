@@ -351,7 +351,7 @@ impl WorkspaceContext {
 
     /// Return immutable HIR definitions published by imported packages —
     /// the current, real mechanism `ast_to_hir::seed_workspace_definitions`
-    /// (`fp-backend`) merges into a package's own `hir::Program`, and that
+    /// (`fp-backend`) merges into a package's own `hir::Package`, and that
     /// `fp-typing::hir_typeck` still calls directly at a few sites (see its
     /// own comments there for the narrower, targeted lookups it prefers
     /// elsewhere). Not legacy code awaiting deletion — copying each
@@ -363,7 +363,7 @@ impl WorkspaceContext {
         &self,
     ) -> Vec<(
         QualifiedPath,
-        crate::hir::Program,
+        crate::hir::Package,
         HashMap<String, crate::hir::Res>,
     )> {
         self.sorted_packages()

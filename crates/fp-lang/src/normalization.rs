@@ -557,7 +557,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
 
         // Under `TypedTranspile`, plain-call/method-call portable-op
         // detection is owned entirely by the post-typecheck
-        // `HirToAstLifter`, consulting `hir::Program.op_defs` directly
+        // `HirToAstLifter`, consulting `hir::Package.op_defs` directly
         // (real resolved callee/method `DefId`s available there).
         // Reclassifying here too — before HIR lowering even runs, by name
         // alone — would just mutate the AST out from under that safer

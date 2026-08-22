@@ -20,7 +20,7 @@ use std::rc::Rc;
 /// multiple items' checks can be concurrently in-flight (one suspended
 /// awaiting another's task) on the same `ExecutorHandle`.
 pub struct TypingShared {
-    program: Rc<hir::Program>,
+    program: Rc<hir::Package>,
     /// Every item task writes its own contribution here as it finishes;
     /// another item's task awaiting this one (see `expr_path_ty`'s
     /// same-package `Const` lookup) reads back through the same cell —
@@ -75,7 +75,7 @@ pub struct TypingShared {
 }
 
 impl TypingShared {
-    fn new(program: hir::Program, typing_context: Option<Rc<TypingContext>>) -> Rc<Self> {
+    fn new(program: hir::Package, typing_context: Option<Rc<TypingContext>>) -> Rc<Self> {
         let executor = typing_context
             .as_ref()
             .map(|context| context.executor.clone())
@@ -93,7 +93,7 @@ impl TypingShared {
 
     /// Read-only access to this package's own HIR — for diagnostics (e.g.
     /// resolving a stalled task's key back to a human-readable item path).
-    pub fn program(&self) -> &hir::Program {
+    pub fn program(&self) -> &hir::Package {
         &self.program
     }
 }
@@ -234,7 +234,7 @@ impl Drop for GenericScope<'_> {
 /// `spawn_item_task`/`typecheck_item` key. Returns `def_id` unchanged if
 /// it's already a top-level item (the common case, checked first so this
 /// stays O(1) except for actual impl members).
-fn resolve_top_level_def_id(program: &hir::Program, def_id: hir::DefId) -> hir::DefId {
+fn resolve_top_level_def_id(program: &hir::Package, def_id: hir::DefId) -> hir::DefId {
     if program.def_map.contains_key(&def_id) {
         return def_id;
     }
@@ -257,7 +257,7 @@ fn resolve_top_level_def_id(program: &hir::Program, def_id: hir::DefId) -> hir::
 /// it. Read the final result back out via `finish_package_typecheck` once
 /// the returned future resolves.
 pub fn spawn_package_typecheck(
-    program: hir::Program,
+    program: hir::Package,
     typing_context: Option<Rc<TypingContext>>,
 ) -> (Rc<TypingShared>, crate::BoxFuture<'static, Result<()>>) {
     let shared = TypingShared::new(program, typing_context);
@@ -275,10 +275,10 @@ pub fn spawn_package_typecheck(
     (shared, joined)
 }
 
-/// Read the final `(hir::Program, TypeckResults)` out of `shared` — only
+/// Read the final `(hir::Package, TypeckResults)` out of `shared` — only
 /// meaningful once every task `spawn_package_typecheck` spawned has
 /// settled (i.e. its returned future resolved).
-pub fn finish_package_typecheck(shared: &Rc<TypingShared>) -> (hir::Program, TypeckResults) {
+pub fn finish_package_typecheck(shared: &Rc<TypingShared>) -> (hir::Package, TypeckResults) {
     (
         shared.program.as_ref().clone(),
         shared.results.borrow().clone(),
@@ -1642,7 +1642,7 @@ impl HirTypeChecker {
         }
         // A transparent type alias (`type __darwin_useconds_t =
         // __uint32_t;`) — HIR has no first-class item for one (see
-        // `hir::Program::type_alias_targets`'s doc comment), so its
+        // `hir::Package::type_alias_targets`'s doc comment), so its
         // `DefId` has no `def_map` entry to look up; expand it in place by
         // checking its already-lowered target type expression instead.
         if let Some(target) = self.shared.program.type_alias_targets.get(&def_id).cloned() {
@@ -3867,7 +3867,7 @@ mod tests {
     /// single-future entry point — drives `spawn_package_typecheck`'s
     /// per-item tasks to completion on a standalone executor (no driver,
     /// no comptime requests expected in these tests).
-    fn typecheck_program_sync(program: hir::Program) -> Result<(hir::Program, TypeckResults)> {
+    fn typecheck_program_sync(program: hir::Package) -> Result<(hir::Package, TypeckResults)> {
         let (shared, mut future) = spawn_package_typecheck(program, None);
         let waker = std::task::Waker::noop();
         let mut cx = std::task::Context::from_waker(waker);
@@ -3963,7 +3963,7 @@ mod tests {
             span: fp_core::span::Span::null(),
         };
 
-        let mut program = hir::Program::new();
+        let mut program = hir::Package::new();
         // Textual order: A first, B second -- A's own task must await B's
         // on demand rather than assuming it's already been checked.
         program.items.push(a_item.clone());
@@ -3990,7 +3990,7 @@ mod tests {
             kind: hir::ExprKind::Literal(hir::Lit::Integer(4)),
             span: fp_core::span::Span::null(),
         };
-        let mut program = hir::Program::new();
+        let mut program = hir::Package::new();
         let item = hir::Item {
             hir_id: hid(1),
             def_id: hir::DefId::local(1),
@@ -4033,7 +4033,7 @@ mod tests {
             ),
             span: fp_core::span::Span::null(),
         };
-        let mut program = hir::Program::new();
+        let mut program = hir::Package::new();
         let item = hir::Item {
             hir_id: hid(1),
             def_id: hir::DefId::local(1),
@@ -4102,7 +4102,7 @@ mod tests {
         let f16_item = let_item(f16_def_id, 10, "f16_value", "f16");
         let f128_item = let_item(f128_def_id, 20, "f128_value", "f128");
 
-        let mut program = hir::Program::new();
+        let mut program = hir::Package::new();
         program.items.push(f16_item.clone());
         program.items.push(f128_item.clone());
         program.def_map.insert(f16_def_id, f16_item);

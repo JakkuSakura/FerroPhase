@@ -11,7 +11,7 @@ use crate::error::CompilerDriverError;
 use crate::{BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
 
 pub struct CompilerState {
-    hir: BTreeMap<HirId, hir::Program>,
+    hir: BTreeMap<HirId, hir::Package>,
     hir_typeck: BTreeMap<HirId, TypeckResults>,
     mir: BTreeMap<MirId, mir::Program>,
     lir: BTreeMap<LirId, lir::LirProgram>,
@@ -63,7 +63,7 @@ impl CompilerState {
         }
     }
 
-    pub fn insert_hir(&mut self, hir_id: HirId, hir: hir::Program) {
+    pub fn insert_hir(&mut self, hir_id: HirId, hir: hir::Package) {
         self.hir.insert(hir_id, hir);
     }
 
@@ -123,7 +123,7 @@ impl CompilerState {
         self.capabilities
     }
 
-    pub fn hir(&self, hir_id: &HirId) -> Result<&hir::Program, CompilerDriverError> {
+    pub fn hir(&self, hir_id: &HirId) -> Result<&hir::Package, CompilerDriverError> {
         self.hir
             .get(hir_id)
             .ok_or_else(|| CompilerDriverError::MissingHir(hir_id.clone()))

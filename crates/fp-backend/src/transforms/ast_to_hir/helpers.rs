@@ -331,7 +331,7 @@ impl HirGenerator {
                         // `Vec`, ...), whose own `HirGenerator` instance
                         // (and its local maps) no longer exists. Its real
                         // path survives in that dependency's own lowered
-                        // `hir::Program::def_paths` instead — fall back to
+                        // `hir::Package::def_paths` instead — fall back to
                         // scanning those when the local map has nothing.
                         if type_paths.is_empty() {
                             if let Some(ref workspace) = self.workspace {

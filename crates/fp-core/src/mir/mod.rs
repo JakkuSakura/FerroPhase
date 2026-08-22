@@ -41,7 +41,7 @@ pub struct Function {
     /// Already-qualified name used for mangling/diagnostics (module
     /// segments joined with `::`, or bare when the function has no
     /// meaningful module qualification). Computed once at HIR->MIR
-    /// lowering time from `hir::Program::def_paths` — MIR does not carry
+    /// lowering time from `hir::Package::def_paths` — MIR does not carry
     /// its own separate path table.
     pub name: Symbol,
     pub def_id: Option<ty::DefId>,
