@@ -816,7 +816,21 @@ fn parse_numeric_literal_local(raw: &str) -> std::result::Result<(Value, Option<
             ))
         }
         _ => {
-            if normalized.contains('.') {
+            // A decimal exponent (`1e0`, `6.022e23`, real
+            // `core::num::imp::dec2flt`'s own lookup tables) makes this a
+            // float even with no `.` in sight — `contains('.')` alone
+            // missed the mantissa-less case. Only decimal literals can
+            // have one: `0xE0`'s `E` is an ordinary hex digit, not an
+            // exponent marker, so radix-prefixed literals are excluded.
+            let is_radix_prefixed = normalized.starts_with("0x")
+                || normalized.starts_with("0X")
+                || normalized.starts_with("0o")
+                || normalized.starts_with("0O")
+                || normalized.starts_with("0b")
+                || normalized.starts_with("0B");
+            let has_exponent =
+                !is_radix_prefixed && normalized.chars().any(|c| c == 'e' || c == 'E');
+            if normalized.contains('.') || has_exponent {
                 let d = normalized.parse::<f64>().map_err(|_| ())?;
                 Ok((Value::decimal(d), None))
             } else if let Some(i) = parse_i64_literal(&normalized) {
