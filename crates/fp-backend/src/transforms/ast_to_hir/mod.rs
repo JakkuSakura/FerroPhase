@@ -256,6 +256,15 @@ enum LiteralTypeKind {
 struct ImportBinding {
     target: Vec<String>,
     alias: Option<String>,
+    /// `target` names a module prefix to expand (`use target::*;`),
+    /// re-evaluated fresh on every fixed-point sweep in
+    /// `resolve_pending_imports` instead of once at collection time — see
+    /// that field's own doc comment for why a one-shot expansion is wrong
+    /// for a glob whose source module's own bindings are still pending
+    /// (e.g. real `core::prelude::rust_2024`'s `pub use super::v1::*;`,
+    /// where `v1` itself has no bindings of its own until its `pub use
+    /// crate::option::Option::{self, None, Some};` resolves).
+    is_glob: bool,
 }
 
 impl AstToHirLowerer {
@@ -312,6 +321,7 @@ impl AstToHirLowerer {
                 out.push(ImportBinding {
                     target,
                     alias: None,
+                    is_glob: false,
                 });
                 Ok(())
             }
@@ -321,6 +331,7 @@ impl AstToHirLowerer {
                 out.push(ImportBinding {
                     target,
                     alias: Some(rename.to.name.clone()),
+                    is_glob: false,
                 });
                 Ok(())
             }
@@ -348,6 +359,7 @@ impl AstToHirLowerer {
                     out.push(ImportBinding {
                         target: base,
                         alias: None,
+                        is_glob: false,
                     });
                 }
                 Ok(())
@@ -400,6 +412,7 @@ impl AstToHirLowerer {
                     out.push(ImportBinding {
                         target,
                         alias: Some(rename.to.name.clone()),
+                        is_glob: false,
                     });
                     return Ok(());
                 }
@@ -414,7 +427,11 @@ impl AstToHirLowerer {
                     return Ok(());
                 }
                 ast::ItemImportTree::Glob => {
-                    self.expand_glob_import(prefix, out);
+                    out.push(ImportBinding {
+                        target: prefix,
+                        alias: None,
+                        is_glob: true,
+                    });
                     return Ok(());
                 }
             }
@@ -424,6 +441,7 @@ impl AstToHirLowerer {
             out.push(ImportBinding {
                 target: prefix,
                 alias: None,
+                is_glob: false,
             });
         }
         Ok(())
@@ -469,6 +487,7 @@ impl AstToHirLowerer {
                 out.push(ImportBinding {
                     target: full,
                     alias: None,
+                    is_glob: false,
                 });
             }
             // `type X = Y;` aliases live in their own table (see
@@ -495,6 +514,7 @@ impl AstToHirLowerer {
                 out.push(ImportBinding {
                     target: full,
                     alias: None,
+                    is_glob: false,
                 });
             }
             // Module children — a direct tree lookup instead of the old
@@ -508,6 +528,7 @@ impl AstToHirLowerer {
                 out.push(ImportBinding {
                     target: full,
                     alias: None,
+                    is_glob: false,
                 });
             }
             return;
@@ -1434,8 +1455,26 @@ impl AstToHirLowerer {
                         // `def_paths` entry over the bare-name
                         // registration below (see the analogous comment in
                         // `transform_item_to_hir`'s `DefEnum` arm).
-                        self.record_value_symbol(
-                            &qualified_variant,
+                        //
+                        // Must go through `record_value_path` (which takes
+                        // an already-split `QualifiedPath`), not
+                        // `record_value_symbol` (which takes a bare `&str`
+                        // name and appends it as a *single* module-tree
+                        // segment via `qualify_path`/`with_segment`) — the
+                        // latter turned the "::"-joined string
+                        // `"Option::None"` into one literal segment named
+                        // `"Option::None"` bound directly under module
+                        // `option`, instead of a `None` binding under
+                        // submodule `option::Option`. Any lookup that
+                        // *splits* a qualified key into real segments
+                        // (`register_import_binding`'s `Option::{self,
+                        // None, Some}` resolution, `load_default_prelude_defs`'s
+                        // scan) could then never find it — the actual root
+                        // cause of every enum-variant-based prelude import
+                        // (`Some`/`None`/`Ok`/`Err`) failing to resolve
+                        // crate-wide.
+                        self.record_value_path(
+                            &self.module_path.join(&variant_path.segments),
                             hir::Res::Def(variant_def_id),
                             &def_enum.visibility,
                         );
@@ -2234,6 +2273,33 @@ impl AstToHirLowerer {
             let mut progressed = false;
             let mut still_pending = Vec::with_capacity(pending.len());
             for (module_path, binding, visibility) in pending {
+                if binding.is_glob {
+                    // Re-expand from scratch every sweep instead of once at
+                    // collection time — the source module's own bindings
+                    // (e.g. `v1`'s re-exported `Some`/`None`) may still be
+                    // unresolved on earlier sweeps, so a one-shot expansion
+                    // would permanently see an empty module. A glob is
+                    // never removed from `pending`: its expansion can keep
+                    // growing as sibling imports resolve, so it's retried
+                    // every sweep until the whole worklist reaches a fixed
+                    // point (tracked via `resolved_import_aliases` growth
+                    // below, since `register_import_binding` itself returns
+                    // `true` for an already-resolved alias too).
+                    let aliases_before = self.resolved_import_aliases.len();
+                    self.with_module_scope(&module_path, |this| {
+                        let mut fresh = Vec::new();
+                        this.expand_glob_import(binding.target.clone(), &mut fresh);
+                        for fresh_binding in fresh {
+                            this.register_import_binding(fresh_binding, &visibility);
+                        }
+                        Ok(())
+                    })?;
+                    if self.resolved_import_aliases.len() > aliases_before {
+                        progressed = true;
+                    }
+                    still_pending.push((module_path, binding, visibility));
+                    continue;
+                }
                 let resolved = self.with_module_scope(&module_path, |this| {
                     Ok(this.register_import_binding(binding.clone(), &visibility))
                 })?;
@@ -2773,8 +2839,13 @@ impl AstToHirLowerer {
                         // `def_id` under the bare variant name alone (for
                         // unqualified in-scope lookup), which must not
                         // clobber the canonical path.
-                        self.record_value_symbol(
-                            &qualified_variant,
+                        //
+                        // `record_value_path` (already-split segments), not
+                        // `record_value_symbol` (bare `&str` re-split as a
+                        // single malformed segment) — see the matching
+                        // `predeclare_items` `DefEnum` arm's doc comment.
+                        self.record_value_path(
+                            &self.module_path.join(&variant_path.segments),
                             hir::Res::Def(variant_def_id),
                             &enum_def.visibility,
                         );
