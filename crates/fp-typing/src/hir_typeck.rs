@@ -1793,7 +1793,39 @@ impl HirTypeChecker {
             // uses for `.method()` calls, just for an associated type
             // instead of a method.
             if path.segments.len() >= 2 {
-                if let Some(base_ty) = primitive_path_ty(path.segments[0].name.as_str()) {
+                let base_ty = match primitive_path_ty(path.segments[0].name.as_str()) {
+                    Some(ty) => Some(ty),
+                    // The same flattening also drops the `as Trait` from
+                    // e.g. `<Wrapping<u8> as Add>::Output` — unlike a
+                    // primitive, the base here is a real struct, still
+                    // named by its own first segment, just with the
+                    // struct's own generic args carried on that segment
+                    // (see `parse_qualified_path_type`'s `Name::
+                    // ParameterPath` arm) instead of on the trait.
+                    None => {
+                        let args = path.segments[0]
+                            .args
+                            .as_ref()
+                            .map(|generic_args| {
+                                generic_args
+                                    .args
+                                    .iter()
+                                    .map(|arg| match arg {
+                                        hir::GenericArg::Type(ty) => {
+                                            self.check_type_expr(ty).map(GenericArg::Type)
+                                        }
+                                        hir::GenericArg::Const(_) => Ok(GenericArg::Type(
+                                            self.error_ty("const generic arguments are not supported"),
+                                        )),
+                                    })
+                                    .collect::<Result<Vec<_>>>()
+                            })
+                            .transpose()?
+                            .unwrap_or_default();
+                        self.well_known_struct_ty(path.segments[0].name.as_str(), args)
+                    }
+                };
+                if let Some(base_ty) = base_ty {
                     let assoc_name = path.segments.last().unwrap().name.clone();
                     if let Some(ty) = self.assoc_type_for_self(&base_ty, &assoc_name).await? {
                         return Ok(ty);
