@@ -3067,6 +3067,20 @@ impl HirGenerator {
                     Span::new(self.current_file, 0, 0),
                 ))
             }
+            ast::Ty::Refinement(refinement) => {
+                let base = Box::new(self.transform_type_to_hir(&refinement.base)?);
+                let binder = hir::Symbol::new(refinement.binder.name.clone());
+                let predicate = Box::new(self.transform_expr_to_hir(&refinement.predicate)?);
+                Ok(hir::TypeExpr::new(
+                    self.next_id(),
+                    hir::TypeExprKind::Refinement {
+                        base,
+                        binder,
+                        predicate,
+                    },
+                    self.normalize_span(ty.span()),
+                ))
+            }
             ast::Ty::Expr(expr) => {
                 if let ast::ExprKind::Value(value) = expr.kind() {
                     match value.as_ref() {

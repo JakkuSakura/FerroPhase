@@ -1314,7 +1314,11 @@ impl HirTypeChecker {
                     let ty = match (&local.ty, &local.init) {
                         (Some(annotation), Some(init)) => {
                             let mut ty = self.check_type_expr(annotation)?;
+                            let refinement_hint = self.refinement_hints.remove(&annotation.hir_id);
                             let init_ty = self.check_expr(init).await?;
+                            if let Some(hint) = &refinement_hint {
+                                self.discharge_refinement(hint, init)?;
+                            }
 
                             // `[T; _]`: resolve this binding's own declared-
                             // type hole from its own initializer — ordinary
@@ -3639,6 +3643,15 @@ impl HirTypeChecker {
     /// Like `require_same`, a failure is recorded as a diagnostic rather
     /// than a hard `Err`, so one bad refinement doesn't abort the whole
     /// item's check. See `crate::refinement` for the algorithm.
+    /// Unlike `require_same` (which only records a soft diagnostic and lets
+    /// the check continue), a refinement violation returns a hard `Err` —
+    /// matching the sibling `let`-binding strict-equality check right above
+    /// this call site (`ty_matches_with_infer_holes`), which is also a hard
+    /// `Err`, not a recorded diagnostic. Some invocation paths (e.g. a
+    /// single-file `--target interpret` compile) never inspect the soft
+    /// diagnostics list at all, so a refinement violation that only used
+    /// `record_error` would silently compile and run anyway — exactly as
+    /// wrong as letting an ordinary type mismatch through.
     fn discharge_refinement(
         &self,
         hint: &crate::refinement::RefinementHint,
@@ -3647,23 +3660,18 @@ impl HirTypeChecker {
         let hypotheses = crate::refinement::implicit_hypotheses(&hint.base, &hint.binder);
         match crate::refinement::discharge(&hint.binder, &hint.predicate, value_expr, &hypotheses)
         {
-            crate::refinement::RefinementOutcome::ProvenTrue => {}
-            crate::refinement::RefinementOutcome::ProvenFalse => {
-                self.record_error(format!(
-                    "refinement predicate violated at compile time: value does not satisfy `{} : {} // ...`",
-                    hint.binder, hint.base
-                ));
-            }
-            crate::refinement::RefinementOutcome::Undecidable => {
-                self.record_error(
-                    "refinement predicate outside supported linear-arithmetic fragment \
-                     (only comparisons, `+ - * /`, `&&`, literals, and variable references \
-                     are supported)"
-                        .to_string(),
-                );
-            }
+            crate::refinement::RefinementOutcome::ProvenTrue => Ok(()),
+            crate::refinement::RefinementOutcome::ProvenFalse => Err(Error::from(format!(
+                "refinement predicate violated at compile time: value does not satisfy `{} : {} // ...`",
+                hint.binder, hint.base
+            ))),
+            crate::refinement::RefinementOutcome::Undecidable => Err(Error::from(
+                "refinement predicate outside supported linear-arithmetic fragment \
+                 (only comparisons, `+ - * /`, `&&`, literals, and variable references \
+                 are supported)"
+                    .to_string(),
+            )),
         }
-        Ok(())
     }
 
     fn require_same_adt(&self, actual: &Ty, expected: &Ty, context: &str) -> Result<()> {

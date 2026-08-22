@@ -119,6 +119,9 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         return parse_structural_type_body(input);
     }
     if peek_symbol(input) == Some("{") {
+        if let Some(refinement) = try_parse_refinement_type(input) {
+            return Ok(refinement);
+        }
         return parse_structural_type_body(input);
     }
     if skip_symbol(input, "!").is_ok() {
@@ -609,6 +612,37 @@ fn parse_type_binary(input: &mut &[Token], min_prec: u8) -> ModalResult<Ty> {
         );
     }
     Ok(lhs)
+}
+
+/// `{binder: Type where predicate}` — a refinement/subtype type (Lean 4's
+/// `{binder : Type // predicate}` notation, spelled with FerroPhase's own
+/// `where` keyword instead of `//` since `//` is already the line-comment
+/// marker in this lexer and can never reach the parser as a token). Tried
+/// before falling back to the existing `{field: Type, ...}` structural-type
+/// body, since both start with `{ident :`; returns `None` (leaving `input`
+/// untouched) on any parse failure rather than committing to an error, so
+/// the caller can fall through cleanly.
+fn try_parse_refinement_type(input: &mut &[Token]) -> Option<Ty> {
+    let mut probe = *input;
+    let parsed = (|| -> ModalResult<Ty> {
+        skip_symbol(&mut probe, "{")?;
+        let binder = ident_like(&mut probe)?;
+        skip_symbol(&mut probe, ":")?;
+        let base = parse_type_expr(&mut probe)?;
+        skip_keyword(&mut probe, Keyword::Where)?;
+        let predicate = parse_expr_winnow_no_struct(&mut probe, 0)?;
+        skip_symbol(&mut probe, "}")?;
+        Ok(Ty::Refinement(Box::new(fp_core::ast::TypeRefinement::new(
+            base, binder, predicate,
+        ))))
+    })();
+    match parsed {
+        Ok(ty) => {
+            *input = probe;
+            Some(ty)
+        }
+        Err(_) => None,
+    }
 }
 
 fn parse_structural_type_body(input: &mut &[Token]) -> ModalResult<Ty> {
