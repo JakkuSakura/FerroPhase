@@ -77,21 +77,17 @@ pub struct HirGenerator {
     value_scopes: Vec<HashMap<String, hir::Res>>,
     module_path: fp_core::ast::path::QualifiedPath,
     module_visibility: Vec<bool>,
-    global_value_defs: HashMap<String, SymbolEntry>,
-    global_type_defs: HashMap<String, SymbolEntry>,
-    /// Reverse index from a `DefId` to every qualified-path key in
-    /// `global_type_defs` whose `SymbolEntry::res` resolves to it (a type
-    /// can have more than one, e.g. via re-exports) — built incrementally
-    /// in `record_type_symbol`, `global_type_defs`'s only insertion site.
-    /// Lets `name_to_hir_path_with_scope`'s cross-module associated-call
+    /// Reverse index from a `DefId` to every qualified-path key bound in
+    /// the type namespace that resolves to it (a type can have more than
+    /// one, e.g. via re-exports) — built incrementally in
+    /// `record_type_symbol`, its only insertion site. Lets
+    /// `name_to_hir_path_with_scope`'s cross-module associated-call
     /// resolution (`Vec::new()`, `String::from(...)`, any std/libc
     /// associated-function call) go straight to the handful of paths that
     /// could possibly match a given type, instead of linear-scanning every
-    /// entry in `global_type_defs` (potentially thousands once vendored
+    /// type binding in the package (potentially thousands once vendored
     /// std is loaded) with a `format!` allocation per candidate.
     global_type_defs_by_def_id: HashMap<hir::DefId, Vec<String>>,
-    prelude_value_defs: HashMap<String, hir::Res>,
-    prelude_type_defs: HashMap<String, hir::Res>,
     preassigned_def_ids: HashMap<u64, hir::DefId>,
     enum_variant_def_ids: HashMap<String, hir::DefId>,
     type_aliases: HashMap<String, ast::Ty>,
@@ -113,21 +109,19 @@ pub struct HirGenerator {
     /// `module_tree` specifically replaces the old `module_defs:
     /// HashSet<QualifiedPath>` (module *existence*, `module_exists`/
     /// `ensure_module`) and `crate_roots: HashMap<String, Vec<String>>`
-    /// (this session's own earlier addition — a sub-crate root is now
-    /// just a child of the tree's crate-root node, not a separate table).
-    /// `global_type_defs`/`global_value_defs`/`prelude_type_defs`/
-    /// `prelude_value_defs` (symbol *lookup*, carrying visibility/def-path
-    /// metadata `ModuleTree`'s bindings don't yet model) deliberately stay
-    /// as their own flat maps below — folding those in too needs
-    /// `ModuleTree` to carry that richer `SymbolEntry` shape, a separate,
-    /// not-yet-designed step flagged in `docs/Resolution.md`.
+    /// (a sub-crate root is just a child of the tree's crate-root node,
+    /// not a separate table), and — since `ModuleTree`'s bindings now
+    /// carry the full `hir::SymbolEntry` shape (visibility/canonical
+    /// path, not just a bare `Res`) — the former `global_type_defs`/
+    /// `global_value_defs`/`prelude_type_defs`/`prelude_value_defs` flat
+    /// maps too. See `docs/Resolution.md`.
     package: hir::Package,
     program_def_map: HashMap<hir::DefId, hir::Item>,
     /// Nonzero while lowering a function-local item statement (an
     /// `ast::BlockStmt::Item` — e.g. a `const`/`struct` declared inside a
     /// function body, via `transform_item_to_hir_stmt`'s fallthrough arm).
     /// `record_value_symbol`/`record_type_symbol` (the two, and only,
-    /// insertion sites for `global_value_defs`/`global_type_defs`) check
+    /// insertion sites for the module tree's value/type bindings) check
     /// this and skip the module-qualified/global registration while it's
     /// set, since such an item is only ever visible through the enclosing
     /// block's lexical scope (`current_value_scope`/`current_type_scope`,
@@ -176,24 +170,12 @@ pub struct HirGenerator {
     /// upfront import worklist already ran) is a guaranteed no-op instead
     /// of an assumed-safe duplicate.
     resolved_import_aliases: HashSet<(fp_core::ast::path::QualifiedPath, String)>,
-    /// Memoized result of `cached_root_modules` — see its doc comment.
-    /// `(module_defs.len(), global_type_defs.len(), global_value_defs.len())`
-    /// at computation time, paired with the computed set; recomputed only
-    /// when one of those sizes has grown since.
-    root_modules_cache: Option<(usize, usize, usize, HashSet<String>)>,
 }
 
 enum MaterializedTypeAlias {
     Struct(ast::TypeStruct),
     Structural(ast::TypeStructural),
     Enum(ast::TypeEnum),
-}
-
-#[derive(Debug, Clone)]
-struct SymbolEntry {
-    res: hir::Res,
-    export: SymbolExport,
-    path: Option<fp_core::ast::path::QualifiedPath>,
 }
 
 #[derive(Debug, Clone)]
@@ -209,25 +191,19 @@ struct StructuralFieldSpec {
     ty: LiteralTypeKind,
 }
 
-#[derive(Debug, Clone)]
-enum SymbolExport {
-    Public,
-    Scoped(Vec<String>),
-}
-
-impl SymbolExport {
-    fn can_access(&self, current_module: &[String]) -> bool {
-        match self {
-            SymbolExport::Public => true,
-            SymbolExport::Scoped(scope) => current_module.starts_with(scope.as_slice()),
-        }
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PathResolutionScope {
     Value,
     Type,
+}
+
+impl PathResolutionScope {
+    fn namespace(self) -> hir::Namespace {
+        match self {
+            PathResolutionScope::Value => hir::Namespace::Value,
+            PathResolutionScope::Type => hir::Namespace::Type,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -402,16 +378,33 @@ impl HirGenerator {
                 continue;
             };
             let mut seen = HashSet::new();
-            // Item children (values/types) aren't yet modeled by
-            // `ModuleTree` (see `HirGenerator::package`'s doc comment) —
-            // still a scan over the flat symbol maps, filtered by key
-            // prefix.
-            for key in self
-                .global_value_defs
-                .keys()
-                .chain(self.global_type_defs.keys())
-                .chain(self.type_aliases.keys())
+            // Item children (values/types) — a direct lookup of this
+            // module's own bindings instead of a flat scan over every
+            // global definition in the package filtered by key prefix.
+            for (child_name, _) in self
+                .package
+                .module_tree
+                .bindings(module_id, hir::Namespace::Value)
+                .chain(
+                    self.package
+                        .module_tree
+                        .bindings(module_id, hir::Namespace::Type),
+                )
             {
+                if !seen.insert(child_name.to_string()) {
+                    continue;
+                }
+                let mut full = candidate.segments.clone();
+                full.push(child_name.to_string());
+                out.push(ImportBinding {
+                    target: full,
+                    alias: None,
+                });
+            }
+            // `type X = Y;` aliases live in their own table (see
+            // `register_type_alias`), not modeled by `ModuleTree` —
+            // still a scan over that one flat map, filtered by key prefix.
+            for key in self.type_aliases.keys() {
                 let segments: Vec<&str> = key.split("::").collect();
                 if segments.len() != candidate.segments.len() + 1 {
                     continue;
@@ -540,10 +533,10 @@ impl HirGenerator {
             // resolve the final identifier against the walked module's
             // own bindings.
             let key = candidate.to_key();
-            let value = self.lookup_symbol(&key, &self.global_value_defs);
-            let ty = self.lookup_symbol(&key, &self.global_type_defs);
+            let value = self.lookup_symbol(&key, hir::Namespace::Value);
+            let ty = self.lookup_symbol(&key, hir::Namespace::Type);
             // `type X = Y;` aliases (e.g. `libc::macos::useconds_t`) live in
-            // a separate table from `global_value_defs`/`global_type_defs`
+            // a separate table from the module tree's value/type bindings
             // (see `register_type_alias`) — an import/glob-re-export needs
             // its own explicit copy step here, or a re-exported alias (e.g.
             // via `libc::mod.fp`'s `pub use macos::*;`) never becomes
@@ -598,8 +591,8 @@ impl HirGenerator {
             }
             let key = candidate.to_key();
             let module_alias = self
-                .lookup_symbol(&key, &self.global_value_defs)
-                .or_else(|| self.lookup_symbol(&key, &self.global_type_defs));
+                .lookup_symbol(&key, hir::Namespace::Value)
+                .or_else(|| self.lookup_symbol(&key, hir::Namespace::Type));
             match module_alias {
                 Some(hir::Res::Module(real_path)) => {
                     current = fp_core::ast::path::QualifiedPath::new(real_path);
@@ -638,11 +631,7 @@ impl HirGenerator {
             value_scopes: vec![HashMap::new()],
             module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
             module_visibility: vec![true],
-            global_value_defs: HashMap::new(),
-            global_type_defs: HashMap::new(),
             global_type_defs_by_def_id: HashMap::new(),
-            prelude_value_defs: HashMap::new(),
-            prelude_type_defs: HashMap::new(),
             preassigned_def_ids: HashMap::new(),
             enum_variant_def_ids: HashMap::new(),
             type_aliases: HashMap::new(),
@@ -665,7 +654,6 @@ impl HirGenerator {
             workspace: None,
             pending_impls: Vec::new(),
             resolved_import_aliases: HashSet::new(),
-            root_modules_cache: None,
         }
     }
 
@@ -707,15 +695,16 @@ impl HirGenerator {
     }
 
     pub fn exported_symbols(&self) -> HashMap<String, hir::Res> {
-        self.global_value_defs
-            .iter()
-            .chain(self.global_type_defs.iter())
-            .filter(|(_, entry)| matches!(entry.export, SymbolExport::Public))
-            .map(|(path, entry)| (path.clone(), entry.res.clone()))
+        self.package
+            .module_tree
+            .all_bindings(hir::Namespace::Value)
+            .chain(self.package.module_tree.all_bindings(hir::Namespace::Type))
+            .filter(|(_, entry)| matches!(entry.export, hir::SymbolExport::Public))
+            .map(|(path, entry)| (path.to_key(), entry.res.clone()))
             .collect()
     }
 
-    /// `type_aliases` (unlike `global_value_defs`/`global_type_defs`) has no
+    /// `type_aliases` (unlike the module tree's value/type bindings) has no
     /// per-entry visibility tracking — `register_type_alias` is called for
     /// every `type X = Y;` regardless of `pub`. Export all of them; a
     /// dependent package can only ever reach one by spelling out its exact
@@ -758,8 +747,6 @@ impl HirGenerator {
         self.module_path = fp_core::ast::path::QualifiedPath::new(Vec::new());
         self.module_visibility.clear();
         self.module_visibility.push(true);
-        self.global_value_defs.clear();
-        self.global_type_defs.clear();
         self.enum_variant_def_ids.clear();
         self.struct_field_defs.clear();
         self.package.module_tree = hir::resolve::ModuleTree::new();
@@ -808,6 +795,27 @@ impl HirGenerator {
         self.record_type_symbol(name, res, visibility);
     }
 
+    /// Binds `path`'s last segment as `res` in namespace `ns`, at the
+    /// module node for `path`'s remaining prefix (created via
+    /// `ensure_module` if it doesn't exist yet) — the module tree's
+    /// equivalent of the old flat `global_type_defs`/`global_value_defs`
+    /// insertion, now carrying the same `SymbolEntry` shape directly on
+    /// the tree node instead of a second, parallel lookup table.
+    fn bind_symbol(
+        &mut self,
+        path: &fp_core::ast::path::QualifiedPath,
+        ns: hir::Namespace,
+        entry: hir::SymbolEntry,
+    ) {
+        let mut segments = path.segments.clone();
+        let Some(leaf) = segments.pop() else {
+            return;
+        };
+        let prefix = fp_core::ast::path::QualifiedPath::new(segments);
+        let module_id = self.package.module_tree.ensure_module(&prefix);
+        self.package.module_tree.bind(module_id, ns, &leaf, entry);
+    }
+
     fn record_value_symbol(&mut self, name: &str, res: hir::Res, visibility: &ast::Visibility) {
         let path = self.qualify_path(name);
         self.record_def_path(&res, &path);
@@ -819,14 +827,14 @@ impl HirGenerator {
         if self.suppress_global_registration_depth > 0 {
             return;
         }
-        let qualified = path.to_key();
         let export = self.symbol_export_marker(visibility);
-        self.global_value_defs.insert(
-            qualified,
-            SymbolEntry {
+        self.bind_symbol(
+            &path,
+            hir::Namespace::Value,
+            hir::SymbolEntry {
                 res,
                 export,
-                path: Some(path),
+                path: Some(path.clone()),
             },
         );
     }
@@ -839,9 +847,10 @@ impl HirGenerator {
     ) {
         self.record_def_path(&res, path);
         let export = self.symbol_export_marker(visibility);
-        self.global_value_defs.insert(
-            path.to_key(),
-            SymbolEntry {
+        self.bind_symbol(
+            path,
+            hir::Namespace::Value,
+            hir::SymbolEntry {
                 res,
                 export,
                 path: Some(path.clone()),
@@ -862,14 +871,15 @@ impl HirGenerator {
             self.global_type_defs_by_def_id
                 .entry(*def_id)
                 .or_default()
-                .push(qualified.clone());
+                .push(qualified);
         }
-        self.global_type_defs.insert(
-            qualified,
-            SymbolEntry {
+        self.bind_symbol(
+            &path,
+            hir::Namespace::Type,
+            hir::SymbolEntry {
                 res,
                 export,
-                path: Some(path),
+                path: Some(path.clone()),
             },
         );
     }
@@ -888,11 +898,11 @@ impl HirGenerator {
         }
     }
 
-    fn symbol_export_marker(&self, visibility: &ast::Visibility) -> SymbolExport {
+    fn symbol_export_marker(&self, visibility: &ast::Visibility) -> hir::SymbolExport {
         if self.should_export(visibility) {
-            SymbolExport::Public
+            hir::SymbolExport::Public
         } else {
-            SymbolExport::Scoped(self.module_path.segments.clone())
+            hir::SymbolExport::Scoped(self.module_path.segments.clone())
         }
     }
 
@@ -951,14 +961,16 @@ impl HirGenerator {
         );
         // `global_type_defs_by_def_id` narrows straight to the qualified
         // paths that could possibly resolve to `self_def_id`, instead of
-        // scanning every entry in `global_type_defs` on every impl block
-        // in the package.
+        // scanning every type binding in the package on every impl block.
+        // Deliberately bypasses `lookup_symbol`'s visibility filtering —
+        // a definition's own canonical path is always resolvable from its
+        // own impl block, regardless of privacy.
         let mut paths: Vec<_> = self
             .global_type_defs_by_def_id
             .get(&self_def_id)
             .into_iter()
             .flatten()
-            .filter_map(|key| self.global_type_defs.get(key))
+            .filter_map(|key| self.tree_lookup_raw(key, hir::Namespace::Type))
             .filter_map(|entry| entry.path.clone())
             .collect();
         paths.sort_by_key(|path| path.to_key());
@@ -1035,8 +1047,6 @@ impl HirGenerator {
         self.const_list_length_scopes.push(HashMap::new());
         self.synthetic_items.clear();
         self.package.module_tree = hir::resolve::ModuleTree::new();
-        self.prelude_value_defs.clear();
-        self.prelude_type_defs.clear();
         self.pending_impls.clear();
         self.resolved_import_aliases.clear();
         // Keep predeclared struct fields available for struct update lowering.
@@ -1067,42 +1077,61 @@ impl HirGenerator {
             }
         }
         let type_aliases: Vec<_> = self
-            .global_type_defs
-            .iter()
-            .filter_map(|(key, entry)| {
-                prelude_bare_name(key).map(|name| (name.to_owned(), entry.res.clone()))
+            .package
+            .module_tree
+            .all_bindings(hir::Namespace::Type)
+            .filter_map(|(path, entry)| {
+                prelude_bare_name(&path.to_key()).map(|name| (name.to_owned(), entry.res.clone()))
             })
             .collect();
         let value_aliases: Vec<_> = self
-            .global_value_defs
-            .iter()
-            .filter_map(|(key, entry)| {
-                prelude_bare_name(key).map(|name| (name.to_owned(), entry.res.clone()))
+            .package
+            .module_tree
+            .all_bindings(hir::Namespace::Value)
+            .filter_map(|(path, entry)| {
+                prelude_bare_name(&path.to_key()).map(|name| (name.to_owned(), entry.res.clone()))
             })
             .collect();
         if std::env::var("FP_DEBUG_PRELUDE").is_ok() {
             eprintln!(
-                "DEBUG load_default_prelude_defs: package_id={:?} {} type aliases, {} value aliases, global_type_defs.len()={}, has String={}",
+                "DEBUG load_default_prelude_defs: package_id={:?} {} type aliases, {} value aliases, has String={}",
                 self.package_id,
                 type_aliases.len(),
                 value_aliases.len(),
-                self.global_type_defs.len(),
                 type_aliases.iter().any(|(name, _)| name == "String"),
             );
-            for (key, _) in self.global_type_defs.iter() {
-                if key.ends_with("::String") || key == "String" {
-                    eprintln!("DEBUG global_type_defs candidate: {key}");
-                }
-            }
         }
-        self.prelude_type_defs = type_aliases.into_iter().collect();
-        self.prelude_value_defs = value_aliases.into_iter().collect();
+        let prelude_module = self.package.module_tree.prelude();
+        for (name, res) in type_aliases {
+            self.package.module_tree.bind(
+                prelude_module,
+                hir::Namespace::Type,
+                &name,
+                hir::SymbolEntry {
+                    res,
+                    export: hir::SymbolExport::Public,
+                    path: None,
+                },
+            );
+        }
+        for (name, res) in value_aliases {
+            self.package.module_tree.bind(
+                prelude_module,
+                hir::Namespace::Value,
+                &name,
+                hir::SymbolEntry {
+                    res,
+                    export: hir::SymbolExport::Public,
+                    path: None,
+                },
+            );
+        }
 
-        // `self.global_value_defs`/`global_type_defs` only ever hold *this*
-        // module's own (freshly `reset_file_context`-cleared) declarations
-        // — std's prelude re-exports live in a dependency package, compiled
-        // in its own, separate `HirGenerator` invocation entirely. Its
-        // exported symbol table (`hir_exports`, the third element
+        // This package's own module tree only ever holds *this* module's
+        // own (freshly `reset_file_context`-cleared) declarations — std's
+        // prelude re-exports live in a dependency package, compiled in its
+        // own, separate `HirGenerator` invocation entirely. Its exported
+        // symbol table (`hir_exports`, the third element
         // `hir_definitions()` returns) is where those actually surface;
         // scan it the same way, merging in rather than overwriting what's
         // already collected above.
@@ -1117,12 +1146,40 @@ impl HirGenerator {
                     // values) — record it in both; an entry that's never
                     // consulted in the "wrong" namespace is simply unused,
                     // not incorrect.
-                    self.prelude_value_defs
-                        .entry(name.to_owned())
-                        .or_insert_with(|| res.clone());
-                    self.prelude_type_defs
-                        .entry(name.to_owned())
-                        .or_insert_with(|| res.clone());
+                    if self
+                        .package
+                        .module_tree
+                        .lookup(prelude_module, hir::Namespace::Value, name)
+                        .is_none()
+                    {
+                        self.package.module_tree.bind(
+                            prelude_module,
+                            hir::Namespace::Value,
+                            name,
+                            hir::SymbolEntry {
+                                res: res.clone(),
+                                export: hir::SymbolExport::Public,
+                                path: None,
+                            },
+                        );
+                    }
+                    if self
+                        .package
+                        .module_tree
+                        .lookup(prelude_module, hir::Namespace::Type, name)
+                        .is_none()
+                    {
+                        self.package.module_tree.bind(
+                            prelude_module,
+                            hir::Namespace::Type,
+                            name,
+                            hir::SymbolEntry {
+                                res: res.clone(),
+                                export: hir::SymbolExport::Public,
+                                path: None,
+                            },
+                        );
+                    }
                 }
             }
         }
@@ -1160,11 +1217,11 @@ impl HirGenerator {
                 .type_alias_targets
                 .extend(hir_program.type_alias_targets);
             // Cross-package exported value/type symbols (`_exports`) are
-            // *not* eagerly copied into `global_value_defs`/
-            // `global_type_defs` here — `resolve_type_symbol`/
-            // `resolve_value_symbol`/`lookup_global_res`/`item_exists` all
-            // fall back to `workspace.find_export` lazily on a
-            // local-lookup miss instead.
+            // *not* eagerly copied into this package's own module tree
+            // here — `resolve_type_symbol`/`resolve_value_symbol`/
+            // `lookup_global_res`/`item_exists` all fall back to
+            // `workspace.find_export` lazily on a local-lookup miss
+            // instead.
         }
         for path in workspace.module_paths() {
             self.package.module_tree.ensure_module(&path);
@@ -1289,7 +1346,8 @@ impl HirGenerator {
                     // registered here, not left to `append_item` (STEP 4),
                     // so that STEP 2's import resolution (in particular glob
                     // re-exports like `pub use macos::*;`) can already see
-                    // them when it enumerates `global_value_defs`.
+                    // them when it enumerates the module tree's value
+                    // bindings.
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_value_def(&decl_fn.name.name, def_id, &ast::Visibility::Public);
                 }
@@ -1525,8 +1583,22 @@ impl HirGenerator {
         }
     }
 
-    fn lookup_symbol(&self, key: &str, map: &HashMap<String, SymbolEntry>) -> Option<hir::Res> {
-        map.get(key).and_then(|entry| {
+    /// A qualified-path `key` (`"a::b::c"`, or a bare name at the crate
+    /// root) resolved against the module tree's bindings in namespace
+    /// `ns`, with no visibility filtering — the raw lookup `lookup_symbol`
+    /// applies `SymbolExport::can_access` on top of, and `canonical_type_path`
+    /// deliberately uses unfiltered instead (a definition's own canonical
+    /// path is always resolvable from its own impl block).
+    fn tree_lookup_raw(&self, key: &str, ns: hir::Namespace) -> Option<&hir::SymbolEntry> {
+        let mut segments: Vec<String> = key.split("::").map(|s| s.to_string()).collect();
+        let leaf = segments.pop()?;
+        let prefix = fp_core::ast::path::QualifiedPath::new(segments);
+        let module_id = self.package.module_tree.module_id(&prefix)?;
+        self.package.module_tree.lookup(module_id, ns, &leaf)
+    }
+
+    fn lookup_symbol(&self, key: &str, ns: hir::Namespace) -> Option<hir::Res> {
+        self.tree_lookup_raw(key, ns).and_then(|entry| {
             if entry.export.can_access(&self.module_path.segments) {
                 Some(entry.res.clone())
             } else {
@@ -1565,9 +1637,14 @@ impl HirGenerator {
     /// does.
     fn resolve_global_type_symbol(&self, name: &str) -> Option<hir::Res> {
         let qualified = self.module_path.with_segment(name.to_string()).to_key();
-        self.lookup_symbol(&qualified, &self.global_type_defs)
-            .or_else(|| self.prelude_type_defs.get(name).cloned())
-            .or_else(|| self.lookup_symbol(name, &self.global_type_defs))
+        self.lookup_symbol(&qualified, hir::Namespace::Type)
+            .or_else(|| {
+                self.package
+                    .module_tree
+                    .lookup_res(self.package.module_tree.prelude(), hir::Namespace::Type, name)
+                    .cloned()
+            })
+            .or_else(|| self.lookup_symbol(name, hir::Namespace::Type))
             // Cross-package export (e.g. `libc::char`), looked up lazily
             // against the workspace on a local-lookup miss — see
             // `lookup_global_res`'s identical fallback.
@@ -1619,9 +1696,14 @@ impl HirGenerator {
     /// resolution, not parser syntax.
     fn resolve_global_value_symbol(&self, name: &str) -> Option<hir::Res> {
         let qualified = self.module_path.with_segment(name.to_string()).to_key();
-        self.lookup_symbol(&qualified, &self.global_value_defs)
-            .or_else(|| self.prelude_value_defs.get(name).cloned())
-            .or_else(|| self.lookup_symbol(name, &self.global_value_defs))
+        self.lookup_symbol(&qualified, hir::Namespace::Value)
+            .or_else(|| {
+                self.package
+                    .module_tree
+                    .lookup_res(self.package.module_tree.prelude(), hir::Namespace::Value, name)
+                    .cloned()
+            })
+            .or_else(|| self.lookup_symbol(name, hir::Namespace::Value))
             .or_else(|| self.workspace.as_ref()?.find_export(&qualified))
             .or_else(|| self.workspace.as_ref()?.find_export(name))
             .or_else(|| self.workspace.as_ref()?.find_export_by_name(name))
@@ -1904,13 +1986,13 @@ impl HirGenerator {
         }
         self.program_def_map = program.def_map.clone();
 
-        // `load_default_prelude_defs` scans *this* package's own
-        // `global_type_defs`/`global_value_defs` for prelude-tagged entries
-        // (see its doc comment) — those tables are only populated by
-        // `predeclare_items` (steps 1/3 above), so this must run after both,
-        // never before. Running it before predeclare (the previous
-        // placement, right after `seed_workspace_definitions`) meant a
-        // package's own prelude module scanned an always-empty table,
+        // `load_default_prelude_defs` scans *this* package's own module
+        // tree for prelude-tagged entries (see its doc comment) — those
+        // bindings are only populated by `predeclare_items` (steps 1/3
+        // above), so this must run after both, never before. Running it
+        // before predeclare (the previous placement, right after
+        // `seed_workspace_definitions`) meant a package's own prelude
+        // module scanned an always-empty tree,
         // silently hiding every one of its own prelude items (`Vec`,
         // `String`, `Option`, `Box`, `Rc`, ...) from its own unqualified
         // uses — exactly the case when compiling `std` itself, whose source
@@ -3890,7 +3972,12 @@ impl HirGenerator {
                 let fields: Vec<ast::StructuralField> = if struct_ty.name != def_type.name {
                     // Look up source struct fields
                     let source_name = struct_ty.name.as_str();
-                    let source_def_id = self.lookup_symbol(source_name, &self.global_type_defs);
+                    // Pre-existing quirk, preserved as-is: `source_name` is
+                    // a raw, unqualified name, not run through
+                    // `qualify_path`/`to_key()` — so this only succeeds if
+                    // the source struct happens to be registered at the
+                    // crate root.
+                    let source_def_id = self.lookup_symbol(source_name, hir::Namespace::Type);
                     let source_fields: Vec<ast::StructuralField> = source_def_id
                         .and_then(|res| match res {
                             hir::Res::Def(def_id) => self.struct_field_defs.get(&def_id).cloned(),

@@ -492,7 +492,7 @@ impl WorkspaceContext {
     /// value/type symbol exported by some other package's `hir_exports`
     /// (e.g. `libc::macos::getenv`), looked up lazily by its fully
     /// qualified key instead of being eagerly copied into the caller's
-    /// own `global_value_defs`/`global_type_defs`.
+    /// own module tree.
     pub fn find_export(&self, key: &str) -> Option<crate::hir::Res> {
         for package in self.sorted_packages() {
             if let Some(res) = package.borrow().hir_exports.get(key) {

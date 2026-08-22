@@ -81,36 +81,43 @@ records what's real today versus what's still ahead.
   the whole program a question rather than indexing a package's fields
   directly.
 
-**Not yet done** (this is the actual remaining gap, superseding the old
-"Target design" below): `HirGenerator` still keeps its own flat
-`module_defs`/`global_type_defs`/`global_value_defs`/`prelude_type_defs`/
-`prelude_value_defs`/`crate_roots` fields internally and hasn't been
-rewired to write into a `ModuleTree` (via `hir::Package`/`hir::Program`)
-instead — the flat-map resolution logic itself is unchanged, only the
-*storage shape* for holding a finished package's HIR content has moved.
-Similarly, `HirGenerator` still builds `def_paths`/`op_defs`/
+**Fold-in landed**: `ModuleTree`'s bindings now carry the full
+`hir::SymbolEntry` shape (`res`/`export`/`path`, moved from `fp-backend`
+into `fp-core::hir::resolve` alongside `ModuleTree`), so `HirGenerator`'s
+former `global_type_defs`/`global_value_defs`/`prelude_type_defs`/
+`prelude_value_defs`/`crate_roots` flat maps are gone entirely — every
+value/type binding now lives directly on its owning module's tree node
+(`record_value_symbol`/`record_type_symbol`/`record_value_path` all go
+through a shared `bind_symbol` helper), and the package-scoped bare-name
+prelude fallback lives on a reserved `ModuleTree::prelude()` node instead
+of its own pair of maps. `expand_glob_import` now lists a module's own
+value/type bindings via `ModuleTree::bindings(module, ns)` — a direct
+per-node lookup — instead of a scan over every global definition in the
+package filtered by qualified-path prefix; only `type_aliases` (a
+`type X = Y;` table with no per-entry visibility, deliberately left out of
+this migration) still needs that kind of scan. `lookup_symbol`/
+`tree_lookup_raw` are the surviving single entry points for a qualified-
+or bare-name key lookup, replacing the old `lookup_symbol(key, &flat_map)`
+signature with `lookup_symbol(key, namespace)` against the tree.
+
+**Still not done**: `HirGenerator` still builds `def_paths`/`op_defs`/
 `intrinsic_defs`/`type_alias_targets`/`placeholder_defs` as private scratch
 fields and merges them into the final `hir::Package` at `transform_package`'s
 several return points (`program.X.extend(self.X.clone())`) — the
 mirror/extend step this whole migration was meant to eliminate is still
 there internally, just now merging into a `Package` instead of the old
-`Program`.
+`Program`. And `fp-typing`'s `path_ty`/`hir_to_ast`'s `HirToAstLifter` still
+hold a `Package` directly rather than querying `hir::Program`'s resolution
+methods (`def_path`, `type_alias_target`, `resolve`, ...).
 
 ## Target design (still future work)
 
 1. **Rewire `HirGenerator` to hold `program: hir::Program` +
    `current_package: PackageId`, writing directly into
    `self.program.packages[&self.current_package]` throughout** — no private
-   scratch fields, no mirror/extend step. `module_defs`/`global_type_defs`/
-   `global_value_defs`/`prelude_type_defs`/`prelude_value_defs`/`crate_roots`
-   are replaced by calls into that package's own `module_tree`:
-   `expand_glob_import` becomes "list bindings at this tree node" instead of
-   a scan-and-filter over flat maps (`module_tree.children(...)`); a
-   sub-crate root (this session's `crate_roots` addition) becomes just a
-   child of the crate-root node, not a separate table;
-   `resolve_module_path_through_aliases`/`register_import_binding`'s
-   per-segment `module_defs.contains` checks become `module_tree.child(...)`
-   descents.
+   scratch fields (`def_paths`/`op_defs`/`intrinsic_defs`/
+   `type_alias_targets`/`placeholder_defs`), no mirror/extend step at
+   `transform_package`'s return points.
 2. **Namespace enum stays two-valued** (already true — `Namespace::{Type,
    Value}` exists, no macro namespace, since macros are already gone by
    resolution time).
@@ -118,13 +125,7 @@ there internally, just now merging into a `Package` instead of the old
 4. **`fp-typing`'s `path_ty` and `hir_to_ast`'s `HirToAstLifter` should query
    `hir::Program`'s resolution methods** (`def_path`, `type_alias_target`,
    ...) instead of indexing a package's fields directly, once they're
-   threaded a `Program` (today they hold a `Package` directly, inherited
-   unchanged from before this rename).
+   threaded a `Program` (today they hold a `Package` directly).
 5. **Import fixpoint loop keeps its current shape** (`resolve_pending_imports`,
-   `register_import_binding`); only the underlying storage changes from flat
-   maps to tree-node bindings.
-
-A migration (when undertaken) would migrate one `HirGenerator` consumer at a
-time (predeclare → imports → glob-expansion → visibility checks) against the
-now-real `ModuleTree`/`Package`/`Program` types, then delete the flat maps
-once every consumer reads from the tree instead.
+   `register_import_binding`) — already reading/writing the tree, unaffected
+   by this remaining step.

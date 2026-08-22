@@ -21,6 +21,33 @@ pub enum Namespace {
     Value,
 }
 
+/// A name binding's resolved target plus the visibility/canonical-path
+/// metadata a bare `Res` doesn't carry. Moved here (from `fp-backend`'s
+/// `ast_to_hir` module) so `ModuleTree` bindings can hold it directly
+/// instead of `HirGenerator` keeping a second, parallel flat-map lookup
+/// table just to carry this extra metadata (see `docs/Resolution.md`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SymbolEntry {
+    pub res: Res,
+    pub export: SymbolExport,
+    pub path: Option<QualifiedPath>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SymbolExport {
+    Public,
+    Scoped(Vec<String>),
+}
+
+impl SymbolExport {
+    pub fn can_access(&self, current_module: &[String]) -> bool {
+        match self {
+            SymbolExport::Public => true,
+            SymbolExport::Scoped(scope) => current_module.starts_with(scope.as_slice()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct ModuleNode {
     #[allow(dead_code)]
@@ -28,7 +55,7 @@ struct ModuleNode {
     #[allow(dead_code)]
     name: String,
     children: HashMap<String, ModuleId>,
-    bindings: [HashMap<String, Res>; 2],
+    bindings: [HashMap<String, SymbolEntry>; 2],
 }
 
 impl ModuleNode {
@@ -64,13 +91,25 @@ impl ModuleTree {
         let mut by_path = HashMap::new();
         by_path.insert(QualifiedPath::new(Vec::new()), ModuleId(0));
         Self {
-            nodes: vec![ModuleNode::root()],
+            // Node 1 is the reserved prelude node (see `prelude()`) — not
+            // reachable via `by_path`/`ensure_module`/`child`, since it
+            // isn't a real module, just a place to hang bare-name fallback
+            // bindings that `load_default_prelude_defs` populates.
+            nodes: vec![ModuleNode::root(), ModuleNode::root()],
             by_path,
         }
     }
 
     pub fn root(&self) -> ModuleId {
         ModuleId(0)
+    }
+
+    /// Reserved node for package-scoped, unqualified prelude fallback
+    /// bindings (replaces the old `prelude_type_defs`/`prelude_value_defs`
+    /// flat maps) — not a real module, never reachable via `child`/
+    /// `module_exists`/`ensure_module`.
+    pub fn prelude(&self) -> ModuleId {
+        ModuleId(1)
     }
 
     /// Ensures every segment of `path` exists as a node, creating any
@@ -126,12 +165,43 @@ impl ModuleTree {
         self.nodes[module.0 as usize].children.get(name).copied()
     }
 
-    pub fn bind(&mut self, module: ModuleId, ns: Namespace, name: &str, res: Res) {
-        self.nodes[module.0 as usize].bindings[ns as usize].insert(name.to_string(), res);
+    pub fn bind(&mut self, module: ModuleId, ns: Namespace, name: &str, entry: SymbolEntry) {
+        self.nodes[module.0 as usize].bindings[ns as usize].insert(name.to_string(), entry);
     }
 
-    pub fn lookup(&self, module: ModuleId, ns: Namespace, name: &str) -> Option<&Res> {
+    pub fn lookup(&self, module: ModuleId, ns: Namespace, name: &str) -> Option<&SymbolEntry> {
         self.nodes[module.0 as usize].bindings[ns as usize].get(name)
+    }
+
+    /// Convenience for callers that only need the resolved target, not the
+    /// visibility/canonical-path metadata (e.g. module-alias detection).
+    pub fn lookup_res(&self, module: ModuleId, ns: Namespace, name: &str) -> Option<&Res> {
+        self.lookup(module, ns, name).map(|entry| &entry.res)
+    }
+
+    /// Every binding in the tree in the given namespace, with its full
+    /// qualified path — a tree walk replacing what used to be a flat
+    /// `HashMap` iteration over `global_type_defs`/`global_value_defs`
+    /// (used by `exported_symbols` and `load_default_prelude_defs`).
+    /// Does not visit the reserved `prelude()` node — it holds no real
+    /// qualified path of its own.
+    pub fn all_bindings(&self, ns: Namespace) -> impl Iterator<Item = (QualifiedPath, &SymbolEntry)> {
+        self.by_path.iter().flat_map(move |(path, id)| {
+            self.nodes[id.0 as usize].bindings[ns as usize]
+                .iter()
+                .map(move |(name, entry)| (path.with_segment(name.clone()), entry))
+        })
+    }
+
+    /// Every binding directly at `module` (not descendants) in namespace
+    /// `ns` — lets a glob-import (`use some::module::*;`) expansion list a
+    /// module's own value/type members with one `HashMap` iteration,
+    /// instead of a flat scan over every global definition in the package
+    /// filtered by qualified-path prefix.
+    pub fn bindings(&self, module: ModuleId, ns: Namespace) -> impl Iterator<Item = (&str, &SymbolEntry)> {
+        self.nodes[module.0 as usize].bindings[ns as usize]
+            .iter()
+            .map(|(name, entry)| (name.as_str(), entry))
     }
 
     /// Every direct child of `module`, by name — replaces `expand_glob_import`'s
@@ -178,12 +248,40 @@ mod tests {
     fn bind_and_lookup_round_trip_per_namespace() {
         let mut tree = ModuleTree::new();
         let module = tree.ensure_module(&path(&["std", "core", "option"]));
-        tree.bind(module, Namespace::Type, "Option", Res::SelfTy);
+        tree.bind(
+            module,
+            Namespace::Type,
+            "Option",
+            SymbolEntry {
+                res: Res::SelfTy,
+                export: SymbolExport::Public,
+                path: None,
+            },
+        );
         assert!(matches!(
             tree.lookup(module, Namespace::Type, "Option"),
-            Some(Res::SelfTy)
+            Some(SymbolEntry { res: Res::SelfTy, .. })
         ));
         assert!(tree.lookup(module, Namespace::Value, "Option").is_none());
+    }
+
+    #[test]
+    fn all_bindings_walks_every_module_with_full_path() {
+        let mut tree = ModuleTree::new();
+        let module = tree.ensure_module(&path(&["std", "core", "option"]));
+        tree.bind(
+            module,
+            Namespace::Type,
+            "Option",
+            SymbolEntry {
+                res: Res::SelfTy,
+                export: SymbolExport::Public,
+                path: None,
+            },
+        );
+        let found: Vec<_> = tree.all_bindings(Namespace::Type).collect();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, path(&["std", "core", "option", "Option"]));
     }
 
     #[test]

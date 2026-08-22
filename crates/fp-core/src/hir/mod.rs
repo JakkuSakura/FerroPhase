@@ -11,7 +11,7 @@ pub mod resolve;
 pub mod ty;
 
 pub use ident::{DefPath, Symbol};
-pub use resolve::{ModuleId, ModuleTree, Namespace};
+pub use resolve::{ModuleId, ModuleTree, Namespace, SymbolEntry, SymbolExport};
 pub use ty::{Abi, Ty};
 
 pub type NodeId = u32;
@@ -916,7 +916,7 @@ impl Program {
     ) -> Option<&Res> {
         let package = self.package(from)?;
         let module = package.module_tree.module_id(from_module)?;
-        package.module_tree.lookup(module, ns, name)
+        package.module_tree.lookup_res(module, ns, name)
     }
 }
 

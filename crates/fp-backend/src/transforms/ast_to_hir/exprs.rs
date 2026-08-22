@@ -2496,14 +2496,11 @@ impl HirGenerator {
             return None;
         }
         let key = path.to_key();
-        let local = match scope {
-            PathResolutionScope::Value => self.lookup_symbol(&key, &self.global_value_defs),
-            PathResolutionScope::Type => self.lookup_symbol(&key, &self.global_type_defs),
-        };
+        let local = self.lookup_symbol(&key, scope.namespace());
         // A cross-package export (e.g. `libc::macos::getenv`) is looked up
         // lazily against the workspace on a local-lookup miss, instead of
-        // being eagerly copied into `global_value_defs`/`global_type_defs`
-        // up front (see `seed_workspace_definitions`).
+        // being eagerly copied into the module tree's own bindings up
+        // front (see `seed_workspace_definitions`).
         local
             .or_else(|| self.workspace.as_ref()?.find_export(&key))
             // The caller's own module-path prefix never matches the

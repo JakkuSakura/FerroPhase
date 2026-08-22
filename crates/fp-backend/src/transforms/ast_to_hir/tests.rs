@@ -625,11 +625,20 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
     // `Result` is defined in `std::result` and re-exported through the
     // prelude; only the prelude alias entry is needed here for the bare
     // `Result` reference below to resolve.
-    generator.global_type_defs.insert(
-        "std::prelude::Result".to_string(),
-        SymbolEntry {
+    let prelude_module = generator
+        .package
+        .module_tree
+        .ensure_module(&QualifiedPath::new(vec![
+            "std".to_string(),
+            "prelude".to_string(),
+        ]));
+    generator.package.module_tree.bind(
+        prelude_module,
+        hir::Namespace::Type,
+        "Result",
+        hir::SymbolEntry {
             res: hir::Res::Def(result_def_id),
-            export: SymbolExport::Public,
+            export: hir::SymbolExport::Public,
             path: None,
         },
     );

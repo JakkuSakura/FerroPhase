@@ -84,45 +84,19 @@ impl HirGenerator {
     }
 
     /// `root_modules` (used by `resolve_item_path`'s root-module heuristic
-    /// in `name_to_hir_path_with_scope`) is derived from `module_defs`/
-    /// `global_type_defs`/`global_value_defs`, which only grow as more
-    /// items get processed — but the caller used to rebuild it (including
-    /// a `parse_path` string-parse per global def key) from scratch on
-    /// *every* unresolved path reference. For a large package (the
-    /// vendored std library) with many still-unresolved references, that
-    /// made each one pay an O(workspace definition count) cost. Cache it,
-    /// keyed by a cheap size snapshot of its three inputs — invalidated
-    /// (and rebuilt) only when one of them has actually grown since the
-    /// last call.
-    fn cached_root_modules(&mut self) -> HashSet<String> {
+    /// in `name_to_hir_path_with_scope`) is every top-level module name —
+    /// now a direct O(children) tree lookup: every item's owning module is
+    /// `ensure_module`d at the point the item itself is bound (see
+    /// `bind_symbol`), so a root-level module is always a direct child of
+    /// `module_tree.root()`, with no need to scan every item's qualified
+    /// path (as the old flat-map-based version did) or cache the result.
+    fn cached_root_modules(&self) -> HashSet<String> {
         let root = self.package.module_tree.root();
-        let sizes = (
-            self.package.module_tree.children(root).count(),
-            self.global_type_defs.len(),
-            self.global_value_defs.len(),
-        );
-        if let Some((a, b, c, cached)) = &self.root_modules_cache {
-            if (*a, *b, *c) == sizes {
-                return cached.clone();
-            }
-        }
-        let mut root_modules = HashSet::new();
-        for (name, _) in self.package.module_tree.children(root) {
-            root_modules.insert(name.to_string());
-        }
-        for key in self
-            .global_type_defs
-            .keys()
-            .chain(self.global_value_defs.keys())
-        {
-            if let Ok(parsed) = parse_path(key) {
-                if let Some(head) = parsed.segments.first() {
-                    root_modules.insert(head.clone());
-                }
-            }
-        }
-        self.root_modules_cache = Some((sizes.0, sizes.1, sizes.2, root_modules.clone()));
-        root_modules
+        self.package
+            .module_tree
+            .children(root)
+            .map(|(name, _)| name.to_string())
+            .collect()
     }
 
     pub(super) fn name_to_hir_path_with_scope(
@@ -440,17 +414,8 @@ impl HirGenerator {
             };
             let item_exists = |candidate: &QualifiedPath| {
                 let key = candidate.to_key();
-                match scope {
-                    PathResolutionScope::Value => {
-                        if self.global_value_defs.contains_key(&key) {
-                            return true;
-                        }
-                    }
-                    PathResolutionScope::Type => {
-                        if self.global_type_defs.contains_key(&key) {
-                            return true;
-                        }
-                    }
+                if self.tree_lookup_raw(&key, scope.namespace()).is_some() {
+                    return true;
                 }
                 // Cross-package export (e.g. `libc::macos::getenv`),
                 // looked up lazily against the workspace on a local-lookup
