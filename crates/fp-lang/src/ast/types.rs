@@ -896,10 +896,15 @@ fn parse_type_arg(input: &mut &[Token]) -> ModalResult<Ty> {
     // `<...>` list at all. `parse_cast_no_struct` sits below every
     // binary operator in the precedence chain, so it naturally stops
     // right after the literal.
+    // A braced const-generic argument (real `alloc::vec::mod`'s own
+    // `TransmuteFrom<&'a MaybeUninit<From>, { Assume::SAFETY }>`) is a
+    // block expression, not a bare literal — same value-position as the
+    // literal case just below, just wrapped in `{ .. }`.
     if input
         .first()
         .is_some_and(|token| token.kind == TokenKind::Number || token.kind == TokenKind::StringLiteral)
         || matches!(peek_ident_like(*input), Some("true" | "false" | "null"))
+        || peek_symbol(*input) == Some("{")
     {
         let expr = parse_cast_no_struct(input, 0)?;
         return Ok(Ty::Expr(Box::new(expr)));

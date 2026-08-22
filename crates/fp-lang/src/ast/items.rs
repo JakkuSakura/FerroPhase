@@ -1341,16 +1341,25 @@ fn skip_where_clause(input: &mut &[Token]) -> ModalResult<()> {
     // own generic args can nest a `{`/`;` that means something else
     // entirely (real `core::array`'s own `where R: Residual<[R::Output;
     // N]>`: that `;` is the array-length separator, not the where
-    // clause's own terminator). Track bracket/paren/brace depth rather
-    // than trusting the first raw `{`/`;` token seen.
+    // clause's own terminator; real `alloc::vec::mod`'s own `where for<'a>
+    // ..: TransmuteFrom<.., { Assume::SAFETY }>` nests a braced
+    // const-generic argument inside a `<..>` generic-arg list, whose own
+    // `{` must not be mistaken for the where clause's own terminator
+    // either). Track angle-bracket depth alongside bracket/paren/brace
+    // depth — real Rust never uses a bare `<`/`>` comparison operator
+    // inside a where clause's own bound list, only generic-arg delimiters
+    // — so this is unambiguous here even though it wouldn't be in general
+    // expression position.
     let mut depth: i32 = 0;
     while !input.is_empty() {
         if depth == 0 && matches!(peek_symbol(input), Some("{") | Some(";")) {
             return Ok(());
         }
         match peek_symbol(input) {
-            Some("(" | "[" | "{") => depth += 1,
-            Some(")" | "]" | "}") => depth -= 1,
+            Some("(" | "[" | "{" | "<") => depth += 1,
+            Some(")" | "]" | "}" | ">") => depth -= 1,
+            Some("<<") => depth += 2,
+            Some(">>") => depth -= 2,
             _ => {}
         }
         *input = &input[1..];
