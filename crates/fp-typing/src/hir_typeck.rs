@@ -2645,10 +2645,48 @@ impl HirTypeChecker {
         actual: &Ty,
         substitutions: &mut HashMap<ty::ParamTy, Ty>,
     ) -> Result<()> {
+        self.unify_call_types_impl(expected, actual, substitutions, true)
+    }
+
+    /// `unify_call_types`, but purely speculative: used by candidate-impl
+    /// matching (`method_output_at`'s `matches_receiver`, `generic_args_
+    /// compatible`, ...) to test compatibility without committing to it —
+    /// the caller always discards the actual `Result` via `.is_ok()`/
+    /// `.is_err()` and moves on to the next candidate on failure. Real
+    /// Rust's own method-resolution candidate search never turns a
+    /// rejected candidate into a diagnostic; only "no candidate matched
+    /// at all" is a real error. Plain `unify_call_types` records every
+    /// mismatch as a permanent diagnostic (`require_same`'s whole point,
+    /// for *committed* checks) — reused unchanged for a speculative probe,
+    /// every non-matching candidate among (for example) a numeric type's
+    /// dozen near-identical width-specific impls would permanently pollute
+    /// the diagnostic list once per rejected candidate per call site,
+    /// even though the search goes on to find the right one and the
+    /// overall typecheck never actually fails.
+    fn unify_call_types_probe(
+        &self,
+        expected: &Ty,
+        actual: &Ty,
+        substitutions: &mut HashMap<ty::ParamTy, Ty>,
+    ) -> Result<()> {
+        self.unify_call_types_impl(expected, actual, substitutions, false)
+    }
+
+    fn unify_call_types_impl(
+        &self,
+        expected: &Ty,
+        actual: &Ty,
+        substitutions: &mut HashMap<ty::ParamTy, Ty>,
+        record: bool,
+    ) -> Result<()> {
         match (&expected.kind, &actual.kind) {
             (TyKind::Param(param), _) => {
                 if let Some(previous) = substitutions.get(param) {
-                    self.require_same(previous, actual)?;
+                    if record {
+                        self.require_same(previous, actual)?;
+                    } else if previous != actual {
+                        return Err(Error::from("speculative type mismatch"));
+                    }
                 } else {
                     substitutions.insert(param.clone(), actual.clone());
                 }
@@ -2656,17 +2694,21 @@ impl HirTypeChecker {
             }
             (_, TyKind::Param(param)) => {
                 if let Some(previous) = substitutions.get(param) {
-                    self.require_same(previous, expected)?;
+                    if record {
+                        self.require_same(previous, expected)?;
+                    } else if previous != expected {
+                        return Err(Error::from("speculative type mismatch"));
+                    }
                 } else {
                     substitutions.insert(param.clone(), expected.clone());
                 }
                 Ok(())
             }
             (TyKind::Ref(_, expected, _), TyKind::Ref(_, actual, _)) => {
-                self.unify_call_types(expected, actual, substitutions)
+                self.unify_call_types_impl(expected, actual, substitutions, record)
             }
             (TyKind::Ref(_, expected, _), _) => {
-                self.unify_call_types(expected, actual, substitutions)
+                self.unify_call_types_impl(expected, actual, substitutions, record)
             }
             // Symmetric to the rule above: a bare-expected/`Ref`-actual pair
             // (e.g. a `str`-returning call's result reconciled against a
@@ -2675,7 +2717,7 @@ impl HirTypeChecker {
             // don't match after peeling, the recursive call's own catch-all
             // still reports a genuine mismatch.
             (_, TyKind::Ref(_, actual, _)) => {
-                self.unify_call_types(expected, actual, substitutions)
+                self.unify_call_types_impl(expected, actual, substitutions, record)
             }
             (TyKind::FnPtr(expected), TyKind::FnPtr(actual))
                 if expected.binder.value.inputs.len() == actual.binder.value.inputs.len() =>
@@ -2687,12 +2729,13 @@ impl HirTypeChecker {
                     .iter()
                     .zip(&actual.binder.value.inputs)
                 {
-                    self.unify_call_types(expected, actual, substitutions)?;
+                    self.unify_call_types_impl(expected, actual, substitutions, record)?;
                 }
-                self.unify_call_types(
+                self.unify_call_types_impl(
                     &expected.binder.value.output,
                     &actual.binder.value.output,
                     substitutions,
+                    record,
                 )
             }
             (TyKind::Tuple(expected), TyKind::Tuple(actual)) if expected.len() == actual.len() => {
@@ -2700,14 +2743,14 @@ impl HirTypeChecker {
                     .iter()
                     .zip(actual)
                     .try_for_each(|(expected, actual)| {
-                        self.unify_call_types(expected, actual, substitutions)
+                        self.unify_call_types_impl(expected, actual, substitutions, record)
                     })
             }
             (TyKind::Array(expected, _), TyKind::Array(actual, _))
             | (TyKind::Slice(expected), TyKind::Slice(actual))
             | (TyKind::Array(expected, _), TyKind::Slice(actual))
             | (TyKind::Slice(expected), TyKind::Array(actual, _)) => {
-                self.unify_call_types(expected, actual, substitutions)
+                self.unify_call_types_impl(expected, actual, substitutions, record)
             }
             (TyKind::Adt(expected, expected_args), TyKind::Adt(actual, actual_args))
                 if expected.did == actual.did && expected_args.len() == actual_args.len() =>
@@ -2716,7 +2759,7 @@ impl HirTypeChecker {
                     if let (GenericArg::Type(expected), GenericArg::Type(actual)) =
                         (expected, actual)
                     {
-                        self.unify_call_types(expected, actual, substitutions)?;
+                        self.unify_call_types_impl(expected, actual, substitutions, record)?;
                     }
                 }
                 Ok(())
@@ -2734,7 +2777,18 @@ impl HirTypeChecker {
             // parameter) — this compiler has no real `void`/opaque-pointer
             // distinction, just an ordinary `RawPtr(())`.
             (TyKind::RawPtr(_), TyKind::RawPtr(_)) => Ok(()),
-            _ => self.require_same(expected, actual),
+            _ => {
+                if record {
+                    self.require_same(expected, actual)
+                } else if expected == actual
+                    || matches!(expected.kind, TyKind::Never)
+                    || matches!(actual.kind, TyKind::Never)
+                {
+                    Ok(())
+                } else {
+                    Err(Error::from("speculative type mismatch"))
+                }
+            }
         }
     }
 
@@ -2759,7 +2813,7 @@ impl HirTypeChecker {
                         return true;
                     }
                     let mut substitutions = HashMap::new();
-                    self.unify_call_types(impl_ty, receiver_ty, &mut substitutions)
+                    self.unify_call_types_probe(impl_ty, receiver_ty, &mut substitutions)
                         .is_ok()
                 }
                 _ => impl_arg == receiver_arg,
@@ -2781,11 +2835,11 @@ impl HirTypeChecker {
             return Ok(a.clone());
         }
         let mut substitutions = HashMap::new();
-        if self.unify_call_types(a, b, &mut substitutions).is_ok() {
+        if self.unify_call_types_probe(a, b, &mut substitutions).is_ok() {
             return Ok(self.substitute_param_map(a, &substitutions));
         }
         let mut substitutions = HashMap::new();
-        if self.unify_call_types(b, a, &mut substitutions).is_ok() {
+        if self.unify_call_types_probe(b, a, &mut substitutions).is_ok() {
             return Ok(self.substitute_param_map(b, &substitutions));
         }
         self.require_same(a, b)?;
@@ -2925,8 +2979,13 @@ impl HirTypeChecker {
         // `Self`'s position, substituted from the *actual*
         // receiver — everything else in the signature stays
         // in terms of the method's own generics for now.
+        // Speculative: the caller (`method_output_at`/`method_declared_
+        // signature_at`) tries every candidate impl in turn and silently
+        // moves on when this returns `None` — a rejected candidate here is
+        // never a real type error, so this must not permanently record one
+        // (see `unify_call_types_probe`'s own doc comment).
         let mut substitutions = HashMap::new();
-        if scope.unify_call_types(self_input, receiver_ty, &mut substitutions).is_err() {
+        if scope.unify_call_types_probe(self_input, receiver_ty, &mut substitutions).is_err() {
             return Ok(None);
         }
         let substituted = scope.substitute_param_map_fn_sig(&sig.binder.value, &substitutions);
@@ -2982,7 +3041,7 @@ impl HirTypeChecker {
                 (None, TyKind::Adt(_, _), _) => false,
                 (None, _, _) => Self::ty_shapes_compatible(&self_ty.kind, &receiver_ty.kind)
                     && scope
-                        .unify_call_types(self_ty, receiver_ty, &mut HashMap::new())
+                        .unify_call_types_probe(self_ty, receiver_ty, &mut HashMap::new())
                         .is_ok(),
                 (Some(_), _, _) => false,
             };
@@ -3123,7 +3182,7 @@ impl HirTypeChecker {
                 };
                 let matches = Self::ty_shapes_compatible(&self_ty.kind, &target_ty.kind)
                     && scope
-                        .unify_call_types(self_ty, target_ty, &mut HashMap::new())
+                        .unify_call_types_probe(self_ty, target_ty, &mut HashMap::new())
                         .is_ok();
                 if !matches {
                     continue;
@@ -3227,7 +3286,7 @@ impl HirTypeChecker {
                 // (which a still-generic impl could never satisfy).
                 (None, _, _) => Self::ty_shapes_compatible(&self_ty.kind, &receiver_ty.kind)
                     && scope
-                        .unify_call_types(self_ty, receiver_ty, &mut HashMap::new())
+                        .unify_call_types_probe(self_ty, receiver_ty, &mut HashMap::new())
                         .is_ok(),
                 (Some(_), _, _) => false,
             };
@@ -3361,7 +3420,7 @@ impl HirTypeChecker {
             };
             let mut substitutions = HashMap::new();
             if scope
-                .unify_call_types(self_ty, receiver_ty, &mut substitutions)
+                .unify_call_types_probe(self_ty, receiver_ty, &mut substitutions)
                 .is_err()
             {
                 continue;
