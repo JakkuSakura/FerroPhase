@@ -11,8 +11,6 @@ pub(crate) enum ContainerInputKind {
     NativeArchive,
     JvmBytecode,
     Cil,
-    GoAsm,
-    Urcl,
 }
 
 /// What `classify_input` decided a path is, computed exactly once per input
@@ -72,17 +70,12 @@ impl ContainerRegistry {
                 "cil" | "msil" | "dotnet-cil" => {
                     return InputClass::Container(ContainerInputKind::Cil);
                 }
-                "goasm" | "go-asm" => {
-                    return InputClass::Container(ContainerInputKind::GoAsm);
-                }
-                "urcl" => {
-                    return InputClass::Container(ContainerInputKind::Urcl);
-                }
-                // Native objects and asm text (including all their dialect
-                // aliases, e.g. "x86_64-asm") are real registered languages
-                // now (`languages::NATIVE_OBJECT`/`NATIVE_ASM`) — the
-                // override string is handed straight to the language
-                // registry as-is, not reclassified here.
+                // Native objects/asm text, goasm, and URCL (including all
+                // their dialect aliases, e.g. "x86_64-asm") are real
+                // registered languages now (`languages::NATIVE_OBJECT`/
+                // `NATIVE_ASM`/`GOASM`/`URCL`) — the override string is
+                // handed straight to the language registry as-is, not
+                // reclassified here.
                 _ => return InputClass::Source,
             }
         }
@@ -96,8 +89,6 @@ impl ContainerRegistry {
             Some("a" | "lib") => InputClass::Container(ContainerInputKind::NativeArchive),
             Some("class" | "jar") => InputClass::Container(ContainerInputKind::JvmBytecode),
             Some("il" | "dll" | "exe") => InputClass::Container(ContainerInputKind::Cil),
-            Some("goasm") => InputClass::Container(ContainerInputKind::GoAsm),
-            Some("urcl") => InputClass::Container(ContainerInputKind::Urcl),
             _ => self
                 .sniff_container_kind(input)
                 .map(InputClass::Container)
@@ -193,36 +184,6 @@ impl ContainerRegistry {
                     ContainerKind::Other,
                     format,
                     ContainerArchitecture::Other("cil".to_string()),
-                    ContainerEndianness::Little,
-                );
-                file.sections.push(ContainerSection {
-                    name: ".container".to_string(),
-                    kind: ContainerSectionKind::Other,
-                    align: 1,
-                    data: payload.clone(),
-                });
-                file
-            }
-            ContainerInputKind::GoAsm => {
-                let mut file = ContainerFile::new(
-                    ContainerKind::Other,
-                    AsmObjectFormat::Custom("goasm".to_string()),
-                    ContainerArchitecture::Other("goasm".to_string()),
-                    ContainerEndianness::Little,
-                );
-                file.sections.push(ContainerSection {
-                    name: ".container".to_string(),
-                    kind: ContainerSectionKind::Other,
-                    align: 1,
-                    data: payload.clone(),
-                });
-                file
-            }
-            ContainerInputKind::Urcl => {
-                let mut file = ContainerFile::new(
-                    ContainerKind::Other,
-                    AsmObjectFormat::Custom("urcl".to_string()),
-                    ContainerArchitecture::Other("urcl".to_string()),
                     ContainerEndianness::Little,
                 );
                 file.sections.push(ContainerSection {

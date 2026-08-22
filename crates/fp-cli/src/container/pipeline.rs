@@ -59,8 +59,6 @@ pub(crate) async fn maybe_transpile_container(
             transpile_jvm_bytecode(input, output, args, &read.payload).await
         }
         ContainerInputKind::Cil => transpile_cil(input, output, args, &read.payload).await,
-        ContainerInputKind::GoAsm => transpile_goasm(input, output, args, &read.payload).await,
-        ContainerInputKind::Urcl => transpile_urcl(input, output, args, &read.payload).await,
     }
 }
 
@@ -346,70 +344,6 @@ async fn transpile_cil(
     ))
 }
 
-async fn transpile_goasm(
-    input: &Path,
-    output: &Path,
-    args: &CompileArgs,
-    bytes: &[u8],
-) -> Result<Option<PathBuf>> {
-    if !is_binary_producing_target(&args.target) {
-        return Err(CliError::InvalidInput(
-            "Go asm input currently supports only a native codegen `--target`".to_string(),
-        ));
-    }
-
-    let text = String::from_utf8(bytes.to_vec())
-        .map_err(|_| CliError::InvalidInput("goasm input must be valid UTF-8".to_string()))?;
-    let (lir_program, _source_target) = fp_goasm::parse_program(&text)
-        .map_err(|err| CliError::Compilation(format!("Failed to parse goasm: {err}")))?;
-
-    let output_path = if args.output.is_none() {
-        match args.target.as_str() {
-            "goasm" => input.with_extension("s"),
-            "urcl" => input.with_extension("urcl"),
-            _ => input.with_extension("o"),
-        }
-    } else {
-        output.to_path_buf()
-    };
-    if let Some(parent) = output_path.parent() {
-        std::fs::create_dir_all(parent).map_err(CliError::Io)?;
-    }
-    emit_lir_program(&lir_program, input, &output_path, args)?;
-    Ok(Some(output_path))
-}
-
-async fn transpile_urcl(
-    input: &Path,
-    output: &Path,
-    args: &CompileArgs,
-    bytes: &[u8],
-) -> Result<Option<PathBuf>> {
-    if !is_binary_producing_target(&args.target) {
-        return Err(CliError::InvalidInput(
-            "URCL input currently supports only a native codegen `--target`".to_string(),
-        ));
-    }
-    let text = String::from_utf8(bytes.to_vec())
-        .map_err(|_| CliError::InvalidInput("URCL input must be valid UTF-8".to_string()))?;
-    let lir_program = fp_urcl::parse_program(&text)
-        .map_err(|err| CliError::Compilation(format!("Failed to parse URCL: {err}")))?;
-
-    let output_path = if args.output.is_none() {
-        match args.target.as_str() {
-            "goasm" => input.with_extension("s"),
-            "urcl" => input.with_extension("urcl"),
-            _ => input.with_extension("o"),
-        }
-    } else {
-        output.to_path_buf()
-    };
-    if let Some(parent) = output_path.parent() {
-        std::fs::create_dir_all(parent).map_err(CliError::Io)?;
-    }
-    emit_lir_program(&lir_program, input, &output_path, args)?;
-    Ok(Some(output_path))
-}
 
 fn emit_lir_program(
     lir_program: &fp_core::lir::LirProgram,

@@ -329,19 +329,45 @@ impl CompilerDriver {
                         source.package_id
                     )));
                 }
+                // A `PrecompiledLir` item (see `fp_core::ast::ItemKind`'s doc
+                // comment) already *is* LIR — install it into the package's
+                // `lir_workspace` directly via the same `publish_lir_units`
+                // every ordinary HIR/MIR/LIR-lowered package uses, instead
+                // of running it through `HirGenerator` (which has no arm for
+                // an already-compiled item and would just record a spurious
+                // "unimplemented" diagnostic for it). `LirCompileUnit`'s own
+                // `package_id` field is never read by `publish_lir_units`
+                // (it takes the real one as a separate parameter), so a
+                // default numeric placeholder is fine here.
+                let precompiled_lir_units: Vec<fp_core::lir::LirCompileUnit> = source
+                    .items
+                    .iter()
+                    .filter_map(|pkg_item| match pkg_item.item.kind() {
+                        fp_core::ast::ItemKind::PrecompiledLir(lir) => {
+                            Some(fp_core::lir::LirCompileUnit {
+                                package_id: fp_core::hir::PackageId::default(),
+                                module_path: pkg_item.path.clone(),
+                                program: lir.clone(),
+                            })
+                        }
+                        _ => None,
+                    })
+                    .collect();
                 let package = self.state.borrow().typing_ctx.env_ctx.begin_package(
                     package_id.clone(),
                     source,
                     self.state.borrow().typing_ctx.data_layout.clone(),
                 );
-                // `TypecheckedTranspile` needs HIR generation + typing too (it lifts the
-                // typed HIR back to AST inside `compile_items_to_lir_units`) — it now also
-                // attempts MIR/LIR lowering there, best-effort, purely so any comptime
-                // entries (e.g. `const { .. }` blocks) can be validated below through the
-                // real interpreter; unlike Native, a comptime failure here is reported,
-                // not propagated, since the Kotlin backend never consumes the resolved
-                // value (only the block's type, already known independent of this).
-                if matches!(self.pipeline, PipelineMode::Native | PipelineMode::TypecheckedTranspile) {
+                if !precompiled_lir_units.is_empty() {
+                    Self::publish_lir_units(&package, package_id, &precompiled_lir_units)?;
+                } else if matches!(self.pipeline, PipelineMode::Native | PipelineMode::TypecheckedTranspile) {
+                    // `TypecheckedTranspile` needs HIR generation + typing too (it lifts the
+                    // typed HIR back to AST inside `compile_items_to_lir_units`) — it now also
+                    // attempts MIR/LIR lowering there, best-effort, purely so any comptime
+                    // entries (e.g. `const { .. }` blocks) can be validated below through the
+                    // real interpreter; unlike Native, a comptime failure here is reported,
+                    // not propagated, since the Kotlin backend never consumes the resolved
+                    // value (only the block's type, already known independent of this).
                     let mut units = self
                         .compile_items_to_lir_units(&package)
                         .await?;

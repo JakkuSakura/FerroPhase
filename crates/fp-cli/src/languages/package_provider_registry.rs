@@ -89,12 +89,33 @@ pub(crate) fn builtin_language_providers() -> Vec<(&'static str, LanguageProvide
     entries.push(("arm64-asm", native_asm_aarch64.clone()));
     entries.push(("aarch64asm", native_asm_aarch64));
 
+    // A standalone `.goasm` file (not a project directory) is Go-style
+    // native assembly text — lift it once at construction into a
+    // target-independent `LirProgram`, the same one-package-one-item shape
+    // `native_asm_provider` uses for `AsmProgram`, so every LIR-consuming
+    // target (native/goasm/urcl/cil/dotnet/jvm-bytecode) can retarget it
+    // with no backend-specific handling (`ItemKind::PrecompiledLir`).
+    // `GoPackageProvider` (a real multi-file project provider, currently
+    // unimplemented) still owns the directory case.
     entries.push((
         "goasm",
         factory(|root: &Path| {
-            Some(Arc::new(fp_goasm::package::GoPackageProvider::new(root.to_path_buf()))
-                as Arc<dyn PackageProvider>)
+            if root.is_file() {
+                precompiled_lir_provider(root, |text| {
+                    fp_goasm::parse_program(text).map(|(lir, _target)| lir)
+                })
+            } else {
+                Some(Arc::new(fp_goasm::package::GoPackageProvider::new(root.to_path_buf()))
+                    as Arc<dyn PackageProvider>)
+            }
         }),
+    ));
+
+    // URCL has no project/directory shape at all — always a standalone
+    // text file, same treatment as goasm above.
+    entries.push((
+        "urcl",
+        factory(|root: &Path| precompiled_lir_provider(root, fp_urcl::parse_program)),
     ));
 
     #[cfg(feature = "lang-typescript")]
@@ -305,5 +326,36 @@ fn native_asm_provider(root: &Path, dialect: NativeAsmDialect) -> Option<Arc<dyn
     Some(Arc::new(fp_native::NativeObjectPackageProvider::from_asm(
         fp_core::package::PackageId::new(name),
         asm,
+    )) as Arc<dyn PackageProvider>)
+}
+
+/// Reads `root` as text, lifts it via `parse` into a target-independent
+/// `LirProgram`, and wraps it as a one-package, one-item provider
+/// (`ItemKind::PrecompiledLir`) — the LIR-shaped counterpart to
+/// `native_asm_provider`'s `AsmProgram` shape, for any language whose
+/// input already parses straight to LIR (goasm, URCL).
+fn precompiled_lir_provider(
+    root: &Path,
+    parse: impl FnOnce(&str) -> fp_core::error::Result<fp_core::lir::LirProgram>,
+) -> Option<Arc<dyn PackageProvider>> {
+    let text = std::fs::read_to_string(root).ok()?;
+    let lir = parse(&text).ok()?;
+    let name = root
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("main")
+        .to_string();
+    let package_id = fp_core::package::PackageId::new(name);
+    let mut source = fp_core::package::PackageSource::new(
+        package_id.clone(),
+        package_id.as_str().to_string(),
+        fp_core::package::graph::PackageGraph::new(Vec::new()),
+    );
+    source.items.push(fp_core::package::PackageItem {
+        path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
+        item: fp_core::ast::Item::precompiled_lir(lir),
+    });
+    Some(Arc::new(fp_core::package::provider::FixedPackageProvider::for_source(
+        package_id, source,
     )) as Arc<dyn PackageProvider>)
 }

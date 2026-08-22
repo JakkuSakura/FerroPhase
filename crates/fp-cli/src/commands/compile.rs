@@ -318,12 +318,19 @@ async fn run_named_target(
         (provider, vec![package_id], lang)
     };
 
-    // A container-input compile (e.g. a native object file given directly
-    // as input) can legitimately just retarget the object without linking
-    // it (`--link`/`--exec` both absent) — every ordinary source compile
-    // always wants a runnable executable regardless of `--link`, matching
-    // today's behavior.
-    let link_requested = if lang == crate::languages::NATIVE_OBJECT || lang == crate::languages::NATIVE_ASM {
+    // A foreign-artifact-input compile (a native object file, or asm/goasm/
+    // URCL text, given directly as input) can legitimately just retarget
+    // it without linking (`--link`/`--exec` both absent) — every ordinary
+    // source compile always wants a runnable executable regardless of
+    // `--link`, matching today's behavior.
+    let is_foreign_artifact = matches!(
+        lang.as_str(),
+        l if l == crate::languages::NATIVE_OBJECT
+            || l == crate::languages::NATIVE_ASM
+            || l == crate::languages::GOASM
+            || l == crate::languages::URCL
+    );
+    let link_requested = if is_foreign_artifact {
         args.link || args.exec
     } else {
         true
