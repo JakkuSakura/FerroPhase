@@ -1133,6 +1133,13 @@ fn parse_fn_param_name(
     if skip_symbol(&mut tuple_probe, "(").is_ok() {
         let mut names = Vec::new();
         while peek_symbol(tuple_probe) != Some(")") {
+            // `&name`/`&mut name` inside the tuple (real
+            // `alloc::collections::btree::map`'s own `fn extend_one(&mut
+            // self, (&k, &v): (&'a K, &'a V))`) — same lossy
+            // drop-the-`&`-keep-the-binding treatment already given to a
+            // bare `&item` parameter below.
+            let _ = skip_symbol(&mut tuple_probe, "&");
+            let _ = skip_keyword(&mut tuple_probe, Keyword::Mut);
             let name = if let Ok(name) = ident_like(&mut tuple_probe) {
                 name
             } else if skip_symbol(&mut tuple_probe, "_").is_ok() {
