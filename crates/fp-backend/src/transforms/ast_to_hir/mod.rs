@@ -112,6 +112,21 @@ pub struct AstToHirLowerer {
     type_aliases: HashMap<String, ast::Ty>,
     struct_field_defs: HashMap<hir::DefId, Vec<ast::StructuralField>>,
     trait_defs: HashMap<String, ast::ItemDefTrait>,
+    /// The module a trait was declared in, keyed the same way as
+    /// `trait_defs` — needed so synthesizing one of its default methods
+    /// into an *implementing* type's impl block (in `transform_impl`) can
+    /// temporarily resolve names as if still in the trait's own module,
+    /// not the impl's. A default method's body/signature is copied
+    /// verbatim from the trait declaration (`Iterator::try_fold`
+    /// returning `ControlFlow`, `Any::type_id` returning `TypeId`, ...)
+    /// and can reference names only that file's own `use` imports bring
+    /// into scope — imports are persisted keyed by the importing
+    /// module's own path (`record_type_symbol`'s `self.module_path.
+    /// with_segment(name)`), so resolving them from the *impl's* module
+    /// path instead finds nothing, exactly the same shape of bug
+    /// `trait_generic_scope_bindings` fixed for a trait's own generic
+    /// parameters.
+    trait_def_modules: HashMap<String, fp_core::ast::path::QualifiedPath>,
     structural_value_defs: HashMap<String, StructuralValueDef>,
     const_list_length_scopes: Vec<HashMap<String, usize>>,
     synthetic_items: Vec<hir::Item>,
@@ -679,6 +694,7 @@ impl AstToHirLowerer {
             type_aliases: HashMap::new(),
             struct_field_defs: HashMap::new(),
             trait_defs: HashMap::new(),
+            trait_def_modules: HashMap::new(),
             structural_value_defs: HashMap::new(),
             const_list_length_scopes: vec![HashMap::new()],
             synthetic_items: Vec::new(),
@@ -1122,6 +1138,7 @@ impl AstToHirLowerer {
         self.current_position = 0;
         self.type_aliases.clear();
         self.trait_defs.clear();
+        self.trait_def_modules.clear();
         self.structural_value_defs.clear();
         self.const_list_length_scopes.clear();
         self.const_list_length_scopes.push(HashMap::new());
@@ -1441,6 +1458,8 @@ impl AstToHirLowerer {
                     }
                     self.trait_defs
                         .insert(def_trait.name.name.clone(), def_trait.clone());
+                    self.trait_def_modules
+                        .insert(def_trait.name.name.clone(), self.module_path.clone());
                 }
                 ItemKind::DefType(def_type) => {
                     self.register_type_alias(&def_type.name.name, &def_type.value);

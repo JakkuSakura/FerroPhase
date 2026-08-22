@@ -406,30 +406,50 @@ impl AstToHirLowerer {
                         .unwrap_or(hir::Res::SelfTy);
                         self.current_type_scope().insert(param.name.name.clone(), res);
                     }
-                    // Synthesize default trait methods into the impl if they are missing.
-                    for trait_item in &trait_items {
-                        let ast::ItemKind::DefFunction(func) = trait_item.kind() else {
-                            continue;
-                        };
-                        if should_drop_const_type_item(trait_item) {
-                            continue;
-                        }
-                        if method_names.contains(&func.name.name) {
-                            continue;
-                        }
-                        let method = self.transform_function_with_body(
-                            func,
-                            Some(self_ty.clone()),
-                            !stub_methods && !attrs_has_name(&func.attrs, "unimplemented"),
-                        )?;
-                        method_names.insert(method.sig.name.as_str().to_string());
-                        items.push(hir::ImplItem {
-                            def_id: self.next_def_id(),
-                            hir_id: self.next_id(),
-                            name: method.sig.name.clone(),
-                            kind: hir::ImplItemKind::Method(method),
-                        });
+                    // Synthesize default trait methods into the impl if they
+                    // are missing — resolving names as if still in the
+                    // trait's own declaring module, not this impl's:
+                    // `Iterator::try_fold`'s default body returns
+                    // `ControlFlow`, `Any::type_id`'s returns `TypeId`, ...
+                    // via that file's own `use` imports, which are
+                    // persisted keyed by the *importing* module's path
+                    // (`record_type_symbol`), so resolving them from the
+                    // impl's own (generally different) module finds
+                    // nothing — the same shape of bug the trait-generic
+                    // bindings above fix for a trait's own type
+                    // parameters, just for its ordinary imports instead.
+                    let saved_module_path = self.module_path.clone();
+                    if let Some(trait_module) = self.trait_def_modules.get(&trait_name) {
+                        self.module_path = trait_module.clone();
                     }
+                    let synthesis_result = (|| -> Result<()> {
+                        for trait_item in &trait_items {
+                            let ast::ItemKind::DefFunction(func) = trait_item.kind() else {
+                                continue;
+                            };
+                            if should_drop_const_type_item(trait_item) {
+                                continue;
+                            }
+                            if method_names.contains(&func.name.name) {
+                                continue;
+                            }
+                            let method = self.transform_function_with_body(
+                                func,
+                                Some(self_ty.clone()),
+                                !stub_methods && !attrs_has_name(&func.attrs, "unimplemented"),
+                            )?;
+                            method_names.insert(method.sig.name.as_str().to_string());
+                            items.push(hir::ImplItem {
+                                def_id: self.next_def_id(),
+                                hir_id: self.next_id(),
+                                name: method.sig.name.clone(),
+                                kind: hir::ImplItemKind::Method(method),
+                            });
+                        }
+                        Ok(())
+                    })();
+                    self.module_path = saved_module_path;
+                    synthesis_result?;
                     self.pop_type_scope();
                 }
             }
