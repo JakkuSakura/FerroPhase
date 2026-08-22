@@ -52,7 +52,7 @@ impl CompilerState {
             typing_ctx: std::rc::Rc::new(TypingContext::new(
                 data_layout,
                 std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new(
-                    std::sync::Arc::new(fp_core::package::provider::EmptyProvider),
+                    std::sync::Arc::new(fp_core::ast::package::provider::EmptyProvider),
                 )),
                 tasks.clone(),
             )),

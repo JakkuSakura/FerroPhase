@@ -365,6 +365,7 @@ pub enum IntrinsicKind {
     AddField,
     CloneStruct,
     BuildType,
+    PrimitiveType,
     HasField,
     FieldCount,
     MethodCount,
@@ -444,6 +445,7 @@ impl IntrinsicKind {
             Self::AddField => "add_field",
             Self::CloneStruct => "clone_struct",
             Self::BuildType => "build_type",
+            Self::PrimitiveType => "primitive_type",
             Self::HasField => "has_field",
             Self::FieldCount => "field_count",
             Self::MethodCount => "method_count",
@@ -577,6 +579,7 @@ impl CallKind {
     pub const AddField: Self = Self::Intrinsic(IntrinsicKind::AddField);
     pub const CloneStruct: Self = Self::Intrinsic(IntrinsicKind::CloneStruct);
     pub const BuildType: Self = Self::Intrinsic(IntrinsicKind::BuildType);
+    pub const PrimitiveType: Self = Self::Intrinsic(IntrinsicKind::PrimitiveType);
     pub const HasField: Self = Self::Intrinsic(IntrinsicKind::HasField);
     pub const FieldCount: Self = Self::Intrinsic(IntrinsicKind::FieldCount);
     pub const MethodCount: Self = Self::Intrinsic(IntrinsicKind::MethodCount);

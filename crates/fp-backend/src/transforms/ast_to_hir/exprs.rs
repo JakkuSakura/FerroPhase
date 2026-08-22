@@ -636,17 +636,33 @@ impl HirGenerator {
                 };
                 Ok(hir::ExprKind::Path(path))
             }
-            // Type-level values (Ty::Type, used by type(Config) etc.)
-            Value::Type(_) => {
-                let path = hir::Path {
-                    segments: vec![hir::PathSegment {
-                        name: hir::Symbol::new("__fp_type"),
-                        args: None,
+            // A type value the *parser* already constant-folded (e.g. a
+            // call argument like `&'static str` that fails plain-
+            // expression grammar and falls back to `parse_type_expr`,
+            // `fp-lang/src/ast/expr.rs`'s `parse_expr_or_type_value`) —
+            // reflect it at runtime via the same `std::intrinsics::
+            // primitive_type` intrinsic a bare `i64`/etc. value reference
+            // now resolves to through its real `std::meta` prelude
+            // `const` (ordinary name resolution, no special-casing here).
+            Value::Type(ty) => match ty.primitive_type_value_name() {
+                Some(name) => Ok(hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
+                    kind: CallKind::PrimitiveType,
+                    callargs: vec![hir::CallArg {
+                        name: hir::Symbol::new("arg0"),
+                        value: hir::Expr {
+                            hir_id: self.next_id(),
+                            kind: hir::ExprKind::Literal(hir::Lit::Str(name)),
+                            span: value.span(),
+                        },
                     }],
-                    res: None,
-                };
-                Ok(hir::ExprKind::Path(path))
-            }
+                })),
+                None => Ok(self.error_placeholder_expr_kind(
+                    format!(
+                        "unsupported type value in expression position during AST→HIR: {ty:?}"
+                    ),
+                    value.span(),
+                )),
+            },
             Value::Function(func) => {
                 let name = func.sig.name.clone().unwrap_or_else(|| {
                     self.add_error(

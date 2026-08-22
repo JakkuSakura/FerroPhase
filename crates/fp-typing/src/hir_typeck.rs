@@ -3839,9 +3839,10 @@ impl HirTypeChecker {
             // the comptime interpreter (`Value::Type`) via dedicated
             // `ComptimeOp`s — same opaque-handle kind as the `type`
             // keyword's own surface annotation (`TypeExprKind::Type`).
-            IntrinsicKind::CreateStruct | IntrinsicKind::AddField | IntrinsicKind::BuildType => {
-                Ty { kind: TyKind::Type }
-            }
+            IntrinsicKind::CreateStruct
+            | IntrinsicKind::AddField
+            | IntrinsicKind::BuildType
+            | IntrinsicKind::PrimitiveType => Ty { kind: TyKind::Type },
             IntrinsicKind::FsWriteString
             | IntrinsicKind::FsAppendString
             | IntrinsicKind::FsCreateDirAll

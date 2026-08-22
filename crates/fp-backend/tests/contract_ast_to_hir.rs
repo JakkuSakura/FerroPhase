@@ -5,9 +5,9 @@ use fp_core::hir::{self, FormatTemplatePart, ItemKind, StmtKind};
 use fp_core::intrinsics::{CallKind, IntrinsicKind};
 use fp_core::lir::LirDataLayout;
 use fp_core::ops::BinOpKind;
-use fp_core::package::graph::PackageGraph;
-use fp_core::package::provider::{FixedPackageProvider, PackageProvider};
-use fp_core::package::{PackageId, PackageItem, PackageSource};
+use fp_core::ast::package::graph::PackageGraph;
+use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
+use fp_core::ast::package::{PackageId, PackageItem, PackageSource};
 use fp_core::workspace::WorkspaceContext;
 
 mod support;

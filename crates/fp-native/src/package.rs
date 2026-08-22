@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use fp_core::package::provider::PackageProvider;
+use fp_core::ast::package::provider::PackageProvider;
 
 use crate::NativeObjectPackageProvider;
 
@@ -18,7 +18,7 @@ fn package_name_for(root: &Path) -> String {
 pub fn object_provider(root: &Path) -> Option<Arc<dyn PackageProvider>> {
     let bytes = std::fs::read(root).ok()?;
     let name = package_name_for(root);
-    NativeObjectPackageProvider::new(fp_core::package::PackageId::new(name), &bytes)
+    NativeObjectPackageProvider::new(fp_core::ast::package::PackageId::new(name), &bytes)
         .ok()
         .map(|p| Arc::new(p) as Arc<dyn PackageProvider>)
 }
@@ -28,7 +28,7 @@ pub fn object_provider(root: &Path) -> Option<Arc<dyn PackageProvider>> {
 pub fn archive_provider(root: &Path) -> Option<Arc<dyn PackageProvider>> {
     let bytes = std::fs::read(root).ok()?;
     let name = package_name_for(root);
-    NativeObjectPackageProvider::from_archive(fp_core::package::PackageId::new(name), &bytes)
+    NativeObjectPackageProvider::from_archive(fp_core::ast::package::PackageId::new(name), &bytes)
         .ok()
         .map(|p| Arc::new(p) as Arc<dyn PackageProvider>)
 }
@@ -65,7 +65,7 @@ pub fn asm_text_provider(root: &Path, dialect: AsmDialect) -> Option<Arc<dyn Pac
     };
     let name = package_name_for(root);
     Some(Arc::new(NativeObjectPackageProvider::from_asm(
-        fp_core::package::PackageId::new(name),
+        fp_core::ast::package::PackageId::new(name),
         asm,
     )) as Arc<dyn PackageProvider>)
 }

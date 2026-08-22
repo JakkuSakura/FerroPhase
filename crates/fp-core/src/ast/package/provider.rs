@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::ast::module::ModuleId;
-use crate::package::{PackageDescriptor, PackageId, PackageMetadata, PackageSource};
+use crate::ast::package::{PackageDescriptor, PackageId, PackageMetadata, PackageSource};
 use crate::vfs::VirtualPath;
 
 pub type ProviderResult<T> = Result<T, ProviderError>;

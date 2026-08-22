@@ -14,7 +14,7 @@ pub use parse::parse_cil_program;
 /// typed AST a Kotlin/Python-style backend would walk.
 fn package_mir(
     workspace: &fp_core::workspace::WorkspaceContext,
-    package_id: &fp_core::package::PackageId,
+    package_id: &fp_core::ast::package::PackageId,
 ) -> fp_core::error::Result<fp_core::mir::Program> {
     let package = workspace.compiled_package(package_id).ok_or_else(|| {
         fp_core::error::Error::from(format!("package `{package_id}` is unavailable"))
@@ -44,7 +44,7 @@ impl fp_core::backend::TargetBackend for CilBackend {
     fn emit_package_artifact(
         &self,
         workspace: &fp_core::workspace::WorkspaceContext,
-        package_id: &fp_core::package::PackageId,
+        package_id: &fp_core::ast::package::PackageId,
     ) -> fp_core::error::Result<()> {
         // CIL text or an assembled PE given directly as input (see
         // `fp_core::ast::ItemKind::PrecompiledArtifact`'s doc comment)

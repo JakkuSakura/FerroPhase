@@ -1929,7 +1929,7 @@ impl HirGenerator {
 
     pub fn transform_package(
         &mut self,
-        package: &fp_core::package::CompiledPackage,
+        package: &fp_core::ast::package::CompiledPackage,
     ) -> Result<hir::Package> {
         self.reset_file_context("<package>");
         self.prepare_lowering_state();
@@ -1979,7 +1979,7 @@ impl HirGenerator {
         }
         let generated_count = lowered_items.len() - original_len;
         let root_path = fp_core::ast::path::QualifiedPath::new(Vec::new());
-        let package_items: Vec<fp_core::package::PackageItem> = lowered_items
+        let package_items: Vec<fp_core::ast::package::PackageItem> = lowered_items
             .into_iter()
             .enumerate()
             .map(|(i, item)| {
@@ -1988,7 +1988,7 @@ impl HirGenerator {
                 } else {
                     package.items[i - generated_count].module_path.clone()
                 };
-                fp_core::package::PackageItem { module_path: path, item }
+                fp_core::ast::package::PackageItem { module_path: path, item }
             })
             .collect();
         // Item-position `macro_rules!` invocations (real std's own idiom for
@@ -2087,7 +2087,7 @@ impl HirGenerator {
     /// Whatever's left unresolved after the fixed point is left as-is,
     /// exactly like today's single-sweep behavior — not a new error
     /// surface, genuinely-unresolvable imports behave the same as before.
-    fn resolve_pending_imports(&mut self, package: &fp_core::package::CompiledPackage) -> Result<()> {
+    fn resolve_pending_imports(&mut self, package: &fp_core::ast::package::CompiledPackage) -> Result<()> {
         let mut pending: Vec<(
             fp_core::ast::path::QualifiedPath,
             ImportBinding,
@@ -4520,8 +4520,8 @@ impl Default for HirGenerator {
 impl HirGenerator {
     fn expand_item_macros(
         &self,
-        items: Vec<fp_core::package::PackageItem>,
-    ) -> Vec<fp_core::package::PackageItem> {
+        items: Vec<fp_core::ast::package::PackageItem>,
+    ) -> Vec<fp_core::ast::package::PackageItem> {
         let Some(normalizer) = self.intrinsic_normalizer.as_deref() else {
             return items;
         };
@@ -4536,7 +4536,7 @@ impl HirGenerator {
                 let module_path = package_item.module_path;
                 self.expand_item_macros_in_item(package_item.item, normalizer, &defs)
                     .into_iter()
-                    .map(move |item| fp_core::package::PackageItem {
+                    .map(move |item| fp_core::ast::package::PackageItem {
                         module_path: module_path.clone(),
                         item,
                     })

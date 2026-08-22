@@ -4,8 +4,8 @@ use crate::resolver::{
     RegistryLoader, RegistryLoaderHandle, cargo_resolver::CargoResolver, target::TargetContext,
 };
 use eyre::Result;
-use fp_core::package::DependencyDescriptor;
-use fp_core::package::provider::PackageProvider;
+use fp_core::ast::package::DependencyDescriptor;
+use fp_core::ast::package::provider::PackageProvider;
 use fp_typescript::TypeScriptPackageProvider;
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};

@@ -5,9 +5,9 @@ use fp_core::intrinsics::IntrinsicNormalizationMode;
 use fp_core::ast::path::QualifiedPath;
 use fp_core::lir::LirDataLayout;
 use fp_core::ops::BinOpKind;
-use fp_core::package::graph::PackageGraph;
-use fp_core::package::provider::{FixedPackageProvider, PackageProvider};
-use fp_core::package::{PackageId, PackageSource};
+use fp_core::ast::package::graph::PackageGraph;
+use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
+use fp_core::ast::package::{PackageId, PackageSource};
 use fp_core::span::Span;
 use fp_core::workspace::WorkspaceContext;
 use fp_typing::{ResolvedName, ResolvedNameNamespace, ResolvedNameTable};
@@ -28,12 +28,12 @@ fn test_data_layout() -> LirDataLayout {
 /// already-built `PackageSource`) followed by
 /// `WorkspaceContext::begin_package` — never a hand-rolled
 /// `CompiledPackage`.
-fn package_from_items(items: Vec<ast::Item>) -> Result<fp_core::package::CompiledPackage> {
+fn package_from_items(items: Vec<ast::Item>) -> Result<fp_core::ast::package::CompiledPackage> {
     let package_id = PackageId::new("test");
     let mut source = PackageSource::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
     source.items = items
         .into_iter()
-        .map(|item| fp_core::package::PackageItem {
+        .map(|item| fp_core::ast::package::PackageItem {
             module_path: QualifiedPath::new(Vec::new()),
             item,
         })
@@ -56,12 +56,12 @@ fn package_from_items(items: Vec<ast::Item>) -> Result<fp_core::package::Compile
 fn package_from_module_items(
     module_path: Vec<String>,
     items: Vec<ast::Item>,
-) -> Result<fp_core::package::CompiledPackage> {
+) -> Result<fp_core::ast::package::CompiledPackage> {
     let package_id = PackageId::new("test");
     let mut source = PackageSource::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
     source.items = items
         .into_iter()
-        .map(|item| fp_core::package::PackageItem {
+        .map(|item| fp_core::ast::package::PackageItem {
             module_path: QualifiedPath::new(module_path.clone()),
             item,
         })
@@ -86,7 +86,7 @@ fn package_from_module_items(
 /// `module_path` can't exercise.
 fn package_from_items_with_paths(
     items: Vec<(Vec<String>, ast::Item)>,
-) -> Result<fp_core::package::CompiledPackage> {
+) -> Result<fp_core::ast::package::CompiledPackage> {
     let package_id = PackageId::new("test");
     let mut source = PackageSource::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
     // Real providers (`RustPackageProvider`) record every distinct module
@@ -106,7 +106,7 @@ fn package_from_items_with_paths(
         .collect();
     source.items = items
         .into_iter()
-        .map(|(module_path, item)| fp_core::package::PackageItem {
+        .map(|(module_path, item)| fp_core::ast::package::PackageItem {
             module_path: QualifiedPath::new(module_path),
             item,
         })

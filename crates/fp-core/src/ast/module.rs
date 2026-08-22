@@ -72,7 +72,7 @@ impl SymbolDescriptor {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModuleDescriptor {
     pub id: ModuleId,
-    pub package: crate::package::PackageId,
+    pub package: crate::ast::package::PackageId,
     pub language: ModuleLanguage,
     pub module_path: Vec<String>,
     pub source: VirtualPath,

@@ -17,6 +17,7 @@ pub mod json;
 mod macros;
 pub mod module;
 mod pat;
+pub mod package;
 pub mod path;
 mod pretty;
 mod schema;

@@ -14,7 +14,7 @@
 //! the exact same trait every target implements, built-in or not — driven
 //! through `emit_package_artifact`/`write_workspace_files` exactly the same way
 //! regardless of where the factory came from. Registered source-language
-//! providers are plain `fp_core::package::provider::PackageProvider`
+//! providers are plain `fp_core::ast::package::provider::PackageProvider`
 //! factories, looked up the same way by
 //! `package_provider_registry::provider_for_language`.
 
@@ -22,7 +22,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use fp_core::backend::{BackendConfig, TargetBackend};
-use fp_core::package::provider::PackageProvider;
+use fp_core::ast::package::provider::PackageProvider;
 
 use crate::error::CliError;
 use crate::Result;

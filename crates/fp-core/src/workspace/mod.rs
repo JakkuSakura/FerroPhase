@@ -191,8 +191,8 @@ impl WorkspaceDependency {
 use crate::ast::{FunctionSignature, MethodSignature, TypeEnum, TypeStruct};
 use crate::hir::PackageId as HirPackageId;
 use crate::ast::path::QualifiedPath;
-use crate::package::provider::PackageProvider;
-use crate::package::{CompiledPackage, PackageId, PackageSource};
+use crate::ast::package::provider::PackageProvider;
+use crate::ast::package::{CompiledPackage, PackageId, PackageSource};
 use std::cell::{Cell, Ref, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -800,7 +800,7 @@ impl WorkspaceContext {
                 "package `{id}` is not present in this compiled workspace"
             ))
         })?;
-        Ok(crate::package::package_source_from_compiled(id, &package))
+        Ok(crate::ast::package::package_source_from_compiled(id, &package))
     }
 
     /// Merges every other loaded package's compiled LIR workspace into
@@ -808,13 +808,13 @@ impl WorkspaceContext {
     /// `evaluate_comptime_lir` uses for comptime execution — see
     /// `fp-compiler`'s `LoweredProgram::lir` this was moved from), then
     /// best-effort resolves `id`'s `main` function (searched by name alone
-    /// across the whole package — see `crate::package::resolve_entrypoint_def_id`'s
+    /// across the whole package — see `crate::ast::package::resolve_entrypoint_def_id`'s
     /// doc comment for why this is deliberately package-based, not
     /// module-based, and not a fit for a host language whose own
     /// entrypoint convention is module/class-qualified) and renames it to
     /// the bare symbol name `main` in the merged program — native/asm
     /// emitters locate the process entry point by that final, bare symbol
-    /// name (see `crate::package::rename_lir_function`'s doc comment), and a
+    /// name (see `crate::ast::package::rename_lir_function`'s doc comment), and a
     /// module-nested `main` built from a flattened, ad hoc `LirProgram`
     /// like this one (rather than through `CompilerDriver::select_entrypoint`)
     /// otherwise never gets that renaming. Silently does nothing if `id`
@@ -845,8 +845,8 @@ impl WorkspaceContext {
             .add_workspace(&package.lir_workspace)
             .map_err(|error| crate::error::Error::from(error.to_string()))?;
         let mut lir = combined.to_program();
-        if let Ok(def_id) = crate::package::resolve_entrypoint_def_id(id, &package, "main") {
-            crate::package::rename_lir_function(&mut lir, def_id, "main");
+        if let Ok(def_id) = crate::ast::package::resolve_entrypoint_def_id(id, &package, "main") {
+            crate::ast::package::rename_lir_function(&mut lir, def_id, "main");
         }
         Ok(lir)
     }

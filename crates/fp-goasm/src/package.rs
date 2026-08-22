@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fp_core::package::provider::{PackageProvider, ProviderResult};
-use fp_core::package::{PackageDescriptor, PackageId, PackageSource};
+use fp_core::ast::package::provider::{PackageProvider, ProviderResult};
+use fp_core::ast::package::{PackageDescriptor, PackageId, PackageSource};
 
 #[derive(Debug)]
 pub struct GoPackageProvider {
@@ -44,14 +44,14 @@ impl PackageProvider for GoPackageProvider {
 
 /// A standalone `.goasm` file (not a project directory) is Go-style native
 /// assembly text — lift it once at construction into a target-independent
-/// `LirProgram` via `fp_core::package::provider::lir_from_text`, so every
+/// `LirProgram` via `fp_core::ast::package::provider::lir_from_text`, so every
 /// LIR-consuming target (native/goasm/urcl/cil/jvm-bytecode) can retarget
 /// it with no backend-specific handling. A directory input is a real
 /// multi-file project, still owned by `GoPackageProvider` (currently
 /// unimplemented).
 pub fn file_provider(root: &Path) -> Option<Arc<dyn PackageProvider>> {
     if root.is_file() {
-        fp_core::package::provider::lir_from_text(root, |text| {
+        fp_core::ast::package::provider::lir_from_text(root, |text| {
             crate::parse_program(text).map(|(lir, _target)| lir)
         })
     } else {

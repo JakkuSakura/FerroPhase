@@ -11,7 +11,7 @@ use fp_core::ast::{
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::CallKind;
-use fp_core::package::PackageSource;
+use fp_core::ast::package::PackageSource;
 
 /// Public entry point used by the CLI target emitter.
 #[derive(Clone, Debug)]
@@ -52,7 +52,7 @@ impl GoSerializer {
     /// Serializes a package into one Go source file per module.
     /// Returns `Vec<(relative_path, code)>`.
     pub fn serialize_package(&self, source: &PackageSource) -> Result<Vec<(String, String)>> {
-        fp_core::package::split_package_into_modules(source)
+        fp_core::ast::package::split_package_into_modules(source)
             .into_iter()
             .map(|module| {
                 let rel_path = module.relative_path();
@@ -87,7 +87,7 @@ impl fp_core::backend::TargetBackend for GoBackend {
     fn emit_package_artifact(
         &self,
         workspace: &fp_core::workspace::WorkspaceContext,
-        package_id: &fp_core::package::PackageId,
+        package_id: &fp_core::ast::package::PackageId,
     ) -> Result<()> {
         let package = workspace.package_source(package_id)?;
         let package = &package;

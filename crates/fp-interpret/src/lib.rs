@@ -5,7 +5,8 @@ use std::ffi::CString;
 use std::rc::Rc;
 
 use fp_core::ast::{
-    Ty, TypeStruct, TypeType, TypeUnknown, Value, ValueList, ValueMapEntry, ValueTuple,
+    Ty, TypePrimitive, TypeStruct, TypeType, TypeUnknown, Value, ValueList, ValueMapEntry,
+    ValueTuple,
 };
 use fp_core::lir::{
     BasicBlockId, CallingConvention, ComptimeOp, LirArtifactKind, LirBasicBlock, LirConstant,
@@ -13,7 +14,7 @@ use fp_core::lir::{
     LirFloat, LirFunction, LirFunctionRef, LirInstruction, LirInstructionKind, LirInteger,
     LirLocal, LirProgram, LirTerminator, LirType, LirValue, LirValueKind, LirWorkspace, RegisterId,
 };
-use fp_core::package::PackageId;
+use fp_core::ast::package::PackageId;
 use fp_ffi::{FfiRuntime, FfiSignature, FfiType};
 
 use crate::vm::{ThreadState, lir_type_info, mem_load, mem_store};
@@ -21,6 +22,30 @@ use crate::vm::{ThreadState, lir_type_info, mem_load, mem_store};
 pub use crate::vm::VmError;
 
 type LirResult<T> = Result<T, VmError>;
+
+/// The Rust-side implementation of `std::intrinsics::primitive_type` —
+/// the single canonical string->`ast::Ty` mapping for a primitive/
+/// reference-to-primitive type-value name, reusing `TypePrimitive::
+/// from_name` (the same reverse mapping the surface-syntax type-expr
+/// parser's names round-trip through). A `&`-prefixed name (optionally
+/// carrying a `'lifetime ` token, e.g. `"&'static str"`) recurses on the
+/// inner name and wraps the result in `Ty::reference`.
+fn primitive_type_value_ty(name: &str) -> Option<Ty> {
+    if let Some(rest) = name.strip_prefix('&') {
+        let rest = rest.trim_start();
+        let rest = rest
+            .strip_prefix('\'')
+            .map(|after_quote| {
+                after_quote
+                    .find(char::is_whitespace)
+                    .map(|idx| after_quote[idx..].trim_start())
+                    .unwrap_or("")
+            })
+            .unwrap_or(rest);
+        return primitive_type_value_ty(rest).map(Ty::reference);
+    }
+    TypePrimitive::from_name(name).map(Ty::Primitive)
+}
 
 #[derive(Clone)]
 struct TypedValue {
@@ -52,7 +77,7 @@ pub struct LirInterpreter {
     /// block/instruction) on every call.
     program_functions: HashMap<String, Rc<LirFunction>>,
     package_functions: HashMap<(PackageId, String), Rc<LirFunction>>,
-    workspace_functions: HashMap<(fp_core::package::PackageId, String), Rc<LirFunction>>,
+    workspace_functions: HashMap<(fp_core::ast::package::PackageId, String), Rc<LirFunction>>,
     definition_functions: HashMap<fp_core::hir::DefId, Rc<LirFunction>>,
 }
 
@@ -151,7 +176,7 @@ impl LirInterpreter {
     pub fn run_function_named_in_workspace(
         &mut self,
         workspaces: &[&LirWorkspace],
-        package_id: &fp_core::package::PackageId,
+        package_id: &fp_core::ast::package::PackageId,
         name: &fp_core::lir::Name,
     ) -> LirResult<Value> {
         let data_layout = workspaces
@@ -626,6 +651,15 @@ impl LirInterpreter {
                     });
                     let obj = Value::Type(struct_ty);
                     self.write_typed_result(dst, self.result_type(instr)?, obj)
+                }
+                ComptimeOp::PrimitiveType { name } => {
+                    let type_name = self.resolve_string_value(name)?;
+                    let ty = primitive_type_value_ty(&type_name).ok_or_else(|| {
+                        VmError::Runtime(format!(
+                            "`{type_name}` is not a supported primitive type value"
+                        ))
+                    })?;
+                    self.write_typed_result(dst, self.result_type(instr)?, Value::Type(ty))
                 }
                 ComptimeOp::AddField {
                     struct_handle,

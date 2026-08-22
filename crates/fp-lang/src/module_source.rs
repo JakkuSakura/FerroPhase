@@ -5,9 +5,9 @@ use fp_core::ast::{File, Item, ItemKind};
 use fp_core::frontend::LanguageFrontend;
 use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
-use fp_core::package::graph::PackageGraph;
-use fp_core::package::provider::{ProviderError, ProviderResult};
-use fp_core::package::{PackageDescriptor, PackageItem, PackageSource};
+use fp_core::ast::package::graph::PackageGraph;
+use fp_core::ast::package::provider::{ProviderError, ProviderResult};
+use fp_core::ast::package::{PackageDescriptor, PackageItem, PackageSource};
 use fp_core::vfs::{VirtualFileSystem, VirtualPath};
 
 use crate::FerroFrontend;
@@ -269,7 +269,7 @@ fn package_name_from_path(path: &QualifiedPath) -> ProviderResult<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fp_core::package::{PackageId, PackageMetadata};
+    use fp_core::ast::package::{PackageId, PackageMetadata};
     use fp_core::vfs::{InMemoryFileSystem, VirtualFileSystem};
 
     fn package() -> PackageDescriptor {

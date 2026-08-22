@@ -5,9 +5,9 @@ use std::sync::Arc;
 use fp_core::frontend::LanguageFrontend;
 use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
-use fp_core::package::graph::PackageGraph;
-use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
-use fp_core::package::{PackageDescriptor, PackageId, PackageItem, PackageMetadata, PackageSource};
+use fp_core::ast::package::graph::PackageGraph;
+use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
+use fp_core::ast::package::{PackageDescriptor, PackageId, PackageItem, PackageMetadata, PackageSource};
 use fp_core::vfs::VirtualPath;
 
 use crate::FerroFrontend;

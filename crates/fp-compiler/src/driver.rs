@@ -4,7 +4,7 @@ use fp_core::hir;
 use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::ast::path::QualifiedPath;
-use fp_core::package::{DependencyDescriptor, DependencyKind, PackageId};
+use fp_core::ast::package::{DependencyDescriptor, DependencyKind, PackageId};
 use fp_core::span::Span;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel};
 use fp_interpret::LirInterpreter;
@@ -63,7 +63,7 @@ pub struct CompilerDriver {
     pub state: Rc<RefCell<CompilerState>>,
     interpreter: LirInterpreter,
     building_packages: HashSet<PackageId>,
-    compiled_packages: HashMap<PackageId, Rc<RefCell<fp_core::package::CompiledPackage>>>,
+    compiled_packages: HashMap<PackageId, Rc<RefCell<fp_core::ast::package::CompiledPackage>>>,
     next_hir_def_id: u32,
     pub pipeline: PipelineMode,
 }
@@ -104,7 +104,7 @@ impl CompilerDriver {
             data_layout,
             tasks,
             Rc::new(fp_core::workspace::WorkspaceContext::new(std::sync::Arc::new(
-                fp_core::package::provider::EmptyProvider,
+                fp_core::ast::package::provider::EmptyProvider,
             ))),
         )
     }
@@ -140,7 +140,7 @@ impl CompilerDriver {
     pub async fn compile_native(
         &mut self,
         package_id: &PackageId,
-    ) -> Result<Rc<RefCell<fp_core::package::CompiledPackage>>, CompilerDriverError> {
+    ) -> Result<Rc<RefCell<fp_core::ast::package::CompiledPackage>>, CompilerDriverError> {
         self.compile_package(package_id).await
     }
 
@@ -160,7 +160,7 @@ impl CompilerDriver {
     pub fn compile_native_sync(
         &mut self,
         package_id: &PackageId,
-    ) -> Result<Rc<RefCell<fp_core::package::CompiledPackage>>, CompilerDriverError> {
+    ) -> Result<Rc<RefCell<fp_core::ast::package::CompiledPackage>>, CompilerDriverError> {
         let executor = self.state.borrow().tasks.clone();
         executor.run(self.compile_native(package_id))
     }
@@ -232,7 +232,7 @@ impl CompilerDriver {
 
     /// Resolves the `DefId` of the function named `function_name` anywhere
     /// in `package_id`'s published HIR — package-based, not module-based
-    /// (see `fp_core::package::resolve_entrypoint_def_id`'s doc comment).
+    /// (see `fp_core::ast::package::resolve_entrypoint_def_id`'s doc comment).
     /// `module_path` isn't used for this resolution itself; it's taken here
     /// only because every caller already has one on hand for the sibling
     /// LIR-id-keying/comptime-path purposes `select_entrypoint`/
@@ -251,7 +251,7 @@ impl CompilerDriver {
             .compiled_package(package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
         let package = package.borrow();
-        fp_core::package::resolve_entrypoint_def_id(package_id, &package, function_name)
+        fp_core::ast::package::resolve_entrypoint_def_id(package_id, &package, function_name)
             .map_err(|error| CompilerDriverError::Interpreter(error.to_string()))
     }
 
@@ -268,7 +268,7 @@ impl CompilerDriver {
         def_id: hir::DefId,
         bare_name: &str,
     ) {
-        fp_core::package::rename_lir_function(lir, def_id, bare_name)
+        fp_core::ast::package::rename_lir_function(lir, def_id, bare_name)
     }
 
     pub fn select_entrypoint(
@@ -339,7 +339,7 @@ impl CompilerDriver {
     pub async fn compile_package(
         &mut self,
         package_id: &PackageId,
-    ) -> Result<Rc<RefCell<fp_core::package::CompiledPackage>>, CompilerDriverError> {
+    ) -> Result<Rc<RefCell<fp_core::ast::package::CompiledPackage>>, CompilerDriverError> {
         let parent_context = self.state.borrow().typing_ctx.clone();
         if let Some(package) = self.compiled_packages.get(package_id).cloned() {
             parent_context
@@ -363,7 +363,7 @@ impl CompilerDriver {
             parent_context.executor.clone(),
         ));
 
-        let result: Result<Rc<RefCell<fp_core::package::CompiledPackage>>, CompilerDriverError> =
+        let result: Result<Rc<RefCell<fp_core::ast::package::CompiledPackage>>, CompilerDriverError> =
             async {
                 let provider = self
                     .state.borrow()
@@ -538,7 +538,7 @@ impl CompilerDriver {
     }
 
     fn publish_lir_units(
-        package: &Rc<RefCell<fp_core::package::CompiledPackage>>,
+        package: &Rc<RefCell<fp_core::ast::package::CompiledPackage>>,
         package_id: &PackageId,
         units: &[fp_core::lir::LirCompileUnit],
     ) -> Result<(), CompilerDriverError> {
@@ -561,7 +561,7 @@ impl CompilerDriver {
 
     async fn compile_items_to_lir_units(
         &mut self,
-        package: &Rc<RefCell<fp_core::package::CompiledPackage>>,
+        package: &Rc<RefCell<fp_core::ast::package::CompiledPackage>>,
     ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
         let hir_package_id = self
             .state.borrow()
@@ -917,7 +917,7 @@ impl CompilerDriver {
 
     async fn relower_cached_lir_units(
         &mut self,
-        package: &Rc<RefCell<fp_core::package::CompiledPackage>>,
+        package: &Rc<RefCell<fp_core::ast::package::CompiledPackage>>,
     ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
         let package_id = self
             .state.borrow()
@@ -1842,7 +1842,7 @@ impl CompilerDriver {
     /// general Adt case in `lower_hir_ty`) that only ever needed to convey
     /// type *identity*, not full field layout.
     fn lookup_real_adt_def(
-        packages: &[Rc<RefCell<fp_core::package::CompiledPackage>>],
+        packages: &[Rc<RefCell<fp_core::ast::package::CompiledPackage>>],
         def_id: hir::DefId,
     ) -> Option<mir::ty::AdtDef> {
         packages
@@ -1853,7 +1853,7 @@ impl CompilerDriver {
     fn value_to_mir_constant(
         value: &Value,
         ty: &mir::Ty,
-        packages: &[Rc<RefCell<fp_core::package::CompiledPackage>>],
+        packages: &[Rc<RefCell<fp_core::ast::package::CompiledPackage>>],
     ) -> Option<mir::Constant> {
         let literal = match value {
             Value::Bool(value) => mir::ConstantKind::Bool(value.value),
@@ -1881,7 +1881,7 @@ impl CompilerDriver {
     fn value_to_const_value(
         value: &Value,
         ty: &mir::Ty,
-        packages: &[Rc<RefCell<fp_core::package::CompiledPackage>>],
+        packages: &[Rc<RefCell<fp_core::ast::package::CompiledPackage>>],
     ) -> Option<mir::ConstValue> {
         match value {
             Value::Unit(_) => Some(mir::ConstValue::Unit),

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::ast::module::ModuleDescriptor;
 use crate::ast::module::ModuleId;
-use crate::package::{PackageDescriptor, PackageId};
+use crate::ast::package::{PackageDescriptor, PackageId};
 
 #[derive(Clone, Debug, Default)]
 pub struct PackageGraph {

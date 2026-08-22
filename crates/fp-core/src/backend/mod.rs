@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 
 use crate::error::Result;
-use crate::package::PackageId;
+use crate::ast::package::PackageId;
 use crate::workspace::WorkspaceContext;
 
 /// Resolved once by `fp-cli` from `CompileArgs`, then handed to each

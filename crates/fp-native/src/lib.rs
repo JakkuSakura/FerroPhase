@@ -71,7 +71,7 @@ impl fp_core::backend::TargetBackend for NativeEmitter {
     fn emit_package_artifact(
         &self,
         workspace: &fp_core::workspace::WorkspaceContext,
-        package_id: &fp_core::package::PackageId,
+        package_id: &fp_core::ast::package::PackageId,
     ) -> Result<()> {
         if let Ok(source) = workspace.package_source(package_id) {
             // A native archive (`NativeObjectPackageProvider::from_archive`)
@@ -419,13 +419,13 @@ fn plan_has_undefined_symbols(plan: &emit::EmitPlan) -> bool {
 /// same way every AST-emitting backend already reads its package's
 /// items — no side-channel field, no extra trait method.
 pub struct NativeObjectPackageProvider {
-    package_id: fp_core::package::PackageId,
-    descriptor: std::sync::Arc<fp_core::package::PackageDescriptor>,
-    source: fp_core::package::PackageSource,
+    package_id: fp_core::ast::package::PackageId,
+    descriptor: std::sync::Arc<fp_core::ast::package::PackageDescriptor>,
+    source: fp_core::ast::package::PackageSource,
 }
 
 impl NativeObjectPackageProvider {
-    pub fn new(package_id: fp_core::package::PackageId, bytes: &[u8]) -> Result<Self> {
+    pub fn new(package_id: fp_core::ast::package::PackageId, bytes: &[u8]) -> Result<Self> {
         let asm = crate::binary::lift_object_to_asmir(bytes)
             .map_err(|err| Error::from(format!("Failed to lift object file: {err}")))?;
         Ok(Self::from_asm(package_id, asm))
@@ -440,9 +440,9 @@ impl NativeObjectPackageProvider {
     /// treats an empty-path single item as "one plain object/asm", not an
     /// archive (see `from_archive`, whose members are each tagged with
     /// their own non-empty path).
-    pub fn from_asm(package_id: fp_core::package::PackageId, asm: AsmProgram) -> Self {
+    pub fn from_asm(package_id: fp_core::ast::package::PackageId, asm: AsmProgram) -> Self {
         let mut source = Self::empty_source(&package_id);
-        source.items.push(fp_core::package::PackageItem {
+        source.items.push(fp_core::ast::package::PackageItem {
             module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
             item: fp_core::ast::Item::precompiled_asm(asm),
         });
@@ -458,7 +458,7 @@ impl NativeObjectPackageProvider {
     /// carries its raw bytes as an opaque `PrecompiledArtifact` and is
     /// repacked verbatim, unretargeted — this mirrors exactly what the
     /// bespoke `container/pipeline.rs` archive transpile used to do.
-    pub fn from_archive(package_id: fp_core::package::PackageId, bytes: &[u8]) -> Result<Self> {
+    pub fn from_archive(package_id: fp_core::ast::package::PackageId, bytes: &[u8]) -> Result<Self> {
         let members = crate::archive::read_archive_members(bytes)
             .map_err(|err| Error::from(format!("Failed to parse archive input: {err}")))?;
         let object_reader = crate::container::ObjectContainerReader::new();
@@ -472,7 +472,7 @@ impl NativeObjectPackageProvider {
             } else {
                 fp_core::ast::Item::precompiled_artifact(member.data)
             };
-            source.items.push(fp_core::package::PackageItem {
+            source.items.push(fp_core::ast::package::PackageItem {
                 module_path: fp_core::ast::path::QualifiedPath::new(vec![member.name]),
                 item,
             });
@@ -480,25 +480,25 @@ impl NativeObjectPackageProvider {
         Ok(Self::from_source(package_id, source))
     }
 
-    fn empty_source(package_id: &fp_core::package::PackageId) -> fp_core::package::PackageSource {
-        fp_core::package::PackageSource::new(
+    fn empty_source(package_id: &fp_core::ast::package::PackageId) -> fp_core::ast::package::PackageSource {
+        fp_core::ast::package::PackageSource::new(
             package_id.clone(),
             package_id.as_str().to_string(),
-            fp_core::package::graph::PackageGraph::new(Vec::new()),
+            fp_core::ast::package::graph::PackageGraph::new(Vec::new()),
         )
     }
 
     fn from_source(
-        package_id: fp_core::package::PackageId,
-        source: fp_core::package::PackageSource,
+        package_id: fp_core::ast::package::PackageId,
+        source: fp_core::ast::package::PackageSource,
     ) -> Self {
-        let descriptor = fp_core::package::PackageDescriptor {
+        let descriptor = fp_core::ast::package::PackageDescriptor {
             id: package_id.clone(),
             name: package_id.as_str().to_string(),
             version: None,
             manifest_path: fp_core::vfs::VirtualPath::new_relative(Vec::<String>::new()),
             root: fp_core::vfs::VirtualPath::new_relative(Vec::<String>::new()),
-            metadata: fp_core::package::PackageMetadata::default(),
+            metadata: fp_core::ast::package::PackageMetadata::default(),
             modules: Vec::new(),
         };
         Self {
@@ -509,42 +509,42 @@ impl NativeObjectPackageProvider {
     }
 }
 
-impl fp_core::package::provider::PackageProvider for NativeObjectPackageProvider {
+impl fp_core::ast::package::provider::PackageProvider for NativeObjectPackageProvider {
     fn list_packages(
         &self,
-    ) -> fp_core::package::provider::ProviderResult<Vec<fp_core::package::PackageId>> {
+    ) -> fp_core::ast::package::provider::ProviderResult<Vec<fp_core::ast::package::PackageId>> {
         Ok(vec![self.package_id.clone()])
     }
 
     fn workspace_packages(
         &self,
-    ) -> fp_core::package::provider::ProviderResult<Vec<fp_core::package::PackageId>> {
+    ) -> fp_core::ast::package::provider::ProviderResult<Vec<fp_core::ast::package::PackageId>> {
         self.list_packages()
     }
 
     fn load_package_metadata(
         &self,
-        id: &fp_core::package::PackageId,
-    ) -> fp_core::package::provider::ProviderResult<std::sync::Arc<fp_core::package::PackageDescriptor>>
+        id: &fp_core::ast::package::PackageId,
+    ) -> fp_core::ast::package::provider::ProviderResult<std::sync::Arc<fp_core::ast::package::PackageDescriptor>>
     {
         if id != &self.package_id {
-            return Err(fp_core::package::provider::ProviderError::PackageNotFound(
+            return Err(fp_core::ast::package::provider::ProviderError::PackageNotFound(
                 id.clone(),
             ));
         }
         Ok(self.descriptor.clone())
     }
 
-    fn refresh(&self) -> fp_core::package::provider::ProviderResult<()> {
+    fn refresh(&self) -> fp_core::ast::package::provider::ProviderResult<()> {
         Ok(())
     }
 
     fn load_package_source(
         &self,
-        id: &fp_core::package::PackageId,
-    ) -> fp_core::package::provider::ProviderResult<fp_core::package::PackageSource> {
+        id: &fp_core::ast::package::PackageId,
+    ) -> fp_core::ast::package::provider::ProviderResult<fp_core::ast::package::PackageSource> {
         if id != &self.package_id {
-            return Err(fp_core::package::provider::ProviderError::PackageNotFound(
+            return Err(fp_core::ast::package::provider::ProviderError::PackageNotFound(
                 id.clone(),
             ));
         }

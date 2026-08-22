@@ -4,7 +4,7 @@ use crate::commands::setup_progress_bar;
 use crate::compiler;
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
-use fp_core::package::PackageId;
+use fp_core::ast::package::PackageId;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
@@ -218,7 +218,7 @@ fn provider_and_package_for_input(
     input: &Path,
     language: &str,
 ) -> Result<(
-    std::sync::Arc<dyn fp_core::package::provider::PackageProvider>,
+    std::sync::Arc<dyn fp_core::ast::package::provider::PackageProvider>,
     PackageId,
     fp_core::ast::path::QualifiedPath,
 )> {
@@ -259,7 +259,7 @@ async fn run_named_target(
     use crate::languages::package_provider_registry::provider_for_language;
 
     let (provider, packages, lang): (
-        std::sync::Arc<dyn fp_core::package::provider::PackageProvider>,
+        std::sync::Arc<dyn fp_core::ast::package::provider::PackageProvider>,
         Vec<PackageId>,
         String,
     ) = if input.is_dir() {
@@ -350,7 +350,7 @@ async fn run_compile_pipeline(
     input: &Path,
     output: &Path,
     target_name: &str,
-    provider: std::sync::Arc<dyn fp_core::package::provider::PackageProvider>,
+    provider: std::sync::Arc<dyn fp_core::ast::package::provider::PackageProvider>,
     packages: Vec<PackageId>,
     lang: &str,
     backend: Box<dyn fp_core::backend::TargetBackend>,

@@ -179,6 +179,24 @@ impl Ty {
     pub fn bool() -> Ty {
         Ty::Primitive(TypePrimitive::Bool)
     }
+
+    /// The reverse of `primitive_type_value_ty` (`fp-interpret`'s
+    /// `std::intrinsics::primitive_type` implementation) — turns an
+    /// already-known primitive/reference-to-primitive `Ty` back into the
+    /// name string that intrinsic expects, e.g. for a `Value::Type`
+    /// literal the *parser* already constant-folded (see `ast_to_hir`'s
+    /// `transform_value_to_hir`). `None` for anything outside that scope
+    /// (structs, generics, ...).
+    pub fn primitive_type_value_name(&self) -> Option<String> {
+        match self {
+            Ty::Primitive(primitive) => primitive.canonical_name().map(str::to_string),
+            Ty::Reference(reference) => reference
+                .ty
+                .primitive_type_value_name()
+                .map(|inner| format!("&{inner}")),
+            _ => None,
+        }
+    }
     pub fn expr(expr: Expr) -> Self {
         let (id, span, kind) = expr.into_parts();
         match kind {
@@ -364,6 +382,65 @@ impl TypePrimitive {
     }
     pub fn bool() -> TypePrimitive {
         TypePrimitive::Bool
+    }
+
+    /// The reverse of the surface-syntax primitive-type names the parser
+    /// already recognizes (`fp-lang/src/ast/types.rs`'s type-expr grammar)
+    /// — the single canonical name-to-`TypePrimitive` mapping, so a
+    /// runtime type-value reflection (`std::intrinsics::primitive_type`,
+    /// the compiler intrinsic backing it) doesn't need its own duplicate
+    /// match. Deliberately only covers names `ast::Ty::Primitive`/
+    /// `DecimalType` can actually represent (no `f16`/`f128` — those
+    /// resolve to a HIR-level `FloatTy` directly in *type* position, with
+    /// no `ast::Ty::Primitive` shape to reflect as a value).
+    pub fn from_name(name: &str) -> Option<TypePrimitive> {
+        Some(match name {
+            "bool" => TypePrimitive::Bool,
+            "char" => TypePrimitive::Char,
+            "str" => TypePrimitive::String,
+            "i8" => TypePrimitive::Int(TypeInt::I8),
+            "i16" => TypePrimitive::Int(TypeInt::I16),
+            "i32" => TypePrimitive::Int(TypeInt::I32),
+            "i64" | "isize" => TypePrimitive::Int(TypeInt::I64),
+            "i128" => TypePrimitive::Int(TypeInt::I128),
+            "u8" => TypePrimitive::Int(TypeInt::U8),
+            "u16" => TypePrimitive::Int(TypeInt::U16),
+            "u32" => TypePrimitive::Int(TypeInt::U32),
+            "u64" | "usize" => TypePrimitive::Int(TypeInt::U64),
+            "u128" => TypePrimitive::Int(TypeInt::U128),
+            "f32" => TypePrimitive::Decimal(DecimalType::F32),
+            "f64" => TypePrimitive::Decimal(DecimalType::F64),
+            _ => return None,
+        })
+    }
+
+    /// The canonical name `from_name` maps back to this exact variant —
+    /// used to turn an already-known `ast::Ty::Primitive` back into the
+    /// name string `std::intrinsics::primitive_type` expects (e.g. when
+    /// the parser has already constant-folded a call argument into a
+    /// `Value::Type` literal, see `ast_to_hir`'s `transform_value_to_hir`).
+    /// `isize`/`usize` collapse to `"i64"`/`"u64"` — same as `from_name`.
+    pub fn canonical_name(&self) -> Option<&'static str> {
+        Some(match self {
+            TypePrimitive::Bool => "bool",
+            TypePrimitive::Char => "char",
+            TypePrimitive::String => "str",
+            TypePrimitive::Int(TypeInt::I8) => "i8",
+            TypePrimitive::Int(TypeInt::I16) => "i16",
+            TypePrimitive::Int(TypeInt::I32) => "i32",
+            TypePrimitive::Int(TypeInt::I64) => "i64",
+            TypePrimitive::Int(TypeInt::I128) => "i128",
+            TypePrimitive::Int(TypeInt::U8) => "u8",
+            TypePrimitive::Int(TypeInt::U16) => "u16",
+            TypePrimitive::Int(TypeInt::U32) => "u32",
+            TypePrimitive::Int(TypeInt::U64) => "u64",
+            TypePrimitive::Int(TypeInt::U128) => "u128",
+            TypePrimitive::Int(TypeInt::BigInt) => return None,
+            TypePrimitive::Decimal(DecimalType::F32) => "f32",
+            TypePrimitive::Decimal(DecimalType::F64) => "f64",
+            TypePrimitive::Decimal(_) => return None,
+            TypePrimitive::List => return None,
+        })
     }
 }
 impl Display for TypePrimitive {

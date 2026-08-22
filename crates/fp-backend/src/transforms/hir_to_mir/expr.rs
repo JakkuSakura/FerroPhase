@@ -17003,6 +17003,7 @@ impl<'a> BodyBuilder<'a> {
                     IntrinsicKind::CreateStruct
                         | IntrinsicKind::AddField
                         | IntrinsicKind::BuildType
+                        | IntrinsicKind::PrimitiveType
                 ) {
                     let lowered_args: Vec<OperandInfo> = call
                         .callargs

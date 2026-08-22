@@ -26,20 +26,20 @@ pub use transforms as transformations;
 /// items structurally on its own, so no flattening is needed here either.
 fn package_from_file(
     file: &fp_core::ast::File,
-) -> fp_core::Result<fp_core::package::CompiledPackage> {
-    use fp_core::package::provider::{FixedPackageProvider, PackageProvider};
+) -> fp_core::Result<fp_core::ast::package::CompiledPackage> {
+    use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
 
-    let package_id = fp_core::package::PackageId::new("roundtrip");
+    let package_id = fp_core::ast::package::PackageId::new("roundtrip");
     let mut items = file.items.clone();
     transforms::ast_to_hir::strip_doc_attrs_in_items(&mut items);
-    let mut source = fp_core::package::PackageSource::new(
+    let mut source = fp_core::ast::package::PackageSource::new(
         package_id.clone(),
         "roundtrip",
-        fp_core::package::graph::PackageGraph::new(Vec::new()),
+        fp_core::ast::package::graph::PackageGraph::new(Vec::new()),
     );
     source.items = items
         .into_iter()
-        .map(|item| fp_core::package::PackageItem {
+        .map(|item| fp_core::ast::package::PackageItem {
             module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
             item,
         })

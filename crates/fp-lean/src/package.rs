@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use fp_core::package::provider::{PackageProvider, ProviderResult};
-use fp_core::package::{PackageDescriptor, PackageId, PackageSource};
+use fp_core::ast::package::provider::{PackageProvider, ProviderResult};
+use fp_core::ast::package::{PackageDescriptor, PackageId, PackageSource};
 
 /// Mirrors every other secondary-language `PackageProvider` in this
 /// workspace (`fp-toml`, `fp-golang`, ...), which are themselves currently

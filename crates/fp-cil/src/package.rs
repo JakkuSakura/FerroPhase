@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use fp_core::package::provider::PackageProvider;
-use fp_core::package::{PackageId, PackageSource};
+use fp_core::ast::package::provider::PackageProvider;
+use fp_core::ast::package::{PackageId, PackageSource};
 
 fn package_name_for(root: &Path) -> String {
     root.file_stem()
@@ -29,14 +29,14 @@ pub fn provider_for_path(root: &Path) -> Option<Arc<dyn PackageProvider>> {
     if !is_pe {
         if let Ok(text) = String::from_utf8(bytes) {
             if let Ok(lir) = crate::parse_cil_program(&text) {
-                source.items.push(fp_core::package::PackageItem {
+                source.items.push(fp_core::ast::package::PackageItem {
                     module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
                     item: fp_core::ast::Item::precompiled_lir(lir),
                 });
             }
         }
     }
-    Some(Arc::new(fp_core::package::provider::FixedPackageProvider::for_source(
+    Some(Arc::new(fp_core::ast::package::provider::FixedPackageProvider::for_source(
         package_id, source,
     )) as Arc<dyn PackageProvider>)
 }

@@ -60,9 +60,9 @@ impl TypeScriptSerializer {
     /// Returns `Vec<(relative_path, code)>`.
     pub fn serialize_package(
         &self,
-        source: &fp_core::package::PackageSource,
+        source: &fp_core::ast::package::PackageSource,
     ) -> Result<Vec<(String, String)>> {
-        fp_core::package::split_package_into_modules(source)
+        fp_core::ast::package::split_package_into_modules(source)
             .into_iter()
             .map(|module| {
                 let rel_path = module.relative_path();
@@ -119,7 +119,7 @@ impl fp_core::backend::TargetBackend for TypeScriptBackend {
     fn emit_package_artifact(
         &self,
         workspace: &fp_core::workspace::WorkspaceContext,
-        package_id: &fp_core::package::PackageId,
+        package_id: &fp_core::ast::package::PackageId,
     ) -> Result<()> {
         let package = workspace.package_source(package_id)?;
         let files = self.serializer.serialize_package(&package)?;
@@ -141,9 +141,9 @@ impl JavaScriptSerializer {
     /// Returns `Vec<(relative_path, code)>`.
     pub fn serialize_package(
         &self,
-        source: &fp_core::package::PackageSource,
+        source: &fp_core::ast::package::PackageSource,
     ) -> Result<Vec<(String, String)>> {
-        fp_core::package::split_package_into_modules(source)
+        fp_core::ast::package::split_package_into_modules(source)
             .into_iter()
             .map(|module| {
                 let rel_path = module.relative_path();
@@ -174,7 +174,7 @@ impl fp_core::backend::TargetBackend for JavaScriptBackend {
     fn emit_package_artifact(
         &self,
         workspace: &fp_core::workspace::WorkspaceContext,
-        package_id: &fp_core::package::PackageId,
+        package_id: &fp_core::ast::package::PackageId,
     ) -> Result<()> {
         let package = workspace.package_source(package_id)?;
         let files = JavaScriptSerializer.serialize_package(&package)?;

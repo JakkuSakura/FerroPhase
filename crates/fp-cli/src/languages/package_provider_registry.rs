@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use fp_core::package::provider::PackageProvider;
+use fp_core::ast::package::provider::PackageProvider;
 use fp_lang::magnet_provider::MagnetWorkspaceProvider;
 
 use super::backend_registry::LanguageProviderFactory;

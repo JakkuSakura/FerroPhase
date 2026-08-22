@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use fp_core::package::provider::PackageProvider;
-use fp_core::package::{PackageId, PackageSource};
+use fp_core::ast::package::provider::PackageProvider;
+use fp_core::ast::package::{PackageId, PackageSource};
 
 fn package_name_for(root: &Path) -> String {
     root.file_stem()
@@ -39,12 +39,12 @@ pub fn bytecode_provider(root: &Path) -> Option<Arc<dyn PackageProvider>> {
         crate::parse_class_to_lir(&bytes).ok()
     };
     if let Some(lir) = lir {
-        source.items.push(fp_core::package::PackageItem {
+        source.items.push(fp_core::ast::package::PackageItem {
             module_path: fp_core::ast::path::QualifiedPath::new(Vec::new()),
             item: fp_core::ast::Item::precompiled_lir(lir),
         });
     }
-    Some(Arc::new(fp_core::package::provider::FixedPackageProvider::for_source(
+    Some(Arc::new(fp_core::ast::package::provider::FixedPackageProvider::for_source(
         package_id, source,
     )) as Arc<dyn PackageProvider>)
 }

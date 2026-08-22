@@ -7,8 +7,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use fp_core::ast::path::QualifiedPath;
-use fp_core::package::provider::{PackageProvider, ProviderError, ProviderResult};
-use fp_core::package::{PackageDescriptor, PackageId, PackageSource};
+use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
+use fp_core::ast::package::{PackageDescriptor, PackageId, PackageSource};
 use fp_core::vfs::{UnixFileSystem, VirtualPath};
 use fp_lang::module_source::FerroModuleSourceResolver;
 

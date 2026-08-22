@@ -110,7 +110,7 @@ impl<'de> serde::Deserialize<'de> for LirProgram {
 /// One independently addressable LIR definition.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirArtifact {
-    pub package_id: crate::package::PackageId,
+    pub package_id: crate::ast::package::PackageId,
     pub module_path: crate::ast::path::QualifiedPath,
     pub kind: LirArtifactKind,
 }
@@ -132,10 +132,10 @@ pub enum LirArtifactKind {
 pub struct LirWorkspace {
     pub data_layout: LirDataLayout,
     artifacts: Vec<LirArtifact>,
-    functions: HashMap<(crate::package::PackageId, Name), usize>,
-    globals: HashMap<(crate::package::PackageId, Name), usize>,
-    types: HashMap<(crate::package::PackageId, Name), usize>,
-    comptime_entries: HashMap<(crate::package::PackageId, Name), usize>,
+    functions: HashMap<(crate::ast::package::PackageId, Name), usize>,
+    globals: HashMap<(crate::ast::package::PackageId, Name), usize>,
+    types: HashMap<(crate::ast::package::PackageId, Name), usize>,
+    comptime_entries: HashMap<(crate::ast::package::PackageId, Name), usize>,
 }
 
 impl LirWorkspace {
@@ -182,7 +182,7 @@ impl LirWorkspace {
 
     pub fn add_program(
         &mut self,
-        package_id: crate::package::PackageId,
+        package_id: crate::ast::package::PackageId,
         module_path: crate::ast::path::QualifiedPath,
         program: LirProgram,
     ) -> Result<(), LirProgramError> {
@@ -255,7 +255,7 @@ impl LirWorkspace {
 
     pub fn find_function(
         &self,
-        package_id: crate::package::PackageId,
+        package_id: crate::ast::package::PackageId,
         name: &Name,
     ) -> Option<&LirFunction> {
         self.functions
@@ -268,7 +268,7 @@ impl LirWorkspace {
 
     pub fn find_global(
         &self,
-        package_id: crate::package::PackageId,
+        package_id: crate::ast::package::PackageId,
         name: &Name,
     ) -> Option<&LirGlobal> {
         self.globals
@@ -281,7 +281,7 @@ impl LirWorkspace {
 
     pub fn find_comptime_entry(
         &self,
-        package_id: crate::package::PackageId,
+        package_id: crate::ast::package::PackageId,
         function: &Name,
     ) -> Option<&LirComptimeEntry> {
         self.comptime_entries
@@ -348,7 +348,7 @@ pub enum LirProgramError {
 pub enum LirWorkspaceError {
     #[error("duplicate LIR artifact `{name}` in package {package_id}")]
     DuplicateArtifact {
-        package_id: crate::package::PackageId,
+        package_id: crate::ast::package::PackageId,
         name: Name,
     },
 }
@@ -595,6 +595,12 @@ pub enum ComptimeOp {
     IntoType {
         value: LirValue,
     },
+    /// `std::intrinsics::primitive_type(name)` — reflects a primitive
+    /// type name (or a `&`-prefixed reference to one) as a runtime type
+    /// value, the same shape `CreateStruct`'s result already has.
+    PrimitiveType {
+        name: LirValue,
+    },
     /// `compile_warning!(message)` — reports `message` and evaluates to
     /// `()`, without aborting comptime evaluation.
     CompileWarning {
@@ -682,7 +688,7 @@ pub enum LirValueKind {
 pub enum LirFunctionRef {
     Name(Name),
     Package {
-        package_id: crate::package::PackageId,
+        package_id: crate::ast::package::PackageId,
         name: Name,
     },
     Definition(crate::hir::DefId),

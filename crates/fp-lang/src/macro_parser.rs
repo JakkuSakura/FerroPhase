@@ -730,20 +730,20 @@ fn collect_macro_rules_defs_into<'a>(
 const MAX_MACRO_EXPANSION_DEPTH: u32 = 16;
 
 pub fn expand_item_macros(
-    items: Vec<fp_core::package::PackageItem>,
+    items: Vec<fp_core::ast::package::PackageItem>,
     defs: &HashMap<String, MacroRulesDef>,
-) -> Vec<fp_core::package::PackageItem> {
+) -> Vec<fp_core::ast::package::PackageItem> {
     items
         .into_iter()
         .map(|package_item| {
-            let fp_core::package::PackageItem { module_path, item } = package_item;
+            let fp_core::ast::package::PackageItem { module_path, item } = package_item;
             let expanded = expand_items(vec![item], defs, 0);
             (module_path, expanded)
         })
         .flat_map(|(module_path, expanded)| {
             expanded
                 .into_iter()
-                .map(move |item| fp_core::package::PackageItem {
+                .map(move |item| fp_core::ast::package::PackageItem {
                     module_path: module_path.clone(),
                     item,
                 })

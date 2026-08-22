@@ -6,8 +6,8 @@ use fp_compiler::{
     PipelineMode,
 };
 use fp_core::ast::path::QualifiedPath;
-use fp_core::package::provider::PackageProvider;
-use fp_core::package::PackageId;
+use fp_core::ast::package::provider::PackageProvider;
+use fp_core::ast::package::PackageId;
 use fp_core::{
     ast::{
         Expr, ExprBlock, File, Ident, Item, ItemDefConst, ItemDefFunction, ItemKind, ScriptBlock,
@@ -140,7 +140,7 @@ fn execute_ast(
 /// Panics on an unrecognized language rather than silently defaulting —
 /// wiring up std resolution for a new source language is a deliberate step,
 /// not something to fall through to FerroPhase's `.fp` std by accident.
-fn std_provider_for(language: &str) -> Arc<dyn fp_core::package::provider::PackageProvider> {
+fn std_provider_for(language: &str) -> Arc<dyn fp_core::ast::package::provider::PackageProvider> {
     match language {
         l if l == languages::FERROPHASE => Arc::new(fp_lang::provider::FerroPhaseProvider),
         l if l == languages::RUST => Arc::new(fp_rust::RustStdProvider),
@@ -154,7 +154,7 @@ fn std_provider_for(language: &str) -> Arc<dyn fp_core::package::provider::Packa
             || l == languages::JVM_BYTECODE
             || l == languages::CIL =>
         {
-            Arc::new(fp_core::package::provider::EmptyProvider)
+            Arc::new(fp_core::ast::package::provider::EmptyProvider)
         }
         other => panic!("std_provider_for: no std/libc provider wired up for language {other:?}"),
     }
@@ -373,7 +373,7 @@ fn compile_source_file(
         resolve_input_package(input, language, identity)?;
 
     let std_provider = std_provider_for(language);
-    let provider = Arc::new(fp_core::package::provider::CompositeProvider::new(
+    let provider = Arc::new(fp_core::ast::package::provider::CompositeProvider::new(
         vec![std_provider],
         input_provider,
     ));
@@ -484,7 +484,7 @@ pub fn build_workspace_session(
 ) -> (CompilerExecutor, CompilerSession) {
     let executor = CompilerExecutor::new();
     let std_provider = std_provider_for(language);
-    let combined = Arc::new(fp_core::package::provider::CompositeProvider::new(
+    let combined = Arc::new(fp_core::ast::package::provider::CompositeProvider::new(
         vec![std_provider],
         provider,
     ));
@@ -611,7 +611,7 @@ impl LoweredProgram {
 
     fn compiled_package(
         &self,
-    ) -> Result<std::rc::Rc<std::cell::RefCell<fp_core::package::CompiledPackage>>> {
+    ) -> Result<std::rc::Rc<std::cell::RefCell<fp_core::ast::package::CompiledPackage>>> {
         self.driver
             .state
             .borrow()

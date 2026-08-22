@@ -2189,7 +2189,7 @@ impl fp_core::backend::TargetBackend for EbpfBackend {
     fn emit_package_artifact(
         &self,
         workspace: &fp_core::workspace::WorkspaceContext,
-        package_id: &fp_core::package::PackageId,
+        package_id: &fp_core::ast::package::PackageId,
     ) -> fp_core::error::Result<()> {
         let lir = workspace.merged_lir_program(package_id)?;
         if let Some(parent) = self.output.parent() {

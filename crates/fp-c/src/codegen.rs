@@ -34,7 +34,7 @@ use fp_core::ast::{
 use fp_core::error::Result;
 use fp_core::intrinsics::CallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
-use fp_core::package::PackageSource;
+use fp_core::ast::package::PackageSource;
 use fp_core::writer::{BraceStyle, StyledWriter, WriterConfig};
 
 /// Public entry point used by the CLI target dispatch (`BuiltinLanguageTarget::C`).
@@ -57,7 +57,7 @@ impl CSourceSerializer {
     /// Returns `Vec<(relative_path, code)>` with two entries per module.
     pub fn serialize_package(&self, source: &PackageSource) -> Result<Vec<(String, String)>> {
         let mut out = Vec::new();
-        for module in fp_core::package::split_package_into_modules(source) {
+        for module in fp_core::ast::package::split_package_into_modules(source) {
             let rel_path = module.relative_path();
             let file = File {
                 path: std::path::PathBuf::from(&rel_path),
@@ -91,7 +91,7 @@ impl fp_core::backend::TargetBackend for CBackend {
     fn emit_package_artifact(
         &self,
         workspace: &fp_core::workspace::WorkspaceContext,
-        package_id: &fp_core::package::PackageId,
+        package_id: &fp_core::ast::package::PackageId,
     ) -> Result<()> {
         let package = workspace.package_source(package_id)?;
         let package = &package;

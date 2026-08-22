@@ -236,7 +236,7 @@ mod tests {
                 integer_alignments: vec![(8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
             },
             std::rc::Rc::new(WorkspaceContext::new(std::sync::Arc::new(
-                fp_core::package::provider::EmptyProvider,
+                fp_core::ast::package::provider::EmptyProvider,
             ))),
             fp_core::executor::CompilerExecutor::new().handle(),
         );

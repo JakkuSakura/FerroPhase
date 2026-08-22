@@ -15,6 +15,7 @@ pub enum LangIntrinsic {
     CreateStruct,
     AddField,
     BuildType,
+    PrimitiveType,
     FsReadDir,
     FsWalkDir,
     FsReadToString,
@@ -92,6 +93,12 @@ const LANG_INSTRINSTICS: &[LangIntrinsicSpec] = &[
         lang_item: "build_type",
         capability: LangIntrinsicCapability::ConstOnly,
         call_kind: Some(CallKind::BuildType),
+    },
+    LangIntrinsicSpec {
+        intrinsic: LangIntrinsic::PrimitiveType,
+        lang_item: "primitive_type",
+        capability: LangIntrinsicCapability::ConstOnly,
+        call_kind: Some(CallKind::PrimitiveType),
     },
     LangIntrinsicSpec {
         intrinsic: LangIntrinsic::FsReadDir,

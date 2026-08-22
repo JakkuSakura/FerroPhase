@@ -25,7 +25,7 @@ impl fp_core::backend::TargetBackend for BytecodeBackend {
     fn emit_package_artifact(
         &self,
         workspace: &fp_core::workspace::WorkspaceContext,
-        package_id: &fp_core::package::PackageId,
+        package_id: &fp_core::ast::package::PackageId,
     ) -> fp_core::error::Result<()> {
         let package = workspace.compiled_package(package_id).ok_or_else(|| {
             fp_core::error::Error::from(format!("package `{package_id}` is unavailable"))

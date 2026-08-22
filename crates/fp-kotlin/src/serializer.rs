@@ -12,7 +12,7 @@ use fp_core::ast::{
 };
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::intrinsics::calls::{CallKind, KnownClass, KnownPackage};
-use fp_core::package::{PackageItem, PackageSource};
+use fp_core::ast::package::{PackageItem, PackageSource};
 use fp_core::diagnostics::report_warning_with_context;
 use fp_core::backend::{BackendConfig, PackageWriter, TargetBackend};
 use fp_core::writer::{IndentStyle, StyledWriter, WriterConfig};
@@ -245,7 +245,7 @@ impl KotlinSerializer {
             enum_variant_names,
             referenced_paths,
         } = ctx;
-        let modules = fp_core::package::split_package_into_modules(source);
+        let modules = fp_core::ast::package::split_package_into_modules(source);
 
         let pkg_name = &source.name;
         let mut files = Vec::new();
@@ -368,7 +368,7 @@ impl KotlinBackend {
         let workspace_packages: HashSet<String> = workspace.workspace_packages().into_iter().collect();
         let sources: Vec<PackageSource> = workspace_packages
             .iter()
-            .map(|name| workspace.package_source(&fp_core::package::PackageId::new(name.clone())))
+            .map(|name| workspace.package_source(&fp_core::ast::package::PackageId::new(name.clone())))
             .collect::<fp_core::error::Result<_>>()?;
         let ctx = KotlinWorkspaceContext::collect(sources.iter());
         let mut package_names: Vec<String> = sources.iter().map(|s| s.name.clone()).collect();
@@ -386,7 +386,7 @@ impl TargetBackend for KotlinBackend {
     fn emit_package_artifact(
         &self,
         workspace: &fp_core::workspace::WorkspaceContext,
-        package_id: &fp_core::package::PackageId,
+        package_id: &fp_core::ast::package::PackageId,
     ) -> fp_core::error::Result<()> {
         let scan = self.ensure_scan(workspace)?;
         // Materialize portable ops (`IntrinsicCall(CallKind::Op(_))`) into

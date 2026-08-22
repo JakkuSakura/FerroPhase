@@ -24,6 +24,11 @@ pub const fn build_type(ty: type) -> type<_> {
     compile_error!("build_type is a compiler intrinsic")
 }
 
+#[intrinsic = "primitive_type"]
+pub const fn primitive_type(name: &str) -> type<_> {
+    compile_error!("primitive_type is a compiler intrinsic")
+}
+
 #[intrinsic = "catch_unwind"]
 pub fn catch_unwind(f: fn()) -> bool {
     compile_error!("catch_unwind is a compiler intrinsic")

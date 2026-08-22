@@ -14,7 +14,7 @@ use crate::abi;
 
 /// Generator for transforming MIR to LIR (Low-level IR)
 pub struct LirGenerator {
-    package_id: fp_core::package::PackageId,
+    package_id: fp_core::ast::package::PackageId,
     module_path: Option<String>,
     data_layout: lir::LirDataLayout,
     next_lir_id: lir::LirId,
@@ -53,7 +53,7 @@ pub struct LirGenerator {
     /// `predeclare_dependency_function_signatures`) — absent entries are
     /// assumed local (`self.package_id`), so this only needs entries for
     /// cross-package functions.
-    function_package_ids: HashMap<String, fp_core::package::PackageId>,
+    function_package_ids: HashMap<String, fp_core::ast::package::PackageId>,
     runtime_symbol_map: fn(&str) -> Option<lir::RuntimeSymbol>,
     /// Dependency packages, queried lazily by `lookup_adt_def` on a
     /// local-lookup miss — a cheap `Rc` snapshot,
@@ -61,7 +61,7 @@ pub struct LirGenerator {
     /// dependency's `mir_adt_defs`/`mir_struct_fields` into `adt_defs`/a
     /// local layout map up front (see `driver.rs`'s old `all_adt_defs`/
     /// `all_layouts`).
-    dependency_packages: Vec<std::rc::Rc<RefCell<fp_core::package::CompiledPackage>>>,
+    dependency_packages: Vec<std::rc::Rc<RefCell<fp_core::ast::package::CompiledPackage>>>,
 }
 
 #[derive(Clone)]
@@ -103,7 +103,7 @@ impl LirGenerator {
         runtime_symbol_map: fn(&str) -> Option<lir::RuntimeSymbol>,
     ) -> Self {
         Self {
-            package_id: fp_core::package::PackageId::new(""),
+            package_id: fp_core::ast::package::PackageId::new(""),
             module_path: None,
             data_layout,
             next_lir_id: 0,
@@ -136,7 +136,7 @@ impl LirGenerator {
         }
     }
 
-    pub fn with_package_id(mut self, package_id: fp_core::package::PackageId) -> Self {
+    pub fn with_package_id(mut self, package_id: fp_core::ast::package::PackageId) -> Self {
         self.package_id = package_id;
         self
     }
@@ -166,7 +166,7 @@ impl LirGenerator {
     /// there's no separate local map to check first.
     pub fn with_dependency_packages(
         mut self,
-        packages: Vec<std::rc::Rc<RefCell<fp_core::package::CompiledPackage>>>,
+        packages: Vec<std::rc::Rc<RefCell<fp_core::ast::package::CompiledPackage>>>,
     ) -> Self {
         self.dependency_packages = packages;
         self
@@ -370,7 +370,7 @@ impl LirGenerator {
     pub fn predeclare_dependency_function_signatures(
         &mut self,
         program: &mir::Program,
-        package_id: fp_core::package::PackageId,
+        package_id: fp_core::ast::package::PackageId,
     ) {
         self.predeclare_function_signatures_impl(program, Some(package_id));
     }
@@ -451,7 +451,7 @@ impl LirGenerator {
     fn predeclare_function_signatures_impl(
         &mut self,
         program: &mir::Program,
-        package_id: Option<fp_core::package::PackageId>,
+        package_id: Option<fp_core::ast::package::PackageId>,
     ) {
         for item in &program.items {
             if let mir::ItemKind::Function(func) = &item.kind {
@@ -1792,6 +1792,7 @@ impl LirGenerator {
                     IntrinsicKind::CreateStruct
                         | IntrinsicKind::AddField
                         | IntrinsicKind::BuildType
+                        | IntrinsicKind::PrimitiveType
                         | IntrinsicKind::CompileWarning
                         | IntrinsicKind::CompileError
                 ) {
@@ -1824,6 +1825,11 @@ impl LirGenerator {
                         IntrinsicKind::BuildType => lir::ComptimeOp::IntoType {
                             value: lir_args.into_iter().next().ok_or_else(|| {
                                 fp_core::error::Error::from("BuildType requires one argument")
+                            })?,
+                        },
+                        IntrinsicKind::PrimitiveType => lir::ComptimeOp::PrimitiveType {
+                            name: lir_args.into_iter().next().ok_or_else(|| {
+                                fp_core::error::Error::from("PrimitiveType requires one argument")
                             })?,
                         },
                         IntrinsicKind::CompileWarning => lir::ComptimeOp::CompileWarning {
