@@ -11,12 +11,21 @@ use crate::TypingDiagnostic;
 use crate::types::{GenericMonorph, TypeckResults};
 
 pub struct ComptimeRequest {
-    /// `Rc`, not owned — the caller already holds this package as an
-    /// `Rc<hir::Package>` (`TypingShared::program`); cloning that `Rc` is
-    /// O(1), unlike cloning the `Package` it points to (every item, the
-    /// whole `def_map`/`def_paths`/`module_tree`), which used to happen
-    /// once per `const { .. }` block encountered during type-checking.
-    pub program: std::rc::Rc<fp_core::hir::Package>,
+    /// Every *already-published* package's own HIR (each shared as the
+    /// same `Rc` its `CompiledPackage`/`WorkspaceContext` holds — see
+    /// `WorkspaceContext::publish_hir_program`, which maintains this
+    /// incrementally, one package at a time, as each finishes — never
+    /// rebuilt/re-scanned on demand). `current` (below) is *not* in here
+    /// yet — it's still being type-checked, not yet published — so the
+    /// receiving `MirLowering` checks `current` first for any `DefId`
+    /// naming it, and falls through to `program` for every other
+    /// package's own `DefId`s. Replaces the old design of pre-merging
+    /// every dependency's `def_map` into one pretend-single-package
+    /// `Package` (or, worse, deep-cloning that merged result) per request.
+    pub program: std::rc::Rc<fp_core::hir::Program>,
+    /// This request's own package — same `Rc` `TypingShared::program`
+    /// already is, so this is an `Rc` clone, not a deep clone.
+    pub current: std::rc::Rc<fp_core::hir::Package>,
     pub typeck_results: TypeckResults,
     /// The exact HIR block encountered by the type checker. The driver may
     /// provide a backend entrypoint for it, but must not reconstruct the
@@ -232,7 +241,8 @@ mod tests {
             fp_core::executor::CompilerExecutor::new().handle(),
         );
         let request = ComptimeRequest {
-            program: std::rc::Rc::new(fp_core::hir::Package::new()),
+            program: std::rc::Rc::new(fp_core::hir::Program::new()),
+            current: std::rc::Rc::new(fp_core::hir::Package::new()),
             typeck_results: TypeckResults::default(),
             block: fp_core::hir::Block {
                 hir_id: fp_core::hir::HirId::new(fp_core::hir::PackageId(0), 0),

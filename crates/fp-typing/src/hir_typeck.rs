@@ -458,7 +458,8 @@ impl HirTypeChecker {
             let typeck_results_snapshot = self.shared.results.borrow().clone();
             let value = context
                 .request_comptime(crate::ComptimeRequest {
-                    program: self.shared.program.clone(),
+                    program: context.env_ctx.hir_program(),
+                    current: self.shared.program.clone(),
                     typeck_results: typeck_results_snapshot,
                     block: hir::Block {
                         hir_id,
@@ -1175,7 +1176,8 @@ impl HirTypeChecker {
                         let typeck_results_snapshot = self.shared.results.borrow().clone();
                         let value = context
                             .request_comptime(crate::ComptimeRequest {
-                                program: self.shared.program.clone(),
+                                program: context.env_ctx.hir_program(),
+                                current: self.shared.program.clone(),
                                 typeck_results: typeck_results_snapshot,
                                 block: hir::Block {
                                     hir_id: expr.hir_id,

@@ -660,6 +660,17 @@ impl CompilerDriver {
             package
                 .borrow_mut()
                 .set_hir_program(self.state.borrow().hir(&hir_id)?.clone());
+            // Fold this package's own HIR into the workspace's persistent
+            // `hir::Program` (see `publish_hir_program`'s doc comment) —
+            // an `Rc` clone of what `set_hir_program` just stored, not
+            // another deep clone.
+            if let Some(hir_program) = package.borrow().hir_program.clone() {
+                self.state
+                    .borrow()
+                    .typing_ctx
+                    .env_ctx
+                    .publish_hir_program(hir_program);
+            }
         }
 
         // TypecheckedTranspile: lift typed HIR back to AST — this is what
@@ -1602,7 +1613,7 @@ impl CompilerDriver {
         for (key, value) in state.borrow().resolved_const_values() {
             lowering.seed_resolved_const(key.to_string(), value.clone());
         }
-        let result = lowering.transform_comptime_request(&request.program, request);
+        let result = lowering.transform_comptime_request(request);
         let mir = match result {
             Ok(mir) => mir,
             Err(error) => {

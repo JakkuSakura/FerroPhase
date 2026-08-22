@@ -260,6 +260,14 @@ pub struct WorkspaceContext {
             )>,
         >,
     >,
+    /// Every published package's own HIR, incrementally maintained (see
+    /// `publish_hir_program`) as each one finishes — not rebuilt from
+    /// `crates`/`hir_packages` on demand. A consumer that wants to
+    /// dispatch a cross-package `DefId` lookup itself (`MirLowering`, via
+    /// `ComptimeRequest`) reads this directly (`hir_program()`, an `Rc`
+    /// clone) instead of a caller pre-merging every dependency's
+    /// `def_map` into one pretend-single-package `Package` first.
+    hir_program: RefCell<Rc<crate::hir::Program>>,
 }
 
 impl WorkspaceContext {
@@ -274,6 +282,7 @@ impl WorkspaceContext {
             sorted_packages_cache: RefCell::new(None),
             export_suffix_index: RefCell::new(None),
             impl_method_cache: RefCell::new(HashMap::new()),
+            hir_program: RefCell::new(Rc::new(crate::hir::Program::new())),
         }
     }
 
@@ -306,6 +315,7 @@ impl WorkspaceContext {
             sorted_packages_cache: RefCell::new(None),
             export_suffix_index: RefCell::new(None),
             impl_method_cache: RefCell::new(HashMap::new()),
+            hir_program: RefCell::new(Rc::new(crate::hir::Program::new())),
         }
     }
 
@@ -352,6 +362,25 @@ impl WorkspaceContext {
         *self.sorted_packages_cache.borrow_mut() = None;
     }
 
+    /// Incrementally folds a just-published package's own HIR into the
+    /// persistent `hir::Program` this workspace maintains — called
+    /// alongside `CompiledPackage::set_hir_program`, once per package, as
+    /// each one finishes. `Rc::make_mut` clones the `Program`'s own
+    /// `HashMap` (never any package's items/def_map/def_paths) only if
+    /// some earlier `hir_program()` caller is still holding the previous
+    /// `Rc` — the ordinary case (nobody holding a stale snapshot) is a
+    /// plain in-place insert.
+    pub fn publish_hir_program(&self, package: std::rc::Rc<crate::hir::Package>) {
+        let mut current = self.hir_program.borrow_mut();
+        Rc::make_mut(&mut current).packages.insert(package.id, package);
+    }
+
+    /// Returns this workspace's persistent `hir::Program` — an `Rc` clone,
+    /// not a rebuild (see `publish_hir_program`, the only writer).
+    pub fn hir_program(&self) -> std::rc::Rc<crate::hir::Program> {
+        self.hir_program.borrow().clone()
+    }
+
     /// Install `std`'s published package as the unqualified prelude lookup
     /// source for ordinary packages. The standard and libc packages do not
     /// import their own prelude.
@@ -385,6 +414,7 @@ impl WorkspaceContext {
     /// `Package` — this used to deep-clone every dependency's whole HIR
     /// program (every item, `def_map`, `def_paths`, `module_tree`) on
     /// every single call; an `Rc` clone is O(1).
+
     pub fn hir_definitions(
         &self,
     ) -> Vec<(

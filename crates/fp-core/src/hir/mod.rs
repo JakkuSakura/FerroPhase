@@ -841,9 +841,16 @@ impl Default for Package {
 /// against it (see `docs/Resolution.md`); resolution across an
 /// already-compiled dependency package is a lookup into this same
 /// structure, not a separate clone-and-merge pass.
+///
+/// Packages are `Rc`, not owned — building a `Program` (e.g. a
+/// `WorkspaceContext` snapshotting its already-compiled dependency
+/// packages, each already an `Rc<Package>`, for a consumer like
+/// `MirLowering` to dispatch cross-package `DefId` lookups against) is
+/// then just a handful of `Rc` clones, never a deep clone of every
+/// dependency's own items/def_map/def_paths.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Program {
-    pub packages: HashMap<PackageId, Package>,
+    pub packages: HashMap<PackageId, std::rc::Rc<Package>>,
 }
 
 impl Program {
@@ -854,11 +861,14 @@ impl Program {
     }
 
     pub fn package(&self, id: PackageId) -> Option<&Package> {
-        self.packages.get(&id)
+        self.packages.get(&id).map(|package| package.as_ref())
     }
 
-    pub fn package_mut(&mut self, id: PackageId) -> Option<&mut Package> {
-        self.packages.get_mut(&id)
+    /// Every item across every package this `Program` knows about — for
+    /// callers that genuinely need the full set (e.g. a one-time reverse
+    /// index build), not a single `DefId` lookup.
+    pub fn all_items(&self) -> impl Iterator<Item = &Item> {
+        self.packages.values().flat_map(|package| package.items.iter())
     }
 
     /// A definition's fully-qualified path, wherever its owning package

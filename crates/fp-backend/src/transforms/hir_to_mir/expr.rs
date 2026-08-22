@@ -583,18 +583,26 @@ pub struct MirLowering {
     /// struct/enum on demand (O(1) point lookup) instead of every
     /// dependency's ADTs being eagerly duplicated into `program.items`
     /// whether anything here references them or not.
-    hir_def_map: HashMap<hir::DefId, hir::Item>,
-    hir_def_paths: HashMap<hir::DefId, hir::DefPath>,
-    /// Package this `MirLowering` instance is itself compiling — the
-    /// package every id in `program.items` shares, captured once at the
-    /// top of `lower_program`/`transform_comptime_request`. `hir_def_map`
-    /// spans the whole workspace (this package's own items plus every
-    /// dependency's, via `seed_workspace_definitions`), but only *this*
-    /// package's own structs/enums/consts/impls get registered by the
-    /// registration passes below — a dependency's own items are only ever
-    /// safe to reference by signature (the dependency compiles its own
-    /// body separately; see `ensure_function_lowered`/
-    /// `ensure_method_lowered`), never to lower a body from here.
+    /// Every *already-published* dependency package's own HIR — `Rc`, not
+    /// owned, and never rebuilt/re-scanned here: `transform_comptime_request`
+    /// shares the exact same `Rc` its `ComptimeRequest::program` already
+    /// is (itself `WorkspaceContext::hir_program()`, incrementally
+    /// maintained — see its own doc comment), and `transform`/`lower_program`
+    /// (the ordinary whole-package path) fetches it once, the same way.
+    /// `current_package` (below) is deliberately *not* folded into this
+    /// map — it's still being lowered right now, not yet published — so
+    /// every lookup method (`hir_item`, `hir_def_path`, `hir_all_items`)
+    /// checks `current_package` first and falls through to this map for
+    /// every other package's own `DefId`s.
+    hir_program: std::rc::Rc<hir::Program>,
+    /// This package's own HIR — see `hir_program`'s doc comment for why
+    /// it's kept separate rather than folded in. Only *this* package's
+    /// own structs/enums/consts/impls get registered by the registration
+    /// passes below — a dependency's own items are only ever safe to
+    /// reference by signature (the dependency compiles its own body
+    /// separately; see `ensure_function_lowered`/`ensure_method_lowered`),
+    /// never to lower a body from here.
+    current_package: std::rc::Rc<hir::Package>,
     current_package_id: Option<hir::PackageId>,
 }
 
@@ -683,13 +691,57 @@ impl MirLowering {
             typeck_generic_call_args: HashMap::new(),
             typeck_generic_method_args: HashMap::new(),
             adt_defs: HashMap::new(),
-            hir_def_map: HashMap::new(),
-            hir_def_paths: HashMap::new(),
+            hir_program: std::rc::Rc::new(hir::Program::new()),
+            current_package: std::rc::Rc::new(hir::Package::new()),
             current_package_id: None,
         }
     }
 
+    /// Point `DefId` lookup — checks `current_package` first (its own
+    /// `def_map`, which for the ordinary whole-package `transform` path
+    /// already holds every dependency's merged-in items too, via
+    /// `seed_workspace_definitions`), then falls through to `hir_program`
+    /// (populated for the `transform_comptime_request` path, where
+    /// `current_package` is deliberately *not* pre-merged with anything).
+    /// Replaces every old direct `self.hir_def_map.get(def_id)` read.
+    fn hir_item(&self, def_id: hir::DefId) -> Option<&hir::Item> {
+        self.current_package.def_map.get(&def_id).or_else(|| {
+            self.hir_program
+                .package(def_id.package_id)?
+                .def_map
+                .get(&def_id)
+        })
+    }
+
+    /// Same dispatch order as `hir_item`, for `def_paths` — used by
+    /// `def_path_str`, which every `register_struct`/`register_enum` call
+    /// now goes through instead of being handed a whole `def_paths` map.
+    fn hir_def_path(&self, def_id: hir::DefId) -> Option<&hir::DefPath> {
+        self.current_package.def_paths.get(&def_id).or_else(|| {
+            self.hir_program
+                .package(def_id.package_id)?
+                .def_paths
+                .get(&def_id)
+        })
+    }
+
+    /// Every item this `MirLowering` instance knows about, across both
+    /// `current_package` and every package in `hir_program` — replaces
+    /// every old `self.hir_def_map.values()`/`.iter()` full scan (used to
+    /// build a one-time reverse index; never a per-lookup cost).
+    fn hir_all_items(&self) -> impl Iterator<Item = &hir::Item> {
+        self.current_package.def_map.values().chain(
+            self.hir_program
+                .packages
+                .values()
+                .flat_map(|package| package.def_map.values()),
+        )
+    }
+
     pub fn transform(&mut self, hir_program: hir::Package) -> Result<mir::Program> {
+        let hir_program = std::rc::Rc::new(hir_program);
+        self.current_package = hir_program.clone();
+        self.current_package_id = Some(hir_program.id);
         let program = self.lower_program(&hir_program)?;
         if self.has_errors {
             return Err(fp_core::error::Error::from(
@@ -724,29 +776,29 @@ impl MirLowering {
     /// `ensure_function_specialization`'s existing lazy mechanisms.
     pub fn transform_comptime_request(
         &mut self,
-        hir_program: &hir::Package,
         request: &fp_typing::ComptimeRequest,
     ) -> Result<mir::Program> {
-        self.hir_def_map = hir_program.def_map.clone();
-        self.hir_def_paths = hir_program.def_paths.clone();
-        self.current_package_id = hir_program.items.first().map(|item| item.def_id.package_id);
-        // `hir_program.items` only lists *top-level* items — a local
+        // Sharing the caller's own `Rc`s (`ComptimeRequest::program`/
+        // `current` are already `Rc`s) instead of cloning `def_map`/
+        // `def_paths` out of them — every item, keyed by `DefId`, across
+        // the whole workspace — fresh on every single `const { .. }`
+        // block. `current_package` stays un-merged with `program`'s
+        // dependency packages (see `hir_item`'s doc comment); only its
+        // own `DefId`s are used for the bookkeeping below.
+        self.hir_program = request.program.clone();
+        self.current_package = request.current.clone();
+        self.current_package_id = Some(self.current_package.id);
+        // `current_package.items` only lists *top-level* items — a local
         // `const` binding inside a function body (or any other nested
         // item) gets a real `DefId` from the same monotonic counter but is
         // only recorded in `def_map`, never in `.items`. Seeding from
         // `.items` alone can collide with such a DefId (confirmed via
         // lldb: for a single-function file, `.items.max()` lands exactly
         // on the enclosing function's own id, one below a local const's).
-        // `def_map` also carries every dependency package's own merged
-        // definitions (`seed_workspace_definitions`), so restrict the max
-        // to this request's own package — a synthetic id must stay within
-        // the current package's id space, the same invariant
-        // `saturating_add` below (which only bumps `index`, keeping
-        // `package_id`) already assumes.
-        self.next_synthetic_hir_def_id = hir_program
+        self.next_synthetic_hir_def_id = self
+            .current_package
             .def_map
             .keys()
-            .filter(|def_id| Some(def_id.package_id) == self.current_package_id)
             .copied()
             .max()
             .unwrap_or(hir::DefId::local(0))
@@ -758,19 +810,25 @@ impl MirLowering {
         // short of that function's const-registration and per-item body
         // loop, which is exactly the whole-package dependency this entry
         // point exists to avoid).
-        for item in &hir_program.items {
+        // `current_package` cloned into a local first (an `Rc` clone,
+        // O(1)) so it can stay borrowed across the `&mut self` calls
+        // below with no conflict — the same trick as `hir_item`'s
+        // dispatch, just needed here because this loop calls back into
+        // `self` directly instead of only reading a field.
+        let current_package = self.current_package.clone();
+        for item in &current_package.items {
             match &item.kind {
                 hir::ItemKind::Struct(def) => {
-                    self.register_struct(&hir_program.def_paths, item.def_id, def, item.span);
+                    self.register_struct(item.def_id, def, item.span);
                 }
                 hir::ItemKind::Enum(def) => {
-                    self.register_enum(&hir_program.def_paths, item.def_id, def, item.span);
+                    self.register_enum(item.def_id, def, item.span);
                 }
                 _ => {}
             }
         }
         self.register_all_dependency_adts();
-        self.finalize_adt_definitions(hir_program);
+        self.finalize_adt_definitions(&current_package);
         // Deliberately *not* an eager `register_impl_signatures` sweep
         // over every impl in the package (as this used to be) — that
         // cloned every method's `hir::Function` body, for every impl,
@@ -870,12 +928,6 @@ impl MirLowering {
     fn register_all_dependency_adts(&mut self) {
         let diagnostics_before = self.diagnostics.len();
         let had_errors_before = self.has_errors;
-        // `mem::take` instead of `.clone()` — `register_struct`/
-        // `register_enum` only ever read `def_paths` (never touch
-        // `self.hir_def_paths`), so there's no need to pay for cloning
-        // the whole workspace-wide def-path table just to satisfy the
-        // borrow checker; put it back once done.
-        let def_paths = std::mem::take(&mut self.hir_def_paths);
         // Only `Struct`/`Enum` items are ever registered below — cloning
         // every item regardless of kind (as this used to) paid for a
         // full deep-clone of every dependency function/impl body in the
@@ -890,50 +942,46 @@ impl MirLowering {
         // request, since there is no cross-request cache today. Fully
         // eliminating that repetition needs a cache that outlives a
         // single `MirLowering` instance (e.g. on `CompilerState`), which
-        // is out of scope for this pass.
+        // is out of scope for this pass. `register_struct`/`register_enum`
+        // no longer need a `def_paths` map handed to them (they dispatch
+        // through `hir_def_path` themselves), so there's no borrow-vs-
+        // `&mut self` conflict left to work around here at all.
         let items: Vec<hir::Item> = self
-            .hir_def_map
-            .values()
+            .hir_all_items()
             .filter(|item| matches!(&item.kind, hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_)))
             .cloned()
             .collect();
         for item in &items {
             match &item.kind {
                 hir::ItemKind::Struct(def) => {
-                    self.register_struct(&def_paths, item.def_id, def, item.span);
+                    self.register_struct(item.def_id, def, item.span);
                 }
                 hir::ItemKind::Enum(def) => {
-                    self.register_enum(&def_paths, item.def_id, def, item.span);
+                    self.register_enum(item.def_id, def, item.span);
                 }
                 _ => {}
             }
         }
-        self.hir_def_paths = def_paths;
         self.diagnostics.truncate(diagnostics_before);
         self.has_errors = had_errors_before;
     }
 
     /// Defensive fallback for a struct/enum somehow missed by
-    /// `register_all_dependency_adts`'s eager sweep of `hir_def_map` —
-    /// reached only when a `def_id` isn't already registered locally.
-    /// `mem::take`s `hir_def_paths` for the duration of the call to hand
-    /// `register_struct`/`register_enum` an owned reference without a
-    /// `&self`/`&mut self` borrow conflict.
+    /// `register_all_dependency_adts`'s eager sweep — reached only when a
+    /// `def_id` isn't already registered locally.
     fn try_lazily_register_adt(&mut self, def_id: hir::DefId, span: Span) {
-        let Some(item) = self.hir_def_map.get(&def_id).cloned() else {
+        let Some(item) = self.hir_item(def_id).cloned() else {
             return;
         };
-        let def_paths = std::mem::take(&mut self.hir_def_paths);
         match &item.kind {
             hir::ItemKind::Struct(strukt) => {
-                self.register_struct(&def_paths, def_id, strukt, span);
+                self.register_struct(def_id, strukt, span);
             }
             hir::ItemKind::Enum(enm) => {
-                self.register_enum(&def_paths, def_id, enm, span);
+                self.register_enum(def_id, enm, span);
             }
             _ => {}
         }
-        self.hir_def_paths = def_paths;
     }
 
     fn compute_ty_layout(&mut self, ty: &Ty, span: Span) {
@@ -1298,11 +1346,8 @@ impl MirLowering {
     }
 
     fn lower_program(&mut self, program: &hir::Package) -> Result<mir::Program> {
-        // Snapshot for `compute_adt_layout`'s lazy foreign-struct/enum
-        // lookup — see the fields' doc comment. One clone per package
-        // compile, not per lookup.
-        self.hir_def_map = program.def_map.clone();
-        self.hir_def_paths = program.def_paths.clone();
+        // `self.current_package`/`current_package_id` are already set by
+        // `transform` (the only caller) before this runs.
         self.current_package_id = program.items.first().map(|item| item.def_id.package_id);
         let mut mir_program = mir::Program::new();
         // Same "seed from `.items` alone can collide with a local const's
@@ -1320,10 +1365,10 @@ impl MirLowering {
         for item in &program.items {
             match &item.kind {
                 hir::ItemKind::Struct(def) => {
-                    self.register_struct(&program.def_paths, item.def_id, def, item.span);
+                    self.register_struct(item.def_id, def, item.span);
                 }
                 hir::ItemKind::Enum(def) => {
-                    self.register_enum(&program.def_paths, item.def_id, def, item.span);
+                    self.register_enum(item.def_id, def, item.span);
                 }
                 _ => {}
             }
@@ -1523,7 +1568,7 @@ impl MirLowering {
         // marking it here on a miss would permanently block
         // `ensure_method_lowered` from ever getting a real chance at the
         // same `def_id` afterwards.
-        let Some(item) = self.hir_def_map.get(&def_id).cloned() else {
+        let Some(item) = self.hir_item(def_id).cloned() else {
             return Ok(());
         };
         let hir::ItemKind::Function(function) = &item.kind else {
@@ -1631,11 +1676,9 @@ impl MirLowering {
         };
 
         let mir_function = mir::Function {
-            name: mir::Symbol::new(Self::def_path_str(
-                &self.hir_def_paths,
-                item.def_id,
-                function.sig.name.as_str(),
-            )),
+            name: mir::Symbol::new(
+                self.def_path_str(item.def_id, function.sig.name.as_str()),
+            ),
             def_id: Some(item.def_id),
             substs: Vec::new(),
             sig,
@@ -1958,8 +2001,7 @@ impl MirLowering {
         let fn_ty = self.function_pointer_ty(&sig);
 
         let item_span = self
-            .hir_def_map
-            .get(&def_id)
+            .hir_item(def_id)
             .map(|item| item.span)
             .ok_or_else(|| crate::error::optimization_error("missing function item"))?;
         let (mir_item, body_id, body) = self.lower_function_with_substs(
@@ -2021,8 +2063,7 @@ impl MirLowering {
         let fn_ty = self.function_pointer_ty(&sig);
 
         let item_span = self
-            .hir_def_map
-            .get(&def_id)
+            .hir_item(def_id)
             .map(|item| item.span)
             .ok_or_else(|| crate::error::optimization_error("missing function item"))?;
         let (mir_item, body_id, body) = self.lower_function_with_substs(
@@ -5264,13 +5305,12 @@ impl MirLowering {
     /// `register_struct`/`register_enum` can be called from a context that
     /// only has `def_paths` on hand (`compute_adt_layout`'s lazy foreign-type
     /// lookup, which runs after the original `hir::Package` is out of scope).
-    fn def_path_str(
-        def_paths: &HashMap<hir::DefId, hir::DefPath>,
-        def_id: hir::DefId,
-        bare_name: &str,
-    ) -> String {
-        def_paths
-            .get(&def_id)
+    /// Dispatches through `hir_def_path` (checks `current_package` first,
+    /// then every package in `hir_program` — see its own doc comment),
+    /// so callers no longer need to carry around whichever specific
+    /// package's `def_paths` map happens to own `def_id`.
+    fn def_path_str(&self, def_id: hir::DefId, bare_name: &str) -> String {
+        self.hir_def_path(def_id)
             .map(|path| path.to_string())
             .unwrap_or_else(|| bare_name.to_string())
     }
@@ -5285,7 +5325,6 @@ impl MirLowering {
 
     fn register_struct(
         &mut self,
-        def_paths: &HashMap<hir::DefId, hir::DefPath>,
         def_id: hir::DefId,
         strukt: &hir::Struct,
         _span: Span,
@@ -5312,7 +5351,7 @@ impl MirLowering {
             .map(|param| param.name.as_str().to_string())
             .collect::<Vec<_>>();
 
-        let name = Self::def_path_str(def_paths, def_id, strukt.name.as_str());
+        let name = self.def_path_str(def_id, strukt.name.as_str());
         self.struct_defs_by_tail_name
             .entry(Self::name_tail(&name).to_string())
             .or_default()
@@ -5330,7 +5369,6 @@ impl MirLowering {
 
     fn register_enum(
         &mut self,
-        def_paths: &HashMap<hir::DefId, hir::DefPath>,
         def_id: hir::DefId,
         enm: &hir::Enum,
         _span: Span,
@@ -5345,7 +5383,7 @@ impl MirLowering {
             .iter()
             .map(|param| param.name.as_str().to_string())
             .collect::<Vec<_>>();
-        let enum_qualified_name = Self::def_path_str(def_paths, def_id, enm.name.as_str());
+        let enum_qualified_name = self.def_path_str(def_id, enm.name.as_str());
 
         let mut variants = Vec::new();
         let mut next_value: i64 = 0;
@@ -6357,7 +6395,7 @@ impl MirLowering {
     fn try_lazily_register_method(&mut self, def_id: hir::DefId) {
         if self.method_owner_index.is_none() {
             let mut index = HashMap::new();
-            for item in self.hir_def_map.values() {
+            for item in self.hir_all_items() {
                 if let hir::ItemKind::Impl(impl_block) = &item.kind {
                     // One real clone per impl, shared via `Rc` across
                     // every one of its method keys below — an owned
@@ -6930,7 +6968,7 @@ impl MirLowering {
                 if let Some(const_info) = self.const_values.get(def_id) {
                     return Some(const_info.typed_value());
                 }
-                let const_item = self.hir_def_map.get(def_id).and_then(|item| {
+                let const_item = self.hir_item(*def_id).and_then(|item| {
                     match &item.kind {
                         hir::ItemKind::Const(konst) => Some(konst.clone()),
                         _ => None,
@@ -6942,7 +6980,7 @@ impl MirLowering {
                         return Some(const_info.typed_value());
                     }
                 }
-                let item = self.hir_def_map.get(def_id)?;
+                let item = self.hir_item(*def_id)?;
                 let hir::ItemKind::Function(_function) = &item.kind else {
                     return None;
                 };
@@ -7235,7 +7273,7 @@ impl MirLowering {
                     };
                 }
 
-                let item = self.hir_def_map.get(def_id)?;
+                let item = self.hir_item(*def_id)?;
                 match &item.kind {
                     hir::ItemKind::Function(function) => {
                         let (TyKind::FnDef(_, _) | TyKind::FnPtr(_)) =
@@ -11833,20 +11871,10 @@ impl<'a> BodyBuilder<'a> {
     fn lower_inner_item(&mut self, item: &hir::Item) -> Result<()> {
         match &item.kind {
             hir::ItemKind::Struct(def) => {
-                self.lowering.register_struct(
-                    &self.lowering.hir_def_paths.clone(),
-                    item.def_id,
-                    def,
-                    item.span,
-                );
+                self.lowering.register_struct(item.def_id, def, item.span);
             }
             hir::ItemKind::Enum(enm) => {
-                self.lowering.register_enum(
-                    &self.lowering.hir_def_paths.clone(),
-                    item.def_id,
-                    enm,
-                    item.span,
-                );
+                self.lowering.register_enum(item.def_id, enm, item.span);
             }
             hir::ItemKind::Const(konst) => {
                 self.lowering.register_const_value(item.def_id, konst);
@@ -13806,7 +13834,7 @@ impl<'a> BodyBuilder<'a> {
                         if let Some(info) = self.lowering.const_values.get(def_id) {
                             const_info = Some(info.clone());
                         } else if let Some(konst) =
-                            self.lowering.hir_def_map.get(def_id).and_then(|item| {
+                            self.lowering.hir_item(*def_id).and_then(|item| {
                                 match &item.kind {
                                     hir::ItemKind::Const(konst) => Some(konst.clone()),
                                     _ => None,
@@ -13823,14 +13851,14 @@ impl<'a> BodyBuilder<'a> {
                         }
                     } else if resolved_path.segments.len() == 1 {
                         let name = resolved_path.segments[0].name.as_str();
-                        let matching_const = self.lowering.hir_def_map.iter().find_map(
-                            |(def_id, item)| match &item.kind {
+                        let matching_const = self.lowering.hir_all_items().find_map(|item| {
+                            match &item.kind {
                                 hir::ItemKind::Const(konst) if konst.name.as_str() == name => {
-                                    Some((*def_id, konst.clone()))
+                                    Some((item.def_id, konst.clone()))
                                 }
                                 _ => None,
-                            },
-                        );
+                            }
+                        });
                         if let Some((def_id, konst)) = matching_const {
                             if let hir::ExprKind::Array(elements) = &konst.body.value.kind {
                                 const_body_len = Some(elements.len() as u64);
@@ -14328,7 +14356,7 @@ impl<'a> BodyBuilder<'a> {
         }
         if callee_abi.is_none() {
             if let Some(name) = callee_name.as_ref() {
-                for item in self.lowering.hir_def_map.values() {
+                for item in self.lowering.hir_all_items() {
                     if let hir::ItemKind::Function(func) = &item.kind {
                         if func.sig.name.as_str() == name {
                             callee_abi = Some(func.sig.abi.clone());
@@ -15321,7 +15349,7 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn param_names_for_def_id(&self, def_id: hir::DefId) -> Option<Vec<hir::Symbol>> {
-        let item = self.lowering.hir_def_map.get(&def_id)?;
+        let item = self.lowering.hir_item(def_id)?;
         match &item.kind {
             hir::ItemKind::Function(function) => self.param_names_from_params(&function.sig.inputs),
             _ => None,
@@ -15349,7 +15377,7 @@ impl<'a> BodyBuilder<'a> {
     /// this fast path already succeeded).
     fn callee_abi_from_path(&self, path: &hir::Path) -> Option<(hir::Abi, bool)> {
         if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
-            if let Some(item) = self.lowering.hir_def_map.get(def_id) {
+            if let Some(item) = self.lowering.hir_item(*def_id) {
                 if let hir::ItemKind::Function(func) = &item.kind {
                     return Some((func.sig.abi.clone(), func.is_extern));
                 }
@@ -15366,7 +15394,7 @@ impl<'a> BodyBuilder<'a> {
         if qualified.is_empty() {
             return None;
         }
-        for item in self.lowering.hir_def_map.values() {
+        for item in self.lowering.hir_all_items() {
             if let hir::ItemKind::Function(func) = &item.kind {
                 if func.sig.name.as_str() == qualified {
                     return Some((func.sig.abi.clone(), func.is_extern));
@@ -15376,7 +15404,7 @@ impl<'a> BodyBuilder<'a> {
         let tail = resolved_path.segments.last().map(|seg| seg.name.as_str());
         if let Some(tail) = tail {
             let mut candidate: Option<(hir::Abi, bool)> = None;
-            for item in self.lowering.hir_def_map.values() {
+            for item in self.lowering.hir_all_items() {
                 if let hir::ItemKind::Function(func) = &item.kind {
                     let name = func.sig.name.as_str();
                     let matches_tail = name == tail || name.ends_with(&format!("::{}", tail));
@@ -15583,8 +15611,7 @@ impl<'a> BodyBuilder<'a> {
             if let Some(sig) = self.lowering.function_sigs.get(def_id).cloned() {
                 let name = self
                     .lowering
-                    .hir_def_map
-                    .get(def_id)
+                    .hir_item(*def_id)
                     .and_then(|item| match &item.kind {
                         hir::ItemKind::Function(func) => Some(func.sig.name.clone()),
                         _ => None,
@@ -15977,7 +16004,7 @@ impl<'a> BodyBuilder<'a> {
                             ty: ty.clone(),
                         });
                     }
-                    let const_def_item = self.lowering.hir_def_map.get(def_id).and_then(|item| {
+                    let const_def_item = self.lowering.hir_item(*def_id).and_then(|item| {
                         match &item.kind {
                             hir::ItemKind::Const(konst) => Some(konst.clone()),
                             _ => None,
@@ -16068,7 +16095,7 @@ impl<'a> BodyBuilder<'a> {
                             "unable to resolve enum layout for variant value",
                         );
                     }
-                    let referenced_fn_sig = self.lowering.hir_def_map.get(def_id).and_then(|item| {
+                    let referenced_fn_sig = self.lowering.hir_item(*def_id).and_then(|item| {
                         match &item.kind {
                             hir::ItemKind::Function(func) => Some(func.sig.clone()),
                             _ => None,
@@ -20272,7 +20299,7 @@ impl<'a> BodyBuilder<'a> {
                             if let Some(info) = self.lowering.const_values.get(def_id) {
                                 const_info = Some(info.clone());
                             } else if let Some(konst) =
-                                self.lowering.hir_def_map.get(def_id).and_then(|item| {
+                                self.lowering.hir_item(*def_id).and_then(|item| {
                                     match &item.kind {
                                         hir::ItemKind::Const(konst) => Some(konst.clone()),
                                         _ => None,
@@ -20289,14 +20316,13 @@ impl<'a> BodyBuilder<'a> {
                             }
                         } else if resolved_path.segments.len() == 1 {
                             let name = resolved_path.segments[0].name.as_str();
-                            let matching_const = self.lowering.hir_def_map.iter().find_map(
-                                |(def_id, item)| match &item.kind {
+                            let matching_const =
+                                self.lowering.hir_all_items().find_map(|item| match &item.kind {
                                     hir::ItemKind::Const(konst) if konst.name.as_str() == name => {
-                                        Some((*def_id, konst.clone()))
+                                        Some((item.def_id, konst.clone()))
                                     }
                                     _ => None,
-                                },
-                            );
+                                });
                             if let Some((def_id, konst)) = matching_const {
                                 if let hir::ExprKind::Array(elements) = &konst.body.value.kind {
                                     const_body_len = Some(elements.len() as u64);
