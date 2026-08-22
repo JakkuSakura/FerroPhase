@@ -3178,18 +3178,31 @@ impl HirTypeChecker {
     /// Resolves `T::AssocName` when `T` is still a bare, uninstantiated
     /// generic parameter (see `path_ty`'s call site) by consulting `T`'s
     /// own trait bounds directly, rather than searching for an impl on a
-    /// concrete self-type (there isn't one yet). Currently only handles
-    /// the one bound shape that's structurally unambiguous without a real
-    /// trait-declaration registry to consult: `Fn`/`FnOnce`/`FnMut(..) ->
-    /// R` sugar's own `Output` (fp-lang's parser already folds this
-    /// straight into a `TypeExprKind::FnPtr`, discarding the trait name —
-    /// see `GenericParam::bounds`'s own doc comment). An explicit
-    /// associated-type binding in an ordinary trait bound (`I: Iterator
-    /// <Item = U>`) is a separate, still-open gap — the binding survives
-    /// parsing as an `Ident = Type` generic arg, but `transform_type_to_
-    /// hir`'s general `ast::Ty::Expr` case has no `ExprKind::Assign` arm
-    /// to carry it into HIR in the first place, so there's nothing yet
-    /// for this function to read it back out of.
+    /// concrete self-type (there isn't one yet). Two bound shapes:
+    ///
+    /// - `Fn`/`FnOnce`/`FnMut(..) -> R` sugar's own `Output` — fp-lang's
+    ///   parser already folds this straight into a `TypeExprKind::FnPtr`,
+    ///   discarding the trait name (see `GenericParam::bounds`'s own doc
+    ///   comment), so this is read directly off the bound's own `output`.
+    /// - An ordinary named-trait bound (`F: Fn<A>`, real `core::ops::
+    ///   function`'s own `impl<A: Tuple, F: ?Sized> Fn<A> for &F where F:
+    ///   Fn<A> { fn call(&self, args: A) -> F::Output { .. } }`) whose
+    ///   trait declares (but doesn't itself bind) `AssocName` — this
+    ///   checker has no per-instantiation projection tracking (it would
+    ///   need to know the *caller's* concrete `F` to know `F::Output`'s
+    ///   real value), so the best available answer is a fresh opaque
+    ///   placeholder type: enough to stop this from being a hard
+    ///   "unresolved type path" error and let type inference continue
+    ///   past it, matching how an under-constrained projection is treated
+    ///   everywhere else in this checker (`ty::ParamTy`-shaped, unified
+    ///   against whatever the caller substitutes at each concrete use).
+    ///
+    /// An explicit associated-type binding in an ordinary trait bound
+    /// (`I: Iterator<Item = U>`) is a separate, still-open gap — the
+    /// binding survives parsing as an `Ident = Type` generic arg, but
+    /// `transform_type_to_hir`'s general `ast::Ty::Expr` case has no
+    /// `ExprKind::Assign` arm to carry it into HIR in the first place, so
+    /// there's nothing yet for this function to read it back out of.
     async fn assoc_type_from_generic_param_bounds(
         &mut self,
         param_name: &hir::Symbol,
@@ -3198,16 +3211,41 @@ impl HirTypeChecker {
         let Some(bounds) = self.generic_param_bounds(param_name).map(<[_]>::to_vec) else {
             return Ok(None);
         };
-        if assoc_name.as_str() != "Output" {
-            return Ok(None);
+        if assoc_name.as_str() == "Output" {
+            if let Some(fn_ptr) = bounds.iter().find_map(|bound| match &bound.kind {
+                hir::TypeExprKind::FnPtr(fn_ptr) => Some(fn_ptr.clone()),
+                _ => None,
+            }) {
+                return Ok(Some(self.check_type_expr(&fn_ptr.output).await?));
+            }
         }
-        let Some(fn_ptr) = bounds.iter().find_map(|bound| match &bound.kind {
-            hir::TypeExprKind::FnPtr(fn_ptr) => Some(fn_ptr.clone()),
-            _ => None,
-        }) else {
-            return Ok(None);
-        };
-        Ok(Some(self.check_type_expr(&fn_ptr.output).await?))
+        for bound in &bounds {
+            let hir::TypeExprKind::Path(path) = &bound.kind else {
+                continue;
+            };
+            let Some(hir::Res::Def(trait_def_id)) = &path.res else {
+                continue;
+            };
+            let Some(item) = self.package().def_map.get(trait_def_id).cloned() else {
+                continue;
+            };
+            let hir::ItemKind::Trait(trait_def) = &item.kind else {
+                continue;
+            };
+            let declares_assoc_type = trait_def.items.iter().any(|trait_item| {
+                trait_item.name == *assoc_name
+                    && matches!(trait_item.kind, hir::TraitItemKind::AssocType(_))
+            });
+            if declares_assoc_type {
+                return Ok(Some(Ty {
+                    kind: TyKind::Param(ty::ParamTy {
+                        index: u32::MAX,
+                        name: assoc_name.clone(),
+                    }),
+                }));
+            }
+        }
+        Ok(None)
     }
 
     /// Ported onto the `HirPackage`-backed cache / `with_generics`-child
