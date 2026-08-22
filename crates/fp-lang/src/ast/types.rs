@@ -991,6 +991,13 @@ pub(crate) fn parse_use_tree(input: &mut &[Token]) -> ModalResult<fp_core::ast::
         let rename = ident_like(input)?;
         let from = match path.segments.pop() {
             Some(fp_core::ast::ItemImportTree::Ident(from)) => from,
+            // `self as alias` (real `std::collections::hash::map`'s own
+            // `use hashbrown::hash_map::{self as base, ..}`) — renaming
+            // the enclosing module itself, not a named item within it;
+            // `ItemImportRename.from` has no separate "the module itself"
+            // slot, so this reuses the plain `self` identifier the same
+            // way an ordinary renamed item would.
+            Some(fp_core::ast::ItemImportTree::SelfMod) => Ident::new("self"),
             _ => return Err(ErrMode::Cut(ContextError::new())),
         };
         path.push(fp_core::ast::ItemImportTree::Rename(
