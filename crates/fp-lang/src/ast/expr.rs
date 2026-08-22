@@ -655,7 +655,7 @@ fn parse_turbofish_suffix(input: &mut &[Token]) -> ModalResult<Postfix> {
     if skip_symbol(&mut probe, "::").is_err() {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
-    if skip_symbol(&mut probe, "<").is_err() {
+    if !try_eat_symbol(&mut probe, "<") {
         return Err(ErrMode::Backtrack(ContextError::new()));
     }
     let mut depth = 1usize;
@@ -666,6 +666,7 @@ fn parse_turbofish_suffix(input: &mut &[Token]) -> ModalResult<Postfix> {
         }
         match token.lexeme.as_str() {
             "<" => depth += 1,
+            "<<" => depth += 2,
             ">" => {
                 depth -= 1;
                 if depth == 0 {
