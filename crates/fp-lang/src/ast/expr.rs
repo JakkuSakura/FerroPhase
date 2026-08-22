@@ -3273,5 +3273,13 @@ fn terminates_expr(input: &[Token]) -> bool {
     matches!(
         peek_symbol(input),
         Some(";") | Some("}") | Some(")") | Some("]") | Some(",")
+            // An open-ended range immediately followed by a body block
+            // (real `std::sys::env::uefi`'s own `for i in 0.. { .. }`) —
+            // the `{` here is unambiguously the loop's own body, not the
+            // start of the range end's struct literal (this checker has
+            // no separate no-struct variant of range-end parsing itself
+            // the way whole conditions/scrutinees do), so it terminates
+            // the range's end the same way `;`/`}`/etc. already do.
+            | Some("{")
     )
 }
