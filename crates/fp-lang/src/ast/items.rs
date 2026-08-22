@@ -1280,11 +1280,21 @@ fn starts_restricted_trait(input: &[Token]) -> bool {
     // undocumented but real syntax for "here's where `()`'s own docs
     // live") both start with `impl` immediately followed by `(` — the
     // restricted-trait form is only real when the balanced `(...)` is
-    // itself followed by the `trait` keyword; `impl ()`'s `(` is the
+    // itself followed (possibly through `const`/`unsafe` modifiers, real
+    // `core::slice::index`'s own `impl(crate) const unsafe trait
+    // SliceIndex<..>`) by the `trait` keyword; `impl ()`'s `(` is the
     // self-type's own empty tuple, followed directly by `{`.
     let mut probe = &input[1..];
     if skip_balanced_delimiters(&mut probe, "(", ")").is_err() {
         return false;
+    }
+    loop {
+        if skip_keyword(&mut probe, Keyword::Const).is_ok()
+            || skip_keyword(&mut probe, Keyword::Unsafe).is_ok()
+        {
+            continue;
+        }
+        break;
     }
     peek_keyword(probe, Keyword::Trait)
 }
