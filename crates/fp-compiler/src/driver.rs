@@ -1180,15 +1180,18 @@ impl CompilerDriver {
                 )
             })?;
         let module_path = QualifiedPath::new(vec!["__comptime_probe__".to_string()]);
-        let hir_id = HirId::new(format!("hir:{}", self.module_state_key(&module_path)));
         let fqp = FullyQualifiedPath::new(module_path);
-        self.state
-            .borrow_mut()
-            .insert_hir(hir_id.clone(), request.program.as_ref().clone());
-        self.state.borrow_mut()
-            .insert_hir_typeck(hir_id.clone(), request.typeck_results.clone());
+        // `request.program`/`request.typeck_results` are already the
+        // exact values `lower_to_mir_for_comptime_request_with` needs —
+        // it used to read them back out of `self.state` via a fixed
+        // `"__comptime_probe__"` key instead, which meant stashing a
+        // clone of the whole `hir::Package` into that `BTreeMap` (and
+        // dropping whatever the *previous* comptime request left there
+        // under the same key) on every single `const { .. }` block, only
+        // to immediately clone it right back out again. Passing them
+        // straight through skips that whole round trip.
         let (mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes, resolved_const_values) =
-            Self::lower_to_mir_for_comptime_request_with(&self.state, &hir_id, &fqp, request)
+            Self::lower_to_mir_for_comptime_request_with(&self.state, &fqp, request)
                 .await?;
         // Merge onto the current package the same way `compile_package`'s
         // own `lower_to_mir` callers already do — otherwise a struct/enum
@@ -1547,7 +1550,6 @@ impl CompilerDriver {
     /// returned `mir::Program`, never from `hir.items` directly.
     async fn lower_to_mir_for_comptime_request_with(
         state: &Rc<RefCell<CompilerState>>,
-        hir_id: &HirId,
         path: &FullyQualifiedPath,
         request: &fp_typing::ComptimeRequest,
     ) -> Result<
@@ -1561,9 +1563,14 @@ impl CompilerDriver {
         ),
         CompilerDriverError,
     > {
-        let typeck_results = state.borrow().hir_typeck(hir_id)?.clone();
+        // `request.program`/`request.typeck_results` are this request's
+        // own final, self-sufficient snapshot (see `ComptimeRequest`'s
+        // doc comment) — read directly, not round-tripped through
+        // `self.state`'s HIR store first (that used to force a whole
+        // `hir::Package` clone into a fixed state-map key just to
+        // immediately clone it back out again).
         let mut lowering = MirLowering::new()
-            .with_typeck_results(&typeck_results)
+            .with_typeck_results(&request.typeck_results)
             .map_err(|error| {
                 CompilerDriverError::InternalCompilerError(format!(
                     "HIR-to-MIR setup failed for {}: {error}",
@@ -1573,18 +1580,7 @@ impl CompilerDriver {
         for (key, value) in state.borrow().resolved_const_values() {
             lowering.seed_resolved_const(key.to_string(), value.clone());
         }
-        // `transform_comptime_request_async` has no real internal
-        // `.await` (it just calls the synchronous version below) — call
-        // that directly instead, so the `state.borrow()` guard only needs
-        // to live for this one synchronous statement rather than forcing
-        // a full `hir::Package` clone (every item, `def_map`, `def_paths`,
-        // `module_tree`) just to produce an owned value to carry across
-        // an `.await` that never actually suspends.
-        let result = {
-            let state_ref = state.borrow();
-            let hir = state_ref.hir(hir_id)?;
-            lowering.transform_comptime_request(hir, request)
-        };
+        let result = lowering.transform_comptime_request(&request.program, request);
         let mir = match result {
             Ok(mir) => mir,
             Err(error) => {
