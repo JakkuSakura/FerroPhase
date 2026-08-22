@@ -248,6 +248,24 @@ impl HirGenerator {
         out: &mut Vec<ImportBinding>,
     ) -> Result<()> {
         match tree {
+            // A group member's bare `self` (`use path::Item::{self, ..};`)
+            // parses as `Path` wrapping a *single* `SelfMod` segment, not
+            // the bare `SelfMod` variant itself — `parse_use_path`'s loop
+            // always wraps whatever it parses in a `Path`, and `self` in
+            // group position hits the same `SelfMod` branch as `self::`
+            // at the start of an ordinary path, with no syntactic way to
+            // tell the two apart at parse time. Handle it here, before
+            // `collect_imports_from_path`, which would otherwise treat a
+            // lone `SelfMod` segment as "current module" prefix semantics
+            // (`self::`) — overwriting `base` with `self.module_path`
+            // instead of using `base` as-is — and silently produce no
+            // binding at all, since a single-segment path with no `::`
+            // separator never reaches that function's `out.push`.
+            ast::ItemImportTree::Path(path)
+                if matches!(path.segments.as_slice(), [ast::ItemImportTree::SelfMod]) =>
+            {
+                self.collect_imports(base, &ast::ItemImportTree::SelfMod, out)
+            }
             ast::ItemImportTree::Path(path) => self.collect_imports_from_path(base, path, out),
             ast::ItemImportTree::Ident(ident) => {
                 let mut target = base;
