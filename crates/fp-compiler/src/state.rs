@@ -51,7 +51,7 @@ impl CompilerState {
             resolved_const_values: BTreeMap::new(),
             typing_ctx: std::rc::Rc::new(TypingContext::new(
                 data_layout,
-                std::rc::Rc::new(fp_core::workspace::WorkspaceContext::new(
+                std::rc::Rc::new(fp_core::ast::workspace::WorkspaceContext::new(
                     std::sync::Arc::new(fp_core::ast::package::provider::EmptyProvider),
                 )),
                 tasks.clone(),

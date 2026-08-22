@@ -27,7 +27,6 @@ pub mod source_map;
 pub mod span;
 pub mod utils;
 pub mod vfs;
-pub mod workspace;
 pub mod writer;
 
 // Re-export commonly used items for convenience

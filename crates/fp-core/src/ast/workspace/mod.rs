@@ -192,7 +192,7 @@ use crate::ast::{FunctionSignature, MethodSignature, TypeEnum, TypeStruct};
 use crate::hir::PackageId as HirPackageId;
 use crate::ast::path::QualifiedPath;
 use crate::ast::package::provider::PackageProvider;
-use crate::ast::package::{CompiledPackage, PackageId, PackageSource};
+use crate::ast::package::{CompiledPackage, PackageId, AstPackage};
 use std::cell::{Cell, Ref, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -201,6 +201,14 @@ use std::sync::Arc;
 /// Shared registry of provider-owned packages and compiler-owned package
 /// results for one compilation session. Dependencies are published here by
 /// the compiler driver before their dependents are typed.
+///
+/// Conceptually similar to `hir::Program` — both are "many packages,
+/// addressed by `PackageId`" containers — but at a different layer and
+/// lifecycle: `hir::Program` is one immutable snapshot of every package's
+/// already-lowered HIR, while `WorkspaceContext` is the live, mutable
+/// registry compilation itself is built against (spanning every layer, not
+/// just HIR, and growing one `begin_package`/`import_package` call at a
+/// time as compilation proceeds).
 pub struct WorkspaceContext {
     crates: RefCell<HashMap<PackageId, Rc<RefCell<CompiledPackage>>>>,
     /// The single package provider for this workspace, required at
@@ -327,21 +335,13 @@ impl WorkspaceContext {
     pub fn begin_package(
         &self,
         package_id: PackageId,
-        source: PackageSource,
+        source: AstPackage,
         data_layout: crate::lir::LirDataLayout,
     ) -> Rc<RefCell<CompiledPackage>> {
         let source_package_id = package_id.clone();
-        let name = source.name.clone();
         let hir_package_id = HirPackageId(self.next_package_id.get());
         self.next_package_id.set(hir_package_id.0.saturating_add(1));
-        let mut krate = CompiledPackage::new(
-            hir_package_id,
-            name.clone(),
-            source.graph.clone(),
-            data_layout,
-        );
-        krate.module_paths = source.module_paths;
-        krate.items = source.items;
+        let krate = CompiledPackage::new(hir_package_id, source, data_layout);
         let krate = Rc::new(RefCell::new(krate));
         self.crates
             .borrow_mut()
@@ -556,7 +556,7 @@ impl WorkspaceContext {
     /// aliases into the caller's own map first.
     pub fn find_type_alias(&self, key: &str) -> Option<crate::ast::Ty> {
         for package in self.sorted_packages() {
-            if let Some(ty) = package.borrow().type_alias_exports.get(key) {
+            if let Some(ty) = package.borrow().ast.type_alias_exports.get(key) {
                 return Some(ty.clone());
             }
         }
@@ -699,6 +699,7 @@ impl WorkspaceContext {
             .flat_map(|package| {
                 package
                     .borrow()
+                    .ast
                     .module_paths
                     .iter()
                     .cloned()
@@ -714,12 +715,12 @@ impl WorkspaceContext {
     /// item itself, needed regardless to build an owned `Ty::Struct(..)`.
     pub fn find_struct(&self, path: &QualifiedPath) -> Option<TypeStruct> {
         for krate in self.sorted_packages() {
-            if let Some(s) = krate.borrow().struct_defs.get(path) {
+            if let Some(s) = krate.borrow().ast.struct_defs.get(path) {
                 return Some(s.clone());
             }
         }
         if let Some(prelude) = self.prelude.borrow().as_ref() {
-            if let Some(s) = prelude.borrow().struct_defs.get(path) {
+            if let Some(s) = prelude.borrow().ast.struct_defs.get(path) {
                 return Some(s.clone());
             }
         }
@@ -731,12 +732,12 @@ impl WorkspaceContext {
     /// `CompiledPackage`, not whatever crate is currently being typed).
     pub fn find_enum(&self, path: &QualifiedPath) -> Option<TypeEnum> {
         for krate in self.sorted_packages() {
-            if let Some(e) = krate.borrow().enum_defs.get(path) {
+            if let Some(e) = krate.borrow().ast.enum_defs.get(path) {
                 return Some(e.clone());
             }
         }
         if let Some(prelude) = self.prelude.borrow().as_ref() {
-            if let Some(e) = prelude.borrow().enum_defs.get(path) {
+            if let Some(e) = prelude.borrow().ast.enum_defs.get(path) {
                 return Some(e.clone());
             }
         }
@@ -745,12 +746,12 @@ impl WorkspaceContext {
 
     pub fn find_function_sig(&self, path: &QualifiedPath) -> Option<FunctionSignature> {
         for krate in self.sorted_packages() {
-            if let Some(sig) = krate.borrow().function_sigs.get(path) {
+            if let Some(sig) = krate.borrow().ast.function_sigs.get(path) {
                 return Some(sig.clone());
             }
         }
         if let Some(prelude) = self.prelude.borrow().as_ref() {
-            if let Some(sig) = prelude.borrow().function_sigs.get(path) {
+            if let Some(sig) = prelude.borrow().ast.function_sigs.get(path) {
                 return Some(sig.clone());
             }
         }
@@ -763,12 +764,12 @@ impl WorkspaceContext {
     /// `find_struct`/`find_function_sig` exactly.
     pub fn find_method_sigs(&self, path: &QualifiedPath) -> Option<Vec<(String, MethodSignature)>> {
         for krate in self.sorted_packages() {
-            if let Some(sigs) = krate.borrow().method_sigs.get(path) {
+            if let Some(sigs) = krate.borrow().ast.method_sigs.get(path) {
                 return Some(sigs.clone());
             }
         }
         if let Some(prelude) = self.prelude.borrow().as_ref() {
-            if let Some(sigs) = prelude.borrow().method_sigs.get(path) {
+            if let Some(sigs) = prelude.borrow().ast.method_sigs.get(path) {
                 return Some(sigs.clone());
             }
         }
@@ -779,12 +780,12 @@ impl WorkspaceContext {
         self.crates
             .borrow()
             .values()
-            .any(|krate| krate.borrow().module_paths.contains(path))
+            .any(|krate| krate.borrow().ast.module_paths.contains(path))
             || self
                 .prelude
                 .borrow()
                 .as_ref()
-                .is_some_and(|prelude| prelude.borrow().module_paths.contains(path))
+                .is_some_and(|prelude| prelude.borrow().ast.module_paths.contains(path))
     }
 
     /// Borrow the root map directly. Used by callers that need to iterate
@@ -794,10 +795,10 @@ impl WorkspaceContext {
         self.crates.borrow()
     }
 
-    /// A `TargetBackend`'s view of `id` as a `PackageSource` — every
+    /// A `TargetBackend`'s view of `id` as a `AstPackage` — every
     /// AST-emitting backend's input. `id` must already be loaded via
     /// `begin_package`/`import_package`.
-    pub fn package_source(&self, id: &PackageId) -> crate::error::Result<PackageSource> {
+    pub fn package_source(&self, id: &PackageId) -> crate::error::Result<AstPackage> {
         let package = self.compiled_package(id).ok_or_else(|| {
             crate::error::Error::from(format!(
                 "package `{id}` is not present in this compiled workspace"

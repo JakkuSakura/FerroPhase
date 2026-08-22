@@ -70,7 +70,7 @@ impl NativeEmitter {
 impl fp_core::backend::TargetBackend for NativeEmitter {
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::workspace::WorkspaceContext,
         package_id: &fp_core::ast::package::PackageId,
     ) -> Result<()> {
         if let Ok(source) = workspace.package_source(package_id) {
@@ -421,7 +421,7 @@ fn plan_has_undefined_symbols(plan: &emit::EmitPlan) -> bool {
 pub struct NativeObjectPackageProvider {
     package_id: fp_core::ast::package::PackageId,
     descriptor: std::sync::Arc<fp_core::ast::package::PackageDescriptor>,
-    source: fp_core::ast::package::PackageSource,
+    source: fp_core::ast::package::AstPackage,
 }
 
 impl NativeObjectPackageProvider {
@@ -480,8 +480,8 @@ impl NativeObjectPackageProvider {
         Ok(Self::from_source(package_id, source))
     }
 
-    fn empty_source(package_id: &fp_core::ast::package::PackageId) -> fp_core::ast::package::PackageSource {
-        fp_core::ast::package::PackageSource::new(
+    fn empty_source(package_id: &fp_core::ast::package::PackageId) -> fp_core::ast::package::AstPackage {
+        fp_core::ast::package::AstPackage::new(
             package_id.clone(),
             package_id.as_str().to_string(),
             fp_core::ast::package::graph::PackageGraph::new(Vec::new()),
@@ -490,7 +490,7 @@ impl NativeObjectPackageProvider {
 
     fn from_source(
         package_id: fp_core::ast::package::PackageId,
-        source: fp_core::ast::package::PackageSource,
+        source: fp_core::ast::package::AstPackage,
     ) -> Self {
         let descriptor = fp_core::ast::package::PackageDescriptor {
             id: package_id.clone(),
@@ -542,7 +542,7 @@ impl fp_core::ast::package::provider::PackageProvider for NativeObjectPackagePro
     fn load_package_source(
         &self,
         id: &fp_core::ast::package::PackageId,
-    ) -> fp_core::ast::package::provider::ProviderResult<fp_core::ast::package::PackageSource> {
+    ) -> fp_core::ast::package::provider::ProviderResult<fp_core::ast::package::AstPackage> {
         if id != &self.package_id {
             return Err(fp_core::ast::package::provider::ProviderError::PackageNotFound(
                 id.clone(),

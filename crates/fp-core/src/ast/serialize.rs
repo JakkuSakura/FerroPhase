@@ -2,7 +2,7 @@ use crate::ast::SchemaDocument;
 use crate::ast::{BExpr, BlockStmt, Expr, ExprBlock, ExprInvoke, Item, ItemDefFunction, Module};
 use crate::ast::{Ty, Value, ValueFunction};
 use crate::query::QueryDocument;
-use crate::workspace::WorkspaceDocument;
+use crate::ast::workspace::WorkspaceDocument;
 use std::cell::RefCell;
 use std::sync::Arc;
 

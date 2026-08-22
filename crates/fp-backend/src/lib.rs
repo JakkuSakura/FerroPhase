@@ -15,7 +15,7 @@ pub use transforms as transformations;
 
 /// Wraps a single already-parsed file's items as a one-member package,
 /// obtained via a real `PackageProvider` (`FixedPackageProvider`, which
-/// just hands back an already-built `PackageSource` — no filesystem
+/// just hands back an already-built `AstPackage` — no filesystem
 /// access), then `WorkspaceContext::begin_package`. Deliberately does not
 /// use `fp-lang`'s disk-resolving `single_file_provider`: callers here
 /// (`roundtrip_items_via_hir`/`_dce`) receive already-fully-assembled
@@ -32,7 +32,7 @@ fn package_from_file(
     let package_id = fp_core::ast::package::PackageId::new("roundtrip");
     let mut items = file.items.clone();
     transforms::ast_to_hir::strip_doc_attrs_in_items(&mut items);
-    let mut source = fp_core::ast::package::PackageSource::new(
+    let mut source = fp_core::ast::package::AstPackage::new(
         package_id.clone(),
         "roundtrip",
         fp_core::ast::package::graph::PackageGraph::new(Vec::new()),
@@ -48,7 +48,7 @@ fn package_from_file(
     let source = provider
         .load_package_source(&package_id)
         .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-    let workspace = fp_core::workspace::WorkspaceContext::new(std::sync::Arc::new(provider));
+    let workspace = fp_core::ast::workspace::WorkspaceContext::new(std::sync::Arc::new(provider));
     let data_layout = fp_core::lir::LirDataLayout::new(
         64,
         8,

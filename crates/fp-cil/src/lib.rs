@@ -13,7 +13,7 @@ pub use parse::parse_cil_program;
 /// not a source-level transpile target; it lowers from MIR, not from the
 /// typed AST a Kotlin/Python-style backend would walk.
 fn package_mir(
-    workspace: &fp_core::workspace::WorkspaceContext,
+    workspace: &fp_core::ast::workspace::WorkspaceContext,
     package_id: &fp_core::ast::package::PackageId,
 ) -> fp_core::error::Result<fp_core::mir::Program> {
     let package = workspace.compiled_package(package_id).ok_or_else(|| {
@@ -43,7 +43,7 @@ pub struct CilBackend {
 impl fp_core::backend::TargetBackend for CilBackend {
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::workspace::WorkspaceContext,
         package_id: &fp_core::ast::package::PackageId,
     ) -> fp_core::error::Result<()> {
         // CIL text or an assembled PE given directly as input (see

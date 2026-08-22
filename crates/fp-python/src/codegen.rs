@@ -29,7 +29,7 @@ impl PythonSerializer {
     /// Returns `Vec<(relative_path, code)>`.
     pub fn serialize_package(
         &self,
-        source: &fp_core::ast::package::PackageSource,
+        source: &fp_core::ast::package::AstPackage,
     ) -> Result<Vec<(String, String)>> {
         fp_core::ast::package::split_package_into_modules(source)
             .into_iter()
@@ -61,7 +61,7 @@ impl PythonBackend {
 impl fp_core::backend::TargetBackend for PythonBackend {
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::workspace::WorkspaceContext,
         package_id: &fp_core::ast::package::PackageId,
     ) -> Result<()> {
         let package = workspace.package_source(package_id)?;

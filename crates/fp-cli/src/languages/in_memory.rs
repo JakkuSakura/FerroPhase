@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
-use fp_core::ast::package::{PackageDescriptor, PackageId, PackageSource};
+use fp_core::ast::package::{PackageDescriptor, PackageId, AstPackage};
 use fp_core::vfs::{UnixFileSystem, VirtualPath};
 use fp_lang::module_source::FerroModuleSourceResolver;
 
@@ -40,7 +40,7 @@ pub fn in_memory_provider(
 struct InMemoryPackageProvider {
     package_id: PackageId,
     descriptor: Arc<PackageDescriptor>,
-    source: PackageSource,
+    source: AstPackage,
 }
 
 impl PackageProvider for InMemoryPackageProvider {
@@ -59,7 +59,7 @@ impl PackageProvider for InMemoryPackageProvider {
         Ok(self.descriptor.clone())
     }
 
-    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
         if id != &self.package_id {
             return Err(ProviderError::PackageNotFound(id.clone()));
         }

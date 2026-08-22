@@ -7,9 +7,9 @@ use fp_core::lir::LirDataLayout;
 use fp_core::ops::BinOpKind;
 use fp_core::ast::package::graph::PackageGraph;
 use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
-use fp_core::ast::package::{PackageId, PackageSource};
+use fp_core::ast::package::{PackageId, AstPackage};
 use fp_core::span::Span;
-use fp_core::workspace::WorkspaceContext;
+use fp_core::ast::workspace::WorkspaceContext;
 use fp_typing::{ResolvedName, ResolvedNameNamespace, ResolvedNameTable};
 use std::collections::HashMap;
 
@@ -25,12 +25,12 @@ fn test_data_layout() -> LirDataLayout {
 /// Wraps bare `ast::Item`s (no real file/frontend involved) as a
 /// one-member package, obtained the same way every real package is: via a
 /// `PackageProvider` (`FixedPackageProvider`, which just hands back an
-/// already-built `PackageSource`) followed by
+/// already-built `AstPackage`) followed by
 /// `WorkspaceContext::begin_package` — never a hand-rolled
 /// `CompiledPackage`.
 fn package_from_items(items: Vec<ast::Item>) -> Result<fp_core::ast::package::CompiledPackage> {
     let package_id = PackageId::new("test");
-    let mut source = PackageSource::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
+    let mut source = AstPackage::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
     source.items = items
         .into_iter()
         .map(|item| fp_core::ast::package::PackageItem {
@@ -58,7 +58,7 @@ fn package_from_module_items(
     items: Vec<ast::Item>,
 ) -> Result<fp_core::ast::package::CompiledPackage> {
     let package_id = PackageId::new("test");
-    let mut source = PackageSource::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
+    let mut source = AstPackage::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
     source.items = items
         .into_iter()
         .map(|item| fp_core::ast::package::PackageItem {
@@ -88,7 +88,7 @@ fn package_from_items_with_paths(
     items: Vec<(Vec<String>, ast::Item)>,
 ) -> Result<fp_core::ast::package::CompiledPackage> {
     let package_id = PackageId::new("test");
-    let mut source = PackageSource::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
+    let mut source = AstPackage::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
     // Real providers (`RustPackageProvider`) record every distinct module
     // path they see across all loaded files here — including a bare
     // crate-root file's own path (e.g. `alloc/lib.rs` -> `["alloc"]`),

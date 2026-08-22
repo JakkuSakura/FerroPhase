@@ -12,7 +12,7 @@ use fp_core::ast::{
 };
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::intrinsics::calls::{CallKind, KnownClass, KnownPackage};
-use fp_core::ast::package::{PackageItem, PackageSource};
+use fp_core::ast::package::{PackageItem, AstPackage};
 use fp_core::diagnostics::report_warning_with_context;
 use fp_core::backend::{BackendConfig, PackageWriter, TargetBackend};
 use fp_core::writer::{IndentStyle, StyledWriter, WriterConfig};
@@ -93,7 +93,7 @@ struct KotlinEmitter {
     declared_names: Vec<HashSet<String>>,
     /// Dotted qualified paths (e.g. `"std.collections.HashMap"`) this file's
     /// content actually references, computed from typed HIR
-    /// (`PackageSource::referenced_paths`) rather than the file's own
+    /// (`AstPackage::referenced_paths`) rather than the file's own
     /// pre-existing `use` items — lets `emit_file` add an import for a
     /// std-equivalent type even when the source's own `use` list doesn't
     /// (already-)cover it (e.g. spliced-in content whose path shape
@@ -171,7 +171,7 @@ impl KotlinEmitter {
 /// struct's fields can be defined in one package and mutated/read from
 /// another — see the individual `collect_*` functions' doc comments for why
 /// each field is needed. Kotlin is the only backend that needs anything
-/// beyond a single `PackageSource` to serialize a package; this groups what
+/// beyond a single `AstPackage` to serialize a package; this groups what
 /// would otherwise be five loose values plus a separately-merged map into
 /// one value threaded through `serialize_package`.
 #[derive(Default)]
@@ -181,7 +181,7 @@ pub struct KotlinWorkspaceContext {
     pub string_fields: HashSet<String>,
     pub enum_fields: HashSet<String>,
     pub enum_variant_names: HashMap<String, HashMap<String, String>>,
-    /// `PackageSource::referenced_paths` merged across every package in the
+    /// `AstPackage::referenced_paths` merged across every package in the
     /// workspace — each item's own qualified path (module + name) mapped to
     /// the qualified paths it references.
     pub referenced_paths: HashMap<Vec<String>, Vec<Vec<String>>>,
@@ -191,7 +191,7 @@ impl KotlinWorkspaceContext {
     /// Collects every workspace-wide fact from every package's items in one
     /// pass. `sources` must be cheaply cloneable (e.g. `sources.iter()` on a
     /// slice) since each fact is collected via its own full traversal.
-    pub fn collect<'a>(sources: impl Iterator<Item = &'a PackageSource> + Clone) -> Self {
+    pub fn collect<'a>(sources: impl Iterator<Item = &'a AstPackage> + Clone) -> Self {
         let items = || sources.clone().flat_map(|src| src.items.iter());
         let mutated_fields = collect_mutated_field_names(items());
         let list_fields = collect_list_field_names(items());
@@ -233,7 +233,7 @@ impl KotlinSerializer {
     /// Returns `Vec<(relative_path, code)>` — source files + build files.
     pub fn serialize_package(
         &self,
-        source: &PackageSource,
+        source: &AstPackage,
         workspace_packages: &HashSet<String>,
         ctx: &KotlinWorkspaceContext,
     ) -> Result<Vec<(String, String)>> {
@@ -317,7 +317,7 @@ impl KotlinSerializer {
 }
 
 /// The workspace-wide facts `KotlinBackend` needs beyond a single
-/// package's own `PackageSource` — computed lazily (see `ensure_scan`)
+/// package's own `AstPackage` — computed lazily (see `ensure_scan`)
 /// from `&WorkspaceContext` on first use and cached, instead of being
 /// force-fed at construction time. `workspace_packages` comes from
 /// `WorkspaceContext::workspace_packages()` (in turn
@@ -361,12 +361,12 @@ impl KotlinBackend {
     /// including the very first — since `run_named_target`'s typecheck
     /// phase already ran for every package in the workspace before any
     /// `emit_package_artifact` call happens.
-    fn ensure_scan(&self, workspace: &fp_core::workspace::WorkspaceContext) -> fp_core::error::Result<&KotlinScan> {
+    fn ensure_scan(&self, workspace: &fp_core::ast::workspace::WorkspaceContext) -> fp_core::error::Result<&KotlinScan> {
         if let Some(scan) = self.scan.get() {
             return Ok(scan);
         }
         let workspace_packages: HashSet<String> = workspace.workspace_packages().into_iter().collect();
-        let sources: Vec<PackageSource> = workspace_packages
+        let sources: Vec<AstPackage> = workspace_packages
             .iter()
             .map(|name| workspace.package_source(&fp_core::ast::package::PackageId::new(name.clone())))
             .collect::<fp_core::error::Result<_>>()?;
@@ -385,7 +385,7 @@ impl KotlinBackend {
 impl TargetBackend for KotlinBackend {
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::workspace::WorkspaceContext,
         package_id: &fp_core::ast::package::PackageId,
     ) -> fp_core::error::Result<()> {
         let scan = self.ensure_scan(workspace)?;
@@ -402,7 +402,7 @@ impl TargetBackend for KotlinBackend {
                 ))
             })?;
             let mut compiled = compiled.borrow_mut();
-            for pkg_item in &mut compiled.items {
+            for pkg_item in &mut compiled.ast.items {
                 pkg_item.item = fp_core::intrinsics::materialize_item(
                     pkg_item.item.clone(),
                     &crate::KotlinMaterializer,
@@ -428,7 +428,7 @@ impl TargetBackend for KotlinBackend {
 
     fn write_workspace_files(
         &self,
-        workspace: &fp_core::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::workspace::WorkspaceContext,
     ) -> fp_core::error::Result<()> {
         let scan = self.ensure_scan(workspace)?;
         let root_name = self.config.root_name.replace('-', "_");

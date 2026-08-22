@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use fp_core::ast::package::provider::{PackageProvider, ProviderResult};
-use fp_core::ast::package::{PackageDescriptor, PackageId, PackageSource};
+use fp_core::ast::package::{PackageDescriptor, PackageId, AstPackage};
 
 #[derive(Debug)]
 pub struct KotlinPackageProvider {
@@ -33,7 +33,7 @@ impl PackageProvider for KotlinPackageProvider {
         todo!()
     }
 
-    fn load_package_source(&self, _id: &PackageId) -> ProviderResult<PackageSource> {
+    fn load_package_source(&self, _id: &PackageId) -> ProviderResult<AstPackage> {
         todo!()
     }
 

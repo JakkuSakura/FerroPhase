@@ -7,7 +7,7 @@ use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
 use fp_core::ast::package::graph::PackageGraph;
 use fp_core::ast::package::provider::{PackageProvider, ProviderError, ProviderResult};
-use fp_core::ast::package::{PackageDescriptor, PackageId, PackageItem, PackageMetadata, PackageSource};
+use fp_core::ast::package::{PackageDescriptor, PackageId, PackageItem, PackageMetadata, AstPackage};
 use fp_core::vfs::VirtualPath;
 
 use crate::FerroFrontend;
@@ -127,7 +127,7 @@ impl PackageProvider for MagnetWorkspaceProvider {
         Ok(())
     }
 
-    fn load_package_source(&self, id: &PackageId) -> ProviderResult<PackageSource> {
+    fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
         if let Ok(c) = self.cache.read() {
             if let Some(items) = c.get(id.as_str()) {
                 return Ok(package_source_from_items(id, items));
@@ -188,7 +188,7 @@ pub fn module_path_from_relative(rel: &str) -> QualifiedPath {
     QualifiedPath::new(parts)
 }
 
-fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> PackageSource {
+fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> AstPackage {
     let paths: HashSet<_> = items.iter().map(|item| item.module_path.clone()).collect();
     let descriptors: Vec<ModuleDescriptor> = paths
         .into_iter()
@@ -216,7 +216,7 @@ fn package_source_from_items(id: &PackageId, items: &[PackageItem]) -> PackageSo
     for desc in descriptors {
         graph.insert_module(desc);
     }
-    let mut source = PackageSource::new(id.clone(), id.as_str(), graph);
+    let mut source = AstPackage::new(id.clone(), id.as_str(), graph);
     source.items = items.to_vec();
     source
 }

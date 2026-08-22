@@ -5,7 +5,7 @@ use std::task::Waker;
 
 use fp_core::ast::{TypeStruct, Value};
 use fp_core::lir::LirDataLayout;
-use fp_core::workspace::WorkspaceContext;
+use fp_core::ast::workspace::WorkspaceContext;
 
 use crate::TypingDiagnostic;
 use crate::types::{GenericMonorph, TypeckResults};
@@ -224,7 +224,7 @@ impl TypingContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fp_core::workspace::WorkspaceContext;
+    use fp_core::ast::workspace::WorkspaceContext;
     use std::future::Future;
 
     #[test]

@@ -24,7 +24,7 @@ pub struct BytecodeBackend {
 impl fp_core::backend::TargetBackend for BytecodeBackend {
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::workspace::WorkspaceContext,
         package_id: &fp_core::ast::package::PackageId,
     ) -> fp_core::error::Result<()> {
         let package = workspace.compiled_package(package_id).ok_or_else(|| {

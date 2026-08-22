@@ -44,7 +44,7 @@ impl UrclEmitter {
 impl fp_core::backend::TargetBackend for UrclEmitter {
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::workspace::WorkspaceContext,
         package_id: &fp_core::ast::package::PackageId,
     ) -> Result<()> {
         let lir = workspace.merged_lir_program(package_id)?;

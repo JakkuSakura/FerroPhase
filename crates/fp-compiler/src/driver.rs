@@ -103,7 +103,7 @@ impl CompilerDriver {
         Self::with_workspace(
             data_layout,
             tasks,
-            Rc::new(fp_core::workspace::WorkspaceContext::new(std::sync::Arc::new(
+            Rc::new(fp_core::ast::workspace::WorkspaceContext::new(std::sync::Arc::new(
                 fp_core::ast::package::provider::EmptyProvider,
             ))),
         )
@@ -112,7 +112,7 @@ impl CompilerDriver {
     pub fn with_workspace(
         data_layout: fp_core::lir::LirDataLayout,
         tasks: ExecutorHandle,
-        workspace: Rc<fp_core::workspace::WorkspaceContext>,
+        workspace: Rc<fp_core::ast::workspace::WorkspaceContext>,
     ) -> Self {
         let mut state = CompilerState::new(data_layout.clone(), tasks.clone());
         state.typing_ctx = Rc::new(TypingContext::new(data_layout, workspace, tasks));
@@ -577,7 +577,7 @@ impl CompilerDriver {
             .unwrap_or_default();
         let mut package_source = package.borrow().clone();
         let macro_rules_defs =
-            fp_lang::collect_macro_rules_defs(package_source.items.iter().map(|item| &item.item));
+            fp_lang::collect_macro_rules_defs(package_source.ast.items.iter().map(|item| &item.item));
         // Item-position macro invocations (e.g. `make_adder!(add_two, 2);`)
         // must expand into real items *before* `HirGenerator` ever sees
         // them — matching rustc's own model, where macro-expanded tokens
@@ -585,7 +585,7 @@ impl CompilerDriver {
         // a separate, lesser one. Without this, such an invocation is
         // silently dropped by `ast_to_hir`'s own item loop, and whatever it
         // would have defined never exists.
-        package_source.items = fp_lang::expand_item_macros(package_source.items, &macro_rules_defs);
+        package_source.ast.items = fp_lang::expand_item_macros(package_source.ast.items, &macro_rules_defs);
         let mut generator = HirGenerator::new()
             .with_intrinsic_normalizer(
                 FerroIntrinsicNormalizer::new(fp_core::intrinsics::IntrinsicNormalizationMode::Compile)
@@ -611,7 +611,7 @@ impl CompilerDriver {
                 package.borrow_mut().hir_exports.extend(package_exports);
                 package
                     .borrow_mut()
-                    .type_alias_exports
+                    .ast.type_alias_exports
                     .extend(type_alias_exports);
             }
         }
@@ -729,7 +729,7 @@ impl CompilerDriver {
                 // keys `HirToAstLifter` already computes here; two
                 // independent implementations of "this item's qualified
                 // path" is exactly what let them silently disagree).
-                for pkg_item in &mut pkg.items {
+                for pkg_item in &mut pkg.ast.items {
                     if let ItemKind::Impl(imp) = pkg_item.item.kind_mut() {
                         // Trait impls aren't in `lifted_items_by_path` at
                         // all (`lift_impl_methods_by_path` skips them —
