@@ -185,7 +185,48 @@ impl AstToHirLowerer {
 
         match parsed.prefix {
             PathPrefix::Root | PathPrefix::Crate => {
-                Some(QualifiedPath::new(parsed.segments.clone()))
+                // Unlike every other prefix arm here, this used to return
+                // the literal segments unconditionally, with no check that
+                // the resulting path actually resolves to anything. The
+                // caller (`name_to_hir_path_with_scope`) treats *any*
+                // `Some` from this function as authoritative and returns
+                // immediately with whatever `lookup_global_res` finds for
+                // it (or `None` if it finds nothing) — so an unconditional
+                // `Some` here permanently short-circuited that caller's own
+                // later `crate_root_candidates` fallback, which is the only
+                // place that knows about the vendored real `std` package's
+                // two-segment sub-crate root (`["std", "core"]`, not just
+                // `["std"]` or the bare literal segments). A `crate::`
+                // path written from inside `core`/`alloc` (e.g.
+                // `crate::panic::Location` from `core::cell`) needs that
+                // root prepended to resolve at all; falling through to
+                // literal segments here made it fail before the caller
+                // ever got a chance to try the correct root. Mirror
+                // `name_to_hir_path_with_scope`'s own candidate order
+                // (bare literal segments, for an ordinary single-crate
+                // package where they need no root at all; then the
+                // package's own one- and two-segment roots) and verify
+                // each with `item_exists`/`module_exists` before
+                // committing, so a candidate that doesn't actually resolve
+                // falls through to `None` instead of masking the caller's
+                // real fallback.
+                let literal = QualifiedPath::new(parsed.segments.clone());
+                if item_exists(&literal) || module_exists(&literal) {
+                    return Some(literal);
+                }
+                let root_segs = &self.module_path.segments;
+                for root_len in [1usize, 2usize] {
+                    if root_segs.len() < root_len {
+                        continue;
+                    }
+                    let mut candidate_segments = root_segs[..root_len].to_vec();
+                    candidate_segments.extend(parsed.segments.iter().cloned());
+                    let candidate = QualifiedPath::new(candidate_segments);
+                    if item_exists(&candidate) || module_exists(&candidate) {
+                        return Some(candidate);
+                    }
+                }
+                None
             }
             PathPrefix::SelfMod => Some(self.module_path.join(&parsed.segments)),
             PathPrefix::Super(depth) => self

@@ -1866,3 +1866,101 @@ fn transform_package_expands_item_position_macro_rules_invocation() -> Result<()
 
     Ok(())
 }
+
+/// Real `core::panic::Location` shape, inside the vendored real-`std`
+/// package's own two-segment sub-crate module paths (`["std", "core", ...]`
+/// — see `transform_package_plain_absolute_path_into_vendored_subcrate`'s
+/// doc comment for why the bundled package needs this): `panic.rs` (module
+/// path `["std", "core", "panic"]`) has `mod location;` (a private
+/// submodule, `["std", "core", "panic", "location"]`) plus `pub use
+/// self::location::Location;` re-exporting it one level up, and `cell.rs`
+/// (module path `["std", "core", "cell"]`) references the type via the
+/// fully-qualified absolute path `crate::panic::Location` with no `use` of
+/// its own — real `core/cell.rs`'s actual style (`borrowed_at: Cell<Option
+/// <&'static crate::panic::Location<'static>>>`). Isolates whether the
+/// `crate::`-prefixed absolute path's crate-root candidate walk
+/// (`name_to_hir_path_with_scope`'s `crate_root_candidates`) resolves
+/// against the correct two-segment sub-crate root before falling back to
+/// the wrong one-segment root, for a path that depends on a same-file-level
+/// re-export chain rather than a direct definition.
+#[test]
+fn transform_package_resolves_crate_absolute_path_to_self_reexport_in_vendored_subcrate(
+) -> Result<()> {
+    let location_item = make_struct("Location", vec![("value", int_ty())]);
+
+    let panic_self_reexport = ast::Item::from(ast::ItemKind::Import(ast::ItemImport {
+        attrs: Vec::new(),
+        visibility: ast::Visibility::Public,
+        style: ast::ItemImportStyle::Plain,
+        tree: ast::ItemImportTree::Path(ast::ItemImportPath {
+            segments: vec![
+                ast::ItemImportTree::SelfMod,
+                ast::ItemImportTree::Ident(ident("location")),
+                ast::ItemImportTree::Ident(ident("Location")),
+            ],
+        }),
+    }));
+
+    let cell_fn_item = make_fn(
+        "make",
+        Vec::new(),
+        ast::Ty::path(ast::Path::plain(vec![
+            ident("crate"),
+            ident("panic"),
+            ident("Location"),
+        ])),
+        ast::Expr::from(ast::ExprKind::Struct(ast::ExprStruct::new_ident(
+            ident("Location"),
+            vec![ast::ExprField::new(
+                ident("value"),
+                ast::Expr::value(ast::Value::int(1)),
+            )],
+        ))),
+    );
+
+    let items = vec![
+        (
+            vec![
+                "std".to_string(),
+                "core".to_string(),
+                "panic".to_string(),
+                "location".to_string(),
+            ],
+            location_item,
+        ),
+        (
+            vec!["std".to_string(), "core".to_string(), "panic".to_string()],
+            panic_self_reexport,
+        ),
+        (
+            vec!["std".to_string(), "core".to_string(), "cell".to_string()],
+            cell_fn_item,
+        ),
+    ];
+    let package = package_from_items_with_paths(items)?;
+    let mut generator = HirGenerator::new();
+    let program = generator.transform_package(&package)?;
+
+    let make_fn_hir = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(func) if func.sig.name.as_str() == "make" => Some(func),
+            _ => None,
+        })
+        .expect("`make` function present");
+    let hir::TypeExprKind::Path(ret_path) = &make_fn_hir.sig.output.kind else {
+        panic!(
+            "expected `make`'s return type to lower to a path, got {:?}",
+            make_fn_hir.sig.output.kind
+        );
+    };
+    assert!(
+        ret_path.res.is_some(),
+        "`crate::panic::Location` (referenced from `core::cell`, resolving \
+         through `core::panic`'s own `pub use self::location::Location;` \
+         re-export) must resolve — got unresolved path {ret_path:?}"
+    );
+
+    Ok(())
+}
