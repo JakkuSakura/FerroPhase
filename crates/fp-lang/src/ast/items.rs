@@ -1263,9 +1263,22 @@ fn skip_where_clause(input: &mut &[Token]) -> ModalResult<()> {
     // would blindly consume every token past its own `;` hunting for a
     // `{` that might be arbitrarily far downstream, corrupting everything
     // in between.
+    //
+    // Only a depth-0 `{`/`;` actually terminates the clause — a bound's
+    // own generic args can nest a `{`/`;` that means something else
+    // entirely (real `core::array`'s own `where R: Residual<[R::Output;
+    // N]>`: that `;` is the array-length separator, not the where
+    // clause's own terminator). Track bracket/paren/brace depth rather
+    // than trusting the first raw `{`/`;` token seen.
+    let mut depth: i32 = 0;
     while !input.is_empty() {
-        if matches!(peek_symbol(input), Some("{") | Some(";")) {
+        if depth == 0 && matches!(peek_symbol(input), Some("{") | Some(";")) {
             return Ok(());
+        }
+        match peek_symbol(input) {
+            Some("(" | "[" | "{") => depth += 1,
+            Some(")" | "]" | "}") => depth -= 1,
+            _ => {}
         }
         *input = &input[1..];
     }
