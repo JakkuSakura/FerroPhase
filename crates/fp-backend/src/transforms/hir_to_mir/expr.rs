@@ -5589,6 +5589,7 @@ impl HirToMirLowerer {
     // has been registered; dependency definitions arrive in hash-map order.
     fn finalize_adt_definitions(&mut self, program: &hir::HirPackage) {
         for item in &program.items {
+            self.current_item_path = self.hir_def_path(item.def_id).map(|path| path.join("::"));
             match &item.kind {
                 hir::ItemKind::Struct(strukt) => {
                     let mir_fields = strukt
@@ -5649,6 +5650,7 @@ impl HirToMirLowerer {
                 _ => {}
             }
         }
+        self.current_item_path = None;
     }
 
     fn struct_layout_for_instance(
