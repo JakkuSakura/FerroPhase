@@ -313,6 +313,8 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
         factory(|config: BackendConfig| {
             Ok(Box::new(fp_cil::CilBackend {
                 output: fill_missing_extension(&config.workspace_root, "il"),
+                assemble: false,
+                save_intermediates: config.save_intermediates,
             }) as Box<dyn TargetBackend>)
         }),
     ));
@@ -320,8 +322,9 @@ fn builtin_target_backends() -> Vec<(&'static str, TargetBackendFactory)> {
     entries.push((
         "dotnet",
         factory(|config: BackendConfig| {
-            Ok(Box::new(fp_cil::DotnetBackend {
+            Ok(Box::new(fp_cil::CilBackend {
                 output: fill_missing_extension(&config.workspace_root, "exe"),
+                assemble: true,
                 save_intermediates: config.save_intermediates,
             }) as Box<dyn TargetBackend>)
         }),
