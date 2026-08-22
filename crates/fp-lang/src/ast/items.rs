@@ -1068,6 +1068,11 @@ fn parse_fn_param_core(
     input: &mut &[Token],
     destructures: &mut Vec<BlockStmt>,
 ) -> ModalResult<FunctionParam> {
+    // A parameter-level attribute (real `std::sys::pal::unix`'s own
+    // `unsafe fn reset_sigpipe(#[allow(unused_variables)] sigpipe: u8)`) —
+    // `FunctionParam` has no slot for it, so it's parsed and dropped, same
+    // treatment already given to every other checker-inert attribute.
+    skip_outer_attrs_for_field(input)?;
     let is_const = skip_keyword(input, Keyword::Const).is_ok();
     let is_context = starts_context_param_marker(*input);
     if is_context {
