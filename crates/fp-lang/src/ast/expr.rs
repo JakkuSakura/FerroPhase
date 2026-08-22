@@ -1106,7 +1106,18 @@ fn parse_struct_literal_fields(
             }
             break;
         }
-        let field = ident_like(input)?;
+        // A numeric field name (real `std::sys::time::xous`'s own
+        // `Instant { 0: Duration::from_millis(..), 1: .. }`) — tuple-struct
+        // literal syntax naming positional fields by index rather than by
+        // an identifier. `ExprField.name` is an `Ident`, so the digits are
+        // just reused as its text, same as any other field name.
+        let field = if let Some(token) = input.first().filter(|t| t.kind == TokenKind::Number) {
+            let ident = Ident::new(token.lexeme.clone());
+            *input = &input[1..];
+            ident
+        } else {
+            ident_like(input)?
+        };
         let value = if skip_symbol(input, ":").is_ok() {
             Some(parse_expr_winnow(input, file)?)
         } else {
