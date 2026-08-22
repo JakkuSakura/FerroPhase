@@ -288,6 +288,24 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         let bounds = parse_dyn_type_bounds(input)?;
         return Ok(Ty::TypeBounds(bounds));
     }
+    // `pattern_type!(BASE is PATTERN)` (real `core::ptr::non_null`'s own
+    // `pattern_type!(*const T is !null)`, `core::num::niche_types`'
+    // `pattern_type!(u32 is 0..u32::MAX)`/`pattern_type!(i32 is ..-1 |
+    // 0..)`) — a nightly-only builtin (not an ordinary `macro_rules!`
+    // invocation `looks_like_type_expr_macro`/`parse_macro_expr` below
+    // already handle generically), refining `BASE` with a validity
+    // pattern this checker has no way to model (same reasoning as
+    // dropping lifetimes: the pattern is a compile-time-only invariant,
+    // never part of the value's actual runtime representation, which is
+    // always just `BASE`). `PATTERN` can be an arbitrary range/negation/
+    // alternation pattern, including ones with path-expression bounds
+    // (`0..u32::MAX`) or negative literals (`..-1`) that don't parse as
+    // an ordinary expression at all — rather than modeling real pattern
+    // syntax just to discard it, skip everything up to the invocation's
+    // own balanced closing `)` and keep only `BASE`.
+    if let Some(base) = try_parse_pattern_type_macro(input) {
+        return Ok(base);
+    }
     // A type-position macro invocation (real `core::pat`'s own nightly
     // `pattern_type!(*const T is !null)`) must be parsed as just the
     // invocation itself, NOT via the full binary-operator-aware expression
@@ -536,6 +554,70 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
         return Ok(ty);
     }
     Ok(Ty::name(name))
+}
+
+/// Parses `pattern_type!(BASE is PATTERN)` if `input` starts with it,
+/// returning just `BASE` (see the call site's doc comment for why the
+/// pattern itself is dropped rather than modeled) and advancing `input`
+/// past the whole invocation. Returns `None` (leaving `input` untouched)
+/// if it isn't this specific shape at all, so the caller can fall through
+/// to the ordinary macro-invocation handling for every other macro name.
+fn try_parse_pattern_type_macro(input: &mut &[Token]) -> Option<Ty> {
+    let mut probe = *input;
+    // An absolute/`crate::`-qualified invocation (real `core::ptr::
+    // non_null`'s own `crate::pattern_type!(*const T is !null)`) — this
+    // builtin is always referenced unqualified in ordinary code, but
+    // vendored std occasionally spells it out at its own definition
+    // site's use.
+    if peek_ident_like(probe) == Some("crate") {
+        let mut qualified_probe = probe;
+        let _ = ident_like(&mut qualified_probe).ok()?;
+        if skip_symbol(&mut qualified_probe, "::").is_ok() {
+            probe = qualified_probe;
+        }
+    }
+    if peek_ident_like(probe) != Some("pattern_type") {
+        return None;
+    }
+    let _ = ident_like(&mut probe).ok()?;
+    skip_symbol(&mut probe, "!").ok()?;
+    skip_symbol(&mut probe, "(").ok()?;
+    let base = parse_type_expr(&mut probe).ok()?;
+    if peek_ident_like(probe) != Some("is") {
+        return None;
+    }
+    let _ = ident_like(&mut probe).ok()?;
+    // Skip the pattern itself — balanced-depth scan to the invocation's
+    // own closing `)`, since the pattern can contain arbitrary nested
+    // parens/brackets (`0..=HALF_USIZE`'s constant, tuple patterns, ...)
+    // that must not be mistaken for the invocation's own terminator.
+    let mut depth = 1i32;
+    loop {
+        if probe.is_empty() {
+            return None;
+        }
+        // Only a `Symbol`-kind token can be one of the bracket characters
+        // being balanced — an identifier/number/keyword token (`null`,
+        // `HALF_USIZE`, `0`, ...) is just more pattern content to skip
+        // over, never a depth change. `peek_symbol` returns `None` for
+        // those, so this must not `?`-propagate that as a parse failure.
+        if let Some(symbol) = peek_symbol(probe) {
+            match symbol {
+                "(" | "[" | "{" => depth += 1,
+                ")" | "]" | "}" => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        probe = &probe[1..];
+    }
+    skip_symbol(&mut probe, ")").ok()?;
+    *input = probe;
+    Some(base)
 }
 
 fn looks_like_type_expr_macro(input: &[Token]) -> bool {

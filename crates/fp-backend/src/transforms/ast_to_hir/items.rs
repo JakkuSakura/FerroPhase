@@ -346,6 +346,14 @@ impl HirGenerator {
             }
 
             if let Some(trait_name) = &impl_block.trait_ty {
+                let trait_generic_args: &[ast::Ty] = match trait_name {
+                    ast::Name::ParameterPath(path) => path
+                        .segments
+                        .last()
+                        .map(|seg| seg.args.as_slice())
+                        .unwrap_or_default(),
+                    _ => &[],
+                };
                 let trait_name = match trait_name {
                     ast::Name::Ident(ident) => ident.name.clone(),
                     ast::Name::Path(path) => path
@@ -359,8 +367,45 @@ impl HirGenerator {
                         .map(|seg| seg.ident.name.clone())
                         .unwrap_or_default(),
                 };
-                if let Some(trait_def) = self.trait_defs.get(&trait_name) {
+                if let Some(trait_def) = self.trait_defs.get(&trait_name).cloned() {
                     let trait_items = trait_def.items.clone();
+                    // A default-bodied trait method (`PartialEq::ne`,
+                    // `PartialOrd::lt`/`le`/`gt`/`ge`, ...) synthesized
+                    // below is lowered fresh, right here, inside *this*
+                    // impl's own scope — which has `Self` bound but not
+                    // the trait's own generic parameters (`PartialEq<Rhs
+                    // = Self>`'s `Rhs`), since that scope only existed
+                    // during `transform_trait`'s own (long-finished)
+                    // processing of the trait declaration itself. Left
+                    // unbound, every occurrence of `Rhs` inside a
+                    // synthesized method's copied-verbatim signature
+                    // (`fn ne(&self, other: &Rhs) -> bool`) fails to
+                    // resolve — the single largest unresolved-type-path
+                    // bucket across vendored core/alloc/std, since almost
+                    // no `PartialEq`/`PartialOrd` impl ever redeclares
+                    // `ne`/`lt`/etc. Bind each trait generic parameter to
+                    // this impl's own explicit argument for it
+                    // (`impl PartialEq<Foo> for X`'s `Foo`), positionally,
+                    // falling back to `Self` for anything left
+                    // unspecified — real rustc's own `Rhs = Self` default,
+                    // which `ast::GenericParam` has nowhere to carry
+                    // through from the parser (see `parse_optional_generic_params`,
+                    // which parses and discards a default value's tokens).
+                    self.push_type_scope();
+                    for (index, param) in trait_def.generics_params.iter().enumerate() {
+                        let res = match trait_generic_args.get(index) {
+                            Some(ast::Ty::Expr(expr)) => match expr.kind() {
+                                ast::ExprKind::Name(name) => self
+                                    .name_to_hir_path_with_scope(name, PathResolutionScope::Type)
+                                    .ok()
+                                    .and_then(|path| path.res),
+                                _ => None,
+                            },
+                            _ => None,
+                        }
+                        .unwrap_or(hir::Res::SelfTy);
+                        self.current_type_scope().insert(param.name.name.clone(), res);
+                    }
                     // Synthesize default trait methods into the impl if they are missing.
                     for trait_item in &trait_items {
                         let ast::ItemKind::DefFunction(func) = trait_item.kind() else {
@@ -385,6 +430,7 @@ impl HirGenerator {
                             kind: hir::ImplItemKind::Method(method),
                         });
                     }
+                    self.pop_type_scope();
                 }
             }
 
