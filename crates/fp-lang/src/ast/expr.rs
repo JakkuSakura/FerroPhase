@@ -2131,6 +2131,40 @@ fn parse_match_pattern(input: &mut &[Token]) -> ModalResult<Pattern> {
         })));
     }
 
+    // An open-start range pattern (`..END`/`..=END` — no lower bound, e.g.
+    // real `core::char::methods`'s `match code { ..MAX_ONE_B => 1, .. }`)
+    // — the closing-side check just below already handles the symmetric
+    // `START..`/`START..=` case (no upper bound isn't handled either, but
+    // that shape doesn't appear in vendored std today), just never one
+    // with the start omitted instead. Checked first since `parse_literal_
+    // pattern_expr` can never itself start with `..`/`..=`, so trying it
+    // first would just fail and fall through anyway.
+    let mut open_start_probe = *input;
+    if let Some(op) = peek_symbol(open_start_probe) {
+        let limit = match op {
+            ".." => Some(ExprRangeLimit::Exclusive),
+            "..=" => Some(ExprRangeLimit::Inclusive),
+            _ => None,
+        };
+        if let Some(limit) = limit {
+            skip_symbol(&mut open_start_probe, op)?;
+            if let Ok(end) = parse_range_bound_expr(&mut open_start_probe) {
+                *input = open_start_probe;
+                return Ok(Pattern::new(PatternKind::Variant(PatternVariant {
+                    name: ExprKind::Range(ExprRange {
+                        span: end.span(),
+                        start: None,
+                        limit,
+                        end: Some(Box::new(end)),
+                        step: None,
+                    })
+                    .into(),
+                    pattern: None,
+                })));
+            }
+        }
+    }
+
     let mut literal_probe = *input;
     if let Ok(expr) = parse_literal_pattern_expr(&mut literal_probe) {
         let mut range_probe = literal_probe;
@@ -2142,7 +2176,7 @@ fn parse_match_pattern(input: &mut &[Token]) -> ModalResult<Pattern> {
             };
             if let Some(limit) = limit {
                 skip_symbol(&mut range_probe, op)?;
-                let end = parse_literal_pattern_expr(&mut range_probe)
+                let end = parse_range_bound_expr(&mut range_probe)
                     .map_err(|_| ErrMode::Cut(ContextError::new()))?;
                 let span = union_exprs(&expr, &end);
                 *input = range_probe;
@@ -2399,6 +2433,23 @@ fn parse_literal_pattern_expr(input: &mut &[Token]) -> ModalResult<Expr> {
         .into());
     }
     parse_string(input, 0).or_else(|_| parse_number(input))
+}
+
+/// A range *pattern*'s bound specifically (either side of `A..=B`, or the
+/// end of an open-start `..B`) — unlike [`parse_literal_pattern_expr`]
+/// (used more broadly to check "is this whole pattern just a bare
+/// literal", where a plain identifier must NOT match — that's a binding/
+/// enum-variant pattern instead), a range bound really can be a named
+/// const (real `core::char::methods`'s `match code { ..MAX_ONE_B => 1,
+/// ..MAX_TWO_B => 2, .. }`), not just a literal.
+fn parse_range_bound_expr(input: &mut &[Token]) -> ModalResult<Expr> {
+    if let Ok(value) = parse_literal_pattern_expr(input) {
+        return Ok(value);
+    }
+    let mut path_probe = *input;
+    let name = parse_name(&mut path_probe)?;
+    *input = path_probe;
+    Ok(Expr::name(name))
 }
 
 fn parse_pattern_alternatives(input: &mut &[Token]) -> ModalResult<Pattern> {
