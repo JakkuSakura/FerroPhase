@@ -1,5 +1,5 @@
 use super::*;
-use fp_core::ast::path::{ParsedPath, PathPrefix, QualifiedPath, parse_path, resolve_item_path};
+use fp_core::ast::path::{ParsedPath, PathPrefix, QualifiedPath};
 
 impl HirGenerator {
     fn resolved_name_to_hir_path(
@@ -97,6 +97,163 @@ impl HirGenerator {
             .children(root)
             .map(|(name, _)| name.to_string())
             .collect()
+    }
+
+    /// Parses a `"a::b::c"`-shaped textual path spec into a `ParsedPath`
+    /// (prefix + segments) — moved here from `fp_core::ast::path` since
+    /// this resolver is its only real caller (`resolve_item_path`'s own
+    /// associated-type-path handling in `name_to_hir_path_with_scope`);
+    /// keeping it as a free-standing "shared kernel" function in `fp-core`
+    /// implied a generality it never actually had.
+    fn parse_path(spec: &str) -> std::result::Result<ParsedPath, fp_core::ast::path::PathError> {
+        use fp_core::ast::path::PathError;
+        let trimmed = spec.trim();
+        if trimmed.is_empty() {
+            return Err(PathError::EmptyPath);
+        }
+        let mut raw = trimmed;
+        let mut prefix = PathPrefix::Plain;
+        if raw.starts_with("::") {
+            prefix = PathPrefix::Root;
+            raw = raw.trim_start_matches("::");
+        }
+        let mut segments: Vec<String> = raw
+            .split("::")
+            .filter(|seg| !seg.is_empty())
+            .map(|seg| seg.trim().to_string())
+            .filter(|seg| !seg.is_empty())
+            .collect();
+        if segments.is_empty() {
+            return Err(PathError::InvalidPath(spec.to_string()));
+        }
+        if matches!(prefix, PathPrefix::Plain) {
+            match segments[0].as_str() {
+                "crate" => {
+                    prefix = PathPrefix::Crate;
+                    segments.remove(0);
+                }
+                "self" => {
+                    prefix = PathPrefix::SelfMod;
+                    segments.remove(0);
+                }
+                "super" => {
+                    let mut depth = 0;
+                    while segments.first().map(|seg| seg.as_str()) == Some("super") {
+                        segments.remove(0);
+                        depth += 1;
+                    }
+                    prefix = PathPrefix::Super(depth);
+                }
+                _ => {}
+            }
+        }
+        Ok(ParsedPath { prefix, segments })
+    }
+
+    /// Resolves a parsed path against this resolver's own state directly
+    /// (module path, module tree, symbol tables, workspace) — moved here
+    /// from `fp_core::ast::path::resolve_item_path` (a free function that
+    /// needed three separate closures just to reach into `self`) since
+    /// this resolver is its only real caller; folds `item_exists`/
+    /// `scope_contains`/`module_exists` (previously closures built at the
+    /// call site) directly into the method body instead.
+    fn resolve_item_path(
+        &self,
+        parsed: &ParsedPath,
+        scope: PathResolutionScope,
+    ) -> Option<QualifiedPath> {
+        if parsed.segments.is_empty() {
+            return None;
+        }
+        let item_exists = |candidate: &QualifiedPath| {
+            let key = candidate.to_key();
+            if self.tree_lookup_raw(&key, scope.namespace()).is_some() {
+                return true;
+            }
+            // Cross-package export (e.g. `libc::macos::getenv`), looked
+            // up lazily against the workspace on a local-lookup miss —
+            // see `lookup_global_res`'s identical fallback.
+            self.workspace
+                .as_ref()
+                .is_some_and(|ws| ws.find_export(&key).is_some())
+        };
+        let scope_contains = |name: &str| match scope {
+            PathResolutionScope::Value => self.resolve_value_symbol(name).is_some(),
+            PathResolutionScope::Type => self.resolve_type_symbol(name).is_some(),
+        };
+        let module_exists = |p: &QualifiedPath| self.package.module_tree.module_exists(p);
+
+        match parsed.prefix {
+            PathPrefix::Root | PathPrefix::Crate => {
+                Some(QualifiedPath::new(parsed.segments.clone()))
+            }
+            PathPrefix::SelfMod => Some(self.module_path.join(&parsed.segments)),
+            PathPrefix::Super(depth) => self
+                .module_path
+                .parent_n(depth)
+                .map(|parent| parent.join(&parsed.segments)),
+            PathPrefix::Plain => {
+                let first = parsed.segments.first()?;
+                let base = if self.module_path.head() == Some("bin") {
+                    QualifiedPath::new(Vec::new())
+                } else {
+                    self.module_path.clone()
+                };
+                // `root_modules`/`extern_prelude`: every top-level module
+                // name, plus the vendored real Rust std's own bundled
+                // sub-crates (`core`/`alloc`/`std`) — a bare first segment
+                // matching either is a legitimate absolute reference, not
+                // just a local sibling.
+                let root_modules = self.cached_root_modules();
+                let extern_prelude = ["std", "core", "alloc"];
+
+                if parsed.segments.len() == 1 {
+                    if scope_contains(first) {
+                        return Some(QualifiedPath::new(vec![first.clone()]));
+                    }
+                    if !base.is_empty() {
+                        let local = base.with_segment(first.clone());
+                        if item_exists(&local) || module_exists(&local) {
+                            return Some(local);
+                        }
+                    } else {
+                        let local = QualifiedPath::new(parsed.segments.clone());
+                        if item_exists(&local) {
+                            return Some(local);
+                        }
+                    }
+                    if root_modules.contains(first) || extern_prelude.contains(&first.as_str()) {
+                        return Some(QualifiedPath::new(parsed.segments.clone()));
+                    }
+                    return None;
+                }
+
+                if !base.is_empty() {
+                    let local = base.join(&parsed.segments);
+                    if item_exists(&local) {
+                        return Some(local);
+                    }
+                    let module_candidate = base.with_segment(first.clone());
+                    if module_exists(&module_candidate) {
+                        return Some(local);
+                    }
+                } else {
+                    let local = QualifiedPath::new(parsed.segments.clone());
+                    if item_exists(&local) {
+                        return Some(local);
+                    }
+                    let module_candidate = QualifiedPath::new(vec![first.clone()]);
+                    if module_exists(&module_candidate) {
+                        return Some(local);
+                    }
+                }
+
+                if root_modules.contains(first) || extern_prelude.contains(&first.as_str()) {
+                    return Some(QualifiedPath::new(parsed.segments.clone()));
+                }
+                None
+            }
+        }
     }
 
     pub(super) fn name_to_hir_path_with_scope(
@@ -332,7 +489,7 @@ impl HirGenerator {
                             eprintln!("DEBUG assoc-path type_def_id={type_def_id:?} type_paths={type_paths:?}");
                         }
                         for type_path in type_paths {
-                            let mut associated_path = parse_path(&type_path)
+                            let mut associated_path = Self::parse_path(&type_path)
                                 .map_err(|error| fp_core::Error::from(format!("{error:?}")))?
                                 .segments;
                             associated_path.extend(
@@ -399,11 +556,6 @@ impl HirGenerator {
         }
 
         if !matches!(resolved, Some(hir::Res::Local(_))) {
-            let root_modules = self.cached_root_modules();
-            let extern_prelude: HashSet<String> = ["std", "core", "alloc"]
-                .into_iter()
-                .map(|name| name.to_string())
-                .collect();
             let segment_names = segments
                 .iter()
                 .map(|seg| seg.name.as_str().to_string())
@@ -412,38 +564,7 @@ impl HirGenerator {
                 prefix: path_prefix,
                 segments: segment_names,
             };
-            let item_exists = |candidate: &QualifiedPath| {
-                let key = candidate.to_key();
-                if self.tree_lookup_raw(&key, scope.namespace()).is_some() {
-                    return true;
-                }
-                // Cross-package export (e.g. `libc::macos::getenv`),
-                // looked up lazily against the workspace on a local-lookup
-                // miss — see `lookup_global_res`'s identical fallback.
-                self.workspace
-                    .as_ref()
-                    .is_some_and(|ws| ws.find_export(&key).is_some())
-            };
-            let scope_contains = |name: &str| match scope {
-                PathResolutionScope::Value => self.resolve_value_symbol(name).is_some(),
-                PathResolutionScope::Type => self.resolve_type_symbol(name).is_some(),
-            };
-            // A closure straight into `module_tree`, not a materialized
-            // `HashSet` — `name_to_hir_path_with_scope` reaches this
-            // fallback for every still-unresolved path, and cloning every
-            // module path in the package on each such call turned a
-            // single compile into an O(paths × unresolved-references)
-            // blowup (confirmed: a real std compile ballooned to tens of
-            // gigabytes before this fix).
-            if let Some(canonical) = resolve_item_path(
-                &parsed,
-                &self.module_path,
-                &root_modules,
-                &extern_prelude,
-                |p| self.package.module_tree.module_exists(p),
-                item_exists,
-                scope_contains,
-            ) {
+            if let Some(canonical) = self.resolve_item_path(&parsed, scope) {
                 let mut canonical_segments = Vec::with_capacity(canonical.segments.len());
                 let offset = canonical.segments.len().saturating_sub(segments.len());
                 for (idx, seg) in canonical.segments.iter().enumerate() {
