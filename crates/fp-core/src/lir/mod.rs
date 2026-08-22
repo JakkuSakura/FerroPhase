@@ -80,6 +80,33 @@ pub struct LirProgram {
     pub queries: Vec<LirQuery>,
 }
 
+/// `ItemKind::PrecompiledLir` (see `fp_core::ast::item`) needs `LirProgram`
+/// to satisfy the same derive bounds every other `ItemKind` payload gets
+/// via the `common_enum!` macro (`Hash`, `Serialize`, `Deserialize`) —
+/// mirrors `AsmProgram`'s identical treatment for `ItemKind::PrecompiledAsm`
+/// (`fp_core::asmir`): trivial/error stand-ins, not real implementations.
+/// An already-compiled artifact is never meant to be hashed for
+/// deduplication or serialized to disk as AST.
+impl std::hash::Hash for LirProgram {
+    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
+}
+
+impl serde::Serialize for LirProgram {
+    fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom(
+            "LirProgram (ItemKind::PrecompiledLir) does not support serialization",
+        ))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for LirProgram {
+    fn deserialize<D: serde::Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "LirProgram (ItemKind::PrecompiledLir) does not support deserialization",
+        ))
+    }
+}
+
 /// One independently addressable LIR definition.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirArtifact {

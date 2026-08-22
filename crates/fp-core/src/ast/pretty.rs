@@ -703,6 +703,9 @@ impl PrettyPrintable for ast::Item {
             ast::ItemKind::PrecompiledAsm(_) => {
                 ctx.write_line(format!("item.precompiled_asm{}", suffix))
             }
+            ast::ItemKind::PrecompiledLir(_) => {
+                ctx.write_line(format!("item.precompiled_lir{}", suffix))
+            }
         }
     }
 }
@@ -917,6 +920,12 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
         ast::Ty::ErrorType(_) => "Error".into(),
         ast::Ty::InferVar(v) => format!("?{}", v.id),
         ast::Ty::Wildcard(_) => "_".into(),
+        ast::Ty::Refinement(refinement) => format!(
+            "{{{} : {} // {}}}",
+            refinement.binder,
+            render_ty_brief(refinement.base.as_ref()),
+            render_expr_inline(refinement.predicate.as_ref())
+        ),
     }
 }
 

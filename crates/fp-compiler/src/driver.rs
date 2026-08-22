@@ -2013,7 +2013,8 @@ fn item_own_name(item: &Item) -> Option<&str> {
         | ItemKind::Import(_)
         | ItemKind::Expr(_)
         | ItemKind::ConstBlock(_)
-        | ItemKind::PrecompiledAsm(_) => None,
+        | ItemKind::PrecompiledAsm(_)
+        | ItemKind::PrecompiledLir(_) => None,
     }
 }
 

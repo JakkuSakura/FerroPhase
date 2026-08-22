@@ -163,7 +163,8 @@ impl PythonEmitter {
             | ItemKind::DefStructural(_)
             | ItemKind::Macro(_)
             | ItemKind::ConstBlock(_)
-            | ItemKind::PrecompiledAsm(_) => {
+            | ItemKind::PrecompiledAsm(_)
+            | ItemKind::PrecompiledLir(_) => {
                 // Unsupported in Python output for now.
             }
         }

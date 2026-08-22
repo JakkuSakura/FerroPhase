@@ -38,7 +38,8 @@ fn annotate_item(item: &mut Item, module_path: &QualifiedPath) {
         | ItemKind::DeclStatic(_)
         | ItemKind::DeclFunction(_)
         | ItemKind::Import(_)
-        | ItemKind::PrecompiledAsm(_) => {}
+        | ItemKind::PrecompiledAsm(_)
+        | ItemKind::PrecompiledLir(_) => {}
     }
 }
 

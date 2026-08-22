@@ -387,6 +387,7 @@ impl WitEmitter {
             ItemKind::Expr(_)
             | ItemKind::ConstBlock(_)
             | ItemKind::PrecompiledAsm(_)
+            | ItemKind::PrecompiledLir(_)
             | ItemKind::Import(_)
             | ItemKind::DeclConst(_)
             | ItemKind::DeclStatic(_)
@@ -733,6 +734,13 @@ impl InterfaceBuilder {
                 receiver_ctx,
             ),
             Ty::TokenStream(_) => "json".to_string(),
+            Ty::Refinement(refinement) => self.wit_type_for(
+                refinement.base.as_ref(),
+                hint,
+                receiver_scope,
+                current_package,
+                receiver_ctx,
+            ),
             Ty::Tuple(tuple) => {
                 let mut parts = Vec::new();
                 for (idx, inner) in tuple.types.iter().enumerate() {
@@ -1600,6 +1608,7 @@ fn ty_to_wit_with_self(ty: &Ty, self_name: Option<&str>) -> String {
         }
         Ty::TokenStream(_) => "json".to_string(),
         Ty::Quote(_) => "json".to_string(),
+        Ty::Refinement(refinement) => ty_to_wit_with_self(refinement.base.as_ref(), self_name),
         Ty::Array(array) => {
             let inner = ty_to_wit_with_self(array.elem.as_ref(), self_name);
             format!("list<{inner}>")

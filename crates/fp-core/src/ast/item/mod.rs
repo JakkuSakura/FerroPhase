@@ -73,6 +73,16 @@ common_enum! {
         /// same way every AST-emitting backend already reads its
         /// package's items.
         PrecompiledAsm(crate::asmir::AsmProgram),
+        /// An already-compiled artifact carrying LIR directly (e.g. a
+        /// goasm/URCL text input lifted by that language's own parser)
+        /// instead of real FerroPhase source. Unlike `PrecompiledAsm`
+        /// (opaque past HIR/MIR/LIR), this one *is* LIR already — HIR
+        /// generation injects it straight into the package's `lir_workspace`
+        /// (`ast_to_hir::append_item`), so `WorkspaceContext::merged_lir_program`
+        /// picks it up transparently and every LIR-consuming backend
+        /// (native/goasm/urcl/cil/dotnet/jvm-bytecode) can retarget it with
+        /// no backend-specific handling at all.
+        PrecompiledLir(crate::lir::LirProgram),
     }
 }
 
@@ -134,6 +144,9 @@ impl Item {
 
     pub fn precompiled_asm(asm: crate::asmir::AsmProgram) -> Self {
         Self::from(ItemKind::PrecompiledAsm(asm))
+    }
+    pub fn precompiled_lir(lir: crate::lir::LirProgram) -> Self {
+        Self::from(ItemKind::PrecompiledLir(lir))
     }
     pub fn as_expr(&self) -> Option<&Expr> {
         match self.kind() {
@@ -241,6 +254,7 @@ impl ItemKind {
             ItemKind::Expr(expr) => expr.span(),
             ItemKind::ConstBlock(block) => block.span(),
             ItemKind::PrecompiledAsm(_) => Span::null(),
+            ItemKind::PrecompiledLir(_) => Span::null(),
         }
     }
 }
