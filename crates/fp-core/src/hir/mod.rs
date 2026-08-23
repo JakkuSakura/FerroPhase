@@ -31,11 +31,35 @@ pub type NodeId = u32;
 /// a lower layer's type reaching up into this one.
 pub type Value = crate::ast::Value;
 
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord,
-    serde::Serialize, serde::Deserialize,
-)]
-pub struct PackageId(pub u32);
+/// A package's HIR-level identity — the package's own name, reused
+/// directly (not a separately-assigned sequential index). A numeric
+/// newtype here previously let a forgotten/wrong assignment silently
+/// default to a "plausible-looking" `PackageId(0)` that could collide
+/// with another package's real id in a `HashMap` with no diagnostic at
+/// all (see the `HirPackage.id`/`HirProgram::add_package` bug this
+/// replaced); a wrong or missing string id is immediately, visibly wrong
+/// instead. Not `Copy` (a `String` isn't) — `DefId`/`HirId`, which embed
+/// this, aren't `Copy` either as a result; both are still cheap `Clone`s,
+/// and every real usage is `HashMap`-keyed rather than densely
+/// array-indexed, so this isn't a hot-path concern.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub struct PackageId(pub String);
+
+impl PackageId {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for PackageId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 /// Identifies a HIR node. Namespaced by `PackageId` (mirroring `DefId`) so
 /// that two separately-lowered packages (each with their own `AstToHirLowerer`
@@ -45,49 +69,50 @@ pub struct PackageId(pub u32);
 /// the consuming package's own `TypeckResults`/`typeck_type_exprs` cache)
 /// could silently hit an unrelated entry that merely shares the same bare
 /// index, returning a wrong-but-plausible value with no diagnostic.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct HirId {
     pub package_id: PackageId,
     pub index: u32,
 }
 
 impl HirId {
-    pub const fn new(package_id: PackageId, index: u32) -> Self {
+    pub fn new(package_id: PackageId, index: u32) -> Self {
         Self { package_id, index }
     }
 }
 
 impl fmt::Display for HirId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.package_id.0, self.index)
+        write!(f, "{}:{}", self.package_id, self.index)
     }
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord,
-    serde::Serialize, serde::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct DefId {
     pub package_id: PackageId,
     pub index: u32,
 }
 
 impl DefId {
-    pub const fn local(index: u32) -> Self {
+    /// A "local, unqualified index" `DefId` with no real package identity
+    /// — used only where the caller genuinely has no package context (see
+    /// call sites); prefer `DefId::new` with a real `PackageId` wherever
+    /// one is available.
+    pub fn local(index: u32) -> Self {
         Self {
-            package_id: PackageId(0),
+            package_id: PackageId::new(""),
             index,
         }
     }
 
-    pub const fn new(package_id: PackageId, index: u32) -> Self {
+    pub fn new(package_id: PackageId, index: u32) -> Self {
         Self { package_id, index }
     }
 
-    pub const fn saturating_add(self, amount: u32) -> Self {
+    pub fn saturating_add(self, amount: u32) -> Self {
         Self {
-            package_id: self.package_id,
             index: self.index.saturating_add(amount),
+            ..self
         }
     }
 }

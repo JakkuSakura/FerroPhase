@@ -15,13 +15,15 @@ fn span() -> Span {
 }
 
 fn def_id(index: u32) -> hir::DefId {
-    hir::DefId::local(index)
+    hir::DefId::new(test_pkg(), index)
 }
 
-const TEST_PKG: hir::PackageId = hir::PackageId(0);
+fn test_pkg() -> hir::PackageId {
+    hir::PackageId::new("test")
+}
 
 fn hid(index: u32) -> hir::HirId {
-    hir::HirId::new(TEST_PKG, index)
+    hir::HirId::new(test_pkg(), index)
 }
 
 fn primitive_type(kind: TypePrimitive) -> TypeExpr {
@@ -51,16 +53,19 @@ fn literal_expr(hir_id: u32, value: i64) -> Expr {
 }
 
 fn program_with_items(items: Vec<Item>) -> HirPackage {
-    let mut program = HirPackage::new();
+    let mut program = HirPackage::new(test_pkg());
     program.items = items.clone();
     for item in items {
-        program.def_map.insert(item.def_id, item);
+        program.def_map.insert(item.def_id.clone(), item);
     }
     program
 }
 
 fn mir_lowering() -> HirToMirLowerer {
-    HirToMirLowerer::new()
+    HirToMirLowerer::new(
+        std::rc::Rc::new(fp_core::hir::HirProgram::new()),
+        fp_core::hir::PackageId::new("test"),
+    )
 }
 
 fn binding_pat(hir_id: u32, name: &str, mutable: bool) -> Pat {
@@ -381,13 +386,13 @@ fn rejects_enum_variant_call_with_missing_payload_values() {
 
     let enum_item = Item {
         hir_id: hid(40),
-        def_id: enum_def_id,
+        def_id: enum_def_id.clone(),
         visibility: Visibility::Public,
         kind: ItemKind::Enum(hir::Enum {
             name: Symbol::new("MaybeInt"),
             variants: vec![hir::EnumVariant {
                 hir_id: hid(41),
-                def_id: variant_def_id,
+                def_id: variant_def_id.clone(),
                 name: Symbol::new("Some"),
                 discriminant: None,
                 payload: Some(primitive_type(TypePrimitive::Int(TypeInt::I32))),
@@ -473,7 +478,7 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
 
     let payload_struct_item = Item {
         hir_id: hid(50),
-        def_id: payload_struct_def_id,
+        def_id: payload_struct_def_id.clone(),
         visibility: Visibility::Public,
         kind: ItemKind::Struct(hir::Struct {
             name: Symbol::new("Some"),
@@ -491,13 +496,13 @@ fn rejects_struct_like_enum_variant_with_missing_fields() {
 
     let enum_item = Item {
         hir_id: hid(52),
-        def_id: enum_def_id,
+        def_id: enum_def_id.clone(),
         visibility: Visibility::Public,
         kind: ItemKind::Enum(hir::Enum {
             name: Symbol::new("MaybeInt"),
             variants: vec![hir::EnumVariant {
                 hir_id: hid(53),
-                def_id: variant_def_id,
+                def_id: variant_def_id.clone(),
                 name: Symbol::new("Some"),
                 discriminant: None,
                 payload: Some(TypeExpr {
@@ -1041,13 +1046,13 @@ fn return_value_is_materialized_before_finally_runs() {
 
     let return_expr = Expr::new(
         hid(103),
-        ExprKind::Return(Some(Box::new(local_path(104, "x", x_pat.hir_id)))),
+        ExprKind::Return(Some(Box::new(local_path(104, "x", x_pat.hir_id.clone())))),
         span(),
     );
     let finally_expr = Expr::new(
         hid(105),
         ExprKind::Assign(
-            Box::new(local_path(106, "x", x_pat.hir_id)),
+            Box::new(local_path(106, "x", x_pat.hir_id.clone())),
             Box::new(literal_expr(107, 2)),
         ),
         span(),
@@ -1162,13 +1167,13 @@ fn break_value_is_materialized_before_finally_runs() {
 
     let break_expr = Expr::new(
         hid(123),
-        ExprKind::Break(Some(Box::new(local_path(124, "x", x_pat.hir_id)))),
+        ExprKind::Break(Some(Box::new(local_path(124, "x", x_pat.hir_id.clone())))),
         span(),
     );
     let finally_expr = Expr::new(
         hid(125),
         ExprKind::Assign(
-            Box::new(local_path(126, "x", x_pat.hir_id)),
+            Box::new(local_path(126, "x", x_pat.hir_id.clone())),
             Box::new(literal_expr(127, 2)),
         ),
         span(),

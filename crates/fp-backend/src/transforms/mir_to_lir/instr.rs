@@ -459,8 +459,8 @@ impl MirToLirLowerer {
                 if self
                     .struct_layouts
                     .borrow()
-                    .contains_key(&(adt.did, substs_types.clone()))
-                    || self.full_layouts.contains_key(&(adt.did, substs_types))
+                    .contains_key(&(adt.did.clone(), substs_types.clone()))
+                    || self.full_layouts.contains_key(&(adt.did.clone(), substs_types))
                 {
                     return false;
                 }
@@ -511,9 +511,9 @@ impl MirToLirLowerer {
             return None;
         }
         let name = self.mangle_function_name(func);
-        if let Some(def_id) = func.def_id {
+        if let Some(ref def_id) = func.def_id {
             self.function_def_map
-                .entry((def_id, func.substs.clone()))
+                .entry((def_id.clone(), func.substs.clone()))
                 .or_insert_with(|| name.clone());
         }
         let signature = lir::LirFunctionSignature {
@@ -3267,7 +3267,7 @@ impl MirToLirLowerer {
             }
             mir::Operand::Constant(constant) => match &constant.literal {
                 mir::ConstantKind::FnDef(def_id, substs) => {
-                    let name = match self.function_def_map.get(&(*def_id, substs.clone())) {
+                    let name = match self.function_def_map.get(&(def_id.clone(), substs.clone())) {
                         Some(name) => name.clone(),
                         // Never predeclared (no whole-program sweep ran, or
                         // this is a forward/cross-package reference that
@@ -3283,7 +3283,7 @@ impl MirToLirLowerer {
                             let resolved = self
                                 .resolve_signature
                                 .as_ref()
-                                .and_then(|resolve| resolve(*def_id));
+                                .and_then(|resolve| resolve(def_id.clone()));
                             let (func, package_id) = resolved.ok_or_else(|| {
                                 fp_core::error::Error::from(format!(
                                     "missing MIR function definition {} with substitutions {:?}",
@@ -3567,7 +3567,7 @@ impl MirToLirLowerer {
                     if let TyKind::Adt(adt, substs) = &ty.kind {
                         if !adt.flags.contains(mir::ty::AdtFlags::IS_ENUM) {
                             let field_lir_ty = self.lir_type_from_ty(field_ty);
-                            let key = (adt.did, Self::adt_substs_types(substs));
+                            let key = (adt.did.clone(), Self::adt_substs_types(substs));
                             let mut layouts = self.struct_layouts.borrow_mut();
                             let fields = layouts.entry(key).or_default();
                             if fields.len() <= *index {
@@ -6510,7 +6510,7 @@ impl MirToLirLowerer {
                     let is_opaque_wrapper = self
                         .struct_layouts
                         .borrow()
-                        .get(&(adt.did, Self::adt_substs_types(substs)))
+                        .get(&(adt.did.clone(), Self::adt_substs_types(substs)))
                         .map(|fields| {
                             fields.is_empty()
                                 || (fields.len() == 1
@@ -6550,9 +6550,9 @@ impl MirToLirLowerer {
                 if self
                     .struct_layouts
                     .borrow()
-                    .contains_key(&(adt.did, Self::adt_substs_types(substs))) =>
+                    .contains_key(&(adt.did.clone(), Self::adt_substs_types(substs))) =>
             {
-                let key = (adt.did, Self::adt_substs_types(substs));
+                let key = (adt.did.clone(), Self::adt_substs_types(substs));
                 let fields = self.struct_layouts.borrow().get(&key).unwrap().clone();
                 lir::LirType::Struct {
                     fields: fields
@@ -6571,7 +6571,7 @@ impl MirToLirLowerer {
                 }
             }
             TyKind::Adt(adt, substs) => {
-                let key = (adt.did, Self::adt_substs_types(substs));
+                let key = (adt.did.clone(), Self::adt_substs_types(substs));
                 // `full_layouts` is an exact-instantiation cache (keyed by
                 // `(DefId, substs)`, like `struct_layouts` above) — when
                 // this exact instantiation has already been computed

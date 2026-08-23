@@ -334,7 +334,7 @@ fn try_promote_op(
             let Some(hir::Res::Def(def_id)) = &path.res else {
                 return None;
             };
-            let op = resolve_op_call_kind(op_defs, *def_id)?;
+            let op = resolve_op_call_kind(op_defs, def_id.clone())?;
             Some(hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
                 kind: op,
                 callargs: Vec::new(),
@@ -344,7 +344,7 @@ fn try_promote_op(
             let Some(hir::Res::Def(def_id)) = &path.res else {
                 return None;
             };
-            let op = resolve_op_call_kind(op_defs, *def_id)?;
+            let op = resolve_op_call_kind(op_defs, def_id.clone())?;
             let old_kind = std::mem::replace(&mut expr.kind, hir::ExprKind::Continue);
             let hir::ExprKind::Struct(_, fields) = old_kind else {
                 unreachable!("matched Struct arm above");
@@ -377,7 +377,7 @@ fn try_promote_op(
             let Some(hir::Res::Def(def_id)) = &path.res else {
                 return None;
             };
-            let op = resolve_op_call_kind(op_defs, *def_id)?;
+            let op = resolve_op_call_kind(op_defs, def_id.clone())?;
             let old_kind = std::mem::replace(&mut expr.kind, hir::ExprKind::Continue);
             let hir::ExprKind::Call(_, args) = old_kind else {
                 unreachable!("matched Call arm above");
@@ -388,7 +388,7 @@ fn try_promote_op(
             }))
         }
         hir::ExprKind::MethodCall(_, _, _) => {
-            let def_id = *method_resolutions.get(&expr.hir_id)?;
+            let def_id = method_resolutions.get(&expr.hir_id)?.clone();
             let op = resolve_op_call_kind(op_defs, def_id)?;
             let old_kind = std::mem::replace(&mut expr.kind, hir::ExprKind::Continue);
             let hir::ExprKind::MethodCall(receiver, _name, args) = old_kind else {

@@ -5,11 +5,11 @@ use fp_core::hir::{
 };
 use fp_core::span::Span;
 
-const TEST_PKG: hir::PackageId = hir::PackageId(0);
+fn test_pkg() -> hir::PackageId { hir::PackageId::new("test") }
 
 pub fn literal_expr(value: i64) -> Expr {
     Expr::new(
-        hir::HirId::new(TEST_PKG, 0),
+        hir::HirId::new(test_pkg(), 0),
         ExprKind::Literal(hir::Lit::Integer(value)),
         Span::new(0, 0, 0),
     )
@@ -17,7 +17,7 @@ pub fn literal_expr(value: i64) -> Expr {
 
 pub fn unit_type() -> TypeExpr {
     TypeExpr {
-        hir_id: hir::HirId::new(TEST_PKG, 0),
+        hir_id: hir::HirId::new(test_pkg(), 0),
         kind: TypeExprKind::Tuple(Vec::new()),
         span: Span::new(0, 0, 0),
     }
@@ -25,7 +25,7 @@ pub fn unit_type() -> TypeExpr {
 
 pub fn function_item(name: &str, body: Expr) -> Item {
     let func_body = Block {
-        hir_id: hir::HirId::new(TEST_PKG, 1),
+        hir_id: hir::HirId::new(test_pkg(), 1),
         stmts: Vec::new(),
         expr: Some(Box::new(body)),
     };
@@ -44,8 +44,8 @@ pub fn function_item(name: &str, body: Expr) -> Item {
     let function = Function::new(sig, Some(func_body), false, false);
 
     Item {
-        hir_id: hir::HirId::new(TEST_PKG, 0),
-        def_id: hir::DefId::local(0),
+        hir_id: hir::HirId::new(test_pkg(), 0),
+        def_id: hir::DefId::new(test_pkg(), 0),
         visibility: hir::Visibility::Public,
         kind: ItemKind::Function(function),
         span: Span::new(0, 0, 0),
@@ -53,7 +53,7 @@ pub fn function_item(name: &str, body: Expr) -> Item {
 }
 
 pub fn program_with_items(items: Vec<Item>) -> HirPackage {
-    let mut program = HirPackage::new();
+    let mut program = HirPackage::new(test_pkg());
     program.items = items;
     program.next_hir_id = program.items.len() as u32;
     program

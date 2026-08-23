@@ -330,32 +330,35 @@ impl HirPackage {
         match &item.kind {
             ItemKind::Struct(def) => {
                 self.struct_defs_by_name
-                    .insert(def.name.as_str().to_string(), item.def_id);
+                    .insert(def.name.as_str().to_string(), item.def_id.clone());
             }
             ItemKind::Enum(def) => {
                 for variant in &def.variants {
-                    self.enum_variant_item_index.insert(variant.def_id, item.def_id);
-                    self.member_to_owning_item.insert(variant.def_id, item.def_id);
+                    self.enum_variant_item_index
+                        .insert(variant.def_id.clone(), item.def_id.clone());
+                    self.member_to_owning_item
+                        .insert(variant.def_id.clone(), item.def_id.clone());
                 }
             }
             ItemKind::Impl(impl_item) => {
                 for impl_member in &impl_item.items {
                     if matches!(impl_member.kind, ImplItemKind::Method(_)) {
                         self.impl_method_item_index
-                            .insert(impl_member.def_id, item.def_id);
+                            .insert(impl_member.def_id.clone(), item.def_id.clone());
                     }
-                    self.member_to_owning_item.insert(impl_member.def_id, item.def_id);
+                    self.member_to_owning_item
+                        .insert(impl_member.def_id.clone(), item.def_id.clone());
                 }
                 let resolved_did = match &impl_item.self_ty.kind {
-                    TypeExprKind::Path(path) => match path.res {
-                        Some(Res::Def(did)) => Some(did),
+                    TypeExprKind::Path(path) => match &path.res {
+                        Some(Res::Def(did)) => Some(did.clone()),
                         _ => None,
                     },
                     _ => None,
                 };
                 match resolved_did {
                     Some(did) => {
-                        self.impls_by_self_did.entry(did).or_default().push(item.def_id);
+                        self.impls_by_self_did.entry(did).or_default().push(item.def_id.clone());
                     }
                     None => {
                         // Not a resolved nominal path (a generic param, a
@@ -393,7 +396,7 @@ impl HirPackage {
     /// already-published-or-publishing package; no separate rebuild pass
     /// needed afterward.
     pub fn add_item(&mut self, item: Item) {
-        self.def_map.insert(item.def_id, item.clone());
+        self.def_map.insert(item.def_id.clone(), item.clone());
         self.index_item(&item);
         self.items.push(item);
     }
@@ -422,7 +425,7 @@ impl HirPackage {
     /// (an impl method/assoc-const, or an enum variant) that isn't itself
     /// a `def_map` key — see `member_to_owning_item`'s doc comment.
     pub fn member_owner(&self, def_id: DefId) -> Option<DefId> {
-        self.member_to_owning_item.get(&def_id).copied()
+        self.member_to_owning_item.get(&def_id).cloned()
     }
 
     /// See `checked_impl_self_ty_cache`'s doc comment.
@@ -560,7 +563,7 @@ impl HirPackage {
     /// A `MethodCall` expr's own `hir_id` -> the concrete method `DefId` it
     /// resolved to.
     pub fn method_resolution(&self, hir_id: HirId) -> Option<DefId> {
-        self.method_resolutions.borrow().get(&hir_id).copied()
+        self.method_resolutions.borrow().get(&hir_id).cloned()
     }
 
     pub fn record_method_resolution(&self, hir_id: HirId, def_id: DefId) {

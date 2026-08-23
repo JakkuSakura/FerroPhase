@@ -2,6 +2,11 @@ use std::collections::HashMap;
 
 use super::{ty, Constant, DefId, Function, ItemKind, MirCodeUnit, MirModule, Ty};
 
+/// A package's MIR-level identity — the same `hir::PackageId` a `DefId`
+/// embeds, reused directly (not a separate namespace) since MIR items are
+/// always lowered 1:1 from an already-identified HIR package.
+pub type PackageId = crate::hir::PackageId;
+
 /// One compiled package's MIR content — its lowered items, one
 /// `MirCodeUnit` per top-level `DefId`, plus the derived tables
 /// `HirToMirLowerer` produces alongside them. Pairs with `MirProgram` the same
@@ -69,8 +74,8 @@ impl MirPackage {
     pub fn insert_unit(&mut self, def_id: DefId, unit: MirCodeUnit) {
         for item in &unit.items {
             if let ItemKind::Function(func) = &item.kind {
-                if func.def_id == Some(def_id) {
-                    self.sigs.insert(def_id, func.clone());
+                if func.def_id.as_ref() == Some(&def_id) {
+                    self.sigs.insert(def_id.clone(), func.clone());
                 }
             }
         }
@@ -125,6 +130,6 @@ impl MirPackage {
     /// The originating `DefId` of a single folded const, by the same name
     /// `resolved_const` uses — see `resolved_const_defs`'s doc comment.
     pub fn resolved_const_def(&self, key: &str) -> Option<DefId> {
-        self.resolved_const_defs.get(key).copied()
+        self.resolved_const_defs.get(key).cloned()
     }
 }

@@ -87,14 +87,14 @@ fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::HirPackage> {
     .expect("valid test data layout");
     let package = workspace.begin_package(package_id, loaded, data_layout);
     let package = package.borrow();
-    let mut generator = AstToHirLowerer::new(hir::PackageId(0));
+    let mut generator = AstToHirLowerer::new(hir::PackageId::new("test"));
     generator.transform_package(&package)
 }
 
 #[test]
 fn transforms_literal_expression_into_main_function() -> OptimizeResult<()> {
     let ast_expr = support::ast::literal_expr(42);
-    let mut generator = AstToHirLowerer::new(hir::PackageId(0));
+    let mut generator = AstToHirLowerer::new(hir::PackageId::new("test"));
 
     let program = generator.transform_expr(&ast_expr)?;
 
@@ -122,7 +122,7 @@ fn transforms_literal_expression_into_main_function() -> OptimizeResult<()> {
 fn preserves_try_expression_for_backend_lowering() -> OptimizeResult<()> {
     use fp_core::ast::{Expr, ExprKind, ExprTry};
 
-    let mut generator = AstToHirLowerer::new(hir::PackageId(0));
+    let mut generator = AstToHirLowerer::new(hir::PackageId::new("test"));
     let try_expr: Expr = ExprKind::Try(ExprTry {
         span: fp_core::span::Span::null(),
         expr: Box::new(Expr::unit()),
@@ -281,7 +281,7 @@ fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
     assert_eq!(add_item.visibility, hir::Visibility::Public);
     assert_eq!(call_item.visibility, hir::Visibility::Public);
 
-    let add_def_id = add_item.def_id;
+    let add_def_id = add_item.def_id.clone();
 
     if let ItemKind::Function(func) = &call_item.kind {
         let body = func.body.as_ref().expect("call_sum has a body");
@@ -414,7 +414,7 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
         "call's qualified path should be recorded in def_paths, not baked into sig.name"
     );
 
-    let add_def_id = add_item.def_id;
+    let add_def_id = add_item.def_id.clone();
 
     if let ItemKind::Function(func) = &callers_item.kind {
         let body = func.body.as_ref().expect("call has a body");

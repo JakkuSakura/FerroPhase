@@ -9,10 +9,12 @@ fn span() -> Span {
     Span::null()
 }
 
-const TEST_PKG: fp_core::hir::PackageId = fp_core::hir::PackageId(0);
+fn test_pkg() -> fp_core::hir::PackageId {
+    fp_core::hir::PackageId::new("test")
+}
 
 fn hid(index: u32) -> fp_core::hir::HirId {
-    fp_core::hir::HirId::new(TEST_PKG, index)
+    fp_core::hir::HirId::new(test_pkg(), index)
 }
 
 fn path_expr(hir_id: u32, name: &str) -> Expr {

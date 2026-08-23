@@ -183,7 +183,7 @@ impl AstToHirLowerer {
         for param in params {
             let hir_id = self.next_id();
             let def_id = self.next_def_id();
-            self.register_type_generic(&param.name.name, def_id);
+            self.register_type_generic(&param.name.name, def_id.clone());
             // A generic parameter's own trait bounds (`F: FnOnce() -> R`,
             // `I: Iterator<Item = T>`, ...) so `path_ty` can resolve a
             // still-generic `F::Output`/`I::Item`-style associated-type
@@ -275,7 +275,7 @@ impl AstToHirLowerer {
                 .collect();
             hir_params.push(hir::GenericParam {
                 hir_id,
-                def_id,
+                def_id: def_id.clone(),
                 name: param.name.clone().into(),
                 kind: hir::GenericParamKind::Type { default: None },
                 bounds,
@@ -329,7 +329,7 @@ impl AstToHirLowerer {
         let hir::TypeExprKind::Path(path) = &ty.kind else {
             return false;
         };
-        let Some(hir::Res::Def(def_id)) = path.res else {
+        let Some(hir::Res::Def(ref def_id)) = path.res else {
             return false;
         };
         self.unimplemented_type_def_ids.contains(&def_id)
@@ -394,7 +394,7 @@ impl AstToHirLowerer {
                                 .as_deref()
                                 .and_then(|class| fp_core::lang::class_and_member_to_portable_op(class, &tag));
                             if let Some(op) = op {
-                                self.package.op_defs.insert(method_def_id, op);
+                                self.package.op_defs.insert(method_def_id.clone(), op);
                             }
                         }
                         method_names.insert(method.sig.name.as_str().to_string());
@@ -623,7 +623,7 @@ impl AstToHirLowerer {
                                 .as_deref()
                                 .and_then(|class| fp_core::lang::class_and_member_to_portable_op(class, &tag));
                             if let Some(op) = op {
-                                self.package.op_defs.insert(method_def_id, op);
+                                self.package.op_defs.insert(method_def_id.clone(), op);
                             }
                         }
                         items.push(hir::TraitItem {

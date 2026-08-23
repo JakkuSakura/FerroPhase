@@ -5,7 +5,7 @@ use crate::hir::PackageId as HirPackageId;
 use crate::ast::path::QualifiedPath;
 use crate::ast::package::provider::PackageProvider;
 use crate::ast::package::{PackageId, AstPackage};
-use std::cell::{Cell, Ref, RefCell};
+use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -34,7 +34,6 @@ pub struct AstProgram {
     providers: Arc<dyn PackageProvider>,
     current_package: Option<PackageId>,
     prelude: RefCell<Option<Rc<RefCell<AstPackage>>>>,
-    next_package_id: Rc<Cell<u32>>,
     /// Reverse index from a package's *HIR* id (the `package_id` embedded
     /// in every `hir::DefId` minted while lowering it) back to its
     /// `AstPackage` — lets a HIR-level, `DefId`-keyed lookup
@@ -60,7 +59,6 @@ impl AstProgram {
             providers: provider,
             current_package: None,
             prelude: RefCell::new(None),
-            next_package_id: Rc::new(Cell::new(0)),
             hir_packages: RefCell::new(HashMap::new()),
             sorted_packages_cache: RefCell::new(None),
         }
@@ -90,7 +88,6 @@ impl AstProgram {
             providers: self.providers.clone(),
             current_package: Some(package_id),
             prelude: RefCell::new(None),
-            next_package_id: self.next_package_id.clone(),
             hir_packages: RefCell::new(HashMap::new()),
             sorted_packages_cache: RefCell::new(None),
         }
@@ -109,23 +106,22 @@ impl AstProgram {
     ) -> Rc<RefCell<AstPackage>> {
         let _ = data_layout;
         let source_package_id = package_id.clone();
-        let hir_package_id = HirPackageId(self.next_package_id.get());
-        self.next_package_id.set(hir_package_id.0.saturating_add(1));
+        let hir_package_id = HirPackageId::new(package_id.as_str());
         let mut source = source;
-        source.hir_package_id = hir_package_id;
+        source.hir_package_id = hir_package_id.clone();
         let krate = Rc::new(RefCell::new(source));
         self.crates
             .borrow_mut()
             .insert(source_package_id, krate.clone());
         self.hir_packages
             .borrow_mut()
-            .insert(hir_package_id, krate.clone());
+            .insert(hir_package_id.clone(), krate.clone());
         *self.sorted_packages_cache.borrow_mut() = None;
         krate
     }
 
     pub fn import_package(&self, package_id: PackageId, package: Rc<RefCell<AstPackage>>) {
-        let hir_package_id = package.borrow().hir_package_id;
+        let hir_package_id = package.borrow().hir_package_id.clone();
         self.hir_packages
             .borrow_mut()
             .insert(hir_package_id, package.clone());

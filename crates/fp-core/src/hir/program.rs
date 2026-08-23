@@ -33,8 +33,8 @@ impl HirProgram {
         }
     }
 
-    pub fn package(&self, id: PackageId) -> Option<&HirPackage> {
-        self.packages.get(&id).map(|package| package.as_ref())
+    pub fn package(&self, id: &PackageId) -> Option<&HirPackage> {
+        self.packages.get(id).map(|package| package.as_ref())
     }
 
     /// Inserts `package`, merging its own `struct_defs_by_name` into this
@@ -43,15 +43,15 @@ impl HirProgram {
     /// package's items on every query.
     pub fn add_package(&mut self, package: std::rc::Rc<HirPackage>) {
         for (name, def_id) in &package.struct_defs_by_name {
-            self.struct_defs_by_name.entry(name.clone()).or_insert(*def_id);
+            self.struct_defs_by_name.entry(name.clone()).or_insert_with(|| def_id.clone());
         }
-        self.packages.insert(package.id, package);
+        self.packages.insert(package.id.clone(), package);
     }
 
     /// O(1) direct lookup — no package iteration — for a struct declared
     /// under `name` in any package this `HirProgram` knows about.
     pub fn struct_def_id(&self, name: &str) -> Option<DefId> {
-        self.struct_defs_by_name.get(name).copied()
+        self.struct_defs_by_name.get(name).cloned()
     }
 
     /// Every item across every package this `HirProgram` knows about — for
@@ -66,69 +66,69 @@ impl HirProgram {
     /// own `package_id`, so a caller never has to know or track which
     /// package a `DefId` came from before asking this question.
     pub fn def_path(&self, def_id: DefId) -> Option<&DefPath> {
-        self.package(def_id.package_id)?.def_paths.get(&def_id)
+        self.package(&def_id.package_id)?.def_paths.get(&def_id)
     }
 
     /// A transparent type alias's expansion target — see
     /// `HirPackage::type_alias_targets`'s doc comment for why this table
     /// exists at all.
     pub fn type_alias_target(&self, def_id: DefId) -> Option<&TypeExpr> {
-        self.package(def_id.package_id)?
+        self.package(&def_id.package_id)?
             .type_alias_targets
             .get(&def_id)
     }
 
     pub fn item(&self, def_id: DefId) -> Option<&Item> {
-        self.package(def_id.package_id)?.def_map.get(&def_id)
+        self.package(&def_id.package_id)?.def_map.get(&def_id)
     }
 
     /// Cross-package counterpart of `HirPackage::member_owner` — routes to
     /// `def_id`'s own package via its `package_id`, so a caller never has
     /// to know or track which package a member `DefId` came from first.
     pub fn member_owner(&self, def_id: DefId) -> Option<DefId> {
-        self.package(def_id.package_id)?.member_owner(def_id)
+        self.package(&def_id.package_id)?.member_owner(def_id)
     }
 
     /// Cross-package counterpart of `HirPackage::checked_impl_self_ty`.
     pub fn checked_impl_self_ty(&self, hir_id: HirId) -> Option<Ty> {
-        self.package(hir_id.package_id)?.checked_impl_self_ty(hir_id)
+        self.package(&hir_id.package_id)?.checked_impl_self_ty(hir_id)
     }
 
     pub fn cache_checked_impl_self_ty(&self, hir_id: HirId, ty: Ty) {
-        if let Some(package) = self.package(hir_id.package_id) {
+        if let Some(package) = self.package(&hir_id.package_id) {
             package.cache_checked_impl_self_ty(hir_id, ty);
         }
     }
 
     /// Cross-package counterpart of `HirPackage::function_signature`.
     pub fn function_signature(&self, hir_id: HirId) -> Option<Ty> {
-        self.package(hir_id.package_id)?.function_signature(hir_id)
+        self.package(&hir_id.package_id)?.function_signature(hir_id)
     }
 
     pub fn cache_function_signature(&self, hir_id: HirId, ty: Ty) {
-        if let Some(package) = self.package(hir_id.package_id) {
+        if let Some(package) = self.package(&hir_id.package_id) {
             package.cache_function_signature(hir_id, ty);
         }
     }
 
     /// Cross-package counterpart of `HirPackage::resolved_trait_def`.
     pub fn resolved_trait_def(&self, def_id: DefId) -> Option<std::rc::Rc<Trait>> {
-        self.package(def_id.package_id)?.resolved_trait_def(def_id)
+        self.package(&def_id.package_id)?.resolved_trait_def(def_id)
     }
 
     pub fn cache_resolved_trait_def(&self, def_id: DefId, trait_def: std::rc::Rc<Trait>) {
-        if let Some(package) = self.package(def_id.package_id) {
+        if let Some(package) = self.package(&def_id.package_id) {
             package.cache_resolved_trait_def(def_id, trait_def);
         }
     }
 
     /// Cross-package counterpart of `HirPackage::refinement_hint`.
     pub fn refinement_hint(&self, hir_id: HirId, slot: ParamSlot) -> Option<RefinementHint> {
-        self.package(hir_id.package_id)?.refinement_hint(hir_id, slot)
+        self.package(&hir_id.package_id)?.refinement_hint(hir_id, slot)
     }
 
     pub fn insert_refinement_hint(&self, hir_id: HirId, slot: ParamSlot, hint: RefinementHint) {
-        if let Some(package) = self.package(hir_id.package_id) {
+        if let Some(package) = self.package(&hir_id.package_id) {
             package.insert_refinement_hint(hir_id, slot, hint);
         }
     }
@@ -140,33 +140,33 @@ impl HirProgram {
     /// `hir_id.package_id` anyway for consistency with every other
     /// per-`HirId` accessor on this type.
     pub fn take_raw_refinement_hint(&self, hir_id: HirId) -> Option<RefinementHint> {
-        self.package(hir_id.package_id)?.take_raw_refinement_hint(hir_id)
+        self.package(&hir_id.package_id)?.take_raw_refinement_hint(hir_id)
     }
 
     pub fn insert_raw_refinement_hint(&self, hir_id: HirId, hint: RefinementHint) {
-        if let Some(package) = self.package(hir_id.package_id) {
+        if let Some(package) = self.package(&hir_id.package_id) {
             package.insert_raw_refinement_hint(hir_id, hint);
         }
     }
 
     /// Cross-package counterpart of `HirPackage::literal_type_hint`.
     pub fn literal_type_hint(&self, hir_id: HirId) -> Option<Vec<String>> {
-        self.package(hir_id.package_id)?.literal_type_hint(hir_id)
+        self.package(&hir_id.package_id)?.literal_type_hint(hir_id)
     }
 
     pub fn insert_literal_type_hint(&self, hir_id: HirId, literals: Vec<String>) {
-        if let Some(package) = self.package(hir_id.package_id) {
+        if let Some(package) = self.package(&hir_id.package_id) {
             package.insert_literal_type_hint(hir_id, literals);
         }
     }
 
     /// Cross-package counterpart of `HirPackage::local_struct_fields`.
     pub fn local_struct_fields(&self, def_id: DefId) -> Option<Vec<(Symbol, Ty)>> {
-        self.package(def_id.package_id)?.local_struct_fields(def_id)
+        self.package(&def_id.package_id)?.local_struct_fields(def_id)
     }
 
     pub fn insert_local_struct_fields(&self, def_id: DefId, fields: Vec<(Symbol, Ty)>) {
-        if let Some(package) = self.package(def_id.package_id) {
+        if let Some(package) = self.package(&def_id.package_id) {
             package.insert_local_struct_fields(def_id, fields);
         }
     }
@@ -181,105 +181,105 @@ impl HirProgram {
     // real caller already owns the package it's recording against.
 
     pub fn expr_type(&self, hir_id: HirId) -> Option<Ty> {
-        self.package(hir_id.package_id)?.expr_type(hir_id)
+        self.package(&hir_id.package_id)?.expr_type(hir_id)
     }
 
     pub fn record_expr_type(&self, hir_id: HirId, ty: Ty) {
-        if let Some(package) = self.package(hir_id.package_id) {
+        if let Some(package) = self.package(&hir_id.package_id) {
             package.record_expr_type(hir_id, ty);
         }
     }
 
     pub fn type_expr_type(&self, hir_id: HirId) -> Option<Ty> {
-        self.package(hir_id.package_id)?.type_expr_type(hir_id)
+        self.package(&hir_id.package_id)?.type_expr_type(hir_id)
     }
 
     pub fn record_type_expr_type(&self, hir_id: HirId, ty: Ty) {
-        if let Some(package) = self.package(hir_id.package_id) {
+        if let Some(package) = self.package(&hir_id.package_id) {
             package.record_type_expr_type(hir_id, ty);
         }
     }
 
     pub fn pat_type(&self, hir_id: HirId) -> Option<Ty> {
-        self.package(hir_id.package_id)?.pat_type(hir_id)
+        self.package(&hir_id.package_id)?.pat_type(hir_id)
     }
 
     pub fn record_pat_type(&self, hir_id: HirId, ty: Ty) {
-        if let Some(package) = self.package(hir_id.package_id) {
+        if let Some(package) = self.package(&hir_id.package_id) {
             package.record_pat_type(hir_id, ty);
         }
     }
 
     pub fn method_resolution(&self, hir_id: HirId) -> Option<DefId> {
-        self.package(hir_id.package_id)?.method_resolution(hir_id)
+        self.package(&hir_id.package_id)?.method_resolution(hir_id)
     }
 
     pub fn record_method_resolution(&self, hir_id: HirId, def_id: DefId) {
-        if let Some(package) = self.package(hir_id.package_id) {
+        if let Some(package) = self.package(&hir_id.package_id) {
             package.record_method_resolution(hir_id, def_id);
         }
     }
 
     pub fn generic_call_arg(&self, hir_id: HirId) -> Option<GenericCallResolution> {
-        self.package(hir_id.package_id)?.generic_call_arg(hir_id)
+        self.package(&hir_id.package_id)?.generic_call_arg(hir_id)
     }
 
     pub fn record_generic_call_arg(&self, hir_id: HirId, resolution: GenericCallResolution) {
-        if let Some(package) = self.package(hir_id.package_id) {
+        if let Some(package) = self.package(&hir_id.package_id) {
             package.record_generic_call_arg(hir_id, resolution);
         }
     }
 
     pub fn generic_method_arg(&self, hir_id: HirId) -> Option<GenericCallResolution> {
-        self.package(hir_id.package_id)?.generic_method_arg(hir_id)
+        self.package(&hir_id.package_id)?.generic_method_arg(hir_id)
     }
 
     pub fn record_generic_method_arg(&self, hir_id: HirId, resolution: GenericCallResolution) {
-        if let Some(package) = self.package(hir_id.package_id) {
+        if let Some(package) = self.package(&hir_id.package_id) {
             package.record_generic_method_arg(hir_id, resolution);
         }
     }
 
     pub fn const_type(&self, def_id: DefId) -> Option<Ty> {
-        self.package(def_id.package_id)?.const_type(def_id)
+        self.package(&def_id.package_id)?.const_type(def_id)
     }
 
     pub fn record_const_type(&self, def_id: DefId, ty: Ty) {
-        if let Some(package) = self.package(def_id.package_id) {
+        if let Some(package) = self.package(&def_id.package_id) {
             package.record_const_type(def_id, ty);
         }
     }
 
     pub fn const_value(&self, def_id: DefId) -> Option<Value> {
-        self.package(def_id.package_id)?.const_value(def_id)
+        self.package(&def_id.package_id)?.const_value(def_id)
     }
 
     pub fn record_const_value(&self, def_id: DefId, value: Value) {
-        if let Some(package) = self.package(def_id.package_id) {
+        if let Some(package) = self.package(&def_id.package_id) {
             package.record_const_value(def_id, value);
         }
     }
 
     pub fn const_block_value(&self, def_id: DefId) -> Option<Value> {
-        self.package(def_id.package_id)?.const_block_value(def_id)
+        self.package(&def_id.package_id)?.const_block_value(def_id)
     }
 
     pub fn record_const_block_value(&self, def_id: DefId, value: Value) {
-        if let Some(package) = self.package(def_id.package_id) {
+        if let Some(package) = self.package(&def_id.package_id) {
             package.record_const_block_value(def_id, value);
         }
     }
 
     pub fn op_def(&self, def_id: DefId) -> Option<&crate::intrinsics::PortableOp> {
-        self.package(def_id.package_id)?.op_defs.get(&def_id)
+        self.package(&def_id.package_id)?.op_defs.get(&def_id)
     }
 
     pub fn intrinsic_def(&self, def_id: DefId) -> Option<&CallKind> {
-        self.package(def_id.package_id)?.intrinsic_defs.get(&def_id)
+        self.package(&def_id.package_id)?.intrinsic_defs.get(&def_id)
     }
 
     pub fn is_placeholder_def(&self, def_id: DefId) -> bool {
-        self.package(def_id.package_id)
+        self.package(&def_id.package_id)
             .is_some_and(|package| package.placeholder_defs.contains(&def_id))
     }
 
@@ -329,7 +329,7 @@ impl HirProgram {
     /// somewhat arbitrary — first match on ambiguity, not a real priority
     /// rule).
     pub fn find_export(&self, key: &str) -> Option<Res> {
-        let mut ids: Vec<_> = self.packages.keys().copied().collect();
+        let mut ids: Vec<_> = self.packages.keys().cloned().collect();
         ids.sort();
         for id in ids {
             if let Some(res) = self.packages[&id].hir_exports.get(key) {
@@ -344,7 +344,7 @@ impl HirProgram {
     /// some OTHER package defines it. Scans every package's `hir_exports`
     /// for a key whose LAST path segment matches `name`.
     pub fn find_export_by_name(&self, name: &str) -> Option<Res> {
-        let mut ids: Vec<_> = self.packages.keys().copied().collect();
+        let mut ids: Vec<_> = self.packages.keys().cloned().collect();
         ids.sort();
         for id in ids {
             for (key, res) in self.packages[&id].hir_exports.iter() {
@@ -360,7 +360,7 @@ impl HirProgram {
     /// (e.g. `Option::Some`) instead of a single bare name.
     pub fn find_export_by_suffix(&self, suffix: &str) -> Option<Res> {
         let dotted_suffix = format!("::{suffix}");
-        let mut ids: Vec<_> = self.packages.keys().copied().collect();
+        let mut ids: Vec<_> = self.packages.keys().cloned().collect();
         ids.sort();
         for id in ids {
             for (key, res) in self.packages[&id].hir_exports.iter() {
@@ -412,7 +412,7 @@ impl HirProgram {
         &self,
         def_id: DefId,
     ) -> Option<(Generics, TypeExpr, Vec<ImplItem>, Function)> {
-        let package = self.package(def_id.package_id)?;
+        let package = self.package(&def_id.package_id)?;
         let impl_def_id = package.impl_method_item_index.get(&def_id)?;
         let item = package.def_map.get(impl_def_id)?;
         let ItemKind::Impl(impl_item) = &item.kind else {
@@ -441,7 +441,7 @@ impl HirProgram {
     /// the enclosing enum's real declared name. Moved from the old
     /// `AstProgram::find_hir_enum_for_variant`.
     pub fn find_hir_enum_for_variant(&self, def_id: DefId) -> Option<String> {
-        let package = self.package(def_id.package_id)?;
+        let package = self.package(&def_id.package_id)?;
         let enum_def_id = package.enum_variant_item_index.get(&def_id)?;
         let item = package.def_map.get(enum_def_id)?;
         let ItemKind::Enum(enum_def) = &item.kind else {
@@ -456,7 +456,7 @@ impl HirProgram {
 
     pub fn resolve(
         &self,
-        from: PackageId,
+        from: &PackageId,
         from_module: &crate::ast::path::QualifiedPath,
         ns: resolve::Namespace,
         name: &str,

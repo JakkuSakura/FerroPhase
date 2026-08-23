@@ -140,7 +140,7 @@ impl LirToMir {
                 // produced a signed `Int` even for an unsigned field).
                 TyKind::Adt(adt_def, _substs) => {
                     let variant = self
-                        .lookup_real_adt_def(adt_def.did)?
+                        .lookup_real_adt_def(adt_def.did.clone())?
                         .variants
                         .first()?
                         .clone();
@@ -195,7 +195,7 @@ impl LirToMir {
                 }
                 TyKind::Adt(adt_def, _substs) => {
                     let variant = self
-                        .lookup_real_adt_def(adt_def.did)?
+                        .lookup_real_adt_def(adt_def.did.clone())?
                         .variants
                         .first()?
                         .clone();
@@ -230,7 +230,7 @@ impl LirToMir {
                 }
                 TyKind::Adt(adt_def, _substs) => {
                     let variant = self
-                        .lookup_real_adt_def(adt_def.did)?
+                        .lookup_real_adt_def(adt_def.did.clone())?
                         .variants
                         .first()?
                         .clone();

@@ -20,7 +20,7 @@ fn test_layout() -> LirDataLayout {
 #[test]
 fn sql_query_document_lowers_to_hir_and_mir_query_items() {
     let query = QueryDocument::sql("SELECT 42", SqlDialect::Generic).with_name("query.sql");
-    let mut hir_generator = AstToHirLowerer::new(hir::PackageId(0));
+    let mut hir_generator = AstToHirLowerer::new(hir::PackageId::new("test"));
     let hir_program = hir_generator
         .transform_query_document(&query)
         .expect("hir program");
@@ -43,7 +43,7 @@ fn sql_query_document_lowers_to_hir_and_mir_query_items() {
         Some(QueryIrStmt::Query(_))
     ));
 
-    let mut mir_lowering = HirToMirLowerer::new();
+    let mut mir_lowering = HirToMirLowerer::new(std::rc::Rc::new(hir::HirProgram::new()), hir::PackageId::new("test"));
     let mir_program = mir_lowering.transform(hir_program).expect("mir program");
     let (diagnostics, had_errors) = mir_lowering.take_diagnostics();
     assert!(!had_errors, "{diagnostics:?}");
@@ -91,7 +91,7 @@ fn prql_query_document_lowers_to_hir_and_mir_query_items() {
         .filter_map(statement_to_query_ir)
         .collect(),
     });
-    let mut hir_generator = AstToHirLowerer::new(hir::PackageId(0));
+    let mut hir_generator = AstToHirLowerer::new(hir::PackageId::new("test"));
     let hir_program = hir_generator
         .transform_query_document(&query)
         .expect("hir program");
@@ -112,7 +112,7 @@ fn prql_query_document_lowers_to_hir_and_mir_query_items() {
         Some(QueryIrStmt::Query(_))
     ));
 
-    let mut mir_lowering = HirToMirLowerer::new();
+    let mut mir_lowering = HirToMirLowerer::new(std::rc::Rc::new(hir::HirProgram::new()), hir::PackageId::new("test"));
     let mir_program = mir_lowering.transform(hir_program).expect("mir program");
     let (diagnostics, had_errors) = mir_lowering.take_diagnostics();
     assert!(!had_errors, "{diagnostics:?}");
@@ -152,7 +152,7 @@ fn fp_query_feature_lowers_in_ast_to_hir_pass() {
         .as_single_expr()
         .expect("expected a single top-level expression");
 
-    let mut hir_generator = AstToHirLowerer::new(hir::PackageId(0));
+    let mut hir_generator = AstToHirLowerer::new(hir::PackageId::new("test"));
     let hir_program = hir_generator.transform_expr(expr).expect("hir program");
     let hir_query = match &hir_program.items[0].kind {
         hir::ItemKind::Query(query) => query,
@@ -163,7 +163,7 @@ fn fp_query_feature_lowers_in_ast_to_hir_pass() {
         Some(QueryIrStmt::Query(_))
     ));
 
-    let mut mir_lowering = HirToMirLowerer::new();
+    let mut mir_lowering = HirToMirLowerer::new(std::rc::Rc::new(hir::HirProgram::new()), hir::PackageId::new("test"));
     let mir_program = mir_lowering.transform(hir_program).expect("mir program");
     let (diagnostics, had_errors) = mir_lowering.take_diagnostics();
     assert!(!had_errors, "{diagnostics:?}");

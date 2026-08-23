@@ -717,7 +717,7 @@ impl AstToHirLowerer {
     /// comment for the bug this class of mistake caused).
     pub fn new(package_id: hir::PackageId) -> Self {
         Self {
-            package_id,
+            package_id: package_id.clone(),
             next_hir_id: 0,
             next_def_id: 0,
             current_file: 0, // Default file ID
@@ -997,7 +997,7 @@ impl AstToHirLowerer {
         let export = self.symbol_export_marker(visibility);
         if let hir::Res::Def(def_id) = &res {
             self.global_type_defs_by_def_id
-                .entry(*def_id)
+                .entry(def_id.clone())
                 .or_default()
                 .push(qualified);
         }
@@ -1021,7 +1021,7 @@ impl AstToHirLowerer {
     fn record_def_path(&mut self, res: &hir::Res, path: &fp_core::ast::path::QualifiedPath) {
         if let hir::Res::Def(def_id) = res {
             self.package.def_paths
-                .entry(*def_id)
+                .entry(def_id.clone())
                 .or_insert_with(|| hir::DefPath::from_qualified_path(path));
         }
     }
@@ -1048,7 +1048,7 @@ impl AstToHirLowerer {
             ]));
         }
         let self_def_id = match self_path.res {
-            Some(hir::Res::Def(def_id)) => Some(def_id),
+            Some(hir::Res::Def(ref def_id)) => Some(def_id.clone()),
             _ => {
                 let relative = self.module_path.join(
                     &self_path
@@ -1063,6 +1063,7 @@ impl AstToHirLowerer {
                 }
             }
         };
+        let self_def_id = self_def_id.as_ref();
         let self_def_id = match self_def_id {
             Some(id) => id,
             None => {
@@ -1141,10 +1142,10 @@ impl AstToHirLowerer {
     fn allocate_def_id_for_item(&mut self, item: &ast::Item) -> hir::DefId {
         let key = Self::item_key(item);
         if let Some(existing) = self.preassigned_def_ids.get(&key) {
-            *existing
+            existing.clone()
         } else {
             let def_id = self.next_def_id();
-            self.preassigned_def_ids.insert(key, def_id);
+            self.preassigned_def_ids.insert(key, def_id.clone());
             def_id
         }
     }
@@ -1152,7 +1153,7 @@ impl AstToHirLowerer {
     fn def_id_for_item(&mut self, item: &ast::Item) -> hir::DefId {
         let key = Self::item_key(item);
         if let Some(id) = self.preassigned_def_ids.get(&key) {
-            *id
+            id.clone()
         } else {
             self.allocate_def_id_for_item(item)
         }
@@ -1336,7 +1337,7 @@ impl AstToHirLowerer {
             // up and lazily registers a foreign struct/enum from it only
             // when something concrete actually needs one.
             for item in &hir_program.items {
-                program.def_map.insert(item.def_id, item.clone());
+                program.def_map.insert(item.def_id.clone(), item.clone());
             }
             program.def_map.extend(hir_program.def_map.clone());
             program.def_paths.extend(hir_program.def_paths.clone());
@@ -1388,10 +1389,10 @@ impl AstToHirLowerer {
                 }
                 ItemKind::DefStruct(def_struct) => {
                     let def_id = self.allocate_def_id_for_item(item);
-                    self.register_type_def(&def_struct.name.name, def_id, &def_struct.visibility);
-                    self.register_value_def(&def_struct.name.name, def_id, &def_struct.visibility);
+                    self.register_type_def(&def_struct.name.name, def_id.clone(), &def_struct.visibility);
+                    self.register_value_def(&def_struct.name.name, def_id.clone(), &def_struct.visibility);
                     if attrs_has_name(&def_struct.attrs, "unimplemented") {
-                        self.unimplemented_type_def_ids.insert(def_id);
+                        self.unimplemented_type_def_ids.insert(def_id.clone());
                     }
                     self.struct_field_defs
                         .insert(def_id, def_struct.value.fields.clone());
@@ -1400,28 +1401,28 @@ impl AstToHirLowerer {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_type_def(
                         &def_structural.name.name,
-                        def_id,
+                        def_id.clone(),
                         &def_structural.visibility,
                     );
                     self.register_value_def(
                         &def_structural.name.name,
-                        def_id,
+                        def_id.clone(),
                         &def_structural.visibility,
                     );
                     if attrs_has_name(&def_structural.attrs, "unimplemented") {
-                        self.unimplemented_type_def_ids.insert(def_id);
+                        self.unimplemented_type_def_ids.insert(def_id.clone());
                     }
                     self.struct_field_defs
                         .insert(def_id, def_structural.value.fields.clone());
                 }
                 ItemKind::OpaqueType(opaque_def) => {
                     let def_id = self.allocate_def_id_for_item(item);
-                    self.register_type_def(&opaque_def.name.name, def_id, &opaque_def.visibility);
+                    self.register_type_def(&opaque_def.name.name, def_id.clone(), &opaque_def.visibility);
                     self.struct_field_defs.insert(def_id, Vec::new());
                 }
                 ItemKind::DefEnum(def_enum) => {
                     let def_id = self.allocate_def_id_for_item(item);
-                    self.register_type_def(&def_enum.name.name, def_id, &def_enum.visibility);
+                    self.register_type_def(&def_enum.name.name, def_id.clone(), &def_enum.visibility);
                     if attrs_has_name(&def_enum.attrs, "unimplemented") {
                         self.unimplemented_type_def_ids.insert(def_id);
                     }
@@ -1434,7 +1435,7 @@ impl AstToHirLowerer {
                                 .as_deref()
                                 .and_then(|class| fp_core::lang::class_and_member_to_portable_op(class, &tag));
                             if let Some(op) = op {
-                                self.package.op_defs.insert(variant_def_id, op);
+                                self.package.op_defs.insert(variant_def_id.clone(), op);
                             }
                         }
 
@@ -1473,12 +1474,12 @@ impl AstToHirLowerer {
                         // crate-wide.
                         self.record_value_path(
                             &self.module_path.join(&variant_path.segments),
-                            hir::Res::Def(variant_def_id),
+                            hir::Res::Def(variant_def_id.clone()),
                             &def_enum.visibility,
                         );
                         self.register_value_def(
                             &variant.name.name,
-                            variant_def_id,
+                            variant_def_id.clone(),
                             &def_enum.visibility,
                         );
                         self.enum_variant_def_ids
@@ -1502,7 +1503,7 @@ impl AstToHirLowerer {
                 }
                 ItemKind::DefTrait(def_trait) => {
                     let def_id = self.allocate_def_id_for_item(item);
-                    self.register_type_def(&def_trait.name.name, def_id, &def_trait.visibility);
+                    self.register_type_def(&def_trait.name.name, def_id.clone(), &def_trait.visibility);
                     if attrs_has_name(&def_trait.attrs, "unimplemented") {
                         self.unimplemented_type_def_ids.insert(def_id);
                     }
@@ -1515,9 +1516,9 @@ impl AstToHirLowerer {
                     self.register_type_alias(&def_type.name.name, &def_type.value);
                     if let Some(materialized) = self.materialized_type_alias(def_type) {
                         let def_id = self.allocate_def_id_for_item(item);
-                        self.register_type_def(&def_type.name.name, def_id, &def_type.visibility);
+                        self.register_type_def(&def_type.name.name, def_id.clone(), &def_type.visibility);
                         if attrs_has_name(&def_type.attrs, "unimplemented") {
-                            self.unimplemented_type_def_ids.insert(def_id);
+                            self.unimplemented_type_def_ids.insert(def_id.clone());
                         }
                         match materialized {
                             MaterializedTypeAlias::Struct(struct_ty) => {
@@ -1545,12 +1546,12 @@ impl AstToHirLowerer {
                                     };
                                     self.record_value_symbol(
                                         &qualified_variant,
-                                        hir::Res::Def(variant_def_id),
+                                        hir::Res::Def(variant_def_id.clone()),
                                         &def_type.visibility,
                                     );
                                     self.register_value_def(
                                         &variant.name.name,
-                                        variant_def_id,
+                                        variant_def_id.clone(),
                                         &def_type.visibility,
                                     );
                                     self.enum_variant_def_ids
@@ -1576,7 +1577,7 @@ impl AstToHirLowerer {
                         // record its already-lowered target `TypeExpr` so
                         // `path_ty` can expand it in place at every use.
                         let def_id = self.allocate_def_id_for_item(item);
-                        self.register_type_def(&def_type.name.name, def_id, &def_type.visibility);
+                        self.register_type_def(&def_type.name.name, def_id.clone(), &def_type.visibility);
                         let target = self.transform_type_to_hir(&def_type.value)?;
                         self.package.type_alias_targets.insert(def_id, target);
                     }
@@ -1936,7 +1937,7 @@ impl AstToHirLowerer {
         self.load_default_prelude_defs();
         self.predeclare_items(&generated_items, false)?;
 
-        let mut hir_program = hir::HirPackage::new(self.package_id);
+        let mut hir_program = hir::HirPackage::new(self.package_id.clone());
         self.program_def_map = HashMap::new();
 
         for item in &generated_items {
@@ -1979,8 +1980,8 @@ impl AstToHirLowerer {
         if !self.synthetic_items.is_empty() {
             let mut synthetic = std::mem::take(&mut self.synthetic_items);
             for item in &synthetic {
-                hir_program.def_map.insert(item.def_id, item.clone());
-                self.program_def_map.insert(item.def_id, item.clone());
+                hir_program.def_map.insert(item.def_id.clone(), item.clone());
+                self.program_def_map.insert(item.def_id.clone(), item.clone());
             }
             hir_program.items.extend(synthetic.drain(..));
         }
@@ -2132,7 +2133,7 @@ impl AstToHirLowerer {
         // declaration order, substitute the bindings, re-parse the result.
         let package_items = self.expand_item_macros(package_items);
 
-        let mut program = hir::HirPackage::new(self.package.id);
+        let mut program = hir::HirPackage::new(self.package.id.clone());
         self.seed_workspace_definitions(&mut program);
 
         // 1: definitions (tolerant — impls whose self-type isn't resolvable
@@ -2188,8 +2189,8 @@ impl AstToHirLowerer {
         if !self.synthetic_items.is_empty() {
             let mut synthetic = std::mem::take(&mut self.synthetic_items);
             for item in &synthetic {
-                program.def_map.insert(item.def_id, item.clone());
-                self.program_def_map.insert(item.def_id, item.clone());
+                program.def_map.insert(item.def_id.clone(), item.clone());
+                self.program_def_map.insert(item.def_id.clone(), item.clone());
             }
             program.items.extend(synthetic.drain(..));
         }
@@ -2356,9 +2357,9 @@ impl AstToHirLowerer {
             span,
         };
 
-        let mut program = hir::HirPackage::new(self.package.id);
-        program.def_map.insert(item.def_id, item.clone());
-        self.program_def_map.insert(item.def_id, item.clone());
+        let mut program = hir::HirPackage::new(self.package.id.clone());
+        program.def_map.insert(item.def_id.clone(), item.clone());
+        self.program_def_map.insert(item.def_id.clone(), item.clone());
         program.items.push(item);
         program.def_paths = self.package.def_paths.clone();
         program.placeholder_defs = self.package.placeholder_defs.clone();
@@ -2380,13 +2381,13 @@ impl AstToHirLowerer {
         self.prepare_lowering_state();
 
         self.module_path = module_path.clone();
-        let mut program = hir::HirPackage::new(self.package.id);
+        let mut program = hir::HirPackage::new(self.package.id.clone());
         self.seed_workspace_definitions(&mut program);
         self.load_default_prelude_defs();
         self.predeclare_items(items, false)?;
         self.program_def_map = program.def_map.clone();
         for item in &self.synthetic_items {
-            self.program_def_map.insert(item.def_id, item.clone());
+            self.program_def_map.insert(item.def_id.clone(), item.clone());
         }
 
         // Append in the same order: extra-module items (impls in particular)
@@ -2403,8 +2404,8 @@ impl AstToHirLowerer {
         if !self.synthetic_items.is_empty() {
             let mut synthetic = std::mem::take(&mut self.synthetic_items);
             for item in &synthetic {
-                program.def_map.insert(item.def_id, item.clone());
-                self.program_def_map.insert(item.def_id, item.clone());
+                program.def_map.insert(item.def_id.clone(), item.clone());
+                self.program_def_map.insert(item.def_id.clone(), item.clone());
             }
             program.items.extend(synthetic.drain(..));
         }
@@ -2507,9 +2508,9 @@ impl AstToHirLowerer {
             ItemKind::DefType(def_type) => {
                 self.register_type_alias(&def_type.name.name, &def_type.value);
                 if let Some(hir_item) = self.materialize_def_type_item(item, def_type)? {
-                    program.def_map.insert(hir_item.def_id, hir_item.clone());
+                    program.def_map.insert(hir_item.def_id.clone(), hir_item.clone());
                     self.program_def_map
-                        .insert(hir_item.def_id, hir_item.clone());
+                        .insert(hir_item.def_id.clone(), hir_item.clone());
                     program.items.push(hir_item);
                 }
                 Ok(())
@@ -2528,17 +2529,17 @@ impl AstToHirLowerer {
                     kind: hir::ItemKind::Expr(hir_expr),
                     span: item.span(),
                 };
-                program.def_map.insert(hir_item.def_id, hir_item.clone());
+                program.def_map.insert(hir_item.def_id.clone(), hir_item.clone());
                 self.program_def_map
-                    .insert(hir_item.def_id, hir_item.clone());
+                    .insert(hir_item.def_id.clone(), hir_item.clone());
                 program.items.push(hir_item);
                 Ok(())
             }
             ItemKind::DeclFunction(decl) => {
                 let hir_item = self.transform_decl_function(item, decl)?;
-                program.def_map.insert(hir_item.def_id, hir_item.clone());
+                program.def_map.insert(hir_item.def_id.clone(), hir_item.clone());
                 self.program_def_map
-                    .insert(hir_item.def_id, hir_item.clone());
+                    .insert(hir_item.def_id.clone(), hir_item.clone());
                 program.items.push(hir_item);
                 Ok(())
             }
@@ -2554,9 +2555,9 @@ impl AstToHirLowerer {
             }
             _ => {
                 let hir_item = self.transform_item_to_hir(item)?;
-                program.def_map.insert(hir_item.def_id, hir_item.clone());
+                program.def_map.insert(hir_item.def_id.clone(), hir_item.clone());
                 self.program_def_map
-                    .insert(hir_item.def_id, hir_item.clone());
+                    .insert(hir_item.def_id.clone(), hir_item.clone());
                 program.items.push(hir_item);
                 Ok(())
             }
@@ -2636,11 +2637,11 @@ impl AstToHirLowerer {
                     let def_id = self.next_def_id();
                     let const_block_expr = hir::Expr {
                         hir_id: self.next_id(),
-                        kind: hir::ExprKind::ConstBlock(hir::ExprConstBlock { def_id, body }),
+                        kind: hir::ExprKind::ConstBlock(hir::ExprConstBlock { def_id: def_id.clone(), body }),
                         span: item.span(),
                     };
                     self.current_value_scope()
-                        .insert(def_type.name.name.clone(), hir::Res::Def(def_id));
+                        .insert(def_type.name.name.clone(), hir::Res::Def(def_id.clone()));
                     self.current_type_scope()
                         .insert(def_type.name.name.clone(), hir::Res::Def(def_id));
                     Ok(hir::StmtKind::Expr(const_block_expr))
@@ -2714,7 +2715,7 @@ impl AstToHirLowerer {
                 self.suppress_global_registration_depth -= 1;
                 let hir_item = hir_item?;
                 self.program_def_map
-                    .insert(hir_item.def_id, hir_item.clone());
+                    .insert(hir_item.def_id.clone(), hir_item.clone());
                 if let Some(ident) = item.as_ref().get_ident() {
                     let label = format!(
                         "{}::<local>::{}",
@@ -2722,7 +2723,7 @@ impl AstToHirLowerer {
                         ident.name.as_str()
                     );
                     self.local_item_debug_labels
-                        .insert(hir_item.def_id, label);
+                        .insert(hir_item.def_id.clone(), label);
                 }
                 Ok(hir::StmtKind::Item(hir_item))
             }
@@ -2737,7 +2738,7 @@ impl AstToHirLowerer {
 
         let (kind, visibility) = match item.kind() {
             ItemKind::DefConst(const_def) => {
-                self.register_value_def(&const_def.name.name, def_id, &const_def.visibility);
+                self.register_value_def(&const_def.name.name, def_id.clone(), &const_def.visibility);
                 let hir_const = self.transform_const_def(const_def)?;
                 (
                     hir::ItemKind::Const(hir_const),
@@ -2745,8 +2746,8 @@ impl AstToHirLowerer {
                 )
             }
             ItemKind::DefStruct(struct_def) => {
-                self.register_type_def(&struct_def.name.name, def_id, &struct_def.visibility);
-                self.register_value_def(&struct_def.name.name, def_id, &struct_def.visibility);
+                self.register_type_def(&struct_def.name.name, def_id.clone(), &struct_def.visibility);
+                self.register_value_def(&struct_def.name.name, def_id.clone(), &struct_def.visibility);
                 self.push_type_scope();
                 let generics = self.transform_generics(&struct_def.value.generics_params);
                 let name = hir::Symbol::new(struct_def.name.name.clone());
@@ -2776,8 +2777,8 @@ impl AstToHirLowerer {
                 )
             }
             ItemKind::DefStructural(struct_def) => {
-                self.register_type_def(&struct_def.name.name, def_id, &struct_def.visibility);
-                self.register_value_def(&struct_def.name.name, def_id, &struct_def.visibility);
+                self.register_type_def(&struct_def.name.name, def_id.clone(), &struct_def.visibility);
+                self.register_value_def(&struct_def.name.name, def_id.clone(), &struct_def.visibility);
                 let name = hir::Symbol::new(struct_def.name.name.clone());
                 let fields = struct_def
                     .value
@@ -2804,7 +2805,7 @@ impl AstToHirLowerer {
                 )
             }
             ItemKind::OpaqueType(opaque_def) => {
-                self.register_type_def(&opaque_def.name.name, def_id, &opaque_def.visibility);
+                self.register_type_def(&opaque_def.name.name, def_id.clone(), &opaque_def.visibility);
                 let name = hir::Symbol::new(opaque_def.name.name.clone());
                 (
                     hir::ItemKind::Struct(hir::Struct {
@@ -2817,7 +2818,7 @@ impl AstToHirLowerer {
                 )
             }
             ItemKind::DefEnum(enum_def) => {
-                self.register_type_def(&enum_def.name.name, def_id, &enum_def.visibility);
+                self.register_type_def(&enum_def.name.name, def_id.clone(), &enum_def.visibility);
                 self.push_type_scope();
                 let generics = self.transform_generics(&enum_def.value.generics_params);
                 let qualified_enum_name = hir::Symbol::new(enum_def.name.name.clone());
@@ -2839,13 +2840,13 @@ impl AstToHirLowerer {
                         };
 
                         let variant_def_id = if let Some(def_id) =
-                            self.enum_variant_def_ids.get(&fully_qualified).copied()
+                            self.enum_variant_def_ids.get(&fully_qualified).cloned()
                         {
                             def_id
                         } else {
                             let new_id = self.next_def_id();
                             self.enum_variant_def_ids
-                                .insert(fully_qualified.clone(), new_id);
+                                .insert(fully_qualified.clone(), new_id.clone());
                             new_id
                         };
 
@@ -2863,12 +2864,12 @@ impl AstToHirLowerer {
                         // `predeclare_items` `DefEnum` arm's doc comment.
                         self.record_value_path(
                             &self.module_path.join(&variant_path.segments),
-                            hir::Res::Def(variant_def_id),
+                            hir::Res::Def(variant_def_id.clone()),
                             &enum_def.visibility,
                         );
                         self.register_value_def(
                             &variant.name.name,
-                            variant_def_id,
+                            variant_def_id.clone(),
                             &enum_def.visibility,
                         );
 
@@ -2920,17 +2921,17 @@ impl AstToHirLowerer {
                 )
             }
             ItemKind::DefFunction(func_def) => {
-                self.register_value_def(&func_def.name.name, def_id, &func_def.visibility);
+                self.register_value_def(&func_def.name.name, def_id.clone(), &func_def.visibility);
                 if let Some(tag) = fp_core::intrinsics::extract_op_attr(&func_def.attrs, "func") {
                     if let Some(op) = fp_core::lang::resolve_portable_op_tag(&tag) {
-                        self.package.op_defs.insert(def_id, op);
+                        self.package.op_defs.insert(def_id.clone(), op);
                     }
                 }
                 if let Some(tag) = fp_core::lang::extract_intrinsic_item(&func_def.attrs) {
                     if let Some(kind) = fp_core::intrinsics::lang_intrinsic_for_lang_item(&tag)
                         .and_then(fp_core::intrinsics::lang_intrinsic_call_kind)
                     {
-                        self.package.intrinsic_defs.insert(def_id, kind);
+                        self.package.intrinsic_defs.insert(def_id.clone(), kind);
                     }
                 }
                 let lower_body = !attrs_has_name(&func_def.attrs, "unimplemented");
@@ -2956,7 +2957,7 @@ impl AstToHirLowerer {
                 )
             }
             ItemKind::DeclFunction(func_decl) => {
-                self.register_value_def(&func_decl.name.name, def_id, &ast::Visibility::Public);
+                self.register_value_def(&func_decl.name.name, def_id.clone(), &ast::Visibility::Public);
                 let function = self.transform_decl_function_sig(func_decl, None)?;
                 (hir::ItemKind::Function(function), hir::Visibility::Public)
             }
@@ -2972,7 +2973,7 @@ impl AstToHirLowerer {
                 // `Literal(Integer(_))`) reports this const's type as its
                 // own *declared* type to callers, instead of the
                 // placeholder body's actual (irrelevant) inferred type.
-                self.register_value_def(&decl.name.name, def_id, &ast::Visibility::Public);
+                self.register_value_def(&decl.name.name, def_id.clone(), &ast::Visibility::Public);
                 let ty = self.transform_type_to_hir(&decl.ty)?;
                 let body = hir::Body {
                     hir_id: self.next_id(),
@@ -3028,7 +3029,7 @@ impl AstToHirLowerer {
                 // somewhere to find a trait's default-method signatures
                 // and associated-type declarations — see that function's
                 // doc comment.
-                self.package.placeholder_defs.insert(def_id);
+                self.package.placeholder_defs.insert(def_id.clone());
                 let hir_trait = self.transform_trait(def_trait)?;
                 (
                     hir::ItemKind::Trait(hir_trait),
@@ -3086,7 +3087,7 @@ impl AstToHirLowerer {
         let hir_id = self.next_id();
         let def_id = self.def_id_for_item(item);
         let span = self.create_span(1);
-        self.register_value_def(&decl.name.name, def_id, &ast::Visibility::Public);
+        self.register_value_def(&decl.name.name, def_id.clone(), &ast::Visibility::Public);
         let function = self.transform_decl_function_sig(decl, None)?;
         Ok(hir::Item {
             hir_id,
@@ -3454,9 +3455,9 @@ impl AstToHirLowerer {
                 // Recorded once, unconditionally, right here — see
                 // `hir::HirPackage::const_block_defs`'s doc comment.
                 self.package.record_const_block_def(
-                    def_id,
+                    def_id.clone(),
                     hir::Block {
-                        hir_id,
+                        hir_id: hir_id.clone(),
                         stmts: Vec::new(),
                         expr: Some(body.clone()),
                     },
@@ -3521,9 +3522,9 @@ impl AstToHirLowerer {
                         let def_id = self.next_def_id();
                         let hir_id = self.next_id();
                         self.package.record_const_block_def(
-                            def_id,
+                            def_id.clone(),
                             hir::Block {
-                                hir_id,
+                                hir_id: hir_id.clone(),
                                 stmts: Vec::new(),
                                 expr: Some(body.clone()),
                             },
@@ -3849,7 +3850,7 @@ impl AstToHirLowerer {
 
         let struct_item = hir::Item {
             hir_id,
-            def_id,
+            def_id: def_id.clone(),
             visibility: hir::Visibility::Private,
             kind: hir::ItemKind::Struct(hir::Struct {
                 name: name_symbol,
@@ -3860,8 +3861,8 @@ impl AstToHirLowerer {
             span,
         };
 
-        self.register_type_def(&name, def_id, &ast::Visibility::Private);
-        self.struct_field_defs.insert(def_id, ast_fields);
+        self.register_type_def(&name, def_id.clone(), &ast::Visibility::Private);
+        self.struct_field_defs.insert(def_id.clone(), ast_fields);
         self.synthetic_items.push(struct_item);
 
         StructuralValueDef {
@@ -3902,7 +3903,7 @@ impl AstToHirLowerer {
             .collect::<Result<Vec<_>>>()?;
         let item = hir::Item {
             hir_id: self.next_id(),
-            def_id,
+            def_id: def_id.clone(),
             visibility: hir::Visibility::Private,
             kind: hir::ItemKind::Struct(hir::Struct {
                 name: hir::Symbol::new(name.clone()),
@@ -3912,7 +3913,7 @@ impl AstToHirLowerer {
             }),
             span: self.create_span(1),
         };
-        self.register_type_def(&name, def_id, &ast::Visibility::Private);
+        self.register_type_def(&name, def_id.clone(), &ast::Visibility::Private);
         self.synthetic_items.push(item);
         let path = hir::Path {
             segments: vec![hir::PathSegment {
@@ -3991,7 +3992,7 @@ impl AstToHirLowerer {
                 name: hir::Symbol::new(def.name.clone()),
                 args: None,
             }],
-            res: Some(hir::Res::Def(def.def_id)),
+            res: Some(hir::Res::Def(def.def_id.clone())),
         }
     }
 
@@ -4058,7 +4059,7 @@ impl AstToHirLowerer {
     ) -> Result<StructuralValueDef> {
         let specs = self.structural_fields_from_value(structural);
         if let Some(def) = self.find_compatible_structural_value_def(&specs) {
-            if self.should_update_structural_def(def.def_id) {
+            if self.should_update_structural_def(def.def_id.clone()) {
                 let hir_fields = structural
                     .fields
                     .iter()
@@ -4081,7 +4082,7 @@ impl AstToHirLowerer {
                     })
                     .collect::<Result<Vec<_>>>()?;
 
-                self.update_structural_def_fields(def.def_id, hir_fields, ast_fields);
+                self.update_structural_def_fields(def.def_id.clone(), hir_fields, ast_fields);
             }
             return Ok(def);
         }
@@ -4315,7 +4316,7 @@ impl AstToHirLowerer {
 
         let (kind, visibility) = match self.materialized_type_alias(def_type) {
             Some(MaterializedTypeAlias::Struct(struct_ty)) => {
-                self.register_type_def(&def_type.name.name, def_id, &def_type.visibility);
+                self.register_type_def(&def_type.name.name, def_id.clone(), &def_type.visibility);
                 self.push_type_scope();
                 let generics = self.transform_generics(&struct_ty.generics_params);
                 let name = hir::Symbol::new(def_type.name.name.clone());
@@ -4375,7 +4376,7 @@ impl AstToHirLowerer {
                 )
             }
             Some(MaterializedTypeAlias::Structural(structural)) => {
-                self.register_type_def(&def_type.name.name, def_id, &def_type.visibility);
+                self.register_type_def(&def_type.name.name, def_id.clone(), &def_type.visibility);
                 let name = hir::Symbol::new(def_type.name.name.clone());
                 let fields = structural
                     .fields
@@ -4401,7 +4402,7 @@ impl AstToHirLowerer {
                 )
             }
             Some(MaterializedTypeAlias::Enum(enum_ty)) => {
-                self.register_type_def(&def_type.name.name, def_id, &def_type.visibility);
+                self.register_type_def(&def_type.name.name, def_id.clone(), &def_type.visibility);
                 self.push_type_scope();
                 let generics = self.transform_generics(&enum_ty.generics_params);
                 let qualified_enum_name = hir::Symbol::new(def_type.name.name.clone());
@@ -4422,24 +4423,24 @@ impl AstToHirLowerer {
                         };
 
                         let variant_def_id = if let Some(def_id) =
-                            self.enum_variant_def_ids.get(&fully_qualified).copied()
+                            self.enum_variant_def_ids.get(&fully_qualified).cloned()
                         {
                             def_id
                         } else {
                             let new_id = self.next_def_id();
                             self.enum_variant_def_ids
-                                .insert(fully_qualified.clone(), new_id);
+                                .insert(fully_qualified.clone(), new_id.clone());
                             new_id
                         };
 
                         self.record_value_symbol(
                             &qualified_variant,
-                            hir::Res::Def(variant_def_id),
+                            hir::Res::Def(variant_def_id.clone()),
                             &def_type.visibility,
                         );
                         self.register_value_def(
                             &variant.name.name,
-                            variant_def_id,
+                            variant_def_id.clone(),
                             &def_type.visibility,
                         );
 

@@ -225,8 +225,8 @@ impl<'a> HirToAstLifter<'a> {
                     continue;
                 };
                 let synthetic_item = hir::Item {
-                    hir_id: impl_item.hir_id,
-                    def_id: impl_item.def_id,
+                    hir_id: impl_item.hir_id.clone(),
+                    def_id: impl_item.def_id.clone(),
                     visibility: hir::Visibility::Public,
                     kind: hir::ItemKind::Function(function.clone()),
                     span: item.span,
@@ -383,9 +383,9 @@ impl<'a> HirToAstLifter<'a> {
                 .iter()
                 .filter_map(|param| match &param.pat.kind {
                     hir::PatKind::Binding { name, .. }
-                        if block_assigns_local(block, param.pat.hir_id) =>
+                        if block_assigns_local(block, param.pat.hir_id.clone()) =>
                     {
-                        Some((param.pat.hir_id, name.as_str().to_string()))
+                        Some((param.pat.hir_id.clone(), name.as_str().to_string()))
                     }
                     _ => None,
                 })
@@ -802,7 +802,7 @@ impl<'a> HirToAstLifter<'a> {
                         }
                         if let Some(ty) = self
                             .program
-                            .pat_type(param.pat.hir_id)
+                            .pat_type(param.pat.hir_id.clone())
                             .and_then(|ty| self.hir_ty_to_ast(&ty))
                         {
                             Ok(Pattern::from(PatternKind::Type(ast::PatternType::new(
@@ -833,7 +833,7 @@ impl<'a> HirToAstLifter<'a> {
         // expr id, same net effect as before this existed.
         if let Some(ty) = self
             .program
-            .expr_type(expr.hir_id)
+            .expr_type(expr.hir_id.clone())
             .and_then(|ty| self.hir_ty_to_ast(&ty))
         {
             self.resolved_expr_types.borrow_mut().insert(lifted.id(), ty);
@@ -892,7 +892,7 @@ impl<'a> HirToAstLifter<'a> {
         self.scope_names.borrow_mut().push(param_names);
         let shadows: Vec<(String, String)> = reassigned_params
             .iter()
-            .map(|(hir_id, name)| (self.declare_binding_name(*hir_id, name), name.clone()))
+            .map(|(hir_id, name)| (self.declare_binding_name(hir_id.clone(), name), name.clone()))
             .collect();
         let result = self.lift_block_stmts(block);
         self.scope_names.borrow_mut().pop();
@@ -931,7 +931,7 @@ impl<'a> HirToAstLifter<'a> {
                 let pat = match pat.kind() {
                     PatternKind::Ident(ident_pat) => {
                         let resolved = self.declare_binding_name(
-                            local.pat.hir_id,
+                            local.pat.hir_id.clone(),
                             ident_pat.ident.name.as_str(),
                         );
                         Pattern::new(PatternKind::Ident(PatternIdent {
@@ -959,7 +959,7 @@ impl<'a> HirToAstLifter<'a> {
                     Some(ty) if !type_expr_contains_infer(ty) => Some(self.lift_type(ty)?),
                     _ => self
                         .program
-                        .pat_type(local.pat.hir_id)
+                        .pat_type(local.pat.hir_id.clone())
                         .and_then(|ty| self.hir_ty_to_ast(&ty)),
                 };
                 // Kotlin destructuring declarations (`val (a, b) = ...`)
@@ -1544,7 +1544,7 @@ impl<'a> HirToAstLifter<'a> {
             if !is_monadic_wrapper {
                 if let Some(enum_name) = self
                     .hir_program
-                    .and_then(|hir_program| hir_program.find_hir_enum_for_variant(*def_id))
+                    .and_then(|hir_program| hir_program.find_hir_enum_for_variant(def_id.clone()))
                 {
                     if let Some(variant_name) = path.segments.last() {
                         return Path::plain(vec![
@@ -1594,7 +1594,7 @@ fn type_expr_contains_infer(ty: &hir::TypeExpr) -> bool {
 /// "reassigning a val" codegen error) rather than silently emitting wrong
 /// behavior.
 fn block_assigns_local(block: &hir::Block, target: hir::HirId) -> bool {
-    block.stmts.iter().any(|stmt| stmt_assigns_local(stmt, target))
+    block.stmts.iter().any(|stmt| stmt_assigns_local(stmt, target.clone()))
         || block
             .expr
             .as_deref()
@@ -1619,10 +1619,10 @@ fn expr_assigns_local(expr: &hir::Expr, target: hir::HirId) -> bool {
         hir::ExprKind::Assign(lhs, rhs) => {
             let assigns_target = matches!(
                 &lhs.kind,
-                hir::ExprKind::Path(path) if matches!(path.res, Some(hir::Res::Local(id)) if id == target)
+                hir::ExprKind::Path(path) if matches!(path.res, Some(hir::Res::Local(ref id)) if *id == target)
             );
             assigns_target
-                || expr_assigns_local(lhs, target)
+                || expr_assigns_local(lhs, target.clone())
                 || expr_assigns_local(rhs, target)
         }
         hir::ExprKind::Literal(_)
@@ -1631,13 +1631,13 @@ fn expr_assigns_local(expr: &hir::Expr, target: hir::HirId) -> bool {
         | hir::ExprKind::FormatString(_)
         | hir::ExprKind::Query(_) => false,
         hir::ExprKind::Binary(_, lhs, rhs) => {
-            expr_assigns_local(lhs, target) || expr_assigns_local(rhs, target)
+            expr_assigns_local(lhs, target.clone()) || expr_assigns_local(rhs, target)
         }
         hir::ExprKind::Unary(_, inner) => expr_assigns_local(inner, target),
         hir::ExprKind::Reference(r) => expr_assigns_local(&r.expr, target),
         hir::ExprKind::Call(callee, args) => {
-            expr_assigns_local(callee, target)
-                || args.iter().any(|arg| expr_assigns_local(&arg.value, target))
+            expr_assigns_local(callee, target.clone())
+                || args.iter().any(|arg| expr_assigns_local(&arg.value, target.clone()))
         }
         hir::ExprKind::MethodCall(recv, method, args) => {
             // `Option::take()` has no real HIR-level assignment node — its
@@ -1651,46 +1651,46 @@ fn expr_assigns_local(expr: &hir::Expr, target: hir::HirId) -> bool {
                 && args.is_empty()
                 && matches!(
                     &recv.kind,
-                    hir::ExprKind::Path(path) if matches!(path.res, Some(hir::Res::Local(id)) if id == target)
+                    hir::ExprKind::Path(path) if matches!(path.res, Some(hir::Res::Local(ref id)) if *id == target)
                 );
             resets_target
-                || expr_assigns_local(recv, target)
-                || args.iter().any(|arg| expr_assigns_local(&arg.value, target))
+                || expr_assigns_local(recv, target.clone())
+                || args.iter().any(|arg| expr_assigns_local(&arg.value, target.clone()))
         }
         hir::ExprKind::FieldAccess(inner, _) => expr_assigns_local(inner, target),
         hir::ExprKind::Index(base, index) => {
-            expr_assigns_local(base, target) || expr_assigns_local(index, target)
+            expr_assigns_local(base, target.clone()) || expr_assigns_local(index, target)
         }
         hir::ExprKind::Slice(s) => {
-            expr_assigns_local(&s.base, target)
-                || s.start.as_deref().is_some_and(|e| expr_assigns_local(e, target))
+            expr_assigns_local(&s.base, target.clone())
+                || s.start.as_deref().is_some_and(|e| expr_assigns_local(e, target.clone()))
                 || s.end.as_deref().is_some_and(|e| expr_assigns_local(e, target))
         }
         hir::ExprKind::Cast(inner, _) => expr_assigns_local(inner, target),
         hir::ExprKind::Struct(_, fields) => {
-            fields.iter().any(|field| expr_assigns_local(&field.expr, target))
+            fields.iter().any(|field| expr_assigns_local(&field.expr, target.clone()))
         }
         hir::ExprKind::If(cond, then_expr, else_expr) => {
-            expr_assigns_local(cond, target)
-                || expr_assigns_local(then_expr, target)
+            expr_assigns_local(cond, target.clone())
+                || expr_assigns_local(then_expr, target.clone())
                 || else_expr.as_deref().is_some_and(|e| expr_assigns_local(e, target))
         }
         hir::ExprKind::Match(scrutinee, arms) => {
-            expr_assigns_local(scrutinee, target)
+            expr_assigns_local(scrutinee, target.clone())
                 || arms.iter().any(|arm| {
-                    arm.guard.as_ref().is_some_and(|g| expr_assigns_local(g, target))
-                        || expr_assigns_local(&arm.body, target)
+                    arm.guard.as_ref().is_some_and(|g| expr_assigns_local(g, target.clone()))
+                        || expr_assigns_local(&arm.body, target.clone())
                 })
         }
         hir::ExprKind::Try(t) => {
-            expr_assigns_local(&t.expr, target)
-                || t.catches.iter().any(|c| expr_assigns_local(&c.body, target))
-                || t.elze.as_deref().is_some_and(|e| expr_assigns_local(e, target))
+            expr_assigns_local(&t.expr, target.clone())
+                || t.catches.iter().any(|c| expr_assigns_local(&c.body, target.clone()))
+                || t.elze.as_deref().is_some_and(|e| expr_assigns_local(e, target.clone()))
                 || t.finally.as_deref().is_some_and(|e| expr_assigns_local(e, target))
         }
         hir::ExprKind::Block(b) => block_assigns_local(b, target),
         hir::ExprKind::IntrinsicCall(ic) => {
-            ic.callargs.iter().any(|arg| expr_assigns_local(&arg.value, target))
+            ic.callargs.iter().any(|arg| expr_assigns_local(&arg.value, target.clone()))
         }
         hir::ExprKind::Let(_, _, init) => {
             init.as_deref().is_some_and(|e| expr_assigns_local(e, target))
@@ -1700,17 +1700,17 @@ fn expr_assigns_local(expr: &hir::Expr, target: hir::HirId) -> bool {
         }
         hir::ExprKind::Loop(b) => block_assigns_local(b, target),
         hir::ExprKind::While(cond, b) => {
-            expr_assigns_local(cond, target) || block_assigns_local(b, target)
+            expr_assigns_local(cond, target.clone()) || block_assigns_local(b, target)
         }
         hir::ExprKind::For(_pat, iter, b) => {
-            expr_assigns_local(iter, target) || block_assigns_local(b, target)
+            expr_assigns_local(iter, target.clone()) || block_assigns_local(b, target)
         }
-        hir::ExprKind::With(a, b) => expr_assigns_local(a, target) || expr_assigns_local(b, target),
+        hir::ExprKind::With(a, b) => expr_assigns_local(a, target.clone()) || expr_assigns_local(b, target),
         hir::ExprKind::Array(items) | hir::ExprKind::Tuple(items) => {
-            items.iter().any(|e| expr_assigns_local(e, target))
+            items.iter().any(|e| expr_assigns_local(e, target.clone()))
         }
         hir::ExprKind::ArrayRepeat { elem, len } => {
-            expr_assigns_local(elem, target) || expr_assigns_local(len, target)
+            expr_assigns_local(elem, target.clone()) || expr_assigns_local(len, target)
         }
         hir::ExprKind::ConstBlock(cb) => expr_assigns_local(&cb.body, target),
         hir::ExprKind::Closure(closure) => expr_assigns_local(&closure.body, target),

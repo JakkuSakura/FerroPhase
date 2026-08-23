@@ -429,7 +429,7 @@ impl AstToHirLowerer {
             }
             ExprKind::Continue(_) => hir::ExprKind::Continue,
             ExprKind::ConstBlock(const_block) => {
-                self.transform_const_block_to_hir(hir_id, const_block)?
+                self.transform_const_block_to_hir(hir_id.clone(), const_block)?
             }
             ExprKind::IntrinsicContainer(container) => {
                 self.transform_intrinsic_container_to_hir(container)?
@@ -474,7 +474,7 @@ impl AstToHirLowerer {
         // type checker each time it happens to encounter this node (see
         // `hir::HirPackage::const_block_defs`'s doc comment).
         self.package.record_const_block_def(
-            def_id,
+            def_id.clone(),
             hir::Block {
                 hir_id,
                 stmts: Vec::new(),
@@ -490,14 +490,14 @@ impl AstToHirLowerer {
     pub(super) fn next_id(&mut self) -> hir::HirId {
         let id = self.next_hir_id;
         self.next_hir_id += 1;
-        hir::HirId::new(self.package_id, id)
+        hir::HirId::new(self.package_id.clone(), id)
     }
 
     /// Generate next definition ID
     pub(super) fn next_def_id(&mut self) -> hir::DefId {
         let id = self.next_def_id;
         self.next_def_id += 1;
-        hir::DefId::new(self.package_id, id)
+        hir::DefId::new(self.package_id.clone(), id)
     }
 
     // transform_function moved to items.rs
@@ -943,7 +943,7 @@ impl AstToHirLowerer {
         // once and then fills missing fields from it, so later MIR lowering
         // only sees a plain struct literal.
         let struct_fields = match path.res {
-            Some(hir::Res::Def(def_id)) => {
+            Some(hir::Res::Def(ref def_id)) => {
                 if let Some(fields) = self.struct_field_defs.get(&def_id).cloned() {
                     fields
                 } else {
@@ -982,7 +982,7 @@ impl AstToHirLowerer {
         let base_symbol = hir::Symbol::new(base_name.clone());
         let base_pat_id = self.next_id();
         let base_pat = hir::Pat {
-            hir_id: base_pat_id,
+            hir_id: base_pat_id.clone(),
             kind: hir::PatKind::Binding {
                 name: base_symbol.clone(),
                 mutable: false,
@@ -1244,7 +1244,7 @@ impl AstToHirLowerer {
 
         let (mut pat, _ty, _) = self.transform_pattern_with_metadata(&for_expr.pat)?;
         let (loop_name, loop_res) = match &mut pat.kind {
-            hir::PatKind::Binding { name, .. } => (name.clone(), Some(hir::Res::Local(pat.hir_id))),
+            hir::PatKind::Binding { name, .. } => (name.clone(), Some(hir::Res::Local(pat.hir_id.clone()))),
             _ => {
                 return Ok(self.error_placeholder_expr_kind(
                     "`for` loop pattern must be a simple binding".to_string(),
@@ -2383,7 +2383,7 @@ impl AstToHirLowerer {
                 _ => None,
             })
             .and_then(|res| match res {
-                hir::Res::Def(def_id) => Some(*def_id),
+                hir::Res::Def(def_id) => Some(def_id.clone()),
                 _ => None,
             })
             .and_then(|def_id| self.program_def_param_info(def_id))

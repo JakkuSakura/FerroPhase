@@ -20,7 +20,7 @@ impl AstToHirLowerer {
                 // to a portable-op-tagged def (`#[op(variant = "...")]`,
                 // e.g. `OptionNone`).
                 if let Some(hir::Res::Def(def_id)) = self.resolve_global_value_symbol(ident.ident.as_str()) {
-                    if self.op_kind_for_def(def_id).is_some() {
+                    if self.op_kind_for_def(def_id.clone()).is_some() {
                         let hir_pat = hir::Pat {
                             hir_id: self.next_id(),
                             kind: hir::PatKind::Variant(hir::Path {
@@ -225,7 +225,7 @@ impl AstToHirLowerer {
     pub(super) fn register_pattern_bindings(&mut self, pat: &hir::Pat) {
         match &pat.kind {
             hir::PatKind::Binding { name, .. } => {
-                self.register_value_local(name.as_str(), pat.hir_id);
+                self.register_value_local(name.as_str(), pat.hir_id.clone());
             }
             hir::PatKind::Struct(_, fields, _) => {
                 for field in fields {

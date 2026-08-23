@@ -346,7 +346,7 @@ pub fn resolve_entrypoint_def_id(
         .iter()
         .find_map(|item| match &item.kind {
             crate::hir::ItemKind::Function(function) if function.sig.name.as_str() == function_name => {
-                Some(item.def_id)
+                Some(item.def_id.clone())
             }
             _ => None,
         })
@@ -364,7 +364,7 @@ pub fn resolve_entrypoint_def_id(
 /// needs renaming back to the bare name it was resolved by.
 pub fn rename_lir_function(lir: &mut crate::lir::LirBlob, def_id: crate::hir::DefId, bare_name: &str) {
     for lir_function in lir.functions.iter_mut() {
-        if lir_function.def_id == Some(def_id) {
+        if lir_function.def_id.as_ref() == Some(&def_id) {
             lir_function.name = crate::lir::Name::new(bare_name.to_string());
             break;
         }

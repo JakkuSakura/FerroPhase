@@ -292,7 +292,7 @@ impl CompilerState {
             ));
         };
         let mut blob = self.lir_blob(package_id);
-        blob.functions.retain(|function| function.def_id != Some(def_id));
+        blob.functions.retain(|function| function.def_id != Some(def_id.clone()));
         blob.functions.push(renamed.clone());
         Ok(blob)
     }
@@ -304,7 +304,7 @@ impl CompilerState {
     pub fn runtime_entrypoint(&self, lir_path: &lir::LirPath) -> Result<hir::DefId, CompilerDriverError> {
         self.runtime_entrypoints
             .get(lir_path)
-            .copied()
+            .cloned()
             .ok_or_else(|| {
                 CompilerDriverError::Interpreter("program has no explicit entrypoint".to_string())
             })
@@ -328,7 +328,7 @@ impl CompilerState {
 
     pub fn hir(&self, package_id: hir::PackageId) -> Result<hir::HirPackage, CompilerDriverError> {
         self.hir_program
-            .package(package_id)
+            .package(&package_id)
             .cloned()
             .ok_or_else(|| CompilerDriverError::MissingHir(format!("{package_id:?}")))
     }

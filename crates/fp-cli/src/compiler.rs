@@ -565,7 +565,7 @@ struct LoweredProgram {
 impl LoweredProgram {
     fn hir(&self) -> Result<fp_core::hir::HirPackage> {
         let package = self.compiled_package()?;
-        let hir_package_id = package.borrow().hir_package_id;
+        let hir_package_id = package.borrow().hir_package_id.clone();
         self.driver
             .state
             .borrow()

@@ -199,7 +199,7 @@ impl LirInterpreter {
         let func = program
             .functions
             .iter()
-            .find(|function| function.def_id == Some(def_id))
+            .find(|function| function.def_id == Some(def_id.clone()))
             .ok_or(VmError::Runtime(format!(
                 "entrypoint {def_id} was not emitted"
             )))?;
@@ -292,8 +292,8 @@ impl LirInterpreter {
                 // borrowed from `artifact`), then only cheap `Rc` clones
                 // into each lookup map below.
                 let function = Rc::new(function.clone());
-                if let Some(def_id) = function.def_id {
-                    self.definition_functions.insert(def_id, function.clone());
+                if let Some(ref def_id) = function.def_id {
+                    self.definition_functions.insert(def_id.clone(), function.clone());
                 }
                 self.workspace_functions.insert(
                     (
@@ -773,7 +773,7 @@ impl LirInterpreter {
                             "unionify's argument must be a plain function reference".into(),
                         ));
                     };
-                    let closure = Value::UnionifyClosure(*def_id);
+                    let closure = Value::UnionifyClosure(def_id.clone());
                     self.write_typed_result(dst, self.result_type(instr)?, closure)
                 }
             },
@@ -3523,7 +3523,7 @@ mod tests {
         let str_ty = LirType::Ptr(Box::new(LirType::I8));
         let shout_def_id = fp_core::hir::DefId::local(1);
         let shout_fn = LirFunction {
-            def_id: Some(shout_def_id),
+            def_id: Some(shout_def_id.clone()),
             name: Name::new("shout"),
             signature: sig(&[str_ty.clone()], str_ty.clone()),
             basic_blocks: vec![bb(
@@ -3549,7 +3549,7 @@ mod tests {
         let mut interpreter = LirInterpreter::new();
         interpreter
             .definition_functions
-            .insert(shout_def_id, Rc::new(shout_fn));
+            .insert(shout_def_id.clone(), Rc::new(shout_fn));
 
         // Register 1: the closure `unionify(shout)` would have produced.
         interpreter.register_values.insert(

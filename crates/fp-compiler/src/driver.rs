@@ -150,7 +150,7 @@ impl CompilerDriver {
         let lir = self
             .state
             .borrow()
-            .runtime_blob(&lir_path.package_id, lir_path, entrypoint)?;
+            .runtime_blob(&lir_path.package_id, lir_path, entrypoint.clone())?;
         self.interpreter = LirInterpreter::new();
         let resolved = self.collect_resolved_const_values();
         self.interpreter
@@ -183,7 +183,7 @@ impl CompilerDriver {
             .workspace
             .compiled_package(package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
-        let hir_package_id = package.borrow().hir_package_id;
+        let hir_package_id = package.borrow().hir_package_id.clone();
         let hir_package = self.state.borrow().hir(hir_package_id)?;
         fp_core::ast::package::resolve_entrypoint_def_id(package_id, &hir_package, function_name)
             .map_err(|error| CompilerDriverError::Interpreter(error.to_string()))
@@ -220,7 +220,7 @@ impl CompilerDriver {
             .lir_blob(package_id)
             .functions
             .into_iter()
-            .find(|candidate| candidate.def_id == Some(function))
+            .find(|candidate| candidate.def_id == Some(function.clone()))
             .ok_or_else(|| {
                 CompilerDriverError::Interpreter(format!(
                     "entrypoint {function} was not emitted"
@@ -266,8 +266,8 @@ impl CompilerDriver {
                 .workspace
                 .compiled_package(package_id)
                 .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
-            let hir_package_id = package.borrow().hir_package_id;
-            self.apply_resolved_comptime_block_values(hir_package_id, &block_values)?;
+            let hir_package_id = package.borrow().hir_package_id.clone();
+            self.apply_resolved_comptime_block_values(hir_package_id.clone(), &block_values)?;
             self.relower_cached_lir_units(package_id, hir_package_id).await?;
         }
         let _ = lir_path;
@@ -372,7 +372,7 @@ impl CompilerDriver {
                     self.compile_items_to_lir_units(&package).await?;
                     let comptime_entries = self.state.borrow().lir_blob(package_id).comptime_entries;
                     if !comptime_entries.is_empty() {
-                        let hir_package_id = package.borrow().hir_package_id;
+                        let hir_package_id = package.borrow().hir_package_id.clone();
                         // Both pipeline modes need the resolved value
                         // relowered back into a real `LirGlobal` (see this
                         // arm's own doc comment above) — a failed comptime
@@ -381,7 +381,7 @@ impl CompilerDriver {
                         // and not the other.
                         let block_values = self.evaluate_comptime_lir(package_id, &QualifiedPath::new(Vec::new())).await?;
                         if !block_values.is_empty() {
-                            self.apply_resolved_comptime_block_values(hir_package_id, &block_values)?;
+                            self.apply_resolved_comptime_block_values(hir_package_id.clone(), &block_values)?;
                             self.relower_cached_lir_units(package_id, hir_package_id).await?;
                         }
                     }
@@ -487,7 +487,7 @@ impl CompilerDriver {
         &mut self,
         package: &Rc<RefCell<fp_core::ast::package::AstPackage>>,
     ) -> Result<(), CompilerDriverError> {
-        let hir_package_id = package.borrow().hir_package_id;
+        let hir_package_id = package.borrow().hir_package_id.clone();
         let current_package_id = package.borrow().package_id.clone();
         let mut package_source = package.borrow().clone();
         let macro_rules_defs =
@@ -500,7 +500,7 @@ impl CompilerDriver {
         // silently dropped by `ast_to_hir`'s own item loop, and whatever it
         // would have defined never exists.
         package_source.items = fp_lang::expand_item_macros(package_source.items, &macro_rules_defs);
-        let mut generator = AstToHirLowerer::new(hir_package_id)
+        let mut generator = AstToHirLowerer::new(hir_package_id.clone())
             .with_intrinsic_normalizer(
                 FerroIntrinsicNormalizer::new(fp_core::intrinsics::IntrinsicNormalizationMode::Compile)
                     .with_macro_rules_defs(macro_rules_defs),
@@ -546,7 +546,7 @@ impl CompilerDriver {
             // return owned data, so nothing here needs to outlive this block.
             let (lifted_items_by_path, referenced_paths_by_path) = {
                 let state = self.state.borrow();
-                let hir = state.hir(hir_package_id)?;
+                let hir = state.hir(hir_package_id.clone())?;
                 let lifter = fp_backend::transforms::HirToAstLifter::new(
                     &hir,
                     Some(state.hir_program()),
@@ -667,7 +667,7 @@ impl CompilerDriver {
     ) -> Result<(), CompilerDriverError> {
         let package = self.state.borrow().hir(hir_package_id)?;
         for (def_id, value) in block_values {
-            package.record_const_block_value(*def_id, value.clone());
+            package.record_const_block_value(def_id.clone(), value.clone());
         }
         self.state.borrow_mut().insert_hir(package);
         Ok(())
@@ -726,7 +726,7 @@ impl CompilerDriver {
             .package()
             .items
             .iter()
-            .map(|item| item.def_id)
+            .map(|item| item.def_id.clone())
             .collect();
         let handles: Vec<_> = item_ids
             .into_iter()
@@ -836,7 +836,7 @@ impl CompilerDriver {
         let package_id = state
             .borrow()
             .workspace
-            .compiled_package_for_def(request.def_id)
+            .compiled_package_for_def(request.def_id.clone())
             .map(|package| package.borrow().package_id.clone())
             .ok_or_else(|| {
                 CompilerDriverError::UnresolvablePackage(format!(
@@ -860,11 +860,11 @@ impl CompilerDriver {
             .cloned()
             .ok_or_else(|| CompilerDriverError::MissingHir(format!("{:?}", request.package_id)))?;
 
-        let mut lowering = HirToMirLowerer::new();
+        let mut lowering = HirToMirLowerer::new(hir_program.clone(), request.package_id.clone());
         for (key, value) in state.borrow().resolved_const_values() {
             lowering.seed_resolved_const(key.to_string(), value.clone());
         }
-        let mir_module = match lowering.transform_comptime_request(hir_program, current_package, request.def_id) {
+        let mir_module = match lowering.transform_comptime_request(hir_program, current_package, request.def_id.clone()) {
             Ok(module) => module,
             Err(error) => {
                 let (diagnostics, _) = lowering.take_diagnostics();
@@ -906,7 +906,7 @@ impl CompilerDriver {
             items: mir_module.items,
             bodies: mir_module.bodies,
         };
-        state.borrow_mut().insert_mir_unit(&package_id, request.def_id, unit.clone());
+        state.borrow_mut().insert_mir_unit(&package_id, request.def_id.clone(), unit.clone());
 
         let module_path = QualifiedPath::new(vec!["__comptime_probe__".to_string()]);
         let mut lir_gen = Self::new_lir_generator(state, &package_id, &module_path, full_layouts, opaque_payload_sizes);
@@ -947,8 +947,9 @@ impl CompilerDriver {
         // HIR has already passed type checking at this boundary. Lowering is
         // therefore strict: a failure is an internal compiler error, never a
         // recoverable source diagnostic.
-        let hir = state.borrow().hir(hir_package_id)?;
-        let mut lowering = HirToMirLowerer::new();
+        let hir = state.borrow().hir(hir_package_id.clone())?;
+        let program_snapshot = Rc::new(state.borrow().hir_program().clone());
+        let mut lowering = HirToMirLowerer::new(program_snapshot, hir_package_id.clone());
         for (key, value) in state.borrow().resolved_const_values() {
             lowering.seed_resolved_const(key.to_string(), value.clone());
         }
@@ -961,10 +962,10 @@ impl CompilerDriver {
         // walks `hir.items`; what's different is that each item's own unit
         // is stored into `state` the moment it's produced, not assembled
         // into one flat module first.
-        let item_def_ids: Vec<_> = hir.items.iter().map(|item| item.def_id).collect();
+        let item_def_ids: Vec<_> = hir.items.iter().map(|item| item.def_id.clone()).collect();
         lowering.seed_package(hir.clone());
         for def_id in item_def_ids {
-            if let Err(error) = lowering.ensure_item_lowered(def_id) {
+            if let Err(error) = lowering.ensure_item_lowered(def_id.clone()) {
                 let (diagnostics, _) = lowering.take_diagnostics();
                 let details = diagnostics_summary(&diagnostics);
                 return Err(CompilerDriverError::InternalCompilerError(if details.is_empty() {
@@ -973,7 +974,7 @@ impl CompilerDriver {
                     format!("HIR-to-MIR lowering failed: {error}; diagnostics: {details}")
                 }));
             }
-            let unit = lowering.take_unit(def_id);
+            let unit = lowering.take_unit(def_id.clone());
             state.borrow_mut().insert_mir_unit(package_id, def_id, unit);
         }
         // Anything left over (e.g. synthetic runtime stub functions —
@@ -1030,7 +1031,7 @@ impl CompilerDriver {
             .borrow()
             .mir_program()
             .package(package_id)
-            .map(|package| package.units.keys().copied().collect())
+            .map(|package| package.units.keys().cloned().collect())
             .unwrap_or_default();
         let mut lir_gen = Self::new_lir_generator(state, package_id, &module_path, full_layouts, opaque_payload_sizes);
         for def_id in def_ids {
@@ -1064,13 +1065,13 @@ impl CompilerDriver {
             lowering
                 .struct_layout_map()
                 .iter()
-                .map(|(key, layout)| ((key.def_id, key.args.clone()), layout.field_tys.clone()))
+                .map(|(key, layout)| ((key.def_id.clone(), key.args.clone()), layout.field_tys.clone()))
                 .collect();
         for (key, layout) in lowering.enum_layout_map() {
             let mut fields = Vec::with_capacity(1 + layout.payload_tys.len());
             fields.push(layout.tag_ty.clone());
             fields.extend(layout.payload_tys.iter().cloned());
-            full_layouts.insert((key.def_id, key.args.clone()), fields);
+            full_layouts.insert((key.def_id.clone(), key.args.clone()), fields);
         }
         full_layouts
     }
@@ -1243,7 +1244,7 @@ impl CompilerDriver {
                 .borrow_mut()
                 .insert_resolved_const_value(entry.key.clone(), constant);
             if entry.const_block_hir_id.is_some() {
-                block_values.insert(entry.def_id, value.clone());
+                block_values.insert(entry.def_id.clone(), value.clone());
             }
             let mut newly_resolved = HashMap::new();
             newly_resolved.insert(entry.key.clone(), value.clone());

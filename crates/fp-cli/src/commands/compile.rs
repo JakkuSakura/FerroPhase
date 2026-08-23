@@ -423,7 +423,7 @@ async fn run_compile_pipeline(
             // `rename_lir_function`'s own doc comments) — silently left
             // unrenamed if `package_id` has no `main` (e.g. a library).
             if let Some(ast_package) = workspace.compiled_package(package_id) {
-                let hir_package_id = ast_package.borrow().hir_package_id;
+                let hir_package_id = ast_package.borrow().hir_package_id.clone();
                 if let Ok(hir_package) = session.driver().state.borrow().hir(hir_package_id) {
                     if let Ok(def_id) = fp_core::ast::package::resolve_entrypoint_def_id(
                         package_id,

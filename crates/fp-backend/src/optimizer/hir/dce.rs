@@ -18,7 +18,7 @@ pub fn eliminate_dead_code(program: &mut hir::HirPackage, entrypoint: Option<hir
     let root_ids: Vec<_> = if let Some(def_id) = entrypoint {
         std::iter::once(def_id)
             .chain(program.items.iter().filter_map(|item| match &item.kind {
-                hir::ItemKind::Query(_) | hir::ItemKind::Expr(_) => Some(item.def_id),
+                hir::ItemKind::Query(_) | hir::ItemKind::Expr(_) => Some(item.def_id.clone()),
                 _ => None,
             }))
             .collect()
@@ -28,10 +28,10 @@ pub fn eliminate_dead_code(program: &mut hir::HirPackage, entrypoint: Option<hir
             .iter()
             .filter_map(|item| match &item.kind {
                 hir::ItemKind::Function(function) if function.sig.name.as_str() == "main" => {
-                    Some(item.def_id)
+                    Some(item.def_id.clone())
                 }
-                hir::ItemKind::Query(_) => Some(item.def_id),
-                hir::ItemKind::Expr(_) => Some(item.def_id),
+                hir::ItemKind::Query(_) => Some(item.def_id.clone()),
+                hir::ItemKind::Expr(_) => Some(item.def_id.clone()),
                 _ => None,
             })
             .collect()
@@ -44,7 +44,7 @@ pub fn eliminate_dead_code(program: &mut hir::HirPackage, entrypoint: Option<hir
     let mut reachable = HashSet::new();
     let mut work = VecDeque::from(root_ids);
     while let Some(def_id) = work.pop_front() {
-        if !reachable.insert(def_id) {
+        if !reachable.insert(def_id.clone()) {
             continue;
         }
         let Some(item) = program.def_map.get(&def_id) else {
@@ -296,7 +296,7 @@ fn build_tail_name_map(program: &hir::HirPackage) -> HashMap<String, hir::DefId>
     for item in &program.items {
         if let Some(name) = item_name(item) {
             let tail = name.rsplit("::").next().unwrap_or(name);
-            names.entry(tail.to_string()).or_insert(item.def_id);
+            names.entry(tail.to_string()).or_insert(item.def_id.clone());
         }
     }
     names
@@ -574,8 +574,8 @@ fn collect_path_refs(
     tail_map: &HashMap<String, hir::DefId>,
     work: &mut VecDeque<hir::DefId>,
 ) {
-    if let Some(hir::Res::Def(def_id)) = path.res {
-        work.push_back(def_id);
+    if let Some(hir::Res::Def(ref def_id)) = path.res {
+        work.push_back(def_id.clone());
         return;
     }
     let segments = path.segments.as_slice();
@@ -587,7 +587,7 @@ fn collect_path_refs(
         .map(|seg| seg.name.as_str())
         .unwrap_or_default();
     if let Some(def_id) = tail_map.get(tail) {
-        work.push_back(*def_id);
+        work.push_back(def_id.clone());
     }
 }
 
@@ -604,10 +604,12 @@ mod tests {
         Symbol::new(name)
     }
 
-    const TEST_PKG: hir::PackageId = hir::PackageId(0);
+    fn test_pkg() -> hir::PackageId {
+        hir::PackageId::new("test")
+    }
 
     fn hid(index: u32) -> hir::HirId {
-        hir::HirId::new(TEST_PKG, index)
+        hir::HirId::new(test_pkg(), index)
     }
 
     fn unit_ty() -> TypeExpr {
@@ -696,9 +698,9 @@ mod tests {
     fn program(items: Vec<Item>) -> HirPackage {
         let def_map = items
             .iter()
-            .map(|item| (item.def_id, item.clone()))
+            .map(|item| (item.def_id.clone(), item.clone()))
             .collect();
-        let mut package = HirPackage::new();
+        let mut package = HirPackage::new(test_pkg());
         package.items = items;
         package.def_map = def_map;
         package.next_hir_id = 100;
