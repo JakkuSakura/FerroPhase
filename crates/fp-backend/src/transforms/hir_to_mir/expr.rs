@@ -1552,6 +1552,122 @@ impl MirLowering {
         }
     }
 
+    /// Seeds this `MirLowering` instance for on-demand, per-`DefId` lowering
+    /// against `hir_program` — call once before any `ensure_item_lowered`
+    /// call, then `ensure_item_lowered` for each top-level `DefId` that
+    /// needs lowering (in any order — this is exactly what makes it usable
+    /// from a driver-level loop instead of requiring one eager whole-package
+    /// sweep), then `take_program` once at the end. Mirrors `lower_program`'s
+    /// own seeding prelude (everything before its per-item loop) verbatim,
+    /// plus the const-registration pass every item's body may depend on
+    /// regardless of lowering order — the only thing this doesn't do
+    /// up front is lower any function/method/const *body*.
+    pub fn seed_package(&mut self, hir_program: hir::Package) {
+        let hir_program = std::rc::Rc::new(hir_program);
+        self.current_package = hir_program.clone();
+        self.current_package_id = Some(hir_program.id);
+        // Same "seed from `.items` alone can collide with a local const's
+        // own real DefId" fix as `lower_program`/`transform_comptime_request`.
+        self.next_synthetic_hir_def_id = hir_program
+            .def_map
+            .keys()
+            .filter(|def_id| Some(def_id.package_id) == self.current_package_id)
+            .copied()
+            .max()
+            .unwrap_or(hir::DefId::local(0))
+            .saturating_add(1);
+        for item in &hir_program.items {
+            match &item.kind {
+                hir::ItemKind::Struct(def) => {
+                    self.register_struct(item.def_id, def, item.span);
+                }
+                hir::ItemKind::Enum(def) => {
+                    self.register_enum(item.def_id, def, item.span);
+                }
+                _ => {}
+            }
+        }
+        self.register_all_dependency_adts();
+        self.finalize_adt_definitions(&hir_program);
+        for item in &hir_program.items {
+            if let hir::ItemKind::Impl(impl_block) = &item.kind {
+                self.register_impl_signatures(impl_block);
+            }
+        }
+        for item in &hir_program.items {
+            if let hir::ItemKind::Const(const_item) = &item.kind {
+                self.register_const_value(item.def_id, const_item);
+            }
+        }
+    }
+
+    /// On-demand, per-`DefId` counterpart to `lower_program`'s per-item
+    /// loop — call once per top-level `DefId` after `seed_package`.
+    /// Idempotent (safe to call more than once for the same `def_id`,
+    /// mirroring `ensure_function_lowered`/`ensure_method_lowered`, which
+    /// this dispatches to for `Function`/`Impl` items). `Struct`/`Enum` are
+    /// already fully registered by `seed_package`; `Trait`/`Expr` are never
+    /// lowered — both are no-ops here.
+    pub fn ensure_item_lowered(&mut self, def_id: hir::DefId) -> Result<()> {
+        if self.lowered_items.contains(&def_id) {
+            return Ok(());
+        }
+        let Some(item) = self.hir_item(def_id).cloned() else {
+            return Ok(());
+        };
+        match &item.kind {
+            hir::ItemKind::Struct(_)
+            | hir::ItemKind::Enum(_)
+            | hir::ItemKind::Trait(_)
+            | hir::ItemKind::Expr(_) => {}
+            hir::ItemKind::Const(const_item) => {
+                self.lowered_items.insert(def_id);
+                let ty = self.lower_type_expr(&const_item.ty);
+                if Self::is_unit_ty(&ty) {
+                    // Unit consts don't need a static allocation; keep them
+                    // as inline constants — already registered by
+                    // `seed_package`.
+                } else {
+                    let mir_item = self.lower_const(def_id, const_item)?;
+                    self.extra_items.push(mir_item);
+                }
+            }
+            hir::ItemKind::Function(function) => {
+                if !function.sig.generics.params.is_empty() {
+                    self.lowered_items.insert(def_id);
+                    self.register_generic_function(def_id, function);
+                } else {
+                    self.ensure_function_lowered(def_id)?;
+                }
+            }
+            hir::ItemKind::Impl(impl_block) => {
+                self.lowered_items.insert(def_id);
+                for impl_item in &impl_block.items {
+                    if let hir::ImplItemKind::Method(_) = &impl_item.kind {
+                        self.ensure_method_lowered(impl_item.def_id)?;
+                    }
+                }
+            }
+            hir::ItemKind::Query(query) => {
+                self.lowered_items.insert(def_id);
+                let mir_item = self.lower_query(&item, query);
+                self.extra_items.push(mir_item);
+            }
+        }
+        Ok(())
+    }
+
+    /// Assembles everything `ensure_item_lowered` has pulled in so far into
+    /// a `mir::Program` — call once after the per-`DefId` loop finishes.
+    /// Mirrors `lower_program`'s own tail (`flush_extra_items` +
+    /// `append_runtime_stubs`) verbatim.
+    pub fn take_program(&mut self) -> mir::Program {
+        let mut mir_program = mir::Program::new();
+        self.flush_extra_items(&mut mir_program);
+        self.append_runtime_stubs(&mut mir_program);
+        mir_program
+    }
+
     /// On-demand counterpart to `lower_function`, for a non-generic free
     /// function: lowers `def_id`'s body at most once (guarded by
     /// `lowered_items`), pushing the result into `extra_items`/

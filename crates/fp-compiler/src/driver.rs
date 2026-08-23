@@ -1340,19 +1340,35 @@ impl CompilerDriver {
         for (key, value) in state.borrow().resolved_const_values() {
             lowering.seed_resolved_const(key.to_string(), value.clone());
         }
-        let result = lowering.transform_async(hir).await;
-        let mir = match result {
-            Ok(mir) => mir,
-            Err(error) => {
-                let (diagnostics, _) = lowering.take_diagnostics();
-                let details = diagnostics_summary(&diagnostics);
-                return Err(CompilerDriverError::InternalCompilerError(if details.is_empty() {
-                    format!("HIR-to-MIR lowering failed: {error}")
-                } else {
-                    format!("HIR-to-MIR lowering failed: {error}; diagnostics: {details}")
-                }));
+        // Seed once, then lower every top-level item on demand by its own
+        // `DefId` — the same `ensure_item_lowered` primitive a single
+        // comptime request's item-scoped lowering already goes through
+        // (`transform_comptime_request`), rather than one eager
+        // whole-package `.transform()` sweep. A full-package compile still
+        // needs every item lowered (no `main`-rooted reachability pruning
+        // here — see `ensure_item_lowered`'s own doc comment on why), so
+        // this loop still walks `hir.items`; what's different is that the
+        // lowering itself is keyed by `DefId`, not implicitly by iteration
+        // order over a package the lowerer owns outright.
+        let item_def_ids: Vec<_> = hir.items.iter().map(|item| item.def_id).collect();
+        lowering.seed_package(hir);
+        let mut lower_error = None;
+        for def_id in item_def_ids {
+            if let Err(error) = lowering.ensure_item_lowered(def_id) {
+                lower_error = Some(error);
+                break;
             }
-        };
+        }
+        if let Some(error) = lower_error {
+            let (diagnostics, _) = lowering.take_diagnostics();
+            let details = diagnostics_summary(&diagnostics);
+            return Err(CompilerDriverError::InternalCompilerError(if details.is_empty() {
+                format!("HIR-to-MIR lowering failed: {error}")
+            } else {
+                format!("HIR-to-MIR lowering failed: {error}; diagnostics: {details}")
+            }));
+        }
+        let mir = lowering.take_program();
         // Run *before* the diagnostics check below — `walk_program_types_for_layouts`
         // can itself report errors (e.g. an unregistered ADT layout), and
         // those must not be silently dropped when `lowering` goes out of
