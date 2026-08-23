@@ -704,16 +704,20 @@ impl AstToHirLowerer {
         Some(current)
     }
 
-    pub fn with_file<P: AsRef<Path>>(path: P) -> Self {
-        let mut generator = Self::new();
+    pub fn with_file<P: AsRef<Path>>(package_id: hir::PackageId, path: P) -> Self {
+        let mut generator = Self::new(package_id);
         generator.reset_file_context(path);
         generator
     }
 
-    /// Create a new HIR generator
-    pub fn new() -> Self {
+    /// Create a new HIR generator for `package_id` — required upfront (not
+    /// filled in later via a builder method) so `self.package`'s own id is
+    /// correct from construction, never a placeholder default that a
+    /// caller might forget to override (see `HirPackage::new`'s doc
+    /// comment for the bug this class of mistake caused).
+    pub fn new(package_id: hir::PackageId) -> Self {
         Self {
-            package_id: hir::PackageId(0),
+            package_id,
             next_hir_id: 0,
             next_def_id: 0,
             current_file: 0, // Default file ID
@@ -732,7 +736,7 @@ impl AstToHirLowerer {
             structural_value_defs: HashMap::new(),
             const_list_length_scopes: vec![HashMap::new()],
             synthetic_items: Vec::new(),
-            package: hir::HirPackage::new(),
+            package: hir::HirPackage::new(package_id),
             program_def_map: HashMap::new(),
             suppress_global_registration_depth: 0,
             local_item_debug_labels: HashMap::new(),
@@ -748,12 +752,6 @@ impl AstToHirLowerer {
             pending_impls: Vec::new(),
             resolved_import_aliases: HashSet::new(),
         }
-    }
-
-    pub fn with_package_id(mut self, package_id: hir::PackageId) -> Self {
-        self.package_id = package_id;
-        self.package.id = package_id;
-        self
     }
 
     pub fn with_def_id_start(mut self, start: u32) -> Self {
@@ -1938,7 +1936,7 @@ impl AstToHirLowerer {
         self.load_default_prelude_defs();
         self.predeclare_items(&generated_items, false)?;
 
-        let mut hir_program = hir::HirPackage::new();
+        let mut hir_program = hir::HirPackage::new(self.package_id);
         self.program_def_map = HashMap::new();
 
         for item in &generated_items {
@@ -2134,7 +2132,7 @@ impl AstToHirLowerer {
         // declaration order, substitute the bindings, re-parse the result.
         let package_items = self.expand_item_macros(package_items);
 
-        let mut program = hir::HirPackage::new();
+        let mut program = hir::HirPackage::new(self.package.id);
         self.seed_workspace_definitions(&mut program);
 
         // 1: definitions (tolerant — impls whose self-type isn't resolvable
@@ -2358,7 +2356,7 @@ impl AstToHirLowerer {
             span,
         };
 
-        let mut program = hir::HirPackage::new();
+        let mut program = hir::HirPackage::new(self.package.id);
         program.def_map.insert(item.def_id, item.clone());
         self.program_def_map.insert(item.def_id, item.clone());
         program.items.push(item);
@@ -2382,7 +2380,7 @@ impl AstToHirLowerer {
         self.prepare_lowering_state();
 
         self.module_path = module_path.clone();
-        let mut program = hir::HirPackage::new();
+        let mut program = hir::HirPackage::new(self.package.id);
         self.seed_workspace_definitions(&mut program);
         self.load_default_prelude_defs();
         self.predeclare_items(items, false)?;
@@ -4765,12 +4763,6 @@ fn value_contains_type_type(value: &ast::Value) -> bool {
             .iter()
             .any(|value| value_contains_type_type(value)),
         _ => false,
-    }
-}
-
-impl Default for AstToHirLowerer {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

@@ -500,12 +500,11 @@ impl CompilerDriver {
         // silently dropped by `ast_to_hir`'s own item loop, and whatever it
         // would have defined never exists.
         package_source.items = fp_lang::expand_item_macros(package_source.items, &macro_rules_defs);
-        let mut generator = AstToHirLowerer::new()
+        let mut generator = AstToHirLowerer::new(hir_package_id)
             .with_intrinsic_normalizer(
                 FerroIntrinsicNormalizer::new(fp_core::intrinsics::IntrinsicNormalizationMode::Compile)
                     .with_macro_rules_defs(macro_rules_defs),
             )
-            .with_package_id(hir_package_id)
             .with_def_id_start(self.next_hir_def_id)
             .with_lowering_config(HirLoweringConfig {
                 // The active `TargetBackend`'s own capabilities (see

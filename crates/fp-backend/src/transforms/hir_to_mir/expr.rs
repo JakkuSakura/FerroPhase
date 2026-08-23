@@ -700,7 +700,7 @@ impl HirToMirLowerer {
             next_synthetic_hir_def_id: hir::DefId::local(1),
             adt_defs: HashMap::new(),
             hir_program: std::rc::Rc::new(hir::HirProgram::new()),
-            current_package: std::rc::Rc::new(hir::HirPackage::new()),
+            current_package: std::rc::Rc::new(hir::HirPackage::new(hir::PackageId::default())),
             current_package_id: None,
             current_item_path: None,
         }

@@ -265,9 +265,16 @@ pub struct HirPackage {
 }
 
 impl HirPackage {
-    pub fn new() -> Self {
+    /// `id` is a required parameter, not filled in after the fact — a
+    /// caller that builds a fresh `HirPackage` and forgets to copy its real
+    /// id back in (as `AstToHirLowerer::transform_package`/
+    /// `transform_module_inner` both once did) previously got a
+    /// silently-plausible `PackageId::default()` instead of a compile
+    /// error, which let two different packages collide under the same key
+    /// in `HirProgram::add_package` with no diagnostic at all.
+    pub fn new(id: PackageId) -> Self {
         Self {
-            id: PackageId::default(),
+            id,
             module_tree: resolve::ModuleTree::new(),
             items: Vec::new(),
             def_map: HashMap::new(),
@@ -303,13 +310,6 @@ impl HirPackage {
             const_block_values: RefCell::new(HashMap::new()),
             const_block_defs: RefCell::new(HashMap::new()),
             diagnostics: crate::diagnostics::DiagnosticManager::new(),
-        }
-    }
-
-    pub fn with_id(id: PackageId) -> Self {
-        Self {
-            id,
-            ..Self::new()
         }
     }
 
@@ -640,11 +640,5 @@ impl HirPackage {
 
     pub fn const_block_def(&self, def_id: DefId) -> Option<Block> {
         self.const_block_defs.borrow().get(&def_id).cloned()
-    }
-}
-
-impl Default for HirPackage {
-    fn default() -> Self {
-        Self::new()
     }
 }
