@@ -286,7 +286,13 @@ impl HirTypeChecker {
             .comptime_resolver
             .clone()
             .expect("HirTypeChecker::request_comptime called without a comptime_resolver");
-        resolver(request).await
+        let def_id = request.def_id;
+        let value = resolver(request).await?;
+        // Recorded here, once, for every caller — not each call site's own
+        // responsibility (see `spawn_comptime_task`, which used to do this
+        // itself right after awaiting this same method).
+        self.program.record_const_block_value(def_id, value.clone());
+        Ok(value)
     }
 
     /// `tcx.sess.has_errors()`-style query: true once any item's check has
@@ -422,8 +428,8 @@ impl HirTypeChecker {
     /// `spawn_item_task`'s dedup pattern, so two typer tasks reaching the
     /// same const-block concurrently share one interpretation run instead
     /// of each independently awaiting `request_comptime`. The resolved
-    /// value is written into the package's own `const_block_values` by the
-    /// same task that produces it, so every awaiter and every later
+    /// value is recorded into the package's own `const_block_values` by
+    /// `request_comptime` itself, not here — every awaiter and every later
     /// `DefId` lookup against the package's own table always agree.
     pub fn spawn_comptime_task(
         checker: &Rc<RefCell<Self>>,
@@ -436,12 +442,7 @@ impl HirTypeChecker {
         executor.get_or_spawn(cache_key, move || {
             Box::pin(async move {
                 let request = build_request();
-                let value = checker.borrow().request_comptime(request).await.ok()?;
-                checker
-                    .borrow()
-                    .package()
-                    .record_const_block_value(def_id, value.clone());
-                Some(value)
+                checker.borrow().request_comptime(request).await.ok()
             }) as Pin<Box<dyn Future<Output = Option<hir::Value>>>>
         })
     }
@@ -1092,7 +1093,10 @@ impl HirTypeChecker {
                         let program_for_task = self.program_rc();
                         let current_package = self.current_package();
                         let root_handle = self.root_handle();
-                        let value = HirTypeChecker::spawn_comptime_task(
+                        // The resolved value is recorded into
+                        // `const_block_values` by `request_comptime`
+                        // itself (inside `spawn_comptime_task`), not here.
+                        HirTypeChecker::spawn_comptime_task(
                             &root_handle,
                             def_id,
                             move || {
@@ -1115,7 +1119,6 @@ impl HirTypeChecker {
                         )
                         .await
                         .ok_or_else(|| Error::from("comptime evaluation failed"))?;
-                        self.program().record_const_block_value(def_id, value);
                     }
                     body_ty
                 }
@@ -1628,7 +1631,10 @@ impl HirTypeChecker {
                     let checker = self.root_handle();
                     let program_for_task = self.program_rc();
                     let current_package = self.current_package();
-                    let value = HirTypeChecker::spawn_comptime_task(&checker, def_id, move || {
+                    // The resolved value is recorded into
+                    // `const_block_values` by `request_comptime` itself
+                    // (inside `spawn_comptime_task`), not here.
+                    HirTypeChecker::spawn_comptime_task(&checker, def_id, move || {
                         let package = program_for_task.package(current_package).expect(
                             "current_package is always inserted into program at construction",
                         );
@@ -1648,7 +1654,6 @@ impl HirTypeChecker {
                     .await
                     .ok_or_else(|| Error::from("comptime evaluation failed"))?;
                     let package = self.program();
-                    package.record_const_block_value(def_id, value);
                     // Replace the `Infer` placeholder just below with the
                     // body's actual checked type, now that it's known —
                     // matches expression-position const-blocks, whose own
