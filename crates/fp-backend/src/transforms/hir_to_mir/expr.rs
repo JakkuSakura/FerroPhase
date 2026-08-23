@@ -851,7 +851,27 @@ impl HirToMirLowerer {
             }
         }
         self.register_all_dependency_adts();
+        // `finalize_adt_definitions` unconditionally computes a *layout*
+        // for every non-generic struct/enum in the whole package — most of
+        // which have nothing to do with the one const block this request
+        // actually needs to evaluate. On this fresh, per-request
+        // `MirLowering` instance, a struct/enum that legitimately depends
+        // on state this instance never populated (e.g. a dependency
+        // package's own field types, only ever fully resolved by that
+        // package's *own* real `lower_program` run) can fail here even
+        // though the real compile never has a problem with it — exactly
+        // the same "diagnostics raised purely by this eager pre-pass are
+        // discarded" reasoning `register_all_dependency_adts` (just above)
+        // already applies for its own unconditional struct/enum sweep; a
+        // real failure still surfaces normally the moment this or any
+        // other comptime request's body actually uses the offending type,
+        // via the ordinary on-demand `struct_layout_for_instance`/
+        // `enum_layout_for_instance` paths inside body lowering below.
+        let diagnostics_before = self.diagnostics.len();
+        let had_errors_before = self.has_errors;
         self.finalize_adt_definitions(&current_package);
+        self.diagnostics.truncate(diagnostics_before);
+        self.has_errors = had_errors_before;
         // Deliberately *not* an eager `register_impl_signatures` sweep
         // over every impl in the package (as this used to be) — that
         // cloned every method's `hir::Function` body, for every impl,
