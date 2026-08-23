@@ -7,27 +7,6 @@ pub use cil::emit_assembly;
 pub use cil::emit_cil;
 pub use parse::parse_cil_program;
 
-/// Reads `package_id`'s already-compiled MIR straight off the shared
-/// workspace's `CompiledPackage` — same source `fp_jvm::JvmBackend` reads
-/// from, since CIL (like JVM bytecode) is a stack-based bytecode target,
-/// not a source-level transpile target; it lowers from MIR, not from the
-/// typed AST a Kotlin/Python-style backend would walk.
-fn package_mir(
-    workspace: &fp_core::ast::program::AstProgram,
-    package_id: &fp_core::ast::package::PackageId,
-) -> fp_core::error::Result<fp_core::mir::MirModule> {
-    let package = workspace.compiled_package(package_id).ok_or_else(|| {
-        fp_core::error::Error::from(format!("package `{package_id}` is unavailable"))
-    })?;
-    let package = package.borrow();
-    if package.mir.units.is_empty() {
-        return Err(fp_core::error::Error::from(format!(
-            "package `{package_id}` has no MIR program"
-        )));
-    }
-    Ok(package.mir.flatten())
-}
-
 /// `TargetBackend` for both `--target cil` (`assemble: false`) and
 /// `--target dotnet` (`assemble: true`) — the only difference between the
 /// two is whether the emitted CIL text gets a further `ilasm` assembly
@@ -53,7 +32,10 @@ impl fp_core::backend::TargetBackend for CilBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
+        mir: &fp_core::mir::MirModule,
+        lir: Option<&fp_core::lir::LirBlob>,
     ) -> fp_core::error::Result<()> {
+        let _ = lir;
         // CIL text or an assembled PE given directly as input (see
         // `fp_core::ast::ItemKind::PrecompiledArtifact`'s doc comment)
         // writes/assembles itself back out instead of going through MIR.
@@ -67,14 +49,18 @@ impl fp_core::backend::TargetBackend for CilBackend {
             }
         }
 
-        let mir = package_mir(workspace, package_id)?;
+        if mir.items.is_empty() {
+            return Err(fp_core::error::Error::from(format!(
+                "package `{package_id}` has no MIR program"
+            )));
+        }
         if self.assemble {
-            emit_assembly(&mir, &self.output, self.save_intermediates).map_err(|e| {
+            emit_assembly(mir, &self.output, self.save_intermediates).map_err(|e| {
                 fp_core::error::Error::from(format!(".NET assembly emit failed: {e}"))
             })?;
             return Ok(());
         }
-        let code = emit_cil(&mir)
+        let code = emit_cil(mir)
             .map_err(|e| fp_core::error::Error::from(format!("CIL emit failed: {e}")))?;
         if let Some(parent) = self.output.parent() {
             std::fs::create_dir_all(parent)?;

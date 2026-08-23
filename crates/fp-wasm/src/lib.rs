@@ -2196,8 +2196,13 @@ impl fp_core::backend::TargetBackend for WasmBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
+    mir: &fp_core::mir::MirModule,
+        lir: Option<&fp_core::lir::LirBlob>,
     ) -> fp_core::error::Result<()> {
-        let lir = workspace.merged_lir_program(package_id)?;
+        let _ = mir;
+        let lir = lir
+            .ok_or_else(|| fp_core::error::Error::from(format!("package `{package_id}` has no compiled LIR")))?
+            .clone();
         let wasm_bytes = emit_wasm(&lir)
             .map_err(|e| fp_core::error::Error::from(format!("Failed to emit wasm: {e}")))?;
         if let Some(parent) = self.output.parent() {

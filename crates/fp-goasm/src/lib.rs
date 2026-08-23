@@ -43,8 +43,13 @@ impl fp_core::backend::TargetBackend for GoAsmEmitter {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
+    mir: &fp_core::mir::MirModule,
+        lir: Option<&fp_core::lir::LirBlob>,
     ) -> Result<()> {
-        let lir = workspace.merged_lir_program(package_id)?;
+        let _ = mir;
+        let lir = lir
+            .ok_or_else(|| fp_core::error::Error::from(format!("package `{package_id}` has no compiled LIR")))?
+            .clone();
         self.emit(lir, None)?;
         Ok(())
     }

@@ -31,7 +31,10 @@ impl fp_core::backend::TargetBackend for JvmBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
+        mir: &fp_core::mir::MirModule,
+        lir: Option<&fp_core::lir::LirBlob>,
     ) -> fp_core::error::Result<()> {
+        let _ = lir;
         // A `.class`/`.jar` file given directly as input (see
         // `fp_core::ast::ItemKind::PrecompiledArtifact`'s doc comment)
         // writes itself back out (repackaging class<->jar as the output
@@ -47,24 +50,18 @@ impl fp_core::backend::TargetBackend for JvmBackend {
             }
         }
 
-        let package = workspace.compiled_package(package_id).ok_or_else(|| {
-            fp_core::error::Error::from(format!("package `{package_id}` is unavailable"))
-        })?;
-        let package_ref = package.borrow();
-        if package_ref.mir.units.is_empty() {
+        if mir.items.is_empty() {
             return Err(fp_core::error::Error::from(format!(
                 "package `{package_id}` has no MIR program"
             )));
         }
-        let mir = package_ref.mir.flatten();
-        drop(package_ref);
 
         let class_stem = package_id.as_str();
         let jvm_options = JvmBackendOptions {
             class_name: derive_class_name(class_stem),
             emit_java_entrypoint: true,
         };
-        let program = lower_program(&mir, &jvm_options)
+        let program = lower_program(mir, &jvm_options)
             .map_err(|e| fp_core::error::Error::from(format!("MIR→JVM lowering failed: {e}")))?;
         let mut classes = emit_class_files(&program)
             .map_err(|e| fp_core::error::Error::from(format!("JVM class emission failed: {e}")))?;

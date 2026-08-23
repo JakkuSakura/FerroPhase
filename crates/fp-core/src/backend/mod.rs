@@ -188,9 +188,24 @@ pub trait TargetBackend: Send + Sync {
     fn capabilities(&self) -> crate::capabilities::LanguageCapabilities;
 
     /// Writes `package_id`'s artifact to the path fixed at construction,
-    /// reading whichever view of it the backend needs from `workspace`
-    /// (`package_source`, `merged_lir_program`, ...).
-    fn emit_package_artifact(&self, workspace: &AstProgram, package_id: &PackageId) -> Result<()>;
+    /// reading whichever view of it the backend needs — `workspace`
+    /// (`package_source`, AST-level lookups, ...) for AST-emitting
+    /// backends, `mir` (this package's own units, already flattened — see
+    /// `CompilerState::mir_module`, empty rather than absent if the
+    /// session never lowered this package to MIR) for a bytecode-shaped
+    /// backend, or `lir` (already merged across dependencies and, when
+    /// resolvable, `main`-renamed — see `lir::LirProgram::merged_blob_for_package`
+    /// and its caller in `fp-cli`) for native/asm-shaped ones. `lir` is
+    /// `None` when this session never produced LIR for `package_id` at all
+    /// (e.g. an AST-only `PipelineMode::Transpile` compile) — a backend
+    /// that actually needs LIR treats that as its own error.
+    fn emit_package_artifact(
+        &self,
+        workspace: &AstProgram,
+        package_id: &PackageId,
+        mir: &crate::mir::MirModule,
+        lir: Option<&crate::lir::LirBlob>,
+    ) -> Result<()>;
 
     /// Workspace-level side files not tied to a single package (e.g.
     /// Kotlin's `settings.gradle.kts`/`build.gradle.kts`). Default: no-op.

@@ -135,7 +135,6 @@ pub mod graph;
 pub mod provider;
 
 use crate::ast::{FunctionSignature, Item, ItemId, MethodSignature, TypeEnum, TypeStruct};
-use crate::hir::PackageId as HirPackageId;
 use crate::ast::path::QualifiedPath;
 use std::collections::{HashMap, HashSet};
 
@@ -164,9 +163,21 @@ pub struct PackageItem {
 /// `XxxPackage` (there's no separate `AstProgram` — `items` is already the
 /// AST layer's un-lowered content, with no further flattening step the way
 /// HIR/MIR/LIR each need before backends consume them).
+/// Compatibility alias for the pre-merge name — a handful of call sites
+/// across `fp-backend`/`fp-cli` still spell this type `CompiledPackage`
+/// (its name before `AstPackage` absorbed `PackageSource`); kept as a plain
+/// alias rather than renaming every one of those call sites in this change.
+pub type CompiledPackage = AstPackage;
+
 #[derive(Clone, Debug)]
 pub struct AstPackage {
     pub package_id: PackageId,
+    /// This package's identity within the HIR numbering space — distinct
+    /// from `package_id` (the source-level id a provider names it by),
+    /// minted once by `AstProgram::begin_package` and needed before any
+    /// HIR exists (used as the key into `AstProgram::hir_packages` and in
+    /// every HIR `DefId`/`HirId` this package ever mints).
+    pub hir_package_id: crate::hir::PackageId,
     pub name: String,
     pub graph: graph::PackageGraph,
 
@@ -232,6 +243,11 @@ impl AstPackage {
 
         Self {
             package_id,
+            // Overwritten by `AstProgram::begin_package` once it mints
+            // this package's real HIR-numbering identity; a fresh
+            // `AstPackage` isn't registered with any workspace yet, so
+            // there's no real id to give it here.
+            hir_package_id: crate::hir::PackageId::default(),
             name: name.into(),
             graph,
             module_paths,
@@ -301,112 +317,11 @@ pub fn split_package_into_modules(source: &AstPackage) -> Vec<PackageModule> {
         .collect()
 }
 
-/// Compiler-owned state produced by type-checking a package.
-///
-/// A compiled package is stored in the workspace so dependent packages can
-/// query its definitions without re-parsing or re-type-checking it.
-#[derive(Clone, Debug)]
-pub struct CompiledPackage {
-    /// This package's identity within the HIR numbering space — distinct
-    /// from `ast.package_id` (the source-level `PackageId` a provider
-    /// names it by), and needed before `hir_program` exists (used as the
-    /// key into `AstProgram::hir_packages` and in HIR `DefId`
-    /// construction).
-    pub package_id: HirPackageId,
-
-    /// This package's own AST/source-level content — also the source of
-    /// truth for its source-level identity (`ast.package_id`/`ast.name`/
-    /// `ast.graph`), so `CompiledPackage` doesn't duplicate them.
-    pub ast: AstPackage,
-
-    /// This package's LIR content.
-    pub lir: crate::lir::LirPackage,
-
-    /// HIR definitions published by this package. `Rc`, not owned — every
-    /// dependent package's `AstProgram::hir_definitions()` call
-    /// clones this once per package it depends on; cloning the `Rc` is
-    /// O(1), unlike cloning the whole `HirPackage` it points to (every item,
-    /// `def_map`, `def_paths`, `module_tree`) on every single call.
-    pub hir_program: Option<std::rc::Rc<crate::hir::HirPackage>>,
-
-    /// For each item in `items` (keyed by its own qualified path), the
-    /// qualified paths of every other definition it references
-    /// (`HirToAstLifter::referenced_paths_by_path`) — raw facts a target
-    /// backend can use to compute which imports it actually needs for
-    /// typed/normalized content, rather than only echoing the source
-    /// file's pre-existing `use` items. `CompilerDriver::compile_package`
-    /// already splices typed HIR back onto `items` itself (by the same
-    /// qualified-path identity), so nothing outside `fp-compiler` needs
-    /// the raw lifted map.
-    pub referenced_paths_by_path: Option<HashMap<crate::hir::DefPath, Vec<crate::hir::DefPath>>>,
-
-    /// This package's MIR content.
-    pub mir: crate::mir::MirPackage,
-
-    /// Fully-qualified HIR lookup entries exported by this package.
-    pub hir_exports: HashMap<String, crate::hir::Res>,
-}
-
-impl CompiledPackage {
-    pub fn new(
-        package_id: HirPackageId,
-        ast: AstPackage,
-        data_layout: crate::lir::LirDataLayout,
-    ) -> Self {
-        Self {
-            package_id,
-            ast,
-            lir: crate::lir::LirPackage::new(data_layout),
-            hir_program: None,
-            referenced_paths_by_path: None,
-            mir: crate::mir::MirPackage::default(),
-            hir_exports: HashMap::new(),
-        }
-    }
-
-    /// Publishes this package's HIR program, building its derived lookup
-    /// indices (`hir::HirPackage::index_derived_lookups`) in the same pass.
-    pub fn set_hir_program(&mut self, mut program: crate::hir::HirPackage) {
-        program.index_derived_lookups();
-        self.hir_program = Some(std::rc::Rc::new(program));
-    }
-}
-
-/// Builds an `AstPackage` read-back view from a compiled package — every
-/// consumer of a typechecked package (`AstProgram`, `fp-cli`'s
-/// single-package and whole-workspace typecheck paths) needs the same way:
-/// typed/normalized content is already spliced onto `package.ast.items` by
-/// `CompilerDriver::compile_package`, so there's nothing left to reconcile
-/// here beyond cloning `ast` and overlaying the HIR-derived
-/// `referenced_paths_by_path` (a different, `DefPath`-keyed shape computed
-/// later than `ast.referenced_paths`) in its place.
-pub fn package_source_from_compiled(
-    package_id: &PackageId,
-    compiled: &std::rc::Rc<std::cell::RefCell<CompiledPackage>>,
-) -> AstPackage {
-    let package = compiled.borrow();
-    let mut ast = package.ast.clone();
-    ast.package_id = package_id.clone();
-    if let Some(by_path) = package.referenced_paths_by_path.as_ref() {
-        ast.referenced_paths = by_path
-            .iter()
-            .map(|(path, refs)| {
-                let path = path.to_segments();
-                let refs = refs.iter().map(|r| r.to_segments()).collect();
-                (path, refs)
-            })
-            .collect();
-    }
-    ast
-}
-
 /// Resolves the `DefId` of the function named `function_name` anywhere in
-/// `compiled`'s published HIR — package-based, not module-based: it
-/// doesn't matter which module the function lives in, only that exactly
-/// one item in the package is named `function_name`. Pure over an
-/// already-borrowed `CompiledPackage` so both `CompilerDriver` (which owns
-/// the driver-state lookup that produces the `CompiledPackage` in the
-/// first place) and `AstProgram` (which already holds one) can
+/// `hir_package`'s items — package-based, not module-based: it doesn't
+/// matter which module the function lives in, only that exactly one item
+/// in the package is named `function_name`. Pure over an already-borrowed
+/// `hir::HirPackage` so both `CompilerDriver` and `AstProgram` callers can
 /// share this without either depending on the other. See
 /// `crate::hir::HirPackage::def_paths`'s doc comment for why `sig.name` is
 /// always the bare, local identifier and disambiguation instead relies on
@@ -423,19 +338,17 @@ pub fn package_source_from_compiled(
 /// package-wide, name-only search.
 pub fn resolve_entrypoint_def_id(
     package_id: &PackageId,
-    compiled: &CompiledPackage,
+    hir_package: &crate::hir::HirPackage,
     function_name: &str,
 ) -> crate::error::Result<crate::hir::DefId> {
-    compiled
-        .hir_program
-        .as_ref()
-        .and_then(|program| {
-            program.items.iter().find_map(|item| match &item.kind {
-                crate::hir::ItemKind::Function(function) if function.sig.name.as_str() == function_name => {
-                    Some(item.def_id)
-                }
-                _ => None,
-            })
+    hir_package
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            crate::hir::ItemKind::Function(function) if function.sig.name.as_str() == function_name => {
+                Some(item.def_id)
+            }
+            _ => None,
         })
         .ok_or_else(|| {
             crate::error::Error::from(format!(

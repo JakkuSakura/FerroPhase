@@ -528,7 +528,7 @@ impl CompilerDriver {
         // mutable, ambient `current_package()` to re-derive what the
         // caller already knows.
         let hir_package_id = package.borrow().package_id;
-        let current_package_id = package.borrow().ast.package_id.clone();
+        let current_package_id = package.borrow().package_id.clone();
         let mut package_source = package.borrow().clone();
         let macro_rules_defs =
             fp_lang::collect_macro_rules_defs(package_source.ast.items.iter().map(|item| &item.item));
@@ -556,7 +556,8 @@ impl CompilerDriver {
                 // sets it, matching this field's prior behavior exactly.
                 capabilities: self.state.borrow().backend_capabilities(),
             })
-            .with_workspace(self.state.borrow().workspace.clone());
+            .with_workspace(self.state.borrow().workspace.clone())
+            .with_hir_program(std::rc::Rc::new(self.state.borrow().hir_program().clone()));
         let hir_program = generator.transform_package(&package_source)?;
         self.next_hir_def_id = self.next_hir_def_id.max(generator.next_def_id_value());
         let package_exports = generator.exported_symbols();
@@ -593,25 +594,11 @@ impl CompilerDriver {
         ));
         self.state.borrow_mut().insert_hir(hir_id.clone(), hir_program);
         self.state.borrow_mut().insert_hir_typeck(hir_id.clone(), typeck_results);
-        if let Some(package) = self
-            .state.borrow()
-            .workspace
-            .compiled_package(&current_package_id)
-        {
-            package
-                .borrow_mut()
-                .set_hir_program(self.state.borrow().hir(&hir_id)?.clone());
-            // Fold this package's own HIR into the workspace's persistent
-            // `hir::HirProgram` (see `publish_hir_program`'s doc comment) —
-            // an `Rc` clone of what `set_hir_program` just stored, not
-            // another deep clone.
-            if let Some(hir_program) = package.borrow().hir_program.clone() {
-                self.state
-                    .borrow()
-                    .workspace
-                    .publish_hir_program(hir_program);
-            }
-        }
+        // No separate publish step needed: `CompilerState.hir_program` (just
+        // written above, via `insert_hir`) is now the sole, canonical home
+        // for this package's HIR — every cross-package lookup reads it
+        // directly (`CompilerState::hir_program()`), rather than a copy
+        // staged on `AstPackage`/`AstProgram`.
 
         // Transpile: lift typed HIR back to AST — this is what
         // the Kotlin backend actually reads, and doesn't depend on
@@ -638,7 +625,7 @@ impl CompilerDriver {
                 let lifter = fp_backend::transforms::HirToAstLifter::new(
                     hir,
                     typeck,
-                    Some(state.workspace.as_ref()),
+                    Some(state.hir_program()),
                 );
                 // `lift_items_by_path` treats an `impl` block as an opaque
                 // placeholder — merge in each impl *method*'s own lifted
@@ -868,7 +855,7 @@ impl CompilerDriver {
         &mut self,
         package: &Rc<RefCell<fp_core::ast::package::CompiledPackage>>,
     ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
-        let package_id = package.borrow().ast.package_id.clone();
+        let package_id = package.borrow().package_id.clone();
         let hir_package_id = package.borrow().package_id;
         let module_path = QualifiedPath::new(Vec::new());
         let hir_id = HirId::new(format!(
@@ -1050,7 +1037,7 @@ impl CompilerDriver {
             .borrow()
             .workspace
             .compiled_package_for_def(request.def_id)
-            .map(|package| package.borrow().ast.package_id.clone())
+            .map(|package| package.borrow().package_id.clone())
             .ok_or_else(|| {
                 CompilerDriverError::UnresolvablePackage(format!(
                     "no compiled package owns comptime request {:?}",
@@ -1512,7 +1499,7 @@ impl CompilerDriver {
             .borrow()
             .workspace
             .compiled_package_for_def(request.def_id)
-            .map(|package| package.borrow().ast.package_id.clone())
+            .map(|package| package.borrow().package_id.clone())
             .ok_or_else(|| {
                 CompilerDriverError::UnresolvablePackage(format!(
                     "no compiled package owns comptime request {:?}",

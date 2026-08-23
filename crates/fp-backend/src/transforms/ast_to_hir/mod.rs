@@ -159,6 +159,11 @@ pub struct HirGenerator {
     lowering_config: HirLoweringConfig,
     intrinsic_normalizer: Option<Box<dyn IntrinsicNormalizer>>,
     workspace: Option<std::rc::Rc<fp_core::ast::program::AstProgram>>,
+    /// Every already-published dependency package's own HIR, for
+    /// cross-package name/export resolution (`hir::HirProgram::find_export*`/
+    /// `hir_definitions`) — separate from `workspace` (AST-only data) since
+    /// `AstProgram` no longer carries HIR content itself.
+    hir_program: Option<std::rc::Rc<fp_core::hir::HirProgram>>,
     /// `impl` items whose self-type didn't resolve on a *tolerant*
     /// `predeclare_items` pass because the name is only reachable through
     /// an import that hadn't been processed yet — see `transform_package`,
@@ -670,6 +675,7 @@ impl HirGenerator {
             lowering_config: HirLoweringConfig::default(),
             intrinsic_normalizer: None,
             workspace: None,
+            hir_program: None,
             pending_impls: Vec::new(),
             resolved_import_aliases: HashSet::new(),
         }
@@ -700,6 +706,13 @@ impl HirGenerator {
         workspace: std::rc::Rc<fp_core::ast::program::AstProgram>,
     ) -> Self {
         self.workspace = Some(workspace);
+        self
+    }
+
+    /// Every already-published dependency package's own HIR — see
+    /// `hir_program`'s doc comment.
+    pub fn with_hir_program(mut self, hir_program: std::rc::Rc<fp_core::hir::HirProgram>) -> Self {
+        self.hir_program = Some(hir_program);
         self
     }
 
@@ -1182,8 +1195,8 @@ impl HirGenerator {
         // `hir_definitions()` returns) is where those actually surface;
         // scan it the same way, merging in rather than overwriting what's
         // already collected above.
-        if let Some(ref workspace) = self.workspace {
-            for (_module_path, _hir_program, exports) in workspace.hir_definitions() {
+        if let Some(ref hir_program) = self.hir_program {
+            for (_module_path, _hir_package, exports) in hir_program.hir_definitions() {
                 for (key, res) in &exports {
                     let Some(name) = prelude_bare_name(key) else {
                         continue;
@@ -1242,10 +1255,10 @@ impl HirGenerator {
     /// this is the only mechanism that makes cross-package references work
     /// at all.
     fn seed_workspace_definitions(&mut self, program: &mut hir::HirPackage) {
-        let Some(ref workspace) = self.workspace else {
+        let Some(ref hir_program) = self.hir_program else {
             return;
         };
-        for (_module_path, hir_program, _exports) in workspace.hir_definitions() {
+        for (_module_path, hir_program, _exports) in hir_program.hir_definitions() {
             // Deliberately *not* pushed into `program.items` — that would
             // duplicate every dependency's struct/enum into this package's
             // own output/lifted AST regardless of whether anything here
@@ -1697,12 +1710,12 @@ impl HirGenerator {
             // Cross-package export (e.g. `libc::char`), looked up lazily
             // against the workspace on a local-lookup miss — see
             // `lookup_global_res`'s identical fallback.
-            .or_else(|| self.workspace.as_ref()?.find_export(&qualified))
-            .or_else(|| self.workspace.as_ref()?.find_export(name))
+            .or_else(|| self.hir_program.as_ref()?.find_export(&qualified))
+            .or_else(|| self.hir_program.as_ref()?.find_export(name))
             // Bare name, defining package unknown (e.g. `Option` really
             // lives at `core::option::Option` in real std) — fall back
             // to a suffix scan across every package's exports.
-            .or_else(|| self.workspace.as_ref()?.find_export_by_name(name))
+            .or_else(|| self.hir_program.as_ref()?.find_export_by_name(name))
     }
 
     fn resolve_type_symbol(&self, name: &str) -> Option<hir::Res> {
@@ -1727,8 +1740,8 @@ impl HirGenerator {
         if let Some(op) = self.package.op_defs.get(&def_id).cloned() {
             return Some(op);
         }
-        let workspace = self.workspace.as_ref()?;
-        for (_module_path, hir_program, _exports) in workspace.hir_definitions() {
+        let hir_program = self.hir_program.as_ref()?;
+        for (_module_path, hir_program, _exports) in hir_program.hir_definitions() {
             if let Some(op) = hir_program.op_defs.get(&def_id).cloned() {
                 return Some(op);
             }
@@ -1753,9 +1766,9 @@ impl HirGenerator {
                     .cloned()
             })
             .or_else(|| self.lookup_symbol(name, hir::Namespace::Value))
-            .or_else(|| self.workspace.as_ref()?.find_export(&qualified))
-            .or_else(|| self.workspace.as_ref()?.find_export(name))
-            .or_else(|| self.workspace.as_ref()?.find_export_by_name(name))
+            .or_else(|| self.hir_program.as_ref()?.find_export(&qualified))
+            .or_else(|| self.hir_program.as_ref()?.find_export(name))
+            .or_else(|| self.hir_program.as_ref()?.find_export_by_name(name))
     }
 
     fn push_value_scope(&mut self) {
@@ -1912,7 +1925,7 @@ impl HirGenerator {
             return result;
         };
         for package in workspace.crates().values() {
-            for package_item in &package.borrow().ast.items {
+            for package_item in &package.borrow().items {
                 if let ItemKind::DefStruct(def) = package_item.item.kind() {
                     let fields = def
                         .value
@@ -1929,7 +1942,7 @@ impl HirGenerator {
 
     pub fn transform_package(
         &mut self,
-        package: &fp_core::ast::package::CompiledPackage,
+        package: &fp_core::ast::package::AstPackage,
     ) -> Result<hir::HirPackage> {
         self.reset_file_context("<package>");
         self.prepare_lowering_state();
@@ -1947,7 +1960,7 @@ impl HirGenerator {
         // relies on (a sub-crate root, e.g. `"core"`/`"std"` under the
         // vendored real Rust `std` package, is just a child of the
         // package-root node — no separate table needed).
-        for path in &package.ast.module_paths {
+        for path in &package.module_paths {
             self.package.module_tree.ensure_module(path);
         }
 
@@ -1959,7 +1972,7 @@ impl HirGenerator {
         // `__ClosureN`/`__closureN_call` items are synthetic and not tied to
         // any one source module, so they're scoped to the package root.
         let mut lowered_items: Vec<ast::Item> =
-            package.ast.items.iter().map(|pi| pi.item.clone()).collect();
+            package.items.iter().map(|pi| pi.item.clone()).collect();
         let original_len = lowered_items.len();
         // A closure argument's receiver (e.g. `node.stats` in
         // `node.stats.as_ref().map_or(..)`) is frequently a struct defined
@@ -1986,7 +1999,7 @@ impl HirGenerator {
                 let path = if i < generated_count {
                     root_path.clone()
                 } else {
-                    package.ast.items[i - generated_count].module_path.clone()
+                    package.items[i - generated_count].module_path.clone()
                 };
                 fp_core::ast::package::PackageItem { module_path: path, item }
             })
@@ -2087,7 +2100,7 @@ impl HirGenerator {
     /// Whatever's left unresolved after the fixed point is left as-is,
     /// exactly like today's single-sweep behavior — not a new error
     /// surface, genuinely-unresolvable imports behave the same as before.
-    fn resolve_pending_imports(&mut self, package: &fp_core::ast::package::CompiledPackage) -> Result<()> {
+    fn resolve_pending_imports(&mut self, package: &fp_core::ast::package::AstPackage) -> Result<()> {
         let mut pending: Vec<(
             fp_core::ast::path::QualifiedPath,
             ImportBinding,
@@ -2131,7 +2144,7 @@ impl HirGenerator {
             }
             Ok(())
         }
-        for package_item in &package.ast.items {
+        for package_item in &package.items {
             collect_pending_imports_recursive(
                 self,
                 &package_item.module_path,

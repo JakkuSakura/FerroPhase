@@ -37,7 +37,7 @@ pub struct HirToAstLifter<'a> {
     /// `AstProgram::find_hir_enum_for_variant`, consulted by
     /// `lift_path`) — `None` for the roundtrip/test call sites that never
     /// go through a real multi-package workspace.
-    workspace: Option<&'a fp_core::ast::program::AstProgram>,
+    hir_program: Option<&'a hir::HirProgram>,
     /// Target-language (Kotlin, ...) lexical scopes currently open during a
     /// lift, one frame per emitted block — tracks which surface names have
     /// already been declared directly in that block (not nested ones),
@@ -72,12 +72,12 @@ impl<'a> HirToAstLifter<'a> {
     pub fn new(
         program: &'a hir::HirPackage,
         typeck: Option<&'a PackageTypes>,
-        workspace: Option<&'a fp_core::ast::program::AstProgram>,
+        hir_program: Option<&'a hir::HirProgram>,
     ) -> Self {
         Self {
             program,
             typeck,
-            workspace,
+            hir_program,
             scope_names: RefCell::new(Vec::new()),
             renamed_locals: RefCell::new(HashMap::new()),
             resolved_expr_types: RefCell::new(HashMap::new()),
@@ -1543,8 +1543,8 @@ impl<'a> HirToAstLifter<'a> {
                 .unwrap_or(false);
             if !is_monadic_wrapper {
                 if let Some(enum_name) = self
-                    .workspace
-                    .and_then(|w| w.find_hir_enum_for_variant(*def_id))
+                    .hir_program
+                    .and_then(|hir_program| hir_program.find_hir_enum_for_variant(*def_id))
                 {
                     if let Some(variant_name) = path.segments.last() {
                         return Path::plain(vec![

@@ -197,6 +197,15 @@ impl CompilerState {
         &self.lir_program
     }
 
+    /// The whole session's `hir::HirProgram` — used by callers
+    /// (`HirToAstLifter`, `HirGenerator::with_hir_program`) that need
+    /// cross-package HIR lookups (`find_export`, `find_hir_impl_method`,
+    /// `find_hir_enum_for_variant`, ...), now that `AstProgram` no longer
+    /// carries HIR content itself.
+    pub fn hir_program(&self) -> &hir::HirProgram {
+        &self.hir_program
+    }
+
     /// Records the one renamed entrypoint function `select_entrypoint`
     /// produced — a single `LirCodeUnit`, not a whole duplicated `LirBlob`:
     /// every other function the entrypoint might call already lives in

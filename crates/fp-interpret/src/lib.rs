@@ -2771,8 +2771,13 @@ impl fp_core::backend::TargetBackend for InterpreterBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &PackageId,
+        mir: &fp_core::mir::MirModule,
+        lir: Option<&fp_core::lir::LirBlob>,
     ) -> fp_core::error::Result<()> {
-        let lir = workspace.merged_lir_program(package_id)?;
+        let _ = mir;
+        let lir = lir
+            .ok_or_else(|| fp_core::error::Error::from(format!("package `{package_id}` has no compiled LIR")))?
+            .clone();
         let mut interpreter = LirInterpreter::new();
         let value = interpreter
             .run_main_with_package(&lir, package_id.clone())

@@ -411,8 +411,33 @@ async fn run_compile_pipeline(
         // Any op materialization the backend needs (e.g. Kotlin's
         // portable-op -> Kotlin-idiom pass) happens inside
         // emit_package_artifact itself, not here.
+        let mir_module = session.driver().state.borrow().mir_module(package_id);
+        let lir_blob = {
+            let state = session.driver().state.borrow();
+            state.lir_program().merged_blob_for_package(package_id).ok()
+        }
+        .map(|mut blob| {
+            // Best-effort: resolve and rename `package_id`'s `main` to the
+            // bare symbol name native/asm emitters look for (see
+            // `fp_core::ast::package::resolve_entrypoint_def_id`/
+            // `rename_lir_function`'s own doc comments) — silently left
+            // unrenamed if `package_id` has no `main` (e.g. a library).
+            if let Some(ast_package) = workspace.compiled_package(package_id) {
+                let hir_package_id = ast_package.borrow().hir_package_id;
+                if let Ok(hir_package) = session.driver().state.borrow().hir(hir_package_id) {
+                    if let Ok(def_id) = fp_core::ast::package::resolve_entrypoint_def_id(
+                        package_id,
+                        &hir_package,
+                        "main",
+                    ) {
+                        fp_core::ast::package::rename_lir_function(&mut blob, def_id, "main");
+                    }
+                }
+            }
+            blob
+        });
         backend
-            .emit_package_artifact(&workspace, package_id)
+            .emit_package_artifact(&workspace, package_id, &mir_module, lir_blob.as_ref())
             .map_err(|e| CliError::Compilation(e.to_string()))?;
     }
 

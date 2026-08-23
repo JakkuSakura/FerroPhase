@@ -30,19 +30,16 @@ impl fp_core::backend::TargetBackend for BytecodeBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
+        mir: &fp_core::mir::MirModule,
+        lir: Option<&fp_core::lir::LirBlob>,
     ) -> fp_core::error::Result<()> {
-        let package = workspace.compiled_package(package_id).ok_or_else(|| {
-            fp_core::error::Error::from(format!("package `{package_id}` is unavailable"))
-        })?;
-        let package_ref = package.borrow();
-        if package_ref.mir.units.is_empty() {
+        let _ = (workspace, lir);
+        if mir.items.is_empty() {
             return Err(fp_core::error::Error::from(format!(
                 "package `{package_id}` has no MIR program"
             )));
         }
-        let mir = package_ref.mir.flatten();
-        drop(package_ref);
-        let bytecode = fp_bytecode::lower_program(&mir)
+        let bytecode = fp_bytecode::lower_program(mir)
             .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
 
         if let Some(parent) = self.output.parent() {
