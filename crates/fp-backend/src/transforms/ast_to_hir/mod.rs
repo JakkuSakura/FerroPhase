@@ -203,6 +203,16 @@ pub struct AstToHirLowerer {
     /// an import that hadn't been processed yet — see `transform_package`,
     /// which retries these once imports are resolved.
     pending_impls: Vec<(fp_core::ast::path::QualifiedPath, ast::Item)>,
+    /// Same idea as `pending_impls`, for a transparent type alias
+    /// (`type Result = result::Result<(), Error>;`) whose RHS names a
+    /// module-qualified path (`result::Result`) that isn't reachable yet
+    /// on a tolerant `predeclare_items` pass because the `use` bringing
+    /// that module into scope hasn't been processed. Eagerly resolving
+    /// the RHS here (`transform_type_to_hir`) runs during STEP 1,
+    /// strictly before STEP 2's import resolution — see
+    /// `transform_package`'s own step comments — so this defers exactly
+    /// the same way `pending_impls` does, retried once imports exist.
+    pending_type_aliases: Vec<(fp_core::ast::path::QualifiedPath, ast::Item)>,
     /// `(module_path, alias)` pairs already registered by
     /// `register_import_binding`, so re-running it (e.g. `append_item`'s
     /// own `ItemKind::Import` handling, after `transform_package`'s
@@ -750,6 +760,7 @@ impl AstToHirLowerer {
             workspace: None,
             hir_program: None,
             pending_impls: Vec::new(),
+            pending_type_aliases: Vec::new(),
             resolved_import_aliases: HashSet::new(),
         }
     }
@@ -1178,6 +1189,7 @@ impl AstToHirLowerer {
         self.synthetic_items.clear();
         self.package.module_tree = hir::resolve::ModuleTree::new();
         self.pending_impls.clear();
+        self.pending_type_aliases.clear();
         self.resolved_import_aliases.clear();
         // Keep predeclared struct fields available for struct update lowering.
     }
@@ -1576,10 +1588,30 @@ impl AstToHirLowerer {
                         // exactly like a materializing alias's would), and
                         // record its already-lowered target `TypeExpr` so
                         // `path_ty` can expand it in place at every use.
-                        let def_id = self.allocate_def_id_for_item(item);
-                        self.register_type_def(&def_type.name.name, def_id.clone(), &def_type.visibility);
-                        let target = self.transform_type_to_hir(&def_type.value)?;
-                        self.package.type_alias_targets.insert(def_id, target);
+                        //
+                        // Same timing hazard as `ItemKind::Impl` below: a
+                        // module-qualified RHS (`type Result = result::
+                        // Result<(), Error>;`) needs `result` already
+                        // resolved as an import, but this whole method
+                        // (STEP 1) runs strictly before STEP 2's import
+                        // resolution — so defer exactly the same way,
+                        // checked non-mutating before the first mutation.
+                        let defer = tolerant
+                            && type_alias_rhs_first_segment_name(&def_type.value)
+                                .map(|name| {
+                                    self.resolve_type_symbol(name).is_none()
+                                        && !is_primitive_type_name(name)
+                                })
+                                .unwrap_or(false);
+                        if defer {
+                            self.pending_type_aliases
+                                .push((self.module_path.clone(), item.clone()));
+                        } else {
+                            let def_id = self.allocate_def_id_for_item(item);
+                            self.register_type_def(&def_type.name.name, def_id.clone(), &def_type.visibility);
+                            let target = self.transform_type_to_hir(&def_type.value)?;
+                            self.package.type_alias_targets.insert(def_id, target);
+                        }
                     }
                 }
                 ItemKind::Impl(_) => {
@@ -1830,7 +1862,49 @@ impl AstToHirLowerer {
             // Bare name, defining package unknown (e.g. `Option` really
             // lives at `core::option::Option` in real std) — fall back
             // to a suffix scan across every package's exports.
-            .or_else(|| self.hir_program.as_ref()?.find_export_by_name(name))
+            .or_else(|| self.resolve_ambiguous_type_export_by_name(name))
+    }
+
+    /// The disambiguating counterpart of `HirProgram::find_export_by_name`
+    /// for the type namespace: real vendored std reaches this tier for
+    /// `Result` with FOUR same-last-segment candidates in scope — the real
+    /// `enum Result<T, E>` (`core::result::Result`) plus three transparent
+    /// type aliases (`fmt::Result`, `io::Result`, `thread::Result`) that
+    /// just narrow its error type for their own module's convenience.
+    /// `find_export_by_name`'s plain "first `HashMap` hit wins" has no way
+    /// to prefer the real enum over an alias, so whichever export a given
+    /// package's `hir_exports` iteration order happens to surface first
+    /// silently wins — every value actually typed as an alias then
+    /// degrades to `{error}` wherever the real two-parameter enum was
+    /// needed instead, which is the majority of std. Fixed here, once,
+    /// where type-namespace resolution actually happens, rather than by
+    /// teaching `HirProgram` itself an ambiguity-resolution policy that
+    /// would apply (likely wrongly) to every other caller too.
+    fn resolve_ambiguous_type_export_by_name(&self, name: &str) -> Option<hir::Res> {
+        let hir_program = self.hir_program.as_ref()?;
+        let mut candidates: Vec<(String, hir::Res)> = hir_program
+            .hir_definitions()
+            .into_iter()
+            .flat_map(|(_module_path, _package, exports)| exports.into_iter())
+            .filter(|(key, _)| key.rsplit("::").next().unwrap_or(key.as_str()) == name)
+            .collect();
+        candidates.sort_by(|(a, _), (b, _)| a.cmp(b));
+        candidates.into_iter().min_by_key(|(_, res)| {
+            let hir::Res::Def(def_id) = res else {
+                // Non-`Def` resolutions (a module, a local, ...) have no
+                // alias/depth to compare — treat as maximally preferred
+                // among themselves via stable key order alone.
+                return (0usize, 0usize);
+            };
+            // A transparent alias (`type Result<T> = result::Result<T, Error>;`)
+            // ranks behind a real nominal declaration (`enum Result`).
+            let is_alias = hir_program.type_alias_target(def_id.clone()).is_some() as usize;
+            let depth = hir_program
+                .def_path(def_id.clone())
+                .map(|path| path.segments.len())
+                .unwrap_or(usize::MAX);
+            (is_alias, depth)
+        }).map(|(_, res)| res)
     }
 
     fn resolve_type_symbol(&self, name: &str) -> Option<hir::Res> {
@@ -2157,6 +2231,13 @@ impl AstToHirLowerer {
         // anything that still fails here is a genuine error, not a
         // forward-reference timing issue.
         for (module_path, item) in std::mem::take(&mut self.pending_impls) {
+            self.with_module_scope(&module_path, |this| {
+                this.predeclare_items(std::slice::from_ref(&item), false)
+            })?;
+        }
+        // Same retry for a type alias whose module-qualified RHS
+        // (`type Result = result::Result<(), Error>;`) was deferred above.
+        for (module_path, item) in std::mem::take(&mut self.pending_type_aliases) {
             self.with_module_scope(&module_path, |this| {
                 this.predeclare_items(std::slice::from_ref(&item), false)
             })?;
@@ -4571,6 +4652,18 @@ fn is_primitive_type_name(name: &str) -> bool {
 /// `self::Foo`, `super::Foo`) and non-name self-types (blanket
 /// `impl<T> Trait for T`) all return `None` — those are never deferred,
 /// they fall straight through to today's immediate resolution/failure.
+/// Same idea as `self_type_first_segment_name`, for a type alias's RHS
+/// (`ast::Ty`, not `ast::Expr`) — `result::Result<(), Error>` and similar
+/// module-qualified type references lower to `Ty::Expr(Name::Path(..))`
+/// (see `comptime_type_alias_rhs`'s doc comment for the same shape used
+/// elsewhere), so this just unwraps that one layer and delegates.
+fn type_alias_rhs_first_segment_name(ty: &ast::Ty) -> Option<&str> {
+    match ty {
+        ast::Ty::Expr(expr) => self_type_first_segment_name(expr),
+        _ => None,
+    }
+}
+
 fn self_type_first_segment_name(self_ty: &ast::Expr) -> Option<&str> {
     let ast::ExprKind::Name(name) = self_ty.kind() else {
         return None;
