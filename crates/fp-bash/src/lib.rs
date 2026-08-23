@@ -1,10 +1,10 @@
 use fp_core::ast::{
     Abi, AttrMeta, AttributesExt, BlockStmt, Expr, ExprBlock, ExprInvokeTarget, ExprKind,
     ExprMatch, ExprStringTemplate, ExprTry, File, FormatArgRef, FormatTemplatePart,
-    ItemDeclFunction, ItemDefFunction, ItemKind, Pattern, PatternKind, Ty, Value,
+    ItemDeclFunction, ItemDefFunction, ItemKind, Name, Pattern, PatternKind, Ty, Value,
 };
 use fp_core::intrinsics::CallKind;
-use fp_core::ops::BinOpKind;
+use fp_core::ops::{BinOpKind, UnOpKind};
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 
@@ -185,12 +185,39 @@ impl<'a> BashRenderer<'a> {
         self.externs = extern_decl_map(file.items.iter(), ScriptTarget::Bash)?;
         for item in &file.items {
             match item.kind() {
-                ItemKind::DefFunction(def) => self.render_function(def)?,
+                ItemKind::DefFunction(def) => self.render_function_or_stub(def),
                 ItemKind::Expr(expr) => self.render_expr_statement(expr, 0)?,
                 _ => {}
             }
         }
         Ok(())
+    }
+
+    /// The full FerroPhase std library is spliced into every compile
+    /// unconditionally (`fp-shell`'s `merge_runtime_helpers`), so a
+    /// function this renderer has no hope of ever supporting (closures as
+    /// struct fields, `catch_unwind`, a benchmark harness — none of which
+    /// bash can express) can show up here even though the actual script
+    /// never calls it. Mirrors `fp-kotlin`'s own `emit_stub_body`
+    /// fallback: an unrenderable body becomes a function that fails
+    /// loudly *if actually invoked*, rather than one unsupported std
+    /// internal aborting the whole compile.
+    fn render_function_or_stub(&mut self, def: &ItemDefFunction) {
+        let checkpoint = self.lines.len();
+        if self.render_function(def).is_ok() {
+            return;
+        }
+        self.lines.truncate(checkpoint);
+        self.push_line(0, &format!("{}() {{", def.name));
+        self.push_line(
+            1,
+            &format!(
+                "echo 'fp: {} is not supported by the bash target' >&2; exit 1",
+                def.name
+            ),
+        );
+        self.push_line(0, "}");
+        self.push_line(0, "");
     }
 
     fn render_function(&mut self, def: &ItemDefFunction) -> Result<(), String> {
@@ -276,11 +303,19 @@ impl<'a> BashRenderer<'a> {
         match statement {
             BlockStmt::Expr(expr) => self.render_expr_statement(&expr.expr, indent),
             BlockStmt::Let(stmt) => {
-                let Some(name) = stmt.pat.as_ident() else {
-                    return Err("bash renderer only supports identifier let bindings".to_string());
-                };
                 let Some(init) = &stmt.init else {
                     return Ok(());
+                };
+                // `let _ = expr;` discards its binding entirely (used in std
+                // bodies to silence "unused parameter" warnings without a
+                // named local) — there's nothing to bind, so just emit the
+                // initializer for its side effects the same way a bare
+                // expression-statement would.
+                if matches!(stmt.pat.kind(), PatternKind::Wildcard(_)) {
+                    return self.render_expr_statement(init, indent);
+                }
+                let Some(name) = stmt.pat.as_ident() else {
+                    return Err("bash renderer only supports identifier let bindings".to_string());
                 };
                 let value = self.render_expr_as_value(init)?;
                 self.push_line(indent, &format!("local {}={}", name, value));
@@ -477,6 +512,9 @@ impl<'a> BashRenderer<'a> {
                 self.render_call(ident.as_str(), &invoke.args)
             }
             ExprKind::Paren(paren) => self.render_condition(&paren.expr),
+            ExprKind::UnOp(un_op) if un_op.op == UnOpKind::Not => {
+                Ok(format!("! {}", self.render_condition(&un_op.val)?))
+            }
             _ => Ok(format!("[[ {} == 'true' ]]", self.render_word(expr)?)),
         }
     }
@@ -531,6 +569,23 @@ impl<'a> BashRenderer<'a> {
                 ))
             }
             ExprKind::Paren(paren) => self.render_int(&paren.expr),
+            // bash has no distinct integer widths/types to cast between —
+            // every arithmetic value already lives in `$(( ))`/`${}` as a
+            // plain shell integer, so a numeric cast is a no-op at this
+            // layer; just render the operand.
+            ExprKind::Cast(cast) => self.render_int(&cast.expr),
+            ExprKind::Invoke(invoke) => {
+                let ExprInvokeTarget::Function(name) = &invoke.target else {
+                    return Err(
+                        "bash int expression only supports function invocation targets"
+                            .to_string(),
+                    );
+                };
+                let ident = name.as_ident().ok_or_else(|| {
+                    "bash int expression only supports identifier invocation targets".to_string()
+                })?;
+                Ok(format!("$({})", self.render_call(ident.as_str(), &invoke.args)?))
+            }
             _ => Err("expected int expression".to_string()),
         }
     }
@@ -550,6 +605,9 @@ impl<'a> BashRenderer<'a> {
                 kind: ExprKind::Name(name),
                 ..
             } => {
+                if is_option_none_name(name) {
+                    return Ok(shell_arg_quote(""));
+                }
                 let ident = name.as_ident().ok_or_else(|| {
                     "bash string expression only supports identifier names".to_string()
                 })?;
@@ -1096,6 +1154,18 @@ finally {{
             _ => Err("bash renderer only supports string-list for iterables".to_string()),
         }
     }
+}
+
+/// bash/PowerShell model `Option<T>` as "empty string means absent" — there's
+/// no null of their own. A bare `None`/`Option::None` reference (any
+/// qualification depth: `None`, `Option::None`, `std::option::Option::None`,
+/// ...) is therefore just the empty-string sentinel value. This mirrors what
+/// the now-retired `Transpile`-mode `FerroIntrinsicNormalizer::normalize_expr`
+/// used to do pre-typecheck (rewriting a bare `None` into `Value::Null`),
+/// except it runs at render time and matches on the resolved name's last
+/// path segment so a fully qualified reference is recognized too.
+fn is_option_none_name(name: &Name) -> bool {
+    matches!(name.to_path().segments.last(), Some(last) if last.as_str() == "None")
 }
 
 fn extract_match_case_string(pattern: &fp_core::ast::Pattern) -> Option<Expr> {

@@ -1,10 +1,10 @@
 use fp_core::ast::{
     Abi, AttrMeta, AttributesExt, BlockStmt, Expr, ExprBlock, ExprInvokeTarget, ExprKind,
     ExprMatch, ExprStringTemplate, ExprTry, File, FormatArgRef, FormatTemplatePart,
-    ItemDeclFunction, ItemDefFunction, ItemKind, Pattern, PatternKind, Ty, Value,
+    ItemDeclFunction, ItemDefFunction, ItemKind, Name, Pattern, PatternKind, Ty, Value,
 };
 use fp_core::intrinsics::CallKind;
-use fp_core::ops::BinOpKind;
+use fp_core::ops::{BinOpKind, UnOpKind};
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 
@@ -107,12 +107,39 @@ impl<'a> PowerShellRenderer<'a> {
         self.externs = extern_decl_map(file.items.iter(), ScriptTarget::PowerShell)?;
         for item in &file.items {
             match item.kind() {
-                ItemKind::DefFunction(def) => self.render_function(def)?,
+                ItemKind::DefFunction(def) => self.render_function_or_stub(def),
                 ItemKind::Expr(expr) => self.render_expr_statement(expr, 0)?,
                 _ => {}
             }
         }
         Ok(())
+    }
+
+    /// The full FerroPhase std library is spliced into every compile
+    /// unconditionally (`fp-shell`'s `merge_runtime_helpers`), so a
+    /// function this renderer has no hope of ever supporting (closures as
+    /// struct fields, `catch_unwind`, a benchmark harness — none of which
+    /// PowerShell can express here) can show up even though the actual
+    /// script never calls it. Mirrors `fp-kotlin`'s own `emit_stub_body`
+    /// fallback: an unrenderable body becomes a function that fails
+    /// loudly *if actually invoked*, rather than one unsupported std
+    /// internal aborting the whole compile.
+    fn render_function_or_stub(&mut self, def: &ItemDefFunction) {
+        let checkpoint = self.lines.len();
+        if self.render_function(def).is_ok() {
+            return;
+        }
+        self.lines.truncate(checkpoint);
+        self.push_line(0, &format!("function {} {{", def.name));
+        self.push_line(
+            1,
+            &format!(
+                "Write-Error 'fp: {} is not supported by the PowerShell target'; exit 1",
+                def.name
+            ),
+        );
+        self.push_line(0, "}");
+        self.push_line(0, "");
     }
 
     fn render_function(&mut self, def: &ItemDefFunction) -> Result<(), String> {
@@ -334,13 +361,20 @@ impl<'a> PowerShellRenderer<'a> {
         match statement {
             BlockStmt::Expr(expr) => self.render_expr_statement(&expr.expr, indent),
             BlockStmt::Let(stmt) => {
+                let Some(init) = &stmt.init else {
+                    return Ok(());
+                };
+                // `let _ = expr;` discards its binding entirely (used in std
+                // bodies to silence "unused parameter" warnings without a
+                // named local) — evaluate it for side effects only, the
+                // same way a bare expression-statement would.
+                if matches!(stmt.pat.kind(), PatternKind::Wildcard(_)) {
+                    return self.render_expr_statement(init, indent);
+                }
                 let Some(name) = stmt.pat.as_ident() else {
                     return Err(
                         "powershell renderer only supports identifier let bindings".to_string()
                     );
-                };
-                let Some(init) = &stmt.init else {
-                    return Ok(());
                 };
                 let value = self.render_expr_as_value(init)?;
                 self.push_line(indent, &format!("${} = {}", name, value));
@@ -537,6 +571,9 @@ impl<'a> PowerShellRenderer<'a> {
                 self.render_call(name, &invoke.args)
             }
             ExprKind::Paren(paren) => self.render_condition(&paren.expr),
+            ExprKind::UnOp(un_op) if un_op.op == UnOpKind::Not => {
+                Ok(format!("-not ({})", self.render_condition(&un_op.val)?))
+            }
             _ => Ok(format!("({} -eq 'true')", self.render_word(expr)?)),
         }
     }
@@ -590,6 +627,14 @@ impl<'a> PowerShellRenderer<'a> {
                 ))
             }
             ExprKind::Paren(paren) => self.render_int(&paren.expr),
+            // PowerShell has no distinct integer widths to cast between —
+            // a numeric cast is a no-op at this layer; just render the
+            // operand.
+            ExprKind::Cast(cast) => self.render_int(&cast.expr),
+            ExprKind::Invoke(invoke) => {
+                let name = invoke_function_name(invoke)?;
+                Ok(format!("$({})", self.render_call(name, &invoke.args)?))
+            }
             _ => Err("expected int expression".to_string()),
         }
     }
@@ -603,6 +648,13 @@ impl<'a> PowerShellRenderer<'a> {
                 _ => Err("unsupported powershell value expression".to_string()),
             },
             ExprKind::Name(name) => {
+                // PowerShell has no null-model distinction here either —
+                // `Option<T>` is modeled as "empty string means absent",
+                // same convention as the bash target (see
+                // `is_option_none_name` there for the rationale).
+                if is_option_none_name(name) {
+                    return Ok(ps_string(""));
+                }
                 let ident = name.as_ident().ok_or_else(|| {
                     "powershell string expression only supports identifier names".to_string()
                 })?;
@@ -1019,6 +1071,13 @@ impl<'a> PowerShellRenderer<'a> {
             _ => Err("unsupported powershell command fragment".to_string()),
         }
     }
+}
+
+/// A bare `None`/`Option::None` reference (any qualification depth) is
+/// just the empty-string sentinel — see the bash target's identical
+/// helper for the full rationale.
+fn is_option_none_name(name: &Name) -> bool {
+    matches!(name.to_path().segments.last(), Some(last) if last.as_str() == "None")
 }
 
 fn extract_match_case_string(pattern: &fp_core::ast::Pattern) -> Option<Expr> {
