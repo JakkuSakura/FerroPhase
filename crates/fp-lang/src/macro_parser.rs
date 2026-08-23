@@ -424,7 +424,20 @@ fn consume_fragment(
             Some(MacroTokenTree::Group(g)) if g.delimiter == MacroDelimiter::Brace => Some(1),
             _ => None,
         },
+        // Real Rust grammar for this fragment specifier is `-?literal` —
+        // a negative numeric literal (`Min = -128,`, common in exactly
+        // this shape of const-table macro) tokenizes as a separate `-`
+        // symbol token followed by the digits, never a single fused
+        // token, so consuming just 1 token here would bind `$Min` to the
+        // bare `-` and leave the digits to desync the rest of the
+        // matcher, silently failing the whole rule (see `int_impl!`'s
+        // `Min = $Min:literal` field in real vendored std for a
+        // confirmed real-world case of this).
         "literal" => match invocation.get(pos) {
+            Some(MacroTokenTree::Token(t)) if t.text == "-" => match invocation.get(pos + 1) {
+                Some(MacroTokenTree::Token(_)) => Some(2),
+                _ => None,
+            },
             Some(MacroTokenTree::Token(_)) => Some(1),
             _ => None,
         },
@@ -803,4 +816,53 @@ fn expand_items(items: Vec<Item>, defs: &HashMap<String, MacroRulesDef>, depth: 
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::FerroPhaseParser;
+    use fp_core::ast::ItemKind;
+
+    /// Real vendored std's `int_impl!` macro (`core::num::int_macros.rs`)
+    /// has a `Min = $Min:literal,` field, invoked with `Min = -128,` — a
+    /// negative numeric literal, which Rust's tokenizer always splits into
+    /// a separate `-` symbol token followed by the digits (never a single
+    /// fused token). Before the `"literal"` fragment kind in
+    /// `consume_fragment` accounted for that leading `-`, this exact shape
+    /// silently failed to match at all, dropping the whole macro
+    /// invocation (and therefore every method it would have generated —
+    /// `count_ones`/`leading_zeros`/etc. on every integer primitive).
+    #[test]
+    fn literal_fragment_matches_negative_number() {
+        let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
+        let items = parser
+            .parse_items_ast(
+                r#"
+                macro_rules! int_impl {
+                    (Min = $Min:literal, Max = $Max:literal,) => {
+                        pub fn min_marker() -> i64 { $Min }
+                        pub fn max_marker() -> i64 { $Max }
+                    };
+                }
+                int_impl! { Min = -128, Max = 127, }
+                "#,
+            )
+            .unwrap();
+        let defs = collect_macro_rules_defs(items.iter());
+        let expanded = expand_items(items, &defs, 0);
+        let fn_names: Vec<_> = expanded
+            .iter()
+            .filter_map(|item| match item.kind() {
+                ItemKind::DefFunction(def) => Some(def.name.name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            fn_names.contains(&"min_marker".to_string()),
+            "expected int_impl! to expand into `min_marker`/`max_marker`, got: {fn_names:?}"
+        );
+        assert!(fn_names.contains(&"max_marker".to_string()));
+    }
 }

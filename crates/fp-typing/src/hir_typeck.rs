@@ -3537,22 +3537,39 @@ impl HirTypeChecker {
             TyKind::Ref(_, inner, _) => inner.as_ref(),
             _ => receiver_ty,
         };
+        // A still-generic receiver (`self: T` inside a default trait
+        // method body) has no impl to search at all — `T` is abstract,
+        // not a concrete type any impl's self-type could ever unify
+        // against. Resolve directly from `T`'s own trait bounds instead,
+        // the same way rustc resolves a generic receiver's method (from
+        // `ParamEnv`, never impl search) — mirrors `T::method(..)`'s own
+        // resolution via `generic_param_bound_method_signature` for the
+        // identical underlying case, just reached through `.method()`
+        // call syntax instead of an explicit type-relative path.
+        if let TyKind::Param(param) = &receiver_ty.kind {
+            return self
+                .generic_param_bound_method_signature(&param.name, method)
+                .await;
+        }
         let receiver_def = match &receiver_ty.kind {
             TyKind::Adt(receiver, _) => Some(receiver.did.clone()),
             _ => None,
         };
-        // `hir::HirProgram::impls_for_adt` is the fast-reject path: an ADT
-        // receiver can only ever match an impl whose self-type also
-        // resolves to `TyKind::Adt` with the same `did` — for a
-        // non-resolved-ADT receiver, every impl in the workspace is a
-        // candidate (`all_impls`). HirProgram cloned out first so the
-        // borrow doesn't outlive the `&mut self` calls below.
+        // `hir::HirProgram::impls_for_adt` is the fast-reject path for an
+        // ADT receiver (self-type also resolves to `TyKind::Adt` with the
+        // same `did`); a concrete non-ADT receiver (primitive/tuple/
+        // slice/etc.) uses the shape-bucketed counterpart instead —
+        // either way, a bounded, indexed lookup, never a scan over every
+        // impl in the workspace (see `shape_and_blanket_candidates`'s doc
+        // comment for why that's a hard requirement, not a nicety).
+        // `program` is cloned out first so the borrow doesn't outlive the
+        // `&mut self` calls below.
         let program = self.program_rc();
-        let candidates: Vec<hir::Item> = match receiver_def {
-            Some(ref def_id) => program.impls_for_adt(def_id.clone()).cloned().collect(),
-            None => program.all_impls().cloned().collect(),
+        let candidates: Box<dyn Iterator<Item = &hir::Item> + '_> = match &receiver_def {
+            Some(def_id) => Box::new(program.impls_for_adt(def_id.clone())),
+            None => Box::new(shape_and_blanket_candidates(&program, &receiver_ty.kind)),
         };
-        for item in &candidates {
+        for item in candidates {
             let hir::ItemKind::Impl(impl_item) = &item.kind else {
                 continue;
             };
@@ -3858,21 +3875,34 @@ impl HirTypeChecker {
             return Ok(None);
         }
         self.resolving_assoc_projections.push(key.clone());
+        // A still-generic target (`T::AssocName` where `T` is abstract)
+        // has no impl to search — resolve straight from `T`'s own trait
+        // bounds instead, the same way `path_ty` already does via
+        // `assoc_type_from_generic_param_bounds` for the identical
+        // underlying case reached through a type-relative path instead of
+        // this function's own (`Self::AssocName`/UFCS-derived) callers.
+        if let TyKind::Param(param) = &target_ty.kind {
+            let result = self
+                .assoc_type_from_generic_param_bounds(&param.name, assoc_name)
+                .await;
+            self.resolving_assoc_projections.pop();
+            return result;
+        }
         // An ADT target can only ever match an impl whose self-type also
         // resolves to `TyKind::Adt` with the same `did` — same fast-reject
-        // reasoning as `method_output_at`'s own `impls_for_adt`/`all_impls`
-        // split.
+        // reasoning as `method_output_at`'s own `impls_for_adt`/shape-
+        // bucketed split.
         let receiver_def = match &target_ty.kind {
             TyKind::Adt(receiver, _) => Some(receiver.did.clone()),
             _ => None,
         };
         let program = self.program_rc();
-        let candidates: Vec<hir::Item> = match receiver_def {
-            Some(def_id) => program.impls_for_adt(def_id).cloned().collect(),
-            None => program.all_impls().cloned().collect(),
+        let candidates: Box<dyn Iterator<Item = &hir::Item> + '_> = match receiver_def {
+            Some(def_id) => Box::new(program.impls_for_adt(def_id.clone())),
+            None => Box::new(shape_and_blanket_candidates(&program, &target_ty.kind)),
         };
         let result: Result<Option<Ty>> = 'search: {
-            for item in &candidates {
+            for item in candidates {
                 let hir::ItemKind::Impl(impl_item) = &item.kind else {
                     continue;
                 };
@@ -3963,6 +3993,58 @@ impl HirTypeChecker {
             TyKind::Ref(_, inner, _) => inner.as_ref(),
             _ => receiver_ty,
         };
+        // A still-generic receiver (`self: T`, e.g. a default trait
+        // method's own body calling `self.other_method()`) has no impl to
+        // search — by far the most common non-ADT receiver shape in a
+        // large real corpus (default-method bodies over generic `Self`),
+        // so this is checked first, before ever touching the impl
+        // candidate lists below. Resolved straight from `T`'s own trait
+        // bounds, the same way `T::method(..)`'s type-relative-path
+        // resolution already does via `generic_param_bound_method_
+        // signature` — duplicated here (rather than reusing that helper
+        // directly) because this call site additionally needs the
+        // resolved method's own `DefId` and its instantiated generic
+        // args/output against `actuals`, not just the bare signature.
+        if let TyKind::Param(param) = &receiver_ty.kind {
+            let Some(bounds) = self.generic_param_bounds(&param.name).map(<[_]>::to_vec) else {
+                return Ok(None);
+            };
+            for bound in &bounds {
+                let hir::TypeExprKind::Path(path) = &bound.kind else {
+                    continue;
+                };
+                let Some(hir::Res::Def(trait_def_id)) = &path.res else {
+                    continue;
+                };
+                let Some(item) = self.program_rc().item(trait_def_id.clone()).cloned() else {
+                    continue;
+                };
+                let hir::ItemKind::Trait(trait_def) = &item.kind else {
+                    continue;
+                };
+                for trait_item in &trait_def.items {
+                    let hir::TraitItemKind::Method(function) = &trait_item.kind else {
+                        continue;
+                    };
+                    if trait_item.name != *method {
+                        continue;
+                    }
+                    let mut scope = self.with_self_type(receiver_ty.clone());
+                    let signature = scope.function_signature(function).await?;
+                    let Some((substitutions, result)) = scope.instantiate_call(&signature, actuals)?
+                    else {
+                        return Err(Error::from("method arguments do not match its signature"));
+                    };
+                    let args = scope.method_generic_args(
+                        &hir::Generics::default(),
+                        &function.sig.generics,
+                        &substitutions,
+                    )?;
+                    return Ok(Some((trait_item.def_id.clone(), args, result)));
+                }
+            }
+            return Ok(None);
+        }
         let receiver_def = match &receiver_ty.kind {
             TyKind::Adt(receiver, _) => Some(receiver.did.clone()),
             _ => None,
@@ -3971,16 +4053,18 @@ impl HirTypeChecker {
         // resolves to `TyKind::Adt` with the same `did` (see the
         // `matches_receiver` match below) — go straight to that bucket via
         // `hir::HirProgram::impls_for_adt` instead of fully type-checking
-        // every impl's self-type in the workspace. A non-ADT receiver
-        // (rare: extension impls on primitives/tuples/etc.) falls back to
-        // checking every impl, exactly as before. `program` is cloned out
-        // first so the borrow doesn't outlive the `&mut self` calls below.
+        // every impl's self-type in the workspace. A concrete non-ADT
+        // receiver (primitive/tuple/slice/etc.) uses the shape-bucketed
+        // counterpart instead — either way, a bounded, indexed lookup,
+        // never a scan over every impl in the workspace. `program` is
+        // cloned out first so the borrow doesn't outlive the `&mut self`
+        // calls below.
         let program = self.program_rc();
-        let candidates: Vec<hir::Item> = match receiver_def {
-            Some(ref def_id) => program.impls_for_adt(def_id.clone()).cloned().collect(),
-            None => program.all_impls().cloned().collect(),
+        let candidates: Box<dyn Iterator<Item = &hir::Item> + '_> = match &receiver_def {
+            Some(def_id) => Box::new(program.impls_for_adt(def_id.clone())),
+            None => Box::new(shape_and_blanket_candidates(&program, &receiver_ty.kind)),
         };
-        for item in &candidates {
+        for item in candidates {
             let hir::ItemKind::Impl(impl_item) = &item.kind else {
                 continue;
             };
@@ -4932,6 +5016,92 @@ fn str_ty() -> Ty {
     Ty {
         kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
     }
+}
+
+/// The `hir::HirPackage::impls_by_shape` bucket key(s) a *checked* receiver
+/// `TyKind` corresponds to — the lookup-side counterpart to
+/// `hir::package::classify_impl_shape`'s index-side classification of an
+/// impl's own (unchecked) self-type `TypeExprKind`. Both sides must agree
+/// on the same key for a given shape, or a real impl silently becomes
+/// unreachable from method/associated-item candidate search.
+///
+/// Returns more than one key only for the one representational collision
+/// in this compiler's checked-`Ty` system: `str` and `[u8]`-ish slices
+/// both check to the identical `TyKind::Slice(Box::new(Ty::int(I8)))`
+/// shape (see `primitive_ty`'s own `TypePrimitive::String` arm) — there is
+/// no way to tell them apart once a value has reached this checked `Ty`
+/// form, so both the `"[]"` and `"str"` buckets are checked rather than
+/// risking one of them going silently unreachable.
+///
+/// Returns `None` for receiver kinds this compiler has no concrete-impl
+/// dispatch shape for at all (closures, generators, trait objects, `dyn`
+/// existentials, ...) — those still get checked against `blanket_impls`
+/// by every caller, which is the only class of impl that could apply to
+/// them; there is deliberately no broader fallback here (see
+/// `method_output_at`'s own doc comment for why a receiver landing here
+/// with `None` is expected, not a bug — unlike an *impl* whose self-type
+/// can't be classified at index time, which is a bug and is flagged via
+/// `HirPackage::diagnostics` at that point instead).
+fn ty_shape_keys(kind: &TyKind) -> Option<Vec<&'static str>> {
+    Some(match kind {
+        TyKind::Bool => vec!["bool"],
+        TyKind::Char => vec!["char"],
+        TyKind::Int(int) => vec![match int {
+            ty::IntTy::I8 => "i8",
+            ty::IntTy::I16 => "i16",
+            ty::IntTy::I32 => "i32",
+            ty::IntTy::I64 => "i64",
+            ty::IntTy::I128 => "i128",
+            ty::IntTy::Isize => "isize",
+        }],
+        TyKind::Uint(uint) => vec![match uint {
+            ty::UintTy::U8 => "u8",
+            ty::UintTy::U16 => "u16",
+            ty::UintTy::U32 => "u32",
+            ty::UintTy::U64 => "u64",
+            ty::UintTy::U128 => "u128",
+            ty::UintTy::Usize => "usize",
+        }],
+        TyKind::Float(float) => vec![match float {
+            ty::FloatTy::F16 => "f16",
+            ty::FloatTy::F32 => "f32",
+            ty::FloatTy::F64 => "f64",
+            ty::FloatTy::F128 => "f128",
+        }],
+        TyKind::Slice(_) => vec!["[]", "str"],
+        TyKind::Array(_, _) => vec!["[;N]"],
+        TyKind::Tuple(elements) if elements.is_empty() => vec!["()"],
+        TyKind::Tuple(_) => vec!["(,)"],
+        TyKind::Ref(_, _, ty::Mutability::Not) => vec!["&"],
+        TyKind::Ref(_, _, ty::Mutability::Mut) => vec!["&mut"],
+        TyKind::RawPtr(pointee) => vec![match pointee.mutbl {
+            ty::Mutability::Not => "*const",
+            ty::Mutability::Mut => "*mut",
+        }],
+        TyKind::FnPtr(_) => vec!["fn(..)"],
+        TyKind::Never => vec!["!"],
+        _ => return None,
+    })
+}
+
+/// The bounded, indexed candidate list for a receiver that isn't a
+/// resolved ADT (`hir::HirProgram::impls_for_adt`'s domain) — every impl
+/// whose self-type shares `receiver_kind`'s own shape (`ty_shape_keys`),
+/// plus every blanket impl (`impl<T> Trait for T`, which must be checked
+/// regardless of shape). Deliberately never falls back to scanning every
+/// impl in the workspace: a receiver kind `ty_shape_keys` has no bucket
+/// for (closures, generators, `dyn` trait objects, ...) just gets the
+/// blanket-impl list alone, which is the only class of impl that could
+/// possibly apply to it anyway.
+fn shape_and_blanket_candidates<'a>(
+    program: &'a hir::HirProgram,
+    receiver_kind: &TyKind,
+) -> impl Iterator<Item = &'a hir::Item> {
+    ty_shape_keys(receiver_kind)
+        .into_iter()
+        .flatten()
+        .flat_map(move |key| program.impls_for_shape(key))
+        .chain(program.blanket_impls())
 }
 
 fn primitive_path_ty(name: &str) -> Option<Ty> {

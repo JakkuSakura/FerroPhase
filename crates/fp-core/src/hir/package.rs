@@ -2,6 +2,36 @@ use super::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// The fixed set of primitive scalar type names an impl's self-type can
+/// name directly (`impl u8 { .. }`), mirrored from the identical name set
+/// `fp_typing::hir_typeck::primitive_path_ty`/`primitive_ty` already use to
+/// go the other way (name -> checked `Ty`) — kept in sync manually since
+/// `fp-core` can't depend on `fp-typing` to share one table.
+const PRIMITIVE_SELF_TYPE_NAMES: &[&str] = &[
+    "bool", "char", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128",
+    "usize", "f16", "f32", "f64", "f128", "str",
+];
+
+/// The fast-reject bucket key for an impl's own self-type, mirroring
+/// rustc's `SimplifiedType` (`rustc_middle::ty::fast_reject`) exactly —
+/// including treating a nominal ADT self-type as just one more bucket
+/// variant, not a separate mechanism from every other concrete shape.
+/// `impls_by_bucket` is the single index every method/associated-item
+/// candidate search goes through; there is deliberately no second,
+/// ADT-only index alongside it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ImplBucketKey {
+    /// A resolved nominal struct/enum self-type (`impl Vec<T> { .. }`),
+    /// keyed by that type's own `DefId`.
+    Adt(DefId),
+    /// Any other concrete, classifiable self-type shape (`impl u8 { .. }`,
+    /// `impl<T> Trait for [T] { .. }`, ...) — see `classify_impl_shape`.
+    /// Reuses `BuiltinSelfType::bucket_key()`'s own string convention for
+    /// the non-primitive shapes, and the bare primitive name for
+    /// primitives, rather than inventing a second key encoding.
+    Shape(String),
+}
+
 /// One compiled package's HIR content — items, definitions, and (as of the
 /// `ModuleTree` migration) its own module/name-resolution tree. Several of
 /// these live inside a `HirProgram`, which owns the whole multi-package
@@ -98,6 +128,26 @@ pub struct HirPackage {
     /// (`fp_typing`'s `method_output`) is a per-package O(1) hash lookup
     /// instead of scanning every impl in the whole workspace.
     pub impls_by_self_did: HashMap<DefId, Vec<DefId>>,
+    /// Every impl in `items` whose self-type is *not* a resolved nominal
+    /// `Res::Def(did)` path (so `impls_by_self_did` can't key it) but
+    /// still resolves to a concrete, classifiable shape — `impl Trait for
+    /// u8`, `impl<T> Trait for [T]`, `impl<T> Trait for (T, T)`, etc. —
+    /// keyed by a stable shape-bucket string (reusing `BuiltinSelfType::
+    /// bucket_key()`'s own convention for the non-primitive shapes, and
+    /// the bare primitive name for primitives — see `classify_impl_shape`).
+    /// Together with `blanket_impls`, this is what makes every method/
+    /// associated-item candidate search a bounded, indexed lookup instead
+    /// of a scan over every impl in the workspace: see
+    /// `HirProgram::impls_for_shape`'s doc comment.
+    pub impls_by_shape: HashMap<String, Vec<DefId>>,
+    /// Impls whose self-type is literally one of the impl's *own* generic
+    /// type parameters (`impl<T> Trait for T`, `impl<T: ?Sized> Borrow<T>
+    /// for T`) — a true blanket impl, which by construction must be
+    /// checked against every receiver shape (there's nothing to bucket it
+    /// under). Kept as its own small list rather than folded into
+    /// `impls_by_shape` under some catch-all key, since every shape-keyed
+    /// lookup must union this list in, not just one shape's bucket.
+    pub blanket_impls: Vec<DefId>,
     /// An enum variant's own `DefId` -> its enclosing enum item's own
     /// `DefId` (not its position in `items` — see
     /// `impl_method_item_index`'s doc comment for why) — maintained
@@ -264,6 +314,51 @@ pub struct HirPackage {
     pub diagnostics: crate::diagnostics::DiagnosticManager,
 }
 
+/// Result of classifying an impl's self-type for `impls_by_shape`/
+/// `blanket_impls` indexing — see `classify_impl_shape`.
+enum ImplShapeClass {
+    Shape(String),
+    Blanket,
+    Unclassified,
+}
+
+/// Structurally classifies `impl_item`'s own self-type (no type-checking
+/// needed — this only looks at the HIR shape, specifically `Res` as
+/// already recorded by `ast_to_hir`'s `canonical_type_path`/self-type
+/// lowering) into a shape-bucket key, a blanket impl over one of
+/// `impl_item`'s own generic params, or `Unclassified` if it's neither a
+/// recognized concrete shape nor a resolved nominal ADT path (already
+/// handled separately by the caller via `impls_by_self_did`) nor a
+/// blanket impl. Every legitimate impl self-type in real Rust falls into
+/// one of the first two cases.
+///
+/// Non-primitive shapes (`&T`, `[T]`, `[T; N]`, `(A, B)`, `fn(..)`, `!`)
+/// lower to a `Path` tagged with `Res::Builtin(BuiltinSelfType)` — reuse
+/// its own `bucket_key()` directly rather than re-deriving an equivalent
+/// key here. A primitive scalar (`impl u8 { .. }`) has no such tag (its
+/// self-type `Path` is simply unresolved, its first segment the primitive
+/// name); match `PRIMITIVE_SELF_TYPE_NAMES` directly for that case.
+fn classify_impl_shape(impl_item: &Impl) -> ImplShapeClass {
+    let TypeExprKind::Path(path) = &impl_item.self_ty.kind else {
+        return ImplShapeClass::Unclassified;
+    };
+    if let Some(Res::Def(did)) = &path.res {
+        if impl_item.generics.params.iter().any(|param| param.def_id == *did) {
+            return ImplShapeClass::Blanket;
+        }
+    }
+    if let Some(Res::Builtin(builtin)) = &path.res {
+        return ImplShapeClass::Shape(builtin.bucket_key().to_string());
+    }
+    if let [segment] = path.segments.as_slice() {
+        let name = segment.name.as_str();
+        if PRIMITIVE_SELF_TYPE_NAMES.contains(&name) {
+            return ImplShapeClass::Shape(name.to_string());
+        }
+    }
+    ImplShapeClass::Unclassified
+}
+
 impl HirPackage {
     /// `id` is a required parameter, not filled in after the fact — a
     /// caller that builds a fresh `HirPackage` and forgets to copy its real
@@ -287,6 +382,8 @@ impl HirPackage {
             struct_defs_by_name: HashMap::new(),
             impl_method_item_index: HashMap::new(),
             impls_by_self_did: HashMap::new(),
+            impls_by_shape: HashMap::new(),
+            blanket_impls: Vec::new(),
             enum_variant_item_index: HashMap::new(),
             member_to_owning_item: HashMap::new(),
             hir_exports: HashMap::new(),
@@ -351,7 +448,15 @@ impl HirPackage {
                 }
                 let resolved_did = match &impl_item.self_ty.kind {
                     TypeExprKind::Path(path) => match &path.res {
-                        Some(Res::Def(did)) => Some(did.clone()),
+                        Some(Res::Def(did))
+                            if !impl_item
+                                .generics
+                                .params
+                                .iter()
+                                .any(|param| param.def_id == *did) =>
+                        {
+                            Some(did.clone())
+                        }
                         _ => None,
                     },
                     _ => None,
@@ -360,23 +465,39 @@ impl HirPackage {
                     Some(did) => {
                         self.impls_by_self_did.entry(did).or_default().push(item.def_id.clone());
                     }
-                    None => {
-                        // Not a resolved nominal path (a generic param, a
-                        // primitive/tuple/slice extension impl, or an
-                        // unresolved path) — `impls_by_self_did` can't key
-                        // this impl, so `HirProgram::impls_for_adt`'s fast
-                        // path will never surface it; only the `all_impls`
-                        // full-scan fallback will. Common in real code
-                        // (`impl Add for i32`, `impl<T> Deref for Vec<T>`),
-                        // so this is expected, not necessarily a bug — but
-                        // flagged so a genuinely-should-have-resolved path
-                        // that silently didn't doesn't go unnoticed.
-                        crate::diagnostics::report_warning(format!(
-                            "impl at {:?} has a self-type that isn't a resolved nominal path; \
-                             it won't be found by impls_by_self_did's fast-reject index",
-                            item.hir_id
-                        ));
-                    }
+                    None => match classify_impl_shape(impl_item) {
+                        ImplShapeClass::Shape(shape) => {
+                            self.impls_by_shape.entry(shape).or_default().push(item.def_id.clone());
+                        }
+                        ImplShapeClass::Blanket => {
+                            self.blanket_impls.push(item.def_id.clone());
+                        }
+                        // A self-type this compiler has no dispatch rule
+                        // for at all — not a resolved nominal ADT path
+                        // (`impls_by_self_did`), not one of the known
+                        // concrete shapes (`ImplShape`), and not a blanket
+                        // impl over the impl's own generic param. Every
+                        // real Rust impl's self-type falls into one of
+                        // those three buckets, so reaching here means this
+                        // impl silently becomes unreachable by any
+                        // candidate search — a real gap, not a case to
+                        // paper over by scanning the whole workspace for
+                        // it. Recorded as a hard diagnostic (not a
+                        // stderr-only warning) so it's visible in the same
+                        // diagnostic count real typing errors are.
+                        ImplShapeClass::Unclassified => {
+                            self.diagnostics.add_diagnostic(
+                                crate::diagnostics::Diagnostic::error(format!(
+                                    "impl at {:?} has a self-type with no known dispatch \
+                                     shape (not a resolved nominal path, not a recognized \
+                                     concrete shape, not a blanket impl over its own generic \
+                                     param) — it is unreachable by method/associated-item \
+                                     candidate search",
+                                    item.hir_id
+                                )),
+                            );
+                        }
+                    },
                 }
             }
             // No derived-index entry applies to these — a free function,
@@ -409,6 +530,8 @@ impl HirPackage {
         self.struct_defs_by_name.clear();
         self.impl_method_item_index.clear();
         self.impls_by_self_did.clear();
+        self.impls_by_shape.clear();
+        self.blanket_impls.clear();
         self.enum_variant_item_index.clear();
         self.member_to_owning_item.clear();
         for index in 0..self.items.len() {

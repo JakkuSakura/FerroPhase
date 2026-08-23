@@ -300,12 +300,37 @@ impl HirProgram {
         })
     }
 
-    /// Every `impl` item across every package — the fallback for a
-    /// method-call/UFCS-call whose receiver type isn't a resolved ADT
-    /// (so there's no `did` to key `impls_for_adt` by).
-    pub fn all_impls(&self) -> impl Iterator<Item = &Item> {
-        self.all_items()
-            .filter(|item| matches!(item.kind, ItemKind::Impl(_)))
+    /// Every `impl` item (from any package) whose self-type structurally
+    /// classifies as `shape` (`HirPackage::impls_by_shape`'s domain) —
+    /// the non-ADT counterpart of `impls_for_adt`, for a receiver that's a
+    /// concrete primitive/tuple/slice/array/etc. rather than a nominal
+    /// struct/enum. Deliberately does *not* union in every impl in the
+    /// workspace the way an `all_impls` scan would — see `blanket_impls`
+    /// for the one class of impl that genuinely must apply regardless of
+    /// shape.
+    pub fn impls_for_shape(&self, shape: &str) -> impl Iterator<Item = &Item> {
+        self.packages.values().flat_map(move |package| {
+            package
+                .impls_by_shape
+                .get(shape)
+                .into_iter()
+                .flatten()
+                .filter_map(move |impl_def_id| package.def_map.get(impl_def_id))
+        })
+    }
+
+    /// Every blanket impl (`impl<T> Trait for T`) across every package —
+    /// unioned into every method/associated-item candidate search
+    /// regardless of the receiver's own shape, since a blanket impl's
+    /// self-type is itself just a bare generic parameter with nothing
+    /// concrete to bucket it under.
+    pub fn blanket_impls(&self) -> impl Iterator<Item = &Item> {
+        self.packages.values().flat_map(|package| {
+            package
+                .blanket_impls
+                .iter()
+                .filter_map(move |impl_def_id| package.def_map.get(impl_def_id))
+        })
     }
 
     /// Resolves `path` (in namespace `ns`) starting from `from_module` in
