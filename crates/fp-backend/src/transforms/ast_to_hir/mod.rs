@@ -10,9 +10,28 @@ use fp_core::query::{
 use fp_core::span::{FileId, Span};
 use fp_core::{ast, ast::ItemKind, ast::attrs_repr, cfg::TargetEnv, hir};
 use fp_sql::sql_ast::parse_sql_ast;
-use fp_typing::ResolvedNameTable;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+
+/// A name resolved during AST-to-HIR lowering, ahead of typing (which
+/// operates on already-lowered HIR and never consults this) — moved here
+/// from `fp-typing`, which never actually used it itself; this crate's
+/// `HirGenerator` (via `resolved_names`/`with_resolved_names`) is the only
+/// real consumer.
+pub type ResolvedNameTable = HashMap<fp_core::ast::ExprId, ResolvedName>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolvedNameNamespace {
+    Value,
+    Type,
+    Module,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedName {
+    pub namespace: ResolvedNameNamespace,
+    pub path: fp_core::ast::path::QualifiedPath,
+}
 
 mod exprs; // expression lowering
 mod helpers;
@@ -1285,7 +1304,7 @@ impl HirGenerator {
             // `workspace.find_export` lazily on a local-lookup miss
             // instead.
         }
-        for path in workspace.module_paths() {
+        for path in self.workspace.as_ref().map(|w| w.module_paths()).unwrap_or_default() {
             self.package.module_tree.ensure_module(&path);
         }
         // Cross-package `type X = Y;` aliases (e.g. `libc::char`) are

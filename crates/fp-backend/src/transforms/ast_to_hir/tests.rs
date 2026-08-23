@@ -10,7 +10,6 @@ use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
 use fp_core::ast::package::{PackageId, AstPackage};
 use fp_core::span::Span;
 use fp_core::ast::program::AstProgram;
-use fp_typing::{ResolvedName, ResolvedNameNamespace, ResolvedNameTable};
 use std::collections::HashMap;
 
 fn test_data_layout() -> LirDataLayout {

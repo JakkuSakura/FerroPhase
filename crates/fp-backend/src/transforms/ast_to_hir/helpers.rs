@@ -4,14 +4,14 @@ use fp_core::ast::path::{ParsedPath, PathPrefix, QualifiedPath};
 impl HirGenerator {
     fn resolved_name_to_hir_path(
         &mut self,
-        resolved_name: &fp_typing::ResolvedName,
+        resolved_name: &ResolvedName,
         name: &Name,
         scope: PathResolutionScope,
     ) -> Result<Option<hir::Path>> {
         let resolution_scope = match resolved_name.namespace {
-            fp_typing::ResolvedNameNamespace::Value => PathResolutionScope::Value,
-            fp_typing::ResolvedNameNamespace::Type => PathResolutionScope::Type,
-            fp_typing::ResolvedNameNamespace::Module => {
+            ResolvedNameNamespace::Value => PathResolutionScope::Value,
+            ResolvedNameNamespace::Type => PathResolutionScope::Type,
+            ResolvedNameNamespace::Module => {
                 return Ok(Some(hir::Path {
                     segments: resolved_name
                         .path

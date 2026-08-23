@@ -1,7 +1,4 @@
-use fp_core::ast::Ty;
-use fp_core::ast::path::QualifiedPath;
 use fp_core::span::Span;
-use std::collections::HashMap;
 
 /// Builds a typing-stage diagnostic through the shared
 /// `fp_core::diagnostics::Diagnostic` type directly — no separate
@@ -14,82 +11,4 @@ pub fn typing_diagnostic(message: impl Into<String>, span: Option<Span>) -> fp_c
         diagnostic = diagnostic.with_span(span);
     }
     diagnostic
-}
-
-pub struct TypingOutcome {
-    pub resolved_names: ResolvedNameTable,
-    /// Structs resolved from a workspace crate rather than the local one
-    /// (e.g. `std::meta::TypeBuilder`, via `TypeBuilder::new(...)`).
-    pub cross_crate_struct_refs: Vec<QualifiedPath>,
-}
-
-pub type ItemId = fp_core::ast::ItemId;
-
-/// A generic function invocation whose concrete type arguments have been
-/// resolved and are ready for monomorphization (specialization). Written
-/// directly into the shared `TypingShared::ready_generics` the moment
-/// `infer_generic_function_call_body` resolves one -- not accumulated on
-/// the typer's own per-pass state and returned via `TypingOutcome` once
-/// the whole compile unit finishes, so the driver can act on it
-/// immediately (see `CompilerDriver::handle_resolved_task`).
-#[derive(Debug, Clone)]
-pub struct GenericMonorph {
-    /// Stable identity of the `ItemDefFunction` node being specialized (see
-    /// `fp_core::ast::ItemId`'s doc comment) -- this, not `function_path`, is
-    /// what `handle_resolved_task` uses to find the function again in the
-    /// compile unit's own pre-typing stored AST. `function_path` is a
-    /// qualification convention (prefixed by whatever module/compile-unit
-    /// context was active when the signature was registered) and doesn't
-    /// generally correspond to real nested-module structure in that AST, so
-    /// it's kept only for the specialized function's display name and the
-    /// dedup key, not for re-locating the original definition.
-    pub item_id: ItemId,
-    /// The discovering compile unit's own package item key, carried verbatim.
-    /// from the discovering compile unit rather than re-derived later from
-    /// `function_path`/a naming convention: `handle_resolved_task` runs
-    /// once the pool is fully drained, with no compile-unit-specific
-    /// context of its own, so this is the only way it knows which stored
-    /// `File` to search for `item_id`.
-    pub ast_key: String,
-    /// Qualified path of the generic function being called
-    pub function_path: QualifiedPath,
-    /// Names of the generic parameters (in definition order)
-    pub generic_params: Vec<String>,
-    /// Resolved concrete types for each generic parameter (in same order)
-    pub concrete_types: Vec<Ty>,
-}
-
-impl GenericMonorph {
-    pub fn new(
-        item_id: ItemId,
-        ast_key: String,
-        function_path: QualifiedPath,
-        generic_params: Vec<String>,
-        concrete_types: Vec<Ty>,
-    ) -> Self {
-        Self {
-            item_id,
-            ast_key,
-            function_path,
-            generic_params,
-            concrete_types,
-        }
-    }
-}
-
-pub type ExprId = fp_core::ast::ExprId;
-
-pub type ResolvedNameTable = HashMap<ExprId, ResolvedName>;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ResolvedNameNamespace {
-    Value,
-    Type,
-    Module,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedName {
-    pub namespace: ResolvedNameNamespace,
-    pub path: QualifiedPath,
 }

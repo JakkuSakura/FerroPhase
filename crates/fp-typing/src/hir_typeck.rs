@@ -10,7 +10,6 @@ use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 
 use crate::context::{ComptimeRequest, ComptimeResolver, ITEM_CHECK_FAILURE_CODE};
-use crate::types::GenericMonorph;
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::hir::{GenericCallResolution, PackageTypes};
 use std::rc::Rc;
@@ -57,17 +56,6 @@ pub struct TypingShared {
     /// distinguish them from an isolated, already-recovered mismatch
     /// without a second manager.
     pub diagnostics: DiagnosticManager,
-    /// Generic function calls whose concrete type arguments have been
-    /// resolved and are ready for monomorphization, written the moment
-    /// typing discovers each one (see `infer_generic_function_call_body`),
-    /// keyed by the same string the trivial "ready to specialize" task is
-    /// spawned under the compiler task pool. The task's only job is to make
-    /// "this generic call is ready" show up through the shared task pool's
-    /// normal resolve-and-dispatch loop; the actual payload the pool's
-    /// `Result<()>` output can't carry lives here instead, read back out
-    /// (and removed) by `CompilerDriver::handle_resolved_task` the moment
-    /// that key resolves.
-    pub ready_generics: RefCell<HashMap<String, GenericMonorph>>,
     /// Answers requests made by HIR while checking compile-time constants —
     /// see `ComptimeResolver`'s doc comment. `None` when no resolver was
     /// supplied at construction; calling `request_comptime` in that case is
@@ -109,7 +97,6 @@ impl TypingShared {
             current_package: package_id,
             results: RefCell::new(PackageTypes::default()),
             diagnostics: DiagnosticManager::new(),
-            ready_generics: RefCell::new(HashMap::new()),
             comptime_resolver,
             executor,
             function_signature_cache: RefCell::new(HashMap::new()),
