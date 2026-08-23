@@ -135,3 +135,72 @@ impl String {
         compile_error!("compiler intrinsic")
     }
 }
+
+// Plain (non-intrinsic) ASCII case-conversion functions — free functions,
+// not `str` methods, since `unionify` (`std::intrinsics::unionify`) takes a
+// bare `fn(&str) -> &str` value, not a method. Comptime-callable like any
+// other `const fn`, evaluated by the same interpreter that runs `const { }`
+// blocks — no compiler special-casing needed.
+pub const fn uppercase(s: &str) -> &str {
+    let mut result: ::std::string::String = ::std::string::String::new();
+    let len = s.len();
+    let mut idx = 0;
+    while idx < len {
+        let byte = s[idx] as u8;
+        if byte >= 97 && byte <= 122 {
+            result.push_byte(byte - 32);
+        } else {
+            result.push_byte(byte);
+        }
+        idx = idx + 1;
+    }
+    result.as_str()
+}
+
+pub const fn lowercase(s: &str) -> &str {
+    let mut result: ::std::string::String = ::std::string::String::new();
+    let len = s.len();
+    let mut idx = 0;
+    while idx < len {
+        let byte = s[idx] as u8;
+        if byte >= 65 && byte <= 90 {
+            result.push_byte(byte + 32);
+        } else {
+            result.push_byte(byte);
+        }
+        idx = idx + 1;
+    }
+    result.as_str()
+}
+
+pub const fn capitalize(s: &str) -> &str {
+    let mut result: ::std::string::String = ::std::string::String::new();
+    let len = s.len();
+    let mut idx = 0;
+    while idx < len {
+        let byte = s[idx] as u8;
+        if idx == 0 && byte >= 97 && byte <= 122 {
+            result.push_byte(byte - 32);
+        } else {
+            result.push_byte(byte);
+        }
+        idx = idx + 1;
+    }
+    result.as_str()
+}
+
+pub const fn uncapitalize(s: &str) -> &str {
+    let mut result: ::std::string::String = ::std::string::String::new();
+    let len = s.len();
+    let mut idx = 0;
+    while idx < len {
+        let byte = s[idx] as u8;
+        if idx == 0 && byte >= 65 && byte <= 90 {
+            result.push_byte(byte + 32);
+        } else {
+            result.push_byte(byte);
+        }
+        idx = idx + 1;
+    }
+    result.as_str()
+}
