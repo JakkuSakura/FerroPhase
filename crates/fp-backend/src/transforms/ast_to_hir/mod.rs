@@ -1881,9 +1881,9 @@ impl HirGenerator {
         &mut self,
         module_path: &fp_core::ast::path::QualifiedPath,
         items: &[ast::Item],
-        typing_context: std::rc::Rc<fp_typing::TypingContext>,
+        typing_shared: std::rc::Rc<fp_typing::TypingShared>,
     ) -> Result<hir::HirPackage> {
-        let _ = typing_context;
+        let _ = typing_shared;
         self.transform_module(module_path, items)
     }
 
@@ -3234,7 +3234,7 @@ impl HirGenerator {
                     }
                 }
                 // Fall through — the const block produces a type at comptime;
-                // the type checker resolves it via `TypingContext::request_comptime`
+                // the type checker resolves it via `TypingShared::request_comptime`
                 // when it encounters this node.
                 let body = Box::new(self.transform_expr_to_hir(block.expr.as_ref())?);
                 let def_id = self.next_def_id();

@@ -27,7 +27,7 @@ pub type ItemId = fp_core::ast::ItemId;
 
 /// A generic function invocation whose concrete type arguments have been
 /// resolved and are ready for monomorphization (specialization). Written
-/// directly into the shared `TypingContext::ready_generics` the moment
+/// directly into the shared `TypingShared::ready_generics` the moment
 /// `infer_generic_function_call_body` resolves one -- not accumulated on
 /// the typer's own per-pass state and returned via `TypingOutcome` once
 /// the whole compile unit finishes, so the driver can act on it

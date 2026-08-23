@@ -393,8 +393,8 @@ fn compile_source_file(
 pub fn drain_driver(driver: &mut CompilerDriver) -> Result<()> {
     // Typing diagnostics live on each compiled package's own `PackageTypes`
     // (see its `diagnostics` field's doc comment), not on the driver's
-    // scratch, per-package-swapped `typing_ctx` — that context is discarded
-    // the moment each package's compile finishes, before this ever runs.
+    // scratch, per-package `TypingShared` — that's discarded the moment
+    // each package's compile finishes, before this ever runs.
     let diagnostics: Vec<_> = driver
         .state
         .borrow()
@@ -565,48 +565,63 @@ struct LoweredProgram {
 impl LoweredProgram {
     fn hir(&self) -> Result<fp_core::hir::HirPackage> {
         let package = self.compiled_package()?;
-        let package = package.borrow();
-        package.hir_program.as_deref().cloned().ok_or_else(|| {
-            CliError::Compilation(format!(
-                "compiled package `{}` contains no HIR program",
-                self.package_id
-            ))
-        })
+        let hir_package_id = package.borrow().hir_package_id;
+        self.driver
+            .state
+            .borrow()
+            .hir(hir_package_id)
+            .map(|package| (*package).clone())
+            .map_err(|_| {
+                CliError::Compilation(format!(
+                    "compiled package `{}` contains no HIR program",
+                    self.package_id
+                ))
+            })
     }
 
     fn mir(&self) -> Result<fp_core::mir::MirModule> {
-        let package = self.compiled_package()?;
-        let package = package.borrow();
-        if package.mir.units.is_empty() {
+        let mir = self.driver.state.borrow().mir_module(&self.package_id);
+        if mir.items.is_empty() {
             return Err(CliError::Compilation(format!(
                 "compiled package `{}` contains no MIR program",
                 self.package_id
             )));
         }
-        Ok(package.mir.flatten())
+        Ok(mir)
     }
 
     /// Native/LLVM/Cranelift emitters all consume a single flattened
-    /// `LirBlob` merging every dependency's compiled LIR workspace in
-    /// before this package's own (mirroring the same merge
-    /// `evaluate_comptime_lir` already does for comptime execution — a
-    /// cross-package call type-checks and lowers fine on just this
-    /// package's own workspace, since the callee's *signature* is
-    /// predeclared into this package's generator, but without the
-    /// dependency's workspace folded in too, its function *body* never
-    /// reaches the emitted binary), then best-effort resolves and renames
-    /// a `main` entrypoint the same way `CompilerDriver::select_entrypoint`
-    /// does — this path builds its own `LirBlob` straight from the
-    /// workspace rather than going through `select_entrypoint`, so a
-    /// mangled `main` needs the same rename here too. See
-    /// `fp_core::ast::program::AstProgram::merged_lir_program`, which
-    /// owns the actual merge/rename logic this delegates to (package-based,
-    /// not module-based — see that method's doc comment).
+    /// `LirBlob` merging every dependency's compiled LIR in before this
+    /// package's own (mirroring the same merge `evaluate_comptime_lir`
+    /// already does for comptime execution — a cross-package call
+    /// type-checks and lowers fine on just this package's own workspace,
+    /// since the callee's *signature* is predeclared into this package's
+    /// generator, but without the dependency's LIR folded in too, its
+    /// function *body* never reaches the emitted binary), then
+    /// best-effort resolves and renames a `main` entrypoint the same way
+    /// `CompilerDriver::select_entrypoint` does — this path builds its own
+    /// `LirBlob` directly rather than going through `select_entrypoint`,
+    /// so a mangled `main` needs the same rename here too. See
+    /// `fp_core::lir::LirProgram::merged_blob_for_package`, which owns the
+    /// actual merge logic this delegates to (package-based, not
+    /// module-based — see `fp_core::ast::package::resolve_entrypoint_def_id`'s
+    /// doc comment).
     fn lir(&self) -> Result<fp_core::lir::LirBlob> {
-        let workspace = self.compiled_workspace()?;
-        workspace
-            .merged_lir_program(&self.package_id)
-            .map_err(|error| CliError::Compilation(error.to_string()))
+        let mut blob = self
+            .driver
+            .state
+            .borrow()
+            .lir_program()
+            .merged_blob_for_package(&self.package_id)
+            .map_err(|error| CliError::Compilation(error.to_string()))?;
+        if let Ok(hir_package) = self.hir() {
+            if let Ok(def_id) =
+                fp_core::ast::package::resolve_entrypoint_def_id(&self.package_id, &hir_package, "main")
+            {
+                fp_core::ast::package::rename_lir_function(&mut blob, def_id, "main");
+            }
+        }
+        Ok(blob)
     }
 
     fn compiled_package(

@@ -312,7 +312,7 @@ pub enum ExprKind {
     Tuple(Vec<Expr>),
     /// A `const { ... }` block. Structurally this node IS the const
     /// context indicator: the type checker eagerly resolves `body`'s
-    /// value via `TypingContext::request_comptime` whenever it encounters
+    /// value via `TypingShared::request_comptime` whenever it encounters
     /// this variant, independent of any name.
     ConstBlock(ExprConstBlock),
     /// A closure literal, kept as a first-class node (params + body, no
@@ -535,7 +535,7 @@ pub enum TypeExprKind {
     /// of a `type X = const { ... };` alias or nested inside another type,
     /// e.g. an array length). The block's own const-ness comes purely from
     /// appearing here structurally; its value is resolved by the type
-    /// checker via `TypingContext::request_comptime`. The `DefId` is this
+    /// checker via `TypingShared::request_comptime`. The `DefId` is this
     /// block's own identity (see `ExprConstBlock::def_id`'s doc comment) —
     /// used to key its resolved value in `PackageTypes::const_block_values`.
     ConstBlock(DefId, Box<Expr>),
@@ -783,10 +783,10 @@ pub struct PackageTypes {
     /// via `const_values`.
     pub const_block_values: HashMap<DefId, Value>,
     /// This package's typing diagnostics (warnings and recovered, non-fatal
-    /// mismatches — see `fp_typing::TypingContext::diagnostics`'s doc
+    /// mismatches — see `fp_typing::TypingShared::diagnostics`'s doc
     /// comment for the full split with hard item-check aborts). Copied out
-    /// of the per-package `TypingContext` the moment its typecheck finishes
-    /// (`CompilerDriver::type_check_program`), since that `TypingContext`
+    /// of the per-package `TypingShared` the moment its typecheck finishes
+    /// (`CompilerDriver::type_check_program`), since that `TypingShared`
     /// itself is scratch state the driver discards/replaces per package —
     /// living here instead, on the durable per-package `PackageTypes`,
     /// means a diagnostic survives long enough for `drain_driver` to

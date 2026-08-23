@@ -9,7 +9,9 @@ use std::future::Future;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 
-use crate::TypingContext;
+use crate::context::{ComptimeRequest, ComptimeResolver, ITEM_CHECK_FAILURE_CODE};
+use crate::types::GenericMonorph;
+use fp_core::diagnostics::DiagnosticManager;
 use fp_core::hir::{GenericCallResolution, PackageTypes};
 use std::rc::Rc;
 
@@ -42,7 +44,35 @@ pub struct TypingShared {
     /// this is what makes same-package forward references resolve
     /// regardless of `program.items`' textual order.
     results: RefCell<PackageTypes>,
-    typing_context: Rc<TypingContext>,
+    /// Accumulated typing diagnostics (warnings + errors) — includes both
+    /// genuinely fatal item-check aborts and deliberately non-fatal,
+    /// recovered mismatches (e.g. `require_same`'s isolated type
+    /// mismatches, recorded via plain `record_error` specifically so one
+    /// bad expression doesn't abort the whole item's check). Typer appends
+    /// during inference; driver reads after each pass via `has_typing_errors`.
+    /// Backed by the same `fp_core::diagnostics::DiagnosticManager` every
+    /// other pipeline stage (frontend parsing, etc.) uses.
+    /// `record_item_check_failure`'s hard-abort diagnostics are tagged with
+    /// `ITEM_CHECK_FAILURE_CODE` so `has_typing_errors` can still
+    /// distinguish them from an isolated, already-recovered mismatch
+    /// without a second manager.
+    pub diagnostics: DiagnosticManager,
+    /// Generic function calls whose concrete type arguments have been
+    /// resolved and are ready for monomorphization, written the moment
+    /// typing discovers each one (see `infer_generic_function_call_body`),
+    /// keyed by the same string the trivial "ready to specialize" task is
+    /// spawned under the compiler task pool. The task's only job is to make
+    /// "this generic call is ready" show up through the shared task pool's
+    /// normal resolve-and-dispatch loop; the actual payload the pool's
+    /// `Result<()>` output can't carry lives here instead, read back out
+    /// (and removed) by `CompilerDriver::handle_resolved_task` the moment
+    /// that key resolves.
+    pub ready_generics: RefCell<HashMap<String, GenericMonorph>>,
+    /// Answers requests made by HIR while checking compile-time constants —
+    /// see `ComptimeResolver`'s doc comment. `None` when no resolver was
+    /// supplied at construction; calling `request_comptime` in that case is
+    /// a caller bug (there is no compile-time value to hand back).
+    comptime_resolver: Option<ComptimeResolver>,
     executor: ExecutorHandle,
     /// Lazily-built, memoized: a member `DefId` (an impl method/
     /// assoc-const, or an enum variant) -> its enclosing *top-level*
@@ -129,7 +159,7 @@ impl TypingShared {
     pub fn new(
         current_package: hir::HirPackage,
         dependency_program: Option<Rc<hir::HirProgram>>,
-        typing_context: Rc<TypingContext>,
+        comptime_resolver: Option<ComptimeResolver>,
         executor: ExecutorHandle,
     ) -> Rc<Self> {
         let package_id = current_package.id;
@@ -139,7 +169,9 @@ impl TypingShared {
             program: Rc::new(program),
             current_package: package_id,
             results: RefCell::new(PackageTypes::default()),
-            typing_context,
+            diagnostics: DiagnosticManager::new(),
+            ready_generics: RefCell::new(HashMap::new()),
+            comptime_resolver,
             executor,
             member_to_owning_item: RefCell::new(None),
             function_signature_cache: RefCell::new(HashMap::new()),
@@ -197,6 +229,29 @@ impl TypingShared {
             .borrow()
             .clone()
             .expect("just populated above")
+    }
+
+    /// Request a compile-time value — awaits `ComptimeResolver` directly, so
+    /// the caller (an item's typecheck task) just suspends naturally until
+    /// the answer is ready, with no manual queue-draining/polling by
+    /// driver-level code required.
+    pub async fn request_comptime(&self, request: ComptimeRequest) -> fp_core::Result<fp_core::ast::Value> {
+        let resolver = self
+            .comptime_resolver
+            .clone()
+            .expect("TypingShared::request_comptime called without a comptime_resolver");
+        resolver(request).await
+    }
+
+    /// `tcx.sess.has_errors()`-style query: true once any item's check has
+    /// hard-aborted (tagged `ITEM_CHECK_FAILURE_CODE`, see `diagnostics`'s
+    /// doc comment) — the only category that leaves a real `PackageTypes`
+    /// gap, and thus the only category safe to gate later stages on.
+    pub fn has_typing_errors(&self) -> bool {
+        self.diagnostics
+            .get_diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_deref() == Some(ITEM_CHECK_FAILURE_CODE))
     }
 }
 
@@ -258,15 +313,14 @@ impl HirTypeChecker {
     /// Records a typing diagnostic instead of hard-aborting the whole
     /// package's typecheck over one error — mirrors `ast_to_hir`'s
     /// `error_placeholder_expr_kind` precedent (`fp-backend/src/
-    /// transforms/ast_to_hir/exprs.rs`). `self.shared.typing_context` (already
+    /// transforms/ast_to_hir/exprs.rs`). `self.shared.diagnostics` (already
     /// carried by every `HirTypeChecker`) is the real sink
-    /// (`TypingContext.diagnostics`, previously never populated by
+    /// (previously never populated by
     /// anything); `typecheck_package` inspects it after the whole pass
     /// finishes to decide overall pass/fail, so this doesn't silently
     /// let a genuinely broken package look fully typed.
     fn record_error(&self, message: impl Into<String>) {
         self.shared
-            .typing_context
             .diagnostics
             .add_diagnostic(crate::types::typing_diagnostic(message, None));
     }
@@ -284,7 +338,6 @@ impl HirTypeChecker {
     /// locatable instead of a bare, file/line-less message.
     fn record_error_with_span(&self, message: impl Into<String>, span: fp_core::span::Span) {
         self.shared
-            .typing_context
             .diagnostics
             .add_diagnostic(crate::types::typing_diagnostic(message, Some(span)));
     }
@@ -302,13 +355,13 @@ impl HirTypeChecker {
     /// deliberately non-fatal `record_error`/`error_ty` calls sprinkled
     /// through `check_expr`/`check_block`, e.g. `require_same`'s isolated
     /// mismatches, which recover and leave no gap). Tagged with
-    /// `ITEM_CHECK_FAILURE_CODE` so `TypingContext::has_typing_errors` can
+    /// `ITEM_CHECK_FAILURE_CODE` so `TypingShared::has_typing_errors` can
     /// gate later stages on real gaps without also tripping on every
     /// recovered, harmless mismatch also sitting in the same manager.
     fn record_item_check_failure(&self, message: impl Into<String>) {
         let diagnostic = crate::types::typing_diagnostic(message, None)
             .with_code(crate::context::ITEM_CHECK_FAILURE_CODE);
-        self.shared.typing_context.diagnostics.add_diagnostic(diagnostic);
+        self.shared.diagnostics.add_diagnostic(diagnostic);
     }
 }
 
@@ -389,7 +442,7 @@ pub fn spawn_item_task(shared: &Rc<TypingShared>, def_id: hir::DefId) -> TaskHan
 /// `get_or_spawn`) a task on the shared executor — mirrors
 /// `spawn_item_task`'s dedup pattern, so two typer tasks reaching the same
 /// const-block concurrently share one interpretation run instead of each
-/// independently awaiting `TypingContext::request_comptime`. The resolved
+/// independently awaiting `TypingShared::request_comptime`. The resolved
 /// value is written into `results.const_block_values` by the same task
 /// that produces it, so every awaiter and every later `DefId` lookup
 /// against the package's own table always agree.
@@ -403,11 +456,7 @@ pub fn spawn_comptime_task(
     shared.executor.clone().get_or_spawn(cache_key, move || {
         Box::pin(async move {
             let request = build_request();
-            let value = shared
-                .typing_context
-                .request_comptime(request)
-                .await
-                .ok()?;
+            let value = shared.request_comptime(request).await.ok()?;
             shared
                 .results
                 .borrow_mut()
@@ -428,7 +477,9 @@ impl HirTypeChecker {
         for (hir_id, def_id, body) in pending {
             let body_ty = self.check_expr(&body).await?;
             let shared = self.shared.clone();
+            let shared_for_task = shared.clone();
             let value = spawn_comptime_task(&shared, def_id, move || {
+                let shared = shared_for_task;
                 // See the matching comment in `check_expr`'s `ConstBlock`
                 // arm: snapshot-and-drop the `Ref` guard before the
                 // request, not inline in its field list, or it stays
@@ -1149,7 +1200,9 @@ impl HirTypeChecker {
                         let hir_id = expr.hir_id;
                         let def_id = const_block.def_id;
                         let body = const_block.body.clone();
+                        let shared_for_task = shared.clone();
                         let value = spawn_comptime_task(&shared, def_id, move || {
+                            let shared = shared_for_task;
                             // Snapshot and drop the `Ref` guard *before*
                             // constructing the request, not inline inside
                             // its field list — a temporary borrow created
@@ -4151,7 +4204,7 @@ mod tests {
     /// executor (no driver, no comptime requests expected in these tests).
     fn typecheck_program_sync(program: hir::HirPackage) -> Result<(hir::HirPackage, PackageTypes)> {
         let executor = fp_core::executor::CompilerExecutor::new().handle();
-        let shared = TypingShared::new(program, None, Rc::new(TypingContext::new()), executor);
+        let shared = TypingShared::new(program, None, None, executor);
         let item_ids: Vec<_> = shared.program().items.iter().map(|item| item.def_id).collect();
         let handles: Vec<_> = item_ids
             .into_iter()
@@ -4413,5 +4466,37 @@ mod tests {
             Some(&Ty::float(ty::FloatTy::F128)),
             "bare `f128` type path must resolve to the f128 primitive, not an unresolved-path error type"
         );
+    }
+
+    #[test]
+    fn comptime_request_returns_resolver_value_directly() {
+        let resolver: ComptimeResolver =
+            Rc::new(|_request| Box::pin(async { Ok(fp_core::ast::Value::unit()) }));
+        let shared = TypingShared::new(hir::HirPackage::new(), None, Some(resolver), fp_core::executor::CompilerExecutor::new().handle());
+        let request = ComptimeRequest {
+            program: std::rc::Rc::new(fp_core::hir::HirProgram::new()),
+            current: std::rc::Rc::new(fp_core::hir::HirPackage::new()),
+            typeck_results: PackageTypes::default(),
+            def_id: hir::DefId::new(hir::PackageId(0), 0),
+            block: hir::Block {
+                hir_id: hid(0),
+                stmts: Vec::new(),
+                expr: None,
+            },
+            expression_id: hid(0),
+            expected_ty: hir::TypeExpr {
+                hir_id: hid(0),
+                kind: hir::TypeExprKind::Tuple(Vec::new()),
+                span: fp_core::span::Span::null(),
+            },
+        };
+        let mut future = Box::pin(shared.request_comptime(request));
+        let waker = std::task::Waker::noop();
+        let mut cx = std::task::Context::from_waker(waker);
+        let value = match future.as_mut().poll(&mut cx) {
+            std::task::Poll::Ready(result) => result.expect("comptime value"),
+            std::task::Poll::Pending => panic!("resolver-backed comptime request should resolve immediately"),
+        };
+        assert!(value.is_unit());
     }
 }

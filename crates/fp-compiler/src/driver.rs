@@ -11,7 +11,6 @@ use fp_core::span::Span;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel};
 use fp_interpret::LirInterpreter;
 use fp_lang::FerroIntrinsicNormalizer;
-use fp_typing::TypingContext;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -50,8 +49,9 @@ fn diagnostics_summary(diagnostics: &[Diagnostic]) -> String {
 
 pub struct CompilerDriver {
     /// `Rc<RefCell<_>>`, not owned: a spawned comptime-resolution task (see
-    /// `TypingContext`'s injected `resolve_comptime` callback,
-    /// `type_check_program`) needs to reach the same HIR/MIR/LIR/typing
+    /// the injected `resolve_comptime` callback stashed on `state.
+    /// comptime_resolver`, `type_check_program`) needs to reach the same
+    /// HIR/MIR/LIR/typing
     /// state independently of whatever `&mut self`-holding future is
     /// already driving `compile_package`/`compile_native` at the time —
     /// that future's `&mut self` borrow lasts for its entire lifetime (how
@@ -110,15 +110,14 @@ impl CompilerDriver {
         Self::from_state_rc(Rc::new(RefCell::new(state)))
     }
 
-    /// Shared tail of `with_workspace`/`with_state` — wires up
-    /// `TypingContext`'s `ComptimeResolver` (see `make_comptime_resolver`)
-    /// against this driver's own `state`, which can only happen once `state`
-    /// is behind the same `Rc<RefCell<_>>` every other comptime-resolution
-    /// call site closes over.
+    /// Shared tail of `with_workspace`/`with_state` — wires up a
+    /// `ComptimeResolver` (see `make_comptime_resolver`) against this
+    /// driver's own `state`, which can only happen once `state` is behind
+    /// the same `Rc<RefCell<_>>` every other comptime-resolution call site
+    /// closes over.
     fn from_state_rc(state: Rc<RefCell<CompilerState>>) -> Self {
         let resolver = Self::make_comptime_resolver(&state);
-        state.borrow_mut().typing_ctx =
-            Rc::new(TypingContext::new().with_comptime_resolver(resolver));
+        state.borrow_mut().comptime_resolver = Some(resolver);
         Self {
             state,
             interpreter: LirInterpreter::new(),
@@ -302,7 +301,7 @@ impl CompilerDriver {
         &mut self,
         package_id: &PackageId,
     ) -> Result<Rc<RefCell<fp_core::ast::package::CompiledPackage>>, CompilerDriverError> {
-        let parent_context = self.state.borrow().typing_ctx.clone();
+        let parent_resolver = self.state.borrow().comptime_resolver.clone();
         let parent_workspace = self.state.borrow().workspace.clone();
         if let Some(package) = self.compiled_packages.get(package_id).cloned() {
             parent_workspace.import_package(package_id.clone(), package.clone());
@@ -322,7 +321,7 @@ impl CompilerDriver {
             let resolver = Self::make_comptime_resolver(&self.state);
             let mut state = self.state.borrow_mut();
             state.workspace = Rc::new(package_workspace);
-            state.typing_ctx = Rc::new(TypingContext::new().with_comptime_resolver(resolver));
+            state.comptime_resolver = Some(resolver);
         }
 
         let result: Result<Rc<RefCell<fp_core::ast::package::CompiledPackage>>, CompilerDriverError> =
@@ -432,7 +431,7 @@ impl CompilerDriver {
         {
             let mut state = self.state.borrow_mut();
             state.workspace = parent_workspace.clone();
-            state.typing_ctx = parent_context;
+            state.comptime_resolver = parent_resolver;
         }
         let package = result?;
         self.compiled_packages
@@ -907,7 +906,7 @@ impl CompilerDriver {
     /// Type-checks `program`. Each `const { .. }` block's `ComptimeRequest`
     /// (`hir_typeck.rs`'s two `ConstBlock` arms, both genuinely `.await` it)
     /// is answered with a *real* value computed by the interpreter, never a
-    /// placeholder, via `TypingContext`'s `ComptimeResolver`
+    /// placeholder, via `TypingShared`'s `ComptimeResolver`
     /// (`make_comptime_resolver`) — so an item's task suspends on it and
     /// resumes naturally, exactly like any other `.await`, with no
     /// driver-side polling loop involved. A request's own failure only
@@ -923,14 +922,14 @@ impl CompilerDriver {
         &mut self,
         program: hir::HirPackage,
     ) -> fp_core::Result<(hir::HirPackage, fp_core::hir::PackageTypes)> {
-        let context = self.state.borrow().typing_ctx.clone();
+        let comptime_resolver = self.state.borrow().comptime_resolver.clone();
         let env_ctx = self.state.borrow().workspace.clone();
         let executor = self.state.borrow().tasks.clone();
         let dependency_program = env_ctx.hir_program();
         let shared = fp_typing::TypingShared::new(
             program,
             Some(dependency_program),
-            context.clone(),
+            comptime_resolver,
             executor,
         );
         let item_ids: Vec<_> = shared.program().items.iter().map(|item| item.def_id).collect();
@@ -949,15 +948,15 @@ impl CompilerDriver {
         // whose own, unrelated failure (triggered by the exact gap this
         // item's aborted check left behind) would then mask the real,
         // specific diagnostic recorded here.
-        if context.has_typing_errors() {
+        if shared.has_typing_errors() {
             // Every diagnostic accumulated so far — not just the hard
             // item-check aborts folded into the returned `Err` below — goes
             // to stderr, so a recovered/non-fatal mismatch elsewhere in the
             // same package (which never aborts an item's check, so never
             // makes it into the combined `Err` message) is still visible
             // when diagnosing a failure.
-            Self::emit_typing_diagnostics_to_stderr(&context);
-            let combined = context
+            Self::emit_typing_diagnostics_to_stderr(&shared);
+            let combined = shared
                 .diagnostics
                 .get_diagnostics()
                 .iter()
@@ -974,13 +973,13 @@ impl CompilerDriver {
                 fp_core::diagnostics::Diagnostic::error(combined),
             ));
         }
+        let diagnostics = shared.diagnostics.clone();
         let (hir_program, mut typeck_results) = fp_typing::finish_package_typecheck(&shared);
-        // `context` (this package's own `TypingContext`) is scratch state —
-        // `compile_package` swaps `state.typing_ctx` back to the caller's
-        // once this returns — so its diagnostics must be copied onto the
-        // durable `PackageTypes` here or they're lost before `drain_driver`
-        // ever gets a chance to report them.
-        typeck_results.diagnostics = context.diagnostics.clone();
+        // `shared` is scratch state, dropped once this returns — its
+        // diagnostics must be copied onto the durable `PackageTypes` here or
+        // they're lost before `drain_driver` ever gets a chance to report
+        // them.
+        typeck_results.diagnostics = diagnostics;
         Ok((hir_program, typeck_results))
     }
 
@@ -992,8 +991,8 @@ impl CompilerDriver {
     /// and previously neither was visible outside the one combined message
     /// folded into a success-path `Err` (never emitted at all on the stall
     /// path).
-    fn emit_typing_diagnostics_to_stderr(context: &fp_typing::TypingContext) {
-        let diagnostics = context.diagnostics.get_diagnostics();
+    fn emit_typing_diagnostics_to_stderr(shared: &fp_typing::TypingShared) {
+        let diagnostics = shared.diagnostics.get_diagnostics();
         if diagnostics.is_empty() {
             return;
         }
@@ -1006,7 +1005,7 @@ impl CompilerDriver {
         }
     }
 
-    /// Builds the `fp_typing::ComptimeResolver` a package's `TypingContext`
+    /// Builds the `fp_typing::ComptimeResolver` a package's `TypingShared`
     /// awaits directly from `request_comptime` — this is what lets an
     /// item's typecheck task suspend on a real `const { .. }` block and
     /// resume naturally once it's answered, with no driver-side polling

@@ -8,7 +8,7 @@ use fp_core::{
     executor::ExecutorHandle,
     hir, lir, mir,
 };
-use fp_typing::TypingContext;
+use fp_typing::ComptimeResolver;
 use fp_core::hir::PackageTypes;
 
 use crate::error::CompilerDriverError;
@@ -48,11 +48,13 @@ pub struct CompilerState {
     const_values: BTreeMap<ConstValueId, Value>,
     /// MIR-level const values for HIR→MIR lowering seed.
     resolved_const_values: BTreeMap<String, mir::Constant>,
-    pub typing_ctx: std::rc::Rc<TypingContext>,
-    /// The compiled-package registry for this compilation session — moved
-    /// here from `TypingContext` (which held it as a bare pass-through
-    /// field with no forwarding methods of its own) since this is squarely
-    /// driver-owned state, not typing-owned.
+    /// This package's comptime resolver, wired up by the driver
+    /// (`make_comptime_resolver`) before `TypingShared` exists — a
+    /// package's HIR isn't generated yet at that point, so there's nowhere
+    /// else to stash it until `type_check_program` builds the real
+    /// `TypingShared` and hands the resolver straight through.
+    pub comptime_resolver: Option<ComptimeResolver>,
+    /// The compiled-package registry for this compilation session.
     pub workspace: Rc<AstProgram>,
     /// Target ABI data shared by typing-triggered comptime blocks and
     /// normal MIR-to-LIR lowering for this compilation session — same
@@ -66,10 +68,9 @@ pub struct CompilerState {
     backend_capabilities: fp_core::capabilities::LanguageCapabilities,
     /// The one shared task pool every suspendable unit of driver work runs
     /// through: per-compile-unit HIR typing tasks and compiler-owned
-    /// comptime work. Lives here, not on
-    /// `TypingContext`, because scheduling ("what task runs next") is the
-    /// driver's concern, not typing's — `TypingContext` only holds typing
-    /// data. `Rc`, not `Rc<RefCell<_>>`: `CompilerExecutor` is already internally
+    /// comptime work. Lives here since scheduling ("what task runs next")
+    /// is the driver's concern, not typing's. `Rc`, not `Rc<RefCell<_>>`:
+    /// `CompilerExecutor` is already internally
     /// interior-mutable (its own methods take `&self`, specifically so a
     /// task can reentrantly `spawn`/`contains`-check it from within its own
     /// poll).
@@ -101,7 +102,7 @@ impl CompilerState {
             runtime_entrypoints: std::collections::HashMap::new(),
             const_values: BTreeMap::new(),
             resolved_const_values: BTreeMap::new(),
-            typing_ctx: std::rc::Rc::new(TypingContext::new()),
+            comptime_resolver: None,
             workspace,
             data_layout,
             backend_capabilities: fp_core::capabilities::LanguageCapabilities::NATIVE,
@@ -188,6 +189,14 @@ impl CompilerState {
             .unwrap_or_else(|| lir::LirBlob::new(self.data_layout.clone()))
     }
 
+    /// The whole session's `lir::LirProgram` — used by callers (`fp-cli`'s
+    /// `run_compile_pipeline`) that need to merge a package's LIR together
+    /// with every dependency's (`LirProgram::merged_blob_for_package`)
+    /// before handing it to a `TargetBackend`.
+    pub fn lir_program(&self) -> &lir::LirProgram {
+        &self.lir_program
+    }
+
     /// Records the one renamed entrypoint function `select_entrypoint`
     /// produced — a single `LirCodeUnit`, not a whole duplicated `LirBlob`:
     /// every other function the entrypoint might call already lives in
@@ -267,8 +276,8 @@ impl CompilerState {
     /// Every package's own typed results compiled so far — used by
     /// `drain_driver` to report typing diagnostics, which live on each
     /// package's own durable `PackageTypes` (see its `diagnostics` field's
-    /// doc comment), not on the driver's scratch, per-package-swapped
-    /// `TypingContext`.
+    /// doc comment), not on the driver's scratch, per-package
+    /// `TypingShared`.
     pub fn all_package_types(&self) -> impl Iterator<Item = std::rc::Rc<std::cell::RefCell<PackageTypes>>> + '_ {
         self.hir_program_types.packages.values().cloned()
     }
