@@ -25,6 +25,14 @@ pub struct ComptimeRequest {
     /// already is, so this is an `Rc` clone, not a deep clone.
     pub current: std::rc::Rc<fp_core::hir::Package>,
     pub typeck_results: PackageTypes,
+    /// This comptime unit's own identity — a `const { .. }` block's or
+    /// `const fn`'s `DefId` (see `hir::ExprConstBlock::def_id`), which
+    /// already carries its owning package (`DefId.package_id`). Comptime
+    /// resolution is never package-level (`fp-typing`'s own
+    /// `spawn_comptime_task` already dedups by this same `DefId`) — the
+    /// driver reads this directly instead of falling back to the
+    /// workspace's mutable, ambient `current_package()`.
+    pub def_id: fp_core::hir::DefId,
     /// The exact HIR block encountered by the type checker. The driver may
     /// provide a backend entrypoint for it, but must not reconstruct the
     /// block through a synthetic const or a definition lookup.
@@ -162,6 +170,7 @@ mod tests {
             program: std::rc::Rc::new(fp_core::hir::Program::new()),
             current: std::rc::Rc::new(fp_core::hir::Package::new()),
             typeck_results: PackageTypes::default(),
+            def_id: fp_core::hir::DefId::new(fp_core::hir::PackageId(0), 0),
             block: fp_core::hir::Block {
                 hir_id: fp_core::hir::HirId::new(fp_core::hir::PackageId(0), 0),
                 stmts: Vec::new(),

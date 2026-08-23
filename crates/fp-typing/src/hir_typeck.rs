@@ -438,6 +438,7 @@ impl HirTypeChecker {
                     program: shared.program.clone(),
                     current: shared.program_rc(),
                     typeck_results: typeck_results_snapshot,
+                    def_id,
                     block: hir::Block {
                         hir_id,
                         stmts: Vec::new(),
@@ -1164,6 +1165,7 @@ impl HirTypeChecker {
                                 program: shared.program.clone(),
                                 current: shared.program_rc(),
                                 typeck_results: typeck_results_snapshot,
+                                def_id,
                                 block: hir::Block {
                                     hir_id,
                                     stmts: Vec::new(),

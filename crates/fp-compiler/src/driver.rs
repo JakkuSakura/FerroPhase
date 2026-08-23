@@ -77,22 +77,13 @@ pub enum PipelineMode {
 }
 
 impl CompilerDriver {
-    fn module_state_key(&self, path: &QualifiedPath) -> String {
-        Self::module_state_key_for(&self.state, path)
-    }
-
-    /// Same as `module_state_key`, but against a bare `Rc<RefCell<CompilerState>>` —
-    /// for the spawned comptime-resolution task, which doesn't hold a `CompilerDriver`.
-    fn module_state_key_for(state: &Rc<RefCell<CompilerState>>, path: &QualifiedPath) -> String {
-        let package_id = state
-            .borrow()
-            .workspace
-            .current_package()
-            .map(|package_id| package_id.as_str().to_string());
-        match package_id {
-            Some(package_id) => format!("{package_id}:{}", path.to_key()),
-            None => path.to_key(),
-        }
+    /// Builds a driver-internal artifact key from an explicit `package_id`
+    /// and module `path` — the caller always already knows which package
+    /// it's working on (a `DefId`'s own `package_id`, or a `CompiledPackage`
+    /// handle it's holding); this never falls back to the workspace's
+    /// mutable, ambient `current_package()`.
+    fn module_state_key(package_id: &PackageId, path: &QualifiedPath) -> String {
+        format!("{package_id}:{}", path.to_key())
     }
 
     pub fn new(data_layout: fp_core::lir::LirDataLayout, tasks: ExecutorHandle) -> Self {
@@ -157,30 +148,6 @@ impl CompilerDriver {
         fp_bytecode::lower_program(&mir).map_err(CompilerDriverError::from)
     }
 
-    /// Focus subsequent module work on an already compiled package. The
-    /// package itself and its imported dependencies remain shared through
-    /// `Rc`; only the lookup context becomes package-local.
-    pub fn focus_package(&mut self, package_id: PackageId) -> Result<(), CompilerDriverError> {
-        let parent_workspace = self.state.borrow().workspace.clone();
-        let package_workspace = parent_workspace.for_package(package_id.clone());
-        for (dependency_id, package) in parent_workspace.crates().iter() {
-            if dependency_id != &package_id {
-                package_workspace.import_package(dependency_id.clone(), package.clone());
-            }
-        }
-        if let Some(std_package) = package_workspace.compiled_package(&PackageId::new("std")) {
-            package_workspace.install_prelude(std_package);
-        }
-        let package = parent_workspace
-            .compiled_package(&package_id)
-            .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
-        package_workspace.import_package(package_id, package);
-        let resolver = Self::make_comptime_resolver(&self.state);
-        let mut state = self.state.borrow_mut();
-        state.workspace = Rc::new(package_workspace);
-        state.typing_ctx = Rc::new(TypingContext::new().with_comptime_resolver(resolver));
-        Ok(())
-    }
 
     pub fn execute_runtime(
         &mut self,
@@ -282,7 +249,7 @@ impl CompilerDriver {
     ) -> Result<(), CompilerDriverError> {
         let lir_id = self.select_entrypoint(package_id, module_path, function_name)?;
         let fqp = FullyQualifiedPath::new(module_path.clone());
-        let block_values = self.evaluate_comptime_lir(&lir_id, &fqp).await?;
+        let block_values = self.evaluate_comptime_lir(package_id, &lir_id, &fqp).await?;
         // Mirrors `compile_package`'s dependency-loading branch (see its
         // identical three-call sequence): `evaluate_comptime_lir` computes
         // each `const { .. }` block's real value into `block_values`, but
@@ -298,7 +265,7 @@ impl CompilerDriver {
         // "missing global" — never a compile-time error, since nothing
         // upstream of execution ever notices the gap.
         if !block_values.is_empty() {
-            self.apply_resolved_comptime_block_values(&block_values)?;
+            self.apply_resolved_comptime_block_values(package_id, &block_values)?;
             let package = self
                 .state
                 .borrow()
@@ -431,9 +398,9 @@ impl CompilerDriver {
                             // comptime block is a genuine compile error in
                             // either mode, not something to downgrade to a
                             // warning in one and not the other.
-                            let block_values = self.evaluate_comptime_lir(&lir_id, &fqp).await?;
+                            let block_values = self.evaluate_comptime_lir(package_id, &lir_id, &fqp).await?;
                             if !block_values.is_empty() {
-                                self.apply_resolved_comptime_block_values(&block_values)?;
+                                self.apply_resolved_comptime_block_values(package_id, &block_values)?;
                                 units = self.relower_cached_lir_units(&package).await?;
                                 Self::publish_lir_units(&package, package_id, &units)?;
                             }
@@ -541,17 +508,12 @@ impl CompilerDriver {
         &mut self,
         package: &Rc<RefCell<fp_core::ast::package::CompiledPackage>>,
     ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
-        let hir_package_id = self
-            .state.borrow()
-            .workspace
-            .current_package()
-            .and_then(|package_id| {
-                self.state.borrow()
-                    .workspace
-                    .compiled_package(package_id)
-                    .map(|package| package.borrow().package_id)
-            })
-            .unwrap_or_default();
+        // Both identities come straight off the `package` handle already
+        // passed in — no need to round-trip through the workspace's
+        // mutable, ambient `current_package()` to re-derive what the
+        // caller already knows.
+        let hir_package_id = package.borrow().package_id;
+        let current_package_id = package.borrow().ast.package_id.clone();
         let mut package_source = package.borrow().clone();
         let macro_rules_defs =
             fp_lang::collect_macro_rules_defs(package_source.ast.items.iter().map(|item| &item.item));
@@ -583,15 +545,11 @@ impl CompilerDriver {
         self.next_hir_def_id = self.next_hir_def_id.max(generator.next_def_id_value());
         let package_exports = generator.exported_symbols();
         let type_alias_exports = generator.exported_type_aliases();
-        if let Some(package_id) = self.state.borrow().workspace.current_package().cloned() {
-            if let Some(package) = self.state.borrow().workspace.compiled_package(&package_id) {
-                package.borrow_mut().hir_exports.extend(package_exports);
-                package
-                    .borrow_mut()
-                    .ast.type_alias_exports
-                    .extend(type_alias_exports);
-            }
-        }
+        package.borrow_mut().hir_exports.extend(package_exports);
+        package
+            .borrow_mut()
+            .ast.type_alias_exports
+            .extend(type_alias_exports);
         let (mut hir_program, typeck_results) = self
             .type_check_program(hir_program)
             .await
@@ -612,18 +570,11 @@ impl CompilerDriver {
             Some(&typeck_results),
             promote_op_only,
         );
-        let current_package_id = self
-            .state.borrow()
-            .workspace
-            .current_package()
-            .cloned()
-            .ok_or_else(|| {
-                CompilerDriverError::UnresolvablePackage(
-                    "package compilation requires a focused package workspace".to_string(),
-                )
-            })?;
         let package_path = QualifiedPath::new(Vec::new());
-        let hir_id = HirId::new(format!("hir:{}", self.module_state_key(&package_path)));
+        let hir_id = HirId::new(format!(
+            "hir:{}",
+            Self::module_state_key(&current_package_id, &package_path)
+        ));
         self.state.borrow_mut().insert_hir(hir_id.clone(), hir_program);
         self.state.borrow_mut().insert_hir_typeck(hir_id.clone(), typeck_results);
         if let Some(package) = self
@@ -764,7 +715,7 @@ impl CompilerDriver {
             // skipped for it), matching this pipeline's prior behavior;
             // the lifted AST above is already complete regardless.
             let fqp = FullyQualifiedPath::new(package_path.clone());
-            return match self.lower_to_mir(&hir_id, &fqp).await {
+            return match self.lower_to_mir(&current_package_id, &hir_id, &fqp).await {
                 Ok((mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes, resolved_const_values, resolved_const_defs)) => {
                     if let Some(package) = self
                         .state.borrow()
@@ -826,7 +777,7 @@ impl CompilerDriver {
 
         let fqp = FullyQualifiedPath::new(package_path.clone());
         let (mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes, resolved_const_values, resolved_const_defs) =
-            self.lower_to_mir(&hir_id, &fqp).await?;
+            self.lower_to_mir(&current_package_id, &hir_id, &fqp).await?;
         if let Some(package) = self
             .state.borrow()
             .workspace
@@ -881,10 +832,14 @@ impl CompilerDriver {
     /// `hir_typeck.rs` needs it to determine its own type).
     fn apply_resolved_comptime_block_values(
         &mut self,
+        package_id: &PackageId,
         block_values: &HashMap<hir::HirId, Value>,
     ) -> Result<(), CompilerDriverError> {
         let module_path = QualifiedPath::new(Vec::new());
-        let hir_id = HirId::new(format!("hir:{}", self.module_state_key(&module_path)));
+        let hir_id = HirId::new(format!(
+            "hir:{}",
+            Self::module_state_key(package_id, &module_path)
+        ));
         let mut typeck_results = self.state.borrow().hir_typeck(&hir_id)?.clone();
         typeck_results
             .const_block_values
@@ -897,27 +852,16 @@ impl CompilerDriver {
         &mut self,
         package: &Rc<RefCell<fp_core::ast::package::CompiledPackage>>,
     ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
-        let package_id = self
-            .state.borrow()
-            .workspace
-            .current_package()
-            .cloned()
-            .ok_or_else(|| {
-                CompilerDriverError::UnresolvablePackage(
-                    "package re-lowering requires a focused package workspace".to_string(),
-                )
-            })?;
-        let hir_package_id = self
-            .state.borrow()
-            .workspace
-            .compiled_package(&package_id)
-            .map(|package| package.borrow().package_id)
-            .unwrap_or_default();
+        let package_id = package.borrow().ast.package_id.clone();
+        let hir_package_id = package.borrow().package_id;
         let module_path = QualifiedPath::new(Vec::new());
-        let hir_id = HirId::new(format!("hir:{}", self.module_state_key(&module_path)));
+        let hir_id = HirId::new(format!(
+            "hir:{}",
+            Self::module_state_key(&package_id, &module_path)
+        ));
         let fqp = FullyQualifiedPath::new(module_path.clone());
         let (mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes, resolved_const_values, resolved_const_defs) =
-            self.lower_to_mir(&hir_id, &fqp).await?;
+            self.lower_to_mir(&package_id, &hir_id, &fqp).await?;
         {
             let mut package = package.borrow_mut();
             package.mir.program = Some(self.state.borrow().mir(&mir_id)?.clone());
@@ -1084,15 +1028,18 @@ impl CompilerDriver {
         state: &Rc<RefCell<CompilerState>>,
         request: fp_typing::ComptimeRequest,
     ) -> Result<Value, CompilerDriverError> {
+        // The request already names its own package via `def_id` — no need
+        // for the workspace to have any package "focused" first.
         let package_id = state
             .borrow()
             .workspace
-            .current_package()
-            .cloned()
+            .compiled_package_for_def(request.def_id)
+            .map(|package| package.borrow().ast.package_id.clone())
             .ok_or_else(|| {
-                CompilerDriverError::UnresolvablePackage(
-                    "comptime evaluation requires a focused package workspace".to_string(),
-                )
+                CompilerDriverError::UnresolvablePackage(format!(
+                    "no compiled package owns comptime request {:?}",
+                    request.def_id
+                ))
             })?;
         let module_path = QualifiedPath::new(vec!["__comptime_probe__".to_string()]);
         let fqp = FullyQualifiedPath::new(module_path);
@@ -1138,8 +1085,8 @@ impl CompilerDriver {
             &full_layouts,
             &opaque_payload_sizes,
         )?;
-        let values = Self::evaluate_comptime_lir_with(state, &lir_id, &fqp)?;
-        values.get(&request.expression_id).cloned().ok_or_else(|| {
+        let values = Self::evaluate_comptime_lir_with(state, &package_id, &lir_id, &fqp)?;
+        values.get(&request.def_id).cloned().ok_or_else(|| {
             CompilerDriverError::UnresolvableComptime(format!(
                 "expression {} did not produce a comptime value",
                 request.expression_id
@@ -1159,10 +1106,11 @@ impl CompilerDriver {
     /// for whichever entries the mid-pass attempts hadn't already resolved).
     async fn evaluate_comptime_lir(
         &mut self,
+        package_id: &PackageId,
         lir_id: &LirId,
         path: &FullyQualifiedPath,
     ) -> Result<HashMap<hir::DefId, Value>, CompilerDriverError> {
-        Self::evaluate_comptime_lir_with(&self.state, lir_id, path)
+        Self::evaluate_comptime_lir_with(&self.state, package_id, lir_id, path)
     }
 
     /// Same as `evaluate_comptime_lir`, but against a bare
@@ -1172,6 +1120,7 @@ impl CompilerDriver {
     /// carried state across calls anyway) — see `lower_to_mir_with`.
     fn evaluate_comptime_lir_with(
         state: &Rc<RefCell<CompilerState>>,
+        package_id: &PackageId,
         lir_id: &LirId,
         path: &FullyQualifiedPath,
     ) -> Result<HashMap<hir::DefId, Value>, CompilerDriverError> {
@@ -1181,16 +1130,6 @@ impl CompilerDriver {
         // program) rather than cloning the entire `LirProgram` a second time.
         let comptime_entries = lir.comptime_entries.clone();
 
-        let package_id = state
-            .borrow()
-            .workspace
-            .current_package()
-            .cloned()
-            .ok_or_else(|| {
-                CompilerDriverError::UnresolvablePackage(
-                    "comptime evaluation requires a focused package workspace".to_string(),
-                )
-            })?;
         let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
         if comptime_entries.is_empty() {
             // No comptime entry needed the real interpreter, but that
@@ -1205,9 +1144,11 @@ impl CompilerDriver {
             // instead of unconditionally substituting a unit placeholder
             // that looks exactly like a real "this evaluates to nothing"
             // result.
-            let package_hir_id =
-                HirId::new(format!("hir:{}", Self::module_state_key_for(state, &QualifiedPath::new(Vec::new()))));
-            let compiled_package = state.borrow().workspace.compiled_package(&package_id);
+            let package_hir_id = HirId::new(format!(
+                "hir:{}",
+                Self::module_state_key(package_id, &QualifiedPath::new(Vec::new()))
+            ));
+            let compiled_package = state.borrow().workspace.compiled_package(package_id);
             let mut last_value = None;
             if let Some(compiled_package) = compiled_package {
                 let package = compiled_package.borrow();
@@ -1268,8 +1209,10 @@ impl CompilerDriver {
         let mut count = 0usize;
         let mut last = Value::unit();
         let mut block_values: HashMap<hir::DefId, Value> = HashMap::new();
-        let package_hir_id =
-            HirId::new(format!("hir:{}", Self::module_state_key_for(state, &QualifiedPath::new(Vec::new()))));
+        let package_hir_id = HirId::new(format!(
+            "hir:{}",
+            Self::module_state_key(package_id, &QualifiedPath::new(Vec::new()))
+        ));
         let mut interpreter = LirInterpreter::new();
         let resolved = Self::resolved_const_values_snapshot(state);
         interpreter
@@ -1278,7 +1221,7 @@ impl CompilerDriver {
         for entry in &comptime_entries {
             let result = interpreter.run_function_named_in_workspace(
                 &workspaces,
-                &package_id,
+                package_id,
                 &entry.function,
             );
             let mut value =
@@ -1341,6 +1284,7 @@ impl CompilerDriver {
 
     async fn lower_to_mir(
         &mut self,
+        package_id: &PackageId,
         hir_id: &HirId,
         path: &FullyQualifiedPath,
     ) -> Result<
@@ -1355,7 +1299,7 @@ impl CompilerDriver {
         ),
         CompilerDriverError,
     > {
-        Self::lower_to_mir_with(&self.state, hir_id, path).await
+        Self::lower_to_mir_with(&self.state, package_id, hir_id, path).await
     }
 
     /// Same as `lower_to_mir`, but against a bare `Rc<RefCell<CompilerState>>` —
@@ -1365,6 +1309,7 @@ impl CompilerDriver {
     /// exact same lowering logic instead of duplicating it.
     async fn lower_to_mir_with(
         state: &Rc<RefCell<CompilerState>>,
+        package_id: &PackageId,
         hir_id: &HirId,
         path: &FullyQualifiedPath,
     ) -> Result<
@@ -1447,7 +1392,10 @@ impl CompilerDriver {
         let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
         let resolved_const_values = lowering.take_resolved_const_values();
         let resolved_const_defs = lowering.take_resolved_const_defs();
-        let mir_id = MirId::new(format!("mir:{}", Self::module_state_key_for(state, path.path())));
+        let mir_id = MirId::new(format!(
+            "mir:{}",
+            Self::module_state_key(package_id, path.path())
+        ));
         state.borrow_mut().insert_mir(mir_id.clone(), mir);
         Ok((
             mir_id,
@@ -1542,7 +1490,24 @@ impl CompilerDriver {
         let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
         let resolved_const_values = lowering.take_resolved_const_values();
         let resolved_const_defs = lowering.take_resolved_const_defs();
-        let mir_id = MirId::new(format!("mir:{}", Self::module_state_key_for(state, path.path())));
+        // `request.def_id` already names its own package — same derivation
+        // `resolve_comptime_request_with` uses, so this never needs the
+        // workspace's mutable, ambient `current_package()` either.
+        let package_id = state
+            .borrow()
+            .workspace
+            .compiled_package_for_def(request.def_id)
+            .map(|package| package.borrow().ast.package_id.clone())
+            .ok_or_else(|| {
+                CompilerDriverError::UnresolvablePackage(format!(
+                    "no compiled package owns comptime request {:?}",
+                    request.def_id
+                ))
+            })?;
+        let mir_id = MirId::new(format!(
+            "mir:{}",
+            Self::module_state_key(&package_id, path.path())
+        ));
         state.borrow_mut().insert_mir(mir_id.clone(), mir);
         Ok((
             mir_id,

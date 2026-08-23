@@ -467,6 +467,19 @@ impl WorkspaceContext {
         self.crates.borrow().get(package_id).cloned()
     }
 
+    /// Routes straight to the one package that could own `def_id`
+    /// (`def_id.package_id`, the same trick `find_hir_impl_method`/
+    /// `find_hir_enum_for_variant` use above) instead of requiring the
+    /// caller to already have this workspace's mutable, ambient
+    /// `current_package()` set to the right value — a `DefId` already
+    /// names its own package, so nothing needs to be "focused" first.
+    pub fn compiled_package_for_def(
+        &self,
+        def_id: crate::hir::DefId,
+    ) -> Option<Rc<RefCell<CompiledPackage>>> {
+        self.hir_packages.borrow().get(&def_id.package_id).cloned()
+    }
+
     pub fn provider_for(&self, package_id: &PackageId) -> Option<Arc<dyn PackageProvider>> {
         let owns_package = self
             .providers

@@ -377,10 +377,6 @@ fn compile_source_file(
     executor
         .run(session.driver().compile_package(&package_id))
         .map_err(|err| CliError::Compilation(err.to_string()))?;
-    session
-        .driver()
-        .focus_package(package_id.clone())
-        .map_err(|err| CliError::Compilation(err.to_string()))?;
     // Only evaluate comptime LIR for full native compilation
     if pipeline == PipelineMode::Native {
         executor
