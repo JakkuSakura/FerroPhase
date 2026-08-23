@@ -11,7 +11,7 @@ use std::pin::Pin;
 
 use crate::context::{ComptimeRequest, ComptimeResolver, ITEM_CHECK_FAILURE_CODE};
 use fp_core::hir::GenericCallResolution;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 /// Builds the unified `program: Rc<hir::HirProgram>` a package's typecheck
 /// runs against, by cloning `dependency_program` (a cheap `Rc`-map clone,
@@ -27,14 +27,41 @@ pub fn build_typing_program(
     Rc::new(program)
 }
 
-/// The package-level state one whole package's typecheck pass shares —
-/// every item's task (see `spawn_item_task`) clones the same
-/// `Rc<RefCell<HirTypeChecker>>` handle, so writes made through
-/// `self.checker.borrow().package()` (which all route to the one
-/// `Rc<HirPackage>` entry inside `program`) are visible to every other
-/// item's checker. Wrapped in `RefCell` rather than handed out as bare
-/// `&`/`&mut` because it's threaded through `'static` boxed futures
-/// (`get_or_spawn`'s task closures) that can't carry a borrow.
+/// One `HirTypeChecker` instance plays one of two roles, distinguished by
+/// `root`:
+///
+/// - The **root** instance (`root: None`, built by `new`) holds the
+///   package-level state one whole package's typecheck pass shares:
+///   `program`/`current_package`/`comptime_resolver`/`executor`. Every
+///   item's task (see `spawn_item_task`) is spawned against the same
+///   `Rc<RefCell<HirTypeChecker>>` root handle, so writes made through
+///   `root.borrow().package()` (routing to the one `Rc<HirPackage>` entry
+///   inside `program`) are visible to every other item's checker.
+/// - A per-item ("child") instance (`root: Some(weak)`, built by `for_item`,
+///   or by one of the `with_*` helpers below while recursing into a nested
+///   scope) carries its own copy of `program`/`current_package`/
+///   `comptime_resolver`/`executor` (cheap clones) plus this item's own
+///   recursion state (`locals`/`generic_scope`/`self_type`/`assoc_types`/
+///   `expected_expr_type`). `root` is only ever consulted to recover the
+///   shared `Rc<RefCell<HirTypeChecker>>` handle itself (needed to spawn
+///   *further* item/comptime tasks against the same root — see
+///   `root_handle`), never for the recursion-state fields.
+///
+/// Nested scopes (entering a block, a generics scope, an impl candidate
+/// being tried, an expected-type hint) are represented by constructing a
+/// new, independent child `HirTypeChecker` (see the `with_*` methods) with
+/// just the relevant field overridden, and recursing using that child —
+/// not by pushing onto a shared stack. Once the child is dropped, the
+/// parent (never mutated) is exactly what it was before; there is no
+/// explicit "pop" anywhere.
+///
+/// `root` is a `Weak`, not a strong `Rc`, back-reference: the root already
+/// outlives every item instance spawned against it (kept alive by whoever
+/// is driving the whole package's typecheck pass — see `spawn_item_task`'s
+/// own `checker: &Rc<RefCell<Self>>` parameter), so a child instance
+/// holding a strong reference back to its own root would just be redundant
+/// refcounting, not a real ownership need.
+#[derive(Clone)]
 pub struct HirTypeChecker {
     /// The whole compiled workspace's HIR, as of when this package's type
     /// checking started: every already-published dependency package, plus
@@ -56,12 +83,41 @@ pub struct HirTypeChecker {
     /// a caller bug (there is no compile-time value to hand back).
     comptime_resolver: Option<ComptimeResolver>,
     executor: ExecutorHandle,
+    /// See the struct's own doc comment.
+    root: Option<Weak<RefCell<HirTypeChecker>>>,
+    /// Every binding currently visible, innermost-shadows-outermost. A
+    /// nested block's child starts as a clone of the parent's map
+    /// (identical visibility) and inserts its own bindings into that clone
+    /// — equivalent to pushing a new scope frame, since `HashMap::insert`
+    /// already shadows by name, and the clone means those insertions never
+    /// reach the parent.
+    locals: HashMap<hir::Symbol, Ty>,
+    /// Every generic param currently in scope (impl generics plus any
+    /// enclosing method/fn generics, merged). `DefId`s are globally
+    /// unique, so a flat merged map is equivalent to searching a stack of
+    /// nested generic scopes.
+    generic_scope: HashMap<hir::DefId, Ty>,
+    /// `Self`'s type for the impl candidate currently being resolved
+    /// against, if any. A child overrides this to try one candidate; once
+    /// it's dropped, the parent's own value (never touched) is live again.
+    self_type: Option<Ty>,
+    /// The current impl candidate's own `type Target = Y;` bindings,
+    /// paired with `self_type` the same way — lets `path_ty` resolve
+    /// `Self::Target` for code lexically inside that impl. Deliberately
+    /// scoped to the impl's own bindings only (no trait-default fallback,
+    /// no cross-impl projection resolution for code outside the impl) —
+    /// see `impl_assoc_types`.
+    assoc_types: Option<HashMap<hir::Symbol, Ty>>,
+    /// The ambient expected-type hint for the expression currently being
+    /// checked, if any.
+    expected_expr_type: Option<Ty>,
 }
 
 impl HirTypeChecker {
     /// Builds the unified `program: Rc<hir::HirProgram>` (via
     /// `build_typing_program`) and wraps the whole package-level state in
-    /// one `Rc<RefCell<_>>` handle, cloned into every item's task.
+    /// one `Rc<RefCell<_>>` root handle, spawned against by every item's
+    /// task (see `spawn_item_task`).
     pub fn new(
         current_package: hir::HirPackage,
         dependency_program: Option<Rc<hir::HirProgram>>,
@@ -75,7 +131,107 @@ impl HirTypeChecker {
             current_package: package_id,
             comptime_resolver,
             executor,
+            root: None,
+            locals: HashMap::new(),
+            generic_scope: HashMap::new(),
+            self_type: None,
+            assoc_types: None,
+            expected_expr_type: None,
         }))
+    }
+
+    /// Fresh, item-local recursion state for checking exactly one item,
+    /// cloned off `root`'s package-level state — see the struct's own doc
+    /// comment for why `program`/`current_package`/`comptime_resolver`/
+    /// `executor` are copied in directly rather than reached through
+    /// `root` on every access.
+    fn for_item(root: &Rc<RefCell<Self>>) -> Self {
+        let shared = root.borrow();
+        Self {
+            program: shared.program.clone(),
+            current_package: shared.current_package,
+            comptime_resolver: shared.comptime_resolver.clone(),
+            executor: shared.executor.clone(),
+            root: Some(Rc::downgrade(root)),
+            locals: HashMap::new(),
+            generic_scope: HashMap::new(),
+            self_type: None,
+            assoc_types: None,
+            expected_expr_type: None,
+        }
+    }
+
+    /// Recovers the shared `Rc<RefCell<HirTypeChecker>>` root handle from a
+    /// child instance's weak back-reference — needed wherever item-level
+    /// code spawns *further* item/comptime tasks against the same root
+    /// (`spawn_item_task`/`spawn_comptime_task` both take that handle, not
+    /// `&self`). Panics if called on the root instance itself (`root` is
+    /// `None` there — the root already *is* what callers elsewhere hold
+    /// their own `Rc<RefCell<_>>` to) or if the root was somehow dropped
+    /// while an item check spawned against it was still running (should
+    /// never happen: the root is kept alive by whoever is driving the
+    /// whole package's typecheck pass for at least as long as any item
+    /// task spawned against it).
+    fn root_handle(&self) -> Rc<RefCell<Self>> {
+        self.root
+            .as_ref()
+            .expect("root_handle called on the root HirTypeChecker instance itself")
+            .upgrade()
+            .expect("root HirTypeChecker dropped while an item check was still using it")
+    }
+
+    /// A child for entering a new block-local scope — see `locals`'s own
+    /// doc comment: the child's own later insertions shadow the parent's
+    /// (cloned-in) bindings without ever reaching back into the parent.
+    fn with_fresh_block_scope(&self) -> Self {
+        self.clone()
+    }
+
+    /// A child with `generics.params` merged into a clone of the current
+    /// `generic_scope` — the same set `push_generics` used to push as a
+    /// new stack frame, just materialized as a new `Self` instead.
+    fn with_generics(&self, generics: &hir::Generics) -> Self {
+        let mut child = self.clone();
+        for (index, parameter) in generics.params.iter().enumerate() {
+            if matches!(parameter.kind, hir::GenericParamKind::Type { .. }) {
+                child.generic_scope.insert(
+                    parameter.def_id,
+                    Ty {
+                        kind: TyKind::Param(ty::ParamTy {
+                            index: index as u32,
+                            name: parameter.name.clone(),
+                        }),
+                    },
+                );
+            }
+        }
+        child
+    }
+
+    /// A child trying `ty` as `Self` for one impl candidate.
+    fn with_self_type(&self, ty: Ty) -> Self {
+        let mut child = self.clone();
+        child.self_type = Some(ty);
+        child
+    }
+
+    /// A child with `assoc` as the current impl candidate's own associated
+    /// types — see `assoc_types`'s own doc comment.
+    fn with_assoc_types(&self, assoc: HashMap<hir::Symbol, Ty>) -> Self {
+        let mut child = self.clone();
+        child.assoc_types = Some(assoc);
+        child
+    }
+
+    /// A child checking one expression under an ambient expected-type hint.
+    fn with_expected_expr_type(&self, ty: Ty) -> Self {
+        let mut child = self.clone();
+        child.expected_expr_type = Some(ty);
+        child
+    }
+
+    fn generic_ty(&self, def_id: hir::DefId) -> Option<Ty> {
+        self.generic_scope.get(&def_id).cloned()
     }
 
     /// The package actually being checked.
@@ -84,6 +240,12 @@ impl HirTypeChecker {
             .package(self.current_package)
             .cloned()
             .expect("current_package is always inserted into program at construction")
+    }
+
+    /// The whole workspace `HirProgram`, for cross-package lookups that
+    /// `package()`'s single-package view can't answer.
+    fn program_rc(&self) -> Rc<hir::HirProgram> {
+        self.program.clone()
     }
 
     /// The whole workspace `HirProgram` this package is being checked
@@ -100,6 +262,13 @@ impl HirTypeChecker {
     /// still-in-progress package back up by this id (see
     /// `CompilerState::in_progress_hir_program`), since the request itself
     /// no longer carries the package's own `Rc` directly.
+    fn current_package(&self) -> hir::PackageId {
+        self.current_package
+    }
+
+    /// See `current_package`; kept as a distinctly-named `pub` accessor
+    /// since external crates (`fp-compiler`) shouldn't need to know that
+    /// the field itself is also called `current_package`.
     pub fn current_package_id(&self) -> hir::PackageId {
         self.current_package
     }
@@ -128,67 +297,16 @@ impl HirTypeChecker {
             .iter()
             .any(|diagnostic| diagnostic.code.as_deref() == Some(ITEM_CHECK_FAILURE_CODE))
     }
-}
-
-/// Type checks a single item and records semantic types outside the tree
-/// itself, directly onto the same package's own typed-results fields (see
-/// `hir::HirPackage`'s doc comments — `expr_types`, `pat_types`, ...).
-/// This is deliberately a side-table pass: HIR nodes remain source-shaped
-/// and MIR lowering can consume the results without an AST round trip.
-///
-/// One `ItemTypeChecker` instance checks exactly one item — its own fields
-/// below are the item-local recursion state (locals in scope, generic
-/// substitutions, the impl `Self` type, ...), fresh per item and never
-/// shared with another item's concurrently in-flight check. Cross-item,
-/// whole-package state lives on the shared `checker` handle instead.
-pub struct ItemTypeChecker {
-    checker: Rc<RefCell<HirTypeChecker>>,
-    locals: Vec<HashMap<hir::Symbol, Ty>>,
-    generic_scopes: Vec<HashMap<hir::DefId, Ty>>,
-    self_types: Vec<Ty>,
-    /// The current impl block's own associated-type bindings (`type
-    /// Target = Y;`), pushed/popped in lockstep with `self_types` — lets
-    /// `path_ty` resolve `Self::Target` for code lexically inside that
-    /// impl. Deliberately scoped to the impl's own bindings only (no
-    /// trait-default fallback, no cross-impl projection resolution for
-    /// code outside the impl) — see `impl_assoc_types`.
-    assoc_types: Vec<HashMap<hir::Symbol, Ty>>,
-    expected_expr_types: Vec<Ty>,
-}
-
-impl ItemTypeChecker {
-    /// The package actually being checked — forwards through the shared
-    /// `checker` handle; returned as an owned `Rc` (not tied to the
-    /// `RefCell` borrow) so callers can chain method calls on it freely.
-    fn program(&self) -> Rc<hir::HirPackage> {
-        self.checker.borrow().package()
-    }
-
-    /// The whole workspace `HirProgram`, for cross-package lookups that
-    /// `program()`'s single-package view can't answer.
-    fn program_rc(&self) -> Rc<hir::HirProgram> {
-        self.checker.borrow().program.clone()
-    }
-
-    fn current_package(&self) -> hir::PackageId {
-        self.checker.borrow().current_package
-    }
-
-    async fn request_comptime(&self, request: ComptimeRequest) -> fp_core::Result<fp_core::ast::Value> {
-        let checker = self.checker.clone();
-        let request_fut = { checker.borrow().request_comptime(request) };
-        request_fut.await
-    }
 
     /// Records a typing diagnostic instead of hard-aborting the whole
     /// package's typecheck over one error — mirrors `ast_to_hir`'s
     /// `error_placeholder_expr_kind` precedent (`fp-backend/src/
-    /// transforms/ast_to_hir/exprs.rs`). `self.program().diagnostics`
+    /// transforms/ast_to_hir/exprs.rs`). `self.package().diagnostics`
     /// is the real sink; `typecheck_package` inspects it after the whole
     /// pass finishes to decide overall pass/fail, so this doesn't silently
     /// let a genuinely broken package look fully typed.
     fn record_error(&self, message: impl Into<String>) {
-        self.program()
+        self.package()
             .diagnostics
             .add_diagnostic(crate::types::typing_diagnostic(message, None));
     }
@@ -205,7 +323,7 @@ impl ItemTypeChecker {
     /// offending expression's span in scope, so the diagnostic is
     /// locatable instead of a bare, file/line-less message.
     fn record_error_with_span(&self, message: impl Into<String>, span: fp_core::span::Span) {
-        self.program()
+        self.package()
             .diagnostics
             .add_diagnostic(crate::types::typing_diagnostic(message, Some(span)));
     }
@@ -223,37 +341,13 @@ impl ItemTypeChecker {
     /// pervasive, deliberately non-fatal `record_error`/`error_ty` calls
     /// sprinkled through `check_expr`/`check_block`, e.g. `require_same`'s
     /// isolated mismatches, which recover and leave no gap). Tagged with
-    /// `ITEM_CHECK_FAILURE_CODE` so `HirTypeChecker::has_typing_errors` can
-    /// gate later stages on real gaps without also tripping on every
-    /// recovered, harmless mismatch also sitting in the same manager.
+    /// `ITEM_CHECK_FAILURE_CODE` so `has_typing_errors` can gate later
+    /// stages on real gaps without also tripping on every recovered,
+    /// harmless mismatch also sitting in the same manager.
     fn record_item_check_failure(&self, message: impl Into<String>) {
         let diagnostic = crate::types::typing_diagnostic(message, None)
             .with_code(crate::context::ITEM_CHECK_FAILURE_CODE);
-        self.program().diagnostics.add_diagnostic(diagnostic);
-    }
-}
-
-struct GenericScope<'a> {
-    checker: &'a mut ItemTypeChecker,
-}
-
-impl Deref for GenericScope<'_> {
-    type Target = ItemTypeChecker;
-
-    fn deref(&self) -> &Self::Target {
-        self.checker
-    }
-}
-
-impl DerefMut for GenericScope<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.checker
-    }
-}
-
-impl Drop for GenericScope<'_> {
-    fn drop(&mut self) {
-        self.checker.generic_scopes.pop();
+        self.package().diagnostics.add_diagnostic(diagnostic);
     }
 }
 
@@ -281,12 +375,31 @@ impl HirTypeChecker {
     /// per-item task (see `spawn_item_task`) has settled (i.e. its returned
     /// future resolved). Every typed result (expr/pat types, resolutions,
     /// diagnostics, ...) is already embedded directly on this same package
-    /// (every `ItemTypeChecker` writes straight through to it — see
+    /// (every item instance writes straight through to it — see
     /// `HirPackage`'s own typed-results fields), so a plain clone is the
     /// whole snapshot; there's no separate side table to read back
     /// alongside it.
     pub fn finish(&self) -> hir::HirPackage {
         self.package().as_ref().clone()
+    }
+
+    /// Entrypoint for type-checking a single item by `DefId`, directly —
+    /// unlike `spawn_item_task`, this does *not* go through
+    /// `ExecutorHandle::get_or_spawn`'s dedup-by-key task registry; it just
+    /// builds a per-item instance (`for_item`) and runs `check_item`
+    /// inline, for callers driving a single item's check themselves rather
+    /// than through the shared per-package task pool (e.g. tooling that
+    /// wants one item's diagnostics/`Result` directly, without another
+    /// concurrent awaiter of the same `def_id` silently sharing this run).
+    /// `def_id` is resolved to its enclosing top-level item first, same as
+    /// `spawn_item_task` — see `resolve_top_level_def_id`.
+    pub async fn typecheck_item(checker: &Rc<RefCell<Self>>, def_id: hir::DefId) -> Result<()> {
+        let def_id = checker.borrow().resolve_top_level_def_id(def_id);
+        let Some(item) = checker.borrow().package().def_map.get(&def_id).cloned() else {
+            return Ok(());
+        };
+        let mut item_checker = Self::for_item(checker);
+        item_checker.check_item(&item).await
     }
 
     /// Get-or-spawn the task that type-checks `def_id` (resolved to its
@@ -308,14 +421,7 @@ impl HirTypeChecker {
                 let Some(item) = checker.borrow().package().def_map.get(&def_id).cloned() else {
                     return;
                 };
-                let mut item_checker = ItemTypeChecker {
-                    checker,
-                    locals: vec![HashMap::new()],
-                    generic_scopes: Vec::new(),
-                    self_types: Vec::new(),
-                    assoc_types: Vec::new(),
-                    expected_expr_types: Vec::new(),
-                };
+                let mut item_checker = Self::for_item(&checker);
                 if let Err(error) = item_checker.check_item(&item).await {
                     item_checker.record_item_check_failure(format!("{error}"));
                 }
@@ -354,10 +460,11 @@ impl HirTypeChecker {
     }
 }
 
-impl ItemTypeChecker {
+impl HirTypeChecker {
     /// Type-checks and collects an impl block's own `type Target = Y;`
-    /// associated-type bindings, ready to push onto `assoc_types` alongside
-    /// `self_types` — see that field's doc comment for the deliberate scope
+    /// associated-type bindings, ready to combine with `self_type` — see
+    /// `with_self_type`/`with_assoc_types` and that field's own doc
+    /// comment for the deliberate scope
     /// limit (impl's own bindings only, no trait-default consultation, no
     /// cross-impl resolution).
     async fn impl_assoc_types(
@@ -382,18 +489,16 @@ impl ItemTypeChecker {
                 }
                 hir::ItemKind::Const(constant) => {
                     let declared_ty = self.check_type_expr(&constant.ty).await?;
-                    self.expected_expr_types.push(declared_ty.clone());
-                    let body_result = self.check_body(&constant.body).await;
-                    self.expected_expr_types.pop();
-                    let body_ty = body_result?;
+                    let mut scope = self.with_expected_expr_type(declared_ty.clone());
+                    let body_ty = scope.check_body(&constant.body).await?;
                     let package = self.program();
                     package.record_type_expr_type(constant.ty.hir_id, body_ty.clone());
                     package.record_const_type(item.def_id, body_ty);
                 }
                 hir::ItemKind::Impl(impl_item) => {
-                    let mut scope = self.generic_scope(&impl_item.generics);
+                    let mut scope = self.with_generics(&impl_item.generics);
                     let self_ty = scope.checked_impl_self_ty(&impl_item.self_ty).await?;
-                    scope.self_types.push(self_ty);
+                    let mut scope = scope.with_self_type(self_ty);
                     // `impl_item.trait_ty`, when present, names the trait
                     // being implemented — a reference to a trait
                     // definition, not a value type. `path_ty`/
@@ -408,7 +513,7 @@ impl ItemTypeChecker {
                     // position was never meant to type-check as a
                     // concrete type in the first place.
                     let assoc_types = scope.impl_assoc_types(&impl_item.items).await?;
-                    scope.assoc_types.push(assoc_types);
+                    let mut scope = scope.with_assoc_types(assoc_types);
                     for item in &impl_item.items {
                         match &item.kind {
                             hir::ImplItemKind::Method(function) => {
@@ -423,17 +528,15 @@ impl ItemTypeChecker {
                             }
                         }
                     }
-                    scope.assoc_types.pop();
-                    scope.self_types.pop();
                 }
                 hir::ItemKind::Struct(def) => {
-                    let mut scope = self.generic_scope(&def.generics);
+                    let mut scope = self.with_generics(&def.generics);
                     for field in &def.fields {
                         scope.check_type_expr(&field.ty).await?;
                     }
                 }
                 hir::ItemKind::Enum(def) => {
-                    let mut scope = self.generic_scope(&def.generics);
+                    let mut scope = self.with_generics(&def.generics);
                     for variant in &def.variants {
                         if let Some(payload) = &variant.payload {
                             scope.check_type_expr(payload).await?;
@@ -470,53 +573,23 @@ impl ItemTypeChecker {
         function: &'a hir::Function,
     ) -> crate::BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            self.push_generics(&function.sig.generics);
-            self.check_signature(&function.sig).await.map_err(|error| {
+            let mut scope = self.with_generics(&function.sig.generics);
+            scope.check_signature(&function.sig).await.map_err(|error| {
                 Error::from(format!(
                     "in function `{}` signature: {error}",
                     function.sig.name
                 ))
             })?;
             if let Some(body) = &function.body {
-                self.check_function_body(&function.sig.inputs, &function.sig.output, body)
+                scope
+                    .check_function_body(&function.sig.inputs, &function.sig.output, body)
                     .await
                     .map_err(|error| {
                         Error::from(format!("in function `{}` body: {error}", function.sig.name))
                     })?;
             }
-            self.generic_scopes.pop();
             Ok(())
         })
-    }
-
-    fn push_generics(&mut self, generics: &hir::Generics) {
-        let mut scope = HashMap::new();
-        for (index, parameter) in generics.params.iter().enumerate() {
-            if matches!(parameter.kind, hir::GenericParamKind::Type { .. }) {
-                scope.insert(
-                    parameter.def_id,
-                    Ty {
-                        kind: TyKind::Param(ty::ParamTy {
-                            index: index as u32,
-                            name: parameter.name.clone(),
-                        }),
-                    },
-                );
-            }
-        }
-        self.generic_scopes.push(scope);
-    }
-
-    fn generic_scope(&mut self, generics: &hir::Generics) -> GenericScope<'_> {
-        self.push_generics(generics);
-        GenericScope { checker: self }
-    }
-
-    fn generic_ty(&self, def_id: hir::DefId) -> Option<Ty> {
-        self.generic_scopes
-            .iter()
-            .rev()
-            .find_map(|scope| scope.get(&def_id).cloned())
     }
 
     async fn check_signature(&mut self, signature: &hir::FunctionSig) -> Result<()> {
@@ -528,14 +601,12 @@ impl ItemTypeChecker {
     }
 
     async fn check_body(&mut self, body: &hir::Body) -> Result<Ty> {
-        self.locals.push(HashMap::new());
+        let mut scope = self.with_fresh_block_scope();
         for param in &body.params {
-            let ty = self.check_type_expr(&param.ty).await?;
-            self.bind_pattern(&param.pat, ty).await?;
+            let ty = scope.check_type_expr(&param.ty).await?;
+            scope.bind_pattern(&param.pat, ty).await?;
         }
-        let value_ty = self.check_expr(&body.value).await?;
-        self.locals.pop();
-        Ok(value_ty)
+        scope.check_expr(&body.value).await
     }
 
     async fn check_function_body(
@@ -544,10 +615,10 @@ impl ItemTypeChecker {
         output: &hir::TypeExpr,
         block: &hir::Block,
     ) -> Result<()> {
-        self.locals.push(HashMap::new());
+        let mut scope = self.with_fresh_block_scope();
         for param in params {
-            let ty = self.check_type_expr(&param.ty).await?;
-            self.bind_pattern(&param.pat, ty).await?;
+            let ty = scope.check_type_expr(&param.ty).await?;
+            scope.bind_pattern(&param.pat, ty).await?;
         }
         // Same expected-type hint `ConstBlock`/`Assign` already provide:
         // without it, a trailing zero-arg generic call like
@@ -557,16 +628,16 @@ impl ItemTypeChecker {
         // block's own trailing expression (see
         // `check_block_with_expected_tail`) — not the whole body — so it
         // doesn't leak into unrelated statements earlier in the function.
-        let output_ty = self.check_type_expr(output).await?;
-        let refinement_hint = self.program_rc().take_raw_refinement_hint(output.hir_id);
-        self.check_block_with_expected_tail(block, Some(output_ty))
+        let output_ty = scope.check_type_expr(output).await?;
+        let refinement_hint = scope.program_rc().take_raw_refinement_hint(output.hir_id);
+        scope
+            .check_block_with_expected_tail(block, Some(output_ty))
             .await?;
         if let Some(hint) = &refinement_hint {
             if let Some(tail) = block.expr.as_ref() {
-                self.discharge_refinement(hint, tail)?;
+                scope.discharge_refinement(hint, tail)?;
             }
         }
-        self.locals.pop();
         Ok(())
     }
 
@@ -698,13 +769,13 @@ impl ItemTypeChecker {
                             .as_ref()
                             .and_then(|inputs| inputs.get(index))
                             .map(|ty| (**ty).clone());
-                        if let Some(hint) = &param_hint {
-                            self.expected_expr_types.push(hint.clone());
-                        }
-                        let actual = self.check_expr(&arg.value).await;
-                        if param_hint.is_some() {
-                            self.expected_expr_types.pop();
-                        }
+                        let actual = if let Some(hint) = &param_hint {
+                            self.with_expected_expr_type(hint.clone())
+                                .check_expr(&arg.value)
+                                .await
+                        } else {
+                            self.check_expr(&arg.value).await
+                        };
                         let actual = actual?;
                         let actual = match expected_inputs
                             .as_ref()
@@ -740,7 +811,7 @@ impl ItemTypeChecker {
                         return Ok(self.error_ty("called expression is not a function"));
                     };
                     if substitutions.is_empty() {
-                        if let Some(expected) = self.expected_expr_types.last() {
+                        if let Some(expected) = self.expected_expr_type.as_ref() {
                             if let TyKind::FnPtr(signature) = &callee_ty.kind {
                                 // Only worth consulting the ambient
                                 // expected-type hint when the callee is
@@ -818,13 +889,13 @@ impl ItemTypeChecker {
                             .as_ref()
                             .and_then(|inputs| inputs.get(index + 1))
                             .map(|ty| (**ty).clone());
-                        if let Some(hint) = &param_hint {
-                            self.expected_expr_types.push(hint.clone());
-                        }
-                        let actual = self.check_expr(&arg.value).await;
-                        if param_hint.is_some() {
-                            self.expected_expr_types.pop();
-                        }
+                        let actual = if let Some(hint) = &param_hint {
+                            self.with_expected_expr_type(hint.clone())
+                                .check_expr(&arg.value)
+                                .await
+                        } else {
+                            self.check_expr(&arg.value).await
+                        };
                         arg_types.push(actual?);
                     }
                     // Method resolution has no natural "error" `DefId` to
@@ -972,9 +1043,10 @@ impl ItemTypeChecker {
                         // that outer `BinaryHeap<T>` hint into `values`'
                         // own zero-arg `Vec::new()` call, which needs (and
                         // has) its own field type, `Vec<T>`, to infer from.
-                        self.expected_expr_types.push(field_ty.clone());
-                        let value_ty = self.check_expr(&field.expr).await;
-                        self.expected_expr_types.pop();
+                        let value_ty = self
+                            .with_expected_expr_type(field_ty.clone())
+                            .check_expr(&field.expr)
+                            .await;
                         let value_ty = value_ty?;
                         self.unify_call_types(&field_ty, &value_ty, &mut substitutions)?;
                     }
@@ -1032,8 +1104,9 @@ impl ItemTypeChecker {
                         let body = const_block.body.clone();
                         let program_for_task = self.program_rc();
                         let current_package = self.current_package();
+                        let root_handle = self.root_handle();
                         let value = HirTypeChecker::spawn_comptime_task(
-                            &self.checker,
+                            &root_handle,
                             def_id,
                             move || {
                                 let package = program_for_task.package(current_package).expect(
@@ -1073,11 +1146,9 @@ impl ItemTypeChecker {
                     // `check_block`, which only scopes the body itself.
                     let iter_ty = self.check_expr(iter).await?;
                     let elem_ty = self.for_loop_element_ty(&iter_ty);
-                    self.locals.push(HashMap::new());
-                    self.bind_pattern(pat, elem_ty).await?;
-                    let result = self.check_block(body).await;
-                    self.locals.pop();
-                    result?;
+                    let mut scope = self.with_fresh_block_scope();
+                    scope.bind_pattern(pat, elem_ty).await?;
+                    scope.check_block(body).await?;
                     self.unit_ty()
                 }
                 hir::ExprKind::Array(values) => {
@@ -1153,9 +1224,10 @@ impl ItemTypeChecker {
                     // `require_same` below fails a plain reassignment like
                     // `self.keys = Vec::new();` even though the field's own
                     // declared type unambiguously determines `T`.
-                    self.expected_expr_types.push(lhs.clone());
-                    let rhs = self.check_expr(rhs).await;
-                    self.expected_expr_types.pop();
+                    let rhs = self
+                        .with_expected_expr_type(lhs.clone())
+                        .check_expr(rhs)
+                        .await;
                     let rhs = rhs?;
                     // `unify_call_types`, not `require_same`: an assignment
                     // target's type should accept a value the same way a
@@ -1247,20 +1319,20 @@ impl ItemTypeChecker {
                     // present. With no hint and no annotation, the
                     // parameter gets an honest `Infer` placeholder rather
                     // than silently resolving to something unusable later.
-                    let hint = self.expected_expr_types.last().cloned();
+                    let hint = self.expected_expr_type.as_ref().cloned();
                     let hint_sig = match &hint {
                         Some(Ty {
                             kind: TyKind::FnPtr(sig),
                         }) => Some(sig.binder.value.clone()),
                         _ => None,
                     };
-                    self.locals.push(HashMap::new());
+                    let mut scope = self.with_fresh_block_scope();
                     let mut param_types = Vec::with_capacity(closure.params.len());
                     for (index, param) in closure.params.iter().enumerate() {
                         let declared = if matches!(param.ty.kind, hir::TypeExprKind::Infer) {
                             None
                         } else {
-                            Some(self.check_type_expr(&param.ty).await?)
+                            Some(scope.check_type_expr(&param.ty).await?)
                         };
                         let param_ty = declared
                             .or_else(|| {
@@ -1272,11 +1344,10 @@ impl ItemTypeChecker {
                             .unwrap_or_else(|| Ty {
                                 kind: TyKind::Infer(ty::InferTy::FreshTy(param.hir_id.index)),
                             });
-                        self.bind_pattern(&param.pat, param_ty.clone()).await?;
+                        scope.bind_pattern(&param.pat, param_ty.clone()).await?;
                         param_types.push(param_ty);
                     }
-                    let body_ty = self.check_expr(&closure.body).await?;
-                    self.locals.pop();
+                    let body_ty = scope.check_expr(&closure.body).await?;
                     Ty {
                         kind: TyKind::FnPtr(ty::PolyFnSig {
                             binder: ty::Binder {
@@ -1326,17 +1397,17 @@ impl ItemTypeChecker {
         block: &hir::Block,
         expected_tail: Option<Ty>,
     ) -> Result<Ty> {
-        self.locals.push(HashMap::new());
+        let mut scope = self.with_fresh_block_scope();
         for stmt in &block.stmts {
             match &stmt.kind {
                 hir::StmtKind::Local(local) => {
                     let ty = match (&local.ty, &local.init) {
                         (Some(annotation), Some(init)) => {
-                            let mut ty = self.check_type_expr(annotation).await?;
-                            let refinement_hint = self.program_rc().take_raw_refinement_hint(annotation.hir_id);
-                            let init_ty = self.check_expr(init).await?;
+                            let mut ty = scope.check_type_expr(annotation).await?;
+                            let refinement_hint = scope.program_rc().take_raw_refinement_hint(annotation.hir_id);
+                            let init_ty = scope.check_expr(init).await?;
                             if let Some(hint) = &refinement_hint {
-                                self.discharge_refinement(hint, init)?;
+                                scope.discharge_refinement(hint, init)?;
                             }
 
                             // `[T; _]`: resolve this binding's own declared-
@@ -1410,58 +1481,53 @@ impl ItemTypeChecker {
                                 }
                             } else {
                                 let mut substitutions = HashMap::new();
-                                self.unify_call_types(&init_ty, &ty, &mut substitutions)?;
-                                self.substitute_param_map(&init_ty, &substitutions)
+                                scope.unify_call_types(&init_ty, &ty, &mut substitutions)?;
+                                scope.substitute_param_map(&init_ty, &substitutions)
                             };
                             if !Self::ty_matches_with_infer_holes(&ty, &resolved_init) {
                                 return Err(Error::from(format!(
                                     "type mismatch: expected `{ty}`, found `{resolved_init}`"
                                 )));
                             }
-                            self.program().record_expr_type(init.hir_id, resolved_init.clone());
+                            scope.program().record_expr_type(init.hir_id, resolved_init.clone());
                             resolved_init
                         }
-                        (Some(annotation), None) => self.check_type_expr(annotation).await?,
-                        (None, Some(init)) => self.check_expr(init).await?,
+                        (Some(annotation), None) => scope.check_type_expr(annotation).await?,
+                        (None, Some(init)) => scope.check_expr(init).await?,
                         (None, None) => {
-                            self.error_ty("local binding needs a type or initializer")
+                            scope.error_ty("local binding needs a type or initializer")
                         }
                     };
-                    self.bind_pattern(&local.pat, ty).await?;
+                    scope.bind_pattern(&local.pat, ty).await?;
                 }
-                hir::StmtKind::Item(item) => self.check_item(item).await?,
+                hir::StmtKind::Item(item) => scope.check_item(item).await?,
                 hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
-                    self.check_expr(expr).await?;
+                    scope.check_expr(expr).await?;
                 }
             }
         }
         let ty = match block.expr.as_ref() {
             Some(expr) => {
                 if let Some(expected) = expected_tail {
-                    self.expected_expr_types.push(expected);
-                    let result = self.check_expr(expr).await;
-                    self.expected_expr_types.pop();
+                    let result = scope.with_expected_expr_type(expected).check_expr(expr).await;
                     result?
                 } else {
-                    self.check_expr(expr).await?
+                    scope.check_expr(expr).await?
                 }
             }
-            None => self.unit_ty(),
+            None => scope.unit_ty(),
         };
-        self.locals.pop();
         Ok(ty)
     }
 
     async fn check_match_arm(&mut self, arm: &hir::MatchArm, scrutinee_ty: &Ty) -> Result<Ty> {
-        self.locals.push(HashMap::new());
-        self.bind_pattern(&arm.pat, scrutinee_ty.clone()).await?;
+        let mut scope = self.with_fresh_block_scope();
+        scope.bind_pattern(&arm.pat, scrutinee_ty.clone()).await?;
         if let Some(guard) = &arm.guard {
-            let guard_ty = self.check_expr(guard).await?;
-            self.require_same_at(&guard_ty, &Ty::bool(), guard.span)?;
+            let guard_ty = scope.check_expr(guard).await?;
+            scope.require_same_at(&guard_ty, &Ty::bool(), guard.span)?;
         }
-        let result = self.check_expr(&arm.body).await;
-        self.locals.pop();
-        result
+        scope.check_expr(&arm.body).await
     }
 
     fn callable_output_args(
@@ -1572,7 +1638,7 @@ impl ItemTypeChecker {
                     let hir_id = expr.hir_id;
                     let body = (**body).clone();
                     let body_ty = self.check_expr(&body).await?;
-                    let checker = self.checker.clone();
+                    let checker = self.root_handle();
                     let program_for_task = self.program_rc();
                     let current_package = self.current_package();
                     let value = HirTypeChecker::spawn_comptime_task(&checker, def_id, move || {
@@ -1710,18 +1776,18 @@ impl ItemTypeChecker {
             }
         }
         if matches!(path.res, Some(hir::Res::SelfTy)) {
-            if self.self_types.is_empty() {
+            let Some(self_type) = self.self_type.clone() else {
                 return Ok(self.error_ty("Self is not available in this type context"));
-            }
+            };
             // `Self::Target` (an associated-type path rooted at `Self`,
             // e.g. inside `impl Deref for X { fn deref(&self) -> &Self::
             // Target { .. } }`) — resolved from the enclosing impl's own
-            // `type Target = Y;` binding (`assoc_types`, pushed alongside
-            // `self_types`). Deliberately doesn't consult a trait default
+            // `type Target = Y;` binding (`assoc_types`, set alongside
+            // `self_type`). Deliberately doesn't consult a trait default
             // or resolve `Self::X` for code outside the impl — see
             // `impl_assoc_types`'s doc comment.
             if let Some(assoc_segment) = path.segments.get(1) {
-                let scope = self.assoc_types.last();
+                let scope = self.assoc_types.as_ref();
                 if let Some(ty) = scope.and_then(|scope| scope.get(&assoc_segment.name)) {
                     return Ok(ty.clone());
                 }
@@ -1730,7 +1796,7 @@ impl ItemTypeChecker {
                     assoc_segment.name
                 )));
             }
-            return Ok(self.self_types.last().cloned().unwrap());
+            return Ok(self_type);
         }
         let Some(def_id) = (match path.res {
             Some(hir::Res::Def(def_id)) => Some(def_id),
@@ -2041,10 +2107,8 @@ impl ItemTypeChecker {
     async fn expr_path_ty(&mut self, path: &hir::Path) -> Result<Ty> {
         if let Some(hir::Res::Local(local)) = path.res {
             if let Some(name) = path.segments.last().map(|segment| &segment.name) {
-                for scope in self.locals.iter().rev() {
-                    if let Some(ty) = scope.get(name) {
-                        return Ok(ty.clone());
-                    }
+                if let Some(ty) = self.locals.get(name) {
+                    return Ok(ty.clone());
                 }
             }
             // HIR locals are resolved by the lowering resolver. Their
@@ -2074,7 +2138,7 @@ impl ItemTypeChecker {
             // `program` is an owned `Rc` clone (cheap — it's the same
             // `Rc<HirProgram>` `self.program` already is), not a borrow
             // of `self` — so `item`/`impl_item` below can stay borrowed
-            // from it across the `self.generic_scope(..)` call afterward
+            // from it across the `self.with_generics(..)` call afterward
             // (which needs `&mut self`) with no conflict, and this whole
             // fallback no longer needs to clone the owning impl's
             // `generics`/`self_ty`/`items`/`function` just to escape a
@@ -2097,15 +2161,12 @@ impl ItemTypeChecker {
                 Some((impl_item, function))
             });
             if let Some((impl_item, function)) = found {
-                let mut scope = self.generic_scope(&impl_item.generics);
+                let mut scope = self.with_generics(&impl_item.generics);
                 let self_ty = scope.check_type_expr(&impl_item.self_ty).await?;
-                scope.self_types.push(self_ty);
+                let mut scope = scope.with_self_type(self_ty);
                 let assoc_types = scope.impl_assoc_types(&impl_item.items).await?;
-                scope.assoc_types.push(assoc_types);
-                let result = scope.function_signature(function).await;
-                scope.assoc_types.pop();
-                scope.self_types.pop();
-                return result;
+                let mut scope = scope.with_assoc_types(assoc_types);
+                return scope.function_signature(function).await;
             }
             // Any package's own `impl_method_item_index` (built once per
             // package, see `hir::HirPackage::index_derived_lookups`) gives the
@@ -2137,15 +2198,12 @@ impl ItemTypeChecker {
                     })
                 });
             if let Some((generics, self_ty, impl_items, function)) = cross_package_method {
-                let mut scope = self.generic_scope(&generics);
+                let mut scope = self.with_generics(&generics);
                 let self_ty = scope.check_type_expr(&self_ty).await?;
-                scope.self_types.push(self_ty);
+                let mut scope = scope.with_self_type(self_ty);
                 let assoc_types = scope.impl_assoc_types(&impl_items).await?;
-                scope.assoc_types.push(assoc_types);
-                let result = scope.function_signature(&function).await;
-                scope.assoc_types.pop();
-                scope.self_types.pop();
-                return result;
+                let mut scope = scope.with_assoc_types(assoc_types);
+                return scope.function_signature(&function).await;
             }
             let matched_enum_item = self
                 .program()
@@ -2164,7 +2222,7 @@ impl ItemTypeChecker {
                     .expect("matched_enum_item's enum_def contains this variant");
                 let enum_ty = self.enum_item_ty(&enum_item, path).await?;
                 if let Some(payload) = &variant.payload {
-                    let mut scope = self.generic_scope(&enum_def.generics);
+                    let mut scope = self.with_generics(&enum_def.generics);
                     let payload_result = scope.check_type_expr(payload).await;
                     let payload_ty = payload_result?;
                     let inputs = match payload_ty.kind {
@@ -2214,10 +2272,9 @@ impl ItemTypeChecker {
                 // same fallback `expr_path_ty`'s cross-package branch
                 // above uses for a foreign impl method's signature.
                 let declared_ty = self.check_type_expr(&constant.ty).await?;
-                self.expected_expr_types.push(declared_ty);
-                let body_result = self.check_body(&constant.body).await;
-                self.expected_expr_types.pop();
-                body_result
+                self.with_expected_expr_type(declared_ty)
+                    .check_body(&constant.body)
+                    .await
             }
             hir::ItemKind::Const(_) => {
                 // A same-package `const` may be declared later in
@@ -2231,7 +2288,7 @@ impl ItemTypeChecker {
                 // wrong answer — this `.await` just suspends like any
                 // other.
                 if self.program().const_type(def_id).is_none() {
-                    HirTypeChecker::spawn_item_task(&self.checker, def_id).await;
+                    HirTypeChecker::spawn_item_task(&self.root_handle(), def_id).await;
                 }
                 Ok(self
                     .program()
@@ -2326,7 +2383,7 @@ impl ItemTypeChecker {
         if let Some(cached) = self.program_rc().function_signature(cache_key) {
             return Ok(cached);
         }
-        let mut scope = self.generic_scope(&function.sig.generics);
+        let mut scope = self.with_generics(&function.sig.generics);
         let mut inputs = Vec::with_capacity(function.sig.inputs.len());
         for (index, input) in function.sig.inputs.iter().enumerate() {
             let ty = scope.check_type_expr(&input.ty).await?;
@@ -2816,7 +2873,7 @@ impl ItemTypeChecker {
     /// as a plain associated fn (rather than a captured closure) so it can
     /// be `async`/awaited at both of that function's call sites.
     async fn method_declared_signature_apply_receiver(
-        scope: &mut ItemTypeChecker,
+        scope: &mut HirTypeChecker,
         receiver_ty: &Ty,
         function: &hir::Function,
     ) -> Result<Option<Ty>> {
@@ -2873,7 +2930,7 @@ impl ItemTypeChecker {
             let hir::ItemKind::Impl(impl_item) = &item.kind else {
                 continue;
             };
-            let mut scope = self.generic_scope(&impl_item.generics);
+            let mut scope = self.with_generics(&impl_item.generics);
             let checked_self_ty = scope.checked_impl_self_ty(&impl_item.self_ty).await?;
             let self_ty = match &checked_self_ty.kind {
                 TyKind::Ref(_, inner, _) => inner.as_ref(),
@@ -2912,7 +2969,7 @@ impl ItemTypeChecker {
             // sync deliberately; see that function's matching block for
             // why). `Self::AssocType`-shaped types in a default method's
             // signature (e.g. `Iterator::map`'s `F: FnMut(Self::Item) ->
-            // B`) only resolve if `scope.self_types`/`scope.assoc_types`
+            // B`) only resolve if `scope.self_type`/`scope.assoc_types`
             // are populated first — this function doesn't need that for
             // the inherent-method case above (no associated types
             // involved there), but does here.
@@ -2923,18 +2980,15 @@ impl ItemTypeChecker {
                             continue;
                         };
                         if trait_item.name == *method && function.body.is_some() {
-                            scope.self_types.push(checked_self_ty.clone());
+                            let mut scope = scope.with_self_type(checked_self_ty.clone());
                             let assoc_types = scope.impl_assoc_types(&impl_item.items).await?;
-                            scope.assoc_types.push(assoc_types);
-                            let result = Self::method_declared_signature_apply_receiver(
+                            let mut scope = scope.with_assoc_types(assoc_types);
+                            return Self::method_declared_signature_apply_receiver(
                                 &mut scope,
                                 receiver_ty,
                                 function,
                             )
                             .await;
-                            scope.assoc_types.pop();
-                            scope.self_types.pop();
-                            return result;
                         }
                     }
                 }
@@ -3026,7 +3080,7 @@ impl ItemTypeChecker {
             let hir::ItemKind::Impl(impl_item) = &item.kind else {
                 continue;
             };
-            let mut scope = self.generic_scope(&impl_item.generics);
+            let mut scope = self.with_generics(&impl_item.generics);
             let checked_self_ty = scope.checked_impl_self_ty(&impl_item.self_ty).await?;
             let self_ty = match &checked_self_ty.kind {
                 TyKind::Ref(_, inner, _) => inner.as_ref(),
@@ -3060,9 +3114,9 @@ impl ItemTypeChecker {
             if !matches_receiver {
                 continue;
             }
-            scope.self_types.push(checked_self_ty);
+            let mut scope = scope.with_self_type(checked_self_ty);
             let assoc_types = scope.impl_assoc_types(&impl_item.items).await?;
-            scope.assoc_types.push(assoc_types);
+            let mut scope = scope.with_assoc_types(assoc_types);
             let impl_generics = impl_item.generics.clone();
             for impl_item in &impl_item.items {
                 let hir::ImplItemKind::Method(function) = &impl_item.kind else {
@@ -3080,8 +3134,6 @@ impl ItemTypeChecker {
                         &function.sig.generics,
                         &substitutions,
                     )?;
-                    scope.assoc_types.pop();
-                    scope.self_types.pop();
                     return Ok(Some((impl_item.def_id, args, result)));
                 }
             }
@@ -3089,8 +3141,8 @@ impl ItemTypeChecker {
             // trait impl, the trait itself may provide a default-bodied
             // method by this name (`Iterator::map`/`filter_map`/etc. are
             // never redeclared per adaptor struct; only `next` typically
-            // is). `scope.self_types`/`scope.assoc_types` are still the
-            // ones pushed for *this* impl candidate above, so a default
+            // is). `scope.self_type`/`scope.assoc_types` are still the
+            // ones set for *this* impl candidate above, so a default
             // method's `Self`/`Self::Item`-shaped signature substitutes
             // through exactly the same generic-instantiation machinery as
             // an inherent method's, with no separate mechanism needed.
@@ -3116,15 +3168,11 @@ impl ItemTypeChecker {
                                 &function.sig.generics,
                                 &substitutions,
                             )?;
-                            scope.assoc_types.pop();
-                            scope.self_types.pop();
                             return Ok(Some((trait_item.def_id, args, result)));
                         }
                     }
                 }
             }
-            scope.assoc_types.pop();
-            scope.self_types.pop();
         }
         Ok(None)
     }
@@ -3182,7 +3230,7 @@ impl ItemTypeChecker {
             if path.segments.last().map(|seg| seg.name.as_str()) != Some("Deref") {
                 continue;
             }
-            let mut scope = self.generic_scope(&impl_item.generics);
+            let mut scope = self.with_generics(&impl_item.generics);
             let Ok(checked_self_ty) = scope.checked_impl_self_ty(&impl_item.self_ty).await else {
                 continue;
             };
@@ -3286,11 +3334,7 @@ impl ItemTypeChecker {
             };
             match &pattern.kind {
                 hir::PatKind::Binding { name, .. } => {
-                    let Some(scope) = self.locals.last_mut() else {
-                        self.record_error("no local scope is active");
-                        return Ok(());
-                    };
-                    scope.insert(name.clone(), ty);
+                    self.locals.insert(name.clone(), ty);
                 }
                 hir::PatKind::Wild => {}
                 hir::PatKind::Lit(lit) => {
@@ -3392,7 +3436,7 @@ impl ItemTypeChecker {
         let Some(field_def) = def.fields.iter().find(|candidate| candidate.name == *field) else {
             return Ok(self.error_ty(format!("field `{field}` was not found")));
         };
-        let mut scope = self.generic_scope(&def.generics);
+        let mut scope = self.with_generics(&def.generics);
         let result = scope.check_type_expr(&field_def.ty).await;
         let ty = result?;
         let substituted = scope.substitute_params(ty, args);
@@ -3436,7 +3480,7 @@ impl ItemTypeChecker {
             let Some(payload) = &variant.payload else {
                 return Ok((enum_ty, Vec::new()));
             };
-            let mut scope = self.generic_scope(&def.generics);
+            let mut scope = self.with_generics(&def.generics);
             let payload_result = scope.check_type_expr(payload).await;
             let payload = payload_result?;
             let payload = scope.substitute_params(payload, scrutinee_args);
