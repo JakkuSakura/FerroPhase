@@ -1,9 +1,9 @@
 use fp_core::error::Result;
 use fp_core::{lir, mir};
 
-use super::LirGenerator;
+use super::MirToLirLowerer;
 
-impl LirGenerator {
+impl MirToLirLowerer {
     /// Analyze MIR body to extract const values assigned to locals
     pub(crate) fn analyze_const_values(&mut self, mir_body: &mir::Body) -> Result<()> {
         // Iterate to propagate simple aliases like x = y where y is const-evaluated

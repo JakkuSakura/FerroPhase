@@ -16,7 +16,7 @@ use std::path::Path;
 /// A name resolved during AST-to-HIR lowering, ahead of typing (which
 /// operates on already-lowered HIR and never consults this) — moved here
 /// from `fp-typing`, which never actually used it itself; this crate's
-/// `HirGenerator` (via `resolved_names`/`with_resolved_names`) is the only
+/// `AstToHirLowerer` (via `resolved_names`/`with_resolved_names`) is the only
 /// real consumer.
 pub type ResolvedNameTable = HashMap<fp_core::ast::ExprId, ResolvedName>;
 
@@ -86,7 +86,7 @@ fn query_origin(document: &QueryDocument) -> QueryOrigin {
 ///
 /// NOTE: This is transitioning from stateful to share-nothing architecture.
 /// The generator now supports lossy mode and will gradually become more pure.
-pub struct HirGenerator {
+pub struct AstToHirLowerer {
     package_id: hir::PackageId,
     next_hir_id: u32,
     next_def_id: u32,
@@ -243,7 +243,7 @@ struct ImportBinding {
     alias: Option<String>,
 }
 
-impl HirGenerator {
+impl AstToHirLowerer {
     fn add_error(&mut self, diag: Diagnostic) {
         diagnostic_manager().add_diagnostic(diag);
     }
@@ -1210,7 +1210,7 @@ impl HirGenerator {
         // This package's own module tree only ever holds *this* module's
         // own (freshly `reset_file_context`-cleared) declarations — std's
         // prelude re-exports live in a dependency package, compiled in its
-        // own, separate `HirGenerator` invocation entirely. Its exported
+        // own, separate `AstToHirLowerer` invocation entirely. Its exported
         // symbol table (`hir_exports`, the third element
         // `hir_definitions()` returns) is where those actually surface;
         // scan it the same way, merging in rather than overwriting what's
@@ -1267,7 +1267,7 @@ impl HirGenerator {
     /// The current, real mechanism for merging every workspace dependency's
     /// own `def_map`/`def_paths`/`op_defs`/`intrinsic_defs` into this
     /// package's own `program` — called at `:1726`/`:1877`, and depended on
-    /// by `hir_to_mir::MirLowering`'s cross-package lookups (`hir_def_map`,
+    /// by `hir_to_mir::HirToMirLowerer`'s cross-package lookups (`hir_def_map`,
     /// documented at `hir_to_mir/expr.rs`) as well as `fp-typing`'s own
     /// same-package/cross-package resolution. Not legacy code awaiting
     /// deletion — a future "one shared program, not copied per package"
@@ -1283,7 +1283,7 @@ impl HirGenerator {
             // duplicate every dependency's struct/enum into this package's
             // own output/lifted AST regardless of whether anything here
             // actually references them. `def_map` (populated below) is the
-            // registry; `hir_to_mir::MirLowering::compute_adt_layout` looks
+            // registry; `hir_to_mir::HirToMirLowerer::compute_adt_layout` looks
             // up and lazily registers a foreign struct/enum from it only
             // when something concrete actually needs one.
             for item in &hir_program.items {
@@ -2138,7 +2138,7 @@ impl HirGenerator {
         // `package.items` never looks inside those, so an import written
         // this way was silently never collected as pending at all.
         fn collect_pending_imports_recursive(
-            this: &mut HirGenerator,
+            this: &mut AstToHirLowerer,
             module_path: &fp_core::ast::path::QualifiedPath,
             item: &ast::Item,
             pending: &mut Vec<(fp_core::ast::path::QualifiedPath, ImportBinding, ast::Visibility)>,
@@ -4551,7 +4551,7 @@ fn value_contains_type_type(value: &ast::Value) -> bool {
     }
 }
 
-impl Default for HirGenerator {
+impl Default for AstToHirLowerer {
     fn default() -> Self {
         Self::new()
     }
@@ -4569,7 +4569,7 @@ impl Default for HirGenerator {
 /// package doesn't define) is left as an unexpanded `ItemKind::Macro`,
 /// exactly as before — still reaches `predeclare_items`'s existing "drop
 /// with a warning" handling unchanged.
-impl HirGenerator {
+impl AstToHirLowerer {
     fn expand_item_macros(
         &self,
         items: Vec<fp_core::ast::package::PackageItem>,

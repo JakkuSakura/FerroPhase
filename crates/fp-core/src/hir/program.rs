@@ -1,7 +1,7 @@
 use super::*;
 
 /// The whole compiled result — every package involved, keyed by
-/// `PackageId`. `HirGenerator` owns one of these and works package-by-package
+/// `PackageId`. `AstToHirLowerer` owns one of these and works package-by-package
 /// against it (see `docs/Resolution.md`); resolution across an
 /// already-compiled dependency package is a lookup into this same
 /// structure, not a separate clone-and-merge pass.
@@ -9,7 +9,7 @@ use super::*;
 /// Packages are `Rc`, not owned — building a `HirProgram` (e.g. a
 /// `AstProgram` snapshotting its already-compiled dependency
 /// packages, each already an `Rc<HirPackage>`, for a consumer like
-/// `MirLowering` to dispatch cross-package `DefId` lookups against) is
+/// `HirToMirLowerer` to dispatch cross-package `DefId` lookups against) is
 /// then just a handful of `Rc` clones, never a deep clone of every
 /// dependency's own items/def_map/def_paths.
 #[derive(Debug, Clone, Default, PartialEq)]

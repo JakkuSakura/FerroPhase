@@ -1,6 +1,6 @@
 use super::*;
 
-impl HirGenerator {
+impl AstToHirLowerer {
     pub(super) fn create_main_function(
         &mut self,
         body: hir::Block,

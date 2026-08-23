@@ -4,7 +4,7 @@ use super::{ty, Constant, DefId, Function, ItemKind, MirCodeUnit, MirModule, Ty}
 
 /// One compiled package's MIR content — its lowered items, one
 /// `MirCodeUnit` per top-level `DefId`, plus the derived tables
-/// `MirLowering` produces alongside them. Pairs with `MirProgram` the same
+/// `HirToMirLowerer` produces alongside them. Pairs with `MirProgram` the same
 /// way `hir::HirPackage` pairs with `hir::HirProgram`; several of these
 /// live on `CompiledPackage`'s `mir` field, one per package.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -19,7 +19,7 @@ pub struct MirPackage {
     pub struct_fields: HashMap<DefId, Vec<Ty>>,
     pub adt_defs: HashMap<crate::hir::DefId, ty::AdtDef>,
     /// Top-level consts resolved by direct constant-folding during MIR
-    /// lowering (see `MirLowering::lower_const`'s fast path) — a
+    /// lowering (see `HirToMirLowerer::lower_const`'s fast path) — a
     /// directly-foldable const (no `let`, no side effects requiring the
     /// real interpreter) never becomes a comptime entry, so without this,
     /// nothing would ever surface its value to a caller that only knows
@@ -30,7 +30,7 @@ pub struct MirPackage {
     pub resolved_const_values: HashMap<String, Constant>,
     /// The originating `hir::DefId` of each `resolved_const_values` entry,
     /// keyed by the same name — populated only at the entry's true origin
-    /// (`MirLowering::lower_const`'s fold fast path, which always has the
+    /// (`HirToMirLowerer::lower_const`'s fold fast path, which always has the
     /// const item's own `DefId` in scope), not by `seed_resolved_const`'s
     /// cross-pass reseeding (which only needs the value, not its identity).
     /// Lets the driver record a folded const's value onto
@@ -42,7 +42,7 @@ pub struct MirPackage {
     /// `DefId` (`mir::ExecutableConst::def_id`/`lir::LirComptimeEntry::
     /// def_id` — freshly minted per block, unrelated to any real item) to
     /// the top-level `DefId` of the item whose body actually contains it
-    /// (`MirLowering::current_lowering_def_id` at the moment the block is
+    /// (`HirToMirLowerer::current_lowering_def_id` at the moment the block is
     /// found). Once the driver resolves a block's real value
     /// (`evaluate_comptime_lir`, keyed by this same synthetic `DefId`),
     /// this is what tells it exactly which single item needs re-lowering
@@ -51,8 +51,8 @@ pub struct MirPackage {
     /// Each top-level function's own `mir::Function` (name/sig/substs/abi),
     /// keyed by the same `DefId` as `units` — maintained incrementally as
     /// units are inserted, not swept eagerly over a whole `MirModule`. This
-    /// is what lets `LirGenerator` resolve a callee's LIR signature lazily,
-    /// on first reference (see `LirGenerator::with_signature_resolver`),
+    /// is what lets `MirToLirLowerer` resolve a callee's LIR signature lazily,
+    /// on first reference (see `MirToLirLowerer::with_signature_resolver`),
     /// instead of requiring every function in the package to be predeclared
     /// up front before any body is lowered.
     pub sigs: HashMap<DefId, Function>,
@@ -82,7 +82,7 @@ impl MirPackage {
     }
 
     /// Folds every unit's `items`/`bodies` together into one flat
-    /// `MirModule` — the view `LirGenerator` and every other MIR-consuming
+    /// `MirModule` — the view `MirToLirLowerer` and every other MIR-consuming
     /// backend (`fp-bytecode`, `fp-jvm`, `fp-cil`, ...) still expects, since
     /// none of them need to know or care that this package's own lowering
     /// happened one `DefId` at a time.

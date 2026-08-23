@@ -210,7 +210,7 @@ pub struct HirPackage {
     /// A `const { .. }` block's own HIR body, recorded under its own
     /// `DefId` once, unconditionally, at AST-to-HIR lowering time (the
     /// moment `ExprConstBlock`/`TypeExprKind::ConstBlock` mint that
-    /// `DefId` — see `HirGenerator::transform_const_block_to_hir` and the
+    /// `DefId` — see `AstToHirLowerer::transform_const_block_to_hir` and the
     /// type-position `ConstBlock` lowering site). Exists because
     /// `fp_typing::ComptimeRequest` carries only `package_id`/`def_id`
     /// (never the block itself, see that type's doc comment), so this is
@@ -362,7 +362,7 @@ impl HirPackage {
     }
 
     /// Rebuilds every derived index from `items` as they stand right now —
-    /// for the one bulk-construction path (`ast_to_hir::HirGenerator`)
+    /// for the one bulk-construction path (`ast_to_hir::AstToHirLowerer`)
     /// that still builds a whole `items: Vec<Item>` up front rather than
     /// through `add_item` one at a time. New code should prefer `add_item`.
     pub fn index_derived_lookups(&mut self) {

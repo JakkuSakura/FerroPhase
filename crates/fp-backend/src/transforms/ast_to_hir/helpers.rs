@@ -1,7 +1,7 @@
 use super::*;
 use fp_core::ast::path::{ParsedPath, PathPrefix, QualifiedPath};
 
-impl HirGenerator {
+impl AstToHirLowerer {
     fn resolved_name_to_hir_path(
         &mut self,
         resolved_name: &ResolvedName,
@@ -466,7 +466,7 @@ impl HirGenerator {
                         // *this* module's own predeclared types —
                         // `type_def_id` resolved above can just as easily
                         // name a workspace dependency's type (`Option`,
-                        // `Vec`, ...), whose own `HirGenerator` instance
+                        // `Vec`, ...), whose own `AstToHirLowerer` instance
                         // (and its local maps) no longer exists. Its real
                         // path survives in that dependency's own lowered
                         // `hir::HirPackage::def_paths` instead — fall back to

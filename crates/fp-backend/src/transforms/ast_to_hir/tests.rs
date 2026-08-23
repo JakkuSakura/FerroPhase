@@ -168,7 +168,7 @@ fn transform_expr_uses_typing_resolved_name_table() -> Result<()> {
         },
     );
 
-    let mut generator = HirGenerator::new().with_resolved_names(resolved_names);
+    let mut generator = AstToHirLowerer::new().with_resolved_names(resolved_names);
     let hir_expr = generator.transform_expr_to_hir(&expr)?;
     let hir::ExprKind::Path(path) = hir_expr.kind else {
         return Err(crate::error::optimization_error(
@@ -189,7 +189,7 @@ fn unqualified_lookup_does_not_scan_global_paths_by_suffix() {
     // items reference each other unqualified). What this guards against is
     // resolving it against an unrelated *foreign* module's entries by
     // matching just the name's suffix.
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     generator.module_path = QualifiedPath::new(vec!["dependency".to_string()]);
     generator.record_type_symbol(
         "SharedType",
@@ -213,7 +213,7 @@ fn compile_normalization_runs_during_ast_to_hir_lowering() -> Result<()> {
     };
     assert!(matches!(expr.kind(), ast::ExprKind::Macro(_)));
 
-    let mut generator = HirGenerator::new().with_intrinsic_normalizer(
+    let mut generator = AstToHirLowerer::new().with_intrinsic_normalizer(
         fp_lang::FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile),
     );
     let lowered = generator.transform_expr_to_hir(expr)?;
@@ -248,7 +248,7 @@ fn const_block_expr_lowers_to_dedicated_hir_node() -> Result<()> {
     };
     assert!(matches!(expr.kind(), ast::ExprKind::ConstBlock(_)));
 
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let lowered = generator.transform_expr_to_hir(expr)?;
     let hir::ExprKind::ConstBlock(const_block) = lowered.kind else {
         return Err(crate::error::optimization_error(
@@ -285,7 +285,7 @@ fn const_block_type_alias_produces_no_synthetic_item() -> Result<()> {
     }));
 
     let package = package_from_items(vec![type_item])?;
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let program = generator.transform_package(&package)?;
 
     assert!(
@@ -305,7 +305,7 @@ fn nested_type_position_const_block_lowers_to_dedicated_hir_node() -> Result<()>
         expr: Box::new(ast::Expr::value(ast::Value::int(2))),
     });
 
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let lowered = generator.transform_type_to_hir(&const_block_ty)?;
     let hir::TypeExprKind::ConstBlock(_, body) = lowered.kind else {
         return Err(crate::error::optimization_error(
@@ -339,14 +339,14 @@ fn cfg_target_os_attr(value: &str) -> ast::Attribute {
 
 #[test]
 fn test_hir_generator_creation() {
-    let generator = HirGenerator::new();
+    let generator = AstToHirLowerer::new();
     assert_eq!(generator.next_hir_id, 0);
     assert_eq!(generator.next_def_id, 0);
 }
 
 #[test]
 fn test_simple_literal_creation() -> Result<()> {
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let expr = generator.create_simple_literal(42);
 
     match expr.kind {
@@ -364,7 +364,7 @@ fn test_simple_literal_creation() -> Result<()> {
 
 #[test]
 fn test_simple_type_creation() -> Result<()> {
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let ty = generator.create_simple_type("i32");
 
     match ty.kind {
@@ -382,7 +382,7 @@ fn test_simple_type_creation() -> Result<()> {
 
 #[test]
 fn transform_slice_type_to_hir() -> Result<()> {
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let slice_ty = ast::Ty::Slice(ast::TypeSlice {
         elem: Box::new(ast::Ty::Primitive(ast::TypePrimitive::Int(
             ast::TypeInt::I64,
@@ -417,7 +417,7 @@ fn transform_index_expression_to_hir() -> Result<()> {
     )];
 
     let package = package_from_items(items)?;
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let program = generator.transform_package(&package)?;
 
     let pick = program
@@ -453,7 +453,7 @@ fn range_expr(
 
 #[test]
 fn transform_slice_syntax_to_hir_slice_expr_preserves_bounds() -> Result<()> {
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
 
     let base = ast::Expr::ident(ident("values"));
     let start = ast::Expr::ident(ident("i"));
@@ -524,7 +524,7 @@ fn transform_slice_syntax_to_hir_slice_expr_preserves_bounds() -> Result<()> {
 
 #[test]
 fn transform_await_expression_to_hir_passthrough() -> Result<()> {
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let await_expr = ast::Expr::from(ast::ExprKind::Await(ast::ExprAwait {
         span: Span::null(),
         base: Box::new(ast::Expr::ident(ident("future"))),
@@ -549,7 +549,7 @@ fn transform_await_expression_to_hir_passthrough() -> Result<()> {
 
 #[test]
 fn transform_async_await_expression_to_hir_passthrough() -> Result<()> {
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let await_expr = ast::Expr::from(ast::ExprKind::Await(ast::ExprAwait {
         span: Span::null(),
         base: Box::new(ast::Expr::ident(ident("future"))),
@@ -599,7 +599,7 @@ fn cfg_filters_items_by_target_os() -> Result<()> {
     }
 
     let package = package_from_items(vec![linux_fn, mac_fn])?;
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     generator.set_target_triple(Some("x86_64-apple-darwin"));
     let program = generator.transform_package(&package)?;
 
@@ -619,7 +619,7 @@ fn cfg_filters_items_by_target_os() -> Result<()> {
 
 #[test]
 fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let result_def_id = hir::DefId::new(hir::PackageId(0), 1);
     // `Result` is defined in `std::result` and re-exported through the
     // prelude; only the prelude alias entry is needed here for the bare
@@ -689,7 +689,7 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
 
 #[test]
 fn transform_intrinsic_container_to_hir() -> Result<()> {
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let container = ast::ExprIntrinsicContainer::VecElements {
         elements: vec![
             ast::Expr::value(ast::Value::int(1)),
@@ -727,7 +727,7 @@ fn transform_package_with_function_and_struct() -> Result<()> {
     let items = vec![point, add];
 
     let package = package_from_items(items)?;
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let program = generator.transform_package(&package)?;
 
     assert_eq!(program.items.len(), 2);
@@ -784,7 +784,7 @@ fn transform_generic_function_and_method() -> Result<()> {
     ];
 
     let package = package_from_items(items)?;
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let program = generator.transform_package(&package)?;
 
     let identity = program
@@ -873,7 +873,7 @@ fn transform_package_resolves_impl_self_type_in_nested_module_path() -> Result<(
 
     let module_path = vec!["std".to_string(), "sys".to_string(), "stdio".to_string()];
     let package = package_from_module_items(module_path, items)?;
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let program = generator.transform_package(&package)?;
 
     let impl_item = program
@@ -985,7 +985,7 @@ fn transform_package_resolves_bare_prelude_reexport_from_sibling_module() -> Res
         (vec!["other".to_string()], make_fn_item),
     ];
     let package = package_from_items_with_paths(items)?;
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let program = generator.transform_package(&package)?;
 
     fn find_fn<'a>(items: &'a [hir::Item], name: &str) -> Option<&'a hir::Function> {
@@ -1069,7 +1069,7 @@ fn transform_package_resolves_import_nested_inside_inline_module() -> Result<()>
         ),
     ];
     let package = package_from_items_with_paths(items)?;
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let program = generator.transform_package(&package)?;
 
     let make_fn_hir = program
@@ -1161,7 +1161,7 @@ fn transform_package_resolves_self_plus_variants_group_import() -> Result<()> {
         (vec!["other".to_string()], make_fn_item),
     ];
     let package = package_from_items_with_paths(items)?;
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let program = generator.transform_package(&package)?;
 
     let make_fn_hir = program
@@ -1271,7 +1271,7 @@ fn transform_package_resolves_extern_crate_alias_reexport_chain() -> Result<()> 
         (vec!["std".to_string()], make_fn_item),
     ];
     let package = package_from_items_with_paths(items)?;
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let program = generator.transform_package(&package)?;
 
     let make_fn_hir = program
@@ -1324,7 +1324,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
     )];
 
     let package = package_from_items(items)?;
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let program = generator.transform_package(&package)?;
 
     let outer = program
@@ -1536,7 +1536,7 @@ fn expect_lowering_error<T: std::fmt::Debug>(result: Result<T>, expected: &str) 
 }
 
 /// Some unsupported constructs are rejected non-fatally: lowering still
-/// succeeds (producing a placeholder node, `HirGenerator::
+/// succeeds (producing a placeholder node, `AstToHirLowerer::
 /// error_placeholder_expr_kind`) so one unsupported construct doesn't
 /// poison the whole surrounding item, but a real error diagnostic is
 /// recorded via `fp_core::diagnostics::diagnostic_manager()` — this
@@ -1560,7 +1560,7 @@ fn expect_lowering_diagnostic<T: std::fmt::Debug>(
 
 #[test]
 fn transform_expr_rejects_dynamic_import() {
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let expr = ast::Expr::from(ast::ExprKind::Invoke(ast::ExprInvoke {
         span: Span::null(),
         target: ast::ExprInvokeTarget::Function(ast::Name::Ident(ident("import"))),
@@ -1576,7 +1576,7 @@ fn transform_expr_rejects_dynamic_import() {
 
 #[test]
 fn transform_expr_rejects_match_without_scrutinee() {
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let expr = ast::Expr::from(ast::ExprKind::Match(ast::ExprMatch {
         span: Span::null(),
         scrutinee: None,
@@ -1597,7 +1597,7 @@ fn transform_expr_rejects_match_without_scrutinee() {
 
 #[test]
 fn transform_expr_rejects_for_loop_non_binding_pattern() {
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let pat = ast::Pattern::new(ast::PatternKind::Tuple(ast::PatternTuple {
         patterns: vec![ast::Pattern::new(ast::PatternKind::Ident(
             ast::PatternIdent::new(ident("i")),
@@ -1674,7 +1674,7 @@ fn transform_package_plain_absolute_path_into_vendored_subcrate() -> Result<()> 
         ),
     ];
     let package = package_from_items_with_paths(items)?;
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let program = generator.transform_package(&package)?;
 
     let f_hir = program
@@ -1773,7 +1773,7 @@ fn transform_package_resolves_self_group_import_nested_in_module_via_default_pre
         (vec!["other".to_string()], make_fn_item),
     ];
     let package = package_from_items_with_paths(items)?;
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let program = generator.transform_package(&package)?;
 
     let make_fn_hir = program
@@ -1836,7 +1836,7 @@ fn transform_package_expands_item_position_macro_rules_invocation() -> Result<()
         .map_err(|e| crate::error::optimization_error(format!("{e:?}")))?;
 
     let package = package_from_items(items)?;
-    let mut generator = HirGenerator::new().with_intrinsic_normalizer(
+    let mut generator = AstToHirLowerer::new().with_intrinsic_normalizer(
         fp_lang::FerroIntrinsicNormalizer::new(
             fp_core::intrinsics::IntrinsicNormalizationMode::Compile,
         ),

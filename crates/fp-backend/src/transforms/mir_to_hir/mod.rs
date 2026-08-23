@@ -15,7 +15,7 @@ impl MirToHir {
     /// The reverse of `lir_to_mir::LirToMir::value_to_mir_constant` —
     /// needed because a directly-foldable top-level const (e.g.
     /// `const X = 1 + 2 * 3;`, no `let` needed) never becomes a comptime
-    /// entry requiring the interpreter (see `MirLowering::lower_const`'s
+    /// entry requiring the interpreter (see `HirToMirLowerer::lower_const`'s
     /// constant-folding fast path), so its value never reaches the
     /// package's own `HirPackage::const_values` the way an interpreted one
     /// does unless something converts its already-computed `mir::Constant`

@@ -1,4 +1,4 @@
-use fp_backend::transformations::HirGenerator;
+use fp_backend::transformations::AstToHirLowerer;
 use fp_core::ast::path::QualifiedPath;
 use fp_core::error::Result as OptimizeResult;
 use fp_core::hir::{self, FormatTemplatePart, ItemKind, StmtKind};
@@ -87,14 +87,14 @@ fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::HirPackage> {
     .expect("valid test data layout");
     let package = workspace.begin_package(package_id, loaded, data_layout);
     let package = package.borrow();
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     generator.transform_package(&package)
 }
 
 #[test]
 fn transforms_literal_expression_into_main_function() -> OptimizeResult<()> {
     let ast_expr = support::ast::literal_expr(42);
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
 
     let program = generator.transform_expr(&ast_expr)?;
 
@@ -122,7 +122,7 @@ fn transforms_literal_expression_into_main_function() -> OptimizeResult<()> {
 fn preserves_try_expression_for_backend_lowering() -> OptimizeResult<()> {
     use fp_core::ast::{Expr, ExprKind, ExprTry};
 
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let try_expr: Expr = ExprKind::Try(ExprTry {
         span: fp_core::span::Span::null(),
         expr: Box::new(Expr::unit()),

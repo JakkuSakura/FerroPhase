@@ -157,7 +157,7 @@ impl CompilerState {
     }
 
     /// Read-only view of every package's MIR compiled so far this session —
-    /// used by `LirGenerator`'s lazy signature resolver (see
+    /// used by `MirToLirLowerer`'s lazy signature resolver (see
     /// `CompilerDriver::new_lir_generator`) to look a callee's signature up
     /// by `DefId`, in this package first and then every other loaded
     /// package, without requiring a whole-program predeclare sweep.
@@ -167,7 +167,7 @@ impl CompilerState {
 
     /// Folds `struct_fields`/`adt_defs`/`resolved_const_values`/
     /// `resolved_const_defs` produced while lowering `package_id`'s HIR into
-    /// its `mir::MirPackage` — the per-package tables `LirGenerator`/
+    /// its `mir::MirPackage` — the per-package tables `MirToLirLowerer`/
     /// `evaluate_comptime_lir` read alongside the package's lowered units.
     pub fn extend_mir_package(
         &mut self,
@@ -196,7 +196,7 @@ impl CompilerState {
     }
 
     /// Every `MirCodeUnit` this package has produced so far, folded into
-    /// one flat `mir::MirModule` — the view `LirGenerator`/the interpreter
+    /// one flat `mir::MirModule` — the view `MirToLirLowerer`/the interpreter
     /// still need. Empty (not an error) if the package has no units yet.
     pub fn mir_module(&self, package_id: &PackageId) -> mir::MirModule {
         self.mir_program
@@ -219,7 +219,7 @@ impl CompilerState {
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))
     }
 
-    /// Splits a whole flat `lir::LirBlob` (e.g. `LirGenerator::transform`'s
+    /// Splits a whole flat `lir::LirBlob` (e.g. `MirToLirLowerer::transform`'s
     /// output) back into its individual artifacts and records each one via
     /// `insert_lir_unit` — `LirUnitTable::add_program` already does exactly
     /// this splitting, so this just routes to it instead of duplicating
@@ -256,7 +256,7 @@ impl CompilerState {
     }
 
     /// The whole session's `hir::HirProgram` — used by callers
-    /// (`HirToAstLifter`, `HirGenerator::with_hir_program`) that need
+    /// (`HirToAstLifter`, `AstToHirLowerer::with_hir_program`) that need
     /// cross-package HIR lookups (`find_export`, `find_hir_impl_method`,
     /// `find_hir_enum_for_variant`, ...), now that `AstProgram` no longer
     /// carries HIR content itself.

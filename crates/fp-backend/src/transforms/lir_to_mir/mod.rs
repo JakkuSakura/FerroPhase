@@ -26,7 +26,7 @@ impl LirToMir {
 
     /// The authoritative source for an Adt's real field list — populated by
     /// `fp-backend`'s `take_adt_defs()` specifically so a downstream
-    /// consumer with no live `MirLowering` (like this one) can look it up.
+    /// consumer with no live `HirToMirLowerer` (like this one) can look it up.
     /// Never use `Ty::Adt(adt_def, _).variants` directly: it's deliberately
     /// left empty by several real construction paths (`adt_shell_ty`, the
     /// general Adt case in `lower_hir_ty`) that only ever needed to convey

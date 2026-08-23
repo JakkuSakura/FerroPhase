@@ -35,7 +35,7 @@ pub type Value = crate::ast::Value;
 pub struct PackageId(pub u32);
 
 /// Identifies a HIR node. Namespaced by `PackageId` (mirroring `DefId`) so
-/// that two separately-lowered packages (each with their own `HirGenerator`
+/// that two separately-lowered packages (each with their own `AstToHirLowerer`
 /// instance, each numbering its own nodes from zero) can never produce
 /// colliding ids — without this, a lookup keyed by a foreign package's
 /// `HirId` (e.g. resolving a lazily-pulled-in dependency item's type through
@@ -344,7 +344,7 @@ pub enum ExprKind {
 pub struct ExprConstBlock {
     /// This const block's own identity, minted the same way every other
     /// item/def is during AST-to-HIR lowering (see
-    /// `HirGenerator::next_def_id`) — used to key its resolved comptime
+    /// `AstToHirLowerer::next_def_id`) — used to key its resolved comptime
     /// value in `HirPackage::const_block_values`, so every comptime unit
     /// (named consts and const blocks alike) is identified the same way.
     pub def_id: DefId,

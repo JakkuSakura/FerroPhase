@@ -70,7 +70,7 @@ fn builds_function_signature_and_locals() {
         bodies,
     };
 
-    let mut generator = LirGenerator::new(test_layout());
+    let mut generator = MirToLirLowerer::new(test_layout());
     let lir_program = generator
         .transform(mir_program)
         .expect("lowering should succeed");
@@ -183,7 +183,7 @@ fn lowers_general_call_and_branches() {
         bodies,
     };
 
-    let mut generator = LirGenerator::new(test_layout());
+    let mut generator = MirToLirLowerer::new(test_layout());
     let lir_program = generator
         .transform(mir_program)
         .expect("lowering should succeed");

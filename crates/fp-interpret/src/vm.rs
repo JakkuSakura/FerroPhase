@@ -173,7 +173,7 @@ impl VirtMem {
 
 /// Initial capacity only — `RegFile` grows on demand (see `write`), since
 /// LIR register ids are numbered globally across an entire compiled
-/// package/program (`LirGenerator`'s `next_id()` never resets per
+/// package/program (`MirToLirLowerer`'s `next_id()` never resets per
 /// function), not locally per function. A fixed-size register file sized
 /// for "one function's local register count" silently dropped writes to
 /// any register id beyond it once a package grew large enough that a

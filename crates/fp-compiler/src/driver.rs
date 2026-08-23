@@ -1,5 +1,5 @@
 use fp_backend::transformations::{
-    HirGenerator, HirLoweringConfig, LirGenerator, LirToMir, MirLowering, MirToHir,
+    AstToHirLowerer, HirLoweringConfig, MirToLirLowerer, LirToMir, HirToMirLowerer, MirToHir,
 };
 use fp_core::ast::{Expr, ExprKind, Item, ItemKind, Value};
 use fp_core::hir;
@@ -17,7 +17,7 @@ use crate::{CompilerDriverError, CompilerState, ConstValueId, ExecutorHandle};
 
 /// Real Rust source over an entire vendored `std`/`core`/`alloc` package
 /// legitimately produces tens of thousands of "skipping unresolvable
-/// type"-style *warnings* from `MirLowering` (one per HIR node whose type
+/// type"-style *warnings* from `HirToMirLowerer` (one per HIR node whose type
 /// couldn't be lowered) — joining every one of those into a single
 /// `InternalCompilerError` message (as this used to) built a single
 /// multi-hundred-megabyte string per failed package, which is what real
@@ -338,7 +338,7 @@ impl CompilerDriver {
                 // A `PrecompiledLir` item (see `fp_core::ast::ItemKind`'s doc
                 // comment) already *is* LIR — install it into
                 // `state.lir_program` directly via `publish_precompiled_lir`
-                // instead of running it through `HirGenerator` (which has no
+                // instead of running it through `AstToHirLowerer` (which has no
                 // arm for an already-compiled item and would just record a
                 // spurious "unimplemented" diagnostic for it).
                 let precompiled_lir_units: Vec<fp_core::lir::LirCompileUnit> = source
@@ -493,14 +493,14 @@ impl CompilerDriver {
         let macro_rules_defs =
             fp_lang::collect_macro_rules_defs(package_source.items.iter().map(|item| &item.item));
         // Item-position macro invocations (e.g. `make_adder!(add_two, 2);`)
-        // must expand into real items *before* `HirGenerator` ever sees
+        // must expand into real items *before* `AstToHirLowerer` ever sees
         // them — matching rustc's own model, where macro-expanded tokens
         // re-enter the exact same pipeline as hand-written code rather than
         // a separate, lesser one. Without this, such an invocation is
         // silently dropped by `ast_to_hir`'s own item loop, and whatever it
         // would have defined never exists.
         package_source.items = fp_lang::expand_item_macros(package_source.items, &macro_rules_defs);
-        let mut generator = HirGenerator::new()
+        let mut generator = AstToHirLowerer::new()
             .with_intrinsic_normalizer(
                 FerroIntrinsicNormalizer::new(fp_core::intrinsics::IntrinsicNormalizationMode::Compile)
                     .with_macro_rules_defs(macro_rules_defs),
@@ -824,7 +824,7 @@ impl CompilerDriver {
     /// still-in-progress package's own HIR, its typed results, the pending
     /// `const { .. }` block itself) is looked up here, from `state`, by
     /// that id, never lowers any item's body other than this one synthetic
-    /// function (`MirLowering::transform_comptime_request`). A genuine
+    /// function (`HirToMirLowerer::transform_comptime_request`). A genuine
     /// failure here only fails the one item awaiting this specific
     /// request, via the `Err` it returns to its `.await` point — the same
     /// per-item isolation `typecheck_item` already relies on.
@@ -861,7 +861,7 @@ impl CompilerDriver {
             .cloned()
             .ok_or_else(|| CompilerDriverError::MissingHir(format!("{:?}", request.package_id)))?;
 
-        let mut lowering = MirLowering::new();
+        let mut lowering = HirToMirLowerer::new();
         for (key, value) in state.borrow().resolved_const_values() {
             lowering.seed_resolved_const(key.to_string(), value.clone());
         }
@@ -949,7 +949,7 @@ impl CompilerDriver {
         // therefore strict: a failure is an internal compiler error, never a
         // recoverable source diagnostic.
         let hir = state.borrow().hir(hir_package_id)?;
-        let mut lowering = MirLowering::new();
+        let mut lowering = HirToMirLowerer::new();
         for (key, value) in state.borrow().resolved_const_values() {
             lowering.seed_resolved_const(key.to_string(), value.clone());
         }
@@ -1024,7 +1024,7 @@ impl CompilerDriver {
         );
 
         // --- MIR -> LIR: per-`DefId`, lazy signature resolution, no
-        // whole-program predeclare sweep (see `LirGenerator::
+        // whole-program predeclare sweep (see `MirToLirLowerer::
         // with_signature_resolver`'s own doc comment) ---
         state.borrow_mut().reset_lir_package(package_id);
         let def_ids: Vec<_> = state
@@ -1054,12 +1054,12 @@ impl CompilerDriver {
     }
 
     /// Folds `struct_layout_map`/`enum_layout_map` into the one combined
-    /// `(DefId, args) -> field types` view `LirGenerator` expects — enums
+    /// `(DefId, args) -> field types` view `MirToLirLowerer` expects — enums
     /// share the same channel as structs (`mir_to_lir`'s `lir_type_from_ty`
     /// reconstructs an enum's runtime shape as `{tag, ...payload slots}`,
     /// exactly mirroring `EnumLayout::tag_ty`/`payload_tys` here).
     fn collect_full_layouts(
-        lowering: &MirLowering,
+        lowering: &HirToMirLowerer,
     ) -> HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>> {
         let mut full_layouts: HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>> =
             lowering
@@ -1076,8 +1076,8 @@ impl CompilerDriver {
         full_layouts
     }
 
-    /// Builds a `LirGenerator` wired with a lazy, per-`DefId` signature
-    /// resolver (see `LirGenerator::with_signature_resolver`'s own doc
+    /// Builds a `MirToLirLowerer` wired with a lazy, per-`DefId` signature
+    /// resolver (see `MirToLirLowerer::with_signature_resolver`'s own doc
     /// comment) instead of a whole-program predeclare sweep: a callee's
     /// signature is looked up first in `package_id`'s own
     /// `mir::MirPackage::sigs` (a forward reference within the same
@@ -1091,7 +1091,7 @@ impl CompilerDriver {
         module_path: &QualifiedPath,
         full_layouts: HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>,
         opaque_payload_sizes: HashMap<String, u64>,
-    ) -> LirGenerator {
+    ) -> MirToLirLowerer {
         let dependency_packages: Vec<mir::MirPackage> =
             state.borrow().mir_program().packages.values().cloned().collect();
         let resolver_state = state.clone();
@@ -1117,7 +1117,7 @@ impl CompilerDriver {
                     .map(|func| (func.clone(), Some(dep_id.clone())))
             })
         });
-        LirGenerator::new(state.borrow().data_layout.clone())
+        MirToLirLowerer::new(state.borrow().data_layout.clone())
             .with_package_id(package_id.clone())
             .with_module_path(module_path.to_key())
             .with_full_layouts(full_layouts)
@@ -1165,7 +1165,7 @@ impl CompilerDriver {
             // No comptime entry needed the real interpreter, but that
             // doesn't mean nothing was computed for this package — a
             // directly-foldable top-level const (e.g. `const X = 1 + 2 *
-            // 3;`, no `let` needed — see `MirLowering::lower_const`'s
+            // 3;`, no `let` needed — see `HirToMirLowerer::lower_const`'s
             // constant-folding fast path) resolves its value without ever
             // becoming a comptime entry. Surface the last one the same way
             // an interpreted entry's value already is (`insert_const_value`,
@@ -1284,7 +1284,7 @@ impl CompilerDriver {
 }
 
 /// The name an `ast::Item` is registered under during AST→HIR lowering
-/// (`HirGenerator::predeclare_items`'s `register_type_def`/
+/// (`AstToHirLowerer::predeclare_items`'s `register_type_def`/
 /// `register_value_def` calls) — `None` for item kinds with no name of
 /// their own (`Impl`, `Import`, bare `Expr`, ...), which therefore can
 /// never be looked up in a qualified-path-keyed map.

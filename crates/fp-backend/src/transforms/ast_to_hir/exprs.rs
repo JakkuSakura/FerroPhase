@@ -16,7 +16,7 @@ struct IterLoopSpec {
     value_pat: ast::Pattern,
 }
 
-impl HirGenerator {
+impl AstToHirLowerer {
     fn borrowed_string_from_bytes(bytes: &ast::ValueBytes) -> Option<String> {
         let raw = bytes.value.as_ref();
         let trimmed = raw.strip_suffix(&[0])?;
@@ -2562,7 +2562,7 @@ impl HirGenerator {
     }
 }
 
-impl HirGenerator {
+impl AstToHirLowerer {
     fn struct_fields_from_type(
         &mut self,
         ty: &ast::Ty,

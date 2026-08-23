@@ -1,6 +1,6 @@
 use super::*;
 
-impl HirGenerator {
+impl AstToHirLowerer {
     pub(super) fn transform_pattern_with_metadata(
         &mut self,
         pat: &Pattern,

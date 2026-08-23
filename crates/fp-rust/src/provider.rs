@@ -280,7 +280,7 @@ pub fn rs_relative_to_module_path(rel: &str) -> QualifiedPath {
     // The crate root file (`lib.rs`/`main.rs`, never nested in a
     // subdirectory) defines crate-root-level items directly, not a `lib::`/
     // `main::` submodule — tag it with an empty path so
-    // `HirGenerator::transform_package`'s per-item `with_module_scope` (which
+    // `AstToHirLowerer::transform_package`'s per-item `with_module_scope` (which
     // pushes one scope level per path segment) doesn't wrongly nest them.
     if rel.is_empty() || (!rel.contains('/') && (rel == "lib.rs" || rel == "main.rs")) {
         return QualifiedPath::new(Vec::new());

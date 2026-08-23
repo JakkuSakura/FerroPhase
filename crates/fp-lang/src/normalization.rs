@@ -141,7 +141,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             // for attributes) and evaluate with the same predicate
             // (`cfg_meta_enabled`) already used for attribute-position
             // `#[cfg(...)]` item filtering. `TargetEnv::host()` matches
-            // `HirGenerator`'s own default (`ast_to_hir/mod.rs`) — this
+            // `AstToHirLowerer`'s own default (`ast_to_hir/mod.rs`) — this
             // transpiler has no real cross-compilation target, so cfg
             // predicates are evaluated against the host machine either way.
             if macro_name == "cfg" {

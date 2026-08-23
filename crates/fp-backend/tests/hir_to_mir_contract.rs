@@ -1,4 +1,4 @@
-use fp_backend::transformations::MirLowering;
+use fp_backend::transformations::HirToMirLowerer;
 use fp_core::ast::{TypeInt, TypePrimitive};
 use fp_core::hir::{
     self, Expr, ExprKind, Function, FunctionSig, Generics, HirPackage, Item, ItemKind, Lit, Pat,
@@ -59,8 +59,8 @@ fn program_with_items(items: Vec<Item>) -> HirPackage {
     program
 }
 
-fn mir_lowering() -> MirLowering {
-    MirLowering::new()
+fn mir_lowering() -> HirToMirLowerer {
+    HirToMirLowerer::new()
 }
 
 fn binding_pat(hir_id: u32, name: &str, mutable: bool) -> Pat {

@@ -13,7 +13,7 @@ use crate::abi;
 // Internal submodules; items are used via inherent methods
 
 /// Generator for transforming MIR to LIR (Low-level IR)
-pub struct LirGenerator {
+pub struct MirToLirLowerer {
     package_id: fp_core::ast::package::PackageId,
     module_path: Option<String>,
     data_layout: lir::LirDataLayout,
@@ -36,7 +36,7 @@ pub struct LirGenerator {
     struct_layouts: RefCell<HashMap<(mir::DefId, Vec<mir::Ty>), Vec<Option<lir::LirType>>>>,
     full_layouts: HashMap<(mir::DefId, Vec<mir::Ty>), Vec<mir::Ty>>,
     /// Byte size for an opaque enum-payload-slot placeholder (see
-    /// `MirLowering::opaque_ty_sizes`'s doc comment) — a slot whose
+    /// `HirToMirLowerer::opaque_ty_sizes`'s doc comment) — a slot whose
     /// per-variant types are heterogeneous has no real fields to lower
     /// structurally, only a byte count for its runtime storage (sized to
     /// fit whichever variant is actually active). Keyed by the
@@ -65,7 +65,7 @@ pub struct LirGenerator {
     /// Lazy, on-demand fallback for a callee whose signature hasn't been
     /// predeclared yet — called from the one real miss site (a `FnDef`
     /// operand whose `def_id` isn't yet in `function_def_map`, see
-    /// `transform_operand`), mirroring `MirLowering::resolve_callee_path`'s
+    /// `transform_operand`), mirroring `HirToMirLowerer::resolve_callee_path`'s
     /// own "signature-only registration on demand" fallback. Returns the
     /// callee's own `mir::Function` (so its signature can be lowered to LIR
     /// with this generator's own type-lowering state, exactly like
@@ -105,7 +105,7 @@ enum PlaceAccess {
     },
 }
 
-impl LirGenerator {
+impl MirToLirLowerer {
     const DIAGNOSTIC_CONTEXT: &'static str = "mir→lir";
 
     /// Create a new LIR generator
@@ -3267,7 +3267,7 @@ impl LirGenerator {
                         // this is a forward/cross-package reference that
                         // sweep wouldn't have covered anyway) — resolve it
                         // lazily via `resolve_signature`, exactly mirroring
-                        // `MirLowering::resolve_callee_path`'s own
+                        // `HirToMirLowerer::resolve_callee_path`'s own
                         // signature-only registration on demand. Cached
                         // into `function_def_map`/`function_signatures`/
                         // `function_package_ids` by `register_function_signature`,
@@ -6523,7 +6523,7 @@ impl LirGenerator {
             TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
                 lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
             }
-            // An opaque enum-payload-slot placeholder (`MirLowering::
+            // An opaque enum-payload-slot placeholder (`HirToMirLowerer::
             // opaque_ty`, minted for a slot where variants disagree on the
             // payload type) has a synthetic `DefId` matching nothing in
             // `struct_layouts`/`full_layouts`/`adt_defs` — it was never a

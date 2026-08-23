@@ -2,7 +2,7 @@
 //! textual path spec (`ParsedPath`), and the fully-resolved absolute form
 //! used as a lookup key (`QualifiedPath`). Actual resolution against a real
 //! module tree (`parse_path`/`resolve_item_path`, as they used to be named
-//! here) lives on `fp-backend`'s `HirGenerator` instead — its only real
+//! here) lives on `fp-backend`'s `AstToHirLowerer` instead — its only real
 //! caller, which needs its own state (module path, module tree, symbol
 //! tables, workspace) throughout, not a free function reached into via
 //! several closures. Lives under `ast` rather than a shared crate-root

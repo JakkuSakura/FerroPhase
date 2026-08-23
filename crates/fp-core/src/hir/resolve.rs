@@ -1,6 +1,6 @@
 //! Central module-tree resolution structure, replacing the flat
 //! `module_defs`/`global_type_defs`/`global_value_defs`/`prelude_*`/
-//! `crate_roots` tables `HirGenerator` used to keep independently (see
+//! `crate_roots` tables `AstToHirLowerer` used to keep independently (see
 //! `docs/Resolution.md`). One `ModuleTree` lives per `hir::HirPackage`.
 //!
 //! Every operation is O(depth) or O(1) — never a scan over every
@@ -24,7 +24,7 @@ pub enum Namespace {
 /// A name binding's resolved target plus the visibility/canonical-path
 /// metadata a bare `Res` doesn't carry. Moved here (from `fp-backend`'s
 /// `ast_to_hir` module) so `ModuleTree` bindings can hold it directly
-/// instead of `HirGenerator` keeping a second, parallel flat-map lookup
+/// instead of `AstToHirLowerer` keeping a second, parallel flat-map lookup
 /// table just to carry this extra metadata (see `docs/Resolution.md`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SymbolEntry {

@@ -430,7 +430,7 @@ enum ConstContainerArgs {
     Map { key_ty: Ty, value_ty: Ty },
 }
 
-pub struct MirLowering {
+pub struct HirToMirLowerer {
     next_mir_id: mir::MirId,
     next_body_id: u32,
     next_error_id: u32,
@@ -606,7 +606,7 @@ pub struct MirLowering {
     current_package_id: Option<hir::PackageId>,
 }
 
-impl MirLowering {
+impl HirToMirLowerer {
     fn default_runtime_signatures() -> HashMap<String, mir::FunctionSig> {
         let mut map = HashMap::new();
         map.insert(
@@ -735,7 +735,7 @@ impl MirLowering {
         })
     }
 
-    /// Every item this `MirLowering` instance knows about, across both
+    /// Every item this `HirToMirLowerer` instance knows about, across both
     /// `current_package` and every package in `hir_program` — replaces
     /// every old `self.hir_def_map.values()`/`.iter()` full scan (used to
     /// build a one-time reverse index; never a per-lookup cost).
@@ -944,14 +944,14 @@ impl MirLowering {
         // workspace (by far the largest items) merely to inspect its
         // `ItemKind` tag and then discard it. `register_struct`/
         // `register_enum` themselves already early-return once a
-        // `def_id` is registered, so on a `MirLowering` instance that
+        // `def_id` is registered, so on a `HirToMirLowerer` instance that
         // does span multiple registration passes, repeating this scan is
         // cheap; on a *fresh* instance (as `transform_comptime_request`
-        // creates once per comptime request — see `MirLowering::new()`'s
+        // creates once per comptime request — see `HirToMirLowerer::new()`'s
         // callers) every dependency struct/enum is still cloned once per
         // request, since there is no cross-request cache today. Fully
         // eliminating that repetition needs a cache that outlives a
-        // single `MirLowering` instance (e.g. on `CompilerState`), which
+        // single `HirToMirLowerer` instance (e.g. on `CompilerState`), which
         // is out of scope for this pass. `register_struct`/`register_enum`
         // no longer need a `def_paths` map handed to them (they dispatch
         // through `hir_def_path` themselves), so there's no borrow-vs-
@@ -1239,7 +1239,7 @@ impl MirLowering {
     /// never-recorded entry (both already flow into the same `Option<_>`
     /// every caller already handles) rather than reported via
     /// `emit_warning`, so this works uniformly from any call site —
-    /// including ones that only hold `&self` or reach `MirLowering` through
+    /// including ones that only hold `&self` or reach `HirToMirLowerer` through
     /// an immutably-borrowed field — without a parallel `&mut self` variant.
     fn typeck_expr_type(&self, hir_id: hir::HirId) -> Option<Ty> {
         let ty = self.current_package.expr_type(hir_id)?;
@@ -1516,7 +1516,7 @@ impl MirLowering {
         }
     }
 
-    /// Seeds this `MirLowering` instance for on-demand, per-`DefId` lowering
+    /// Seeds this `HirToMirLowerer` instance for on-demand, per-`DefId` lowering
     /// against `hir_program` — call once before any `ensure_item_lowered`
     /// call, then `ensure_item_lowered` for each top-level `DefId` that
     /// needs lowering (in any order — this is exactly what makes it usable
@@ -1685,7 +1685,7 @@ impl MirLowering {
             if def_id.package_id != current {
                 // A dependency package's own function — that package
                 // compiles its own body separately, in its own
-                // `MirLowering` instance (own struct/enum/const
+                // `HirToMirLowerer` instance (own struct/enum/const
                 // registrations); lowering it here would build it against
                 // *this* package's registrations instead, silently
                 // producing a wrong/incomplete body the moment it
@@ -8281,7 +8281,7 @@ impl MirLowering {
         None
     }
 
-    /// `MirLowering`-level byte-size computation, used while computing an
+    /// `HirToMirLowerer`-level byte-size computation, used while computing an
     /// enum's own layout (`enum_layout_for_instance`, which runs before any
     /// `BodyBuilder`/`type_substs` context exists — `BodyBuilder::
     /// compute_ty_size` isn't reachable here). Mirrors that function's
@@ -8773,7 +8773,7 @@ impl MirLowering {
     }
 }
 
-impl Default for MirLowering {
+impl Default for HirToMirLowerer {
     fn default() -> Self {
         Self::new()
     }
@@ -8792,7 +8792,7 @@ enum MatchBindingUndo {
 }
 
 struct BodyBuilder<'a> {
-    lowering: &'a mut MirLowering,
+    lowering: &'a mut HirToMirLowerer,
     function: &'a hir::Function,
     sig: &'a mir::FunctionSig,
     locals: Vec<mir::LocalDecl>,
@@ -9639,7 +9639,7 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn new(
-        lowering: &'a mut MirLowering,
+        lowering: &'a mut HirToMirLowerer,
         function: &'a hir::Function,
         sig: &'a mir::FunctionSig,
         span: Span,
@@ -9903,7 +9903,7 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
-    fn struct_def_from_ty_by_name(lowering: &MirLowering, ty: &Ty) -> Option<hir::DefId> {
+    fn struct_def_from_ty_by_name(lowering: &HirToMirLowerer, ty: &Ty) -> Option<hir::DefId> {
         lowering
             .struct_layouts_by_ty
             .get(ty)
@@ -9920,7 +9920,7 @@ impl<'a> BodyBuilder<'a> {
                 // allocation per iteration.
                 let candidates = lowering
                     .struct_defs_by_tail_name
-                    .get(MirLowering::name_tail(&name))?;
+                    .get(HirToMirLowerer::name_tail(&name))?;
                 let matches: Vec<hir::DefId> = candidates
                     .iter()
                     .filter_map(|def_id| {
@@ -10974,7 +10974,7 @@ impl<'a> BodyBuilder<'a> {
     fn lower_tail_expr(&mut self, expr: &hir::Expr) -> Result<()> {
         let return_ty = self.locals[0].ty.clone();
         let place = mir::Place::from_local(0);
-        if MirLowering::is_unit_ty(&return_ty) {
+        if HirToMirLowerer::is_unit_ty(&return_ty) {
             self.lower_expr_as_statement(expr)?;
             self.push_statement(mir::Statement {
                 source_info: expr.span,
@@ -12016,7 +12016,7 @@ impl<'a> BodyBuilder<'a> {
                 // non-unit const so cross-references between consts
                 // work correctly in the interpreter and native codegen.
                 let ty = self.lowering.lower_type_expr(&konst.ty);
-                if !MirLowering::is_unit_ty(&ty) {
+                if !HirToMirLowerer::is_unit_ty(&ty) {
                     let mir_item = self.lowering.lower_const(item.def_id, konst)?;
                     self.lowering.extra_items.push(mir_item);
                 }
@@ -12562,7 +12562,7 @@ impl<'a> BodyBuilder<'a> {
         }
         let expected_ty = self.lowering.unwrap_expr_actual_ty(expected_ty);
 
-        fn find_result_def(lowering: &MirLowering, ty: &Ty) -> Option<hir::DefId> {
+        fn find_result_def(lowering: &HirToMirLowerer, ty: &Ty) -> Option<hir::DefId> {
             match &ty.kind {
                 TyKind::Ref(_, inner, _) => find_result_def(lowering, inner.as_ref()),
                 TyKind::RawPtr(type_and_mut) => find_result_def(lowering, type_and_mut.ty.as_ref()),
@@ -12804,7 +12804,7 @@ impl<'a> BodyBuilder<'a> {
         let enum_def = self.enum_def_from_ty(expected_ty);
         for (def_id, payloads) in &layout.variant_payloads {
             let matches = if payloads.is_empty() {
-                MirLowering::is_unit_ty(payload_ty)
+                HirToMirLowerer::is_unit_ty(payload_ty)
             } else if payloads.len() == 1 {
                 payloads[0] == *payload_ty
             } else {
@@ -15120,7 +15120,7 @@ impl<'a> BodyBuilder<'a> {
                             && is_unresolved(&explicit_args[0])
                             && matches!(callee_tail, Some("Err"))
                         {
-                            explicit_args[0] = MirLowering::unit_ty();
+                            explicit_args[0] = HirToMirLowerer::unit_ty();
                         }
                         if explicit_args.len() >= 2 && is_unresolved(&explicit_args[1]) {
                             explicit_args[1] = self.lowering.error_ty();
@@ -15330,7 +15330,7 @@ impl<'a> BodyBuilder<'a> {
 
                     for (idx, expected_input) in sig.inputs.iter().enumerate() {
                         if let Some(original_ty) = arg_types.get(idx) {
-                            if MirLowering::is_unit_ty(original_ty)
+                            if HirToMirLowerer::is_unit_ty(original_ty)
                                 && matches!(
                                     expected_input.kind,
                                     TyKind::Ref(_, _, _) | TyKind::RawPtr(_)
@@ -16718,7 +16718,7 @@ impl<'a> BodyBuilder<'a> {
                 };
                 if matches!(kind, IntrinsicKind::Print | IntrinsicKind::Println) {
                     self.emit_printf_call(call, expr.span)?;
-                    let unit_ty = MirLowering::unit_ty();
+                    let unit_ty = HirToMirLowerer::unit_ty();
                     let local_id = self.allocate_temp(unit_ty.clone(), expr.span);
                     let local_place = mir::Place::from_local(local_id);
                     let statement = mir::Statement {
@@ -16765,7 +16765,7 @@ impl<'a> BodyBuilder<'a> {
                 }
                 if kind == IntrinsicKind::Panic {
                     self.emit_panic_intrinsic(call, expr.span)?;
-                    let unit_ty = MirLowering::unit_ty();
+                    let unit_ty = HirToMirLowerer::unit_ty();
                     return Ok(OperandInfo {
                         operand: mir::Operand::Constant(mir::Constant {
                             span: expr.span,
@@ -16836,7 +16836,7 @@ impl<'a> BodyBuilder<'a> {
                 }
                 if kind == IntrinsicKind::FsRemoveFile {
                     self.lower_fs_remove_file_as_statement(expr, call)?;
-                    let unit_ty = MirLowering::unit_ty();
+                    let unit_ty = HirToMirLowerer::unit_ty();
                     return Ok(OperandInfo {
                         operand: mir::Operand::Constant(mir::Constant {
                             span: expr.span,
@@ -17045,7 +17045,7 @@ impl<'a> BodyBuilder<'a> {
                                         kind
                                     ),
                                 );
-                                let unit_ty = MirLowering::unit_ty();
+                                let unit_ty = HirToMirLowerer::unit_ty();
                                 let local_id = self.allocate_temp(unit_ty.clone(), expr.span);
                                 let local_place = mir::Place::from_local(local_id);
                                 self.push_statement(mir::Statement {
@@ -17074,7 +17074,7 @@ impl<'a> BodyBuilder<'a> {
                             if lowered_args.is_empty() {
                                 self.lowering
                                     .emit_error(expr.span, "join intrinsic expects arguments");
-                                let unit_ty = MirLowering::unit_ty();
+                                let unit_ty = HirToMirLowerer::unit_ty();
                                 let local_id = self.allocate_temp(unit_ty.clone(), expr.span);
                                 let local_place = mir::Place::from_local(local_id);
                                 self.push_statement(mir::Statement {
@@ -17145,7 +17145,7 @@ impl<'a> BodyBuilder<'a> {
                         .collect::<Result<Vec<_>>>()?;
                     let operands: Vec<mir::Operand> =
                         lowered_args.iter().map(|a| a.operand.clone()).collect();
-                    let ty = MirLowering::type_ty();
+                    let ty = HirToMirLowerer::type_ty();
                     let local_id = self.allocate_temp(ty.clone(), expr.span);
                     let local_place = mir::Place::from_local(local_id);
                     self.push_statement(mir::Statement {
@@ -17183,7 +17183,7 @@ impl<'a> BodyBuilder<'a> {
                         .collect::<Result<Vec<_>>>()?;
                     let operands: Vec<mir::Operand> =
                         lowered_args.iter().map(|a| a.operand.clone()).collect();
-                    let ty = MirLowering::unit_ty();
+                    let ty = HirToMirLowerer::unit_ty();
                     let local_id = self.allocate_temp(ty.clone(), expr.span);
                     let local_place = mir::Place::from_local(local_id);
                     self.push_statement(mir::Statement {
@@ -18150,7 +18150,7 @@ impl<'a> BodyBuilder<'a> {
                             self.locals[local_id as usize].ty = string_ty.clone();
                             let sig = mir::FunctionSig {
                                 inputs: vec![string_ty.clone()],
-                                output: MirLowering::unit_ty(),
+                                output: HirToMirLowerer::unit_ty(),
                             };
                             self.lowering.ensure_runtime_stub("fp_panic", &sig);
                             let fn_ty = self.lowering.function_pointer_ty(&sig);
@@ -18164,7 +18164,7 @@ impl<'a> BodyBuilder<'a> {
                             });
                             let args = vec![mir::Operand::Copy(local_place)];
 
-                            let result_local = self.allocate_temp(MirLowering::unit_ty(), span);
+                            let result_local = self.allocate_temp(HirToMirLowerer::unit_ty(), span);
                             let after_block = self.new_block();
                             let terminator = mir::Terminator {
                                 source_info: span,
@@ -18237,7 +18237,7 @@ impl<'a> BodyBuilder<'a> {
                     }
                     let sig = mir::FunctionSig {
                         inputs: vec![string_ty.clone()],
-                        output: MirLowering::unit_ty(),
+                        output: HirToMirLowerer::unit_ty(),
                     };
                     self.lowering.ensure_runtime_stub("fp_panic", &sig);
                     let fn_ty = self.lowering.function_pointer_ty(&sig);
@@ -18249,7 +18249,7 @@ impl<'a> BodyBuilder<'a> {
                     });
                     let args = vec![message_operand.operand];
 
-                    let result_local = self.allocate_temp(MirLowering::unit_ty(), span);
+                    let result_local = self.allocate_temp(HirToMirLowerer::unit_ty(), span);
                     let after_block = self.new_block();
                     let terminator = mir::Terminator {
                         source_info: span,
@@ -18281,7 +18281,7 @@ impl<'a> BodyBuilder<'a> {
 
         let sig = mir::FunctionSig {
             inputs: vec![self.lowering.raw_string_ptr_ty()],
-            output: MirLowering::unit_ty(),
+            output: HirToMirLowerer::unit_ty(),
         };
         self.lowering.ensure_runtime_stub("fp_panic", &sig);
         let fn_ty = self.lowering.function_pointer_ty(&sig);
@@ -18298,7 +18298,7 @@ impl<'a> BodyBuilder<'a> {
             literal: mir::ConstantKind::Str(message),
         })];
 
-        let result_local = self.allocate_temp(MirLowering::unit_ty(), span);
+        let result_local = self.allocate_temp(HirToMirLowerer::unit_ty(), span);
         let after_block = self.new_block();
         let terminator = mir::Terminator {
             source_info: span,
@@ -18348,7 +18348,7 @@ impl<'a> BodyBuilder<'a> {
 
         let sig = mir::FunctionSig {
             inputs: vec![string_ty.clone()],
-            output: MirLowering::unit_ty(),
+            output: HirToMirLowerer::unit_ty(),
         };
         self.lowering.ensure_runtime_stub("fp_panic", &sig);
         let fn_ty = self.lowering.function_pointer_ty(&sig);
@@ -18360,7 +18360,7 @@ impl<'a> BodyBuilder<'a> {
         });
         let args = vec![message_operand];
 
-        let result_local = self.allocate_temp(MirLowering::unit_ty(), span);
+        let result_local = self.allocate_temp(HirToMirLowerer::unit_ty(), span);
         let after_block = self.new_block();
         let terminator = mir::Terminator {
             source_info: span,
@@ -18443,7 +18443,7 @@ impl<'a> BodyBuilder<'a> {
                 "catch_unwind closure must not take user arguments",
             );
         }
-        if !MirLowering::is_unit_ty(&sig.output) {
+        if !HirToMirLowerer::is_unit_ty(&sig.output) {
             self.lowering.emit_error(
                 expr.span,
                 "catch_unwind only supports callables that return unit",
@@ -19874,7 +19874,7 @@ impl<'a> BodyBuilder<'a> {
                 let left = self.lower_operand(lhs, None)?;
                 let right = self.lower_operand(rhs, None)?;
 
-                if MirLowering::is_unit_ty(&left.ty) || MirLowering::is_unit_ty(&right.ty) {
+                if HirToMirLowerer::is_unit_ty(&left.ty) || HirToMirLowerer::is_unit_ty(&right.ty) {
                     return Err(fp_core::error::Error::from(format!(
                         "binary operation `{op:?}` received unit operand(s): lhs=`{}`, rhs=`{}`",
                         left.ty, right.ty
@@ -20071,7 +20071,7 @@ impl<'a> BodyBuilder<'a> {
                     };
                     self.push_statement(statement);
                     if (place.local as usize) < self.locals.len() {
-                        self.locals[place.local as usize].ty = MirLowering::unit_ty();
+                        self.locals[place.local as usize].ty = HirToMirLowerer::unit_ty();
                     }
                     return Ok(());
                 }
@@ -21392,7 +21392,7 @@ impl<'a> BodyBuilder<'a> {
 
                 for (idx, expected_input) in sanitized_sig.inputs.iter().enumerate() {
                     if let Some(original_ty) = arg_types.get(idx) {
-                        if MirLowering::is_unit_ty(original_ty)
+                        if HirToMirLowerer::is_unit_ty(original_ty)
                             && matches!(
                                 expected_input.kind,
                                 TyKind::Ref(_, _, _) | TyKind::RawPtr(_)
@@ -21412,7 +21412,7 @@ impl<'a> BodyBuilder<'a> {
                             mir::Operand::Copy(place) | mir::Operand::Move(place) => {
                                 if (place.local as usize) < self.locals.len() {
                                     let existing = self.locals[place.local as usize].ty.clone();
-                                    if MirLowering::is_unit_ty(&existing)
+                                    if HirToMirLowerer::is_unit_ty(&existing)
                                         || matches!(
                                             existing.kind,
                                             TyKind::Infer(_) | TyKind::Error(_)

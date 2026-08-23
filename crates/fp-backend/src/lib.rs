@@ -22,7 +22,7 @@ pub use transforms as transformations;
 /// `File`s (e.g. `fp-shell` splices in its embedded std tree directly,
 /// leaving behind `mod foo;` markers whose content already lives
 /// elsewhere in the tree) that must not be re-resolved against a real
-/// filesystem — `HirGenerator::append_item` already walks nested `Module`
+/// filesystem — `AstToHirLowerer::append_item` already walks nested `Module`
 /// items structurally on its own, so no flattening is needed here either.
 fn package_from_file(
     file: &fp_core::ast::File,
@@ -64,7 +64,7 @@ pub fn roundtrip_items_via_hir(
     file: &fp_core::ast::File,
 ) -> fp_core::Result<Vec<fp_core::ast::Item>> {
     let package = package_from_file(file)?;
-    let mut generator = transforms::ast_to_hir::HirGenerator::new();
+    let mut generator = transforms::ast_to_hir::AstToHirLowerer::new();
     generator.set_cfg_filtering(false);
     let program = generator.transform_package(&package)?;
     transforms::hir_to_ast::HirToAstLifter::new(&program, None).lift_items()
@@ -74,7 +74,7 @@ pub fn roundtrip_items_via_hir_dce(
     file: &fp_core::ast::File,
 ) -> fp_core::Result<Vec<fp_core::ast::Item>> {
     let package = package_from_file(file)?;
-    let mut generator = transforms::ast_to_hir::HirGenerator::new();
+    let mut generator = transforms::ast_to_hir::AstToHirLowerer::new();
     generator.set_cfg_filtering(false);
     let mut program = generator.transform_package(&package)?;
     optimizer::hir::eliminate_dead_code(&mut program, None);

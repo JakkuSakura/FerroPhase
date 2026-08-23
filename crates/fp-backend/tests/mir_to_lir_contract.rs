@@ -1,4 +1,4 @@
-use fp_backend::transformations::LirGenerator;
+use fp_backend::transformations::MirToLirLowerer;
 use fp_core::lir::{
     LirDataLayout, LirInstructionKind, LirRelocationKind, LirRelocationTarget, LirTerminator,
     LirType, LirValue,
@@ -11,8 +11,8 @@ use std::collections::HashMap;
 
 mod support;
 
-fn generator() -> LirGenerator {
-    LirGenerator::new(
+fn generator() -> MirToLirLowerer {
+    MirToLirLowerer::new(
         LirDataLayout::new(
             64,
             8,
