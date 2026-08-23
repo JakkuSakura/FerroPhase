@@ -819,9 +819,9 @@ impl HirTypeChecker {
                         {
                             let mut inputs = Vec::with_capacity(fn_ptr.inputs.len());
                             for input in &fn_ptr.inputs {
-                                inputs.push(Box::new(self.check_type_expr(input)?));
+                                inputs.push(Box::new(self.check_type_expr(input).await?));
                             }
-                            let output = Box::new(self.check_type_expr(&fn_ptr.output)?);
+                            let output = Box::new(self.check_type_expr(&fn_ptr.output).await?);
                             callee_ty = Ty {
                                 kind: TyKind::FnPtr(ty::PolyFnSig {
                                     binder: ty::Binder {
@@ -949,9 +949,11 @@ impl HirTypeChecker {
                                         self.generic_param_bound_method_signature(
                                             &param.name,
                                             &method_name,
-                                        )?
+                                        )
+                                        .await?
                                     } else {
-                                        self.method_declared_signature_at(&receiver_ty, &method_name)?
+                                        self.method_declared_signature_at(&receiver_ty, &method_name)
+                                            .await?
                                     };
                                     if let Some(sig) = sig {
                                         tracing::debug!(
@@ -990,18 +992,20 @@ impl HirTypeChecker {
                                 // don't hand it to a type-directed lookup
                                 // as if it named something.
                                 let expected = self
-                                    .expected_expr_types
-                                    .last()
+                                    .expected_expr_type
+                                    .clone()
                                     .filter(|ty| !matches!(ty.kind, TyKind::Error(_)));
-                                if let Some(receiver_ty) = expected.cloned() {
+                                if let Some(receiver_ty) = expected {
                                     let method_name = path.segments[1].name.clone();
                                     let sig = if let TyKind::Param(param) = &receiver_ty.kind {
                                         self.generic_param_bound_method_signature(
                                             &param.name,
                                             &method_name,
-                                        )?
+                                        )
+                                        .await?
                                     } else {
-                                        self.method_declared_signature_at(&receiver_ty, &method_name)?
+                                        self.method_declared_signature_at(&receiver_ty, &method_name)
+                                            .await?
                                     };
                                     if let Some(sig) = sig {
                                         tracing::debug!(
@@ -2090,25 +2094,24 @@ impl HirTypeChecker {
                     // (see `parse_qualified_path_type`'s `Name::
                     // ParameterPath` arm) instead of on the trait.
                     None => {
-                        let args = path.segments[0]
-                            .args
-                            .as_ref()
-                            .map(|generic_args| {
-                                generic_args
-                                    .args
-                                    .iter()
-                                    .map(|arg| match arg {
+                        let args = match &path.segments[0].args {
+                            Some(generic_args) => {
+                                let mut checked = Vec::with_capacity(generic_args.args.len());
+                                for arg in &generic_args.args {
+                                    let arg = match arg {
                                         hir::GenericArg::Type(ty) => {
-                                            self.check_type_expr(ty).map(GenericArg::Type)
+                                            GenericArg::Type(self.check_type_expr(ty).await?)
                                         }
-                                        hir::GenericArg::Const(_) => Ok(GenericArg::Type(
+                                        hir::GenericArg::Const(_) => GenericArg::Type(
                                             self.error_ty("const generic arguments are not supported"),
-                                        )),
-                                    })
-                                    .collect::<Result<Vec<_>>>()
-                            })
-                            .transpose()?
-                            .unwrap_or_default();
+                                        ),
+                                    };
+                                    checked.push(arg);
+                                }
+                                checked
+                            }
+                            None => Vec::new(),
+                        };
                         self.well_known_struct_ty(path.segments[0].name.as_str(), args)
                     }
                 };
@@ -2550,7 +2553,7 @@ impl HirTypeChecker {
             // real "unresolved" diagnostic belongs to whichever call site
             // actually exhausts every resolution attempt, not to this
             // intermediate, expected-to-be-incomplete step.
-            if let Some(item) = self.shared.program.def_map.get(&def_id) {
+            if let Some(item) = self.program_rc().item(def_id) {
                 if matches!(&item.kind, hir::ItemKind::Trait(_)) {
                     return Ok(Ty::error());
                 }

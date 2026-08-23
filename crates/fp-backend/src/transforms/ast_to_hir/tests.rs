@@ -1938,7 +1938,7 @@ fn transform_package_resolves_crate_absolute_path_to_self_reexport_in_vendored_s
         ),
     ];
     let package = package_from_items_with_paths(items)?;
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let program = generator.transform_package(&package)?;
 
     let make_fn_hir = program
@@ -2021,7 +2021,7 @@ fn transform_package_resolves_whole_module_import_then_relative_item_reference()
         ),
     ];
     let package = package_from_items_with_paths(items)?;
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let program = generator.transform_package(&package)?;
 
     let make_fn_hir = program
@@ -2115,7 +2115,7 @@ fn transform_package_resolves_module_self_plus_named_item_group_import() -> Resu
         (vec!["caller".to_string()], caller_fn),
     ];
     let package = package_from_items_with_paths(items)?;
-    let mut generator = HirGenerator::new();
+    let mut generator = AstToHirLowerer::new();
     let program = generator.transform_package(&package)?;
 
     let make_fn_hir = program
