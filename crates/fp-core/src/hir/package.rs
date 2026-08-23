@@ -104,6 +104,22 @@ pub struct HirPackage {
     /// own `DefId` (e.g. `enum_variant_by_def_id`) but the enum item
     /// itself, not the bare variant, is what's actually stored in `items`.
     pub enum_variant_item_index: HashMap<DefId, DefId>,
+    /// Any impl member (method *or* assoc const) or enum variant's own
+    /// `DefId` -> its enclosing top-level item's own `DefId` — the general
+    /// counterpart of `impl_method_item_index`/`enum_variant_item_index`
+    /// above (which only cover methods and variants respectively) for
+    /// callers that need to resolve *any* non-top-level member back to the
+    /// `def_map` entry it's nested under, e.g. to type-check an `impl`'s
+    /// assoc const as its own item. Maintained the same incremental way,
+    /// by `add_item`/`index_derived_lookups`.
+    pub member_to_owning_item: HashMap<DefId, DefId>,
+    /// Fully-qualified name -> HIR `Res` lookup entries exported by this
+    /// package (moved from the old `CompiledPackage::hir_exports`) —
+    /// populated incrementally by `ast_to_hir` as it registers each
+    /// exported definition. `HirProgram` merges these across every loaded
+    /// package for cross-package bare-name resolution (`AstProgram`'s old
+    /// `find_export`/`find_export_by_suffix`, now `HirProgram`'s).
+    pub hir_exports: HashMap<String, Res>,
 }
 
 impl HirPackage {
@@ -123,6 +139,8 @@ impl HirPackage {
             impl_method_item_index: HashMap::new(),
             impls_by_self_did: HashMap::new(),
             enum_variant_item_index: HashMap::new(),
+            member_to_owning_item: HashMap::new(),
+            hir_exports: HashMap::new(),
         }
     }
 
@@ -141,7 +159,8 @@ impl HirPackage {
 
     /// Registers `item`'s derived-index entries (`struct_defs_by_name`,
     /// `impl_method_item_index`, `impls_by_self_did`,
-    /// `enum_variant_item_index`), keyed by `item`'s own stable `DefId` —
+    /// `enum_variant_item_index`, `member_to_owning_item`), keyed by
+    /// `item`'s own stable `DefId` —
     /// the incremental counterpart to a clear-and-rebuild pass: call this
     /// once per item as it's added instead of re-scanning every item in
     /// `items` from scratch whenever the package's HIR changes.
@@ -154,6 +173,7 @@ impl HirPackage {
             ItemKind::Enum(def) => {
                 for variant in &def.variants {
                     self.enum_variant_item_index.insert(variant.def_id, item.def_id);
+                    self.member_to_owning_item.insert(variant.def_id, item.def_id);
                 }
             }
             ItemKind::Impl(impl_item) => {
@@ -162,6 +182,7 @@ impl HirPackage {
                         self.impl_method_item_index
                             .insert(impl_member.def_id, item.def_id);
                     }
+                    self.member_to_owning_item.insert(impl_member.def_id, item.def_id);
                 }
                 let resolved_did = match &impl_item.self_ty.kind {
                     TypeExprKind::Path(path) => match path.res {
@@ -224,6 +245,7 @@ impl HirPackage {
         self.impl_method_item_index.clear();
         self.impls_by_self_did.clear();
         self.enum_variant_item_index.clear();
+        self.member_to_owning_item.clear();
         for index in 0..self.items.len() {
             let item = self.items[index].clone();
             self.index_item(&item);
@@ -232,6 +254,13 @@ impl HirPackage {
 
     pub fn span(&self) -> Span {
         Span::union(self.items.iter().map(Item::span))
+    }
+
+    /// The enclosing top-level item's own `DefId` for a member `def_id`
+    /// (an impl method/assoc-const, or an enum variant) that isn't itself
+    /// a `def_map` key — see `member_to_owning_item`'s doc comment.
+    pub fn member_owner(&self, def_id: DefId) -> Option<DefId> {
+        self.member_to_owning_item.get(&def_id).copied()
     }
 }
 

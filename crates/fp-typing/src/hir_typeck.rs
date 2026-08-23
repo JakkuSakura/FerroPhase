@@ -74,15 +74,6 @@ pub struct TypingShared {
     /// a caller bug (there is no compile-time value to hand back).
     comptime_resolver: Option<ComptimeResolver>,
     executor: ExecutorHandle,
-    /// Lazily-built, memoized: a member `DefId` (an impl method/
-    /// assoc-const, or an enum variant) -> its enclosing *top-level*
-    /// item's own `DefId` (itself a key in a package's `def_map`, unlike
-    /// the member). Current-package only — mirrors `resolve_top_level_def_id`'s
-    /// and `expr_path_ty`'s two associated-lookup fallbacks' original
-    /// scope, which never looked past the current package's own items
-    /// either (`spawn_item_task` only ever spawns tasks for this
-    /// package's own top-level items).
-    member_to_owning_item: RefCell<Option<Rc<HashMap<hir::DefId, hir::DefId>>>>,
     /// Memoized `function_signature` results, keyed by the function's own
     /// `output` type's `HirId` (stable per declared function, independent
     /// of any particular call site). `function_signature` only ever
@@ -173,7 +164,6 @@ impl TypingShared {
             ready_generics: RefCell::new(HashMap::new()),
             comptime_resolver,
             executor,
-            member_to_owning_item: RefCell::new(None),
             function_signature_cache: RefCell::new(HashMap::new()),
             checked_impl_self_ty_cache: RefCell::new(HashMap::new()),
             resolved_trait_defs: RefCell::new(HashMap::new()),
@@ -200,35 +190,6 @@ impl TypingShared {
             .get(&self.current_package)
             .cloned()
             .expect("current_package is always inserted into program at construction")
-    }
-
-    /// Lazily builds and memoizes `member_to_owning_item` (see its doc
-    /// comment) on first use, then returns a cheap `Rc` clone on every
-    /// later call.
-    fn member_to_owning_item(&self) -> Rc<HashMap<hir::DefId, hir::DefId>> {
-        if self.member_to_owning_item.borrow().is_none() {
-            let mut index = HashMap::new();
-            for item in &self.program().items {
-                match &item.kind {
-                    hir::ItemKind::Impl(impl_item) => {
-                        for member in &impl_item.items {
-                            index.insert(member.def_id, item.def_id);
-                        }
-                    }
-                    hir::ItemKind::Enum(enum_def) => {
-                        for variant in &enum_def.variants {
-                            index.insert(variant.def_id, item.def_id);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            *self.member_to_owning_item.borrow_mut() = Some(Rc::new(index));
-        }
-        self.member_to_owning_item
-            .borrow()
-            .clone()
-            .expect("just populated above")
     }
 
     /// Request a compile-time value — awaits `ComptimeResolver` directly, so
@@ -379,16 +340,14 @@ impl Drop for GenericScope<'_> {
 /// `spawn_item_task`/`typecheck_item` key. Returns `def_id` unchanged if
 /// it's already a top-level item (the common case, checked first so this
 /// stays O(1) except for actual impl members) — an O(1) index lookup via
-/// `TypingShared::member_to_owning_item` otherwise (see its doc comment).
+/// `hir::HirPackage::member_owner` otherwise (see its doc comment),
+/// incrementally maintained on the package itself rather than rebuilt here.
 fn resolve_top_level_def_id(shared: &TypingShared, def_id: hir::DefId) -> hir::DefId {
-    if shared.program().def_map.contains_key(&def_id) {
+    let program = shared.program();
+    if program.def_map.contains_key(&def_id) {
         return def_id;
     }
-    shared
-        .member_to_owning_item()
-        .get(&def_id)
-        .copied()
-        .unwrap_or(def_id)
+    program.member_owner(def_id).unwrap_or(def_id)
 }
 
 /// Read the final `(hir::HirPackage, PackageTypes)` out of `shared` — only
@@ -2228,7 +2187,7 @@ impl HirTypeChecker {
             // `generics`/`self_ty`/`items`/`function` just to escape a
             // borrow of `self` that was never actually necessary.
             let shared = self.shared.clone();
-            let owner_id = shared.member_to_owning_item().get(&def_id).copied();
+            let owner_id = shared.program().member_owner(def_id);
             let found = owner_id.and_then(|owner_id| shared.program.item(owner_id)).and_then(|item| {
                 let hir::ItemKind::Impl(impl_item) = &item.kind else {
                     return None;
@@ -2296,9 +2255,8 @@ impl HirTypeChecker {
             }
             let matched_enum_item = self
                 .shared
-                .member_to_owning_item()
-                .get(&def_id)
-                .copied()
+                .program()
+                .member_owner(def_id)
                 .and_then(|owner_id| self.shared.program.item(owner_id))
                 .filter(|item| matches!(&item.kind, hir::ItemKind::Enum(_)))
                 .cloned();

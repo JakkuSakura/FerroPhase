@@ -82,6 +82,13 @@ impl HirProgram {
         self.package(def_id.package_id)?.def_map.get(&def_id)
     }
 
+    /// Cross-package counterpart of `HirPackage::member_owner` — routes to
+    /// `def_id`'s own package via its `package_id`, so a caller never has
+    /// to know or track which package a member `DefId` came from first.
+    pub fn member_owner(&self, def_id: DefId) -> Option<DefId> {
+        self.package(def_id.package_id)?.member_owner(def_id)
+    }
+
     pub fn op_def(&self, def_id: DefId) -> Option<&crate::intrinsics::PortableOp> {
         self.package(def_id.package_id)?.op_defs.get(&def_id)
     }
