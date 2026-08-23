@@ -1,4 +1,6 @@
-use fp_backend::transformations::{HirGenerator, HirLoweringConfig, LirGenerator, MirLowering};
+use fp_backend::transformations::{
+    HirGenerator, HirLoweringConfig, LirGenerator, LirToMir, MirLowering, MirToHir,
+};
 use fp_core::ast::{Expr, ExprKind, Item, ItemKind, Ty, TypeStruct, TypeType, Value};
 use fp_core::hir;
 use fp_core::mir;
@@ -1156,7 +1158,7 @@ impl CompilerDriver {
                     let Some(value) = package
                         .mir
                         .resolved_const(key)
-                        .and_then(Self::mir_constant_to_value)
+                        .and_then(MirToHir::constant_to_value)
                     else {
                         continue;
                     };
@@ -1184,6 +1186,7 @@ impl CompilerDriver {
             .values()
             .cloned()
             .collect();
+        let lir_to_mir = LirToMir::new(dependency_packages.clone());
         let dependency_borrows: Vec<_> = dependency_packages.iter().map(|p| p.borrow()).collect();
         let mut workspaces: Vec<&fp_core::lir::LirWorkspace> = dependency_borrows
             .iter()
@@ -1239,7 +1242,7 @@ impl CompilerDriver {
             value = interpreter
                 .read_typed_const_value(value, &entry_lir_ty)
                 .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
-            let constant = Self::value_to_mir_constant(&value, &entry.ty, &dependency_packages).ok_or_else(|| {
+            let constant = lir_to_mir.value_to_mir_constant(&value, &entry.ty).ok_or_else(|| {
                 CompilerDriverError::UnsupportedWork(format!(
                     "unsupported comptime result for {}",
                     entry.key
@@ -1634,327 +1637,9 @@ impl CompilerDriver {
             .borrow()
             .resolved_const_values()
             .filter_map(|(key, constant)| {
-                Self::mir_constant_to_value(constant).map(|value| (key.to_string(), value))
+                MirToHir::constant_to_value(constant).map(|value| (key.to_string(), value))
             })
             .collect()
-    }
-
-    /// The reverse of `value_to_mir_constant` — needed because a
-    /// directly-foldable top-level const (e.g. `const X = 1 + 2 * 3;`, no
-    /// `let` needed) never becomes a comptime entry requiring the
-    /// interpreter (see `lower_const`'s constant-folding fast path in
-    /// hir_to_mir), so its value never reaches `PackageTypes::const_values`
-    /// the way an interpreted one does unless something converts its
-    /// already-computed `mir::Constant` back into a `Value` — see
-    /// `evaluate_comptime_lir_with`'s folded-const branch and
-    /// `resolved_const_values_snapshot`, its two callers.
-    fn mir_constant_to_value(constant: &mir::Constant) -> Option<Value> {
-        match &constant.literal {
-            mir::ConstantKind::Bool(v) => Some(Value::bool(*v)),
-            mir::ConstantKind::Int(v) => Some(Value::int(*v)),
-            mir::ConstantKind::UInt(v) => Some(Value::uint(*v)),
-            mir::ConstantKind::Float(v) => Some(Value::decimal(*v)),
-            mir::ConstantKind::Str(v) => Some(Value::string(v.clone())),
-            mir::ConstantKind::Null => Some(Value::null()),
-            mir::ConstantKind::Val(value) => Self::mir_const_value_to_value(value),
-            // A function reference, token stream, or global-path constant
-            // has no meaningful runtime `Value` representation outside
-            // actual execution — an honest "can't convert this" rather
-            // than a placeholder.
-            mir::ConstantKind::Ty(_)
-            | mir::ConstantKind::Fn(_)
-            | mir::ConstantKind::FnDef(_, _)
-            | mir::ConstantKind::Global(_)
-            | mir::ConstantKind::TokenStream { .. }
-            | mir::ConstantKind::Undef => None,
-        }
-    }
-
-    fn mir_const_value_to_value(value: &mir::ConstValue) -> Option<Value> {
-        match value {
-            mir::ConstValue::Unit => Some(Value::unit()),
-            mir::ConstValue::Bool(v) => Some(Value::bool(*v)),
-            mir::ConstValue::Int(v) => Some(Value::int(*v)),
-            mir::ConstValue::UInt(v) => Some(Value::uint(*v)),
-            mir::ConstValue::Float(v) => Some(Value::decimal(*v)),
-            mir::ConstValue::Str(v) => Some(Value::string(v.clone())),
-            mir::ConstValue::Null => Some(Value::null()),
-            // The comptime interpreter represents every positional
-            // aggregate (tuple *or* struct) as `Value::Tuple` — see
-            // `value_to_const_value`'s own doc comment on the same
-            // asymmetry in the forward direction.
-            mir::ConstValue::Tuple(values) | mir::ConstValue::Struct(values) => {
-                let values = values
-                    .iter()
-                    .map(Self::mir_const_value_to_value)
-                    .collect::<Option<Vec<_>>>()?;
-                Some(Value::Tuple(fp_core::ast::ValueTuple::new(values)))
-            }
-            mir::ConstValue::Array(values) => {
-                let values = values
-                    .iter()
-                    .map(Self::mir_const_value_to_value)
-                    .collect::<Option<Vec<_>>>()?;
-                Some(Value::List(fp_core::ast::ValueList::new(values)))
-            }
-            mir::ConstValue::List { elements, .. } => {
-                let values = elements
-                    .iter()
-                    .map(Self::mir_const_value_to_value)
-                    .collect::<Option<Vec<_>>>()?;
-                Some(Value::List(fp_core::ast::ValueList::new(values)))
-            }
-            // No `Value::Map` constructor exists to convert into (see
-            // `all_adt_field_tys`'s neighbors) — an honest "can't convert
-            // this" rather than a placeholder.
-            mir::ConstValue::Map { .. } => None,
-            // A function reference has no meaningful runtime `Value`
-            // representation outside actual execution.
-            mir::ConstValue::Fn(_) => None,
-        }
-    }
-
-    /// The authoritative source for an Adt's real field list — populated by
-    /// `fp-backend`'s `take_adt_defs()` specifically so a downstream
-    /// consumer with no live `MirLowering` (like this one) can look it up.
-    /// Never use `Ty::Adt(adt_def, _).variants` directly: it's deliberately
-    /// left empty by several real construction paths (`adt_shell_ty`, the
-    /// general Adt case in `lower_hir_ty`) that only ever needed to convey
-    /// type *identity*, not full field layout.
-    fn lookup_real_adt_def(
-        packages: &[Rc<RefCell<fp_core::ast::package::CompiledPackage>>],
-        def_id: hir::DefId,
-    ) -> Option<mir::ty::AdtDef> {
-        packages
-            .iter()
-            .find_map(|p| p.borrow().mir.adt_defs.get(&def_id).cloned())
-    }
-
-    fn value_to_mir_constant(
-        value: &Value,
-        ty: &mir::Ty,
-        packages: &[Rc<RefCell<fp_core::ast::package::CompiledPackage>>],
-    ) -> Option<mir::Constant> {
-        let literal = match value {
-            Value::Bool(value) => mir::ConstantKind::Bool(value.value),
-            Value::Int(value) => mir::ConstantKind::Int(value.value),
-            Value::UInt(value) => mir::ConstantKind::UInt(value.value),
-            Value::Decimal(value) => mir::ConstantKind::Float(value.value),
-            Value::String(value) => mir::ConstantKind::Str(value.value.clone()),
-            Value::Bytes(bytes) => {
-                let s = String::from_utf8_lossy(&bytes.value)
-                    .trim_end_matches('\0')
-                    .to_string();
-                mir::ConstantKind::Str(s)
-            }
-            Value::Null(_) => mir::ConstantKind::Null,
-            _ => mir::ConstantKind::Val(Self::value_to_const_value(value, ty, packages)?),
-        };
-        Some(mir::Constant {
-            span: Span::null(),
-            ty: ty.clone(),
-            user_ty: None,
-            literal,
-        })
-    }
-
-    fn value_to_const_value(
-        value: &Value,
-        ty: &mir::Ty,
-        packages: &[Rc<RefCell<fp_core::ast::package::CompiledPackage>>],
-    ) -> Option<mir::ConstValue> {
-        match value {
-            Value::Unit(_) => Some(mir::ConstValue::Unit),
-            Value::Bool(value) => Some(mir::ConstValue::Bool(value.value)),
-            Value::Int(value) => Some(match ty.kind {
-                TyKind::Uint(UintTy::Usize)
-                | TyKind::Uint(UintTy::U8)
-                | TyKind::Uint(UintTy::U16)
-                | TyKind::Uint(UintTy::U32)
-                | TyKind::Uint(UintTy::U64)
-                | TyKind::Uint(UintTy::U128) => mir::ConstValue::UInt(value.value as u64),
-                _ => mir::ConstValue::Int(value.value),
-            }),
-            Value::UInt(value) => Some(match ty.kind {
-                TyKind::Int(IntTy::Isize)
-                | TyKind::Int(IntTy::I8)
-                | TyKind::Int(IntTy::I16)
-                | TyKind::Int(IntTy::I32)
-                | TyKind::Int(IntTy::I64)
-                | TyKind::Int(IntTy::I128) => mir::ConstValue::Int(value.value as i64),
-                _ => mir::ConstValue::UInt(value.value),
-            }),
-            Value::Decimal(value) => Some(match ty.kind {
-                TyKind::Float(FloatTy::F32) | TyKind::Float(FloatTy::F64) => {
-                    mir::ConstValue::Float(value.value)
-                }
-                _ => return None,
-            }),
-            Value::String(value) => Some(mir::ConstValue::Str(value.value.clone())),
-            Value::Bytes(bytes) => {
-                let s = String::from_utf8_lossy(&bytes.value)
-                    .trim_end_matches('\0')
-                    .to_string();
-                Some(mir::ConstValue::Str(s))
-            }
-            Value::Null(_) => Some(mir::ConstValue::Null),
-            // A raw pointer's comptime value is just its address — e.g.
-            // `Vec::new()`'s `ptr: *mut T` field, always null before any
-            // allocation happens. There's no dedicated pointer/address
-            // `ConstValue` variant, so mirror `Value::Null`'s treatment
-            // for a null address (the only case that can arise from a
-            // `const`/`const fn` evaluation — a real heap/stack address
-            // from a genuinely *runtime* allocation has no meaningful
-            // representation as a compile-time constant at all) and
-            // otherwise surface the address as a plain integer.
-            Value::Pointer(pointer) => Some(if pointer.value == 0 {
-                mir::ConstValue::Null
-            } else {
-                mir::ConstValue::UInt(pointer.value as u64)
-            }),
-            // `fp-interpret` stores every register-resident aggregate as a
-            // plain `Value::Tuple` regardless of its nominal type (structs
-            // included — see `default_value_for_type`/`load_value_at`), so
-            // a struct/enum-typed comptime result (e.g. `Vec::new()`'s
-            // `Vec<T>{ptr,len,capacity}`) arrives here as `Value::Tuple`
-            // even though `ty.kind` is `TyKind::Adt`, not `TyKind::Tuple`.
-            // Mirror the `Value::Struct`/`TyKind::Adt` arm below rather
-            // than rejecting it.
-            Value::Tuple(tuple) => match &ty.kind {
-                TyKind::Tuple(fields) => {
-                    if tuple.values.len() != fields.len() {
-                        return None;
-                    }
-                    let values = tuple
-                        .values
-                        .iter()
-                        .zip(fields.iter())
-                        .map(|(value, field_ty)| Self::value_to_const_value(value, field_ty, packages))
-                        .collect::<Option<Vec<_>>>()?;
-                    Some(mir::ConstValue::Tuple(values))
-                }
-                // Never derive field info from `adt_def.variants` directly
-                // (see `lookup_real_adt_def`'s doc comment) — look up the
-                // real, registered `AdtDef` instead, and convert each field
-                // against its own declared `Ty` rather than blindly
-                // guessing (the previous untyped conversion always
-                // produced a signed `Int` even for an unsigned field).
-                TyKind::Adt(adt_def, _substs) => {
-                    let variant = Self::lookup_real_adt_def(packages, adt_def.did)?
-                        .variants
-                        .first()?
-                        .clone();
-                    if tuple.values.len() != variant.fields.len() {
-                        return None;
-                    }
-                    let values = tuple
-                        .values
-                        .iter()
-                        .zip(variant.fields.iter())
-                        .map(|(value, field_def)| {
-                            Self::value_to_const_value(value, &field_def.ty, packages)
-                        })
-                        .collect::<Option<Vec<_>>>()?;
-                    Some(mir::ConstValue::Struct(values))
-                }
-                _ => None,
-            },
-            Value::List(list) => match &ty.kind {
-                TyKind::Array(elem_ty, _) => {
-                    let values = list
-                        .values
-                        .iter()
-                        .map(|value| Self::value_to_const_value(value, elem_ty, packages))
-                        .collect::<Option<Vec<_>>>()?;
-                    Some(mir::ConstValue::Array(values))
-                }
-                TyKind::Slice(elem_ty) => {
-                    let values = list
-                        .values
-                        .iter()
-                        .map(|value| Self::value_to_const_value(value, elem_ty, packages))
-                        .collect::<Option<Vec<_>>>()?;
-                    Some(mir::ConstValue::List {
-                        elements: values,
-                        elem_ty: elem_ty.as_ref().clone(),
-                    })
-                }
-                _ => None,
-            },
-            Value::Struct(value_struct) => match &ty.kind {
-                TyKind::Tuple(fields) => {
-                    if value_struct.structural.fields.len() != fields.len() {
-                        return None;
-                    }
-                    let values = value_struct
-                        .structural
-                        .fields
-                        .iter()
-                        .zip(fields.iter())
-                        .map(|(field, field_ty)| {
-                            Self::value_to_const_value(&field.value, field_ty, packages)
-                        })
-                        .collect::<Option<Vec<_>>>()?;
-                    Some(mir::ConstValue::Struct(values))
-                }
-                TyKind::Adt(adt_def, _substs) => {
-                    let variant = Self::lookup_real_adt_def(packages, adt_def.did)?
-                        .variants
-                        .first()?
-                        .clone();
-                    if value_struct.structural.fields.len() != variant.fields.len() {
-                        return None;
-                    }
-                    let values = value_struct
-                        .structural
-                        .fields
-                        .iter()
-                        .zip(variant.fields.iter())
-                        .map(|(field, field_def)| {
-                            Self::value_to_const_value(&field.value, &field_def.ty, packages)
-                        })
-                        .collect::<Option<Vec<_>>>()?;
-                    Some(mir::ConstValue::Struct(values))
-                }
-                _ => return None,
-            },
-            Value::Structural(structural) => match &ty.kind {
-                TyKind::Tuple(fields) => {
-                    if structural.fields.len() != fields.len() {
-                        return None;
-                    }
-                    let values = structural
-                        .fields
-                        .iter()
-                        .zip(fields.iter())
-                        .map(|(field, field_ty)| {
-                            Self::value_to_const_value(&field.value, field_ty, packages)
-                        })
-                        .collect::<Option<Vec<_>>>()?;
-                    Some(mir::ConstValue::Struct(values))
-                }
-                TyKind::Adt(adt_def, _substs) => {
-                    let variant = Self::lookup_real_adt_def(packages, adt_def.did)?
-                        .variants
-                        .first()?
-                        .clone();
-                    if structural.fields.len() != variant.fields.len() {
-                        return None;
-                    }
-                    let values = structural
-                        .fields
-                        .iter()
-                        .zip(variant.fields.iter())
-                        .map(|(field, field_def)| {
-                            Self::value_to_const_value(&field.value, &field_def.ty, packages)
-                        })
-                        .collect::<Option<Vec<_>>>()?;
-                    Some(mir::ConstValue::Struct(values))
-                }
-                _ => None,
-            },
-            _ => None,
-        }
     }
 
 }

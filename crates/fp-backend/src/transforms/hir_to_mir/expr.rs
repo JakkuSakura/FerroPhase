@@ -554,6 +554,17 @@ pub struct MirLowering {
     /// call-site lazy fallback, the impl signature pre-pass) with no body
     /// ever lowered.
     lowered_items: HashSet<hir::DefId>,
+    /// The top-level item whose body is currently being lowered — set for
+    /// the duration of `lower_function`/`lower_method`/`lower_const`, `None`
+    /// otherwise (e.g. while lowering `transform_comptime_request`'s own
+    /// synthetic probe, which has no enclosing top-level item of its own).
+    /// The only reader is `register_const_block_comptime_entry_direct`,
+    /// which uses it to record `const_block_owners` below.
+    current_lowering_def_id: Option<hir::DefId>,
+    /// See `mir::MirPackage::const_block_owners`'s doc comment — populated
+    /// here, at the one place a const block's enclosing item is actually
+    /// known, and drained by the driver via `take_const_block_owners`.
+    const_block_owners: HashMap<hir::DefId, hir::DefId>,
     opaque_types: HashMap<String, Ty>,
     /// Byte size for an opaque type minted for a *mismatched enum payload
     /// slot* (`enum_layout_for_instance`'s per-slot merge loop) — the
@@ -1289,53 +1300,39 @@ impl MirLowering {
     }
 
     /// Convert a comptime-evaluated `Value` (from `const { ... }` block
-    /// resolution) into an MIR constant. Mirrors the scalar cases the
-    /// driver's own `simple_value_to_mir_constant` handles for named
-    /// consts; kept as a separate, small copy here since `fp-backend`
-    /// cannot depend on `fp-compiler`.
+    /// resolution) into an MIR constant. No declared type is available at
+    /// either call site, so this infers a reasonable one from the value's
+    /// own scalar shape, then defers the actual `Constant` construction to
+    /// `LirToMir::value_to_mir_constant` (the shared LIR->MIR lift, see
+    /// `fp_backend::transforms::lir_to_mir`) — an empty package list is
+    /// correct here since only scalar shapes ever reach this path (no Adt
+    /// lookup can trigger).
     fn const_block_value_to_mir_constant(&self, value: &Value, span: Span) -> Option<mir::Constant> {
-        let (ty, literal) = match value {
-            Value::Int(value) => (
-                Ty {
-                    kind: TyKind::Int(IntTy::I64),
-                },
-                mir::ConstantKind::Int(value.value),
-            ),
-            Value::UInt(value) => (
-                Ty {
-                    kind: TyKind::Uint(UintTy::U64),
-                },
-                mir::ConstantKind::UInt(value.value),
-            ),
-            Value::Bool(value) => (Ty { kind: TyKind::Bool }, mir::ConstantKind::Bool(value.value)),
-            Value::Decimal(value) => (
-                Ty {
-                    kind: TyKind::Float(FloatTy::F64),
-                },
-                mir::ConstantKind::Float(value.value),
-            ),
-            Value::String(value) => (
-                Ty {
-                    kind: TyKind::Slice(Box::new(Ty {
-                        kind: TyKind::Int(IntTy::I8),
-                    })),
-                },
-                mir::ConstantKind::Str(value.value.clone()),
-            ),
-            Value::Null(_) => (
-                Ty {
-                    kind: TyKind::Tuple(Vec::new()),
-                },
-                mir::ConstantKind::Null,
-            ),
+        let ty = match value {
+            Value::Int(_) => Ty {
+                kind: TyKind::Int(IntTy::I64),
+            },
+            Value::UInt(_) => Ty {
+                kind: TyKind::Uint(UintTy::U64),
+            },
+            Value::Bool(_) => Ty { kind: TyKind::Bool },
+            Value::Decimal(_) => Ty {
+                kind: TyKind::Float(FloatTy::F64),
+            },
+            Value::String(_) => Ty {
+                kind: TyKind::Slice(Box::new(Ty {
+                    kind: TyKind::Int(IntTy::I8),
+                })),
+            },
+            Value::Null(_) => Ty {
+                kind: TyKind::Tuple(Vec::new()),
+            },
             _ => return None,
         };
-        Some(mir::Constant {
-            span,
-            ty,
-            user_ty: None,
-            literal,
-        })
+        let mut constant = crate::transforms::lir_to_mir::LirToMir::new(Vec::new())
+            .value_to_mir_constant(value, &ty)?;
+        constant.span = span;
+        Some(constant)
     }
 
     fn const_key(&self, name: &str, span: Span) -> String {
