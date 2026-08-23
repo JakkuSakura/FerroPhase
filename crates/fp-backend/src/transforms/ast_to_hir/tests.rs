@@ -2047,3 +2047,98 @@ fn transform_package_resolves_whole_module_import_then_relative_item_reference()
 
     Ok(())
 }
+
+/// Real `core::any`'s own shape: `use crate::intrinsics::{self,
+/// type_id_vtable};` — a *module*-alias `self` combined, in the same
+/// group, with a specific named sibling item (`type_id_vtable`), unlike
+/// `transform_package_resolves_self_plus_variants_group_import`'s
+/// enum-variant shape (`Foo::{self, Variant}`, where `self` means "the
+/// enclosing type", not "the enclosing module") or the whole-module-only
+/// case above (`use crate::{result};`, no combined named sibling).
+/// Followed by a relative call through the module alias
+/// (`intrinsics::make_value()`), matching `core::any`'s own `intrinsics::
+/// type_id::<T>()`.
+#[test]
+fn transform_package_resolves_module_self_plus_named_item_group_import() -> Result<()> {
+    let helper_item = make_struct("Helper", vec![("value", int_ty())]);
+
+    let make_value_fn = make_fn(
+        "make_value",
+        Vec::new(),
+        ty_ident("Helper"),
+        ast::Expr::from(ast::ExprKind::Struct(ast::ExprStruct::new_ident(
+            ident("Helper"),
+            vec![ast::ExprField::new(
+                ident("value"),
+                ast::Expr::value(ast::Value::int(1)),
+            )],
+        ))),
+    );
+
+    let import_item = ast::Item::from(ast::ItemKind::Import(ast::ItemImport {
+        attrs: Vec::new(),
+        visibility: ast::Visibility::Private,
+        style: ast::ItemImportStyle::Plain,
+        tree: ast::ItemImportTree::Path(ast::ItemImportPath {
+            segments: vec![
+                ast::ItemImportTree::Crate,
+                ast::ItemImportTree::Ident(ident("intrinsics")),
+                ast::ItemImportTree::Group(ast::ItemImportGroup {
+                    items: vec![
+                        ast::ItemImportTree::SelfMod,
+                        ast::ItemImportTree::Ident(ident("Helper")),
+                    ],
+                }),
+            ],
+        }),
+    }));
+
+    let caller_fn = make_fn(
+        "make",
+        Vec::new(),
+        ast::Ty::path(ast::Path::plain(vec![ident("intrinsics"), ident("Helper")])),
+        ast::Expr::from(ast::ExprKind::Invoke(ast::ExprInvoke {
+            target: ast::ExprInvokeTarget::Function(ast::Name::Path(ast::Path::new(
+                fp_core::ast::path::PathPrefix::Plain,
+                vec![ident("intrinsics"), ident("make_value")],
+            ))),
+            args: Vec::new(),
+            kwargs: Vec::new(),
+            span: Span::default(),
+        })),
+    );
+
+    let items = vec![
+        (vec!["intrinsics".to_string()], helper_item),
+        (vec!["intrinsics".to_string()], make_value_fn),
+        (vec!["caller".to_string()], import_item),
+        (vec!["caller".to_string()], caller_fn),
+    ];
+    let package = package_from_items_with_paths(items)?;
+    let mut generator = HirGenerator::new();
+    let program = generator.transform_package(&package)?;
+
+    let make_fn_hir = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(func) if func.sig.name.as_str() == "make" => Some(func),
+            _ => None,
+        })
+        .expect("`make` function present");
+    let hir::TypeExprKind::Path(ret_path) = &make_fn_hir.sig.output.kind else {
+        panic!(
+            "expected `make`'s return type to lower to a path, got {:?}",
+            make_fn_hir.sig.output.kind
+        );
+    };
+    assert!(
+        ret_path.res.is_some(),
+        "`intrinsics::Helper` (referenced from `caller` after `use crate::\
+         intrinsics::{{self, Helper}};` brings the `intrinsics` module \
+         itself into scope alongside a named sibling) must resolve — got \
+         unresolved path {ret_path:?}"
+    );
+
+    Ok(())
+}
