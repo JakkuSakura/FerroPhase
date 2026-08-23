@@ -674,9 +674,10 @@ fn parse_dyn_type_bounds(input: &mut &[Token]) -> ModalResult<TypeBounds> {
 fn parse_trait_bound_expr(input: &mut &[Token]) -> ModalResult<Expr> {
     let name = parse_name(input)?;
     if skip_symbol(input, "(").is_ok() {
+        let mut params = Vec::new();
         if peek_symbol(input) != Some(")") {
             loop {
-                let _ = parse_type_expr(input)?;
+                params.push(parse_type_expr(input)?);
                 if skip_symbol(input, ",").is_err() {
                     break;
                 }
@@ -686,9 +687,31 @@ fn parse_trait_bound_expr(input: &mut &[Token]) -> ModalResult<Expr> {
             }
         }
         skip_symbol(input, ")")?;
-        if skip_symbol(input, "->").is_ok() {
-            let _ = parse_type_expr(input)?;
-        }
+        let ret_ty = if skip_symbol(input, "->").is_ok() {
+            Some(Box::new(parse_type_expr(input)?))
+        } else {
+            None
+        };
+        // `dyn Fn(..) -> ..`/`FnMut`/`FnOnce` — same sugar shape
+        // `parse_simple_type`'s own `name(..)` branch folds into a bare
+        // `Ty::Function`, just reached from `dyn`'s own bound list instead
+        // (`parse_dyn_type_bounds` calls this function per `+`-separated
+        // bound, not the ordinary type parser). This previously parsed
+        // and discarded the parameter/return types entirely (`let _ =
+        // parse_type_expr(input)?;`), so `dyn FnMut(&T) -> bool` erased to
+        // the bare trait name with no signature at all by the time
+        // `ast_to_hir` ever saw it. Wrap the real signature as
+        // `Value::Type(Ty::Function(..))`, the same shape `ast_to_hir`'s
+        // `ImplTraits`/`TypeBounds` arms already know how to turn into a
+        // real `FnPtr` HIR type.
+        return Ok(type_to_expr(&Ty::Function(
+            TypeFunction {
+                params,
+                generics_params: Vec::new(),
+                ret_ty,
+            }
+            .into(),
+        )));
     }
     Ok(Expr::name(name))
 }

@@ -919,7 +919,15 @@ impl HirTypeChecker {
                     let Some((mut substitutions, _)) =
                         self.instantiate_call(&callee_ty, &arg_types)?
                     else {
-                        return Ok(self.error_ty("called expression is not a function"));
+                        tracing::debug!(
+                            callee_kind = ?callee_ty.kind,
+                            callee_expr = ?callee.kind,
+                            "call target did not resolve to a function type"
+                        );
+                        return Ok(self.error_ty(format!(
+                            "called expression is not a function (callee type: {:?}, callee expr: {:?})",
+                            callee_ty.kind, callee.kind
+                        )));
                     };
                     if substitutions.is_empty() {
                         if let Some(expected) = self.expected_expr_type.as_ref() {
@@ -1900,7 +1908,11 @@ impl HirTypeChecker {
         }
         if matches!(path.res, Some(hir::Res::SelfTy)) {
             let Some(self_type) = self.self_type.clone() else {
-                return Ok(self.error_ty("Self is not available in this type context"));
+                tracing::debug!(?path, "Self is not available in this type context");
+                return Ok(self.error_ty(format!(
+                    "Self is not available in this type context (path: {:?})",
+                    path
+                )));
             };
             // `Self::Target` (an associated-type path rooted at `Self`,
             // e.g. inside `impl Deref for X { fn deref(&self) -> &Self::
@@ -1908,15 +1920,23 @@ impl HirTypeChecker {
             // `type Target = Y;` binding (`assoc_types`, set alongside
             // `self_type`). Deliberately doesn't consult a trait default
             // or resolve `Self::X` for code outside the impl — see
-            // `impl_assoc_types`'s doc comment.
+            // `impl_assoc_types`'s doc comment. Kept as a fallback here in
+            // case this function is ever reached for a genuinely type-like
+            // use, though the method lookup above should cover the
+            // overwhelming majority of real value-path cases.
             if let Some(assoc_segment) = path.segments.get(1) {
                 let scope = self.assoc_types.as_ref();
                 if let Some(ty) = scope.and_then(|scope| scope.get(&assoc_segment.name)) {
                     return Ok(ty.clone());
                 }
+                tracing::debug!(
+                    assoc = %assoc_segment.name,
+                    ?self_type,
+                    "associated type not defined in this impl"
+                );
                 return Ok(self.error_ty(format!(
-                    "associated type `Self::{}` is not defined in this impl",
-                    assoc_segment.name
+                    "associated type `Self::{}` is not defined in this impl (self type: {:?})",
+                    assoc_segment.name, self_type
                 )));
             }
             return Ok(self_type);
@@ -2298,6 +2318,36 @@ impl HirTypeChecker {
     }
 
     async fn expr_path_ty(&mut self, path: &hir::Path) -> Result<Ty> {
+        tracing::debug!(?path, "expr_path_ty");
+        // A multi-segment `Self::` value path is an associated
+        // function/method called via `Self::name(..)` (e.g. `Self::new()`,
+        // or a default trait method calling a sibling via
+        // `Self::helper(self, ..)`) — resolve it the same way `.method()`
+        // call syntax already does, via `method_declared_signature_at`.
+        if matches!(path.res, Some(hir::Res::SelfTy)) {
+            if let (Some(self_ty), Some(method_segment)) =
+                (self.self_type.clone(), path.segments.get(1))
+            {
+                if path.segments.len() == 2 {
+                    let found = self
+                        .method_declared_signature_at(&self_ty, &method_segment.name)
+                        .await?;
+                    tracing::debug!(
+                        method = %method_segment.name,
+                        ?self_ty,
+                        found = found.is_some(),
+                        "Self::method lookup"
+                    );
+                    if let Some(sig) = found {
+                        return Ok(sig);
+                    }
+                    return Ok(self.error_ty(format!(
+                        "method `{}` not found on `Self` (self type: {:?})",
+                        method_segment.name, self_ty
+                    )));
+                }
+            }
+        }
         if let Some(hir::Res::Local(local)) = path.res {
             if let Some(name) = path.segments.last().map(|segment| &segment.name) {
                 if let Some(ty) = self.locals.get(name) {

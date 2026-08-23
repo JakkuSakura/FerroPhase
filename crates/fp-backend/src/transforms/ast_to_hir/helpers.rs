@@ -408,7 +408,13 @@ impl AstToHirLowerer {
         // named "Self"), so short-circuit here instead of falling through
         // to certain failure. Keeps all segments (including `Self`
         // itself) so `path_ty` can see both the root and the assoc-type
-        // name it's projecting.
+        // name it's projecting. Also the correct shape for a *value*-scope
+        // `Self::method_name(..)` call (an associated function called via
+        // `Self::`) — `fp-typing`'s `expr_path_ty` has its own dedicated
+        // `Res::SelfTy` handling for exactly that case, resolving the
+        // trailing segment against the current `self_types` scope; see
+        // its own doc comment for why that handler, not this one, turned
+        // out to be where the real bug was.
         if segments.len() > 1 && path_prefix == PathPrefix::Plain && segments[0].name.as_str() == "Self"
         {
             return Ok(hir::Path {

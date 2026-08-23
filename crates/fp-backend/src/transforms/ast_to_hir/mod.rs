@@ -3226,6 +3226,40 @@ impl AstToHirLowerer {
                 Span::new(self.current_file, 0, 0),
             )),
             ast::Ty::TypeBounds(bounds) => {
+                // `dyn Fn(..) -> ..`/`FnMut`/`FnOnce` bounds (`dyn FnMut(&T)
+                // -> bool`, commonly boxed as `Box<dyn FnMut(..) -> ..>`)
+                // parse through the same `FnMut(..) -> ..` sugar-folding as
+                // a bare `fn(..) -> ..` type (`ast::Value::Type(ast::Ty::
+                // Function(fn_ty))`, per `fp_lang::ast::type_to_expr`) —
+                // the exact same shape the `ast::Ty::ImplTraits` arm above
+                // already special-cases for `impl Fn(..)`. Without this,
+                // the generic `ExprKind::Name` match below never matches
+                // (a `Value::Type(Function)` bound has no `Name` at all),
+                // `primary_trait_name` falls through to `None`, and the
+                // whole `dyn FnMut(..)` type erases to `Infer`, losing its
+                // signature entirely. Build the same real `FnPtr` HIR type
+                // here too.
+                if let Some(bound) = bounds.bounds.first() {
+                    if let ast::ExprKind::Value(value) = bound.kind() {
+                        if let ast::Value::Type(ast::Ty::Function(fn_ty)) = value.as_ref() {
+                            let inputs = fn_ty
+                                .params
+                                .iter()
+                                .map(|ty| self.transform_type_to_hir(ty).map(Box::new))
+                                .collect::<Result<Vec<_>>>()?;
+                            let output = if let Some(ret_ty) = &fn_ty.ret_ty {
+                                Box::new(self.transform_type_to_hir(ret_ty)?)
+                            } else {
+                                Box::new(self.create_unit_type())
+                            };
+                            return Ok(hir::TypeExpr::new(
+                                self.next_id(),
+                                hir::TypeExprKind::FnPtr(hir::FnPtrType { inputs, output }),
+                                self.normalize_span(ty.span()),
+                            ));
+                        }
+                    }
+                }
                 // `dyn Trait` (extra `+ Send`/`Sync`-style bounds carry no
                 // separate identity, so only the primary trait matters).
                 // Resolve it to a real path the same way a concrete struct
