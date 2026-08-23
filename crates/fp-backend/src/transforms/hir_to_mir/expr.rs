@@ -4407,10 +4407,29 @@ impl HirToMirLowerer {
         let def_id = self.next_synthetic_def_id();
         match self.lower_executable_const(def_id, &konst, ty, key, Some(expr_hir_id)) {
             Ok(mir_item) => self.extra_items.push(mir_item),
-            Err(error) => self.emit_warning(
-                span,
-                format!("const block not lowerable for comptime validation: {error}"),
-            ),
+            Err(error) => {
+                // This warning previously went straight into `self.
+                // diagnostics`, which no caller of `transform_comptime_
+                // request` ever reads back for the *warning* severity
+                // (only real errors get surfaced, via `has_errors`/the
+                // typing-diagnostic dump) — so a const block that fails to
+                // lower here failed completely silently, and the caller
+                // only ever saw the misleading generic "did not produce a
+                // comptime value" (`resolve_one_comptime_request`'s own
+                // fallback once `block_values` has no entry for this
+                // request, since no `ExecutableConst` item — and so no
+                // `LirComptimeEntry` — was ever created). Print the real
+                // cause too, so a genuine per-block lowering failure is
+                // diagnosable instead of indistinguishable from every
+                // other "no value produced" case.
+                eprintln!(
+                    "warning: const block not lowerable for comptime validation: {error}"
+                );
+                self.emit_warning(
+                    span,
+                    format!("const block not lowerable for comptime validation: {error}"),
+                );
+            }
         }
     }
 
