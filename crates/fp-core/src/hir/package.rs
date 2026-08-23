@@ -207,14 +207,19 @@ pub struct HirPackage {
     /// `ExprConstBlock::def_id`) — the same identity kind named consts use,
     /// via `const_values`.
     const_block_values: RefCell<HashMap<DefId, Value>>,
-    /// A `const { .. }` block's own not-yet-published HIR body, recorded
-    /// under its own `DefId` the moment the type checker builds a
-    /// `ComptimeRequest` for it — since the request itself carries only
-    /// `package_id`/`def_id` (see `fp_typing::ComptimeRequest`'s doc
-    /// comment), this is how the driver's comptime resolver recovers the
-    /// exact block to lower, the same shared-package lookup every other
-    /// typed result already goes through.
-    pending_comptime_blocks: RefCell<HashMap<DefId, Block>>,
+    /// A `const { .. }` block's own HIR body, recorded under its own
+    /// `DefId` once, unconditionally, at AST-to-HIR lowering time (the
+    /// moment `ExprConstBlock`/`TypeExprKind::ConstBlock` mint that
+    /// `DefId` — see `HirGenerator::transform_const_block_to_hir` and the
+    /// type-position `ConstBlock` lowering site). Exists because
+    /// `fp_typing::ComptimeRequest` carries only `package_id`/`def_id`
+    /// (never the block itself, see that type's doc comment), so this is
+    /// how the driver's comptime resolver recovers the exact block to
+    /// lower from just that `DefId` — the same shared-package lookup
+    /// every other typed result already goes through, alongside
+    /// `type_alias_targets` (another "extra HIR shape with no real
+    /// `def_map` entry" index).
+    const_block_defs: RefCell<HashMap<DefId, Block>>,
     /// This package's typing diagnostics (warnings and recovered, non-fatal
     /// mismatches — see `fp_typing::TypingShared::record_error`'s doc
     /// comment for the full split with hard item-check aborts). Lives here
@@ -259,7 +264,7 @@ impl HirPackage {
             const_types: RefCell::new(HashMap::new()),
             const_values: RefCell::new(HashMap::new()),
             const_block_values: RefCell::new(HashMap::new()),
-            pending_comptime_blocks: RefCell::new(HashMap::new()),
+            const_block_defs: RefCell::new(HashMap::new()),
             diagnostics: crate::diagnostics::DiagnosticManager::new(),
         }
     }
@@ -559,13 +564,13 @@ impl HirPackage {
         self.const_block_values.borrow().clone()
     }
 
-    /// See `pending_comptime_blocks`'s doc comment.
-    pub fn record_pending_comptime_block(&self, def_id: DefId, block: Block) {
-        self.pending_comptime_blocks.borrow_mut().insert(def_id, block);
+    /// See `const_block_defs`'s doc comment.
+    pub fn record_const_block_def(&self, def_id: DefId, block: Block) {
+        self.const_block_defs.borrow_mut().insert(def_id, block);
     }
 
-    pub fn pending_comptime_block(&self, def_id: DefId) -> Option<Block> {
-        self.pending_comptime_blocks.borrow().get(&def_id).cloned()
+    pub fn const_block_def(&self, def_id: DefId) -> Option<Block> {
+        self.const_block_defs.borrow().get(&def_id).cloned()
     }
 }
 

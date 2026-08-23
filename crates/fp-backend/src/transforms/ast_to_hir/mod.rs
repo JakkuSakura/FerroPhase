@@ -3267,12 +3267,23 @@ impl HirGenerator {
                     }
                 }
                 // Fall through — the const block produces a type at comptime;
-                // the type checker resolves it via `TypingShared::request_comptime`
+                // the type checker resolves it via `HirTypeChecker::request_comptime`
                 // when it encounters this node.
                 let body = Box::new(self.transform_expr_to_hir(block.expr.as_ref())?);
                 let def_id = self.next_def_id();
+                let hir_id = self.next_id();
+                // Recorded once, unconditionally, right here — see
+                // `hir::HirPackage::const_block_defs`'s doc comment.
+                self.package.record_const_block_def(
+                    def_id,
+                    hir::Block {
+                        hir_id,
+                        stmts: Vec::new(),
+                        expr: Some(body.clone()),
+                    },
+                );
                 Ok(hir::TypeExpr::new(
-                    self.next_id(),
+                    hir_id,
                     hir::TypeExprKind::ConstBlock(def_id, body),
                     Span::new(self.current_file, 0, 0),
                 ))

@@ -854,14 +854,14 @@ impl MirLowering {
         // comment already scopes itself to, just reached lazily instead
         // of unconditionally for methods this request never references.
 
-        // The exact HIR block the type checker encountered, recorded onto
-        // this package under its own `def_id` the moment it built this
-        // request (see `HirPackage::pending_comptime_block`'s doc comment)
-        // — the request itself only names `package_id`/`def_id`, never
-        // carries its own block.
-        let block = current_package.pending_comptime_block(def_id).ok_or_else(|| {
+        // The exact HIR block, recorded onto this package under its own
+        // `def_id` once, unconditionally, at AST-to-HIR lowering time (see
+        // `HirPackage::const_block_defs`'s doc comment) — the request
+        // itself only names `package_id`/`def_id`, never carries its own
+        // block.
+        let block = current_package.const_block_def(def_id).ok_or_else(|| {
             fp_core::error::Error::from(format!(
-                "internal compiler error: no pending comptime block recorded for {def_id:?}"
+                "internal compiler error: no const block recorded for {def_id:?}"
             ))
         })?;
         let body = block.expr.as_ref().ok_or_else(|| {

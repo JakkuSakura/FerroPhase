@@ -429,7 +429,7 @@ impl HirGenerator {
             }
             ExprKind::Continue(_) => hir::ExprKind::Continue,
             ExprKind::ConstBlock(const_block) => {
-                self.transform_const_block_to_hir(const_block)?
+                self.transform_const_block_to_hir(hir_id, const_block)?
             }
             ExprKind::IntrinsicContainer(container) => {
                 self.transform_intrinsic_container_to_hir(container)?
@@ -465,10 +465,22 @@ impl HirGenerator {
 
     fn transform_const_block_to_hir(
         &mut self,
+        hir_id: hir::HirId,
         const_block: &ast::ExprConstBlock,
     ) -> Result<hir::ExprKind> {
         let body = Box::new(self.transform_expr_to_hir(const_block.expr.as_ref())?);
         let def_id = self.next_def_id();
+        // Recorded once, unconditionally, right here — not lazily by the
+        // type checker each time it happens to encounter this node (see
+        // `hir::HirPackage::const_block_defs`'s doc comment).
+        self.package.record_const_block_def(
+            def_id,
+            hir::Block {
+                hir_id,
+                stmts: Vec::new(),
+                expr: Some(body.clone()),
+            },
+        );
         Ok(hir::ExprKind::ConstBlock(hir::ExprConstBlock { def_id, body }))
     }
 

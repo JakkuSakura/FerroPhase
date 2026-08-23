@@ -434,16 +434,14 @@ impl HirTypeChecker {
     pub fn spawn_comptime_task(
         checker: &Rc<RefCell<Self>>,
         def_id: hir::DefId,
-        build_request: impl FnOnce() -> crate::ComptimeRequest + 'static,
+        request: crate::ComptimeRequest,
     ) -> TaskHandle<Option<hir::Value>> {
         let cache_key = format!("comptime:{def_id:?}");
         let checker = checker.clone();
         let executor = checker.borrow().executor.clone();
         executor.get_or_spawn(cache_key, move || {
-            Box::pin(async move {
-                let request = build_request();
-                checker.borrow().request_comptime(request).await.ok()
-            }) as Pin<Box<dyn Future<Output = Option<hir::Value>>>>
+            Box::pin(async move { checker.borrow().request_comptime(request).await.ok() })
+                as Pin<Box<dyn Future<Output = Option<hir::Value>>>>
         })
     }
 }
@@ -1077,49 +1075,22 @@ impl HirTypeChecker {
                 }
                 hir::ExprKind::ConstBlock(const_block) => {
                     let body_ty = self.check_expr(&const_block.body).await?;
-                    {
-                        // Record the outer const-block expression's own type
-                        // under its own `hir_id` *before* building the
-                        // request below — the driver-side comptime entry
-                        // (`register_const_block_comptime_entry`/
-                        // `transform_comptime_request`) needs this exact
-                        // `hir_id` to find the checked type on `request.
-                        // current` (the same `Rc<HirPackage>` this writes
-                        // onto).
-                        self.program().record_expr_type(expr.hir_id, body_ty.clone());
-                        let hir_id = expr.hir_id;
-                        let def_id = const_block.def_id;
-                        let body = const_block.body.clone();
-                        let program_for_task = self.program_rc();
-                        let current_package = self.current_package();
-                        let root_handle = self.root_handle();
-                        // The resolved value is recorded into
-                        // `const_block_values` by `request_comptime`
-                        // itself (inside `spawn_comptime_task`), not here.
-                        HirTypeChecker::spawn_comptime_task(
-                            &root_handle,
-                            def_id,
-                            move || {
-                                let package = program_for_task.package(current_package).expect(
-                                    "current_package is always inserted into program at construction",
-                                );
-                                package.record_pending_comptime_block(
-                                    def_id,
-                                    hir::Block {
-                                        hir_id,
-                                        stmts: Vec::new(),
-                                        expr: Some(body),
-                                    },
-                                );
-                                crate::ComptimeRequest {
-                                    package_id: current_package,
-                                    def_id,
-                                }
-                            },
-                        )
+                    // Record the outer const-block expression's own type
+                    // under its own `hir_id` *before* requesting the value
+                    // below — the driver-side comptime entry
+                    // (`transform_comptime_request`) needs this exact
+                    // `hir_id` to find the checked type on `request.
+                    // current` (the same `Rc<HirPackage>` this writes
+                    // onto).
+                    self.program().record_expr_type(expr.hir_id, body_ty.clone());
+                    let def_id = const_block.def_id;
+                    let request = crate::ComptimeRequest {
+                        package_id: self.current_package(),
+                        def_id,
+                    };
+                    HirTypeChecker::spawn_comptime_task(&self.root_handle(), def_id, request)
                         .await
                         .ok_or_else(|| Error::from("comptime evaluation failed"))?;
-                    }
                     body_ty
                 }
                 hir::ExprKind::While(condition, block) => {
@@ -1626,39 +1597,19 @@ impl HirTypeChecker {
                     // first.
                     let def_id = *def_id;
                     let hir_id = expr.hir_id;
-                    let body = (**body).clone();
-                    let body_ty = self.check_expr(&body).await?;
-                    let checker = self.root_handle();
-                    let program_for_task = self.program_rc();
-                    let current_package = self.current_package();
-                    // The resolved value is recorded into
-                    // `const_block_values` by `request_comptime` itself
-                    // (inside `spawn_comptime_task`), not here.
-                    HirTypeChecker::spawn_comptime_task(&checker, def_id, move || {
-                        let package = program_for_task.package(current_package).expect(
-                            "current_package is always inserted into program at construction",
-                        );
-                        package.record_pending_comptime_block(
-                            def_id,
-                            hir::Block {
-                                hir_id,
-                                stmts: Vec::new(),
-                                expr: Some(Box::new(body)),
-                            },
-                        );
-                        crate::ComptimeRequest {
-                            package_id: current_package,
-                            def_id,
-                        }
-                    })
-                    .await
-                    .ok_or_else(|| Error::from("comptime evaluation failed"))?;
-                    let package = self.program();
+                    let body_ty = self.check_expr(body).await?;
+                    let request = crate::ComptimeRequest {
+                        package_id: self.current_package(),
+                        def_id,
+                    };
+                    HirTypeChecker::spawn_comptime_task(&self.root_handle(), def_id, request)
+                        .await
+                        .ok_or_else(|| Error::from("comptime evaluation failed"))?;
                     // Replace the `Infer` placeholder just below with the
                     // body's actual checked type, now that it's known —
                     // matches expression-position const-blocks, whose own
                     // type is likewise the checked type of their body.
-                    package.record_type_expr_type(hir_id, body_ty.clone());
+                    self.program().record_type_expr_type(hir_id, body_ty.clone());
                     body_ty
                 }
                 hir::TypeExprKind::Error => self.error_ty("invalid type expression"),
