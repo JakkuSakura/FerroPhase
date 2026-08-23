@@ -4607,15 +4607,12 @@ impl HirTypeChecker {
         // The few genuinely high-level ops with no intrinsic equivalent
         // (`Option`/`Result`/`Vec` constructors, `collect`, `find`, ...)
         // fall to `check_high_level_op` instead.
-        let kind = match call.kind.intrinsic_kind() {
-            Some(kind) => kind,
-            None => {
-                let fp_core::intrinsics::CallKind::Op(op) = call.kind.clone() else {
-                    unreachable!("intrinsic_kind() only returns None for CallKind::Op")
-                };
-                return self.check_high_level_op(op, call).await;
-            }
-        };
+        // `CallKind::Op` was retired, so `intrinsic_kind()` is always `Some`
+        // now — every `IntrinsicCallExpr` is a genuine low-level intrinsic.
+        let kind = call
+            .kind
+            .intrinsic_kind()
+            .expect("CallKind is always Intrinsic now that CallKind::Op is retired");
         // `sizeof!`/`field_count!`/`method_count!`'s single argument names
         // a *type* (a struct, or — inside a generic function/impl body —
         // the function's own type parameter, e.g. `sizeof!(T)` in
@@ -4762,51 +4759,6 @@ impl HirTypeChecker {
                 self.error_ty("compile_error intrinsic requested an error")
             }
             _ => self.error_ty(format!("intrinsic `{:?}` has no HIR type rule", kind)),
-        })
-    }
-
-    /// Type-checks a genuine high-level `#[op(...)]` call (`CallKind::Op`)
-    /// that has no low-level `IntrinsicKind` equivalent. Data-driven off the
-    /// `PortableOp`'s own `result_rule` (resolved once, at promotion time,
-    /// from the central `PortableOpRegistry` — see
-    /// `fp-core/src/intrinsics/calls.rs`) instead of a hand-grouped match:
-    /// adding a new portable op only ever means adding one `PortableOpDef`
-    /// there, never touching this function. `ResultTypeRule::
-    /// NotStaticallyKnowable` covers every op whose real result type depends
-    /// on a stdlib generic parameter this call site can no longer recover
-    /// (the original callee path/DefId was discarded when AST-level
-    /// recognition folded the call into an `IntrinsicCall`) — rather than
-    /// guess a plausibly-wrong type, those fail loudly.
-    async fn check_high_level_op(
-        &mut self,
-        op: fp_core::intrinsics::PortableOp,
-        call: &hir::IntrinsicCallExpr,
-    ) -> Result<Ty> {
-        use fp_core::intrinsics::ResultTypeRule;
-        let mut arg_types = Vec::with_capacity(call.callargs.len());
-        for arg in &call.callargs {
-            arg_types.push(self.check_expr(&arg.value).await?);
-        }
-        Ok(match op.result_rule {
-            ResultTypeRule::SameAsArg(index) => match arg_types.get(index) {
-                Some(ty) => ty.clone(),
-                None => self.error_ty(format!(
-                    "`{}` requires an argument at position {index}",
-                    op.name()
-                )),
-            },
-            ResultTypeRule::AlwaysBool => Ty::bool(),
-            ResultTypeRule::TargetNativeString => Ty {
-                kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
-            },
-            // `Err(e)` becomes `error(e)`, which — like `panic!` — never
-            // produces a value, so it unifies with whatever the surrounding
-            // context expects.
-            ResultTypeRule::Never => Ty::never(),
-            ResultTypeRule::NotStaticallyKnowable => self.error_ty(format!(
-                "portable op `{}` reached a stage that only handles genuine intrinsics or simple passthroughs",
-                op.name()
-            )),
         })
     }
 

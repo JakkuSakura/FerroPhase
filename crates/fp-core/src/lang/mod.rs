@@ -193,18 +193,6 @@ pub fn lookup_intrinsic(name: &Name) -> Option<CallKind> {
         .and_then(|kind| kind.intrinsic_kind().map(CallKind::from))
 }
 
-pub fn lookup_op_intrinsic(name: &Name) -> Option<CallKind> {
-    let registry = try_get_threadlocal_lang_items()?;
-    let name_segments: Vec<&str> = match name {
-        Name::Ident(ident) => vec![ident.name.as_str()],
-        Name::Path(path) => path.segments.iter().map(|seg| seg.name.as_str()).collect(),
-        _ => return None,
-    };
-    registry
-        .find_op_by_call_segments(&name_segments)
-        .map(CallKind::Op)
-}
-
 pub fn lookup_intrinsic_name(name: &Name) -> Option<String> {
     let registry = try_get_threadlocal_lang_items()?;
     let name_segments: Vec<&str> = match name {

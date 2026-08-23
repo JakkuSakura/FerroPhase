@@ -2881,37 +2881,6 @@ impl KotlinEmitter {
                         let receiver = args.first().cloned().unwrap_or_default();
                         Ok(format!("{}.count()", receiver))
                     }
-                    CallKind::Op(op) if op.name() == "map_or" => {
-                        let receiver = args.first().cloned().unwrap_or_default();
-                        let default = args.get(1).cloned().unwrap_or_default();
-                        Ok(format!("{} ?: {}", receiver, default))
-                    }
-                    CallKind::Op(op) if op.name() == "collect" => {
-                        let receiver = args.first().cloned().unwrap_or_default();
-                        Ok(format!("{}.toList()", receiver))
-                    }
-                    CallKind::Op(op) if op.name() == "find" => {
-                        let receiver = args.first().cloned().unwrap_or_default();
-                        let pred = args.get(1).cloned();
-                        if let Some(p) = pred {
-                            Ok(format!("{}.firstOrNull {{ {} }}", receiver, p))
-                        } else {
-                            Ok(format!("{}.firstOrNull()", receiver))
-                        }
-                    }
-                    CallKind::Op(op) if op.name() == "unwrap_or" => {
-                        let receiver = args.first().cloned().unwrap_or_default();
-                        let default = args.get(1).cloned().unwrap_or_default();
-                        Ok(format!("{} ?: {}", receiver, default))
-                    }
-                    CallKind::Op(op) if op.name() == "to_string" => {
-                        let receiver = args.first().cloned().unwrap_or_default();
-                        Ok(format!("{}.toString()", receiver))
-                    }
-                    CallKind::Op(op) if op.name() == "and_then" => {
-                        let receiver = args.first().cloned().unwrap_or_default();
-                        Ok(format!("{}.let {{ it }}", receiver))
-                    }
                     // `OptionUnwrap`/`OptionSome`/`OptionNone`/`VecNew`/`AsRef`/
                     // `Iter`/`ToOwned`/`AsStr`/`Clone` never reach here:
                     // `KotlinMaterializer::materialize_call` (run over the
@@ -3612,7 +3581,6 @@ fn kotlin_un_op(kind: &UnOpKind) -> &str {
 fn intrinsic_name(kind: &fp_core::intrinsics::calls::CallKind) -> String {
     use fp_core::intrinsics::calls::IntrinsicKind;
     match kind {
-        fp_core::intrinsics::calls::CallKind::Op(op) => format!("op_{}", op.name()),
         fp_core::intrinsics::calls::CallKind::Intrinsic(i) => match i {
             IntrinsicKind::Print => "print".into(),
             IntrinsicKind::Println => "println".into(),

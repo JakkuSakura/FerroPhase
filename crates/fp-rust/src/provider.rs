@@ -127,6 +127,13 @@ impl PackageProvider for RustPackageProvider {
         self.list_packages()
     }
 
+    /// Real Rust source's own frontend engine — see
+    /// `RustIntrinsicNormalizer`'s doc comment for the vendored-std
+    /// `uint_impl!` collision it disambiguates.
+    fn intrinsic_normalizer(&self) -> Box<dyn fp_core::intrinsics::IntrinsicNormalizer> {
+        Box::new(crate::normalizer::RustIntrinsicNormalizer::new())
+    }
+
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let member_root = self.resolve_root(id)?;
         let mut module_ids = Vec::new();
@@ -381,6 +388,14 @@ impl PackageProvider for RustStdProvider {
 
     fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>> {
         self.list_packages()
+    }
+
+    // Only ever blended in as a `CompositeProvider` *dependency* (std/libc),
+    // never the primary `workspace` provider — `CompositeProvider::
+    // intrinsic_normalizer` always defers to `self.workspace`'s own choice
+    // instead, so this one is never actually consulted.
+    fn intrinsic_normalizer(&self) -> Box<dyn fp_core::intrinsics::IntrinsicNormalizer> {
+        Box::new(crate::normalizer::RustIntrinsicNormalizer::new())
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {

@@ -531,6 +531,10 @@ impl fp_core::ast::package::provider::PackageProvider for NativeObjectPackagePro
         self.list_packages()
     }
 
+    fn intrinsic_normalizer(&self) -> Box<dyn fp_core::intrinsics::IntrinsicNormalizer> {
+        Box::new(fp_core::intrinsics::NoopIntrinsicNormalizer)
+    }
+
     fn load_package_metadata(
         &self,
         id: &fp_core::ast::package::PackageId,

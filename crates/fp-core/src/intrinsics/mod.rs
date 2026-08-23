@@ -42,28 +42,6 @@ pub fn extract_op_attr(attrs: &[Attribute], key: &str) -> Option<String> {
     None
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum IntrinsicNormalizationMode {
-    Compile,
-    Transpile,
-    /// `PipelineMode::Transpile` specifically — plain-call/
-    /// method-call portable-op detection is handled post-typecheck by
-    /// `HirToAstLifter` directly consulting `hir::HirPackage.op_defs` instead
-    /// (real resolved callee/method `DefId`s available there, so a
-    /// same-named user function/method is never misclassified).
-    /// `normalize_invoke` skips its own name-based
-    /// reclassification entirely under this mode, rather than racing
-    /// with (and pre-empting) the post-typecheck pass by mutating the
-    /// AST before HIR lowering even sees it.
-    TypedTranspile,
-}
-
-impl Default for IntrinsicNormalizationMode {
-    fn default() -> Self {
-        Self::Transpile
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NormalizeOutcome<T> {
     /// The strategy chose not to handle this node; the shared framework should
@@ -163,14 +141,19 @@ pub trait IntrinsicNormalizer {
     /// Language-specific *item*-position macro expansion hook (e.g. real
     /// Rust std's own `macro_rules! alias_core_ffi { ($($t:ident)*) => {$(
     /// pub type $t = core::ffi::$t; )*} }` idiom for batch-generating C-FFI
-    /// type aliases). `defs` is every `macro_rules!` definition reachable in
-    /// the same package (see `ast_to_hir`'s `expand_item_macros`, the only
-    /// caller); `invocation` is one item-position macro call site. Returns
-    /// `Some(items)` when a frontend's real macro engine (fp-lang's
+    /// type aliases). `defs` is every `macro_rules!` definition the shared
+    /// single-pass item walker (`ast_to_hir::expand_item_macros`, the only
+    /// caller) has collected *so far* in its one descent — not necessarily
+    /// every definition in the whole package, matching real Rust's own
+    /// declare-before-use macro visibility instead of treating
+    /// `macro_rules!` as globally order-independent. `invocation` is one
+    /// item-position macro call site. Returns `Some(items)` when a
+    /// frontend's real macro engine (fp-lang's
     /// `expand_item_macro_invocation`) matched a rule and re-parsed its
-    /// substituted output into real items; `None` when the name is unknown
-    /// or no rule matched, in which case the caller leaves the invocation
-    /// as an unexpanded item (unchanged from this hook's absence).
+    /// substituted output into real items; `None` when the name is
+    /// unknown yet or no rule matched, in which case the caller leaves the
+    /// invocation as an unexpanded item (unchanged from this hook's
+    /// absence).
     fn expand_item_macro(
         &self,
         _invocation: &crate::ast::MacroInvocation,
@@ -179,23 +162,88 @@ pub trait IntrinsicNormalizer {
         None
     }
 
-    /// Collects every `macro_rules! name { .. }` definition reachable in
-    /// `items` (recursing into nested modules), parsed into structured
-    /// `MacroRulesDef`s ready for `expand_item_macro`. Paired with that
-    /// method since parsing a macro's own matcher/transcriber syntax needs
-    /// the same frontend-specific engine (fp-lang's
-    /// `collect_macro_rules_defs`); the default no-op keeps a caller with
-    /// no normalizer wired in behaving exactly as before (no item macros
-    /// ever expand).
-    fn collect_macro_rules_defs(
+    /// Called by the shared single-pass item walker
+    /// (`ast_to_hir::expand_item_macros`) when it encounters a second
+    /// `macro_rules!` definition for a name it's already seen earlier in
+    /// the same walk — `existing_depth`/`new_depth` are each
+    /// definition's own module-nesting depth (`PackageItem::module_path`
+    /// length, plus one per genuinely inline `mod foo { .. }` block
+    /// crossed). Returns whether the new definition should replace the
+    /// existing one for subsequent invocations. Default: always replace
+    /// (last one found in the walk wins) — correct wherever a macro name
+    /// is unique in the package, the overwhelmingly common case; a
+    /// language with a real same-name collision to resolve (see
+    /// `fp_rust::RustIntrinsicNormalizer`'s own doc comment for vendored
+    /// std's `uint_impl!`) overrides this with its own policy instead of
+    /// needing a general scoping mechanism here.
+    fn prefer_macro_rules_def(&self, _existing_depth: usize, _new_depth: usize) -> bool {
+        true
+    }
+
+    /// Parses a `macro_rules! name { .. }` item's body into a matchable
+    /// `MacroRulesDef`, for the shared single-pass walker
+    /// (`ast_to_hir::expand_item_macros`) to insert into its running `defs`
+    /// map as soon as the definition is encountered. Language-specific
+    /// (each source language's own macro grammar), so there's no default
+    /// parse here — a normalizer for a macro-free language just never
+    /// hits this (no `ItemKind::Macro` definitions exist to call it on).
+    fn parse_macro_rules_def(
         &self,
-        _items: &[Item],
-    ) -> std::collections::HashMap<String, crate::ast::MacroRulesDef> {
-        std::collections::HashMap::new()
+        name: &str,
+        _tokens: &[crate::ast::MacroTokenTree],
+    ) -> crate::ast::MacroRulesDef {
+        crate::ast::MacroRulesDef {
+            name: name.to_string(),
+            rules: Vec::new(),
+        }
     }
 }
 
 impl IntrinsicNormalizer for NoopIntrinsicNormalizer {}
+
+impl IntrinsicNormalizer for Box<dyn IntrinsicNormalizer> {
+    fn normalize_expr(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        self.as_ref().normalize_expr(expr)
+    }
+    fn normalize_call(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        self.as_ref().normalize_call(expr)
+    }
+    fn normalize_container(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        self.as_ref().normalize_container(expr)
+    }
+    fn normalize_struct(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        self.as_ref().normalize_struct(expr)
+    }
+    fn normalize_structural(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        self.as_ref().normalize_structural(expr)
+    }
+    fn normalize_invoke(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        self.as_ref().normalize_invoke(expr)
+    }
+    fn normalize_match(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        self.as_ref().normalize_match(expr)
+    }
+    fn normalize_macro(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        self.as_ref().normalize_macro(expr)
+    }
+    fn expand_item_macro(
+        &self,
+        invocation: &crate::ast::MacroInvocation,
+        defs: &std::collections::HashMap<String, crate::ast::MacroRulesDef>,
+    ) -> Option<Vec<Item>> {
+        self.as_ref().expand_item_macro(invocation, defs)
+    }
+    fn parse_macro_rules_def(
+        &self,
+        name: &str,
+        tokens: &[crate::ast::MacroTokenTree],
+    ) -> crate::ast::MacroRulesDef {
+        self.as_ref().parse_macro_rules_def(name, tokens)
+    }
+    fn prefer_macro_rules_def(&self, existing_depth: usize, new_depth: usize) -> bool {
+        self.as_ref().prefer_macro_rules_def(existing_depth, new_depth)
+    }
+}
 
 /// Strategy interface for backend-specific intrinsic materialisation.
 pub trait IntrinsicMaterializer {

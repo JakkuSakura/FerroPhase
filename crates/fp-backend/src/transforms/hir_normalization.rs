@@ -36,8 +36,11 @@ use fp_core::intrinsics::CallKind;
 /// declaration (`hir::HirPackage::op_defs`). `#[intrinsic = "..."]`-tagged
 /// free functions are deliberately NOT resolved here — see the module doc
 /// comment for where that recognition happens instead.
-fn resolve_op_call_kind(op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::PortableOp>, def_id: DefId) -> Option<CallKind> {
-    op_defs.get(&def_id).cloned().map(CallKind::Op)
+fn resolve_op_call_kind(_op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::PortableOp>, _def_id: DefId) -> Option<CallKind> {
+    // `CallKind::Op` was retired — portable ops are no longer promoted to a
+    // shared, name-tagged `IntrinsicCall` here. Target backends recognize
+    // them directly (temporarily, by name) instead.
+    None
 }
 
 /// Normalizes every item in `program`'s HIR in place.

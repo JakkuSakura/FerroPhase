@@ -478,14 +478,7 @@ impl IntrinsicKind {
 /// whole point of the portable-op system.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CallKind {
-    Op(PortableOp),
     Intrinsic(IntrinsicKind),
-}
-
-impl From<PortableOp> for CallKind {
-    fn from(op: PortableOp) -> Self {
-        Self::Op(op)
-    }
 }
 
 impl From<IntrinsicKind> for CallKind {
@@ -506,13 +499,11 @@ impl CallKind {
     pub fn intrinsic_kind(&self) -> Option<IntrinsicKind> {
         match self {
             Self::Intrinsic(kind) => Some(*kind),
-            Self::Op(_) => None,
         }
     }
 
     pub fn name(&self) -> String {
         match self {
-            Self::Op(op) => op.name().to_string(),
             Self::Intrinsic(kind) => kind.name().to_string(),
         }
     }

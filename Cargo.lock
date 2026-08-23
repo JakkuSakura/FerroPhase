@@ -1339,7 +1339,6 @@ dependencies = [
  "fp-bytecode",
  "fp-core",
  "fp-interpret",
- "fp-lang",
  "fp-typing",
  "serde",
  "thiserror 2.0.19",

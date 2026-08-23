@@ -8,7 +8,6 @@ use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::package::{DependencyDescriptor, DependencyKind, PackageId};
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel};
 use fp_interpret::LirInterpreter;
-use fp_lang::FerroIntrinsicNormalizer;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -489,22 +488,18 @@ impl CompilerDriver {
     ) -> Result<(), CompilerDriverError> {
         let hir_package_id = package.borrow().hir_package_id.clone();
         let current_package_id = package.borrow().package_id.clone();
-        let mut package_source = package.borrow().clone();
-        let macro_rules_defs =
-            fp_lang::collect_macro_rules_defs(package_source.items.iter().map(|item| &item.item));
-        // Item-position macro invocations (e.g. `make_adder!(add_two, 2);`)
-        // must expand into real items *before* `AstToHirLowerer` ever sees
-        // them — matching rustc's own model, where macro-expanded tokens
-        // re-enter the exact same pipeline as hand-written code rather than
-        // a separate, lesser one. Without this, such an invocation is
-        // silently dropped by `ast_to_hir`'s own item loop, and whatever it
-        // would have defined never exists.
-        package_source.items = fp_lang::expand_item_macros(package_source.items, &macro_rules_defs);
+        let package_source = package.borrow().clone();
+        // Item-position macro invocations (e.g. `make_adder!(add_two, 2);`,
+        // real vendored std's `int_impl!`/`uint_impl!`, ...) are expanded by
+        // `AstToHirLowerer`'s own single-pass item walker
+        // (`ast_to_hir::expand_item_macros`), driven by the provider's own
+        // `intrinsic_normalizer()` — see `PackageProvider::
+        // intrinsic_normalizer`'s doc comment for why that choice lives on
+        // the already-resolved, already-per-language provider rather than a
+        // separate frontend dependency of this crate.
+        let normalizer = self.state.borrow().workspace.provider().intrinsic_normalizer();
         let mut generator = AstToHirLowerer::new(hir_package_id.clone())
-            .with_intrinsic_normalizer(
-                FerroIntrinsicNormalizer::new(fp_core::intrinsics::IntrinsicNormalizationMode::Compile)
-                    .with_macro_rules_defs(macro_rules_defs),
-            )
+            .with_intrinsic_normalizer(normalizer)
             .with_def_id_start(self.next_hir_def_id)
             .with_lowering_config(HirLoweringConfig {
                 // The active `TargetBackend`'s own capabilities (see
@@ -526,12 +521,11 @@ impl CompilerDriver {
                 "package HIR type checking failed: {error}"
             ))
         })?;
-        // Formalized post-typecheck `#[op(...)]` promotion (see
-        // `hir_normalization` for the full rationale): only
-        // `Transpile` (Kotlin/Shell AST-lift) promotes
-        // pure-`Op`-only calls to `IntrinsicCall(CallKind::Op(..))` in
-        // place. `Native` leaves them as ordinary calls to their real stub
-        // bodies (see `hir_materialization` for why that's correct here).
+        // `CallKind::Op` was retired, so `hir_normalization::normalize_program`
+        // no longer promotes anything here regardless of `promote_op_only` —
+        // portable-op recognition now belongs to target backends directly
+        // (temporarily, by bare name). The walk itself is kept (still needed
+        // for uniformity/future extension) rather than skipped outright.
         let promote_op_only = matches!(self.pipeline, PipelineMode::Transpile);
         fp_backend::transforms::hir_normalization::normalize_program(&mut hir_program_typed, promote_op_only);
         hir_program_typed.hir_exports.extend(package_exports);

@@ -99,6 +99,14 @@ impl PackageProvider for MagnetWorkspaceProvider {
         self.list_packages()
     }
 
+    /// The `.fp`-dialect's own frontend engine — see
+    /// `FerroIntrinsicNormalizer`'s doc comment. Real Rust source instead
+    /// gets `fp_rust::RustIntrinsicNormalizer` from its own provider
+    /// (`RustPackageProvider`), not this one.
+    fn intrinsic_normalizer(&self) -> Box<dyn fp_core::intrinsics::IntrinsicNormalizer> {
+        Box::new(crate::normalization::FerroIntrinsicNormalizer::new())
+    }
+
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let member_root = self.resolve_root(id)?;
         let mut module_ids = Vec::new();

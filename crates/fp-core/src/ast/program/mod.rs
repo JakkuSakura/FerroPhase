@@ -187,6 +187,14 @@ impl AstProgram {
         self.hir_packages.borrow().get(&def_id.package_id).cloned()
     }
 
+    /// This workspace's one registered provider — a compile always already
+    /// has exactly this in hand by the time it needs, e.g.,
+    /// `PackageProvider::intrinsic_normalizer()`, so there's no need to
+    /// resolve a package id first the way `provider_for` does.
+    pub fn provider(&self) -> &Arc<dyn PackageProvider> {
+        &self.providers
+    }
+
     pub fn provider_for(&self, package_id: &PackageId) -> Option<Arc<dyn PackageProvider>> {
         let owns_package = self
             .providers

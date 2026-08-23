@@ -130,6 +130,14 @@ impl PackageProvider for FerroPhaseProvider {
         self.list_packages()
     }
 
+    // Only ever blended in as a `CompositeProvider` *dependency* (std/libc),
+    // never the primary `workspace` provider — `CompositeProvider::
+    // intrinsic_normalizer` always defers to `self.workspace`'s own choice
+    // instead, so this one is never actually consulted; `Noop` regardless.
+    fn intrinsic_normalizer(&self) -> Box<dyn fp_core::intrinsics::IntrinsicNormalizer> {
+        Box::new(fp_core::intrinsics::NoopIntrinsicNormalizer)
+    }
+
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let root = match id.as_str() {
             STD_PACKAGE_NAME => embedded_std::root_dir(),
@@ -224,6 +232,10 @@ impl PackageProvider for InputPackageProvider {
 
     fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>> {
         self.list_packages()
+    }
+
+    fn intrinsic_normalizer(&self) -> Box<dyn fp_core::intrinsics::IntrinsicNormalizer> {
+        Box::new(crate::normalization::FerroIntrinsicNormalizer::new())
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {

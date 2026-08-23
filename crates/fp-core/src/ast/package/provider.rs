@@ -50,6 +50,22 @@ pub trait PackageProvider {
     /// would be an easy, silent mistake — every implementor states it
     /// explicitly instead.
     fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>>;
+
+    /// The `IntrinsicNormalizer` a compile of this provider's own source
+    /// language should use — e.g. real Rust's `RustPackageProvider` hands
+    /// back one that knows how to disambiguate a same-named `macro_rules!`
+    /// collision (see `fp_rust::RustIntrinsicNormalizer`'s own doc comment
+    /// for the exact real vendored-std case that motivated this). Lives
+    /// here — on the already-resolved, already-per-language provider —
+    /// rather than a separate registry: a compile always already has
+    /// exactly one provider in hand by the time it needs a normalizer, so
+    /// there is no second per-language lookup to build. Deliberately no
+    /// default body, matching `workspace_packages`'s own rationale above:
+    /// a provider for a macro-free language (C, native object/asm, ...)
+    /// still states `NoopIntrinsicNormalizer` itself, rather than
+    /// silently inheriting it and this decision going unnoticed if that
+    /// default is ever revisited.
+    fn intrinsic_normalizer(&self) -> Box<dyn crate::intrinsics::IntrinsicNormalizer>;
 }
 
 /// A `PackageProvider` that always hands back one already-built
@@ -118,6 +134,10 @@ impl PackageProvider for FixedPackageProvider {
         }
         Ok(self.source.clone())
     }
+
+    fn intrinsic_normalizer(&self) -> Box<dyn crate::intrinsics::IntrinsicNormalizer> {
+        Box::new(crate::intrinsics::NoopIntrinsicNormalizer)
+    }
 }
 
 /// A `PackageProvider` with no packages at all — for the handful of generic
@@ -146,6 +166,10 @@ impl PackageProvider for EmptyProvider {
 
     fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
         Err(ProviderError::PackageNotFound(id.clone()))
+    }
+
+    fn intrinsic_normalizer(&self) -> Box<dyn crate::intrinsics::IntrinsicNormalizer> {
+        Box::new(crate::intrinsics::NoopIntrinsicNormalizer)
     }
 }
 
@@ -203,6 +227,14 @@ impl PackageProvider for CompositeProvider {
 
     fn workspace_packages(&self) -> ProviderResult<Vec<PackageId>> {
         self.workspace.workspace_packages()
+    }
+
+    /// Delegates to the primary project provider (`self.workspace`), not
+    /// the blended-in `dependencies` (e.g. std) — a workspace's own
+    /// macro/intrinsic semantics follow its own source language, not
+    /// whichever language its std happens to be authored in.
+    fn intrinsic_normalizer(&self) -> Box<dyn crate::intrinsics::IntrinsicNormalizer> {
+        self.workspace.intrinsic_normalizer()
     }
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {

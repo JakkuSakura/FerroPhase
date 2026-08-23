@@ -1,15 +1,13 @@
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprField, ExprIf, ExprIntrinsicCall,
-    ExprIntrinsicContainer, ExprInvoke, ExprLet,
+    ExprInvoke,
     ExprInvokeTarget, ExprKind, ExprReference, ExprSelect, ExprSelectType, ExprStringTemplate,
     ExprStruct, ExprUnOp,
     FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident, MacroTokenTree, Name,
-    Path, PatternKind, StmtLet, Ty, Value,
+    Path, StmtLet, Ty, Value,
 };
 use fp_core::error::Result;
-use fp_core::intrinsics::{
-    CallKind, IntrinsicKind, IntrinsicNormalizationMode, IntrinsicNormalizer, NormalizeOutcome,
-};
+use fp_core::intrinsics::{CallKind, IntrinsicKind, IntrinsicNormalizer, NormalizeOutcome};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 
@@ -29,7 +27,6 @@ use crate::macro_parser::{
 /// delegating all other macros to the Rust normalizer.
 #[derive(Debug, Clone)]
 pub struct FerroIntrinsicNormalizer {
-    mode: IntrinsicNormalizationMode,
     /// Every `macro_rules!` definition reachable in the package being
     /// compiled (see `collect_macro_rules_defs`), consulted by
     /// `normalize_macro`'s fallback for any macro name that isn't one of
@@ -43,14 +40,13 @@ pub struct FerroIntrinsicNormalizer {
 
 impl Default for FerroIntrinsicNormalizer {
     fn default() -> Self {
-        Self::new(IntrinsicNormalizationMode::Transpile)
+        Self::new()
     }
 }
 
 impl FerroIntrinsicNormalizer {
-    pub fn new(mode: IntrinsicNormalizationMode) -> Self {
+    pub fn new() -> Self {
         Self {
-            mode,
             macro_rules_defs: Arc::new(HashMap::new()),
         }
     }
@@ -63,21 +59,6 @@ impl FerroIntrinsicNormalizer {
 
 impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
     fn normalize_expr(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
-        // Handle None / Some as bare name references (enum variants)
-        if self.mode == IntrinsicNormalizationMode::Transpile {
-            if let ExprKind::Name(name) = expr.kind() {
-                let s = name.to_string();
-                if s == "None" {
-                    let (id, span, _) = expr.into_parts();
-                    return Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
-                        ExprKind::Value(Box::new(Value::Null(Default::default()))),
-                    )));
-                }
-                if s == "Some" {
-                    return Ok(NormalizeOutcome::Ignored(expr));
-                }
-            }
-        }
         // Fall through to default dispatch
         let kind = expr.kind().clone();
         let moved = expr;
@@ -94,27 +75,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
     }
 
     fn normalize_call(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
-        let (id, span, kind) = expr.into_parts();
-        let ExprKind::IntrinsicCall(call) = kind else {
-            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span, kind,
-            )));
-        };
-        let CallKind::Op(ref op) = call.kind else {
-            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
-                ExprKind::IntrinsicCall(call),
-            )));
-        };
-        // The op-defining declaration's own source path is never
-        // reconstructed here (that was the design flaw in the retired
-        // `compile_mode_std_path`): the resolved call target is discarded
-        // upstream on purpose, and only `op` survives, to be consumed later
-        // by a backend-specific materializer (e.g. `kotlin_materializer.rs`).
-        // Every mode therefore just keeps the `IntrinsicCall(CallKind::Op)`
-        // node unchanged.
-        let _ = op;
-        Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
-            ExprKind::IntrinsicCall(call),
-        )))
+        // `CallKind::Op` was retired — an `IntrinsicCall` is always a
+        // genuine intrinsic now, and this pass never rewrites those.
+        Ok(NormalizeOutcome::Ignored(expr))
     }
 
     fn normalize_macro(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
@@ -555,65 +518,6 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             )));
         };
 
-        // Under `TypedTranspile`, plain-call/method-call portable-op
-        // detection is owned entirely by the post-typecheck
-        // `HirToAstLifter`, consulting `hir::HirPackage.op_defs` directly
-        // (real resolved callee/method `DefId`s available there).
-        // Reclassifying here too — before HIR lowering even runs, by name
-        // alone — would just mutate the AST out from under that safer
-        // pass, reintroducing the exact same-name-collision risk it
-        // exists to close. Skip entirely.
-        if self.mode == IntrinsicNormalizationMode::TypedTranspile {
-            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
-                ExprKind::Invoke(invoke),
-            )));
-        }
-
-        // In transpile mode, let resolve_lang_intrinsic handle portable ops
-        // directly (Some, None, Vec::new, etc.) instead of routing through
-        // intrinsic_call_from_invoke → normalize_call which returns Ignored.
-        if self.mode == IntrinsicNormalizationMode::Transpile {
-            if let Some(kind) = resolve_lang_intrinsic(&invoke) {
-                if let CallKind::Op(ref op) = kind {
-                    match op.name() {
-                        "option_some" | "option_unwrap" | "clone" | "as_ref" | "iter"
-                        | "to_owned" | "as_str" => {
-                            // Portable passthroughs (`Some(x)`/`x.unwrap()`/
-                            // `x.clone()`/method-like ops that just drop) —
-                            // keep the receiver/sole argument as-is.
-                            return Ok(NormalizeOutcome::Normalized(
-                                invoke.args.first().cloned().unwrap_or_else(|| {
-                                    Expr::from_parts(0, Some(Span::default()),
-                                        ExprKind::Value(Box::new(Value::Null(Default::default()))))
-                                })
-                            ));
-                        }
-                        "option_none" => {
-                            return Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
-                                ExprKind::Value(Box::new(Value::Null(Default::default()))),
-                            )));
-                        }
-                        "vec_new" => {
-                            return Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
-                                ExprKind::IntrinsicContainer(
-                                    ExprIntrinsicContainer::VecElements { elements: vec![] }
-                                ),
-                            )));
-                        }
-                        // Wrapped as IntrinsicCall for serializer handling
-                        "map_or" | "collect" | "find" | "unwrap_or" | "to_string" | "and_then" => {
-                            return Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
-                                ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                                    kind, invoke.args, invoke.kwargs,
-                                )),
-                            )));
-                        }
-                        _ => {} // fall through to existing native path
-                    }
-                }
-            }
-        }
-
         // Keep the exact language-item registry as the source of truth for
         // operations exposed by loaded std modules. This also preserves the
         // call-specific argument shaping used by print and filesystem ops.
@@ -629,136 +533,20 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             )));
         };
 
-        match self.mode {
-            // Unreachable in practice — `TypedTranspile` returns early above,
-            // before `intrinsic_call_from_invoke` is even consulted — but
-            // `Compile`'s behavior is the safe default if that ever changes.
-            //
-            // No path reconstruction (the retired `compile_mode_std_path`'s
-            // design flaw): the resolved call target is discarded on
-            // purpose here, and only the `PortableOp`/`IntrinsicKind`
-            // survives, for a backend-specific materializer to consume
-            // later. A portable `Op` never has an `IntrinsicKind`
-            // equivalent (see `CallKind::intrinsic_kind`'s doc comment),
-            // so it's simply ignored here — `Compile`/`TypedTranspile`
-            // only materialize genuine intrinsics this way.
-            IntrinsicNormalizationMode::Compile | IntrinsicNormalizationMode::TypedTranspile => match intrinsic_kind {
-                CallKind::Op(_) => Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
-                    ExprKind::Invoke(invoke),
-                ))),
-                CallKind::Intrinsic(kind) => Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
-                    ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                        CallKind::Intrinsic(kind),
-                        invoke.args,
-                        invoke.kwargs,
-                    )),
-                ))),
-            },
-            IntrinsicNormalizationMode::Transpile => match &intrinsic_kind {
-                CallKind::Op(op) if op.name() == "option_some" || op.name() == "option_unwrap" || op.name() == "clone" => {
-                    Ok(NormalizeOutcome::Normalized(
-                        invoke.args.first().cloned().unwrap_or_else(|| {
-                            Expr::from_parts(0, Some(Span::default()),
-                                ExprKind::Value(Box::new(Value::Null(Default::default()))))
-                        })
-                    ))
-                }
-                CallKind::Op(op) if op.name() == "option_none" => {
-                    Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
-                        ExprKind::Value(Box::new(Value::Null(Default::default()))),
-                    )))
-                }
-                CallKind::Op(op) if op.name() == "vec_new" => {
-                    Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
-                        ExprKind::IntrinsicContainer(
-                            ExprIntrinsicContainer::VecElements { elements: vec![] }
-                        ),
-                    )))
-                }
-                _ => {
-                    Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
-                        ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                            intrinsic_kind, invoke.args, invoke.kwargs,
-                        )),
-                    )))
-                }
-            },
-        }
+        // `CallKind::Op` was retired, so `resolve_lang_intrinsic` only ever
+        // returns a genuine `CallKind::Intrinsic` here.
+        let CallKind::Intrinsic(kind) = intrinsic_kind;
+        Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
+            ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                CallKind::Intrinsic(kind),
+                invoke.args,
+                invoke.kwargs,
+            )),
+        )))
     }
 
     fn normalize_match(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
-        if self.mode != IntrinsicNormalizationMode::Transpile {
-            return Ok(NormalizeOutcome::Ignored(expr));
-        }
-        let (id, span, kind) = expr.into_parts();
-        let ExprKind::Match(m) = kind else {
-            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span, kind)));
-        };
-
-        // Find binding arm in 1 or 2-arm match
-        let binding_case = if m.cases.len() == 1 {
-            &m.cases[0]
-        } else if m.cases.len() == 2 {
-            let p0 = m.cases[0].pat.as_ref().map(|p| &p.kind);
-            let p1 = m.cases[1].pat.as_ref().map(|p| &p.kind);
-            let t0 = is_trivial_match_arm(p0);
-            let t1 = is_trivial_match_arm(p1);
-            if !t0 && t1 { &m.cases[1] } else if t0 && !t1 { &m.cases[0] } else {
-                return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span, ExprKind::Match(m))));
-            }
-        } else {
-            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span, ExprKind::Match(m))));
-        };
-
-        let pat = match binding_case.pat.as_ref() {
-            Some(p) if is_option_or_result_binding_pattern(&p.kind) => p,
-            _ => return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span, ExprKind::Match(m)))),
-        };
-
-        let scrutinee = match &m.scrutinee {
-            Some(s) => s.as_ref().clone(),
-            None => return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span, ExprKind::Match(m)))),
-        };
-
-        // Build: if (scrutinee != null) { val x = scrutinee!!; body }
-        let binding = match_binding_name(pat);
-        let body = if let Some(_b) = binding {
-            let let_expr = Expr::from_parts(0, None,
-                ExprKind::Let(ExprLet {
-                    span: Span::default(),
-                    pat: pat.clone(),
-                    expr: Box::new(build_force_unwrap_expr(&scrutinee)),
-                })
-            );
-            Expr::from_parts(0, None,
-                ExprKind::Block(ExprBlock {
-                    span: Span::default(),
-                    collected_items: vec![],
-                    stmts: vec![
-                        BlockStmt::Expr(BlockStmtExpr {
-                            expr: Box::new(let_expr),
-                            semicolon: Some(true),
-                        }),
-                        BlockStmt::Expr(BlockStmtExpr {
-                            expr: binding_case.body.clone(),
-                            semicolon: Some(false),
-                        }),
-                    ],
-                })
-            )
-        } else {
-            binding_case.body.as_ref().clone()
-        };
-
-        let if_expr = Expr::from_parts(id, span,
-            ExprKind::If(ExprIf {
-                span: Span::default(),
-                cond: Box::new(build_not_null_check_expr(&scrutinee)),
-                then: Box::new(body),
-                elze: None,
-            })
-        );
-        Ok(NormalizeOutcome::Normalized(if_expr))
+        Ok(NormalizeOutcome::Ignored(expr))
     }
 
     fn expand_item_macro(
@@ -769,11 +557,12 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
         crate::macro_parser::expand_item_macro_invocation(invocation, defs)
     }
 
-    fn collect_macro_rules_defs(
+    fn parse_macro_rules_def(
         &self,
-        items: &[fp_core::ast::Item],
-    ) -> std::collections::HashMap<String, fp_core::ast::MacroRulesDef> {
-        crate::macro_parser::collect_macro_rules_defs(items)
+        name: &str,
+        tokens: &[MacroTokenTree],
+    ) -> fp_core::ast::MacroRulesDef {
+        crate::macro_parser::parse_macro_rules_def(name.to_string(), tokens)
     }
 }
 
@@ -870,7 +659,7 @@ fn resolve_lang_intrinsic(invoke: &ExprInvoke) -> Option<CallKind> {
     match name {
         Name::Ident(ident) => {
             let fn_name = ident.name.as_str();
-            intrinsic_macro_kind(fn_name).or_else(|| operation_kind(fn_name).map(CallKind::Op))
+            intrinsic_macro_kind(fn_name)
         }
         // Path-qualified builtins — FerroPhase's own std module layout
         // (`std::time::now`, `std::task::spawn`, etc.), so the segment
@@ -905,42 +694,6 @@ fn resolve_lang_intrinsic(invoke: &ExprInvoke) -> Option<CallKind> {
         }
         _ => None,
     }
-}
-
-/// The central portable-op registry, resolved once — see
-/// `fp_core::intrinsics::PortableOpRegistry::builtin`'s doc comment for the
-/// canonicalization convention every language's own tags must follow.
-fn portable_op_registry() -> &'static fp_core::intrinsics::PortableOpRegistry {
-    static REGISTRY: std::sync::OnceLock<fp_core::intrinsics::PortableOpRegistry> =
-        std::sync::OnceLock::new();
-    REGISTRY.get_or_init(fp_core::intrinsics::PortableOpRegistry::builtin)
-}
-
-/// Maps a bare macro/plain-call name to its canonical portable-op name
-/// (only for the ops that are genuinely a `PortableOp`, i.e. have no
-/// `IntrinsicKind` equivalent — see `intrinsic_macro_kind` for the
-/// `IntrinsicKind`-mapped names, which construct `CallKind::Intrinsic`
-/// directly instead of going through this resolution step at all).
-fn operation_kind(name: &str) -> Option<fp_core::intrinsics::PortableOp> {
-    let canonical = match name {
-        "some" | "Some" => "option_some",
-        "none" | "None" => "option_none",
-        "unwrap" | "Unwrap" => "option_unwrap",
-        "vec_new" | "Vec::new" | "Vec" | "vec" => "vec_new",
-        "clone" | "Clone" => "clone",
-        "as_ref" => "as_ref",
-        "map_or" => "map_or",
-        "iter" => "iter",
-        "collect" => "collect",
-        "find" => "find",
-        "unwrap_or" => "unwrap_or",
-        "to_owned" => "to_owned",
-        "as_str" => "as_str",
-        "to_string" => "to_string",
-        "and_then" => "and_then",
-        _ => return None,
-    };
-    portable_op_registry().resolve(canonical)
 }
 
 fn intrinsic_macro_kind(name: &str) -> Option<CallKind> {
@@ -999,14 +752,10 @@ fn intrinsic_macro_kind(name: &str) -> Option<CallKind> {
         "compile_warning" => Some(CallKind::Intrinsic(IntrinsicKind::CompileWarning)),
         "catch_unwind" => Some(CallKind::Intrinsic(IntrinsicKind::CatchUnwind)),
         "catch_unwind_result" => Some(CallKind::Intrinsic(IntrinsicKind::CatchUnwindResult)),
-        // Portable ops (no `IntrinsicKind` equivalent) — resolved against
-        // the central registry via `operation_kind`, same as the plain-call
-        // fallback in `resolve_lang_intrinsic`.
-        "some" | "Some" | "none" | "None" | "unwrap" | "Unwrap" | "vec_new" | "Vec::new" | "Vec"
-        | "vec" | "clone" | "Clone" | "as_ref" | "map_or" | "iter" | "collect" | "find"
-        | "unwrap_or" | "to_owned" | "as_str" | "to_string" | "and_then" => {
-            operation_kind(name).map(CallKind::Op)
-        }
+        // Portable ops (`Some`/`clone`/`map_or`/...) have no `CallKind`
+        // representation anymore (`CallKind::Op` was retired) — target
+        // backends recognize them directly (temporarily, by bare name)
+        // instead of through this shared table.
         _ => None,
     }
 }
@@ -1554,70 +1303,6 @@ fn panic_call_with_message(message: &str) -> Expr {
     )))
 }
 
-/// Whether a match arm pattern is trivial (no binding).
-fn is_trivial_match_arm(pat: Option<&PatternKind>) -> bool {
-    match pat {
-        Some(PatternKind::Wildcard(_)) => true,
-        Some(PatternKind::Ident(id)) => id.ident.name == "None" || id.ident.name == "Err",
-        None => true,
-        _ => false,
-    }
-}
-
-/// Whether a pattern is shaped like the binding side of an Option/Result
-/// match (`Some(x)`/`Ok(x)`, or a bare binding identifier) — required
-/// before `normalize_match` rewrites a 1-or-2-arm match into an
-/// `if (scrutinee != null)` check. Without this, any match with a
-/// wildcard/`None`/`Err` arm plus *any* other pattern (e.g. a bare enum
-/// variant like `ChangesLineKind::Add`) gets misidentified as an
-/// Option/Result if-let.
-fn is_option_or_result_binding_pattern(pat: &PatternKind) -> bool {
-    match pat {
-        PatternKind::TupleStruct(ts) => {
-            let name = ts.name.to_string();
-            let variant = name.rsplit("::").next().unwrap_or(name.as_str());
-            variant == "Some" || variant == "Ok"
-        }
-        PatternKind::Ident(id) => id.ident.name != "None" && id.ident.name != "Err",
-        _ => false,
-    }
-}
-
-/// Extract the binding variable name from a pattern.
-fn match_binding_name(pat: &fp_core::ast::Pattern) -> Option<String> {
-    match &pat.kind {
-        PatternKind::Ident(id) => Some(id.ident.name.clone()),
-        PatternKind::TupleStruct(ts) => ts.patterns.first().and_then(|p| match_binding_name(p)),
-        _ => None,
-    }
-}
-
-fn build_not_null_check_expr(expr: &Expr) -> Expr {
-    Expr::from_parts(0, None,
-        ExprKind::BinOp(ExprBinOp {
-            span: Span::default(),
-            kind: fp_core::ops::BinOpKind::Ne,
-            lhs: Box::new(expr.clone()),
-            rhs: Box::new(Expr::from_parts(0, None,
-                ExprKind::Value(Box::new(Value::Null(Default::default()))),
-            )),
-        })
-    )
-}
-
-fn build_force_unwrap_expr(expr: &Expr) -> Expr {
-    let op = portable_op_registry()
-        .resolve("option_unwrap")
-        .expect("option_unwrap is a builtin portable op");
-    Expr::from_parts(0, None,
-        ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-            fp_core::intrinsics::CallKind::Op(op),
-            vec![expr.clone()],
-            vec![],
-        ))
-    )
-}
-
 // Allow returning Ok(None) from normalize_match without extra type annotations
 struct NoneOutcome;
 impl From<NoneOutcome> for NormalizeOutcome<Expr> {
@@ -1629,17 +1314,6 @@ mod tests {
     use super::*;
     use fp_core::frontend::LanguageFrontend;
 
-    fn op_call(name: &str) -> Expr {
-        let op = portable_op_registry()
-            .resolve(name)
-            .unwrap_or_else(|| panic!("{name} is not a builtin portable op"));
-        Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-            CallKind::Op(op),
-            Vec::new(),
-            Vec::new(),
-        )))
-    }
-
     fn intrinsic_call(kind: fp_core::intrinsics::IntrinsicKind) -> Expr {
         Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
             CallKind::Intrinsic(kind),
@@ -1649,20 +1323,8 @@ mod tests {
     }
 
     #[test]
-    fn compile_mode_preserves_intrinsics_but_restores_ops() {
-        let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile);
-
-        // No path reconstruction: the op stays a bare `IntrinsicCall(Op(_))`
-        // node for a backend-specific materializer to consume later.
-        let op = normalizer
-            .normalize_call(op_call("clone"))
-            .expect("normalize op call")
-            .into_inner();
-        assert!(matches!(
-            op.kind(),
-            ExprKind::IntrinsicCall(call) if matches!(&call.kind, CallKind::Op(op) if op.name() == "clone")
-        ));
-
+    fn normalize_call_preserves_intrinsics() {
+        let normalizer = FerroIntrinsicNormalizer::new();
         let intrinsic = normalizer
             .normalize_call(intrinsic_call(
                 fp_core::intrinsics::IntrinsicKind::FsReadToString,
@@ -1673,11 +1335,8 @@ mod tests {
     }
 
     #[test]
-    fn compile_mode_shapes_direct_print_calls() {
-        // No path/shape reconstruction in Compile mode anymore — a pre-formed
-        // `IntrinsicCall(Op(_))` node is kept exactly as-is, for a
-        // backend-specific materializer to consume later.
-        let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile);
+    fn normalize_call_shapes_direct_print_calls() {
+        let normalizer = FerroIntrinsicNormalizer::new();
         let call = Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
             CallKind::Intrinsic(fp_core::intrinsics::IntrinsicKind::Print),
             vec![Expr::value(Value::string("value".to_string()))],
@@ -1696,8 +1355,8 @@ mod tests {
     }
 
     #[test]
-    fn compile_mode_does_not_capture_qualified_user_print() {
-        let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile);
+    fn normalize_invoke_does_not_capture_qualified_user_print() {
+        let normalizer = FerroIntrinsicNormalizer::new();
         let invoke = Expr::new(ExprKind::Invoke(ExprInvoke {
             span: Span::null(),
             target: ExprInvokeTarget::Function(Name::path(Path::plain(vec![
@@ -1716,23 +1375,8 @@ mod tests {
     }
 
     #[test]
-    fn transpile_mode_keeps_ops_canonical() {
-        let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Transpile);
-        let normalized = normalizer
-            .normalize_call(op_call("clone"))
-            .expect("normalize op call")
-            .into_inner();
-        assert!(matches!(normalized.kind(), ExprKind::IntrinsicCall(_)));
-    }
-
-    #[test]
-    fn compile_mode_restores_representative_std_paths() {
-        // The op-defining declaration's own source path is never
-        // reconstructed by the normalizer (that was the retired
-        // `compile_mode_std_path`'s design flaw) — every representative op
-        // stays a bare `IntrinsicCall(Op(_))` node, for a backend-specific
-        // materializer to consume later.
-        let normalizer = FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile);
+    fn normalize_call_restores_representative_std_paths() {
+        let normalizer = FerroIntrinsicNormalizer::new();
         let cases = [
             fp_core::intrinsics::IntrinsicKind::FsWriteString,
             fp_core::intrinsics::IntrinsicKind::EnvVar,

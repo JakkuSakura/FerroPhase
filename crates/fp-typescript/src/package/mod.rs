@@ -159,6 +159,10 @@ impl PackageProvider for TypeScriptPackageProvider {
         self.list_packages()
     }
 
+    fn intrinsic_normalizer(&self) -> Box<dyn fp_core::intrinsics::IntrinsicNormalizer> {
+        Box::new(fp_core::intrinsics::NoopIntrinsicNormalizer)
+    }
+
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let guard = match self.packages.read() {
             Ok(g) => g,

@@ -1,7 +1,6 @@
 use super::*;
 use fp_core::ast;
 use fp_core::frontend::LanguageFrontend;
-use fp_core::intrinsics::IntrinsicNormalizationMode;
 use fp_core::ast::path::QualifiedPath;
 use fp_core::lir::LirDataLayout;
 use fp_core::ops::BinOpKind;
@@ -214,7 +213,7 @@ fn compile_normalization_runs_during_ast_to_hir_lowering() -> Result<()> {
     assert!(matches!(expr.kind(), ast::ExprKind::Macro(_)));
 
     let mut generator = AstToHirLowerer::new(hir::PackageId::new("test")).with_intrinsic_normalizer(
-        fp_lang::FerroIntrinsicNormalizer::new(IntrinsicNormalizationMode::Compile),
+        fp_lang::FerroIntrinsicNormalizer::new(),
     );
     let lowered = generator.transform_expr_to_hir(expr)?;
     // `println!`/`print!`/`format!` are compiler intrinsics; unlike other
@@ -1837,9 +1836,7 @@ fn transform_package_expands_item_position_macro_rules_invocation() -> Result<()
 
     let package = package_from_items(items)?;
     let mut generator = AstToHirLowerer::new(hir::PackageId::new("test")).with_intrinsic_normalizer(
-        fp_lang::FerroIntrinsicNormalizer::new(
-            fp_core::intrinsics::IntrinsicNormalizationMode::Compile,
-        ),
+        fp_lang::FerroIntrinsicNormalizer::new(),
     );
     let program = generator.transform_package(&package)?;
 

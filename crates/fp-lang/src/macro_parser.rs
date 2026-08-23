@@ -105,7 +105,7 @@ pub(crate) fn wrap_tokens_in_group(
 /// delimiters when capturing this token tree), no manual depth-tracking is
 /// needed to find rule boundaries, same insight already used by
 /// `select_cfg_select_arm` in `normalization.rs`.
-pub(crate) fn parse_macro_rules_def(name: String, body: &[MacroTokenTree]) -> MacroRulesDef {
+pub fn parse_macro_rules_def(name: String, body: &[MacroTokenTree]) -> MacroRulesDef {
     let mut rules = Vec::new();
     let mut i = 0;
     while i < body.len() {
@@ -657,20 +657,6 @@ pub(crate) fn macro_rules_def_file_id(def: &MacroRulesDef) -> u64 {
     0
 }
 
-/// Collects every `macro_rules! name { ... }` definition reachable in a set
-/// of top-level items (recursing into nested modules), parsed into
-/// structured `MacroRulesDef`s ready for `match_macro_rule`/
-/// `substitute_template` — so an invocation anywhere in the same package can
-/// be expanded against the actual rules it names, instead of needing a
-/// hand-written per-macro-name special case.
-pub fn collect_macro_rules_defs<'a>(
-    items: impl IntoIterator<Item = &'a Item>,
-) -> HashMap<String, MacroRulesDef> {
-    let mut defs = HashMap::new();
-    collect_macro_rules_defs_into(items, &mut defs);
-    defs
-}
-
 /// Expands an *item-position* macro invocation (e.g. `alias_core_ffi! { c_int
 /// c_uint }`, real std's own idiom for generating a batch of `pub type X =
 /// path::X;` aliases) against a real `macro_rules!` definition collected via
@@ -703,6 +689,53 @@ pub fn expand_item_macro_invocation(
     None
 }
 
+/// Collects every `macro_rules! name { .. }` definition reachable in a set
+/// of package items (recursing into nested modules), parsed into
+/// structured `MacroRulesDef`s ready for `match_macro_rule`/
+/// `substitute_template` — so an invocation anywhere in the same package
+/// can be expanded against the actual rules it names, instead of needing a
+/// hand-written per-macro-name special case. Flattens by bare name into a
+/// single map; the last-visited definition of a given name wins. That's
+/// correct as long as macro names are unique across the whole package
+/// (the overwhelmingly common case for this generic, language-agnostic
+/// engine) — a *language-specific* notion of macro visibility precise
+/// enough to disambiguate a genuine same-name collision (e.g. real Rust's
+/// `#[macro_use]`/module-scoping rules) belongs in that language's own
+/// frontend crate, layered on top of `collect_macro_rules_defs_with_depth`
+/// below, not baked in here.
+pub fn collect_macro_rules_defs<'a>(
+    items: impl IntoIterator<Item = &'a fp_core::ast::package::PackageItem>,
+) -> HashMap<String, MacroRulesDef> {
+    let mut defs = HashMap::new();
+    for package_item in items {
+        collect_macro_rules_defs_into(std::iter::once(&package_item.item), &mut defs);
+    }
+    defs
+}
+
+/// Same traversal as `collect_macro_rules_defs`, but keeps *every*
+/// same-named definition found (each tagged with its own defining
+/// module's nesting depth — the file's own `PackageItem::module_path`
+/// length, plus one per genuinely inline `mod foo { .. }` block crossed;
+/// a file-based `mod foo;` declaration never shows up as a nested
+/// `ItemKind::Module` in this representation the way an inline block
+/// would, so per-file `module_path` is the only scoping signal available
+/// at all for those) instead of collapsing to one winner — so a
+/// language-specific caller (e.g. `fp-rust`'s own normalizer, which knows
+/// real Rust's `#[macro_use]`/module-visibility rules) can apply its own
+/// disambiguation policy on a genuine collision instead of this generic
+/// engine guessing one.
+pub fn collect_macro_rules_defs_with_depth<'a>(
+    items: impl IntoIterator<Item = &'a fp_core::ast::package::PackageItem>,
+) -> HashMap<String, Vec<(usize, MacroRulesDef)>> {
+    let mut defs: HashMap<String, Vec<(usize, MacroRulesDef)>> = HashMap::new();
+    for package_item in items {
+        let depth = package_item.module_path.segments.len();
+        collect_macro_rules_defs_with_depth_into(std::iter::once(&package_item.item), depth, &mut defs);
+    }
+    defs
+}
+
 fn collect_macro_rules_defs_into<'a>(
     items: impl IntoIterator<Item = &'a Item>,
     out: &mut HashMap<String, MacroRulesDef>,
@@ -719,6 +752,30 @@ fn collect_macro_rules_defs_into<'a>(
                         &item_macro.invocation.token_trees,
                     );
                     out.insert(def.name.clone(), def);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_macro_rules_defs_with_depth_into<'a>(
+    items: impl IntoIterator<Item = &'a Item>,
+    depth: usize,
+    out: &mut HashMap<String, Vec<(usize, MacroRulesDef)>>,
+) {
+    for item in items {
+        match item.kind() {
+            ItemKind::Module(module) => {
+                collect_macro_rules_defs_with_depth_into(&module.items, depth + 1, out);
+            }
+            ItemKind::Macro(item_macro) => {
+                if let Some(name) = &item_macro.declared_name {
+                    let def = parse_macro_rules_def(
+                        name.as_str().to_string(),
+                        &item_macro.invocation.token_trees,
+                    );
+                    out.entry(def.name.clone()).or_default().push((depth, def));
                 }
             }
             _ => {}
@@ -824,6 +881,179 @@ mod tests {
     use crate::ast::FerroPhaseParser;
     use fp_core::ast::ItemKind;
 
+    /// Diagnostic-only scratch test against the *real* vendored
+    /// `int_impl!` macro definition + its first real invocation
+    /// (`impl i8 { .. }`), loaded straight off disk — isolates whether the
+    /// remaining "count_ones was not found" gap in the full corpus is a
+    /// matcher failure (some field beyond `Min = -128,` still doesn't
+    /// match) or a re-parse failure (the substituted transcriber's real
+    /// doc comments/attributes don't round-trip through
+    /// `parse_items_tokens`).
+    #[test]
+    fn real_int_impl_macro_expands_against_i8_invocation() {
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let macro_src = std::fs::read_to_string(
+            repo_root.join("crates/fp-rust/std/core/num/int_macros.rs"),
+        )
+        .expect("read int_macros.rs");
+        let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
+        let macro_items = parser
+            .parse_items_ast(&macro_src)
+            .expect("parse int_macros.rs");
+        let mut defs = HashMap::new();
+        collect_macro_rules_defs_into(macro_items.iter(), &mut defs);
+        let def = defs.get("int_impl").expect("int_impl! def collected");
+        eprintln!("int_impl! rules: {}", def.rules.len());
+
+        let invocation_src = r#"
+            impl i8 {
+                int_impl! {
+                    Self = i8,
+                    ActualT = i8,
+                    UnsignedT = u8,
+                    BITS = 8,
+                    BITS_MINUS_ONE = 7,
+                    Min = -128,
+                    Max = 127,
+                    rot = 2,
+                    rot_op = "-0x7e",
+                    rot_result = "0xa",
+                    swap_op = "0x12",
+                    swapped = "0x12",
+                    reversed = "0x48",
+                    le_bytes = "[0x12]",
+                    be_bytes = "[0x12]",
+                    to_xe_bytes_doc = i8_xe_bytes_doc!(),
+                    from_xe_bytes_doc = i8_xe_bytes_doc!(),
+                    bound_condition = "",
+                }
+            }
+        "#;
+        parser.clear_diagnostics();
+        let items = parser
+            .parse_items_ast(invocation_src)
+            .expect("parse invocation");
+        let ItemKind::Impl(impl_block) = items[0].kind() else {
+            panic!("expected impl item");
+        };
+        let ItemKind::Macro(item_macro) = impl_block.items[0].kind() else {
+            panic!("expected macro item inside impl, got {:?}", impl_block.items[0].kind());
+        };
+        let invocation = &item_macro.invocation;
+        let file_id = macro_rules_def_file_id(def);
+        for (i, rule) in def.rules.iter().enumerate() {
+            match match_macro_rule(&rule.matcher, &invocation.token_trees, file_id) {
+                Some(bindings) => {
+                    eprintln!("rule {i} MATCHED, bound names: {:?}", bindings.values.keys().collect::<Vec<_>>());
+                    let substituted = substitute_template(&rule.transcriber, &bindings);
+                    let flat = macro_token_trees_to_tokens(&substituted);
+                    match crate::ast::parse_items_tokens(&flat, file_id) {
+                        Ok(parsed) => {
+                            eprintln!("re-parse OK: {} items", parsed.len());
+                            let names: Vec<_> = parsed.iter().map(|it| format!("{:?}", it.kind())).collect();
+                            eprintln!("first few: {:?}", &names[..names.len().min(3)]);
+                        }
+                        Err(e) => eprintln!("re-parse FAILED: {e:?}"),
+                    }
+                }
+                None => eprintln!("rule {i} did not match"),
+            }
+        }
+    }
+
+    #[test]
+    fn real_uint_impl_macro_expands_against_u32_invocation() {
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let macro_src = std::fs::read_to_string(
+            repo_root.join("crates/fp-rust/std/core/num/uint_macros.rs"),
+        )
+        .expect("read uint_macros.rs");
+        let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
+        let macro_items = parser
+            .parse_items_ast(&macro_src)
+            .expect("parse uint_macros.rs");
+        let mut defs = HashMap::new();
+        collect_macro_rules_defs_into(macro_items.iter(), &mut defs);
+        let def = defs.get("uint_impl").expect("uint_impl! def collected");
+        eprintln!("uint_impl! rules: {}", def.rules.len());
+
+        let invocation_src = r#"
+            impl u32 {
+                uint_impl! {
+                    Self = u32,
+                    ActualT = u32,
+                    SignedT = i32,
+                    BITS = 32,
+                    BITS_MINUS_ONE = 31,
+                    MAX = 4294967295,
+                    rot = 8,
+                    rot_op = "0x10000b3",
+                    rot_result = "0xb301",
+                    fsh_op = "0x2fe78e45",
+                    fshl_result = "0xb32f",
+                    fshr_result = "0xb32fe78e",
+                    clmul_lhs = "0x56789012",
+                    clmul_rhs = "0xf52ecd34",
+                    clmul_result = "0x9b980928",
+                    swap_op = "0x12345678",
+                    swapped = "0x78563412",
+                    reversed = "0x1e6a2c48",
+                    le_bytes = "[0x78, 0x56, 0x34, 0x12]",
+                    be_bytes = "[0x12, 0x34, 0x56, 0x78]",
+                    to_xe_bytes_doc = "",
+                    from_xe_bytes_doc = "",
+                    bound_condition = "",
+                }
+            }
+        "#;
+        parser.clear_diagnostics();
+        let items = parser
+            .parse_items_ast(invocation_src)
+            .expect("parse invocation");
+        let ItemKind::Impl(impl_block) = items[0].kind() else {
+            panic!("expected impl item");
+        };
+        let ItemKind::Macro(item_macro) = impl_block.items[0].kind() else {
+            panic!("expected macro item inside impl, got {:?}", impl_block.items[0].kind());
+        };
+        let invocation = &item_macro.invocation;
+        let file_id = macro_rules_def_file_id(def);
+        for (i, rule) in def.rules.iter().enumerate() {
+            match match_macro_rule(&rule.matcher, &invocation.token_trees, file_id) {
+                Some(bindings) => {
+                    eprintln!("rule {i} MATCHED, bound names: {:?}", bindings.values.keys().collect::<Vec<_>>());
+                    let substituted = substitute_template(&rule.transcriber, &bindings);
+                    let flat = macro_token_trees_to_tokens(&substituted);
+                    match crate::ast::parse_items_tokens(&flat, file_id) {
+                        Ok(parsed) => {
+                            eprintln!("re-parse OK: {} items", parsed.len());
+                            let names: Vec<_> = parsed
+                                .iter()
+                                .filter_map(|it| match it.kind() {
+                                    ItemKind::DefFunction(def) => Some(def.name.name.clone()),
+                                    ItemKind::DefConst(def) => Some(def.name.name.clone()),
+                                    _ => None,
+                                })
+                                .collect();
+                            eprintln!("names: {:?}", names);
+                            assert!(names.contains(&"count_ones".to_string()));
+                        }
+                        Err(e) => panic!("re-parse FAILED: {e:?}"),
+                    }
+                }
+                None => panic!("rule {i} did not match"),
+            }
+        }
+    }
+
     /// Real vendored std's `int_impl!` macro (`core::num::int_macros.rs`)
     /// has a `Min = $Min:literal,` field, invoked with `Min = -128,` — a
     /// negative numeric literal, which Rust's tokenizer always splits into
@@ -850,7 +1080,8 @@ mod tests {
                 "#,
             )
             .unwrap();
-        let defs = collect_macro_rules_defs(items.iter());
+        let mut defs = HashMap::new();
+        collect_macro_rules_defs_into(items.iter(), &mut defs);
         let expanded = expand_items(items, &defs, 0);
         let fn_names: Vec<_> = expanded
             .iter()

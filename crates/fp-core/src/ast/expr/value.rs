@@ -920,8 +920,7 @@ fn scan_ident(bytes: &[u8], mut idx: usize) -> usize {
 /// `build_intrinsic_call` directly instead, skipping this name lookup entirely.
 pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCall> {
     let kind = match &invoke.target {
-        ExprInvokeTarget::Function(name) => crate::lang::lookup_op_intrinsic(name)
-            .or_else(|| crate::lang::lookup_intrinsic(name))?,
+        ExprInvokeTarget::Function(name) => crate::lang::lookup_intrinsic(name)?,
         _ => return None,
     };
     build_intrinsic_call(kind, invoke)
@@ -1160,23 +1159,6 @@ pub fn build_intrinsic_call(kind: CallKind, invoke: &ExprInvoke) -> Option<ExprI
         | CallKind::ShellFileCopy
         | CallKind::ShellFileTemplate
         | CallKind::ShellFileRsync => None,
-        // Portable ops: only the constructor-shaped ones (recognized here by
-        // canonical name, since `PortableOp` is no longer a matchable closed
-        // enum) rebuild with their args cloned; every other portable op
-        // needs a real receiver/typed context this pre-typecheck,
-        // name-resolved path doesn't have, so it defers (`None`) to the
-        // typed `DefId`-resolved path instead (see `build_intrinsic_call`'s
-        // doc comment).
-        CallKind::Op(ref op)
-            if matches!(
-                op.name(),
-                "option_some" | "option_none" | "option_unwrap" | "result_ok" | "result_err"
-                    | "vec_new" | "clone"
-            ) =>
-        {
-            Some(ExprIntrinsicCall::new(kind, invoke.args.clone(), invoke.kwargs.clone()))
-        }
-        CallKind::Op(_) => None,
     }?;
     Some(call)
 }
