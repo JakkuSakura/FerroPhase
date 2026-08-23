@@ -1150,13 +1150,17 @@ impl HirTypeChecker {
                 }
                 hir::ExprKind::ConstBlock(const_block) => {
                     let body_ty = self.check_expr(&const_block.body).await?;
-                    // Record the outer const-block expression's own type
-                    // under its own `hir_id` *before* requesting the value
-                    // below — the driver-side comptime entry
-                    // (`transform_comptime_request`) needs this exact
-                    // `hir_id` to find the checked type on `request.
-                    // current` (the same `Rc<HirPackage>` this writes
-                    // onto).
+                    // Recorded unconditionally, before any generic-param
+                    // skip below — `register_const_block_comptime_entry`
+                    // (`hir_to_mir`'s own body-walk, reached whenever this
+                    // item's typecheck succeeds overall even if *this*
+                    // const block's own comptime evaluation was skipped or
+                    // failed) panics with "const block has no checked type
+                    // in TypeckResults" if this entry is missing — it has
+                    // no other way to know this expression's type, and a
+                    // missing entry used to be unreachable only because
+                    // every such item's typecheck previously hard-failed
+                    // via the request's own `?` before HIR-to-MIR ever ran.
                     self.package().record_expr_type(expr.hir_id, body_ty.clone());
                     // A `const { .. }` block whose value still depends on
                     // an uninstantiated generic parameter of the enclosing
