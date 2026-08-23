@@ -916,6 +916,38 @@ impl HirTypeChecker {
                         }
                         arg_types.push(actual);
                     }
+                    // Fully-qualified trait-method UFCS syntax
+                    // (`Add::add(lhs, rhs)`, `Shl::shl(*self, other)`) —
+                    // generated en masse by std's `forward_ref_binop!`/
+                    // `forward_ref_unop!` macros (`internal_macros.rs`).
+                    // `Add`/`Shl`/etc. resolve to nothing at HIR-lowering
+                    // time (a trait name standing alone in value position
+                    // isn't a def/local/module the resolver knows how to
+                    // bind), so `callee_ty` is `Error` here. The first
+                    // call argument (`lhs`/`self`) is always the receiver
+                    // for this call shape, so resolve the method the same
+                    // way `.method()` call syntax already does, keyed off
+                    // its concrete type.
+                    if matches!(callee_ty.kind, TyKind::Error(_)) {
+                        if let hir::ExprKind::Path(path) = &callee.kind {
+                            if path.res.is_none() && path.segments.len() == 2 {
+                                if let Some(receiver_ty) = arg_types.first().cloned() {
+                                    let method_name = path.segments[1].name.clone();
+                                    if let Some(sig) =
+                                        self.method_declared_signature_at(&receiver_ty, &method_name)?
+                                    {
+                                        tracing::debug!(
+                                            trait_name = %path.segments[0].name,
+                                            method = %method_name,
+                                            ?receiver_ty,
+                                            "trait-qualified UFCS call resolved"
+                                        );
+                                        callee_ty = sig;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     let Some((mut substitutions, _)) =
                         self.instantiate_call(&callee_ty, &arg_types)?
                     else {
