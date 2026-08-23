@@ -234,10 +234,14 @@ impl HirTypeChecker {
         self.generic_scope.get(&def_id).cloned()
     }
 
-    /// The package actually being checked.
+    /// The package actually being checked — an `Rc` clone (a pointer bump,
+    /// never a deep copy of the package's own data; `HirProgram::package`
+    /// itself only hands out a plain `&HirPackage`, not the `Rc` needed
+    /// here, so this reads the underlying `packages` map directly).
     pub fn package(&self) -> Rc<hir::HirPackage> {
         self.program
-            .package(self.current_package)
+            .packages
+            .get(&self.current_package)
             .cloned()
             .expect("current_package is always inserted into program at construction")
     }
@@ -357,11 +361,12 @@ impl HirTypeChecker {
     /// future resolved). Every typed result (expr/pat types, resolutions,
     /// diagnostics, ...) is already embedded directly on this same package
     /// (every item instance writes straight through to it — see
-    /// `HirPackage`'s own typed-results fields), so a plain clone is the
-    /// whole snapshot; there's no separate side table to read back
-    /// alongside it.
-    pub fn finish(&self) -> hir::HirPackage {
-        self.package().as_ref().clone()
+    /// `HirPackage`'s own typed-results fields), so the `Rc` handle itself
+    /// (an `Rc` clone, not a deep copy — see `package`) *is* the whole
+    /// snapshot; there's no separate side table to read back alongside it,
+    /// and no need to ever copy the package's own data out of it.
+    pub fn finish(&self) -> Rc<hir::HirPackage> {
+        self.package()
     }
 
     /// Entrypoint for type-checking a single item by `DefId`, directly —
@@ -4092,7 +4097,7 @@ mod tests {
     async fn typecheck_program(
         package: hir::HirPackage,
         executor: ExecutorHandle,
-    ) -> Result<hir::HirPackage> {
+    ) -> Result<Rc<hir::HirPackage>> {
         let checker = HirTypeChecker::new(package, None, None, executor);
         let item_ids: Vec<_> = checker
             .borrow()

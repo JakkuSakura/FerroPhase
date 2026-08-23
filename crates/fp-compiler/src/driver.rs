@@ -762,7 +762,15 @@ impl CompilerDriver {
                 fp_core::diagnostics::Diagnostic::error(combined),
             ));
         }
-        Ok(checker.borrow().finish())
+        let package = checker.borrow().finish();
+        // `checker` is the last other strong owner of this `Rc<HirPackage>`
+        // (via its own `program.packages` map) — dropping it here, before
+        // unwrapping, lets the caller take real ownership without ever
+        // deep-copying the package's own data.
+        drop(checker);
+        Ok(Rc::try_unwrap(package).unwrap_or_else(|_| {
+            unreachable!("no other strong reference to this package's HirPackage should outlive its own typecheck pass")
+        }))
     }
 
     /// Prints every diagnostic accumulated on `package` so far to stderr, one
