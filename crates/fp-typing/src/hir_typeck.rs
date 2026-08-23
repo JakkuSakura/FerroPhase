@@ -5224,6 +5224,108 @@ mod tests {
         assert_eq!(results.pat_type(hid(8)), Some(Ty::int(ty::IntTy::I64)));
     }
 
+    fn str_shaped_ty() -> Ty {
+        Ty {
+            kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
+        }
+    }
+
+    /// Wraps a bare `hir::TypeExpr` in `let value: <ty>;` (no initializer)
+    /// the same way `f16_and_f128_type_paths_resolve_as_primitive_floats`
+    /// does, so `check_type_expr`'s handling of a single `TypeExprKind` can
+    /// be exercised in isolation via `results.pat_type(hid(8))`.
+    fn let_with_type(ty_kind: hir::TypeExprKind) -> hir::HirPackage {
+        let pattern = hir::Pat {
+            hir_id: hid(8),
+            kind: hir::PatKind::Binding {
+                name: "value".into(),
+                mutable: false,
+            },
+        };
+        let expr = hir::Expr {
+            hir_id: hid(9),
+            kind: hir::ExprKind::Let(
+                pattern,
+                Box::new(hir::TypeExpr {
+                    hir_id: hid(10),
+                    kind: ty_kind,
+                    span: fp_core::span::Span::null(),
+                }),
+                None,
+            ),
+            span: fp_core::span::Span::null(),
+        };
+        let mut program = hir::HirPackage::new();
+        let item = hir::Item {
+            hir_id: hid(1),
+            def_id: hir::DefId::local(1),
+            visibility: hir::Visibility::Private,
+            kind: hir::ItemKind::Expr(expr),
+            span: fp_core::span::Span::null(),
+        };
+        program.items.push(item.clone());
+        program.def_map.insert(item.def_id, item);
+        program
+    }
+
+    #[test]
+    fn string_literal_type_resolves_to_str() {
+        let program = let_with_type(hir::TypeExprKind::LiteralString("foo".into()));
+        let executor = fp_core::executor::CompilerExecutor::new().handle();
+        let results = executor
+            .run(typecheck_program(program, executor.clone()))
+            .expect("HIR type check");
+        assert_eq!(results.pat_type(hid(8)), Some(str_shaped_ty()));
+    }
+
+    #[test]
+    fn union_of_string_literal_types_resolves_to_str() {
+        let program = let_with_type(hir::TypeExprKind::TypeBinaryOp(hir::TypeBinaryOp {
+            kind: fp_core::ast::TypeBinaryOpKind::Union,
+            lhs: Box::new(hir::TypeExpr {
+                hir_id: hid(11),
+                kind: hir::TypeExprKind::LiteralString("a".into()),
+                span: fp_core::span::Span::null(),
+            }),
+            rhs: Box::new(hir::TypeExpr {
+                hir_id: hid(12),
+                kind: hir::TypeExprKind::LiteralString("b".into()),
+                span: fp_core::span::Span::null(),
+            }),
+        }));
+        let executor = fp_core::executor::CompilerExecutor::new().handle();
+        let results = executor
+            .run(typecheck_program(program, executor.clone()))
+            .expect("HIR type check");
+        assert_eq!(results.pat_type(hid(8)), Some(str_shaped_ty()));
+    }
+
+    /// A union of two *non*-literal types (e.g. two primitives) must keep
+    /// erroring exactly as it did before literal-union support was added —
+    /// only a union where every operand is itself a literal-string type (or
+    /// a nested union of them) is accepted.
+    #[test]
+    fn union_of_non_literal_types_still_errors() {
+        let program = let_with_type(hir::TypeExprKind::TypeBinaryOp(hir::TypeBinaryOp {
+            kind: fp_core::ast::TypeBinaryOpKind::Union,
+            lhs: Box::new(hir::TypeExpr {
+                hir_id: hid(11),
+                kind: hir::TypeExprKind::Primitive(TypePrimitive::Int(TypeInt::I64)),
+                span: fp_core::span::Span::null(),
+            }),
+            rhs: Box::new(hir::TypeExpr {
+                hir_id: hid(12),
+                kind: hir::TypeExprKind::Primitive(TypePrimitive::Bool),
+                span: fp_core::span::Span::null(),
+            }),
+        }));
+        let executor = fp_core::executor::CompilerExecutor::new().handle();
+        let results = executor
+            .run(typecheck_program(program, executor.clone()))
+            .expect("HIR type check");
+        assert_eq!(results.pat_type(hid(8)), Some(Ty::error()));
+    }
+
     /// `f16`/`f128` are real, stabilized Rust primitive float types (same
     /// family as `f32`/`f64`), not name-resolution gaps — a bare `f16`/
     /// `f128` type path must resolve straight to `Ty::Float`, never fall

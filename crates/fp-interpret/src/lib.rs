@@ -2012,8 +2012,28 @@ impl LirInterpreter {
                 "missing function definition {def_id}"
             )))?;
         let program = LirBlob::new(self.data_layout.clone());
-        let result = self.run_function(&program, &function, &[Value::string(arg.to_string())])?;
-        match result {
+        // `&str` (`Ptr<I8>`) parameters are managed-object pointers, not
+        // bare `Value::String`s (see `render_typed_value`'s `Ptr<I8>` arm) —
+        // push the argument onto the object heap and pass a pointer to it,
+        // matching how every other `&str`-typed value flows through this
+        // interpreter (e.g. the `"format"`/`"str_alloc"` builtins).
+        let handle = self.state.objects.len() as u64;
+        self.state.objects.push(Value::string(arg.to_string()));
+        let arg_value = Value::Pointer(fp_core::ast::ValuePointer::managed(handle as i64));
+        let result = self.run_function(&program, &function, &[arg_value])?;
+        let result_value = match result {
+            Value::Pointer(pointer) => {
+                let handle = usize::try_from(pointer.value)
+                    .map_err(|_| VmError::Runtime("negative string pointer".into()))?;
+                self.state
+                    .objects
+                    .get(handle)
+                    .cloned()
+                    .ok_or_else(|| VmError::Runtime(format!("string handle {handle} is out of range")))?
+            }
+            other => other,
+        };
+        match result_value {
             Value::String(s) => Ok(s.value),
             other => Err(VmError::TypeMismatch {
                 expected: "string".into(),
@@ -3487,5 +3507,98 @@ mod tests {
             panic!("expected a VM pointer");
         };
         assert!(pointer.value >= 0x1000);
+    }
+
+    /// End-to-end check of `unionify(f)(u)`: `f` is a real (if trivial) LIR
+    /// function that transforms its `&str` argument, `u` is a reflected
+    /// `Ty::TypeBinaryOp(Union)` of two `Ty::Literal`s — the same shapes
+    /// `ComptimeOp::Unionify`/`handle_unionify_closure_call` operate on.
+    /// Exercises the closure-return + indirect-call path directly (not
+    /// currying — `unionify` itself is only ever called with its one
+    /// argument, `f`).
+    #[test]
+    fn unionify_closure_maps_over_union_members() {
+        use fp_core::ast::{Ty, TypeBinaryOp, TypeBinaryOpKind, TypeLiteralString};
+
+        let str_ty = LirType::Ptr(Box::new(LirType::I8));
+        let shout_def_id = fp_core::hir::DefId::local(1);
+        let shout_fn = LirFunction {
+            def_id: Some(shout_def_id),
+            name: Name::new("shout"),
+            signature: sig(&[str_ty.clone()], str_ty.clone()),
+            basic_blocks: vec![bb(
+                0,
+                vec![LirInstruction::new(
+                    0,
+                    LirInstructionKind::IntrinsicCall {
+                        kind: fp_core::lir::LirIntrinsicKind::Format,
+                        format: "{}!".to_string(),
+                        args: vec![LirValue::register(1, str_ty.clone())],
+                    },
+                )
+                .with_result(str_ty.clone())],
+                ret(LirValue::register(0, str_ty.clone())),
+            )],
+            locals: vec![],
+            stack_slots: vec![],
+            calling_convention: CallingConvention::C,
+            linkage: fp_core::lir::Linkage::Internal,
+            is_declaration: false,
+        };
+
+        let mut interpreter = LirInterpreter::new();
+        interpreter
+            .definition_functions
+            .insert(shout_def_id, Rc::new(shout_fn));
+
+        // Register 1: the closure `unionify(shout)` would have produced.
+        interpreter.register_values.insert(
+            1,
+            TypedValue {
+                ty: str_ty.clone(),
+                value: Value::UnionifyClosure(shout_def_id),
+            },
+        );
+        // Register 2: the reflected union type `"a" | "b"`.
+        let union_ty = Ty::TypeBinaryOp(Box::new(TypeBinaryOp {
+            kind: TypeBinaryOpKind::Union,
+            lhs: Box::new(Ty::Literal(TypeLiteralString { value: "a".into() })),
+            rhs: Box::new(Ty::Literal(TypeLiteralString { value: "b".into() })),
+        }));
+        interpreter.register_values.insert(
+            2,
+            TypedValue {
+                ty: str_ty.clone(),
+                value: Value::Type(union_ty),
+            },
+        );
+
+        interpreter
+            .handle_unionify_closure_call(
+                3,
+                &LirValue::register(1, str_ty.clone()),
+                &[LirValue::register(2, str_ty.clone())],
+                Some(&str_ty),
+            )
+            .expect("unionify closure call succeeds");
+
+        let result = interpreter
+            .register_values
+            .get(&3)
+            .expect("result register written")
+            .value
+            .clone();
+        let Value::Type(Ty::TypeBinaryOp(op)) = result else {
+            panic!("expected a reflected union type, got {result:?}");
+        };
+        assert_eq!(op.kind, TypeBinaryOpKind::Union);
+        let Ty::Literal(lhs) = op.lhs.as_ref() else {
+            panic!("expected literal lhs");
+        };
+        let Ty::Literal(rhs) = op.rhs.as_ref() else {
+            panic!("expected literal rhs");
+        };
+        assert_eq!(lhs.value, "a!");
+        assert_eq!(rhs.value, "b!");
     }
 }

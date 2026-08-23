@@ -308,6 +308,21 @@ mod tests {
     }
 
     #[test]
+    fn parses_string_literal_types_example() {
+        let frontend = FerroFrontend::new();
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/41_string_literal_types.fp");
+        let source = fs::read_to_string(&path).expect("read example source");
+        let result = frontend.parse(&source, Some(&path));
+        assert!(
+            result.is_ok(),
+            "failed to parse {}: {:?}",
+            path.display(),
+            result.err()
+        );
+    }
+
+    #[test]
     fn parse_single_std_source_from_env() {
         let Ok(path) = std::env::var("FP_STD_FILE") else {
             return;
