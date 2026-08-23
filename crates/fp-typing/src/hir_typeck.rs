@@ -352,25 +352,6 @@ impl HirTypeChecker {
 }
 
 impl HirTypeChecker {
-    /// Given a `def_id` that might name an `impl`'s method/assoc-const
-    /// rather than a top-level item, resolve it to the enclosing top-level
-    /// item's own `def_id` — `program.def_map` only has entries for
-    /// top-level items (see `expr_path_ty`'s pre-existing manual scan for
-    /// the same reason), so an impl member's `def_id` needs this extra step
-    /// before it can be used as a `spawn_item_task`/`typecheck_item` key.
-    /// Returns `def_id` unchanged if it's already a top-level item (the
-    /// common case, checked first so this stays O(1) except for actual impl
-    /// members) — an O(1) index lookup via `hir::HirPackage::member_owner`
-    /// otherwise (see its doc comment), incrementally maintained on the
-    /// package itself rather than rebuilt here.
-    fn resolve_top_level_def_id(&self, def_id: hir::DefId) -> hir::DefId {
-        let package = self.package();
-        if package.def_map.contains_key(&def_id) {
-            return def_id;
-        }
-        package.member_owner(def_id).unwrap_or(def_id)
-    }
-
     /// Read the final `hir::HirPackage` out — only meaningful once every
     /// per-item task (see `spawn_item_task`) has settled (i.e. its returned
     /// future resolved). Every typed result (expr/pat types, resolutions,
@@ -391,10 +372,12 @@ impl HirTypeChecker {
     /// than through the shared per-package task pool (e.g. tooling that
     /// wants one item's diagnostics/`Result` directly, without another
     /// concurrent awaiter of the same `def_id` silently sharing this run).
-    /// `def_id` is resolved to its enclosing top-level item first, same as
-    /// `spawn_item_task` — see `resolve_top_level_def_id`.
+    /// `def_id` must already name a top-level item — `program.def_map`
+    /// only has entries for those (an `impl`'s own methods/assoc-consts
+    /// aren't separate `def_map` keys; see `expr_path_ty`'s manual
+    /// `member_owner` scan for that case), so a member `DefId` here just
+    /// misses and no-ops, same as `spawn_item_task`.
     pub async fn typecheck_item(checker: &Rc<RefCell<Self>>, def_id: hir::DefId) -> Result<()> {
-        let def_id = checker.borrow().resolve_top_level_def_id(def_id);
         let Some(item) = checker.borrow().package().def_map.get(&def_id).cloned() else {
             return Ok(());
         };
@@ -402,17 +385,16 @@ impl HirTypeChecker {
         item_checker.check_item(&item).await
     }
 
-    /// Get-or-spawn the task that type-checks `def_id` (resolved to its
-    /// enclosing top-level item first — see `resolve_top_level_def_id`),
-    /// keyed so any number of dependents (another item's task, or the
-    /// initial per-package spawn loop) share the same in-flight/completed
-    /// attempt instead of re-checking it. Errors from checking the item
-    /// itself are recorded (via `record_item_check_failure`, against this
-    /// item specifically) rather than propagated — one item's failure never
-    /// stops any other item's task from completing, which is what "a
-    /// package almost never fails as a whole" means in practice.
+    /// Get-or-spawn the task that type-checks `def_id`, keyed so any number
+    /// of dependents (another item's task, or the initial per-package
+    /// spawn loop) share the same in-flight/completed attempt instead of
+    /// re-checking it. Errors from checking the item itself are recorded
+    /// (via `record_item_check_failure`, against this item specifically)
+    /// rather than propagated — one item's failure never stops any other
+    /// item's task from completing, which is what "a package almost never
+    /// fails as a whole" means in practice. `def_id` must already name a
+    /// top-level item — see `typecheck_item`'s doc comment.
     pub fn spawn_item_task(checker: &Rc<RefCell<Self>>, def_id: hir::DefId) -> TaskHandle<()> {
-        let def_id = checker.borrow().resolve_top_level_def_id(def_id);
         let key = format!("typecheck:{def_id:?}");
         let checker = checker.clone();
         let executor = checker.borrow().executor.clone();
