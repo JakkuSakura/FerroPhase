@@ -264,7 +264,7 @@ impl LirGenerator {
         Ok(call_id)
     }
 
-    pub fn prepare_program(&mut self, mir_program: &mir::Program) {
+    pub fn prepare_program(&mut self, mir_program: &mir::MirProgram) {
         self.predeclare_function_signatures(mir_program);
     }
 
@@ -327,7 +327,7 @@ impl LirGenerator {
         Ok(lir_program)
     }
 
-    pub fn transform_items(&mut self, mir_program: mir::Program) -> Result<Vec<lir::LirProgram>> {
+    pub fn transform_items(&mut self, mir_program: mir::MirProgram) -> Result<Vec<lir::LirProgram>> {
         self.prepare_program(&mir_program);
         mir_program
             .items
@@ -337,7 +337,7 @@ impl LirGenerator {
     }
 
     /// Transform MIR to a flat LIR program for legacy backend callers.
-    pub fn transform(&mut self, mir_program: mir::Program) -> Result<lir::LirProgram> {
+    pub fn transform(&mut self, mir_program: mir::MirProgram) -> Result<lir::LirProgram> {
         let mut lir_program = lir::LirProgram::new(self.data_layout.clone());
         self.prepare_program(&mir_program);
         for item in mir_program.items {
@@ -355,7 +355,7 @@ impl LirGenerator {
         );
     }
 
-    fn predeclare_function_signatures(&mut self, program: &mir::Program) {
+    fn predeclare_function_signatures(&mut self, program: &mir::MirProgram) {
         self.predeclare_function_signatures_impl(program, None);
     }
 
@@ -370,7 +370,7 @@ impl LirGenerator {
     /// (caller's) one.
     pub fn predeclare_dependency_function_signatures(
         &mut self,
-        program: &mir::Program,
+        program: &mir::MirProgram,
         package_id: fp_core::ast::package::PackageId,
     ) {
         self.predeclare_function_signatures_impl(program, Some(package_id));
@@ -451,7 +451,7 @@ impl LirGenerator {
 
     fn predeclare_function_signatures_impl(
         &mut self,
-        program: &mir::Program,
+        program: &mir::MirProgram,
         package_id: Option<fp_core::ast::package::PackageId>,
     ) {
         for item in &program.items {

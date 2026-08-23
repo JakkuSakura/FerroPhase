@@ -34,7 +34,7 @@ use fp_core::hir::PackageTypes;
 
 /// Resolves the promoted `CallKind` for a definition recognized purely by
 /// its own resolved identity (`DefId`) — an `#[op(...)]`-tagged
-/// declaration (`hir::Package::op_defs`). `#[intrinsic = "..."]`-tagged
+/// declaration (`hir::HirPackage::op_defs`). `#[intrinsic = "..."]`-tagged
 /// free functions are deliberately NOT resolved here — see the module doc
 /// comment for where that recognition happens instead.
 fn resolve_op_call_kind(op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::PortableOp>, def_id: DefId) -> Option<CallKind> {
@@ -52,7 +52,7 @@ fn resolve_op_call_kind(op_defs: &std::collections::HashMap<DefId, fp_core::intr
 /// used by the `Native` pipeline, which lowers un-promoted `Op`s as
 /// ordinary calls to their real stub bodies instead (see
 /// `hir_materialization.rs` for why).
-pub fn normalize_program(program: &mut hir::Package, typeck: Option<&PackageTypes>, promote_op_only: bool) {
+pub fn normalize_program(program: &mut hir::HirPackage, typeck: Option<&PackageTypes>, promote_op_only: bool) {
     // Snapshot `op_defs` up front: we can't hold `&program.op_defs` while
     // mutating `program.items` in place, and this map is small/cheap to
     // clone relative to the HIR it's consulted against.

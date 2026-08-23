@@ -5,12 +5,16 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 pub mod ident;
+pub mod package;
 pub mod place;
 pub mod pretty;
+pub mod program;
 pub mod resolve;
 pub mod ty;
 
 pub use ident::{DefPath, Symbol};
+pub use package::HirPackage;
+pub use program::HirProgram;
 pub use resolve::{ModuleId, ModuleTree, Namespace, SymbolEntry, SymbolExport};
 pub use ty::{Abi, Ty};
 
@@ -86,112 +90,6 @@ impl fmt::Display for DefId {
 
 // Remove the old type alias
 // pub type Symbol = String;
-
-/// One compiled package's HIR content — items, definitions, and (as of the
-/// `ModuleTree` migration) its own module/name-resolution tree. Several of
-/// these live inside a `Program`, which owns the whole multi-package
-/// compiled result (see `Program`'s own doc comment).
-#[derive(Debug, Clone, PartialEq)]
-pub struct Package {
-    pub id: PackageId,
-    pub module_tree: resolve::ModuleTree,
-    pub items: Vec<Item>,
-    pub def_map: HashMap<DefId, Item>,
-    pub next_hir_id: u32,
-    /// Fully-qualified path for a definition's `DefId`, recorded once at
-    /// first registration (module segments + the definition's own bare
-    /// name as the last segment). Analogous to rustc's `DefPathTable`:
-    /// item `name` fields are always bare, local identifiers, and a
-    /// qualified path — when one is needed for lookup/diagnostics — is
-    /// computed by consulting this table rather than stored redundantly
-    /// on the item itself. A missing entry means the definition has no
-    /// meaningful module qualification (e.g. impl methods, addressed by
-    /// (type, method) pair instead, or synthetic items).
-    pub def_paths: HashMap<DefId, DefPath>,
-    /// `DefId`s of items whose HIR form is a structural stand-in, not a
-    /// real lowering of the original source construct — currently, trait
-    /// declarations (HIR has no first-class trait item; `ast_to_hir`
-    /// fabricates a placeholder `Const` just so the definition has some
-    /// HIR shape to type-check as a value/type reference). Consumers that
-    /// reconstruct AST from HIR (`HirToAstLifter`) must skip these rather
-    /// than lift the placeholder itself, so backends that work from the
-    /// original source item (e.g. fp-kotlin modeling a trait as a real
-    /// Kotlin interface) see it unmodified instead of overwritten.
-    pub placeholder_defs: HashSet<DefId>,
-    /// A definition's portable op, when its source declaration was tagged
-    /// `#[op(func = "...")]` (free function) or `#[op(method = "...")]`
-    /// (inside a `class`-tagged `impl` block) — populated once, by
-    /// `ast_to_hir` reading the item's own attrs at the point it assigns
-    /// that item's real `DefId`. Consulted post-typecheck directly by
-    /// `HirToAstLifter`, keyed by the *resolved*
-    /// identity of a call's callee (`hir::Res::Def`) or a method call's
-    /// resolution (`TypeckResults::method_resolutions`) — never by
-    /// re-deriving and string/path-comparing a call site's own syntax,
-    /// which is both redundant (the compiler already resolved this) and
-    /// where the earlier, retired `compile_mode_std_path`/path-based
-    /// registry design went wrong.
-    pub op_defs: HashMap<DefId, crate::intrinsics::PortableOp>,
-    /// A free function's compiler intrinsic, when its source declaration was
-    /// tagged `#[intrinsic = "..."]` — populated the same way and at the
-    /// same site as `op_defs`, and consulted the same way: keyed by the
-    /// *resolved* identity of a call's callee (`hir::Res::Def`), never by
-    /// re-deriving and name/path-comparing a call site's own syntax. A
-    /// bare-name call with no real declaration to resolve to (nothing in
-    /// scope, not even this intrinsic's own) simply never reaches this map —
-    /// it stays an ordinary (and, for a genuinely undefined name, erroring)
-    /// call, same as any other unresolved identifier.
-    pub intrinsic_defs: HashMap<DefId, CallKind>,
-    /// A transparent type alias's expansion (`type Foo = Bar;`, where
-    /// `Bar` isn't itself a fresh struct/enum/structural literal this
-    /// alias declaration introduces) — HIR has no first-class "type
-    /// alias" item (mirroring the `placeholder_defs` doc comment above:
-    /// there's no dedicated item shape for this either), so the alias's
-    /// own `DefId` still resolves (via `global_type_defs`/`def_map`
-    /// registration at `ast_to_hir` time) but has no entry in `def_map`
-    /// itself — `path_ty` consults this table instead, recursively
-    /// checking the aliased type expression in the alias's own place.
-    /// Without this, `type __darwin_useconds_t = __uint32_t;`-style
-    /// aliases (extremely common in real Rust — most of libc's typedefs,
-    /// and many of std's own `pub type Result<T> = ...`-style aliases)
-    /// could never resolve at all: nothing else in the pipeline gives a
-    /// non-materializing alias any HIR item to look up.
-    pub type_alias_targets: HashMap<DefId, TypeExpr>,
-    /// Struct `DefId`s in `items`, keyed by name — built once by
-    /// `index_derived_lookups` alongside this package's other derived
-    /// tables, so cross-package HIR struct lookups
-    /// (`WorkspaceContext::find_hir_struct_def_id`) are an O(1) hash lookup
-    /// per package instead of a linear scan over every item every time.
-    pub struct_defs_by_name: HashMap<String, DefId>,
-    /// For every method `ImplItem` in `items`, its own `DefId` mapped to
-    /// the `DefId` of the enclosing `impl` item — built incrementally by
-    /// `add_item`/`index_derived_lookups`, so cross-package HIR method
-    /// lookups (`WorkspaceContext::find_hir_impl_method`) are an O(1) hash
-    /// lookup per package instead of a linear scan over every impl block
-    /// and its members every time. Keyed to the impl's own `DefId` (looked
-    /// up via `def_map`), not its position in `items` — a `usize` index
-    /// would silently go stale the moment an item is ever
-    /// inserted/removed/reordered.
-    pub impl_method_item_index: HashMap<DefId, DefId>,
-    /// Every `impl` item in `items` whose self-type resolves to a nominal
-    /// `Res::Def(did)`, keyed by that `did` -> the `DefId`s of every
-    /// matching impl item (not their positions — see
-    /// `impl_method_item_index`'s doc comment for why) — built
-    /// incrementally by `add_item`/`index_derived_lookups`.
-    /// `Program::impls_for_adt` unions this across every package (an impl
-    /// for type T can live in a different package than T itself), so a
-    /// method-call/UFCS-call expression's fast-reject candidate search
-    /// (`fp_typing`'s `method_output`) is a per-package O(1) hash lookup
-    /// instead of scanning every impl in the whole workspace.
-    pub impls_by_self_did: HashMap<DefId, Vec<DefId>>,
-    /// An enum variant's own `DefId` -> its enclosing enum item's own
-    /// `DefId` (not its position in `items` — see
-    /// `impl_method_item_index`'s doc comment for why) — maintained
-    /// incrementally by `add_item`, same rationale as
-    /// `impl_method_item_index`: `Program`/callers key by a variant's own
-    /// `DefId` (e.g. `enum_variant_by_def_id`) but the enum item itself,
-    /// not the bare variant, is what's actually stored in `items`.
-    pub enum_variant_item_index: HashMap<DefId, DefId>,
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {
@@ -850,280 +748,6 @@ impl Default for Generics {
     }
 }
 
-impl Package {
-    pub fn new() -> Self {
-        Self {
-            id: PackageId::default(),
-            module_tree: resolve::ModuleTree::new(),
-            items: Vec::new(),
-            def_map: HashMap::new(),
-            next_hir_id: 0,
-            def_paths: HashMap::new(),
-            placeholder_defs: HashSet::new(),
-            op_defs: HashMap::new(),
-            intrinsic_defs: HashMap::new(),
-            type_alias_targets: HashMap::new(),
-            struct_defs_by_name: HashMap::new(),
-            impl_method_item_index: HashMap::new(),
-            impls_by_self_did: HashMap::new(),
-            enum_variant_item_index: HashMap::new(),
-        }
-    }
-
-    pub fn with_id(id: PackageId) -> Self {
-        Self {
-            id,
-            ..Self::new()
-        }
-    }
-
-    pub fn next_id(&mut self, package_id: PackageId) -> HirId {
-        let id = self.next_hir_id;
-        self.next_hir_id += 1;
-        HirId::new(package_id, id)
-    }
-
-    /// Registers `item`'s derived-index entries (`struct_defs_by_name`,
-    /// `impl_method_item_index`, `impls_by_self_did`,
-    /// `enum_variant_item_index`), keyed by `item`'s own stable `DefId` —
-    /// the incremental counterpart to a clear-and-rebuild pass: call this
-    /// once per item as it's added instead of re-scanning every item in
-    /// `items` from scratch whenever the package's HIR changes.
-    fn index_item(&mut self, item: &Item) {
-        match &item.kind {
-            ItemKind::Struct(def) => {
-                self.struct_defs_by_name
-                    .insert(def.name.as_str().to_string(), item.def_id);
-            }
-            ItemKind::Enum(def) => {
-                for variant in &def.variants {
-                    self.enum_variant_item_index.insert(variant.def_id, item.def_id);
-                }
-            }
-            ItemKind::Impl(impl_item) => {
-                for impl_member in &impl_item.items {
-                    if matches!(impl_member.kind, ImplItemKind::Method(_)) {
-                        self.impl_method_item_index
-                            .insert(impl_member.def_id, item.def_id);
-                    }
-                }
-                let resolved_did = match &impl_item.self_ty.kind {
-                    TypeExprKind::Path(path) => match path.res {
-                        Some(Res::Def(did)) => Some(did),
-                        _ => None,
-                    },
-                    _ => None,
-                };
-                match resolved_did {
-                    Some(did) => {
-                        self.impls_by_self_did.entry(did).or_default().push(item.def_id);
-                    }
-                    None => {
-                        // Not a resolved nominal path (a generic param, a
-                        // primitive/tuple/slice extension impl, or an
-                        // unresolved path) — `impls_by_self_did` can't key
-                        // this impl, so `Program::impls_for_adt`'s fast
-                        // path will never surface it; only the `all_impls`
-                        // full-scan fallback will. Common in real code
-                        // (`impl Add for i32`, `impl<T> Deref for Vec<T>`),
-                        // so this is expected, not necessarily a bug — but
-                        // flagged so a genuinely-should-have-resolved path
-                        // that silently didn't doesn't go unnoticed.
-                        crate::diagnostics::report_warning(format!(
-                            "impl at {:?} has a self-type that isn't a resolved nominal path; \
-                             it won't be found by impls_by_self_did's fast-reject index",
-                            item.hir_id
-                        ));
-                    }
-                }
-            }
-            // No derived-index entry applies to these — a free function,
-            // const, trait, query, or item-position expr is never looked
-            // up by name/impl-target/variant the way struct/enum/impl
-            // items are.
-            ItemKind::Function(_)
-            | ItemKind::Const(_)
-            | ItemKind::Trait(_)
-            | ItemKind::Query(_)
-            | ItemKind::Expr(_) => {}
-        }
-    }
-
-    /// Appends `item` to `items` and incrementally maintains every derived
-    /// index in the same step — the preferred way to add an item to an
-    /// already-published-or-publishing package; no separate rebuild pass
-    /// needed afterward.
-    pub fn add_item(&mut self, item: Item) {
-        self.def_map.insert(item.def_id, item.clone());
-        self.index_item(&item);
-        self.items.push(item);
-    }
-
-    /// Rebuilds every derived index from `items` as they stand right now —
-    /// for the one bulk-construction path (`ast_to_hir::HirGenerator`)
-    /// that still builds a whole `items: Vec<Item>` up front rather than
-    /// through `add_item` one at a time. New code should prefer `add_item`.
-    pub fn index_derived_lookups(&mut self) {
-        self.struct_defs_by_name.clear();
-        self.impl_method_item_index.clear();
-        self.impls_by_self_did.clear();
-        self.enum_variant_item_index.clear();
-        for index in 0..self.items.len() {
-            let item = self.items[index].clone();
-            self.index_item(&item);
-        }
-    }
-}
-
-impl Default for Package {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// The whole compiled result — every package involved, keyed by
-/// `PackageId`. `HirGenerator` owns one of these and works package-by-package
-/// against it (see `docs/Resolution.md`); resolution across an
-/// already-compiled dependency package is a lookup into this same
-/// structure, not a separate clone-and-merge pass.
-///
-/// Packages are `Rc`, not owned — building a `Program` (e.g. a
-/// `WorkspaceContext` snapshotting its already-compiled dependency
-/// packages, each already an `Rc<Package>`, for a consumer like
-/// `MirLowering` to dispatch cross-package `DefId` lookups against) is
-/// then just a handful of `Rc` clones, never a deep clone of every
-/// dependency's own items/def_map/def_paths.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Program {
-    pub packages: HashMap<PackageId, std::rc::Rc<Package>>,
-    /// Direct name -> `DefId` lookup across every package, for well-known
-    /// cross-package lookups by bare name (e.g. `fp_typing`'s well-known
-    /// standard-library collection types) — maintained incrementally by
-    /// `add_package`, never rescanned per query. First package added to
-    /// declare a given name wins (add the current package last, after its
-    /// dependencies, for "current package's own name shadows a
-    /// dependency's" priority).
-    struct_defs_by_name: HashMap<String, DefId>,
-}
-
-impl Program {
-    pub fn new() -> Self {
-        Self {
-            packages: HashMap::new(),
-            struct_defs_by_name: HashMap::new(),
-        }
-    }
-
-    pub fn package(&self, id: PackageId) -> Option<&Package> {
-        self.packages.get(&id).map(|package| package.as_ref())
-    }
-
-    /// Inserts `package`, merging its own `struct_defs_by_name` into this
-    /// `Program`'s direct lookup index in the same step — the incremental
-    /// counterpart to re-deriving that index by scanning every package's
-    /// items on every query.
-    pub fn add_package(&mut self, package: std::rc::Rc<Package>) {
-        for (name, def_id) in &package.struct_defs_by_name {
-            self.struct_defs_by_name.entry(name.clone()).or_insert(*def_id);
-        }
-        self.packages.insert(package.id, package);
-    }
-
-    /// O(1) direct lookup — no package iteration — for a struct declared
-    /// under `name` in any package this `Program` knows about.
-    pub fn struct_def_id(&self, name: &str) -> Option<DefId> {
-        self.struct_defs_by_name.get(name).copied()
-    }
-
-    /// Every item across every package this `Program` knows about — for
-    /// callers that genuinely need the full set (e.g. a one-time reverse
-    /// index build), not a single `DefId` lookup.
-    pub fn all_items(&self) -> impl Iterator<Item = &Item> {
-        self.packages.values().flat_map(|package| package.items.iter())
-    }
-
-    /// A definition's fully-qualified path, wherever its owning package
-    /// lives — routes to that package's own `def_paths` via the `DefId`'s
-    /// own `package_id`, so a caller never has to know or track which
-    /// package a `DefId` came from before asking this question.
-    pub fn def_path(&self, def_id: DefId) -> Option<&DefPath> {
-        self.package(def_id.package_id)?.def_paths.get(&def_id)
-    }
-
-    /// A transparent type alias's expansion target — see
-    /// `Package::type_alias_targets`'s doc comment for why this table
-    /// exists at all.
-    pub fn type_alias_target(&self, def_id: DefId) -> Option<&TypeExpr> {
-        self.package(def_id.package_id)?
-            .type_alias_targets
-            .get(&def_id)
-    }
-
-    pub fn item(&self, def_id: DefId) -> Option<&Item> {
-        self.package(def_id.package_id)?.def_map.get(&def_id)
-    }
-
-    pub fn op_def(&self, def_id: DefId) -> Option<&crate::intrinsics::PortableOp> {
-        self.package(def_id.package_id)?.op_defs.get(&def_id)
-    }
-
-    pub fn intrinsic_def(&self, def_id: DefId) -> Option<&CallKind> {
-        self.package(def_id.package_id)?.intrinsic_defs.get(&def_id)
-    }
-
-    pub fn is_placeholder_def(&self, def_id: DefId) -> bool {
-        self.package(def_id.package_id)
-            .is_some_and(|package| package.placeholder_defs.contains(&def_id))
-    }
-
-    /// Every `impl` item (from any package) whose self-type resolves to
-    /// `did` — an impl for a type can live in a different package than the
-    /// type itself, so this unions every package's own
-    /// `Package::impls_by_self_did` rather than only looking in `did`'s own
-    /// package. Each per-package lookup is still O(1); only the number of
-    /// packages that actually declare a matching impl costs anything.
-    pub fn impls_for_adt(&self, did: DefId) -> impl Iterator<Item = &Item> {
-        self.packages.values().flat_map(move |package| {
-            package
-                .impls_by_self_did
-                .get(&did)
-                .into_iter()
-                .flatten()
-                .filter_map(move |impl_def_id| package.def_map.get(impl_def_id))
-        })
-    }
-
-    /// Every `impl` item across every package — the fallback for a
-    /// method-call/UFCS-call whose receiver type isn't a resolved ADT
-    /// (so there's no `did` to key `impls_for_adt` by).
-    pub fn all_impls(&self) -> impl Iterator<Item = &Item> {
-        self.all_items()
-            .filter(|item| matches!(item.kind, ItemKind::Impl(_)))
-    }
-
-    /// Resolves `path` (in namespace `ns`) starting from `from_module` in
-    /// package `from`, falling through to another already-compiled
-    /// package's own module tree when `path`'s root names a different
-    /// package (mirrors how a real cross-crate path resolves — the target
-    /// package's own tree, not the caller's).
-    /// Resolves `name` (in namespace `ns`) as seen from `from_module` in
-    /// package `from` — takes a plain module path, not a `ModuleId`:
-    /// `ModuleId` is `ModuleTree`'s own internal node handle, never meant
-    /// to leak past this API to a caller (fp-typing, hir_to_ast, ...) that
-    /// has no reason to know the tree exists at all, only that it can ask
-    /// the program a question about a path.
-    pub fn resolve(
-        &self,
-        from: PackageId,
-        from_module: &crate::ast::path::QualifiedPath,
-        ns: resolve::Namespace,
-        name: &str,
-    ) -> Option<&Res> {
-        let package = self.package(from)?;
-        let module = package.module_tree.module_id(from_module)?;
-        package.module_tree.lookup_res(module, ns, name)
-    }
-}
 
 /// A generic function/method call whose concrete type arguments have been
 /// resolved and are ready for monomorphization.
@@ -1136,7 +760,7 @@ pub struct GenericCallResolution {
 /// Semantic information produced by HIR type checking for one package. HIR
 /// itself remains a source-shaped tree; inferred types and resolutions are
 /// keyed by HIR node. Shared, writable state — `Rc<RefCell<PackageTypes>>`,
-/// mirroring `Package`'s own `Rc` sharing — so the concurrent per-item
+/// mirroring `HirPackage`'s own `Rc` sharing — so the concurrent per-item
 /// checking tasks type checking spawns (see `fp_typing::TypingShared`) can
 /// each contribute their own item's results into the same package-wide
 /// sink.
@@ -1226,12 +850,6 @@ impl Expr {
 impl TypeExpr {
     pub fn new(hir_id: HirId, kind: TypeExprKind, span: Span) -> Self {
         Self { hir_id, kind, span }
-    }
-}
-
-impl Package {
-    pub fn span(&self) -> Span {
-        Span::union(self.items.iter().map(Item::span))
     }
 }
 

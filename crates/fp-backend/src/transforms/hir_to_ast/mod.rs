@@ -19,19 +19,19 @@ use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 use fp_core::hir::PackageTypes;
 
-/// Lifts a typechecked `hir::Package` back into a plain item list — the
+/// Lifts a typechecked `hir::HirPackage` back into a plain item list — the
 /// shape every backend serializer (Kotlin, Python, Go, ...) already knows
 /// how to consume, so `PipelineMode::Transpile` can reuse those
 /// serializers unchanged rather than each needing its own HIR-consuming path.
 ///
-/// Carries the source `&hir::Package` (needed for a couple of program-wide
+/// Carries the source `&hir::HirPackage` (needed for a couple of program-wide
 /// lookups: the single-`Query`-item check, closure-signature reconstruction,
 /// and now `DefId` → path resolution via `program.def_paths`) and an
 /// optional `&PackageTypes` — optional because two of the three call sites
 /// never run the typer at all (`fp-backend`'s own roundtrip helpers), so
 /// there's nothing to attach in those cases.
 pub struct HirToAstLifter<'a> {
-    program: &'a hir::Package,
+    program: &'a hir::HirPackage,
     typeck: Option<&'a PackageTypes>,
     /// Cross-package lookup for a resolved `DefId`'s real identity (e.g.
     /// `WorkspaceContext::find_hir_enum_for_variant`, consulted by
@@ -70,7 +70,7 @@ pub struct HirToAstLifter<'a> {
 
 impl<'a> HirToAstLifter<'a> {
     pub fn new(
-        program: &'a hir::Package,
+        program: &'a hir::HirPackage,
         typeck: Option<&'a PackageTypes>,
         workspace: Option<&'a fp_core::ast::workspace::WorkspaceContext>,
     ) -> Self {
@@ -113,7 +113,7 @@ impl<'a> HirToAstLifter<'a> {
         }
     }
 
-    /// Lifts a typechecked `hir::Package` back into a plain item list — the
+    /// Lifts a typechecked `hir::HirPackage` back into a plain item list — the
     /// shape every backend serializer already knows how to consume.
     /// Strict: propagates the first per-item lift error rather than
     /// tolerating it (unlike the lenient, per-item-tolerant

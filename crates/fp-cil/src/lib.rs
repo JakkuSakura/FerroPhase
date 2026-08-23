@@ -15,7 +15,7 @@ pub use parse::parse_cil_program;
 fn package_mir(
     workspace: &fp_core::ast::workspace::WorkspaceContext,
     package_id: &fp_core::ast::package::PackageId,
-) -> fp_core::error::Result<fp_core::mir::Program> {
+) -> fp_core::error::Result<fp_core::mir::MirProgram> {
     let package = workspace.compiled_package(package_id).ok_or_else(|| {
         fp_core::error::Error::from(format!("package `{package_id}` is unavailable"))
     })?;

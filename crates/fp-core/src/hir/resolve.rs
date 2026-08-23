@@ -1,7 +1,7 @@
 //! Central module-tree resolution structure, replacing the flat
 //! `module_defs`/`global_type_defs`/`global_value_defs`/`prelude_*`/
 //! `crate_roots` tables `HirGenerator` used to keep independently (see
-//! `docs/Resolution.md`). One `ModuleTree` lives per `hir::Package`.
+//! `docs/Resolution.md`). One `ModuleTree` lives per `hir::HirPackage`.
 //!
 //! Every operation is O(depth) or O(1) — never a scan over every
 //! definition in the program, unlike the flat-map design it replaces

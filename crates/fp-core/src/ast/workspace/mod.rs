@@ -14,9 +14,9 @@ use std::sync::Arc;
 /// results for one compilation session. Dependencies are published here by
 /// the compiler driver before their dependents are typed.
 ///
-/// Conceptually similar to `hir::Program` — both are "many packages,
+/// Conceptually similar to `hir::HirProgram` — both are "many packages,
 /// addressed by `PackageId`" containers — but at a different layer and
-/// lifecycle: `hir::Program` is one immutable snapshot of every package's
+/// lifecycle: `hir::HirProgram` is one immutable snapshot of every package's
 /// already-lowered HIR, while `WorkspaceContext` is the live, mutable
 /// registry compilation itself is built against (spanning every layer, not
 /// just HIR, and growing one `begin_package`/`import_package` call at a
@@ -86,8 +86,8 @@ pub struct WorkspaceContext {
     /// dispatch a cross-package `DefId` lookup itself (`MirLowering`, via
     /// `ComptimeRequest`) reads this directly (`hir_program()`, an `Rc`
     /// clone) instead of a caller pre-merging every dependency's
-    /// `def_map` into one pretend-single-package `Package` first.
-    hir_program: RefCell<Rc<crate::hir::Program>>,
+    /// `def_map` into one pretend-single-package `HirPackage` first.
+    hir_program: RefCell<Rc<crate::hir::HirProgram>>,
 }
 
 impl WorkspaceContext {
@@ -102,7 +102,7 @@ impl WorkspaceContext {
             sorted_packages_cache: RefCell::new(None),
             export_suffix_index: RefCell::new(None),
             impl_method_cache: RefCell::new(HashMap::new()),
-            hir_program: RefCell::new(Rc::new(crate::hir::Program::new())),
+            hir_program: RefCell::new(Rc::new(crate::hir::HirProgram::new())),
         }
     }
 
@@ -135,7 +135,7 @@ impl WorkspaceContext {
             sorted_packages_cache: RefCell::new(None),
             export_suffix_index: RefCell::new(None),
             impl_method_cache: RefCell::new(HashMap::new()),
-            hir_program: RefCell::new(Rc::new(crate::hir::Program::new())),
+            hir_program: RefCell::new(Rc::new(crate::hir::HirProgram::new())),
         }
     }
 
@@ -175,21 +175,21 @@ impl WorkspaceContext {
     }
 
     /// Incrementally folds a just-published package's own HIR into the
-    /// persistent `hir::Program` this workspace maintains — called
+    /// persistent `hir::HirProgram` this workspace maintains — called
     /// alongside `CompiledPackage::set_hir_program`, once per package, as
-    /// each one finishes. `Rc::make_mut` clones the `Program`'s own
+    /// each one finishes. `Rc::make_mut` clones the `HirProgram`'s own
     /// `HashMap` (never any package's items/def_map/def_paths) only if
     /// some earlier `hir_program()` caller is still holding the previous
     /// `Rc` — the ordinary case (nobody holding a stale snapshot) is a
     /// plain in-place insert.
-    pub fn publish_hir_program(&self, package: std::rc::Rc<crate::hir::Package>) {
+    pub fn publish_hir_program(&self, package: std::rc::Rc<crate::hir::HirPackage>) {
         let mut current = self.hir_program.borrow_mut();
         Rc::make_mut(&mut current).packages.insert(package.id, package);
     }
 
-    /// Returns this workspace's persistent `hir::Program` — an `Rc` clone,
+    /// Returns this workspace's persistent `hir::HirProgram` — an `Rc` clone,
     /// not a rebuild (see `publish_hir_program`, the only writer).
-    pub fn hir_program(&self) -> std::rc::Rc<crate::hir::Program> {
+    pub fn hir_program(&self) -> std::rc::Rc<crate::hir::HirProgram> {
         self.hir_program.borrow().clone()
     }
 
@@ -212,7 +212,7 @@ impl WorkspaceContext {
 
     /// Return immutable HIR definitions published by imported packages —
     /// the current, real mechanism `ast_to_hir::seed_workspace_definitions`
-    /// (`fp-backend`) merges into a package's own `hir::Package`, and that
+    /// (`fp-backend`) merges into a package's own `hir::HirPackage`, and that
     /// `fp-typing::hir_typeck` still calls directly at a few sites (see its
     /// own comments there for the narrower, targeted lookups it prefers
     /// elsewhere). Not legacy code awaiting deletion — copying each
@@ -221,9 +221,9 @@ impl WorkspaceContext {
     /// architectural option, but until that lands this is the only
     /// mechanism that makes cross-package references work at all.
     ///
-    /// Returns each dependency's `Rc<hir::Package>` (matching
+    /// Returns each dependency's `Rc<hir::HirPackage>` (matching
     /// `CompiledPackage::hir_program`'s own storage) rather than an owned
-    /// `Package` — this used to deep-clone every dependency's whole HIR
+    /// `HirPackage` — this used to deep-clone every dependency's whole HIR
     /// program (every item, `def_map`, `def_paths`, `module_tree`) on
     /// every single call; an `Rc` clone is O(1).
 
@@ -231,7 +231,7 @@ impl WorkspaceContext {
         &self,
     ) -> Vec<(
         QualifiedPath,
-        std::rc::Rc<crate::hir::Package>,
+        std::rc::Rc<crate::hir::HirPackage>,
         HashMap<String, crate::hir::Res>,
     )> {
         self.sorted_packages()
@@ -253,10 +253,10 @@ impl WorkspaceContext {
     /// package's *HIR* program rather than the AST-level `struct_defs`
     /// registry — used where the caller specifically needs a `hir::DefId`
     /// (the HIR type-checking pass). O(1) per package via
-    /// `hir::Package::struct_defs_by_name`, built once when the package's
+    /// `hir::HirPackage::struct_defs_by_name`, built once when the package's
     /// HIR is published (`CompiledPackage::set_hir_program`), unlike
     /// `hir_definitions()`, which clones every package's whole HIR
-    /// `Program` on every call.
+    /// `HirProgram` on every call.
     pub fn find_hir_struct_def_id(&self, name: &str) -> Option<crate::hir::DefId> {
         for package in self.sorted_packages() {
             let package = package.borrow();
@@ -276,13 +276,13 @@ impl WorkspaceContext {
     /// rule's HIR-level consequence), so `def_id.package_id` already names
     /// the *only* package that could hold it — go straight to it via
     /// `hir_packages` instead of searching every loaded package. Within
-    /// that one package, `hir::Package::impl_method_item_index` (built once
+    /// that one package, `hir::HirPackage::impl_method_item_index` (built once
     /// when its HIR is published, alongside `struct_defs_by_name` above)
     /// gives the enclosing impl item's index directly; only that impl's own
     /// method list is then scanned to clone the specific
     /// generics/self-type/items/function the caller needs — instead of
     /// `hir_definitions()`'s full clone of every dependency package's
-    /// whole HIR `Program`.
+    /// whole HIR `HirProgram`.
     ///
     /// Memoized by `def_id` in `impl_method_cache` (see its doc comment):
     /// a package's published HIR never changes, so the same `def_id`

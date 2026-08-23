@@ -424,15 +424,15 @@ pub struct FrontendBundle {
 #[derive(Debug, Clone)]
 pub struct MirBundle {
     pub frontend: FrontendBundle,
-    pub hir_program: fp_core::hir::Package,
-    pub mir_program: fp_core::mir::Program,
+    pub hir_program: fp_core::hir::HirPackage,
+    pub mir_program: fp_core::mir::MirProgram,
 }
 
 #[derive(Debug, Clone)]
 pub struct LirBundle {
     pub frontend: FrontendBundle,
-    pub hir_program: fp_core::hir::Package,
-    pub mir_program: fp_core::mir::Program,
+    pub hir_program: fp_core::hir::HirPackage,
+    pub mir_program: fp_core::mir::MirProgram,
     pub lir_program: fp_core::lir::LirProgram,
 }
 
@@ -559,7 +559,7 @@ struct LoweredProgram {
 
 
 impl LoweredProgram {
-    fn hir(&self) -> Result<fp_core::hir::Package> {
+    fn hir(&self) -> Result<fp_core::hir::HirPackage> {
         let package = self.compiled_package()?;
         let package = package.borrow();
         package.hir_program.as_deref().cloned().ok_or_else(|| {
@@ -570,7 +570,7 @@ impl LoweredProgram {
         })
     }
 
-    fn mir(&self) -> Result<fp_core::mir::Program> {
+    fn mir(&self) -> Result<fp_core::mir::MirProgram> {
         let package = self.compiled_package()?;
         let package = package.borrow();
         package.mir.program.clone().ok_or_else(|| {

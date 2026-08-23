@@ -930,7 +930,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
 /// Shapes `invoke`'s arguments the way each `CallKind` expects (e.g. `Print`/
 /// `Println` need their first argument rebuilt into a `FormatString` template),
 /// given an already-known `CallKind` — shared by both `intrinsic_call_from_invoke`
-/// (name-resolved) and any `DefId`-resolved caller (see `hir::Package::intrinsic_defs`/
+/// (name-resolved) and any `DefId`-resolved caller (see `hir::HirPackage::intrinsic_defs`/
 /// `op_defs`), so the two never disagree on how a given intrinsic's call is built.
 pub fn build_intrinsic_call(kind: CallKind, invoke: &ExprInvoke) -> Option<ExprIntrinsicCall> {
     let call = match kind {

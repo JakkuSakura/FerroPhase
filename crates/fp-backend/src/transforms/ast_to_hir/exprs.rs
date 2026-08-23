@@ -80,7 +80,7 @@ impl HirGenerator {
         // reclassification). Bare function-name calls are recognized in
         // `transform_invoke_to_hir`'s `Function` arm instead, purely from
         // the callee's *resolved* `DefId` and that declaration's own
-        // `#[op]`/`#[intrinsic]` attribute (`hir::Package::op_defs`/
+        // `#[op]`/`#[intrinsic]` attribute (`hir::HirPackage::op_defs`/
         // `intrinsic_defs`) — never by name/path-matching the call site,
         // which can't tell a builtin apart from a same-named real user
         // function (e.g. `std::json`'s own `print`, called from within

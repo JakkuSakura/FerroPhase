@@ -67,7 +67,7 @@ fn mangles_function_path_into_lir_name() {
 
     let return_ty = Ty::int(IntTy::I32);
     // `mir::Function.name` is already the fully-qualified name by the time
-    // HIR->MIR lowering constructs it (see `hir::Program::def_paths`) —
+    // HIR->MIR lowering constructs it (see `hir::HirProgram::def_paths`) —
     // there is no separate `path` field for LIR mangling to reconstruct
     // from.
     let function = mir::Function {
@@ -84,7 +84,7 @@ fn mangles_function_path_into_lir_name() {
         attrs: Vec::new(),
     };
 
-    let program = mir::Program {
+    let program = mir::MirProgram {
         items: vec![Item {
             mir_id: 0,
             kind: ItemKind::Function(function),
@@ -120,7 +120,7 @@ fn lowers_static_integer_initializer_into_global_constant() {
         mutability: Mutability::Not,
     };
 
-    let program = mir::Program {
+    let program = mir::MirProgram {
         items: vec![Item {
             mir_id: 0,
             kind: ItemKind::Static(static_item),
@@ -164,7 +164,7 @@ fn rejects_non_constant_static_initializer_operand() {
         mutability: Mutability::Not,
     };
 
-    let program = mir::Program {
+    let program = mir::MirProgram {
         items: vec![Item {
             mir_id: 0,
             kind: ItemKind::Static(static_item),
@@ -200,7 +200,7 @@ fn rejects_tuple_constant_with_non_tuple_ty() {
         mutability: Mutability::Not,
     };
 
-    let program = mir::Program {
+    let program = mir::MirProgram {
         items: vec![Item {
             mir_id: 0,
             kind: ItemKind::Static(static_item),
@@ -238,7 +238,7 @@ fn lowers_slice_static_into_bytes_with_relocation() {
         mutability: Mutability::Not,
     };
 
-    let program = mir::Program {
+    let program = mir::MirProgram {
         items: vec![Item {
             mir_id: 0,
             kind: ItemKind::Static(static_item),
@@ -347,7 +347,7 @@ fn lowers_single_case_switchint_as_equality_compare() {
         is_extern: false,
         attrs: Vec::new(),
     };
-    let program = mir::Program {
+    let program = mir::MirProgram {
         items: vec![Item {
             mir_id: 0,
             kind: ItemKind::Function(function),
@@ -426,7 +426,7 @@ fn rejects_slice_intrinsic_assignment_with_wrong_arity() {
         is_extern: false,
         attrs: Vec::new(),
     };
-    let program = mir::Program {
+    let program = mir::MirProgram {
         items: vec![Item {
             mir_id: 0,
             kind: ItemKind::Function(function),
@@ -484,7 +484,7 @@ fn rejects_unsupported_intrinsic_assignment() {
         is_extern: false,
         attrs: Vec::new(),
     };
-    let program = mir::Program {
+    let program = mir::MirProgram {
         items: vec![Item {
             mir_id: 0,
             kind: ItemKind::Function(function),
@@ -530,7 +530,7 @@ fn rejects_unhandled_mir_terminator() {
         is_extern: false,
         attrs: Vec::new(),
     };
-    let program = mir::Program {
+    let program = mir::MirProgram {
         items: vec![Item {
             mir_id: 0,
             kind: ItemKind::Function(function),
@@ -588,7 +588,7 @@ fn rejects_call_terminator_without_destination() {
         is_extern: false,
         attrs: Vec::new(),
     };
-    let program = mir::Program {
+    let program = mir::MirProgram {
         items: vec![Item {
             mir_id: 0,
             kind: ItemKind::Function(function),
@@ -648,7 +648,7 @@ fn rejects_downcast_place_projection() {
         is_extern: false,
         attrs: Vec::new(),
     };
-    let program = mir::Program {
+    let program = mir::MirProgram {
         items: vec![Item {
             mir_id: 0,
             kind: ItemKind::Function(function),

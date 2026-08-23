@@ -14,9 +14,9 @@ use crate::error::CompilerDriverError;
 use crate::{BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
 
 pub struct CompilerState {
-    hir: BTreeMap<HirId, hir::Package>,
+    hir: BTreeMap<HirId, hir::HirPackage>,
     hir_typeck: BTreeMap<HirId, PackageTypes>,
-    mir: BTreeMap<MirId, mir::Program>,
+    mir: BTreeMap<MirId, mir::MirProgram>,
     lir: BTreeMap<LirId, lir::LirProgram>,
     runtime_entrypoints: BTreeMap<LirId, hir::DefId>,
     const_values: BTreeMap<ConstValueId, Value>,
@@ -85,7 +85,7 @@ impl CompilerState {
         }
     }
 
-    pub fn insert_hir(&mut self, hir_id: HirId, hir: hir::Package) {
+    pub fn insert_hir(&mut self, hir_id: HirId, hir: hir::HirPackage) {
         self.hir.insert(hir_id, hir);
     }
 
@@ -93,7 +93,7 @@ impl CompilerState {
         self.hir_typeck.insert(hir_id, results);
     }
 
-    pub fn insert_mir(&mut self, mir_id: MirId, mir: mir::Program) {
+    pub fn insert_mir(&mut self, mir_id: MirId, mir: mir::MirProgram) {
         self.mir.insert(mir_id, mir);
     }
 
@@ -146,7 +146,7 @@ impl CompilerState {
         self.capabilities
     }
 
-    pub fn hir(&self, hir_id: &HirId) -> Result<&hir::Package, CompilerDriverError> {
+    pub fn hir(&self, hir_id: &HirId) -> Result<&hir::HirPackage, CompilerDriverError> {
         self.hir
             .get(hir_id)
             .ok_or_else(|| CompilerDriverError::MissingHir(hir_id.clone()))
@@ -167,7 +167,7 @@ impl CompilerState {
         self.hir_typeck.values()
     }
 
-    pub fn mir(&self, mir_id: &MirId) -> Result<&mir::Program, CompilerDriverError> {
+    pub fn mir(&self, mir_id: &MirId) -> Result<&mir::MirProgram, CompilerDriverError> {
         self.mir
             .get(mir_id)
             .ok_or_else(|| CompilerDriverError::MissingMir(mir_id.clone()))

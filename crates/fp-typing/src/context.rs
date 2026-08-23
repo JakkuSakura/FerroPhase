@@ -19,11 +19,11 @@ pub struct ComptimeRequest {
     /// naming it, and falls through to `program` for every other
     /// package's own `DefId`s. Replaces the old design of pre-merging
     /// every dependency's `def_map` into one pretend-single-package
-    /// `Package` (or, worse, deep-cloning that merged result) per request.
-    pub program: std::rc::Rc<fp_core::hir::Program>,
+    /// `HirPackage` (or, worse, deep-cloning that merged result) per request.
+    pub program: std::rc::Rc<fp_core::hir::HirProgram>,
     /// This request's own package — same `Rc` `TypingShared::program`
     /// already is, so this is an `Rc` clone, not a deep clone.
-    pub current: std::rc::Rc<fp_core::hir::Package>,
+    pub current: std::rc::Rc<fp_core::hir::HirPackage>,
     pub typeck_results: PackageTypes,
     /// This comptime unit's own identity — a `const { .. }` block's or
     /// `const fn`'s `DefId` (see `hir::ExprConstBlock::def_id`), which
@@ -167,8 +167,8 @@ mod tests {
             Box::pin(async { Ok(Value::unit()) })
         }));
         let request = ComptimeRequest {
-            program: std::rc::Rc::new(fp_core::hir::Program::new()),
-            current: std::rc::Rc::new(fp_core::hir::Package::new()),
+            program: std::rc::Rc::new(fp_core::hir::HirProgram::new()),
+            current: std::rc::Rc::new(fp_core::hir::HirPackage::new()),
             typeck_results: PackageTypes::default(),
             def_id: fp_core::hir::DefId::new(fp_core::hir::PackageId(0), 0),
             block: fp_core::hir::Block {

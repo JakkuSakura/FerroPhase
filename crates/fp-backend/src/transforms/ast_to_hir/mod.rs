@@ -103,7 +103,7 @@ pub struct HirGenerator {
     /// scratch copy, no mirror/extend step at `transform_package`'s return
     /// points (the earlier design this replaced kept separate `def_paths`/
     /// `op_defs`/`intrinsic_defs`/`type_alias_targets`/`placeholder_defs`
-    /// fields here and copied them into a freshly-built `hir::Package` at
+    /// fields here and copied them into a freshly-built `hir::HirPackage` at
     /// several return points instead).
     ///
     /// `module_tree` specifically replaces the old `module_defs:
@@ -115,7 +115,7 @@ pub struct HirGenerator {
     /// path, not just a bare `Res`) — the former `global_type_defs`/
     /// `global_value_defs`/`prelude_type_defs`/`prelude_value_defs` flat
     /// maps too. See `docs/Resolution.md`.
-    package: hir::Package,
+    package: hir::HirPackage,
     program_def_map: HashMap<hir::DefId, hir::Item>,
     /// Nonzero while lowering a function-local item statement (an
     /// `ast::BlockStmt::Item` — e.g. a `const`/`struct` declared inside a
@@ -658,7 +658,7 @@ impl HirGenerator {
             structural_value_defs: HashMap::new(),
             const_list_length_scopes: vec![HashMap::new()],
             synthetic_items: Vec::new(),
-            package: hir::Package::new(),
+            package: hir::HirPackage::new(),
             program_def_map: HashMap::new(),
             suppress_global_registration_depth: 0,
             local_item_debug_labels: HashMap::new(),
@@ -932,7 +932,7 @@ impl HirGenerator {
     }
 
     /// Records a definition's qualified path the first time its `DefId` is
-    /// registered (see `hir::Package::def_paths`). Uses `entry().or_insert`
+    /// registered (see `hir::HirPackage::def_paths`). Uses `entry().or_insert`
     /// rather than overwriting so that later re-registrations under an
     /// alias (`register_import_binding` re-registers an existing
     /// `Res::Def` under a `use ... as` name through these same helpers)
@@ -1241,7 +1241,7 @@ impl HirGenerator {
     /// redesign remains a real architectural option, but until that lands
     /// this is the only mechanism that makes cross-package references work
     /// at all.
-    fn seed_workspace_definitions(&mut self, program: &mut hir::Package) {
+    fn seed_workspace_definitions(&mut self, program: &mut hir::HirPackage) {
         let Some(ref workspace) = self.workspace else {
             return;
         };
@@ -1717,7 +1717,7 @@ impl HirGenerator {
 
     /// `self.package.op_defs` only ever holds THIS package's own tagged ops until
     /// `seed_workspace_definitions` merges every workspace dependency's
-    /// `op_defs` into the final output `hir::Package` — which happens only
+    /// `op_defs` into the final output `hir::HirPackage` — which happens only
     /// at the very end of `transform_package`, after all items/patterns
     /// have already been lowered. A pattern-lowering decision that needs to
     /// know whether a cross-package def (e.g. std's `Option::None`) is a
@@ -1797,7 +1797,7 @@ impl HirGenerator {
     }
 
     /// Transform an AST expression tree to HIR
-    pub fn transform_expr(&mut self, ast_expr: &ast::Expr) -> Result<hir::Package> {
+    pub fn transform_expr(&mut self, ast_expr: &ast::Expr) -> Result<hir::HirPackage> {
         let mut lowered_expr = ast_expr.clone();
         let (generated_items, closure_diagnostics) = lower_closures_in_expr(&mut lowered_expr)?;
         diagnostic_manager().add_diagnostics(closure_diagnostics);
@@ -1809,7 +1809,7 @@ impl HirGenerator {
         self.load_default_prelude_defs();
         self.predeclare_items(&generated_items, false)?;
 
-        let mut hir_program = hir::Package::new();
+        let mut hir_program = hir::HirPackage::new();
         self.program_def_map = HashMap::new();
 
         for item in &generated_items {
@@ -1871,7 +1871,7 @@ impl HirGenerator {
         &mut self,
         module_path: &fp_core::ast::path::QualifiedPath,
         items: &[ast::Item],
-    ) -> Result<hir::Package> {
+    ) -> Result<hir::HirPackage> {
         self.transform_module_inner(module_path, module_path.to_key(), items)
     }
 
@@ -1882,7 +1882,7 @@ impl HirGenerator {
         module_path: &fp_core::ast::path::QualifiedPath,
         items: &[ast::Item],
         typing_context: std::rc::Rc<fp_typing::TypingContext>,
-    ) -> Result<hir::Package> {
+    ) -> Result<hir::HirPackage> {
         let _ = typing_context;
         self.transform_module(module_path, items)
     }
@@ -1930,7 +1930,7 @@ impl HirGenerator {
     pub fn transform_package(
         &mut self,
         package: &fp_core::ast::package::CompiledPackage,
-    ) -> Result<hir::Package> {
+    ) -> Result<hir::HirPackage> {
         self.reset_file_context("<package>");
         self.prepare_lowering_state();
         // The module tree otherwise only ever gains a node via an explicit
@@ -2005,7 +2005,7 @@ impl HirGenerator {
         // declaration order, substitute the bindings, re-parse the result.
         let package_items = self.expand_item_macros(package_items);
 
-        let mut program = hir::Package::new();
+        let mut program = hir::HirPackage::new();
         self.seed_workspace_definitions(&mut program);
 
         // 1: definitions (tolerant — impls whose self-type isn't resolvable
@@ -2162,7 +2162,7 @@ impl HirGenerator {
     }
 
     /// Transform a query document node into HIR.
-    pub fn transform_query_document(&mut self, query: &QueryDocument) -> Result<hir::Package> {
+    pub fn transform_query_document(&mut self, query: &QueryDocument) -> Result<hir::HirPackage> {
         let file_name = query.name.as_deref().unwrap_or("<query>");
         self.reset_file_context(file_name);
         self.prepare_lowering_state();
@@ -2183,7 +2183,7 @@ impl HirGenerator {
             span,
         };
 
-        let mut program = hir::Package::new();
+        let mut program = hir::HirPackage::new();
         program.def_map.insert(item.def_id, item.clone());
         self.program_def_map.insert(item.def_id, item.clone());
         program.items.push(item);
@@ -2202,12 +2202,12 @@ impl HirGenerator {
         module_path: &fp_core::ast::path::QualifiedPath,
         file_label: P,
         items: &[ast::Item],
-    ) -> Result<hir::Package> {
+    ) -> Result<hir::HirPackage> {
         self.reset_file_context(file_label);
         self.prepare_lowering_state();
 
         self.module_path = module_path.clone();
-        let mut program = hir::Package::new();
+        let mut program = hir::HirPackage::new();
         self.seed_workspace_definitions(&mut program);
         self.load_default_prelude_defs();
         self.predeclare_items(items, false)?;
@@ -2308,7 +2308,7 @@ impl HirGenerator {
         })
     }
 
-    fn append_item(&mut self, program: &mut hir::Package, item: &ast::Item) -> Result<()> {
+    fn append_item(&mut self, program: &mut hir::HirPackage, item: &ast::Item) -> Result<()> {
         if !self.item_enabled_by_cfg(item) {
             return Ok(());
         }
@@ -2840,7 +2840,7 @@ impl HirGenerator {
                 // fp-kotlin) still work off the original, pristine
                 // `ast::Item` instead of anything lifted from this HIR
                 // shape — recording `def_id` in `placeholder_defs`
-                // (mirrored into `hir::Package::placeholder_defs`) lets
+                // (mirrored into `hir::HirPackage::placeholder_defs`) lets
                 // `HirToAstLifter::lift_items_by_path` skip lifting this
                 // item, so typed-splice (`typecheck_package`) falls back to
                 // the real trait declaration for codegen. This real

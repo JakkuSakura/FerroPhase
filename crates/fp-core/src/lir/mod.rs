@@ -318,7 +318,7 @@ impl LirWorkspace {
 }
 
 /// One compiled package's LIR content — pairs with `LirProgram` the same way
-/// `hir::Package`/`mir::MirPackage` pair with their own layer's `Program`
+/// `hir::HirPackage`/`mir::MirPackage` pair with their own layer's `Program`
 /// type. `own_artifacts` is always single-package (see `LirWorkspace`'s doc
 /// comment) — built fresh from just this package's own compiled units by
 /// `CompilerDriver::publish_lir_units`, never merged with a dependency's.

@@ -1,8 +1,8 @@
 use fp_backend::transformations::MirLowering;
 use fp_core::ast::{TypeInt, TypePrimitive};
 use fp_core::hir::{
-    self, Expr, ExprKind, Function, FunctionSig, Generics, Item, ItemKind, Lit, Pat, PatKind, Path,
-    PathSegment, Program, Res, Symbol, TypeExpr, TypeExprKind, Visibility,
+    self, Expr, ExprKind, Function, FunctionSig, Generics, HirPackage, Item, ItemKind, Lit, Pat,
+    PatKind, Path, PathSegment, Res, Symbol, TypeExpr, TypeExprKind, Visibility,
 };
 use fp_core::mir::{
     self, ConstantKind, ItemKind as MirItemKind, Operand, Rvalue, StatementKind, TerminatorKind,
@@ -50,8 +50,8 @@ fn literal_expr(hir_id: u32, value: i64) -> Expr {
     Expr::new(hid(hir_id), ExprKind::Literal(Lit::Integer(value)), span())
 }
 
-fn program_with_items(items: Vec<Item>) -> Program {
-    let mut program = Program::new();
+fn program_with_items(items: Vec<Item>) -> HirPackage {
+    let mut program = HirPackage::new();
     program.items = items.clone();
     for item in items {
         program.def_map.insert(item.def_id, item);

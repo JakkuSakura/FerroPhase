@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 use fp_core::hir::{
-    self, Block, Expr, ExprKind, Function, FunctionSig, Generics, Item, ItemKind, Program,
+    self, Block, Expr, ExprKind, Function, FunctionSig, Generics, HirPackage, Item, ItemKind,
     TypeExpr, TypeExprKind,
 };
 use fp_core::span::Span;
@@ -52,8 +52,8 @@ pub fn function_item(name: &str, body: Expr) -> Item {
     }
 }
 
-pub fn program_with_items(items: Vec<Item>) -> Program {
-    let mut program = Program::new();
+pub fn program_with_items(items: Vec<Item>) -> HirPackage {
+    let mut program = HirPackage::new();
     program.items = items;
     program.next_hir_id = program.items.len() as u32;
     program

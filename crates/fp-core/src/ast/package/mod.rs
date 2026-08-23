@@ -160,7 +160,7 @@ pub struct PackageItem {
 /// (`struct_defs`/`enum_defs`/`function_sigs`/...). One type across both
 /// stages rather than two near-identical ones: the typecheck-derived fields
 /// are simply empty until typechecking fills them in. Pairs with
-/// `hir::Package`/`mir::MirPackage`/`lir::LirPackage` as this layer's
+/// `hir::HirPackage`/`mir::MirPackage`/`lir::LirPackage` as this layer's
 /// `XxxPackage` (there's no separate `AstProgram` — `items` is already the
 /// AST layer's un-lowered content, with no further flattening step the way
 /// HIR/MIR/LIR each need before backends consume them).
@@ -325,9 +325,9 @@ pub struct CompiledPackage {
     /// HIR definitions published by this package. `Rc`, not owned — every
     /// dependent package's `WorkspaceContext::hir_definitions()` call
     /// clones this once per package it depends on; cloning the `Rc` is
-    /// O(1), unlike cloning the whole `Package` it points to (every item,
+    /// O(1), unlike cloning the whole `HirPackage` it points to (every item,
     /// `def_map`, `def_paths`, `module_tree`) on every single call.
-    pub hir_program: Option<std::rc::Rc<crate::hir::Package>>,
+    pub hir_program: Option<std::rc::Rc<crate::hir::HirPackage>>,
 
     /// For each item in `items` (keyed by its own qualified path), the
     /// qualified paths of every other definition it references
@@ -365,8 +365,8 @@ impl CompiledPackage {
     }
 
     /// Publishes this package's HIR program, building its derived lookup
-    /// indices (`hir::Package::index_derived_lookups`) in the same pass.
-    pub fn set_hir_program(&mut self, mut program: crate::hir::Package) {
+    /// indices (`hir::HirPackage::index_derived_lookups`) in the same pass.
+    pub fn set_hir_program(&mut self, mut program: crate::hir::HirPackage) {
         program.index_derived_lookups();
         self.hir_program = Some(std::rc::Rc::new(program));
     }
@@ -408,7 +408,7 @@ pub fn package_source_from_compiled(
 /// the driver-state lookup that produces the `CompiledPackage` in the
 /// first place) and `WorkspaceContext` (which already holds one) can
 /// share this without either depending on the other. See
-/// `crate::hir::Package::def_paths`'s doc comment for why `sig.name` is
+/// `crate::hir::HirPackage::def_paths`'s doc comment for why `sig.name` is
 /// always the bare, local identifier and disambiguation instead relies on
 /// the recorded def path.
 ///

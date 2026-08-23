@@ -588,7 +588,7 @@ impl CompilerDriver {
                 .borrow_mut()
                 .set_hir_program(self.state.borrow().hir(&hir_id)?.clone());
             // Fold this package's own HIR into the workspace's persistent
-            // `hir::Program` (see `publish_hir_program`'s doc comment) —
+            // `hir::HirProgram` (see `publish_hir_program`'s doc comment) —
             // an `Rc` clone of what `set_hir_program` just stored, not
             // another deep clone.
             if let Some(hir_program) = package.borrow().hir_program.clone() {
@@ -906,8 +906,8 @@ impl CompilerDriver {
     /// return from here.
     async fn type_check_program(
         &mut self,
-        program: hir::Package,
-    ) -> fp_core::Result<(hir::Package, fp_core::hir::PackageTypes)> {
+        program: hir::HirPackage,
+    ) -> fp_core::Result<(hir::HirPackage, fp_core::hir::PackageTypes)> {
         let context = self.state.borrow().typing_ctx.clone();
         let env_ctx = self.state.borrow().workspace.clone();
         let executor = self.state.borrow().tasks.clone();
@@ -1049,7 +1049,7 @@ impl CompilerDriver {
         // exact values `lower_to_mir_for_comptime_request_with` needs —
         // it used to read them back out of `self.state` via a fixed
         // `"__comptime_probe__"` key instead, which meant stashing a
-        // clone of the whole `hir::Package` into that `BTreeMap` (and
+        // clone of the whole `hir::HirPackage` into that `BTreeMap` (and
         // dropping whatever the *previous* comptime request left there
         // under the same key) on every single `const { .. }` block, only
         // to immediately clone it right back out again. Passing them
@@ -1433,7 +1433,7 @@ impl CompilerDriver {
     /// own doc comment), never the whole package. Everything downstream
     /// (diagnostics, layout extraction) is identical and reused verbatim,
     /// since it only reads from `lowering`'s accumulated state and the
-    /// returned `mir::Program`, never from `hir.items` directly.
+    /// returned `mir::MirProgram`, never from `hir.items` directly.
     async fn lower_to_mir_for_comptime_request_with(
         state: &Rc<RefCell<CompilerState>>,
         path: &FullyQualifiedPath,
@@ -1454,7 +1454,7 @@ impl CompilerDriver {
         // own final, self-sufficient snapshot (see `ComptimeRequest`'s
         // doc comment) — read directly, not round-tripped through
         // `self.state`'s HIR store first (that used to force a whole
-        // `hir::Package` clone into a fixed state-map key just to
+        // `hir::HirPackage` clone into a fixed state-map key just to
         // immediately clone it back out again).
         let mut lowering = MirLowering::new()
             .with_typeck_results(&request.typeck_results)

@@ -50,7 +50,7 @@ fn builds_function_signature_and_locals() {
 
     bodies.insert(mir::BodyId::new(0), body);
 
-    let mir_program = mir::Program {
+    let mir_program = mir::MirProgram {
         items: vec![mir::Item {
             mir_id: 0,
             kind: mir::ItemKind::Function(mir::Function {
@@ -157,7 +157,7 @@ fn lowers_general_call_and_branches() {
         attrs: Vec::new(),
     };
 
-    let mir_program = mir::Program {
+    let mir_program = mir::MirProgram {
         items: vec![
             mir::Item {
                 mir_id: 1,

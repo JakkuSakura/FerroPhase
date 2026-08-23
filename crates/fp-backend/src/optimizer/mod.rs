@@ -96,7 +96,7 @@ pub struct OptimizationReport {
 
 pub trait MirPass {
     fn name(&self) -> MirPassName;
-    fn run(&self, program: &mut mir::Program, engine: &mut MirQueryEngine) -> Result<usize, Error>;
+    fn run(&self, program: &mut mir::MirProgram, engine: &mut MirQueryEngine) -> Result<usize, Error>;
 }
 
 #[derive(Default)]
@@ -125,7 +125,7 @@ impl MirOptimizer {
 
     pub fn apply_plan(
         &self,
-        program: &mut mir::Program,
+        program: &mut mir::MirProgram,
         plan: &OptimizationPlan,
     ) -> Result<OptimizationReport, Error> {
         let mut report = OptimizationReport::default();
@@ -181,7 +181,7 @@ impl MirQueryEngine {
 
     pub(crate) fn propagation(
         &mut self,
-        program: &mir::Program,
+        program: &mir::MirProgram,
         body_id: mir::BodyId,
     ) -> Result<&BodyPropagation, Error> {
         if !self.propagation.contains_key(&body_id) {
@@ -197,7 +197,7 @@ impl MirQueryEngine {
 
     pub(crate) fn liveness(
         &mut self,
-        program: &mir::Program,
+        program: &mir::MirProgram,
         body_id: mir::BodyId,
     ) -> Result<&BodyLiveness, Error> {
         if !self.liveness.contains_key(&body_id) {
@@ -640,7 +640,7 @@ impl MirPass for ConstFoldPass {
 
     fn run(
         &self,
-        program: &mut mir::Program,
+        program: &mut mir::MirProgram,
         _engine: &mut MirQueryEngine,
     ) -> Result<usize, Error> {
         let mut changes = 0;
@@ -671,7 +671,7 @@ impl MirPass for ConstPropagatePass {
         MirPassName::ConstPropagate
     }
 
-    fn run(&self, program: &mut mir::Program, engine: &mut MirQueryEngine) -> Result<usize, Error> {
+    fn run(&self, program: &mut mir::MirProgram, engine: &mut MirQueryEngine) -> Result<usize, Error> {
         let mut changes = 0;
 
         let body_ids: Vec<_> = program.bodies.keys().copied().collect();
@@ -707,7 +707,7 @@ impl MirPass for CopyPropagatePass {
         MirPassName::CopyPropagate
     }
 
-    fn run(&self, program: &mut mir::Program, engine: &mut MirQueryEngine) -> Result<usize, Error> {
+    fn run(&self, program: &mut mir::MirProgram, engine: &mut MirQueryEngine) -> Result<usize, Error> {
         let mut changes = 0;
 
         let body_ids: Vec<_> = program.bodies.keys().copied().collect();
@@ -743,7 +743,7 @@ impl MirPass for SimplifyBranchesPass {
         MirPassName::SimplifyBranches
     }
 
-    fn run(&self, program: &mut mir::Program, engine: &mut MirQueryEngine) -> Result<usize, Error> {
+    fn run(&self, program: &mut mir::MirProgram, engine: &mut MirQueryEngine) -> Result<usize, Error> {
         let mut changes = 0;
 
         let body_ids: Vec<_> = program.bodies.keys().copied().collect();
@@ -807,7 +807,7 @@ impl MirPass for DeadStorePass {
         MirPassName::DeadStore
     }
 
-    fn run(&self, program: &mut mir::Program, engine: &mut MirQueryEngine) -> Result<usize, Error> {
+    fn run(&self, program: &mut mir::MirProgram, engine: &mut MirQueryEngine) -> Result<usize, Error> {
         let mut changes = 0;
 
         let body_ids: Vec<_> = program.bodies.keys().copied().collect();
@@ -894,7 +894,7 @@ impl MirPass for RemoveStoragePass {
 
     fn run(
         &self,
-        program: &mut mir::Program,
+        program: &mut mir::MirProgram,
         _engine: &mut MirQueryEngine,
     ) -> Result<usize, Error> {
         let mut changes = 0;
@@ -925,7 +925,7 @@ impl MirPass for RemoveNopPass {
 
     fn run(
         &self,
-        program: &mut mir::Program,
+        program: &mut mir::MirProgram,
         _engine: &mut MirQueryEngine,
     ) -> Result<usize, Error> {
         let mut changes = 0;

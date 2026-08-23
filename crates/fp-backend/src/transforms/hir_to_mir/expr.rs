@@ -588,7 +588,7 @@ pub struct MirLowering {
     typeck_generic_call_args: HashMap<hir::HirId, Vec<Ty>>,
     typeck_generic_method_args: HashMap<hir::HirId, Vec<Ty>>,
     adt_defs: HashMap<hir::DefId, mir::ty::AdtDef>,
-    /// Snapshot of the whole-workspace `hir::Package.def_map`/`def_paths`
+    /// Snapshot of the whole-workspace `hir::HirPackage.def_map`/`def_paths`
     /// (local items + every dependency's, via `seed_workspace_definitions`),
     /// taken once at the top of `lower_program`/`transform`. Lets
     /// `compute_adt_layout` look up and lazily register a foreign
@@ -606,7 +606,7 @@ pub struct MirLowering {
     /// every lookup method (`hir_item`, `hir_def_path`, `hir_all_items`)
     /// checks `current_package` first and falls through to this map for
     /// every other package's own `DefId`s.
-    hir_program: std::rc::Rc<hir::Program>,
+    hir_program: std::rc::Rc<hir::HirProgram>,
     /// This package's own HIR — see `hir_program`'s doc comment for why
     /// it's kept separate rather than folded in. Only *this* package's
     /// own structs/enums/consts/impls get registered by the registration
@@ -614,7 +614,7 @@ pub struct MirLowering {
     /// reference by signature (the dependency compiles its own body
     /// separately; see `ensure_function_lowered`/`ensure_method_lowered`),
     /// never to lower a body from here.
-    current_package: std::rc::Rc<hir::Package>,
+    current_package: std::rc::Rc<hir::HirPackage>,
     current_package_id: Option<hir::PackageId>,
 }
 
@@ -704,8 +704,8 @@ impl MirLowering {
             typeck_generic_call_args: HashMap::new(),
             typeck_generic_method_args: HashMap::new(),
             adt_defs: HashMap::new(),
-            hir_program: std::rc::Rc::new(hir::Program::new()),
-            current_package: std::rc::Rc::new(hir::Package::new()),
+            hir_program: std::rc::Rc::new(hir::HirProgram::new()),
+            current_package: std::rc::Rc::new(hir::HirPackage::new()),
             current_package_id: None,
         }
     }
@@ -751,7 +751,7 @@ impl MirLowering {
         )
     }
 
-    pub fn transform(&mut self, hir_program: hir::Package) -> Result<mir::Program> {
+    pub fn transform(&mut self, hir_program: hir::HirPackage) -> Result<mir::MirProgram> {
         let hir_program = std::rc::Rc::new(hir_program);
         self.current_package = hir_program.clone();
         self.current_package_id = Some(hir_program.id);
@@ -770,7 +770,7 @@ impl MirLowering {
     /// cached by their typed `(DefId, SubstsRef)` identity. Keeping this boundary
     /// async lets the compiler driver own executor progress without making
     /// every recursive expression operation an artificial future.
-    pub async fn transform_async(&mut self, hir_program: hir::Package) -> Result<mir::Program> {
+    pub async fn transform_async(&mut self, hir_program: hir::HirPackage) -> Result<mir::MirProgram> {
         self.transform(hir_program)
     }
 
@@ -790,7 +790,7 @@ impl MirLowering {
     pub fn transform_comptime_request(
         &mut self,
         request: &fp_typing::ComptimeRequest,
-    ) -> Result<mir::Program> {
+    ) -> Result<mir::MirProgram> {
         // Sharing the caller's own `Rc`s (`ComptimeRequest::program`/
         // `current` are already `Rc`s) instead of cloning `def_map`/
         // `def_paths` out of them — every item, keyed by `DefId`, across
@@ -887,7 +887,7 @@ impl MirLowering {
             body.span,
         );
 
-        let mut mir_program = mir::Program::new();
+        let mut mir_program = mir::MirProgram::new();
         self.flush_extra_items(&mut mir_program);
         self.append_runtime_stubs(&mut mir_program);
 
@@ -1029,7 +1029,7 @@ impl MirLowering {
         }
     }
 
-    fn compute_body_locals(&mut self, program: &mir::Program, body_id: mir::BodyId) {
+    fn compute_body_locals(&mut self, program: &mir::MirProgram, body_id: mir::BodyId) {
         if let Some(body) = program.bodies.get(&body_id) {
             for local in &body.locals {
                 self.compute_ty_layout(&local.ty, Span::null());
@@ -1158,7 +1158,7 @@ impl MirLowering {
         }
     }
 
-    pub fn walk_program_types_for_layouts(&mut self, program: &mir::Program) {
+    pub fn walk_program_types_for_layouts(&mut self, program: &mir::MirProgram) {
         for item in &program.items {
             match &item.kind {
                 mir::ItemKind::Function(func) => {
@@ -1350,11 +1350,11 @@ impl MirLowering {
         format!("__fp_comptime_const_{}_{}", name.as_str(), hash)
     }
 
-    fn lower_program(&mut self, program: &hir::Package) -> Result<mir::Program> {
+    fn lower_program(&mut self, program: &hir::HirPackage) -> Result<mir::MirProgram> {
         // `self.current_package`/`current_package_id` are already set by
         // `transform` (the only caller) before this runs.
         self.current_package_id = program.items.first().map(|item| item.def_id.package_id);
-        let mut mir_program = mir::Program::new();
+        let mut mir_program = mir::MirProgram::new();
         // Same "seed from `.items` alone can collide with a local const's
         // own real DefId" fix as `transform_comptime_request` — see that
         // function's own comment for the full rationale.
@@ -1473,7 +1473,7 @@ impl MirLowering {
         mir_item
     }
 
-    fn append_runtime_stubs(&mut self, program: &mut mir::Program) {
+    fn append_runtime_stubs(&mut self, program: &mut mir::MirProgram) {
         let span = Span::new(0, 0, 0);
         for name in self.synthetic_runtime_functions.clone() {
             // `printf` is only ever called through the dedicated
@@ -1540,7 +1540,7 @@ impl MirLowering {
         matches!(name, "printf")
     }
 
-    fn flush_extra_items(&mut self, program: &mut mir::Program) {
+    fn flush_extra_items(&mut self, program: &mut mir::MirProgram) {
         for item in self.extra_items.drain(..) {
             program.items.push(item);
         }
@@ -1559,7 +1559,7 @@ impl MirLowering {
     /// plus the const-registration pass every item's body may depend on
     /// regardless of lowering order — the only thing this doesn't do
     /// up front is lower any function/method/const *body*.
-    pub fn seed_package(&mut self, hir_program: hir::Package) {
+    pub fn seed_package(&mut self, hir_program: hir::HirPackage) {
         let hir_program = std::rc::Rc::new(hir_program);
         self.current_package = hir_program.clone();
         self.current_package_id = Some(hir_program.id);
@@ -1655,11 +1655,11 @@ impl MirLowering {
     }
 
     /// Assembles everything `ensure_item_lowered` has pulled in so far into
-    /// a `mir::Program` — call once after the per-`DefId` loop finishes.
+    /// a `mir::MirProgram` — call once after the per-`DefId` loop finishes.
     /// Mirrors `lower_program`'s own tail (`flush_extra_items` +
     /// `append_runtime_stubs`) verbatim.
-    pub fn take_program(&mut self) -> mir::Program {
-        let mut mir_program = mir::Program::new();
+    pub fn take_program(&mut self) -> mir::MirProgram {
+        let mut mir_program = mir::MirProgram::new();
         self.flush_extra_items(&mut mir_program);
         self.append_runtime_stubs(&mut mir_program);
         mir_program
@@ -5421,13 +5421,13 @@ impl MirLowering {
     }
 
     /// Qualified display name for a definition, sourced from
-    /// `hir::Package::def_paths` (the item's `name` field is always bare —
+    /// `hir::HirPackage::def_paths` (the item's `name` field is always bare —
     /// see that table's doc comment). Falls back to the bare name itself
     /// when no path is recorded (e.g. synthetic items). Takes the
-    /// `def_paths` table directly (not the whole `&hir::Package`) so
+    /// `def_paths` table directly (not the whole `&hir::HirPackage`) so
     /// `register_struct`/`register_enum` can be called from a context that
     /// only has `def_paths` on hand (`compute_adt_layout`'s lazy foreign-type
-    /// lookup, which runs after the original `hir::Package` is out of scope).
+    /// lookup, which runs after the original `hir::HirPackage` is out of scope).
     /// Dispatches through `hir_def_path` (checks `current_package` first,
     /// then every package in `hir_program` — see its own doc comment),
     /// so callers no longer need to carry around whichever specific
@@ -5585,7 +5585,7 @@ impl MirLowering {
 
     // Resolve field types and layouts only after every canonical ADT identity
     // has been registered; dependency definitions arrive in hash-map order.
-    fn finalize_adt_definitions(&mut self, program: &hir::Package) {
+    fn finalize_adt_definitions(&mut self, program: &hir::HirPackage) {
         for item in &program.items {
             match &item.kind {
                 hir::ItemKind::Struct(strukt) => {
@@ -6767,13 +6767,13 @@ impl MirLowering {
         &mut self,
         item: &hir::Item,
         impl_block: &hir::Impl,
-        output: Option<&mut mir::Program>,
+        output: Option<&mut mir::MirProgram>,
     ) -> Result<()> {
         let mut output = output;
         let mut emit_function =
             |this: &mut Self, mir_item: mir::Item, body_id: mir::BodyId, body: mir::Body| {
                 if let Some(program_ref) = output.as_mut() {
-                    let program: &mut mir::Program = &mut **program_ref;
+                    let program: &mut mir::MirProgram = &mut **program_ref;
                     program.items.push(mir_item);
                     program.bodies.insert(body_id, body);
                 } else {

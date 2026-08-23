@@ -2,7 +2,7 @@
 use fp_core::mir::ty::{IntTy, Ty};
 use fp_core::mir::{
     self, BasicBlockData, Body, BodyId, Function, FunctionSig, Item, ItemKind, LocalDecl,
-    LocalInfo, Mutability, Program, Statement, StatementKind, Terminator, TerminatorKind,
+    LocalInfo, MirProgram, Mutability, Statement, StatementKind, Terminator, TerminatorKind,
 };
 use fp_core::span::Span;
 
@@ -10,8 +10,8 @@ fn int_ty() -> Ty {
     Ty::int(IntTy::I32)
 }
 
-pub fn empty_program() -> Program {
-    Program::new()
+pub fn empty_program() -> MirProgram {
+    MirProgram::new()
 }
 
 pub fn return_block() -> BasicBlockData {

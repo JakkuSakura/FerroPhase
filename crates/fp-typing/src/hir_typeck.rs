@@ -26,11 +26,11 @@ pub struct TypingShared {
     /// inserted under its own `PackageId` at construction (see `new`).
     /// Both `HirId` and `DefId` already carry their owning `PackageId` (see
     /// `hir::DefId`'s own doc comment), so any lookup by id — same-package
-    /// or cross-package alike — routes through this one `Program` via
-    /// `Program::item`/`def_path`/etc.; there's no separate same-package
+    /// or cross-package alike — routes through this one `HirProgram` via
+    /// `HirProgram::item`/`def_path`/etc.; there's no separate same-package
     /// (`program.def_map`) vs cross-package (a `WorkspaceContext` handle)
     /// lookup path to keep in sync.
-    program: Rc<hir::Program>,
+    program: Rc<hir::HirProgram>,
     /// Which entry in `program` is the package actually being checked —
     /// needed for iterating just this package's own items (the initial
     /// per-item spawn loop) and for snapshotting the package's own,
@@ -64,7 +64,7 @@ pub struct TypingShared {
     /// the vendored std) re-typechecked its own signature from scratch on
     /// every single call, the same class of O(workspace) blowup already
     /// fixed once for `method_output`'s own fast-reject candidate search
-    /// (`hir::Program::impls_for_adt`) but left unaddressed here.
+    /// (`hir::HirProgram::impls_for_adt`) but left unaddressed here.
     function_signature_cache: RefCell<HashMap<hir::HirId, Ty>>,
     /// Memoized `check_type_expr(&impl_item.self_ty)` results, keyed by
     /// the impl's own `self_ty` `TypeExpr`'s `HirId` (stable per declared
@@ -121,14 +121,14 @@ enum ParamSlot {
 }
 
 impl TypingShared {
-    /// Builds the unified `program: Rc<hir::Program>` by cloning
+    /// Builds the unified `program: Rc<hir::HirProgram>` by cloning
     /// `dependency_program` (a cheap `Rc`-map clone, not a deep one — see
-    /// `hir::Program`'s own `packages` field) and adding `current_package`
+    /// `hir::HirProgram`'s own `packages` field) and adding `current_package`
     /// (still in progress, not yet published) into it last, via
-    /// `Program::add_package`.
+    /// `HirProgram::add_package`.
     pub fn new(
-        current_package: hir::Package,
-        dependency_program: Option<Rc<hir::Program>>,
+        current_package: hir::HirPackage,
+        dependency_program: Option<Rc<hir::HirProgram>>,
         typing_context: Rc<TypingContext>,
         executor: ExecutorHandle,
     ) -> Rc<Self> {
@@ -153,7 +153,7 @@ impl TypingShared {
     /// Read-only access to the package actually being checked — for
     /// diagnostics (e.g. resolving a stalled task's key back to a
     /// human-readable item path) and same-package-only scans.
-    pub fn program(&self) -> &hir::Package {
+    pub fn program(&self) -> &hir::HirPackage {
         self.program
             .package(self.current_package)
             .expect("current_package is always inserted into program at construction")
@@ -162,7 +162,7 @@ impl TypingShared {
     /// An owned `Rc` clone of the package actually being checked — for
     /// callers that need to hold onto it past `self`'s own lifetime (e.g.
     /// `ComptimeRequest.current`).
-    fn program_rc(&self) -> Rc<hir::Package> {
+    fn program_rc(&self) -> Rc<hir::HirPackage> {
         self.program
             .packages
             .get(&self.current_package)
@@ -338,10 +338,10 @@ fn resolve_top_level_def_id(shared: &TypingShared, def_id: hir::DefId) -> hir::D
         .unwrap_or(def_id)
 }
 
-/// Read the final `(hir::Package, PackageTypes)` out of `shared` — only
+/// Read the final `(hir::HirPackage, PackageTypes)` out of `shared` — only
 /// meaningful once every per-item task (see `spawn_item_task`) has
 /// settled (i.e. its returned future resolved).
-pub fn finish_package_typecheck(shared: &Rc<TypingShared>) -> (hir::Package, PackageTypes) {
+pub fn finish_package_typecheck(shared: &Rc<TypingShared>) -> (hir::HirPackage, PackageTypes) {
     (shared.program().clone(), shared.results.borrow().clone())
 }
 
@@ -1870,7 +1870,7 @@ impl HirTypeChecker {
         }
         // A transparent type alias (`type __darwin_useconds_t =
         // __uint32_t;`) — HIR has no first-class item for one (see
-        // `hir::Package::type_alias_targets`'s doc comment), so its
+        // `hir::HirPackage::type_alias_targets`'s doc comment), so its
         // `DefId` has no `def_map` entry to look up; expand it in place by
         // checking its already-lowered target type expression instead.
         if let Some(target) = self.shared.program.type_alias_target(def_id).cloned() {
@@ -2106,7 +2106,7 @@ impl HirTypeChecker {
     /// standard-library collection types that a synthesized function
     /// signature (see `collection_constructor_signature`) needs to name as
     /// its output type, since normal path resolution never runs for them.
-    /// O(1) per package via `hir::Package::struct_defs_by_name` (built once
+    /// O(1) per package via `hir::HirPackage::struct_defs_by_name` (built once
     /// per package, not scanned per lookup).
     fn well_known_struct_def_id(&self, name: &str) -> Option<hir::DefId> {
         self.shared.program.struct_def_id(name)
@@ -2201,7 +2201,7 @@ impl HirTypeChecker {
                 return result;
             }
             // Any package's own `impl_method_item_index` (built once per
-            // package, see `hir::Package::index_derived_lookups`) gives the
+            // package, see `hir::HirPackage::index_derived_lookups`) gives the
             // enclosing impl's item index directly — same-package or
             // cross-package alike, since `def_id` already carries the
             // owning `package_id` and `self.shared.program` now holds
@@ -2935,11 +2935,11 @@ impl HirTypeChecker {
             TyKind::Adt(receiver, _) => Some(receiver.did),
             _ => None,
         };
-        // `hir::Program::impls_for_adt` is the fast-reject path: an ADT
+        // `hir::HirProgram::impls_for_adt` is the fast-reject path: an ADT
         // receiver can only ever match an impl whose self-type also
         // resolves to `TyKind::Adt` with the same `did` — for a
         // non-resolved-ADT receiver, every impl in the workspace is a
-        // candidate (`all_impls`). Program cloned out first so the
+        // candidate (`all_impls`). HirProgram cloned out first so the
         // borrow doesn't outlive the `&mut self` calls below.
         let program = self.shared.program.clone();
         let candidates: Vec<hir::Item> = match receiver_def {
@@ -3104,7 +3104,7 @@ impl HirTypeChecker {
         // An ADT receiver can only ever match an impl whose self-type also
         // resolves to `TyKind::Adt` with the same `did` (see the
         // `matches_receiver` match below) — go straight to that bucket via
-        // `hir::Program::impls_for_adt` instead of fully type-checking
+        // `hir::HirProgram::impls_for_adt` instead of fully type-checking
         // every impl's self-type in the workspace. A non-ADT receiver
         // (rare: extension impls on primitives/tuples/etc.) falls back to
         // checking every impl, exactly as before. `program` is cloned out
@@ -3580,7 +3580,7 @@ impl HirTypeChecker {
     ) -> Option<(hir::Item, hir::EnumVariant)> {
         // `enum_variant_item_index` is a direct `variant_id -> owning enum
         // item's DefId` lookup (maintained incrementally, see
-        // `hir::Package::add_item`), so this never scans package items to
+        // `hir::HirPackage::add_item`), so this never scans package items to
         // find the owning enum.
         self.shared
             .program
@@ -4149,7 +4149,7 @@ mod tests {
     /// single-future entry point — spawns one task per top-level item (see
     /// `spawn_item_task`) and drives them to completion on a standalone
     /// executor (no driver, no comptime requests expected in these tests).
-    fn typecheck_program_sync(program: hir::Package) -> Result<(hir::Package, PackageTypes)> {
+    fn typecheck_program_sync(program: hir::HirPackage) -> Result<(hir::HirPackage, PackageTypes)> {
         let executor = fp_core::executor::CompilerExecutor::new().handle();
         let shared = TypingShared::new(program, None, Rc::new(TypingContext::new()), executor);
         let item_ids: Vec<_> = shared.program().items.iter().map(|item| item.def_id).collect();
@@ -4257,7 +4257,7 @@ mod tests {
             span: fp_core::span::Span::null(),
         };
 
-        let mut program = hir::Package::new();
+        let mut program = hir::HirPackage::new();
         // Textual order: A first, B second -- A's own task must await B's
         // on demand rather than assuming it's already been checked.
         program.items.push(a_item.clone());
@@ -4284,7 +4284,7 @@ mod tests {
             kind: hir::ExprKind::Literal(hir::Lit::Integer(4)),
             span: fp_core::span::Span::null(),
         };
-        let mut program = hir::Package::new();
+        let mut program = hir::HirPackage::new();
         let item = hir::Item {
             hir_id: hid(1),
             def_id: hir::DefId::local(1),
@@ -4327,7 +4327,7 @@ mod tests {
             ),
             span: fp_core::span::Span::null(),
         };
-        let mut program = hir::Package::new();
+        let mut program = hir::HirPackage::new();
         let item = hir::Item {
             hir_id: hid(1),
             def_id: hir::DefId::local(1),
@@ -4396,7 +4396,7 @@ mod tests {
         let f16_item = let_item(f16_def_id, 10, "f16_value", "f16");
         let f128_item = let_item(f128_def_id, 20, "f128_value", "f128");
 
-        let mut program = hir::Package::new();
+        let mut program = hir::HirPackage::new();
         program.items.push(f16_item.clone());
         program.items.push(f128_item.clone());
         program.def_map.insert(f16_def_id, f16_item);

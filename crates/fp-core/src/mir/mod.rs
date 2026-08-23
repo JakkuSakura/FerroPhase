@@ -1,92 +1,22 @@
-use std::collections::HashMap;
-
 use crate::ast::QuoteFragmentKind;
 use crate::ast::QuoteItemKind;
 use crate::intrinsics::IntrinsicKind;
 use crate::query::{QueryIrDocument, QueryOrigin};
 
 pub mod ident;
+pub mod package;
 pub mod pretty;
+pub mod program;
 pub mod ty;
 
 pub use ident::{Path, Symbol};
+pub use package::MirPackage;
+pub use program::MirProgram;
 pub use ty::Ty;
 
 pub type MirId = u32;
 pub type LocalId = u32;
 pub type BasicBlockId = u32;
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Program {
-    pub items: Vec<Item>,
-    pub bodies: HashMap<BodyId, Body>,
-}
-
-/// One compiled package's MIR content — its lowered `Program` plus the
-/// derived tables `MirLowering` produces alongside it. Pairs with `Program`
-/// the same way `hir::Package` pairs with a package's HIR content; several
-/// of these live on `CompiledPackage`'s `mir` field, one per package.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct MirPackage {
-    pub program: Option<Program>,
-    /// Struct field types keyed by `DefId`, computed during MIR lowering.
-    pub struct_fields: HashMap<DefId, Vec<Ty>>,
-    pub adt_defs: HashMap<crate::hir::DefId, ty::AdtDef>,
-    /// Top-level consts resolved by direct constant-folding during MIR
-    /// lowering (see `MirLowering::lower_const`'s fast path) — a
-    /// directly-foldable const (no `let`, no side effects requiring the
-    /// real interpreter) never becomes a comptime entry, so without this,
-    /// nothing would ever surface its value to a caller that only knows
-    /// how to ask "what did evaluating this package's comptime entries
-    /// produce" (e.g. `evaluate_comptime_lir`'s "no comptime entries at
-    /// all" case, which otherwise has nothing to fall back to but an
-    /// arbitrary placeholder).
-    pub resolved_const_values: HashMap<String, Constant>,
-    /// The originating `hir::DefId` of each `resolved_const_values` entry,
-    /// keyed by the same name — populated only at the entry's true origin
-    /// (`MirLowering::lower_const`'s fold fast path, which always has the
-    /// const item's own `DefId` in scope), not by `seed_resolved_const`'s
-    /// cross-pass reseeding (which only needs the value, not its identity).
-    /// Lets the driver record a folded const's value into
-    /// `hir::PackageTypes::const_values` (DefId-keyed) without re-deriving
-    /// identity from the name string.
-    pub resolved_const_defs: HashMap<String, DefId>,
-}
-
-impl MirPackage {
-    pub fn set_program(&mut self, program: Program) {
-        self.program = Some(program);
-    }
-
-    pub fn extend_struct_fields(&mut self, entries: impl IntoIterator<Item = (DefId, Vec<Ty>)>) {
-        self.struct_fields.extend(entries);
-    }
-
-    pub fn extend_adt_defs(&mut self, entries: impl IntoIterator<Item = (crate::hir::DefId, ty::AdtDef)>) {
-        self.adt_defs.extend(entries);
-    }
-
-    pub fn extend_resolved_const_values(&mut self, entries: impl IntoIterator<Item = (String, Constant)>) {
-        self.resolved_const_values.extend(entries);
-    }
-
-    pub fn extend_resolved_const_defs(&mut self, entries: impl IntoIterator<Item = (String, DefId)>) {
-        self.resolved_const_defs.extend(entries);
-    }
-
-    /// A single folded const's value, by name — see `resolved_const_values`'s
-    /// doc comment. Read this in place off an already-borrowed package
-    /// rather than cloning the whole map.
-    pub fn resolved_const(&self, key: &str) -> Option<&Constant> {
-        self.resolved_const_values.get(key)
-    }
-
-    /// The originating `DefId` of a single folded const, by the same name
-    /// `resolved_const` uses — see `resolved_const_defs`'s doc comment.
-    pub fn resolved_const_def(&self, key: &str) -> Option<DefId> {
-        self.resolved_const_defs.get(key).copied()
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {
@@ -107,7 +37,7 @@ pub struct Function {
     /// Already-qualified name used for mangling/diagnostics (module
     /// segments joined with `::`, or bare when the function has no
     /// meaningful module qualification). Computed once at HIR->MIR
-    /// lowering time from `hir::Package::def_paths` — MIR does not carry
+    /// lowering time from `hir::HirPackage::def_paths` — MIR does not carry
     /// its own separate path table.
     pub name: Symbol,
     pub def_id: Option<ty::DefId>,
@@ -616,15 +546,6 @@ pub enum ConstValue {
 }
 
 // Implementation helpers
-impl Program {
-    pub fn new() -> Self {
-        Self {
-            items: Vec::new(),
-            bodies: HashMap::new(),
-        }
-    }
-}
-
 impl Body {
     pub fn new(
         basic_blocks: Vec<BasicBlockData>,
@@ -669,12 +590,6 @@ impl BasicBlockData {
             terminator,
             is_cleanup: false,
         }
-    }
-}
-
-impl Program {
-    pub fn span(&self) -> Span {
-        Span::union(self.items.iter().map(Item::span))
     }
 }
 
