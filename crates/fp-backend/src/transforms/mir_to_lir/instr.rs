@@ -307,6 +307,7 @@ impl LirGenerator {
                     ty: konst.ty,
                     token_stream: false,
                     const_block_hir_id: konst.const_block_hir_id,
+                    def_id: konst.def_id,
                 });
             }
             mir::ItemKind::Query(query) => {

@@ -964,7 +964,7 @@ fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
             let output_str = fmt_type_expr(&fn_ptr.output, ctx);
             format!("fn({}) -> {}", inputs_str, output_str)
         }
-        TypeExprKind::ConstBlock(body) => format!("const {{ {} }}", format_expr_inline(body, ctx)),
+        TypeExprKind::ConstBlock(_, body) => format!("const {{ {} }}", format_expr_inline(body, ctx)),
         TypeExprKind::Never => "!".into(),
         TypeExprKind::Infer => "_".into(),
         TypeExprKind::Error => "<error>".into(),

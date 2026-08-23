@@ -1,8 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::task::Waker;
 
-use fp_core::ast::{TypeStruct, Value};
+use fp_core::ast::Value;
 use fp_core::diagnostics::DiagnosticManager;
 
 use crate::types::GenericMonorph;
@@ -61,14 +60,6 @@ pub type ComptimeResolver = std::rc::Rc<dyn Fn(ComptimeRequest) -> BoxFuture<'st
 /// straight through the field) and `CompilerState` already owns the task
 /// pool independently.
 pub struct TypingContext {
-    /// Comptime-evaluated const values, keyed by const name.
-    /// Driver writes after each comptime pass; typer reads on next pass.
-    pub resolved_consts: RefCell<HashMap<String, Value>>,
-
-    /// Struct type definitions resolved via comptime evaluation.
-    /// Driver writes after comptime pass; typer merges into `struct_defs`.
-    pub resolved_types: RefCell<HashMap<String, TypeStruct>>,
-
     /// Accumulated typing diagnostics (warnings + errors) — includes both
     /// genuinely fatal item-check aborts and deliberately non-fatal,
     /// recovered mismatches (e.g. `require_same`'s isolated type
@@ -84,13 +75,6 @@ pub struct TypingContext {
     /// still distinguish them from an isolated, already-recovered mismatch
     /// without a second manager.
     pub diagnostics: DiagnosticManager,
-
-    /// Wakers of typing tasks currently suspended on a comptime value (keyed
-    /// by const/type-alias name) not yet resolved — see
-    /// comptime resolution. Precisely
-    /// (not broadcast) woken by whichever write site
-    /// (`resolved_consts`/`resolved_types`) actually resolves that name.
-    pub comptime_wakers: RefCell<HashMap<String, Vec<Waker>>>,
 
     /// Generic function calls whose concrete type arguments have been
     /// resolved and are ready for monomorphization, written the moment
@@ -114,10 +98,7 @@ pub struct TypingContext {
 impl TypingContext {
     pub fn new() -> Self {
         Self {
-            resolved_consts: RefCell::new(HashMap::new()),
-            resolved_types: RefCell::new(HashMap::new()),
             diagnostics: DiagnosticManager::new(),
-            comptime_wakers: RefCell::new(HashMap::new()),
             ready_generics: RefCell::new(HashMap::new()),
             comptime_resolver: RefCell::new(None),
         }
@@ -130,25 +111,6 @@ impl TypingContext {
     pub fn with_comptime_resolver(self, resolver: ComptimeResolver) -> Self {
         *self.comptime_resolver.borrow_mut() = Some(resolver);
         self
-    }
-
-    /// Wake every task parked on `name`'s comptime value — call this right
-    /// after writing `name`'s resolution into `resolved_consts`/
-    /// `resolved_types` (the three write sites are all in `fp-compiler`'s
-    /// driver). Precise, not broadcast: only tasks registered under this
-    /// exact name are woken.
-    pub fn wake_comptime(&self, name: &str) {
-        // `.remove(name)` is extracted into its own statement (rather than
-        // used directly as an `if let` scrutinee) so the `borrow_mut()`
-        // guard drops before `waker.wake()` runs -- an `if let` scrutinee's
-        // temporaries are otherwise kept alive for the whole `if let`, which
-        // would hold this guard across every woken task's `wake()` call.
-        let wakers = self.comptime_wakers.borrow_mut().remove(name);
-        if let Some(wakers) = wakers {
-            for waker in wakers {
-                waker.wake();
-            }
-        }
     }
 
     /// Request a compile-time value — awaits `ComptimeResolver` directly, so

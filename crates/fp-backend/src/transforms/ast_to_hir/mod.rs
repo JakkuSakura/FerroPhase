@@ -2443,26 +2443,33 @@ impl HirGenerator {
                     // `type X = const { .. };` / `type X = EXPR;` (where
                     // `EXPR` needs compile-time evaluation to produce a
                     // concrete type, e.g. a `TypeBuilder`-constructed
-                    // struct) has no `DefId`/`def_map` entry to give — a
-                    // real struct/enum's shape is known up front, this
-                    // one only once the checker evaluates `inner`. Lower it
-                    // as an ordinary, eagerly-checked expression-position
+                    // struct) has no `def_map` entry to give — a real
+                    // struct/enum's shape is known up front, this one only
+                    // once the checker evaluates `inner`. Lower it as an
+                    // ordinary, eagerly-checked expression-position
                     // `ConstBlock` statement (per Part B: `const { .. }` in
                     // this position is transparent sugar, so both syntaxes
                     // collapse to the same node here), and bind `X`'s name
-                    // to that expression's own `HirId` via `Res::Local`
-                    // rather than a `DefId` — `path_ty`/`field_ty` read the
-                    // resolved shape straight out of `PackageTypes` by
-                    // that `HirId` once this statement has been checked,
-                    // no `def_map` involved at all.
+                    // to that const block's own `DefId` via `Res::Def` —
+                    // scope-local only (like `register_type_generic`'s
+                    // generics binding), not exported through
+                    // `record_value_symbol`/`record_type_symbol`, since this
+                    // name is lexically scoped to this statement, not a real
+                    // module-level definition. `path_ty`/`field_ty` read the
+                    // resolved shape straight out of `PackageTypes`'s
+                    // `const_block_values` by that `DefId` once this
+                    // statement has been checked.
                     let body = Box::new(self.transform_expr_to_hir(inner)?);
+                    let def_id = self.next_def_id();
                     let const_block_expr = hir::Expr {
                         hir_id: self.next_id(),
-                        kind: hir::ExprKind::ConstBlock(hir::ExprConstBlock { body }),
+                        kind: hir::ExprKind::ConstBlock(hir::ExprConstBlock { def_id, body }),
                         span: item.span(),
                     };
-                    self.register_value_local(&def_type.name.name, const_block_expr.hir_id);
-                    self.register_type_local(&def_type.name.name, const_block_expr.hir_id);
+                    self.current_value_scope()
+                        .insert(def_type.name.name.clone(), hir::Res::Def(def_id));
+                    self.current_type_scope()
+                        .insert(def_type.name.name.clone(), hir::Res::Def(def_id));
                     Ok(hir::StmtKind::Expr(const_block_expr))
                 } else {
                     let unit_block = hir::Block {
@@ -3230,9 +3237,10 @@ impl HirGenerator {
                 // the type checker resolves it via `TypingContext::request_comptime`
                 // when it encounters this node.
                 let body = Box::new(self.transform_expr_to_hir(block.expr.as_ref())?);
+                let def_id = self.next_def_id();
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
-                    hir::TypeExprKind::ConstBlock(body),
+                    hir::TypeExprKind::ConstBlock(def_id, body),
                     Span::new(self.current_file, 0, 0),
                 ))
             }

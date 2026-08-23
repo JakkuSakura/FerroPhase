@@ -122,15 +122,16 @@ impl CompilerState {
         self.resolved_const_values.insert(key.into(), value);
     }
 
-    /// Write a typed comptime value into the shared typing context so the
-    /// typer can see it on the next pass.
-    pub fn insert_typing_const(&mut self, key: impl Into<String>, value: Value) {
-        let key = key.into();
-        self.typing_ctx
-            .resolved_consts
-            .borrow_mut()
-            .insert(key.clone(), value);
-        self.typing_ctx.wake_comptime(&key);
+    /// Record a comptime-resolved named const's value into its own
+    /// package's `PackageTypes::const_values`, keyed by the const item's
+    /// own stable `DefId` — replaces the old string-name-keyed
+    /// `TypingContext.resolved_consts` broadcast.
+    pub fn insert_resolved_const(&mut self, package_hir_id: HirId, def_id: hir::DefId, value: Value) {
+        self.hir_typeck
+            .entry(package_hir_id)
+            .or_default()
+            .const_values
+            .insert(def_id, value);
     }
 
     pub fn insert_runtime_value(&mut self, value_id: RuntimeValueId, value: Value) {

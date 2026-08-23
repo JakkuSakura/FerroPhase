@@ -468,7 +468,8 @@ impl HirGenerator {
         const_block: &ast::ExprConstBlock,
     ) -> Result<hir::ExprKind> {
         let body = Box::new(self.transform_expr_to_hir(const_block.expr.as_ref())?);
-        Ok(hir::ExprKind::ConstBlock(hir::ExprConstBlock { body }))
+        let def_id = self.next_def_id();
+        Ok(hir::ExprKind::ConstBlock(hir::ExprConstBlock { def_id, body }))
     }
 
     // create_main_function moved to items.rs

@@ -440,6 +440,12 @@ pub enum ExprKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExprConstBlock {
+    /// This const block's own identity, minted the same way every other
+    /// item/def is during AST-to-HIR lowering (see
+    /// `HirGenerator::next_def_id`) — used to key its resolved comptime
+    /// value in `PackageTypes::const_block_values`, so every comptime unit
+    /// (named consts and const blocks alike) is identified the same way.
+    pub def_id: DefId,
     pub body: Box<Expr>,
 }
 
@@ -629,8 +635,10 @@ pub enum TypeExprKind {
     /// of a `type X = const { ... };` alias or nested inside another type,
     /// e.g. an array length). The block's own const-ness comes purely from
     /// appearing here structurally; its value is resolved by the type
-    /// checker via `TypingContext::request_comptime`.
-    ConstBlock(Box<Expr>),
+    /// checker via `TypingContext::request_comptime`. The `DefId` is this
+    /// block's own identity (see `ExprConstBlock::def_id`'s doc comment) —
+    /// used to key its resolved value in `PackageTypes::const_block_values`.
+    ConstBlock(DefId, Box<Expr>),
     Never,
     Infer,
     Error,
@@ -1144,9 +1152,10 @@ pub struct PackageTypes {
     pub const_types: HashMap<DefId, Ty>,
     pub const_values: HashMap<DefId, Value>,
     /// Comptime-evaluated values of `const { ... }` blocks, keyed by the
-    /// block expression's own `HirId` (const-blocks are anonymous, so
-    /// unlike named const items they have no `DefId` to key by).
-    pub const_block_values: HashMap<HirId, Value>,
+    /// block's own `DefId` (minted during AST-to-HIR lowering, see
+    /// `ExprConstBlock::def_id`) — the same identity kind named consts use,
+    /// via `const_values`.
+    pub const_block_values: HashMap<DefId, Value>,
 }
 
 impl PackageTypes {
@@ -1683,7 +1692,7 @@ impl TypeExprKind {
             TypeExprKind::Ptr(ty) => ty.span(),
             TypeExprKind::Ref(ty) => ty.span(),
             TypeExprKind::FnPtr(func) => func.span(),
-            TypeExprKind::ConstBlock(body) => body.span(),
+            TypeExprKind::ConstBlock(_, body) => body.span(),
             TypeExprKind::Never
             | TypeExprKind::Infer
             | TypeExprKind::Error

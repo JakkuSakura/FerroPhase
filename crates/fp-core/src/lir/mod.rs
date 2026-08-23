@@ -400,6 +400,9 @@ pub struct LirComptimeEntry {
     /// See `mir::ExecutableConst::const_block_hir_id`'s doc comment —
     /// carried through unchanged from MIR lowering.
     pub const_block_hir_id: Option<crate::hir::HirId>,
+    /// See `mir::ExecutableConst::def_id`'s doc comment — carried through
+    /// unchanged from MIR lowering.
+    pub def_id: crate::hir::DefId,
 }
 
 #[derive(Debug, Clone, PartialEq)]

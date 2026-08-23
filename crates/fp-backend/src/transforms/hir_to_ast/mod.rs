@@ -1127,7 +1127,7 @@ impl<'a> HirToAstLifter<'a> {
                     .collect::<Result<Vec<_>>>()?,
             }),
             hir::TypeExprKind::TypeBinaryOp(_) => Ty::Unknown(ast::TypeUnknown),
-            hir::TypeExprKind::ConstBlock(body) => Ty::ConstBlock(ast::ExprConstBlock {
+            hir::TypeExprKind::ConstBlock(_, body) => Ty::ConstBlock(ast::ExprConstBlock {
                 span: ty.span,
                 collected_items: Vec::new(),
                 expr: Box::new(self.lift_expr(body)?),

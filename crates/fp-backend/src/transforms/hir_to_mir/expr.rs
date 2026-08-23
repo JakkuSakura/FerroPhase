@@ -476,6 +476,7 @@ pub struct MirLowering {
     const_values: HashMap<hir::DefId, ConstInfo>,
     executable_consts: HashMap<hir::DefId, (mir::Symbol, Ty)>,
     resolved_const_values: HashMap<String, mir::Constant>,
+    resolved_const_defs: HashMap<String, hir::DefId>,
     function_sigs: HashMap<hir::DefId, mir::FunctionSig>,
     generic_function_defs: HashMap<hir::DefId, hir::Function>,
     runtime_functions: HashMap<String, mir::FunctionSig>,
@@ -567,11 +568,11 @@ pub struct MirLowering {
     typeck_type_exprs: HashMap<hir::HirId, Ty>,
     typeck_exprs: HashMap<hir::HirId, Ty>,
     /// Comptime-evaluated `const { ... }` block values, keyed by the
-    /// block expression's own `HirId` — populated from
-    /// `PackageTypes::const_block_values`. Looked up directly when
+    /// block's own `DefId` (see `hir::ExprConstBlock::def_id`) — populated
+    /// from `PackageTypes::const_block_values`. Looked up directly when
     /// lowering `hir::ExprKind::ConstBlock`/`TypeExprKind::ConstBlock`;
     /// no synthetic item, no string key.
-    typeck_const_block_values: HashMap<hir::HirId, Value>,
+    typeck_const_block_values: HashMap<hir::DefId, Value>,
     typeck_method_resolutions: HashMap<hir::HirId, hir::DefId>,
     typeck_generic_call_args: HashMap<hir::HirId, Vec<Ty>>,
     typeck_generic_method_args: HashMap<hir::HirId, Vec<Ty>>,
@@ -661,6 +662,7 @@ impl MirLowering {
             const_values: HashMap::new(),
             executable_consts: HashMap::new(),
             resolved_const_values: HashMap::new(),
+            resolved_const_defs: HashMap::new(),
             function_sigs: HashMap::new(),
             generic_function_defs: HashMap::new(),
             runtime_functions: Self::default_runtime_signatures(),
@@ -1192,10 +1194,16 @@ impl MirLowering {
     /// Every top-level const resolved by direct folding this pass (see
     /// `lower_const`'s fast path) — a directly-foldable const never
     /// becomes a comptime entry requiring the real interpreter, so its
-    /// value would otherwise never reach `driver.rs`'s `resolved_consts`
-    /// the way an interpreted const's value already does.
+    /// value would otherwise never reach `driver.rs`'s
+    /// `PackageTypes::const_values` the way an interpreted const's value
+    /// already does.
     pub fn take_resolved_const_values(&mut self) -> HashMap<String, mir::Constant> {
         std::mem::take(&mut self.resolved_const_values)
+    }
+
+    /// See `mir::MirPackage::resolved_const_defs`'s doc comment.
+    pub fn take_resolved_const_defs(&mut self) -> HashMap<String, hir::DefId> {
+        std::mem::take(&mut self.resolved_const_defs)
     }
 
     /// Struct field types only — enums are exported separately via
@@ -4094,10 +4102,11 @@ impl MirLowering {
         // A const resolved this way (directly foldable — no `let`, no
         // side effects requiring the real interpreter) never becomes a
         // comptime entry, so nothing else would ever surface its value to
-        // `driver.rs`'s `resolved_consts` the way an interpreted const's
-        // value already does — see `all_resolved_const_values`, the
-        // exporter this feeds.
-        self.resolved_const_values.insert(key, init_constant);
+        // the driver's `PackageTypes::const_values` the way an interpreted
+        // const's value already does — see `take_resolved_const_values`/
+        // `take_resolved_const_defs`, the exporters this feeds.
+        self.resolved_const_values.insert(key.clone(), init_constant);
+        self.resolved_const_defs.insert(key, def_id);
 
         let mir_static = mir::Static {
             name: konst.name.clone().into(),
@@ -4177,6 +4186,7 @@ impl MirLowering {
                 key,
                 span: konst.body.value.span,
                 const_block_hir_id,
+                def_id,
             }),
         };
         self.next_mir_id += 1;
@@ -4401,7 +4411,7 @@ impl MirLowering {
             // `typeck_type_exprs` above (populated from the type checker's
             // `resolve_pending_type_const_blocks`); reaching here means that
             // lookup missed, so fall back the same way `Infer` does.
-            hir::TypeExprKind::ConstBlock(_) => self.error_ty(),
+            hir::TypeExprKind::ConstBlock(_, _) => self.error_ty(),
             hir::TypeExprKind::Type => Ty { kind: TyKind::Type },
             hir::TypeExprKind::Any => Ty { kind: TyKind::Any },
             // Erases to `base`'s `TyKind` directly — there is deliberately
@@ -6141,7 +6151,7 @@ impl MirLowering {
             },
             hir::TypeExprKind::Infer => self.error_ty(),
             hir::TypeExprKind::Error => self.error_ty(),
-            hir::TypeExprKind::ConstBlock(_) => self
+            hir::TypeExprKind::ConstBlock(_, _) => self
                 .typeck_type_exprs
                 .get(&ty_expr.hir_id)
                 .cloned()
@@ -6271,13 +6281,13 @@ impl MirLowering {
         // real execution, the same way an expression-position `const {
         // .. }` block already does (`register_const_block_comptime_entry`
         // just above `lower_type_expr`). Reuse that exact two-pass
-        // protocol, keyed by this const's own body `hir_id` instead of a
+        // protocol, keyed by this const item's own `def_id` instead of a
         // fresh synthetic one: on relower (after `CompilerDriver::
         // evaluate_comptime_lir` has run this package's own comptime
         // entries through the real interpreter and `apply_resolved_
         // comptime_block_values` fed the answer back into `PackageTypes`
         // via `with_typeck_results`), the resolved value is already
-        // sitting in `typeck_const_block_values` under this same `hir_id`
+        // sitting in `typeck_const_block_values` under this same `def_id`
         // — consult it here, the same way an inline `ConstBlock` operand
         // does (`lower_operand`'s `ConstBlock` arm) — before falling back
         // to registering a comptime entry for the *next* pass to resolve.
@@ -6285,7 +6295,7 @@ impl MirLowering {
         // silently dropped: no MIR item, no LIR global, no compile-time
         // error — only a runtime "missing global" once something actually
         // reads it.
-        if let Some(value) = self.typeck_const_block_values.get(&konst.body.hir_id).cloned() {
+        if let Some(value) = self.typeck_const_block_values.get(&def_id).cloned() {
             if let Some(constant) = self.const_block_value_to_mir_constant(&value, konst.body.value.span) {
                 self.const_values.insert(def_id, ConstInfo { ty, value: constant });
                 return;
@@ -17149,9 +17159,9 @@ impl<'a> BodyBuilder<'a> {
                 );
                 // The value was resolved eagerly during type checking (see
                 // `HirTypeChecker::check_expr`'s `ConstBlock` arm) and handed
-                // here keyed by this expression's own `hir_id` — no
-                // synthetic item, no string key.
-                if let Some(value) = self.lowering.typeck_const_block_values.get(&expr.hir_id) {
+                // here keyed by this block's own `def_id` — no synthetic
+                // item, no string key.
+                if let Some(value) = self.lowering.typeck_const_block_values.get(&const_block.def_id) {
                     if let Some(constant) = self
                         .lowering
                         .const_block_value_to_mir_constant(&value.clone(), expr.span)

@@ -64,17 +64,12 @@ pub fn eval_script(script: ScriptBlock) -> Result<Value> {
         PipelineMode::Native,
     )?;
     drain_driver(&mut driver)?;
-    if let Some((_, value)) = driver
-        .state
-        .borrow()
-        .typing_ctx
-        .resolved_consts
-        .borrow()
-        .iter()
-        .find(|(key, _)| key.contains("__eval_result"))
-    {
-        return Ok(value.clone());
-    }
+    // This script's `File` has exactly one const item (`__eval_result`
+    // above), so `evaluate_comptime_lir_with`'s own last-resolved-value
+    // bookkeeping (`insert_const_value`, keyed by this script's own path —
+    // see `ConstValueId`'s construction here) always ends up holding this
+    // const's value, whichever of its two resolution paths (direct
+    // constant-folding or real interpretation) it took.
     driver
         .state
         .borrow()

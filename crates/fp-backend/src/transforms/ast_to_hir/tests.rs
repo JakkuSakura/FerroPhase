@@ -308,7 +308,7 @@ fn nested_type_position_const_block_lowers_to_dedicated_hir_node() -> Result<()>
 
     let mut generator = HirGenerator::new();
     let lowered = generator.transform_type_to_hir(&const_block_ty)?;
-    let hir::TypeExprKind::ConstBlock(body) = lowered.kind else {
+    let hir::TypeExprKind::ConstBlock(_, body) = lowered.kind else {
         return Err(crate::error::optimization_error(
             "nested type-position const block must lower to a dedicated ConstBlock node"
                 .to_string(),

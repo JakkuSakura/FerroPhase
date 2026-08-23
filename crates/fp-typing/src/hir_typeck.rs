@@ -109,7 +109,7 @@ pub struct TypingShared {
     /// `field_ty` recovers from the `Ty`'s own `AdtDef.did` (constructed
     /// with identical `package_id`/`index`) whenever `AdtFlags::
     /// IS_COMPTIME_LOCAL` is set, instead of consulting `def_map`.
-    local_struct_fields: RefCell<HashMap<hir::HirId, Vec<(hir::Symbol, Ty)>>>,
+    local_struct_fields: RefCell<HashMap<hir::DefId, Vec<(hir::Symbol, Ty)>>>,
 }
 
 /// Which part of a function's signature a persisted `RefinementHint`
@@ -226,7 +226,7 @@ pub struct HirTypeChecker {
     /// Type-position `const { ... }` blocks encountered while checking
     /// types (which is synchronous). Resolved via comptime once this
     /// item's own check finishes; see `resolve_pending_type_const_blocks`.
-    pending_type_const_blocks: Vec<(hir::HirId, hir::Expr)>,
+    pending_type_const_blocks: Vec<(hir::HirId, hir::DefId, hir::Expr)>,
     /// Refinement (`{binder : base // predicate}`) annotations encountered
     /// by `check_type_expr`, keyed by the `TypeExpr`'s own `hir_id` — a
     /// caller that still has that same `TypeExpr` in hand (e.g. the `Let`
@@ -384,6 +384,40 @@ pub fn spawn_item_task(shared: &Rc<TypingShared>, def_id: hir::DefId) -> TaskHan
     })
 }
 
+/// Resolves one comptime unit (a const block, keyed by its own `DefId` —
+/// see `hir::ExprConstBlock::def_id`) by spawning (or reusing, via
+/// `get_or_spawn`) a task on the shared executor — mirrors
+/// `spawn_item_task`'s dedup pattern, so two typer tasks reaching the same
+/// const-block concurrently share one interpretation run instead of each
+/// independently awaiting `TypingContext::request_comptime`. The resolved
+/// value is written into `results.const_block_values` by the same task
+/// that produces it, so every awaiter and every later `DefId` lookup
+/// against the package's own table always agree.
+pub fn spawn_comptime_task(
+    shared: &Rc<TypingShared>,
+    def_id: hir::DefId,
+    build_request: impl FnOnce() -> crate::ComptimeRequest + 'static,
+) -> TaskHandle<Option<hir::Value>> {
+    let cache_key = format!("comptime:{def_id:?}");
+    let shared = shared.clone();
+    shared.executor.clone().get_or_spawn(cache_key, move || {
+        Box::pin(async move {
+            let request = build_request();
+            let value = shared
+                .typing_context
+                .request_comptime(request)
+                .await
+                .ok()?;
+            shared
+                .results
+                .borrow_mut()
+                .const_block_values
+                .insert(def_id, value.clone());
+            Some(value)
+        }) as Pin<Box<dyn Future<Output = Option<hir::Value>>>>
+    })
+}
+
 impl HirTypeChecker {
     /// Resolve `const { ... }` blocks encountered in type position
     /// (`check_type_expr` is synchronous, so it defers these rather than
@@ -391,18 +425,18 @@ impl HirTypeChecker {
     /// the old whole-program deferral this replaces.
     async fn resolve_pending_type_const_blocks(&mut self) -> Result<()> {
         let pending = std::mem::take(&mut self.pending_type_const_blocks);
-        for (hir_id, body) in pending {
+        for (hir_id, def_id, body) in pending {
             let body_ty = self.check_expr(&body).await?;
-            let context = self.shared.typing_context.clone();
-            // See the matching comment in `check_expr`'s `ConstBlock` arm:
-            // snapshot-and-drop the `Ref` guard before the request, not
-            // inline in its field list, or it stays borrowed across the
-            // `.await` below.
-            let typeck_results_snapshot = self.shared.results.borrow().clone();
-            let value = context
-                .request_comptime(crate::ComptimeRequest {
-                    program: self.shared.program.clone(),
-                    current: self.shared.program_rc(),
+            let shared = self.shared.clone();
+            let value = spawn_comptime_task(&shared, def_id, move || {
+                // See the matching comment in `check_expr`'s `ConstBlock`
+                // arm: snapshot-and-drop the `Ref` guard before the
+                // request, not inline in its field list, or it stays
+                // borrowed across the `.await` inside `spawn_comptime_task`.
+                let typeck_results_snapshot = shared.results.borrow().clone();
+                crate::ComptimeRequest {
+                    program: shared.program.clone(),
+                    current: shared.program_rc(),
                     typeck_results: typeck_results_snapshot,
                     block: hir::Block {
                         hir_id,
@@ -415,10 +449,12 @@ impl HirTypeChecker {
                         kind: hir::TypeExprKind::Infer,
                         span: fp_core::span::Span::null(),
                     },
-                })
-                .await?;
+                }
+            })
+            .await
+            .ok_or_else(|| Error::from("comptime evaluation failed"))?;
             let mut results = self.shared.results.borrow_mut();
-            results.const_block_values.insert(hir_id, value);
+            results.const_block_values.insert(def_id, value);
             // Replace the `Infer` placeholder `check_type_expr` recorded for
             // this node with the body's actual checked type, now that it's
             // known — matches expression-position const-blocks, whose own
@@ -1095,7 +1131,6 @@ impl HirTypeChecker {
                 }
                 hir::ExprKind::ConstBlock(const_block) => {
                     let body_ty = self.check_expr(&const_block.body).await?;
-                    let context = self.shared.typing_context.clone();
                     {
                         // Record the outer const-block expression's own type
                         // under its own `hir_id` *before* snapshotting below —
@@ -1109,26 +1144,32 @@ impl HirTypeChecker {
                             .results
                             .borrow_mut()
                             .record_expr_type(expr.hir_id, body_ty.clone());
-                        // Snapshot and drop the `Ref` guard *before*
-                        // constructing the request, not inline inside its
-                        // field list — a temporary borrow created there
-                        // would otherwise stay alive until the end of this
-                        // whole statement (Rust's temporary-lifetime rule),
-                        // i.e. across the `.await` below, and panic when
-                        // another task polled during that suspension tries
-                        // its own `borrow_mut()` on the same `RefCell`.
-                        let typeck_results_snapshot = self.shared.results.borrow().clone();
-                        let value = context
-                            .request_comptime(crate::ComptimeRequest {
-                                program: self.shared.program.clone(),
-                                current: self.shared.program_rc(),
+                        let shared = self.shared.clone();
+                        let hir_id = expr.hir_id;
+                        let def_id = const_block.def_id;
+                        let body = const_block.body.clone();
+                        let value = spawn_comptime_task(&shared, def_id, move || {
+                            // Snapshot and drop the `Ref` guard *before*
+                            // constructing the request, not inline inside
+                            // its field list — a temporary borrow created
+                            // there would otherwise stay alive until the
+                            // end of this whole statement (Rust's
+                            // temporary-lifetime rule), i.e. across the
+                            // `.await` inside `spawn_comptime_task`, and
+                            // panic when another task polled during that
+                            // suspension tries its own `borrow_mut()` on
+                            // the same `RefCell`.
+                            let typeck_results_snapshot = shared.results.borrow().clone();
+                            crate::ComptimeRequest {
+                                program: shared.program.clone(),
+                                current: shared.program_rc(),
                                 typeck_results: typeck_results_snapshot,
                                 block: hir::Block {
-                                    hir_id: expr.hir_id,
+                                    hir_id,
                                     stmts: Vec::new(),
-                                    expr: Some(const_block.body.clone()),
+                                    expr: Some(body),
                                 },
-                                expression_id: expr.hir_id,
+                                expression_id: hir_id,
                                 // Matches `resolve_pending_type_const_blocks`'s
                                 // own placeholder below — no declared type is
                                 // carried on the HIR node itself any more (it
@@ -1137,13 +1178,15 @@ impl HirTypeChecker {
                                 // the real checked type out of
                                 // `typeck_results.expr_types` instead.
                                 expected_ty: hir::TypeExpr {
-                                    hir_id: expr.hir_id,
+                                    hir_id,
                                     kind: hir::TypeExprKind::Infer,
                                     span: fp_core::span::Span::null(),
                                 },
-                            })
-                            .await?;
-                        self.shared.results.borrow_mut().const_block_values.insert(expr.hir_id, value);
+                            }
+                        })
+                        .await
+                        .ok_or_else(|| Error::from("comptime evaluation failed"))?;
+                        self.shared.results.borrow_mut().const_block_values.insert(def_id, value);
                     }
                     body_ty
                 }
@@ -1640,9 +1683,9 @@ impl HirTypeChecker {
             hir::TypeExprKind::Infer => Ty {
                 kind: TyKind::Infer(ty::InferTy::FreshTy(expr.hir_id.index)),
             },
-            hir::TypeExprKind::ConstBlock(body) => {
+            hir::TypeExprKind::ConstBlock(def_id, body) => {
                 self.pending_type_const_blocks
-                    .push((expr.hir_id, (**body).clone()));
+                    .push((expr.hir_id, *def_id, (**body).clone()));
                 Ty {
                     kind: TyKind::Infer(ty::InferTy::FreshTy(expr.hir_id.index)),
                 }
@@ -1685,77 +1728,81 @@ impl HirTypeChecker {
                 return Ok(primitive);
             }
         }
-        if let Some(hir::Res::Local(local)) = path.res {
+        if let Some(hir::Res::Def(def_id)) = path.res {
             // A local `type X = const { .. };` (`ast_to_hir`'s
-            // `comptime_type_alias_rhs` lowering) — its shape is whatever
-            // the tagged expression comptime-evaluated to, already
+            // `comptime_type_alias_rhs` lowering) binds `X` to the const
+            // block's own `DefId` (scope-local only, not a real `def_map`
+            // item — see that lowering site's doc comment). Its shape is
+            // whatever the tagged expression comptime-evaluated to, already
             // resolved by the time any later statement's `path_ty` call
             // runs (the expression-position `ConstBlock` arm checks it
-            // eagerly, in-sequence). No other kind of local ever resolves
-            // through this `Res` variant in type position, so a missing or
-            // non-`Type` value here is a genuine error, not a probe.
-            let value = self
+            // eagerly, in-sequence). A real item's `Res::Def` never has a
+            // `const_block_values` entry, so this only fires for the
+            // comptime-local case; everything else falls through to the
+            // ordinary `def_map`-based resolution below.
+            if let Some(value) = self
                 .shared
                 .results
                 .borrow()
                 .const_block_values
-                .get(&local)
-                .cloned();
-            return Ok(match value {
-                Some(fp_core::ast::Value::Type(fp_core::ast::Ty::Struct(struct_ty))) => {
-                    let fields: Vec<(hir::Symbol, Ty)> = struct_ty
-                        .fields
-                        .iter()
-                        .map(|field| {
-                            let field_ty = ast_value_ty_to_hir_ty(&field.value)
-                                .unwrap_or_else(|| self.error_ty(format!(
-                                    "field `{}`'s comptime-constructed type is not supported here",
-                                    field.name.name
-                                )));
-                            (hir::Symbol::new(field.name.name.clone()), field_ty)
-                        })
-                        .collect();
-                    self.shared
-                        .local_struct_fields
-                        .borrow_mut()
-                        .insert(local, fields.clone());
-                    let variant = ty::VariantDef {
-                        def_id: local_did(local),
-                        ctor_def_id: None,
-                        ident: hir::Symbol::new(struct_ty.name.name.clone()),
-                        discr: ty::VariantDiscr::Relative(0),
-                        fields: fields
+                .get(&def_id)
+                .cloned()
+            {
+                return Ok(match value {
+                    fp_core::ast::Value::Type(fp_core::ast::Ty::Struct(struct_ty)) => {
+                        let fields: Vec<(hir::Symbol, Ty)> = struct_ty
+                            .fields
                             .iter()
-                            .map(|(name, _)| ty::FieldDef {
-                                did: local_did(local),
-                                ident: name.clone(),
-                                vis: ty::TyVisibility::Public,
+                            .map(|field| {
+                                let field_ty = ast_value_ty_to_hir_ty(&field.value)
+                                    .unwrap_or_else(|| self.error_ty(format!(
+                                        "field `{}`'s comptime-constructed type is not supported here",
+                                        field.name.name
+                                    )));
+                                (hir::Symbol::new(field.name.name.clone()), field_ty)
                             })
-                            .collect(),
-                        ctor_kind: ty::CtorKind::Fn,
-                        is_recovered: false,
-                    };
-                    Ty {
-                        kind: TyKind::Adt(
-                            AdtDef {
-                                did: local_did(local),
-                                variants: vec![variant],
-                                flags: AdtFlags::IS_STRUCT | AdtFlags::IS_COMPTIME_LOCAL,
-                                repr: ReprOptions {
-                                    int: None,
-                                    align: None,
-                                    pack: None,
-                                    flags: ReprFlags::empty(),
-                                    field_shuffle_seed: 0,
+                            .collect();
+                        self.shared
+                            .local_struct_fields
+                            .borrow_mut()
+                            .insert(def_id, fields.clone());
+                        let variant = ty::VariantDef {
+                            def_id,
+                            ctor_def_id: None,
+                            ident: hir::Symbol::new(struct_ty.name.name.clone()),
+                            discr: ty::VariantDiscr::Relative(0),
+                            fields: fields
+                                .iter()
+                                .map(|(name, _)| ty::FieldDef {
+                                    did: def_id,
+                                    ident: name.clone(),
+                                    vis: ty::TyVisibility::Public,
+                                })
+                                .collect(),
+                            ctor_kind: ty::CtorKind::Fn,
+                            is_recovered: false,
+                        };
+                        Ty {
+                            kind: TyKind::Adt(
+                                AdtDef {
+                                    did: def_id,
+                                    variants: vec![variant],
+                                    flags: AdtFlags::IS_STRUCT | AdtFlags::IS_COMPTIME_LOCAL,
+                                    repr: ReprOptions {
+                                        int: None,
+                                        align: None,
+                                        pack: None,
+                                        flags: ReprFlags::empty(),
+                                        field_shuffle_seed: 0,
+                                    },
                                 },
-                            },
-                            Vec::new(),
-                        ),
+                                Vec::new(),
+                            ),
+                        }
                     }
-                }
-                Some(_) => self.error_ty(format!("local `{local}` is not a type")),
-                None => self.error_ty(format!("local `{local}` is not a type")),
-            });
+                    _ => self.error_ty(format!("local `{def_id:?}` is not a type")),
+                });
+            }
         }
         if matches!(path.res, Some(hir::Res::SelfTy)) {
             if self.self_types.is_empty() {
@@ -3410,14 +3457,13 @@ impl HirTypeChecker {
             )));
         };
         if adt.flags.contains(AdtFlags::IS_COMPTIME_LOCAL) {
-            // `path_ty`'s `Res::Local` arm set this bit itself, on this
-            // exact `Ty`, when it built it from a comptime-evaluated
-            // local type alias — the field shapes it recorded then are
-            // the only source of truth here, `def_map` was never involved
-            // in producing this `Ty` at all.
-            let hir_id = hir::HirId::new(adt.did.package_id, adt.did.index);
+            // `path_ty`'s comptime-local-type-alias arm set this bit
+            // itself, on this exact `Ty`, when it built it from a
+            // comptime-evaluated local type alias — the field shapes it
+            // recorded then are the only source of truth here, `def_map`
+            // was never involved in producing this `Ty` at all.
             let fields = self.shared.local_struct_fields.borrow();
-            let Some(fields) = fields.get(&hir_id) else {
+            let Some(fields) = fields.get(&adt.did) else {
                 return Ok(self.error_ty("comptime-constructed struct's field shape was not found"));
             };
             let Some((_, field_ty)) = fields.iter().find(|(name, _)| name == field) else {
@@ -4033,15 +4079,6 @@ fn primitive_path_ty(name: &str) -> Option<Ty> {
         },
         _ => return None,
     })
-}
-
-/// A `hir::DefId` sharing the same `(package_id, index)` as `hir_id` — used
-/// only as `AdtDef`/`FieldDef::did`'s internal identity for a comptime-
-/// local struct type (see `path_ty`'s `Res::Local` arm), never inserted
-/// into `def_map` or any other real `DefId`-keyed table, so it can't
-/// collide with a genuine definition's id.
-fn local_did(hir_id: hir::HirId) -> hir::DefId {
-    hir::DefId::new(hir_id.package_id, hir_id.index)
 }
 
 /// Converts the subset of `ast::Ty` that `TypeBuilder`'s intrinsics

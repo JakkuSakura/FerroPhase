@@ -42,6 +42,15 @@ pub struct MirPackage {
     /// all" case, which otherwise has nothing to fall back to but an
     /// arbitrary placeholder).
     pub resolved_const_values: HashMap<String, Constant>,
+    /// The originating `hir::DefId` of each `resolved_const_values` entry,
+    /// keyed by the same name — populated only at the entry's true origin
+    /// (`MirLowering::lower_const`'s fold fast path, which always has the
+    /// const item's own `DefId` in scope), not by `seed_resolved_const`'s
+    /// cross-pass reseeding (which only needs the value, not its identity).
+    /// Lets the driver record a folded const's value into
+    /// `hir::PackageTypes::const_values` (DefId-keyed) without re-deriving
+    /// identity from the name string.
+    pub resolved_const_defs: HashMap<String, DefId>,
 }
 
 impl MirPackage {
@@ -59,6 +68,23 @@ impl MirPackage {
 
     pub fn extend_resolved_const_values(&mut self, entries: impl IntoIterator<Item = (String, Constant)>) {
         self.resolved_const_values.extend(entries);
+    }
+
+    pub fn extend_resolved_const_defs(&mut self, entries: impl IntoIterator<Item = (String, DefId)>) {
+        self.resolved_const_defs.extend(entries);
+    }
+
+    /// A single folded const's value, by name — see `resolved_const_values`'s
+    /// doc comment. Read this in place off an already-borrowed package
+    /// rather than cloning the whole map.
+    pub fn resolved_const(&self, key: &str) -> Option<&Constant> {
+        self.resolved_const_values.get(key)
+    }
+
+    /// The originating `DefId` of a single folded const, by the same name
+    /// `resolved_const` uses — see `resolved_const_defs`'s doc comment.
+    pub fn resolved_const_def(&self, key: &str) -> Option<DefId> {
+        self.resolved_const_defs.get(key).copied()
     }
 }
 
@@ -117,6 +143,13 @@ pub struct ExecutableConst {
     pub body_id: BodyId,
     pub key: String,
     pub span: Span,
+    /// The originating HIR item's stable identity — the real item's own
+    /// `DefId` for an ordinary top-level `const`, or a synthesized one for
+    /// a const-block-derived entry (see `register_const_block_comptime_entry`).
+    /// Carried through to `lir::LirComptimeEntry` so resolved values can be
+    /// recorded into `hir::PackageTypes::const_values` by `DefId` instead
+    /// of by name string.
+    pub def_id: crate::hir::DefId,
     /// The originating `const { .. }` expression's `HirId`, when this
     /// executable const was synthesized from one (see
     /// `register_const_block_comptime_entry`) — `None` for an ordinary
