@@ -31,7 +31,10 @@ pub type NodeId = u32;
 /// a lower layer's type reaching up into this one.
 pub type Value = crate::ast::Value;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord,
+    serde::Serialize, serde::Deserialize,
+)]
 pub struct PackageId(pub u32);
 
 /// Identifies a HIR node. Namespaced by `PackageId` (mirroring `DefId`) so
@@ -60,7 +63,10 @@ impl fmt::Display for HirId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord,
+    serde::Serialize, serde::Deserialize,
+)]
 pub struct DefId {
     pub package_id: PackageId,
     pub index: u32,

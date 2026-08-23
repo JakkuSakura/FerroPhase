@@ -32,9 +32,12 @@ pub const fn primitive_type(name: &str) -> type<_> {
 // TODO: implement this as a real std fn once type-level reflection/
 // pattern matching is expressive enough in-language; it's a compiler
 // intrinsic for now purely to bootstrap union-of-literal-type support
-// (TypeScript-style template literal type union distribution).
+// (TypeScript-style template literal type union distribution). Returns a
+// closure (not currying/general partial application): calling that
+// closure with a reflected union type applies `f` to each member's
+// literal string and rebuilds the union.
 #[intrinsic = "unionify"]
-pub const fn unionify(f: fn(&str) -> &str, u: type) -> type<_> {
+pub const fn unionify(f: fn(&str) -> &str) -> fn(type) -> type<_> {
     compile_error!("unionify is a compiler intrinsic")
 }
 

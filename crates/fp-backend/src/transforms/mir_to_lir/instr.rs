@@ -1890,17 +1890,11 @@ impl MirToLirLowerer {
                                 fp_core::error::Error::from("compile_error! requires one argument")
                             })?,
                         },
-                        IntrinsicKind::Unionify => {
-                            let mut iter = lir_args.into_iter();
-                            lir::ComptimeOp::Unionify {
-                                function: iter.next().ok_or_else(|| {
-                                    fp_core::error::Error::from("unionify requires two arguments")
-                                })?,
-                                ty: iter.next().ok_or_else(|| {
-                                    fp_core::error::Error::from("unionify requires two arguments")
-                                })?,
-                            }
-                        }
+                        IntrinsicKind::Unionify => lir::ComptimeOp::Unionify {
+                            function: lir_args.into_iter().next().ok_or_else(|| {
+                                fp_core::error::Error::from("unionify requires one argument")
+                            })?,
+                        },
                         _ => unreachable!(),
                     };
                     let instr_id = self.next_id();

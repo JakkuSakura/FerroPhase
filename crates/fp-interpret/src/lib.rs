@@ -765,40 +765,16 @@ impl LirInterpreter {
                     let text = self.render_str_argument(message)?;
                     Err(VmError::Runtime(format!("compile_error!: {text}")))
                 }
-                ComptimeOp::Unionify { function, ty } => {
-                    let LirValueKind::Function(function_ref) = &function.kind else {
-                        // Curried calls (`unionify(f)(u)`) aren't supported
-                        // yet — the interpreter has no first-class/indirect
-                        // call support at all today. `unionify` currently
-                        // only works called flat: `unionify(f, u)`.
+                ComptimeOp::Unionify { function } => {
+                    let LirValueKind::Function(LirFunctionRef::Definition(def_id)) =
+                        &function.kind
+                    else {
                         return Err(VmError::Runtime(
-                            "unionify's first argument must be a plain function reference \
-                             (curried calls are not yet supported)"
-                                .into(),
+                            "unionify's argument must be a plain function reference".into(),
                         ));
                     };
-                    let function_ref = function_ref.clone();
-                    let type_val = self.object_value_operand(ty)?;
-                    let Value::Type(reflected_ty) = type_val else {
-                        return Err(VmError::TypeMismatch {
-                            expected: "type value".into(),
-                            found: format!("{type_val:?}"),
-                        });
-                    };
-                    let members = collect_literal_union_members(&reflected_ty).ok_or_else(|| {
-                        VmError::Runtime(
-                            "unionify's second argument must be a string literal type or a \
-                             union of string literal types"
-                                .into(),
-                        )
-                    })?;
-                    let mut transformed = Vec::with_capacity(members.len());
-                    for member in members {
-                        let result = self.invoke_function_ref_with_string(&function_ref, &member)?;
-                        transformed.push(result);
-                    }
-                    let result_ty = Value::Type(build_literal_union(transformed));
-                    self.write_typed_result(dst, self.result_type(instr)?, result_ty)
+                    let closure = Value::UnionifyClosure(*def_id);
+                    self.write_typed_result(dst, self.result_type(instr)?, closure)
                 }
             },
             LirInstructionKind::InlineAsm { .. }
@@ -1964,10 +1940,57 @@ impl LirInterpreter {
         self.write_typed_result(dst, ty, integer_value(result, signed))
     }
 
+    /// Handles calling the closure `unionify(f)` returns — the only
+    /// indirect-call shape this interpreter supports (see `handle_call`'s
+    /// doc comment). Any other non-statically-known callee still errors
+    /// with "indirect call"; this is deliberately not general first-class
+    /// function/currying support.
+    fn handle_unionify_closure_call(
+        &mut self,
+        dst: u32,
+        function: &LirValue,
+        args: &[LirValue],
+        result_ty: Option<&LirType>,
+    ) -> LirResult<()> {
+        let callee = self.resolve_operand(function)?;
+        let Value::UnionifyClosure(def_id) = callee.value else {
+            return Err(VmError::Runtime("indirect call".into()));
+        };
+        let [type_arg] = args else {
+            return Err(VmError::Runtime(
+                "unionify's closure takes exactly one argument".into(),
+            ));
+        };
+        let type_val = self.object_value_operand(type_arg)?;
+        let Value::Type(reflected_ty) = type_val else {
+            return Err(VmError::TypeMismatch {
+                expected: "type value".into(),
+                found: format!("{type_val:?}"),
+            });
+        };
+        let members = collect_literal_union_members(&reflected_ty).ok_or_else(|| {
+            VmError::Runtime(
+                "unionify's closure argument must be a string literal type or a union of \
+                 string literal types"
+                    .into(),
+            )
+        })?;
+        let function_ref = LirFunctionRef::Definition(def_id);
+        let mut transformed = Vec::with_capacity(members.len());
+        for member in members {
+            transformed.push(self.invoke_function_ref_with_string(&function_ref, &member)?);
+        }
+        let result = Value::Type(build_literal_union(transformed));
+        let Some(ty) = result_ty else {
+            return Ok(());
+        };
+        self.write_typed_result(dst, ty, result)
+    }
+
     /// Invokes a plain (non-indirect) function reference with a single
     /// `&str` argument and returns its `String` result — used by
-    /// `ComptimeOp::Unionify` to apply a function to each member of a
-    /// reflected union type. Shares `handle_call`'s `Definition` dispatch
+    /// `handle_unionify_closure_call` to apply a function to each member of
+    /// a reflected union type. Shares `handle_call`'s `Definition` dispatch
     /// logic, but works directly on `Value`s (no destination register /
     /// `LirType` signature check) since the caller already knows the
     /// expected shape.
@@ -2007,7 +2030,11 @@ impl LirInterpreter {
         result_ty: Option<&LirType>,
     ) -> LirResult<()> {
         let LirValueKind::Function(function_ref) = &function.kind else {
-            return Err(VmError::Runtime("indirect call".into()));
+            // Not a statically-known function reference — the only
+            // supported indirect-call shape today is calling the closure
+            // `unionify(f)` returns (`Value::UnionifyClosure`), never a
+            // general first-class/curried function value.
+            return self.handle_unionify_closure_call(dst, function, args, result_ty);
         };
         match function_ref {
             LirFunctionRef::Name(name) => {

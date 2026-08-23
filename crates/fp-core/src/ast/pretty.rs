@@ -1221,6 +1221,7 @@ fn summarize_value(value: &ast::Value) -> String {
         ast::Value::FfiSliceRef(slice_ref) => {
             format!("ffi_slice_ref[{}](len={})", slice_ref.index, slice_ref.values.len())
         }
+        ast::Value::UnionifyClosure(def_id) => format!("unionify_closure({:?})", def_id),
     }
 }
 

@@ -59,6 +59,13 @@ common_enum! {
         BinOpKind(BinOpKind),
         UnOpKind(UnOpKind),
         FfiSliceRef(FfiSliceRef),
+        /// The closure `unionify(f)` returns, capturing just `f`'s
+        /// definition — not a general env-capturing closure, only ever
+        /// produced by the `unionify` intrinsic and only ever called with a
+        /// single reflected type-value argument (see
+        /// `LangIntrinsic::Unionify`'s doc comment, `fp-interpret`'s
+        /// `ComptimeOp::Unionify`/`handle_call`).
+        UnionifyClosure(crate::hir::DefId),
     }
 }
 impl Value {

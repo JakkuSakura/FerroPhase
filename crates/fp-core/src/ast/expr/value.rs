@@ -1094,7 +1094,12 @@ pub fn build_intrinsic_call(kind: CallKind, invoke: &ExprInvoke) -> Option<ExprI
             ))
         }
         CallKind::Unionify => {
-            if invoke.args.len() != 2 {
+            // `unionify(f)` — a fixed 1-arg intrinsic that returns a
+            // closure (`Value::UnionifyClosure`), not a general-arity
+            // callable. Calling that closure with the union type is an
+            // ordinary indirect call, not part of this intrinsic's own
+            // arg list.
+            if invoke.args.len() != 1 {
                 return None;
             }
             Some(ExprIntrinsicCall::new(
