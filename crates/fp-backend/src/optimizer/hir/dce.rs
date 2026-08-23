@@ -277,7 +277,8 @@ fn type_has_unresolved_paths(ty: &hir::TypeExpr) -> bool {
         hir::TypeExprKind::Refinement { base, predicate, .. } => {
             type_has_unresolved_paths(base) || expr_has_unresolved_paths(predicate)
         }
-        hir::TypeExprKind::Primitive(_)
+        hir::TypeExprKind::LiteralString(_)
+        | hir::TypeExprKind::Primitive(_)
         | hir::TypeExprKind::Never
         | hir::TypeExprKind::Infer
         | hir::TypeExprKind::Error
@@ -558,7 +559,8 @@ fn collect_type_refs(
             collect_type_refs(base, tail_map, work);
             collect_expr_refs(predicate, tail_map, work);
         }
-        hir::TypeExprKind::Primitive(_)
+        hir::TypeExprKind::LiteralString(_)
+        | hir::TypeExprKind::Primitive(_)
         | hir::TypeExprKind::Never
         | hir::TypeExprKind::Infer
         | hir::TypeExprKind::Error

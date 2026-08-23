@@ -86,6 +86,14 @@ fn parse_qualified_path_type(input: &mut &[Token]) -> ModalResult<Ty> {
     Ok(Ty::Expr(Box::new(Expr::name(name))))
 }
 
+/// True for an ordinary double-quoted string lexeme (`"foo"`) with no
+/// `f`/`b`/`c`/`r`-family prefix and no single-quote char/byte-char form —
+/// the only string-literal shape that becomes a string literal type. See
+/// `parse_string` in `ast/expr.rs` for the full prefix dispatch this mirrors.
+fn is_plain_string_lexeme(lexeme: &str) -> bool {
+    lexeme.starts_with('"')
+}
+
 pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     // A relaxed bound (`?Sized`) can appear as an operand of a `+`-joined
     // bound list (`R: Read + ?Sized`), which `parse_type_binary` parses via
@@ -345,6 +353,20 @@ pub(crate) fn parse_simple_type(input: &mut &[Token]) -> ModalResult<Ty> {
     if looks_like_type_expr_macro(*input) {
         let expr = parse_macro_expr(input)?;
         return Ok(Ty::Expr(Box::new(expr)));
+    }
+    // A plain string literal in type position (not an f-string/template,
+    // byte/char literal, etc.) is a string literal type, e.g.
+    // `type A = "foo";` — parsed directly (bypassing the full
+    // binary-operator-aware expression grammar below) so that `|`
+    // immediately following it is left for `parse_type_binary`'s own
+    // union-operator handling rather than being consumed as `Value`'s
+    // bitwise-or expression operator.
+    if matches!(input.first(), Some(token) if token.kind == TokenKind::StringLiteral && is_plain_string_lexeme(&token.lexeme))
+    {
+        let token = token_kind(input, TokenKind::StringLiteral)?;
+        let value = decode_string_literal(&token.lexeme)
+            .ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        return Ok(Ty::Literal(fp_core::ast::TypeLiteralString { value }));
     }
     if matches!(input.first(), Some(token) if token.kind == TokenKind::Keyword(Keyword::Const))
         || matches!(input.first(), Some(token) if token.kind == TokenKind::Number || token.kind == TokenKind::StringLiteral)

@@ -1093,6 +1093,16 @@ pub fn build_intrinsic_call(kind: CallKind, invoke: &ExprInvoke) -> Option<ExprI
                 invoke.kwargs.clone(),
             ))
         }
+        CallKind::Unionify => {
+            if invoke.args.len() != 2 {
+                return None;
+            }
+            Some(ExprIntrinsicCall::new(
+                kind,
+                invoke.args.clone(),
+                invoke.kwargs.clone(),
+            ))
+        }
         CallKind::DebugAssertions
         | CallKind::Input
         | CallKind::Panic

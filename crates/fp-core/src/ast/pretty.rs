@@ -929,6 +929,7 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
             render_ty_brief(refinement.base.as_ref()),
             render_expr_inline(refinement.predicate.as_ref())
         ),
+        ast::Ty::Literal(lit) => format!("{:?}", lit.value),
     }
 }
 

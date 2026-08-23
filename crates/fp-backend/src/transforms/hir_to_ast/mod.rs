@@ -1141,6 +1141,9 @@ impl<'a> HirToAstLifter<'a> {
                     self.lift_expr(predicate)?,
                 ),
             )),
+            hir::TypeExprKind::LiteralString(value) => Ty::Literal(ast::TypeLiteralString {
+                value: value.clone(),
+            }),
         })
     }
 

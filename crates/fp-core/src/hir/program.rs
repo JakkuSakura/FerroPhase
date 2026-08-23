@@ -149,6 +149,17 @@ impl HirProgram {
         }
     }
 
+    /// Cross-package counterpart of `HirPackage::literal_type_hint`.
+    pub fn literal_type_hint(&self, hir_id: HirId) -> Option<Vec<String>> {
+        self.package(hir_id.package_id)?.literal_type_hint(hir_id)
+    }
+
+    pub fn insert_literal_type_hint(&self, hir_id: HirId, literals: Vec<String>) {
+        if let Some(package) = self.package(hir_id.package_id) {
+            package.insert_literal_type_hint(hir_id, literals);
+        }
+    }
+
     /// Cross-package counterpart of `HirPackage::local_struct_fields`.
     pub fn local_struct_fields(&self, def_id: DefId) -> Option<Vec<(Symbol, Ty)>> {
         self.package(def_id.package_id)?.local_struct_fields(def_id)

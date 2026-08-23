@@ -1840,6 +1840,7 @@ impl MirToLirLowerer {
                         | IntrinsicKind::PrimitiveType
                         | IntrinsicKind::CompileWarning
                         | IntrinsicKind::CompileError
+                        | IntrinsicKind::Unionify
                 ) {
                     let mut lir_args = Vec::with_capacity(args.len());
                     for arg in args {
@@ -1889,6 +1890,17 @@ impl MirToLirLowerer {
                                 fp_core::error::Error::from("compile_error! requires one argument")
                             })?,
                         },
+                        IntrinsicKind::Unionify => {
+                            let mut iter = lir_args.into_iter();
+                            lir::ComptimeOp::Unionify {
+                                function: iter.next().ok_or_else(|| {
+                                    fp_core::error::Error::from("unionify requires two arguments")
+                                })?,
+                                ty: iter.next().ok_or_else(|| {
+                                    fp_core::error::Error::from("unionify requires two arguments")
+                                })?,
+                            }
+                        }
                         _ => unreachable!(),
                     };
                     let instr_id = self.next_id();

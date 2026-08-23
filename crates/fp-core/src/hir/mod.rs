@@ -574,6 +574,11 @@ pub enum TypeExprKind {
         binder: Symbol,
         predicate: Box<Expr>,
     },
+    /// A string literal type, e.g. `"foo"`. Purely syntactic, like
+    /// `Refinement`: the type checker resolves the literal string and
+    /// erases this to `TyKind::Slice(i8)` (the same shape a plain `str`
+    /// resolves to) — no `TyKind` counterpart exists.
+    LiteralString(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1308,6 +1313,7 @@ impl TypeExprKind {
             TypeExprKind::Refinement { base, predicate, .. } => {
                 Span::union([base.span(), predicate.span()])
             }
+            TypeExprKind::LiteralString(_) => Span::null(),
         }
     }
 }

@@ -122,6 +122,33 @@ fn parses_bare_ident_optional_type_sugar() {
 }
 
 #[test]
+fn parses_string_literal_type() {
+    let def = parse_single_type_alias(r#"type A = "foo";"#);
+    match def.value {
+        Ty::Literal(lit) => assert_eq!(lit.value, "foo"),
+        other => panic!("expected string literal type, found {:?}", other),
+    }
+}
+
+#[test]
+fn parses_type_union_of_string_literals() {
+    let def = parse_single_type_alias(r#"type T = "a" | "b";"#);
+    match def.value {
+        Ty::TypeBinaryOp(bin) => {
+            assert!(matches!(bin.kind, TypeBinaryOpKind::Union));
+            match (bin.lhs.as_ref(), bin.rhs.as_ref()) {
+                (Ty::Literal(lhs), Ty::Literal(rhs)) => {
+                    assert_eq!(lhs.value, "a");
+                    assert_eq!(rhs.value, "b");
+                }
+                other => panic!("expected literal operands, found {:?}", other),
+            }
+        }
+        other => panic!("expected type union, found {:?}", other),
+    }
+}
+
+#[test]
 fn parses_optional_structural_field_marker() {
     let def = parse_single_type_alias("type A = { email?: string };");
     match def.value {

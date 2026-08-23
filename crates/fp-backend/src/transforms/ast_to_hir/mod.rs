@@ -3483,6 +3483,11 @@ impl AstToHirLowerer {
                     self.normalize_span(ty.span()),
                 ))
             }
+            ast::Ty::Literal(lit) => Ok(hir::TypeExpr::new(
+                self.next_id(),
+                hir::TypeExprKind::LiteralString(lit.value.clone()),
+                self.normalize_span(ty.span()),
+            )),
             ast::Ty::Expr(expr) => {
                 if let ast::ExprKind::Value(value) = expr.kind() {
                     match value.as_ref() {
@@ -3501,6 +3506,35 @@ impl AstToHirLowerer {
                             }
                         }
                         _ => {}
+                    }
+                }
+                // A bare `f"...{...}..."` in type position is an implicit
+                // const block — type position is already a const-eval
+                // context, so there's no need for the explicit `const { }`
+                // wrapper this otherwise mirrors exactly (see the
+                // `ast::Ty::ConstBlock` arm above). Checked explicitly by
+                // shape (an intrinsic call can never be a type path) rather
+                // than folded into the generic path-resolution-failed
+                // fallback below, which exists to produce a real
+                // "unresolved type" error for genuine mistakes.
+                if let ast::ExprKind::IntrinsicCall(call) = expr.kind() {
+                    if call.kind == fp_core::intrinsics::CallKind::Format {
+                        let body = Box::new(self.transform_expr_to_hir(expr)?);
+                        let def_id = self.next_def_id();
+                        let hir_id = self.next_id();
+                        self.package.record_const_block_def(
+                            def_id,
+                            hir::Block {
+                                hir_id,
+                                stmts: Vec::new(),
+                                expr: Some(body.clone()),
+                            },
+                        );
+                        return Ok(hir::TypeExpr::new(
+                            hir_id,
+                            hir::TypeExprKind::ConstBlock(def_id, body),
+                            self.normalize_span(ty.span()),
+                        ));
                     }
                 }
                 if let Ok(path) = self.ast_expr_to_hir_path(expr, PathResolutionScope::Type) {
@@ -4612,7 +4646,8 @@ fn ty_contains_quote(ty: &ast::Ty) -> bool {
         ast::Ty::Expr(expr) => expr_contains_quote_value(expr.as_ref()),
         ast::Ty::ConstBlock(block) => expr_contains_quote_value(block.expr.as_ref()),
         ast::Ty::Refinement(refinement) => ty_contains_quote(&refinement.base),
-        ast::Ty::Primitive(_)
+        ast::Ty::Literal(_)
+        | ast::Ty::Primitive(_)
         | ast::Ty::TokenStream(_)
         | ast::Ty::ImplTraits(_)
         | ast::Ty::Any(_)
@@ -4661,7 +4696,8 @@ fn ty_contains_type_type(ty: &ast::Ty) -> bool {
         ast::Ty::Value(value) => value_contains_type_type(value.value.as_ref()),
         ast::Ty::Expr(expr) => expr_contains_type_type(expr.as_ref()),
         ast::Ty::Refinement(refinement) => ty_contains_type_type(&refinement.base),
-        ast::Ty::Primitive(_)
+        ast::Ty::Literal(_)
+        | ast::Ty::Primitive(_)
         | ast::Ty::TokenStream(_)
         | ast::Ty::ImplTraits(_)
         | ast::Ty::Any(_)

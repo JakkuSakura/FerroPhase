@@ -47,6 +47,45 @@ fn primitive_type_value_ty(name: &str) -> Option<Ty> {
     TypePrimitive::from_name(name).map(Ty::Primitive)
 }
 
+/// Flattens a `Ty::Literal`/`Ty::TypeBinaryOp(Union)` tree of string
+/// literal types into its member strings, in left-to-right order — the
+/// same shape `unionify` (`ComptimeOp::Unionify`) both reads and rebuilds.
+/// `None` if `ty` isn't (recursively) built purely from string literal
+/// types and unions of them.
+fn collect_literal_union_members(ty: &Ty) -> Option<Vec<String>> {
+    match ty {
+        Ty::Literal(lit) => Some(vec![lit.value.clone()]),
+        Ty::TypeBinaryOp(op) if matches!(op.kind, fp_core::ast::TypeBinaryOpKind::Union) => {
+            let mut lhs = collect_literal_union_members(&op.lhs)?;
+            let rhs = collect_literal_union_members(&op.rhs)?;
+            lhs.extend(rhs);
+            Some(lhs)
+        }
+        _ => None,
+    }
+}
+
+/// The inverse of `collect_literal_union_members` — rebuilds a
+/// `Ty::Literal`/`Ty::TypeBinaryOp(Union)` tree from a flat list of
+/// strings, left-associated (matching how the parser's own `|` chains
+/// associate).
+fn build_literal_union(values: Vec<String>) -> Ty {
+    let mut iter = values.into_iter();
+    let first = iter
+        .next()
+        .map(|value| Ty::Literal(fp_core::ast::TypeLiteralString { value }))
+        .unwrap_or(Ty::Literal(fp_core::ast::TypeLiteralString {
+            value: String::new(),
+        }));
+    iter.fold(first, |acc, value| {
+        Ty::TypeBinaryOp(Box::new(fp_core::ast::TypeBinaryOp {
+            kind: fp_core::ast::TypeBinaryOpKind::Union,
+            lhs: Box::new(acc),
+            rhs: Box::new(Ty::Literal(fp_core::ast::TypeLiteralString { value })),
+        }))
+    })
+}
+
 #[derive(Clone)]
 struct TypedValue {
     ty: LirType,
@@ -630,8 +669,22 @@ impl LirInterpreter {
                         println!("{rendered}");
                         return Ok(());
                     }
-                    fp_core::lir::LirIntrinsicKind::Format
-                    | fp_core::lir::LirIntrinsicKind::TimeNow => {}
+                    fp_core::lir::LirIntrinsicKind::Format => {
+                        // Unlike `Print`/`Println` (side-effecting, no
+                        // meaningful return value) `Format` is a real
+                        // value-producing expression — e.g. `f"..."` used
+                        // as a plain string value, including in an
+                        // implicit type-position const block (see
+                        // `ast_to_hir`'s `ast::Ty::Expr` arm for
+                        // `CallKind::Format`). Write the actual rendered
+                        // string instead of discarding it as `unit`.
+                        return self.write_typed_result(
+                            dst,
+                            self.result_type(instr)?,
+                            Value::string(rendered),
+                        );
+                    }
+                    fp_core::lir::LirIntrinsicKind::TimeNow => {}
                     fp_core::lir::LirIntrinsicKind::ProcMacroTokenStreamFromStr
                     | fp_core::lir::LirIntrinsicKind::ProcMacroTokenStreamToString => {
                         unreachable!("handled above")
@@ -711,6 +764,41 @@ impl LirInterpreter {
                 ComptimeOp::CompileError { message } => {
                     let text = self.render_str_argument(message)?;
                     Err(VmError::Runtime(format!("compile_error!: {text}")))
+                }
+                ComptimeOp::Unionify { function, ty } => {
+                    let LirValueKind::Function(function_ref) = &function.kind else {
+                        // Curried calls (`unionify(f)(u)`) aren't supported
+                        // yet — the interpreter has no first-class/indirect
+                        // call support at all today. `unionify` currently
+                        // only works called flat: `unionify(f, u)`.
+                        return Err(VmError::Runtime(
+                            "unionify's first argument must be a plain function reference \
+                             (curried calls are not yet supported)"
+                                .into(),
+                        ));
+                    };
+                    let function_ref = function_ref.clone();
+                    let type_val = self.object_value_operand(ty)?;
+                    let Value::Type(reflected_ty) = type_val else {
+                        return Err(VmError::TypeMismatch {
+                            expected: "type value".into(),
+                            found: format!("{type_val:?}"),
+                        });
+                    };
+                    let members = collect_literal_union_members(&reflected_ty).ok_or_else(|| {
+                        VmError::Runtime(
+                            "unionify's second argument must be a string literal type or a \
+                             union of string literal types"
+                                .into(),
+                        )
+                    })?;
+                    let mut transformed = Vec::with_capacity(members.len());
+                    for member in members {
+                        let result = self.invoke_function_ref_with_string(&function_ref, &member)?;
+                        transformed.push(result);
+                    }
+                    let result_ty = Value::Type(build_literal_union(transformed));
+                    self.write_typed_result(dst, self.result_type(instr)?, result_ty)
                 }
             },
             LirInstructionKind::InlineAsm { .. }
@@ -1874,6 +1962,41 @@ impl LirInterpreter {
             self.integer_value(&lhs)?.wrapping_rem(rhs_value)
         };
         self.write_typed_result(dst, ty, integer_value(result, signed))
+    }
+
+    /// Invokes a plain (non-indirect) function reference with a single
+    /// `&str` argument and returns its `String` result — used by
+    /// `ComptimeOp::Unionify` to apply a function to each member of a
+    /// reflected union type. Shares `handle_call`'s `Definition` dispatch
+    /// logic, but works directly on `Value`s (no destination register /
+    /// `LirType` signature check) since the caller already knows the
+    /// expected shape.
+    fn invoke_function_ref_with_string(
+        &mut self,
+        function_ref: &LirFunctionRef,
+        arg: &str,
+    ) -> LirResult<String> {
+        let LirFunctionRef::Definition(def_id) = function_ref else {
+            return Err(VmError::Runtime(
+                "unionify only supports functions resolved to a definition".into(),
+            ));
+        };
+        let function = self
+            .definition_functions
+            .get(def_id)
+            .cloned()
+            .ok_or(VmError::Runtime(format!(
+                "missing function definition {def_id}"
+            )))?;
+        let program = LirBlob::new(self.data_layout.clone());
+        let result = self.run_function(&program, &function, &[Value::string(arg.to_string())])?;
+        match result {
+            Value::String(s) => Ok(s.value),
+            other => Err(VmError::TypeMismatch {
+                expected: "string".into(),
+                found: format!("{other:?}"),
+            }),
+        }
     }
 
     fn handle_call(

@@ -1908,8 +1908,38 @@ impl HirTypeChecker {
                 hir::TypeExprKind::Structural(_) => {
                     self.error_ty("structural types are not supported by HIR typing")
                 }
+                hir::TypeExprKind::TypeBinaryOp(op)
+                    if matches!(op.kind, fp_core::ast::TypeBinaryOpKind::Union) =>
+                {
+                    let lhs_ty = self.check_type_expr(&op.lhs).await?;
+                    let rhs_ty = self.check_type_expr(&op.rhs).await?;
+                    let lhs_literals = self.program_rc().literal_type_hint(op.lhs.hir_id);
+                    let rhs_literals = self.program_rc().literal_type_hint(op.rhs.hir_id);
+                    match (lhs_literals, rhs_literals) {
+                        (Some(mut lhs), Some(rhs)) => {
+                            for value in rhs {
+                                if !lhs.contains(&value) {
+                                    lhs.push(value);
+                                }
+                            }
+                            self.program_rc().insert_literal_type_hint(expr.hir_id, lhs);
+                            str_ty()
+                        }
+                        _ => {
+                            let _ = (lhs_ty, rhs_ty);
+                            self.error_ty(
+                                "type expressions cannot be combined with a type operator",
+                            )
+                        }
+                    }
+                }
                 hir::TypeExprKind::TypeBinaryOp(_) => {
                     self.error_ty("type expressions cannot be combined with a type operator")
+                }
+                hir::TypeExprKind::LiteralString(value) => {
+                    self.program_rc()
+                        .insert_literal_type_hint(expr.hir_id, vec![value.clone()]);
+                    str_ty()
                 }
                 hir::TypeExprKind::Type => Ty {
                     kind: TyKind::Type,
@@ -4894,6 +4924,15 @@ fn ty_contains_param(ty: &Ty) -> bool {
                 || ty_contains_param(&signature.binder.value.output)
         }
         _ => false,
+    }
+}
+
+/// The same erased shape a plain `str`/string literal already resolves to
+/// (`literal_ty`'s `Lit::Str` arm) — used by literal/union string type
+/// resolution so every one of those erases identically.
+fn str_ty() -> Ty {
+    Ty {
+        kind: TyKind::Slice(Box::new(Ty::int(ty::IntTy::I8))),
     }
 }
 

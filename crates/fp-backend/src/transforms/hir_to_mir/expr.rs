@@ -4589,6 +4589,11 @@ impl HirToMirLowerer {
             // no corresponding `TyKind::Refinement` (see the doc comment on
             // `hir::TypeExprKind::Refinement`).
             hir::TypeExprKind::Refinement { base, .. } => self.lower_type_expr(base),
+            // Erases to plain `str` — the typeck-resolved lookup above
+            // should always hit (populated by `fp_typing::check_type_expr`'s
+            // `LiteralString` arm); this is the same fallback shape as a
+            // normal `str`.
+            hir::TypeExprKind::LiteralString(_) => self.string_slice_ty(),
         }
     }
 
@@ -6332,6 +6337,7 @@ impl HirToMirLowerer {
             hir::TypeExprKind::Refinement { base, .. } => {
                 self.lower_type_expr_with_substs(base, substs)
             }
+            hir::TypeExprKind::LiteralString(_) => self.string_slice_ty(),
         }
     }
 

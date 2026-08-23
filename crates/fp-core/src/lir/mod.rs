@@ -654,6 +654,13 @@ pub enum ComptimeOp {
     CompileError {
         message: LirValue,
     },
+    /// `unionify(f, ty)` — lifts `f` over a reflected union type's members,
+    /// applying it to each member's literal string and rebuilding the
+    /// union. See `LangIntrinsic::Unionify`'s doc comment.
+    Unionify {
+        function: LirValue,
+        ty: LirValue,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -153,6 +153,8 @@ common_enum! {
         /// type checker discharges `predicate` and erases this to `base`;
         /// no downstream IR (HIR TyKind, MIR, LIR) ever needs to represent it.
         Refinement(Box<TypeRefinement>),
+        /// A string literal type, e.g. `"foo"`.
+        Literal(TypeLiteralString),
     }
 
 }
@@ -289,6 +291,7 @@ impl Ty {
             Ty::Quote(ty) => ty.span(),
             Ty::TypeBinaryOp(op) => op.span(),
             Ty::Refinement(ty) => ty.span(),
+            Ty::Literal(ty) => ty.span(),
             _ => Span::null(),
         }
     }
@@ -636,6 +639,18 @@ impl TypeBounds {
 
     pub fn span(&self) -> Span {
         Span::union(self.bounds.iter().map(Expr::span))
+    }
+}
+
+common_struct! {
+    /// A string literal type, e.g. `"foo"` in type position.
+    pub struct TypeLiteralString {
+        pub value: String,
+    }
+}
+impl TypeLiteralString {
+    pub fn span(&self) -> Span {
+        Span::null()
     }
 }
 

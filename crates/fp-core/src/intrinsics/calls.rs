@@ -382,6 +382,7 @@ pub enum IntrinsicKind {
     ShellFileCopy,
     ShellFileTemplate,
     ShellFileRsync,
+    Unionify,
 }
 
 impl IntrinsicKind {
@@ -462,6 +463,7 @@ impl IntrinsicKind {
             Self::ShellFileCopy => "shell_file_copy",
             Self::ShellFileTemplate => "shell_file_template",
             Self::ShellFileRsync => "shell_file_rsync",
+            Self::Unionify => "unionify",
         }
     }
 }
@@ -580,6 +582,7 @@ impl CallKind {
     pub const CloneStruct: Self = Self::Intrinsic(IntrinsicKind::CloneStruct);
     pub const BuildType: Self = Self::Intrinsic(IntrinsicKind::BuildType);
     pub const PrimitiveType: Self = Self::Intrinsic(IntrinsicKind::PrimitiveType);
+    pub const Unionify: Self = Self::Intrinsic(IntrinsicKind::Unionify);
     pub const HasField: Self = Self::Intrinsic(IntrinsicKind::HasField);
     pub const FieldCount: Self = Self::Intrinsic(IntrinsicKind::FieldCount);
     pub const MethodCount: Self = Self::Intrinsic(IntrinsicKind::MethodCount);

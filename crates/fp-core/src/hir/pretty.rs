@@ -980,6 +980,7 @@ fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
             fmt_type_expr(base, ctx),
             format_expr_inline(predicate, ctx)
         ),
+        TypeExprKind::LiteralString(value) => format!("{:?}", value),
     }
 }
 

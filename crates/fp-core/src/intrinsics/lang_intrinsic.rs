@@ -59,6 +59,7 @@ pub enum LangIntrinsic {
     ProcMacroTokenStreamFromStr,
     ProcMacroTokenStreamToString,
     FieldType,
+    Unionify,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,6 +100,18 @@ const LANG_INSTRINSTICS: &[LangIntrinsicSpec] = &[
         lang_item: "primitive_type",
         capability: LangIntrinsicCapability::ConstOnly,
         call_kind: Some(CallKind::PrimitiveType),
+    },
+    // Lifts a function over a reflected union type's members, applying it
+    // to each member's literal string and rebuilding the union — how
+    // TypeScript's template-literal-type union distribution is modeled
+    // here. Intrinsic for now (see `std/intrinsics/mod.fp`'s `unionify`
+    // stub doc comment); intended to migrate to a real std fn once
+    // in-language type reflection/pattern matching is expressive enough.
+    LangIntrinsicSpec {
+        intrinsic: LangIntrinsic::Unionify,
+        lang_item: "unionify",
+        capability: LangIntrinsicCapability::ConstOnly,
+        call_kind: Some(CallKind::Unionify),
     },
     LangIntrinsicSpec {
         intrinsic: LangIntrinsic::FsReadDir,

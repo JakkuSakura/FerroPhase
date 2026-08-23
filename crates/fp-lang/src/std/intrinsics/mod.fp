@@ -29,6 +29,15 @@ pub const fn primitive_type(name: &str) -> type<_> {
     compile_error!("primitive_type is a compiler intrinsic")
 }
 
+// TODO: implement this as a real std fn once type-level reflection/
+// pattern matching is expressive enough in-language; it's a compiler
+// intrinsic for now purely to bootstrap union-of-literal-type support
+// (TypeScript-style template literal type union distribution).
+#[intrinsic = "unionify"]
+pub const fn unionify(f: fn(&str) -> &str, u: type) -> type<_> {
+    compile_error!("unionify is a compiler intrinsic")
+}
+
 #[intrinsic = "catch_unwind"]
 pub fn catch_unwind(f: fn()) -> bool {
     compile_error!("catch_unwind is a compiler intrinsic")

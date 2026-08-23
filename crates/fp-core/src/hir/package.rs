@@ -202,6 +202,14 @@ pub struct HirPackage {
     /// checks running concurrently — no two items' `TypeExpr`s ever share a
     /// `hir_id`.
     raw_refinement_hints: RefCell<HashMap<HirId, RefinementHint>>,
+    /// The resolved set of literal strings a string-literal/union-of-literal/
+    /// template-literal type `TypeExpr` expands to, keyed by that node's own
+    /// `hir_id`. Purely an internal accelerator for `fp_typing::check_type_expr`
+    /// so a containing `Template`/union/intrinsic-string-op arm can look up
+    /// what an already-checked child resolved to without re-walking the raw
+    /// `TypeExpr` tree — never consulted past typecheck (every arm still
+    /// erases to the same `str`-shaped `Ty` regardless of this side table).
+    literal_type_hints: RefCell<HashMap<HirId, Vec<String>>>,
     /// Field shapes for a `type X = const { .. };` whose RHS resolves via
     /// `Res::Local(hir_id)` rather than a real `def_map` item — keyed by
     /// that same definition's `DefId`, which `fp_typing::field_ty` recovers
@@ -282,6 +290,7 @@ impl HirPackage {
             assoc_type_for_self_cache: RefCell::new(HashMap::new()),
             refinement_hints: RefCell::new(HashMap::new()),
             raw_refinement_hints: RefCell::new(HashMap::new()),
+            literal_type_hints: RefCell::new(HashMap::new()),
             local_struct_fields: RefCell::new(HashMap::new()),
             expr_types: RefCell::new(HashMap::new()),
             type_expr_types: RefCell::new(HashMap::new()),
@@ -485,6 +494,15 @@ impl HirPackage {
 
     pub fn insert_raw_refinement_hint(&self, hir_id: HirId, hint: RefinementHint) {
         self.raw_refinement_hints.borrow_mut().insert(hir_id, hint);
+    }
+
+    /// See `literal_type_hints`'s doc comment.
+    pub fn literal_type_hint(&self, hir_id: HirId) -> Option<Vec<String>> {
+        self.literal_type_hints.borrow().get(&hir_id).cloned()
+    }
+
+    pub fn insert_literal_type_hint(&self, hir_id: HirId, literals: Vec<String>) {
+        self.literal_type_hints.borrow_mut().insert(hir_id, literals);
     }
 
     /// See `local_struct_fields`'s doc comment.
