@@ -966,6 +966,56 @@ impl HirTypeChecker {
                             }
                         }
                     }
+                    // Trait-qualified UFCS calls whose receiver is the
+                    // trait's own *output* type, not any argument
+                    // (`Default::default()`, `FromIterator::from_iter
+                    // (iter)`) — the same call shape as above, but the
+                    // real `Self` comes from the ambient expected type at
+                    // the call site (`let x: Foo = Default::default();`),
+                    // exactly like a bare struct/enum literal's own field
+                    // types resolve from the same `expected_expr_types`
+                    // stack elsewhere in this function. Only tried once
+                    // the argument-typed attempt above has already come up
+                    // empty, since a real receiver argument always takes
+                    // priority when one exists.
+                    if matches!(callee_ty.kind, TyKind::Error(_)) {
+                        if let hir::ExprKind::Path(path) = &callee.kind {
+                            if path.segments.len() == 2 {
+                                // The ambient expected type is itself only
+                                // a real receiver to search with when it's
+                                // an actual type — if it's `TyKind::Error`
+                                // (the typechecker's own "already failed
+                                // here" placeholder, not any real Rust
+                                // type), there is nothing to search, so
+                                // don't hand it to a type-directed lookup
+                                // as if it named something.
+                                let expected = self
+                                    .expected_expr_types
+                                    .last()
+                                    .filter(|ty| !matches!(ty.kind, TyKind::Error(_)));
+                                if let Some(receiver_ty) = expected.cloned() {
+                                    let method_name = path.segments[1].name.clone();
+                                    let sig = if let TyKind::Param(param) = &receiver_ty.kind {
+                                        self.generic_param_bound_method_signature(
+                                            &param.name,
+                                            &method_name,
+                                        )?
+                                    } else {
+                                        self.method_declared_signature_at(&receiver_ty, &method_name)?
+                                    };
+                                    if let Some(sig) = sig {
+                                        tracing::debug!(
+                                            trait_name = %path.segments[0].name,
+                                            method = %method_name,
+                                            ?receiver_ty,
+                                            "expected-type-qualified UFCS call resolved"
+                                        );
+                                        callee_ty = sig;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     let Some((mut substitutions, _)) =
                         self.instantiate_call(&callee_ty, &arg_types)?
                     else {
@@ -2466,11 +2516,21 @@ impl HirTypeChecker {
             }
             // A trait base (`Add::add(a, b)`) — which impl to search
             // depends on the concrete receiver, which isn't known until
-            // the call's own arguments are checked. Fall through to the
-            // ordinary per-`ItemKind` handling below (a `Trait` item hits
-            // its catch-all "resolved path is not a value" `Error`), and
-            // let the `Call` arm's argument-typed fallback resolve it once
-            // it has the first argument's type to search impls with.
+            // the call's own arguments are checked, so this function
+            // genuinely cannot resolve it yet. Return a bare (undiagnosed)
+            // error type rather than falling into the ordinary per-
+            // `ItemKind` handling below, whose catch-all calls `error_ty`
+            // and so *records a diagnostic immediately* — that would fire
+            // even when the `Call` arm's argument-typed fallback goes on
+            // to resolve this same path successfully right afterward. A
+            // real "unresolved" diagnostic belongs to whichever call site
+            // actually exhausts every resolution attempt, not to this
+            // intermediate, expected-to-be-incomplete step.
+            if let Some(item) = self.shared.program.def_map.get(&def_id) {
+                if matches!(&item.kind, hir::ItemKind::Trait(_)) {
+                    return Ok(Ty::error());
+                }
+            }
         }
         let Some(item) = self.program_rc().item(def_id).cloned() else {
             // `program` is an owned `Rc` clone (cheap — it's the same
