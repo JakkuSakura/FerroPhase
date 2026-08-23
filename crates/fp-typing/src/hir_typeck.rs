@@ -4145,6 +4145,20 @@ impl HirTypeChecker {
         if impl_generics.params.is_empty() && method_generics.params.is_empty() {
             return Ok(None);
         }
+        // This only ever fills in the *explicit* generic-argument list
+        // recorded for codegen's benefit (`TypeckResults::generic_method_
+        // args`) — the call expression's own resulting type was already
+        // fully computed by `instantiate_call` before either caller ever
+        // reaches this function. A generic parameter that only appears in
+        // a position `instantiate_call`'s own unification never touched
+        // (e.g. a method-level generic used solely in a `where` bound, or
+        // meant to be inferred from an expected return type this checker
+        // doesn't propagate here) is a real, common case, not a type
+        // error — so failing to fill in the *list* must not fail the
+        // *call*: fall back to `Ok(None)` ("no explicit args recorded")
+        // instead of aborting the whole method resolution via `Err`, which
+        // previously discarded an already-correct `result` type purely
+        // because this auxiliary bookkeeping came up short.
         let mut args = Vec::new();
         for (index, parameter) in impl_generics.params.iter().enumerate() {
             let param = ty::ParamTy {
@@ -4158,32 +4172,24 @@ impl HirTypeChecker {
             // lookup miss does, not be silently returned as if it were a
             // concrete type (see `resolve_param_transitively`'s doc
             // comment).
-            let argument = match self.resolve_param_transitively(&param, substitutions) {
-                Some(argument) if !matches!(argument.kind, TyKind::Param(_)) => argument,
-                _ => {
-                    return Err(Error::from(format!(
-                        "could not infer generic parameter `{}` in impl method",
-                        parameter.name
-                    )));
+            match self.resolve_param_transitively(&param, substitutions) {
+                Some(argument) if !matches!(argument.kind, TyKind::Param(_)) => {
+                    args.push(argument.clone());
                 }
-            };
-            args.push(argument.clone());
+                _ => return Ok(None),
+            }
         }
         for (index, parameter) in method_generics.params.iter().enumerate() {
             let param = ty::ParamTy {
                 index: index as u32,
                 name: parameter.name.clone(),
             };
-            let argument = match self.resolve_param_transitively(&param, substitutions) {
-                Some(argument) if !matches!(argument.kind, TyKind::Param(_)) => argument,
-                _ => {
-                    return Err(Error::from(format!(
-                        "could not infer generic parameter `{}` in method",
-                        parameter.name
-                    )));
+            match self.resolve_param_transitively(&param, substitutions) {
+                Some(argument) if !matches!(argument.kind, TyKind::Param(_)) => {
+                    args.push(argument.clone());
                 }
-            };
-            args.push(argument.clone());
+                _ => return Ok(None),
+            }
         }
         Ok(Some(args))
     }
