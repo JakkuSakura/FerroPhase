@@ -3243,9 +3243,21 @@ impl HirTypeChecker {
         let TyKind::FnPtr(sig) = &signature.kind else {
             return Ok(None);
         };
-        let Some(self_input) = sig.binder.value.inputs.first() else {
-            return Ok(None);
-        };
+        let has_self_param = matches!(
+            function.sig.inputs.first().map(|param| &param.pat.kind),
+            Some(hir::PatKind::Binding { name, .. }) if name.as_str() == "self"
+        );
+        if !has_self_param {
+            // An associated function called via `Self::name(..)` (e.g.
+            // `Layout::is_size_alignment_valid(size, alignment)`) takes no
+            // receiver at all — the caller already supplies every argument
+            // explicitly, so there's no `Self` position to unify here.
+            // Return the declared signature verbatim; the caller's own
+            // `instantiate_call` against the explicit call arguments does
+            // the real unification.
+            return Ok(Some(signature));
+        }
+        let self_input = &sig.binder.value.inputs[0];
         // `Self`'s position, substituted from the *actual*
         // receiver — everything else in the signature stays
         // in terms of the method's own generics for now.
