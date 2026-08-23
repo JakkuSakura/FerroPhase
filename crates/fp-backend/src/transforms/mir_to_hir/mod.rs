@@ -1,6 +1,6 @@
 //! MIR->HIR lift: turns an already-resolved `mir::Constant`/`mir::ConstValue`
-//! back into the `hir::Value` shape HIR-level consumers (typing's
-//! `PackageTypes::const_values`/`const_block_values`, `eval_script`,
+//! back into the `hir::Value` shape HIR-level consumers (typing's own
+//! `HirPackage::const_values`/`const_block_values`, `eval_script`,
 //! interpreter global-seeding) read directly. Pure structural pattern
 //! matching, no lowering context needed — the mirror image of
 //! `lir_to_mir::LirToMir`, which handles the other direction (needs ADT
@@ -16,10 +16,10 @@ impl MirToHir {
     /// needed because a directly-foldable top-level const (e.g.
     /// `const X = 1 + 2 * 3;`, no `let` needed) never becomes a comptime
     /// entry requiring the interpreter (see `MirLowering::lower_const`'s
-    /// constant-folding fast path), so its value never reaches
-    /// `PackageTypes::const_values` the way an interpreted one does unless
-    /// something converts its already-computed `mir::Constant` back into a
-    /// `hir::Value`.
+    /// constant-folding fast path), so its value never reaches the
+    /// package's own `HirPackage::const_values` the way an interpreted one
+    /// does unless something converts its already-computed `mir::Constant`
+    /// back into a `hir::Value`.
     pub fn constant_to_value(constant: &mir::Constant) -> Option<hir::Value> {
         match &constant.literal {
             mir::ConstantKind::Bool(v) => Some(hir::Value::bool(*v)),

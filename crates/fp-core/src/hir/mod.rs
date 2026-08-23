@@ -27,8 +27,8 @@ pub type NodeId = u32;
 /// HIR's own name for a runtime/const value — the same representation
 /// `ast::Value` already is (comptime results don't need a distinct
 /// HIR-shaped value type), aliased here so HIR-owned data
-/// (`PackageTypes`, ...) names it as `hir::Value`, not a lower layer's
-/// type reaching up into this one.
+/// (`HirPackage`'s typed-results fields, ...) names it as `hir::Value`, not
+/// a lower layer's type reaching up into this one.
 pub type Value = crate::ast::Value;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -345,7 +345,7 @@ pub struct ExprConstBlock {
     /// This const block's own identity, minted the same way every other
     /// item/def is during AST-to-HIR lowering (see
     /// `HirGenerator::next_def_id`) — used to key its resolved comptime
-    /// value in `PackageTypes::const_block_values`, so every comptime unit
+    /// value in `HirPackage::const_block_values`, so every comptime unit
     /// (named consts and const blocks alike) is identified the same way.
     pub def_id: DefId,
     pub body: Box<Expr>,
@@ -539,7 +539,7 @@ pub enum TypeExprKind {
     /// appearing here structurally; its value is resolved by the type
     /// checker via `TypingShared::request_comptime`. The `DefId` is this
     /// block's own identity (see `ExprConstBlock::def_id`'s doc comment) —
-    /// used to key its resolved value in `PackageTypes::const_block_values`.
+    /// used to key its resolved value in `HirPackage::const_block_values`.
     ConstBlock(DefId, Box<Expr>),
     Never,
     Infer,

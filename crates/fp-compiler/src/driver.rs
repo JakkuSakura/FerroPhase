@@ -652,11 +652,11 @@ impl CompilerDriver {
     }
 
     /// Writes `evaluate_comptime_lir`'s real, interpreter-computed values
-    /// back into this package's stored `PackageTypes::const_block_values`
-    /// (keyed by each block's own `HirId`), before `relower_cached_lir_units`
+    /// back onto this package's own `HirPackage::const_block_values`
+    /// (keyed by each block's own `DefId`), before `relower_cached_lir_units`
     /// re-lowers HIR->MIR a second time. That second lowering pass already
-    /// has a fast path (`typeck_const_block_values.get(&expr.hir_id)`,
-    /// `hir_to_mir/expr.rs`'s `ConstBlock` arm) that embeds a real constant
+    /// has a fast path (`typeck_const_block_value`, `hir_to_mir/expr.rs`'s
+    /// `ConstBlock` arm) that embeds a real constant
     /// when a value is present there and otherwise falls back to lowering
     /// the block as ordinary runtime code — this is what turns that
     /// fallback into a real compile-time constant, without needing typing

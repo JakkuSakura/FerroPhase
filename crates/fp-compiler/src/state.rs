@@ -16,9 +16,11 @@ use crate::ConstValueId;
 pub struct CompilerState {
     /// Every package's own HIR published so far this session — mirrors
     /// `mir_program`/`lir_program` below; keyed internally by `hir::PackageId`
-    /// (see `HirProgram`/`ProgramTypes`'s own shape), not the compiler's
-    /// surface `ast::package::PackageId`, since a `hir::Package`'s identity
-    /// is always the former.
+    /// (see `HirProgram`'s own shape), not the compiler's surface
+    /// `ast::package::PackageId`, since a `hir::Package`'s identity is
+    /// always the former. Typed results (expr/pat types, resolutions,
+    /// diagnostics, ...) live directly on each published `HirPackage` —
+    /// there's no separate typed-results table to keep in sync.
     hir_program: hir::HirProgram,
     /// The whole workspace `HirProgram` a package's `TypingShared` is
     /// checking against, published only for the duration of that package's

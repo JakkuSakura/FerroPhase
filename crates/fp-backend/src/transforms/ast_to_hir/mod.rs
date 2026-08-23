@@ -842,7 +842,8 @@ impl HirGenerator {
     /// `struct`/`enum` item (`register_type_def`, backed by `Res::Def` and a
     /// `def_map` entry known up front), the shape here is only known once
     /// the checker actually evaluates the tagged expression, so `path_ty`
-    /// reads it out of `PackageTypes` via this `HirId` instead.
+    /// reads it out of the package's own typed results via this `HirId`
+    /// instead.
     fn register_type_local(&mut self, name: &str, hir_id: hir::HirId) {
         self.current_type_scope()
             .insert(name.to_string(), hir::Res::Local(hir_id));
@@ -2488,7 +2489,7 @@ impl HirGenerator {
                     // `record_value_symbol`/`record_type_symbol`, since this
                     // name is lexically scoped to this statement, not a real
                     // module-level definition. `path_ty`/`field_ty` read the
-                    // resolved shape straight out of `PackageTypes`'s
+                    // resolved shape straight out of the package's own
                     // `const_block_values` by that `DefId` once this
                     // statement has been checked.
                     let body = Box::new(self.transform_expr_to_hir(inner)?);

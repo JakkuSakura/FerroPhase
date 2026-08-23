@@ -83,7 +83,7 @@ pub struct ExecutableConst {
     /// `DefId` for an ordinary top-level `const`, or a synthesized one for
     /// a const-block-derived entry (see `register_const_block_comptime_entry`).
     /// Carried through to `lir::LirComptimeEntry` so resolved values can be
-    /// recorded into `hir::PackageTypes::const_values` by `DefId` instead
+    /// recorded onto `hir::HirPackage::const_values` by `DefId` instead
     /// of by name string.
     pub def_id: crate::hir::DefId,
     /// The originating `const { .. }` expression's `HirId`, when this

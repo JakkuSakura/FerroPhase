@@ -1202,8 +1202,8 @@ impl MirLowering {
     /// Every top-level const resolved by direct folding this pass (see
     /// `lower_const`'s fast path) — a directly-foldable const never
     /// becomes a comptime entry requiring the real interpreter, so its
-    /// value would otherwise never reach `driver.rs`'s
-    /// `PackageTypes::const_values` the way an interpreted const's value
+    /// value would otherwise never reach `driver.rs`'s own
+    /// `HirPackage::const_values` the way an interpreted const's value
     /// already does.
     pub fn take_resolved_const_values(&mut self) -> HashMap<String, mir::Constant> {
         std::mem::take(&mut self.resolved_const_values)
@@ -1234,69 +1234,36 @@ impl MirLowering {
     /// `self.current_package` (the same `Rc<HirPackage>` it wrote it onto —
     /// no separate copy-and-lower-everything-up-front pass here anymore,
     /// see this type's own doc comment for why that used to exist) and
-    /// lowered to a MIR `Ty` on demand. A single unresolvable type must not
-    /// block MIR lowering for every *other*, independently-correct item —
-    /// this just skips it (recording a diagnostic) and returns `None`,
-    /// exactly like a genuinely-never-recorded entry would.
-    fn typeck_expr_type(&mut self, hir_id: hir::HirId) -> Option<Ty> {
+    /// lowered to a MIR `Ty` on demand. Deliberately `&self`, not `&mut
+    /// self`: an unresolvable type here is silently treated exactly like a
+    /// never-recorded entry (both already flow into the same `Option<_>`
+    /// every caller already handles) rather than reported via
+    /// `emit_warning`, so this works uniformly from any call site —
+    /// including ones that only hold `&self` or reach `MirLowering` through
+    /// an immutably-borrowed field — without a parallel `&mut self` variant.
+    fn typeck_expr_type(&self, hir_id: hir::HirId) -> Option<Ty> {
         let ty = self.current_package.expr_type(hir_id)?;
-        match lower_hir_ty(&ty) {
-            Ok(lowered) => Some(lowered),
-            Err(error) => {
-                self.emit_warning(
-                    Span::default(),
-                    format!("skipping unresolvable type for HIR node {hir_id:?}: {error}"),
-                );
-                None
-            }
-        }
+        lower_hir_ty(&ty).ok()
     }
 
     /// Same as `typeck_expr_type`, for a type-position `TypeExpr`'s own
     /// checked type instead of a value expr's.
-    fn typeck_type_expr_type(&mut self, hir_id: hir::HirId) -> Option<Ty> {
+    fn typeck_type_expr_type(&self, hir_id: hir::HirId) -> Option<Ty> {
         let ty = self.current_package.type_expr_type(hir_id)?;
-        match lower_hir_ty(&ty) {
-            Ok(lowered) => Some(lowered),
-            Err(error) => {
-                self.emit_warning(
-                    Span::default(),
-                    format!("skipping unresolvable type for HIR node {hir_id:?}: {error}"),
-                );
-                None
-            }
-        }
+        lower_hir_ty(&ty).ok()
     }
 
     /// Same idea, for a resolved generic call/method call's own concrete
     /// type arguments — if any one argument fails to lower, the whole
     /// resolution is skipped (a partial arg list would be nonsensical).
-    fn typeck_generic_call_arg(&mut self, hir_id: hir::HirId) -> Option<Vec<Ty>> {
+    fn typeck_generic_call_arg(&self, hir_id: hir::HirId) -> Option<Vec<Ty>> {
         let resolution = self.current_package.generic_call_arg(hir_id)?;
-        match resolution.args.iter().map(lower_hir_ty).collect::<Result<Vec<_>>>() {
-            Ok(args) => Some(args),
-            Err(error) => {
-                self.emit_warning(
-                    Span::default(),
-                    format!("skipping unresolvable generic args for HIR node {hir_id:?}: {error}"),
-                );
-                None
-            }
-        }
+        resolution.args.iter().map(lower_hir_ty).collect::<Result<Vec<_>>>().ok()
     }
 
-    fn typeck_generic_method_arg(&mut self, hir_id: hir::HirId) -> Option<Vec<Ty>> {
+    fn typeck_generic_method_arg(&self, hir_id: hir::HirId) -> Option<Vec<Ty>> {
         let resolution = self.current_package.generic_method_arg(hir_id)?;
-        match resolution.args.iter().map(lower_hir_ty).collect::<Result<Vec<_>>>() {
-            Ok(args) => Some(args),
-            Err(error) => {
-                self.emit_warning(
-                    Span::default(),
-                    format!("skipping unresolvable generic args for HIR node {hir_id:?}: {error}"),
-                );
-                None
-            }
-        }
+        resolution.args.iter().map(lower_hir_ty).collect::<Result<Vec<_>>>().ok()
     }
 
     /// Convert a comptime-evaluated `Value` (from `const { ... }` block
@@ -4233,7 +4200,7 @@ impl MirLowering {
         // A const resolved this way (directly foldable — no `let`, no
         // side effects requiring the real interpreter) never becomes a
         // comptime entry, so nothing else would ever surface its value to
-        // the driver's `PackageTypes::const_values` the way an interpreted
+        // the driver's `HirPackage::const_values` the way an interpreted
         // const's value already does — see `take_resolved_const_values`/
         // `take_resolved_const_defs`, the exporters this feeds.
         self.resolved_const_values.insert(key.clone(), init_constant);
@@ -4343,11 +4310,11 @@ impl MirLowering {
         // `hir::ExprConstBlock` carries no declared type of its own (see
         // `hir::ExprConstBlock`'s doc comment) — the real, checked type is
         // whatever the type checker recorded for this expression's own
-        // `hir_id` in `PackageTypes::expr_types`, already loaded here via
-        // `with_typeck_results`/`typeck_exprs`. Every `ConstBlock` expr is
-        // checked (and its type recorded) before MIR lowering ever runs —
-        // a missing entry means typing skipped this node, an internal
-        // compiler error, not a case to paper over with a made-up type.
+        // `hir_id`, read here via `typeck_expr_type`. Every `ConstBlock`
+        // expr is checked (and its type recorded) before MIR lowering ever
+        // runs — a missing entry means typing skipped this node, an
+        // internal compiler error, not a case to paper over with a made-up
+        // type.
         let lowered_ty = self.typeck_expr_type(expr_hir_id).unwrap_or_else(|| {
             panic!(
                 "internal compiler error: const block {expr_hir_id:?} has no checked type recorded on its own HirPackage"
@@ -4363,7 +4330,7 @@ impl MirLowering {
 
     /// Shared by `register_const_block_comptime_entry` (found incidentally
     /// while walking a body that contains a `const { .. }` block, `ty`
-    /// already resolved from `PackageTypes`) and `transform_comptime_
+    /// already resolved via `typeck_expr_type`) and `transform_comptime_
     /// request` (fed directly from a `fp_typing::ComptimeRequest`'s own
     /// `typeck_results`/`block.expr`, with no body walk at all) — both just
     /// need the already-checked `ty`/`body` unboxed, not an `hir::
@@ -4535,9 +4502,10 @@ impl MirLowering {
             hir::TypeExprKind::Infer => self.error_ty(),
             hir::TypeExprKind::Error => self.error_ty(),
             // The typeck-resolved type for this node is looked up via
-            // `typeck_type_exprs` above (populated from the type checker's
-            // `resolve_pending_type_const_blocks`); reaching here means that
-            // lookup missed, so fall back the same way `Infer` does.
+            // `typeck_type_expr_type` above (populated from the type
+            // checker's `resolve_pending_type_const_blocks`); reaching here
+            // means that lookup missed, so fall back the same way `Infer`
+            // does.
             hir::TypeExprKind::ConstBlock(_, _) => self.error_ty(),
             hir::TypeExprKind::Type => Ty { kind: TyKind::Type },
             hir::TypeExprKind::Any => Ty { kind: TyKind::Any },
@@ -7347,7 +7315,7 @@ impl MirLowering {
                 if args.is_empty() && !struct_def.generics.is_empty() {
                     // No explicit turbofish — read `fp-typing`'s own
                     // already-resolved generic args for this literal
-                    // (`typeck_exprs`) rather than re-deriving them here.
+                    // (`typeck_expr_type`) rather than re-deriving them here.
                     // Top-level `const` items aren't themselves generic, so
                     // there's no live specialization context to compose in
                     // (empty substs map); if the cache has no entry, fall
@@ -8602,8 +8570,9 @@ impl MirLowering {
     }
 
     /// Reads this struct-literal expression's generic type args from
-    /// `fp-typing`'s own already-resolved type-check result (`typeck_exprs`)
-    /// instead of re-deriving them independently in `fp-backend` — HIR→MIR
+    /// `fp-typing`'s own already-resolved type-check result
+    /// (`typeck_expr_type`) instead of re-deriving them independently in
+    /// `fp-backend` — HIR→MIR
     /// lowering must only consume typeck's answers, never recompute generic
     /// substitutions itself (mirrors rustc's `rustc_mir_build`, which never
     /// re-infers what `rustc_hir_typeck` already resolved). When the cached
@@ -12087,9 +12056,9 @@ impl<'a> BodyBuilder<'a> {
                 // case bailing out for exactly this reason). Detect it
                 // here, before `lower_place` gets a chance to report
                 // "assignment target is not addressable", and dispatch to
-                // a real method call instead. `typeck_exprs` gives the
-                // receiver's type without lowering it (no side effects
-                // from lowering something we might not use).
+                // a real method call instead. `typeck_expr_type` gives the
+                // receiver's type on demand, without eagerly lowering every
+                // other expr in the package up front.
                 if let hir::ExprKind::Index(receiver, index) = &place_expr.kind {
                     let receiver_ty = self.lowering.typeck_expr_type(receiver.hir_id);
                     if let Some(struct_def_id) = receiver_ty
@@ -13143,7 +13112,7 @@ impl<'a> BodyBuilder<'a> {
                 if generic_args.is_empty() && !info.generics.is_empty() {
                     // No explicit turbofish — read `fp-typing`'s own
                     // already-resolved generic args for this literal
-                    // (`typeck_exprs`), composed with this specialization's
+                    // (`typeck_expr_type`), composed with this specialization's
                     // own `type_substs` when the cached result is still
                     // `Param`-relative to an enclosing generic item. Do not
                     // fall back to independently re-deriving the args here

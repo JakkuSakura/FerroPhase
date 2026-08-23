@@ -33,8 +33,8 @@ pub struct MirPackage {
     /// (`MirLowering::lower_const`'s fold fast path, which always has the
     /// const item's own `DefId` in scope), not by `seed_resolved_const`'s
     /// cross-pass reseeding (which only needs the value, not its identity).
-    /// Lets the driver record a folded const's value into
-    /// `hir::PackageTypes::const_values` (DefId-keyed) without re-deriving
+    /// Lets the driver record a folded const's value onto
+    /// `hir::HirPackage::const_values` (DefId-keyed) without re-deriving
     /// identity from the name string.
     pub resolved_const_defs: HashMap<String, DefId>,
     /// For a `const { .. }` block found incidentally while lowering some
