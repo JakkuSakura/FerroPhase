@@ -4,7 +4,7 @@ pub mod config;
 use crate::codegen::CraneliftBackend as CraneliftCodegenBackend;
 use crate::config::{CraneliftConfig, EmitKind};
 use fp_core::error::Result;
-use fp_core::lir::LirProgram;
+use fp_core::lir::LirBlob;
 use std::path::{Path, PathBuf};
 
 /// Cranelift-backed compiler entry point.
@@ -20,7 +20,7 @@ impl CraneliftEmitter {
     }
 
     /// Emit LIR into an object or executable.
-    pub fn emit(&self, lir_program: LirProgram, source_file: Option<&Path>) -> Result<PathBuf> {
+    pub fn emit(&self, lir_program: LirBlob, source_file: Option<&Path>) -> Result<PathBuf> {
         let _ = source_file;
 
         if let Some(parent) = self.config.output_path.parent() {
@@ -40,7 +40,7 @@ impl CraneliftEmitter {
     }
 
     /// Back-compat for older callers.
-    pub fn compile(&self, lir_program: LirProgram, source_file: Option<&Path>) -> Result<PathBuf> {
+    pub fn compile(&self, lir_program: LirBlob, source_file: Option<&Path>) -> Result<PathBuf> {
         self.emit(lir_program, source_file)
     }
 }
@@ -48,7 +48,7 @@ impl CraneliftEmitter {
 pub type CraneliftCompiler = CraneliftEmitter;
 
 /// `TargetBackend` for the `cranelift` target. Reads a package's merged LIR
-/// straight off the shared `WorkspaceContext` (mirroring
+/// straight off the shared `AstProgram` (mirroring
 /// `fp_native::NativeEmitter`) rather than re-driving an independent
 /// compile from source, then shells out to `clang`/`clang++` to link the
 /// final binary — that final linking step lives here (an OS-toolchain
@@ -66,9 +66,13 @@ pub struct CraneliftBackend {
 }
 
 impl fp_core::backend::TargetBackend for CraneliftBackend {
+    fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
+        fp_core::capabilities::LanguageCapabilities::NATIVE
+    }
+
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::ast::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
     ) -> Result<()> {
         let lir = workspace.merged_lir_program(package_id)?;

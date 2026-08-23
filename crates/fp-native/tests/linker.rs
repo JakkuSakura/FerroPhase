@@ -1,6 +1,6 @@
 use fp_core::lir::{
     CallingConvention, Linkage, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature,
-    LirInstruction, LirInstructionKind, LirInteger, LirIntrinsicKind, LirProgram, LirRegister,
+    LirInstruction, LirInstructionKind, LirInteger, LirIntrinsicKind, LirBlob, LirRegister,
     LirTerminator, LirType, LirValue, Name,
 };
 use fp_native::emit::{self, RelocKind, TargetArch, TargetFormat};
@@ -134,7 +134,7 @@ fn read_u32_le_any(bytes: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(chunk)
 }
 
-fn minimal_program() -> LirProgram {
+fn minimal_program() -> LirBlob {
     let func = LirFunction {
         def_id: None,
         name: Name::new("main"),
@@ -158,7 +158,7 @@ fn minimal_program() -> LirProgram {
         is_declaration: false,
     };
 
-    LirProgram {
+    LirBlob {
         data_layout: data_layout(),
         functions: vec![func],
         globals: Vec::new(),
@@ -168,7 +168,7 @@ fn minimal_program() -> LirProgram {
     }
 }
 
-fn program_with_many_call_args() -> LirProgram {
+fn program_with_many_call_args() -> LirBlob {
     let callee = LirFunction {
         def_id: None,
         name: Name::new("callee"),
@@ -235,7 +235,7 @@ fn program_with_many_call_args() -> LirProgram {
         is_declaration: false,
     };
 
-    LirProgram {
+    LirBlob {
         data_layout: data_layout(),
         functions: vec![main, callee],
         globals: Vec::new(),
@@ -245,7 +245,7 @@ fn program_with_many_call_args() -> LirProgram {
     }
 }
 
-fn program_with_print() -> LirProgram {
+fn program_with_print() -> LirBlob {
     let print_inst = LirInstruction {
         id: 1,
         kind: LirInstructionKind::IntrinsicCall {
@@ -280,7 +280,7 @@ fn program_with_print() -> LirProgram {
         is_declaration: false,
     };
 
-    LirProgram {
+    LirBlob {
         data_layout: data_layout(),
         functions: vec![func],
         globals: Vec::new(),
@@ -290,7 +290,7 @@ fn program_with_print() -> LirProgram {
     }
 }
 
-fn program_with_shifts_and_casts() -> LirProgram {
+fn program_with_shifts_and_casts() -> LirBlob {
     let shift_left = LirInstruction {
         id: 1,
         kind: LirInstructionKind::Shl(int_value(1, LirType::I8), int_value(2, LirType::I8)),
@@ -388,7 +388,7 @@ fn program_with_shifts_and_casts() -> LirProgram {
         is_declaration: false,
     };
 
-    LirProgram {
+    LirBlob {
         data_layout: data_layout(),
         functions: vec![func],
         globals: Vec::new(),
@@ -398,7 +398,7 @@ fn program_with_shifts_and_casts() -> LirProgram {
     }
 }
 
-fn program_with_switch() -> LirProgram {
+fn program_with_switch() -> LirBlob {
     let entry = LirBasicBlock {
         id: 0,
         label: Some(Name::new("entry")),
@@ -444,7 +444,7 @@ fn program_with_switch() -> LirProgram {
         is_declaration: false,
     };
 
-    LirProgram {
+    LirBlob {
         data_layout: data_layout(),
         functions: vec![func],
         globals: Vec::new(),
@@ -454,7 +454,7 @@ fn program_with_switch() -> LirProgram {
     }
 }
 
-fn program_with_format_intrinsic() -> LirProgram {
+fn program_with_format_intrinsic() -> LirBlob {
     let format_inst = LirInstruction {
         id: 1,
         kind: LirInstructionKind::IntrinsicCall {
@@ -495,7 +495,7 @@ fn program_with_format_intrinsic() -> LirProgram {
         is_declaration: false,
     };
 
-    LirProgram {
+    LirBlob {
         data_layout: data_layout(),
         functions: vec![func],
         globals: Vec::new(),

@@ -17,8 +17,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::{
-    CompilerDriverError, CompilerState, ConstValueId, ExecutorHandle, FullyQualifiedPath, HirId,
-    LirId, MirId, RuntimeValueId,
+    CompilerDriverError, CompilerState, ConstValueId, ExecutorHandle, FullyQualifiedPath,
 };
 
 /// Real Rust source over an entire vendored `std`/`core`/`alloc` package
@@ -92,7 +91,7 @@ impl CompilerDriver {
         Self::with_workspace(
             data_layout,
             tasks,
-            Rc::new(fp_core::ast::workspace::WorkspaceContext::new(std::sync::Arc::new(
+            Rc::new(fp_core::ast::program::AstProgram::new(std::sync::Arc::new(
                 fp_core::ast::package::provider::EmptyProvider,
             ))),
         )
@@ -101,7 +100,7 @@ impl CompilerDriver {
     pub fn with_workspace(
         data_layout: fp_core::lir::LirDataLayout,
         tasks: ExecutorHandle,
-        workspace: Rc<fp_core::ast::workspace::WorkspaceContext>,
+        workspace: Rc<fp_core::ast::program::AstProgram>,
     ) -> Self {
         let state = CompilerState::with_workspace(data_layout, tasks, workspace);
         Self::from_state_rc(Rc::new(RefCell::new(state)))
@@ -142,11 +141,14 @@ impl CompilerDriver {
         package_id: &PackageId,
     ) -> Result<fp_bytecode::BytecodeProgram, CompilerDriverError> {
         let package = self.compile_package(package_id).await?;
-        let mir = package.borrow().mir.program.clone().ok_or_else(|| {
-            CompilerDriverError::InternalCompilerError(format!(
+        let package_ref = package.borrow();
+        if package_ref.mir.units.is_empty() {
+            return Err(CompilerDriverError::InternalCompilerError(format!(
                 "package {package_id} has no MIR program"
-            ))
-        })?;
+            )));
+        }
+        let mir = package_ref.mir.flatten();
+        drop(package_ref);
         fp_bytecode::lower_program(&mir).map_err(CompilerDriverError::from)
     }
 
@@ -155,7 +157,7 @@ impl CompilerDriver {
         &mut self,
         lir_id: &LirId,
     ) -> Result<fp_core::ast::Value, CompilerDriverError> {
-        let lir = self.state.borrow().lir(lir_id)?.clone();
+        let lir = self.state.borrow().runtime_program(lir_id)?.clone();
         self.interpreter = LirInterpreter::new();
         let resolved = self.collect_resolved_const_values();
         self.interpreter
@@ -176,8 +178,6 @@ impl CompilerDriver {
         let value = self
             .interpreter
             .run_entrypoint_with_package(&lir, entrypoint, package_id)?;
-        let value_id = RuntimeValueId::new(format!("runtime_value:{}", lir_id.as_str()));
-        self.state.borrow_mut().insert_runtime_value(value_id, value.clone());
         Ok(value)
     }
 
@@ -214,7 +214,7 @@ impl CompilerDriver {
     /// renaming back to the name it was looked up by, regardless of its
     /// module qualification.
     pub fn rename_lir_function(
-        lir: &mut fp_core::lir::LirProgram,
+        lir: &mut fp_core::lir::LirBlob,
         def_id: hir::DefId,
         bare_name: &str,
     ) {
@@ -234,10 +234,9 @@ impl CompilerDriver {
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
         let function = self.resolve_entrypoint_def_id(package_id, module_path, function_name)?;
         let lir_id = Self::package_module_lir_id(package_id, module_path);
-        let mut lir = package.borrow().lir.own_artifacts.to_program();
+        let mut lir = package.borrow().lir.own_artifacts.to_blob();
         Self::rename_lir_function(&mut lir, function, function_name);
-        self.state.borrow_mut().insert_lir(lir_id.clone(), lir);
-        self.state.borrow().lir(&lir_id)?;
+        self.state.borrow_mut().insert_runtime_program(lir_id.clone(), lir);
         self.state.borrow_mut()
             .insert_runtime_entrypoint(lir_id.clone(), function);
         Ok(lir_id)
@@ -255,7 +254,7 @@ impl CompilerDriver {
         // Mirrors `compile_package`'s dependency-loading branch (see its
         // identical three-call sequence): `evaluate_comptime_lir` computes
         // each `const { .. }` block's real value into `block_values`, but
-        // that alone never reaches the `LirProgram` actually executed —
+        // that alone never reaches the `LirBlob` actually executed —
         // the block's owning item (e.g. a `const X = const { .. };`) was
         // already lowered to an `ExecutableConst`/`LirComptimeEntry`
         // *before* its value was known, not a `LirGlobal`. Re-lowering
@@ -362,7 +361,7 @@ impl CompilerDriver {
                             Some(fp_core::lir::LirCompileUnit {
                                 package_id: fp_core::hir::PackageId::default(),
                                 module_path: pkg_item.module_path.clone(),
-                                program: lir.clone(),
+                                blob: lir.clone(),
                             })
                         }
                         _ => None,
@@ -388,7 +387,7 @@ impl CompilerDriver {
                     if !units.is_empty() {
                         Self::publish_lir_units(&package, package_id, &units)?;
 
-                        let lir = package.borrow().lir.own_artifacts.to_program();
+                        let lir = package.borrow().lir.own_artifacts.to_blob();
                         if !lir.comptime_entries.is_empty() {
                             let module_path = QualifiedPath::new(Vec::new());
                             let lir_id = Self::package_module_lir_id(package_id, &module_path);
@@ -463,7 +462,7 @@ impl CompilerDriver {
     /// path-depends on sibling A) is compiled exactly once regardless of
     /// which member's turn surfaces it first, since both go through
     /// `compile_package`'s own `compiled_packages` cache. Callers read back
-    /// each member's result via `WorkspaceContext::package_source` rather
+    /// each member's result via `AstProgram::package_source` rather
     /// than from this call's return value.
     pub async fn compile_workspace(
         &mut self,
@@ -491,13 +490,13 @@ impl CompilerDriver {
         units: &[fp_core::lir::LirCompileUnit],
     ) -> Result<(), CompilerDriverError> {
         let layout = package.borrow().lir.own_artifacts.data_layout.clone();
-        let mut workspace = fp_core::lir::LirWorkspace::new(layout);
+        let mut workspace = fp_core::lir::LirUnitTable::new(layout);
         for unit in units {
             workspace
                 .add_program(
                     package_id.clone(),
                     unit.module_path.clone(),
-                    unit.program.clone(),
+                    unit.blob.clone(),
                 )
                 .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         }
@@ -535,12 +534,13 @@ impl CompilerDriver {
             .with_package_id(hir_package_id)
             .with_def_id_start(self.next_hir_def_id)
             .with_lowering_config(HirLoweringConfig {
-                // Per-target capabilities (see `fp_core::capabilities::
-                // LanguageCapabilities`), set by `fp-cli` before compiling
-                // via `CompilerState::set_capabilities` — defaults to
+                // The active `TargetBackend`'s own capabilities (see
+                // `fp_core::backend::TargetBackend::capabilities`), set by
+                // `fp-cli` before compiling via
+                // `CompilerState::set_backend_capabilities` — defaults to
                 // `NATIVE` (nothing first-class) for any caller that never
                 // sets it, matching this field's prior behavior exactly.
-                capabilities: self.state.borrow().capabilities(),
+                capabilities: self.state.borrow().backend_capabilities(),
             })
             .with_workspace(self.state.borrow().workspace.clone());
         let hir_program = generator.transform_package(&package_source)?;
@@ -751,7 +751,7 @@ impl CompilerDriver {
                             Ok(vec![fp_core::lir::LirCompileUnit {
                                 package_id: hir_package_id,
                                 module_path: package_path,
-                                program: lir,
+                                blob: lir,
                             }])
                         }
                         Err(error) => {
@@ -816,7 +816,7 @@ impl CompilerDriver {
         Ok(vec![fp_core::lir::LirCompileUnit {
             package_id: hir_package_id,
             module_path: package_path,
-            program: lir,
+            blob: lir,
         }])
     }
 
@@ -885,7 +885,7 @@ impl CompilerDriver {
         Ok(vec![fp_core::lir::LirCompileUnit {
             package_id: hir_package_id,
             module_path,
-            program: self.state.borrow().lir(&lir_id)?.clone(),
+            blob: self.state.borrow().lir(&lir_id)?.clone(),
         }])
     }
 
@@ -1096,7 +1096,7 @@ impl CompilerDriver {
         })
     }
 
-    /// Interprets every comptime entry in `lir_id`'s `LirProgram` for real
+    /// Interprets every comptime entry in `lir_id`'s `LirBlob` for real
     /// and returns each const block's resolved value keyed by its own
     /// `DefId` (`LirComptimeEntry::def_id`, threaded through structurally
     /// from `register_const_block_comptime_entry`/`lower_const` via
@@ -1129,7 +1129,7 @@ impl CompilerDriver {
         let lir = state.borrow().lir(lir_id)?.clone();
         // Only `comptime_entries` is needed after `lir` itself is moved into
         // `all_units` below — clone just that (much smaller than the whole
-        // program) rather than cloning the entire `LirProgram` a second time.
+        // program) rather than cloning the entire `LirBlob` a second time.
         let comptime_entries = lir.comptime_entries.clone();
 
         let value_id = ConstValueId::new(format!("const_value:{}", path.to_key()));
@@ -1188,7 +1188,7 @@ impl CompilerDriver {
             .collect();
         let lir_to_mir = LirToMir::new(dependency_packages.clone());
         let dependency_borrows: Vec<_> = dependency_packages.iter().map(|p| p.borrow()).collect();
-        let mut workspaces: Vec<&fp_core::lir::LirWorkspace> = dependency_borrows
+        let mut workspaces: Vec<&fp_core::lir::LirUnitTable> = dependency_borrows
             .iter()
             .map(|package| &package.lir.own_artifacts)
             .collect();
@@ -1200,7 +1200,7 @@ impl CompilerDriver {
             ws.find_function(package_id.clone(), &comptime_entries[0].function)
                 .is_some()
         }) {
-            let mut ws = fp_core::lir::LirWorkspace::new(lir.data_layout.clone());
+            let mut ws = fp_core::lir::LirUnitTable::new(lir.data_layout.clone());
             ws.add_program(package_id.clone(), path.path().clone(), lir)
                 .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
             temp_workspace = Some(ws);
@@ -1433,7 +1433,7 @@ impl CompilerDriver {
     /// own doc comment), never the whole package. Everything downstream
     /// (diagnostics, layout extraction) is identical and reused verbatim,
     /// since it only reads from `lowering`'s accumulated state and the
-    /// returned `mir::MirProgram`, never from `hir.items` directly.
+    /// returned `mir::MirModule`, never from `hir.items` directly.
     async fn lower_to_mir_for_comptime_request_with(
         state: &Rc<RefCell<CompilerState>>,
         path: &FullyQualifiedPath,

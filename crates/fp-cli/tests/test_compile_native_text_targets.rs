@@ -60,7 +60,7 @@ fn main() -> i64 {
     assert!(text.contains(".function main"));
 }
 
-// `WorkspaceContext::merged_lir_program` (used by every codegen
+// `AstProgram::merged_lir_program` (used by every codegen
 // `TargetBackend` since the workspace-based TargetBackend unification)
 // merges in the whole dependency graph's LIR, including std's global
 // constant data — fp-goasm's emitter doesn't support the

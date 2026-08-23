@@ -13,15 +13,19 @@ pub use parse::parse_cil_program;
 /// not a source-level transpile target; it lowers from MIR, not from the
 /// typed AST a Kotlin/Python-style backend would walk.
 fn package_mir(
-    workspace: &fp_core::ast::workspace::WorkspaceContext,
+    workspace: &fp_core::ast::program::AstProgram,
     package_id: &fp_core::ast::package::PackageId,
-) -> fp_core::error::Result<fp_core::mir::MirProgram> {
+) -> fp_core::error::Result<fp_core::mir::MirModule> {
     let package = workspace.compiled_package(package_id).ok_or_else(|| {
         fp_core::error::Error::from(format!("package `{package_id}` is unavailable"))
     })?;
-    package.borrow().mir.program.clone().ok_or_else(|| {
-        fp_core::error::Error::from(format!("package `{package_id}` has no MIR program"))
-    })
+    let package = package.borrow();
+    if package.mir.units.is_empty() {
+        return Err(fp_core::error::Error::from(format!(
+            "package `{package_id}` has no MIR program"
+        )));
+    }
+    Ok(package.mir.flatten())
 }
 
 /// `TargetBackend` for both `--target cil` (`assemble: false`) and
@@ -41,9 +45,13 @@ pub struct CilBackend {
 }
 
 impl fp_core::backend::TargetBackend for CilBackend {
+    fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
+        fp_core::capabilities::LanguageCapabilities::NATIVE
+    }
+
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::ast::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
     ) -> fp_core::error::Result<()> {
         // CIL text or an assembled PE given directly as input (see

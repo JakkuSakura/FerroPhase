@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use crate::error::Result;
 use crate::ast::package::PackageId;
-use crate::ast::workspace::WorkspaceContext;
+use crate::ast::program::AstProgram;
 
 /// Resolved once by `fp-cli` from `CompileArgs`, then handed to each
 /// backend's constructor — never threaded through trait methods afterward.
@@ -173,18 +173,28 @@ impl BackendConfig {
 
 /// A target's interface for turning a compiled package into on-disk
 /// output. Different backends read different views of the package from
-/// `WorkspaceContext` (AST, MIR, LIR, ...) — passing the workspace itself,
+/// `AstProgram` (AST, MIR, LIR, ...) — passing the workspace itself,
 /// rather than a fixed view type, lets every backend share this one
 /// non-generic trait as `Box<dyn TargetBackend>`.
 pub trait TargetBackend: Send + Sync {
+    /// What this backend's target language can express directly — see
+    /// `crate::capabilities::LanguageCapabilities`. Read once by `fp-cli`
+    /// (via the already-constructed backend, before compiling) to seed
+    /// `CompilerState`'s backend capabilities so HIR lowering
+    /// (`HirLoweringConfig.capabilities`) can branch on them. No default:
+    /// every backend states its own capabilities explicitly (most return
+    /// `LanguageCapabilities::NATIVE` — the conservative "nothing first-
+    /// class" baseline — a handful, like Kotlin, return more).
+    fn capabilities(&self) -> crate::capabilities::LanguageCapabilities;
+
     /// Writes `package_id`'s artifact to the path fixed at construction,
     /// reading whichever view of it the backend needs from `workspace`
     /// (`package_source`, `merged_lir_program`, ...).
-    fn emit_package_artifact(&self, workspace: &WorkspaceContext, package_id: &PackageId) -> Result<()>;
+    fn emit_package_artifact(&self, workspace: &AstProgram, package_id: &PackageId) -> Result<()>;
 
     /// Workspace-level side files not tied to a single package (e.g.
     /// Kotlin's `settings.gradle.kts`/`build.gradle.kts`). Default: no-op.
-    fn write_workspace_files(&self, workspace: &WorkspaceContext) -> Result<()> {
+    fn write_workspace_files(&self, workspace: &AstProgram) -> Result<()> {
         let _ = workspace;
         Ok(())
     }

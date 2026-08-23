@@ -9,10 +9,10 @@ use fp_core::ast::{
     ValueTuple,
 };
 use fp_core::lir::{
-    BasicBlockId, CallingConvention, ComptimeOp, LirArtifactKind, LirBasicBlock, LirConstant,
+    BasicBlockId, CallingConvention, ComptimeOp, LirCodeUnitKind, LirBasicBlock, LirConstant,
     LirConstantAggregate, LirConstantData, LirConstantExpr, LirConstantKind, LirDataLayout,
     LirFloat, LirFunction, LirFunctionRef, LirInstruction, LirInstructionKind, LirInteger,
-    LirLocal, LirProgram, LirTerminator, LirType, LirValue, LirValueKind, LirWorkspace, RegisterId,
+    LirLocal, LirBlob, LirTerminator, LirType, LirValue, LirValueKind, LirUnitTable, RegisterId,
 };
 use fp_core::ast::package::PackageId;
 use fp_ffi::{FfiRuntime, FfiSignature, FfiType};
@@ -104,7 +104,7 @@ impl LirInterpreter {
         }
     }
 
-    pub fn run_main(&mut self, program: &LirProgram) -> LirResult<Value> {
+    pub fn run_main(&mut self, program: &LirBlob) -> LirResult<Value> {
         self.run_main_with_package(program, PackageId::new(""))
     }
 
@@ -114,7 +114,7 @@ impl LirInterpreter {
     /// any program that calls a function other than `main` itself.
     pub fn run_main_with_package(
         &mut self,
-        program: &LirProgram,
+        program: &LirBlob,
         package_id: PackageId,
     ) -> LirResult<Value> {
         self.populate_functions_from_program(program);
@@ -127,7 +127,7 @@ impl LirInterpreter {
 
     pub fn run_entrypoint(
         &mut self,
-        program: &LirProgram,
+        program: &LirBlob,
         def_id: fp_core::hir::DefId,
     ) -> LirResult<Value> {
         self.run_entrypoint_with_package(program, def_id, PackageId::new(""))
@@ -150,7 +150,7 @@ impl LirInterpreter {
     /// called top-level function exists.
     pub fn run_entrypoint_with_package(
         &mut self,
-        program: &LirProgram,
+        program: &LirBlob,
         def_id: fp_core::hir::DefId,
         package_id: PackageId,
     ) -> LirResult<Value> {
@@ -172,10 +172,10 @@ impl LirInterpreter {
     /// current package's own, plus each dependency's own, in order) —
     /// queried directly against each one's own artifacts instead of
     /// requiring the caller to first clone every workspace's artifacts
-    /// into one throwaway combined `LirWorkspace`.
+    /// into one throwaway combined `LirUnitTable`.
     pub fn run_function_named_in_workspace(
         &mut self,
-        workspaces: &[&LirWorkspace],
+        workspaces: &[&LirUnitTable],
         package_id: &fp_core::ast::package::PackageId,
         name: &fp_core::lir::Name,
     ) -> LirResult<Value> {
@@ -195,7 +195,7 @@ impl LirInterpreter {
             .ok_or_else(|| {
                 VmError::Runtime(format!("missing function {name} in package {package_id}"))
             })?;
-        let program = LirProgram::new(data_layout);
+        let program = LirBlob::new(data_layout);
         self.run_function(&program, &function, &[])
     }
 
@@ -246,9 +246,9 @@ impl LirInterpreter {
         Ok(Value::string(text))
     }
 
-    fn populate_functions_from_workspace(&mut self, workspace: &LirWorkspace) {
+    fn populate_functions_from_workspace(&mut self, workspace: &LirUnitTable) {
         for artifact in workspace.artifacts() {
-            if let LirArtifactKind::Function(function) = &artifact.kind {
+            if let LirCodeUnitKind::Function(function) = &artifact.kind {
                 // One real deep clone here (unavoidable — `function` is
                 // borrowed from `artifact`), then only cheap `Rc` clones
                 // into each lookup map below.
@@ -276,19 +276,19 @@ impl LirInterpreter {
         }
     }
 
-    fn populate_globals_from_workspace(&mut self, workspace: &LirWorkspace) -> LirResult<()> {
-        let program = workspace.to_program();
+    fn populate_globals_from_workspace(&mut self, workspace: &LirUnitTable) -> LirResult<()> {
+        let program = workspace.to_blob();
         self.populate_globals_batch(&[&program])
     }
 
-    fn populate_functions_from_program(&mut self, program: &LirProgram) {
+    fn populate_functions_from_program(&mut self, program: &LirBlob) {
         for func in &program.functions {
             self.program_functions
                 .insert(func.name.as_str().to_string(), Rc::new(func.clone()));
         }
     }
 
-    fn populate_functions_for_package(&mut self, program: &LirProgram, package_id: PackageId) {
+    fn populate_functions_for_package(&mut self, program: &LirBlob, package_id: PackageId) {
         for function in &program.functions {
             self.package_functions.insert(
                 (package_id.clone(), function.name.as_str().to_string()),
@@ -299,7 +299,7 @@ impl LirInterpreter {
 
     pub fn run_function(
         &mut self,
-        program: &LirProgram,
+        program: &LirBlob,
         func: &LirFunction,
         args: &[Value],
     ) -> LirResult<Value> {
@@ -939,7 +939,7 @@ impl LirInterpreter {
         }
     }
 
-    fn populate_globals_batch(&mut self, programs: &[&LirProgram]) -> LirResult<()> {
+    fn populate_globals_batch(&mut self, programs: &[&LirBlob]) -> LirResult<()> {
         for program in programs {
             self.data_layout = program.data_layout.clone();
             for global in &program.globals {
@@ -1923,7 +1923,7 @@ impl LirInterpreter {
                         Ok(value.value)
                     })
                     .collect::<LirResult<Vec<_>>>()?;
-                let program = LirProgram::new(self.data_layout.clone());
+                let program = LirBlob::new(self.data_layout.clone());
                 let value = self.run_function(&program, &function, &resolved_args)?;
                 let Some(ty) = result_ty else {
                     return Ok(());
@@ -2009,7 +2009,7 @@ impl LirInterpreter {
                 args.len()
             )));
         }
-        let prog = LirProgram::new(self.data_layout.clone());
+        let prog = LirBlob::new(self.data_layout.clone());
         let value = self.run_function(&prog, &function, &resolved_args)?;
         let Some(ty) = result_ty else {
             return Ok(());
@@ -2763,9 +2763,13 @@ fn lir_ty_to_ffi(ty: &LirType) -> FfiType {
 pub struct InterpreterBackend;
 
 impl fp_core::backend::TargetBackend for InterpreterBackend {
+    fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
+        fp_core::capabilities::LanguageCapabilities::NATIVE
+    }
+
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::ast::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::program::AstProgram,
         package_id: &PackageId,
     ) -> fp_core::error::Result<()> {
         let lir = workspace.merged_lir_program(package_id)?;
@@ -2783,12 +2787,12 @@ mod tests {
     use super::*;
     use fp_core::lir::{
         CallingConvention, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature,
-        LirGlobal, LirInstruction, LirInstructionKind, LirInteger, LirProgram, LirRegister,
+        LirGlobal, LirInstruction, LirInstructionKind, LirInteger, LirBlob, LirRegister,
         LirTerminator, LirType, LirValue, Name,
     };
 
-    fn make(f: LirFunction) -> LirProgram {
-        LirProgram {
+    fn make(f: LirFunction) -> LirBlob {
+        LirBlob {
             data_layout: LirDataLayout::new(
                 64,
                 8,
@@ -2803,7 +2807,7 @@ mod tests {
         }
     }
 
-    fn make_with_globals(f: LirFunction, globals: Vec<LirGlobal>) -> LirProgram {
+    fn make_with_globals(f: LirFunction, globals: Vec<LirGlobal>) -> LirBlob {
         let mut program = make(f);
         program.globals = globals;
         program
@@ -2812,7 +2816,7 @@ mod tests {
     fn make_with_functions_and_globals(
         functions: Vec<LirFunction>,
         globals: Vec<LirGlobal>,
-    ) -> LirProgram {
+    ) -> LirBlob {
         let mut program = make(functions.first().cloned().expect("entry function"));
         program.functions = functions;
         program.globals = globals;
@@ -3030,7 +3034,7 @@ mod tests {
             is_declaration: false,
         };
 
-        let value = LirInterpreter::new().run_main(&LirProgram {
+        let value = LirInterpreter::new().run_main(&LirBlob {
             data_layout: LirDataLayout::new(
                 64,
                 8,
@@ -3153,7 +3157,7 @@ mod tests {
         );
     }
 
-    fn cond_br_f(take: bool) -> LirProgram {
+    fn cond_br_f(take: bool) -> LirBlob {
         make(LirFunction {
             def_id: None,
             name: Name::new("main"),

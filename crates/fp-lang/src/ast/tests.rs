@@ -335,7 +335,7 @@ fn parse_items_ast_handles_emit_method_body_snippet() {
     let items = parser
         .parse_items_ast(
             r#"
-            pub fn emit(&self, lir_program: LirProgram, source_file: Option<&Path>) -> Result<PathBuf> {
+            pub fn emit(&self, lir_program: LirBlob, source_file: Option<&Path>) -> Result<PathBuf> {
                 let _ = source_file;
 
                 if let Some(parent) = self.config.output_path.parent() {
@@ -357,7 +357,7 @@ fn parse_items_ast_handles_emit_impl_tuple_let_snippet() {
     let items = parser
         .parse_items_ast(
             r#"
-            fn emit_impl(&self, lir_program: &LirProgram) -> Result<PathBuf> {
+            fn emit_impl(&self, lir_program: &LirBlob) -> Result<PathBuf> {
                 let out = self.config.output_path.clone();
                 resolve_native_target(
                     self.config.native_target,
@@ -482,7 +482,7 @@ fn parse_items_ast_handles_native_emitter_impl_snippet() {
                 }
 
                 /// Emit LIR into an object or executable.
-                pub fn emit(&self, lir_program: LirProgram, source_file: Option<&Path>) -> Result<PathBuf> {
+                pub fn emit(&self, lir_program: LirBlob, source_file: Option<&Path>) -> Result<PathBuf> {
                     let _ = source_file;
 
                     // Ensure output directory exists.
@@ -494,11 +494,11 @@ fn parse_items_ast_handles_native_emitter_impl_snippet() {
                 }
 
                 /// Back-compat for older callers.
-                pub fn compile(&self, lir_program: LirProgram, source_file: Option<&Path>) -> Result<PathBuf> {
+                pub fn compile(&self, lir_program: LirBlob, source_file: Option<&Path>) -> Result<PathBuf> {
                     self.emit(lir_program, source_file)
                 }
 
-                fn emit_impl(&self, lir_program: &LirProgram) -> Result<PathBuf> {
+                fn emit_impl(&self, lir_program: &LirBlob) -> Result<PathBuf> {
                     let out = self.config.output_path.clone();
                     resolve_native_target(
                         self.config.native_target,

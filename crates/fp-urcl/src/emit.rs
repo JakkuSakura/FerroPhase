@@ -1,12 +1,12 @@
 use fp_core::error::Result;
 use fp_core::lir::{
     BasicBlockId, LirBasicBlock, LirConstant, LirConstantData, LirConstantKind, LirFunction,
-    LirFunctionRef, LirInstruction, LirInstructionKind, LirIntrinsicKind, LirProgram,
+    LirFunctionRef, LirInstruction, LirInstructionKind, LirIntrinsicKind, LirBlob,
     LirTerminator, LirValue, LirValueKind,
 };
 use std::fmt::Write;
 
-pub fn emit_program(program: &LirProgram) -> Result<String> {
+pub fn emit_program(program: &LirBlob) -> Result<String> {
     let mut out = String::new();
     writeln!(&mut out, "BITS 64").ok();
     writeln!(&mut out, "MINREG 32").ok();

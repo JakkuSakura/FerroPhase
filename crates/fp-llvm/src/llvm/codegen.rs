@@ -102,7 +102,7 @@ impl<'a> LirCodegen<'a> {
     }
 
     /// Generate LLVM IR for a LIR program.
-    pub fn generate_program(&mut self, lir_program: lir::LirProgram) -> Result<()> {
+    pub fn generate_program(&mut self, lir_program: lir::LirBlob) -> Result<()> {
         self.data_layout = Some(lir_program.data_layout.clone());
         let num_globals = lir_program.globals.len();
         let num_functions = lir_program.functions.len();
@@ -111,7 +111,7 @@ impl<'a> LirCodegen<'a> {
             num_functions, num_globals
         );
 
-        let lir::LirProgram {
+        let lir::LirBlob {
             functions,
             globals,
             type_definitions: _type_definitions,

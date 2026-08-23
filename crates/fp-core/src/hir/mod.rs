@@ -6,6 +6,7 @@ use std::fmt;
 
 pub mod ident;
 pub mod package;
+pub mod path;
 pub mod place;
 pub mod pretty;
 pub mod program;
@@ -14,6 +15,7 @@ pub mod ty;
 
 pub use ident::{DefPath, Symbol};
 pub use package::HirPackage;
+pub use path::HirPath;
 pub use program::HirProgram;
 pub use resolve::{ModuleId, ModuleTree, Namespace, SymbolEntry, SymbolExport};
 pub use ty::{Abi, Ty};
@@ -825,6 +827,29 @@ impl ProgramTypes {
 
     pub fn package(&self, id: PackageId) -> Option<std::rc::Rc<std::cell::RefCell<PackageTypes>>> {
         self.packages.get(&id).cloned()
+    }
+
+    /// Replaces (or inserts) `id`'s own typed results wholesale — the
+    /// driver's per-package typecheck pass produces one final
+    /// `PackageTypes` per package, not an incremental merge, so this always
+    /// overwrites rather than folding into whatever was there before.
+    pub fn insert_package(&mut self, id: PackageId, types: PackageTypes) {
+        self.packages
+            .insert(id, std::rc::Rc::new(std::cell::RefCell::new(types)));
+    }
+
+    /// Get-or-create `id`'s own typed results — for a caller that wants to
+    /// mutate one package's already-published `PackageTypes` in place
+    /// (e.g. recording a newly comptime-resolved const's value) rather than
+    /// replace it outright.
+    pub fn package_or_default(
+        &mut self,
+        id: PackageId,
+    ) -> std::rc::Rc<std::cell::RefCell<PackageTypes>> {
+        self.packages
+            .entry(id)
+            .or_insert_with(|| std::rc::Rc::new(std::cell::RefCell::new(PackageTypes::default())))
+            .clone()
     }
 }
 

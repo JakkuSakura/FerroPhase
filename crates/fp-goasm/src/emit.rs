@@ -2,7 +2,7 @@ use crate::config::GoAsmTarget;
 use fp_core::error::Result;
 use fp_core::lir::{
     BasicBlockId, LirBasicBlock, LirConstant, LirConstantData, LirConstantKind, LirFunction,
-    LirInstruction, LirInstructionKind, LirIntrinsicKind, LirProgram, LirTerminator, LirValue,
+    LirInstruction, LirInstructionKind, LirIntrinsicKind, LirBlob, LirTerminator, LirValue,
     LirValueKind,
 };
 use std::fmt::Write;
@@ -16,7 +16,7 @@ macro_rules! line {
     };
 }
 
-pub fn emit_program(program: &LirProgram, target: GoAsmTarget) -> Result<String> {
+pub fn emit_program(program: &LirBlob, target: GoAsmTarget) -> Result<String> {
     let mut out = String::new();
     line!(&mut out, "#include \"textflag.h\"")?;
     line!(&mut out, "// fp-goasm ({})", arch_name(target))?;

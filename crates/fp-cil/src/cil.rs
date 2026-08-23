@@ -10,12 +10,12 @@ use tempfile::TempDir;
 /// like JVM's, not a source-level transpile target like Kotlin's; walking
 /// the typed AST directly, as this used to, was the wrong level).
 /// Not yet implemented.
-pub fn emit_cil(_mir: &fp_core::mir::MirProgram) -> Result<String> {
+pub fn emit_cil(_mir: &fp_core::mir::MirModule) -> Result<String> {
     todo!("lower MIR to CIL assembly text")
 }
 
 pub fn emit_assembly(
-    mir: &fp_core::mir::MirProgram,
+    mir: &fp_core::mir::MirModule,
     output_path: &Path,
     keep_cil: bool,
 ) -> Result<PathBuf> {

@@ -8,10 +8,11 @@
 ///
 /// Each target-emitting crate (`fp-kotlin`, `fp-cil`, ...) that wants
 /// anything other than the conservative default declares its own `const`
-/// of this type (see `fp-kotlin`'s `CAPABILITIES`); `fp-cli` is the only
-/// place that maps a requested output language to the right one
-/// (`languages::backend::capabilities_for_target`) and threads it through
-/// to the compiler driver. Every pipeline that never opts in (in
+/// of this type (see `fp-kotlin`'s `CAPABILITIES`) and returns it from its
+/// `TargetBackend::capabilities` — `fp-cli` reads it off the
+/// already-constructed backend and threads it through to the compiler
+/// driver, rather than mapping a target name to a capabilities value
+/// itself. Every pipeline that never opts in (in
 /// particular `PipelineMode::Native`, which lowers to MIR — a
 /// closure-and-iterator-free IR) keeps exactly today's desugaring
 /// behavior via `LanguageCapabilities::NATIVE`.

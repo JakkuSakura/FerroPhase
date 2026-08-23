@@ -6,11 +6,11 @@ use super::ty::Ty;
 use super::{
     CallingConvention, Linkage, LirBasicBlock, LirConstant, LirConstantAggregate, LirConstantData,
     LirConstantExpr, LirConstantKind, LirFloat, LirFunction, LirFunctionRef, LirGlobal,
-    LirInstruction, LirInstructionKind, LirProgram, LirQuery, LirTerminator, LirValue,
+    LirInstruction, LirInstructionKind, LirBlob, LirQuery, LirTerminator, LirValue,
     LirValueKind, Visibility,
 };
 
-impl PrettyPrintable for LirProgram {
+impl PrettyPrintable for LirBlob {
     fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
         ctx.writeln(f, "lir::Program {")?;
         ctx.with_indent(|ctx| {

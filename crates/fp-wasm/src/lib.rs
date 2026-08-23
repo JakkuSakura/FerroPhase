@@ -2,7 +2,7 @@ use fp_core::error::{Error, Result};
 use fp_core::lir::{
     BasicBlockId, LirBasicBlock, LirConstant, LirConstantAggregate, LirConstantData,
     LirConstantKind, LirDataLayout, LirFloat, LirFunction, LirFunctionRef, LirFunctionSignature,
-    LirGlobal, LirInstruction, LirInstructionKind, LirInteger, LirIntrinsicKind, LirProgram,
+    LirGlobal, LirInstruction, LirInstructionKind, LirInteger, LirIntrinsicKind, LirBlob,
     LirRelocationKind, LirRelocationTarget, LirTerminator, LirType, LirValue, LirValueKind,
     RegisterId,
 };
@@ -18,13 +18,13 @@ const TIME_STEP_SECS: f64 = 0.01;
 const PRINT_BUF_SIZE: i64 = 64;
 const IOVEC_SIZE: i64 = 16;
 
-pub fn emit_wasm(program: &LirProgram) -> Result<Vec<u8>> {
+pub fn emit_wasm(program: &LirBlob) -> Result<Vec<u8>> {
     let mut emitter = WasmEmitter::new(program);
     emitter.emit_module()
 }
 
 struct WasmEmitter<'a> {
-    program: &'a LirProgram,
+    program: &'a LirBlob,
     func_index: HashMap<String, u32>,
     type_index: HashMap<SignatureKey, u32>,
     extern_funcs: HashMap<String, SignatureKey>,
@@ -40,7 +40,7 @@ struct SignatureKey {
 }
 
 impl<'a> WasmEmitter<'a> {
-    fn new(program: &'a LirProgram) -> Self {
+    fn new(program: &'a LirBlob) -> Self {
         Self {
             program,
             func_index: HashMap::new(),
@@ -2188,9 +2188,13 @@ pub struct WasmBackend {
 }
 
 impl fp_core::backend::TargetBackend for WasmBackend {
+    fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
+        fp_core::capabilities::LanguageCapabilities::NATIVE
+    }
+
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::ast::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
     ) -> fp_core::error::Result<()> {
         let lir = workspace.merged_lir_program(package_id)?;

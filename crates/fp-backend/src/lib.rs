@@ -16,7 +16,7 @@ pub use transforms as transformations;
 /// Wraps a single already-parsed file's items as a one-member package,
 /// obtained via a real `PackageProvider` (`FixedPackageProvider`, which
 /// just hands back an already-built `AstPackage` — no filesystem
-/// access), then `WorkspaceContext::begin_package`. Deliberately does not
+/// access), then `AstProgram::begin_package`. Deliberately does not
 /// use `fp-lang`'s disk-resolving `single_file_provider`: callers here
 /// (`roundtrip_items_via_hir`/`_dce`) receive already-fully-assembled
 /// `File`s (e.g. `fp-shell` splices in its embedded std tree directly,
@@ -48,7 +48,7 @@ fn package_from_file(
     let source = provider
         .load_package_source(&package_id)
         .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-    let workspace = fp_core::ast::workspace::WorkspaceContext::new(std::sync::Arc::new(provider));
+    let workspace = fp_core::ast::program::AstProgram::new(std::sync::Arc::new(provider));
     let data_layout = fp_core::lir::LirDataLayout::new(
         64,
         8,

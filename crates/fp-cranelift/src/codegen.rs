@@ -11,7 +11,7 @@ use fp_core::lir::{
     BasicBlockId, CallingConvention, Linkage as LirLinkage, LirBasicBlock, LirConstant,
     LirConstantAggregate, LirConstantData, LirConstantKind, LirDataLayout, LirFloat, LirFunction,
     LirFunctionRef, LirFunctionSignature, LirGlobalRelocation, LirInstruction, LirInstructionKind,
-    LirInteger, LirIntrinsicKind, LirProgram, LirRelocationTarget, LirTerminator, LirType,
+    LirInteger, LirIntrinsicKind, LirBlob, LirRelocationTarget, LirTerminator, LirType,
     LirValue, LirValueKind,
 };
 use std::collections::HashMap;
@@ -95,7 +95,7 @@ impl CraneliftBackend {
         })
     }
 
-    pub fn emit_object(mut self, program: &LirProgram) -> Result<Vec<u8>> {
+    pub fn emit_object(mut self, program: &LirBlob) -> Result<Vec<u8>> {
         self.declare_globals(program)?;
         self.declare_functions(program)?;
         self.define_globals(program)?;
@@ -108,7 +108,7 @@ impl CraneliftBackend {
         Ok(obj)
     }
 
-    fn declare_globals(&mut self, program: &LirProgram) -> Result<()> {
+    fn declare_globals(&mut self, program: &LirBlob) -> Result<()> {
         for global in &program.globals {
             let name = global.name.to_string();
             if self.data_ids.contains_key(&name) {
@@ -125,7 +125,7 @@ impl CraneliftBackend {
         Ok(())
     }
 
-    fn declare_functions(&mut self, program: &LirProgram) -> Result<()> {
+    fn declare_functions(&mut self, program: &LirBlob) -> Result<()> {
         for func in &program.functions {
             let name = func.name.to_string();
             if self.func_ids.contains_key(&name) {
@@ -150,7 +150,7 @@ impl CraneliftBackend {
         Ok(())
     }
 
-    fn define_globals(&mut self, program: &LirProgram) -> Result<()> {
+    fn define_globals(&mut self, program: &LirBlob) -> Result<()> {
         for global in &program.globals {
             let name = global.name.to_string();
             let Some(data_id) = self.data_ids.get(&name).copied() else {
@@ -212,7 +212,7 @@ impl CraneliftBackend {
         Ok(())
     }
 
-    fn define_functions(&mut self, program: &LirProgram) -> Result<()> {
+    fn define_functions(&mut self, program: &LirBlob) -> Result<()> {
         for func in &program.functions {
             if func.is_declaration {
                 continue;

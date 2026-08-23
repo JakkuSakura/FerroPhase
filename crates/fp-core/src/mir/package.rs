@@ -1,15 +1,20 @@
 use std::collections::HashMap;
 
-use super::{ty, Constant, DefId, MirProgram, Ty};
+use super::{ty, Constant, DefId, MirCodeUnit, MirModule, Ty};
 
-/// One compiled package's MIR content — its lowered `MirProgram` plus the
-/// derived tables `MirLowering` produces alongside it. Pairs with
-/// `MirProgram` the same way `hir::HirPackage` pairs with a package's HIR
-/// content; several of these live on `CompiledPackage`'s `mir` field, one
-/// per package.
+/// One compiled package's MIR content — its lowered items, one
+/// `MirCodeUnit` per top-level `DefId`, plus the derived tables
+/// `MirLowering` produces alongside them. Pairs with `MirProgram` the same
+/// way `hir::HirPackage` pairs with `hir::HirProgram`; several of these
+/// live on `CompiledPackage`'s `mir` field, one per package.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MirPackage {
-    pub program: Option<MirProgram>,
+    /// This package's lowered content, one `MirCodeUnit` per top-level
+    /// `DefId` — see `MirCodeUnit`'s own doc comment for why this is
+    /// partitioned instead of one flat blob. Use `flatten` to get the
+    /// whole-package `MirModule` view most MIR-consuming backends still
+    /// expect.
+    pub units: HashMap<DefId, MirCodeUnit>,
     /// Struct field types keyed by `DefId`, computed during MIR lowering.
     pub struct_fields: HashMap<DefId, Vec<Ty>>,
     pub adt_defs: HashMap<crate::hir::DefId, ty::AdtDef>,
@@ -46,8 +51,30 @@ pub struct MirPackage {
 }
 
 impl MirPackage {
-    pub fn set_program(&mut self, program: MirProgram) {
-        self.program = Some(program);
+    /// Replaces (or inserts) the `MirCodeUnit` produced for `def_id` — the
+    /// only way this package's `units` map is ever written, so re-lowering
+    /// one item after a comptime value resolves is always this exact call
+    /// with a fresh unit, never a partial in-place edit.
+    pub fn insert_unit(&mut self, def_id: DefId, unit: MirCodeUnit) {
+        self.units.insert(def_id, unit);
+    }
+
+    pub fn unit(&self, def_id: DefId) -> Option<&MirCodeUnit> {
+        self.units.get(&def_id)
+    }
+
+    /// Folds every unit's `items`/`bodies` together into one flat
+    /// `MirModule` — the view `LirGenerator` and every other MIR-consuming
+    /// backend (`fp-bytecode`, `fp-jvm`, `fp-cil`, ...) still expects, since
+    /// none of them need to know or care that this package's own lowering
+    /// happened one `DefId` at a time.
+    pub fn flatten(&self) -> MirModule {
+        let mut module = MirModule::new();
+        for unit in self.units.values() {
+            module.items.extend(unit.items.iter().cloned());
+            module.bodies.extend(unit.bodies.iter().map(|(k, v)| (*k, v.clone())));
+        }
+        module
     }
 
     pub fn extend_struct_fields(&mut self, entries: impl IntoIterator<Item = (DefId, Vec<Ty>)>) {

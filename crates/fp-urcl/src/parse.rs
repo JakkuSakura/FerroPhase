@@ -1,7 +1,7 @@
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
     BasicBlockId, LirBasicBlock, LirConstant, LirConstantData, LirConstantKind, LirDataLayout,
-    LirFunction, LirFunctionSignature, LirInstruction, LirInstructionKind, LirInteger, LirProgram,
+    LirFunction, LirFunctionSignature, LirInstruction, LirInstructionKind, LirInteger, LirBlob,
     LirRegister, LirTerminator, LirType, LirValue, LirValueKind, Name,
 };
 use std::collections::HashMap;
@@ -18,12 +18,12 @@ struct ParsedBlock {
     lines: Vec<String>,
 }
 
-/// Parse URCL text emitted by `fp-urcl` back into a `LirProgram`.
+/// Parse URCL text emitted by `fp-urcl` back into a `LirBlob`.
 ///
 /// Scope: this is intentionally conservative and primarily targets the
 /// SSA-ish URCL subset emitted by FerroPhase itself.
-pub fn parse_program(text: &str) -> Result<LirProgram> {
-    let mut program = LirProgram::new(
+pub fn parse_program(text: &str) -> Result<LirBlob> {
+    let mut program = LirBlob::new(
         LirDataLayout::new(
             64,
             8,

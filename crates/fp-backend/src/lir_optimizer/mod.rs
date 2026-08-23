@@ -1,5 +1,5 @@
 use fp_core::error::Error;
-use fp_core::lir::LirProgram;
+use fp_core::lir::LirBlob;
 
 use crate::error::optimization_error;
 
@@ -68,7 +68,7 @@ impl LirOptimizer {
 
     pub fn apply_plan(
         &self,
-        program: &mut LirProgram,
+        program: &mut LirBlob,
         plan: &LirOptimizationPlan,
     ) -> Result<LirOptimizationReport, Error> {
         let mut report = LirOptimizationReport::default();

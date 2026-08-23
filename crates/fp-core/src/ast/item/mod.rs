@@ -79,11 +79,11 @@ common_enum! {
         /// (opaque past HIR/MIR/LIR), this one *is* LIR already —
         /// `CompilerDriver::compile_package` installs it straight into the
         /// package's `lir_workspace`, skipping HIR/MIR generation entirely,
-        /// so `WorkspaceContext::merged_lir_program` picks it up
+        /// so `AstProgram::merged_lir_program` picks it up
         /// transparently and every LIR-consuming backend (native/goasm/
         /// urcl/cil/dotnet/jvm-bytecode) can retarget it with no
         /// backend-specific handling at all.
-        PrecompiledLir(crate::lir::LirProgram),
+        PrecompiledLir(crate::lir::LirBlob),
         /// Raw bytes an already-compiled artifact carries for byte-identical
         /// (or near-identical, e.g. class-to-jar repackaging) passthrough to
         /// one specific target shape — e.g. a `.class`/`.jar` input compiled
@@ -161,7 +161,7 @@ impl Item {
     pub fn precompiled_asm(asm: crate::asmir::AsmProgram) -> Self {
         Self::from(ItemKind::PrecompiledAsm(asm))
     }
-    pub fn precompiled_lir(lir: crate::lir::LirProgram) -> Self {
+    pub fn precompiled_lir(lir: crate::lir::LirBlob) -> Self {
         Self::from(ItemKind::PrecompiledLir(lir))
     }
     pub fn precompiled_artifact(bytes: Vec<u8>) -> Self {

@@ -1,11 +1,11 @@
 use fp_core::asmir::AsmProgram;
 use fp_core::error::{Error, Result};
-use fp_core::lir::{LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirValue};
+use fp_core::lir::{LirInstruction, LirInstructionKind, LirBlob, LirTerminator, LirValue};
 
 use crate::emit::{CodegenOutput, TargetArch, TargetFormat, aarch64, x86_64};
 
 pub fn emit_text_from_selection(
-    lir_program: &LirProgram,
+    lir_program: &LirBlob,
     asmir_program: &AsmProgram,
     format: TargetFormat,
     arch: TargetArch,
@@ -80,7 +80,7 @@ pub fn emit_text_from_selection(
     }
 }
 
-pub fn lower_program_for_native(lir_program: &LirProgram) -> Result<LirProgram> {
+pub fn lower_program_for_native(lir_program: &LirBlob) -> Result<LirBlob> {
     let mut lir_program = lir_program.clone();
     lower_phi_in_program(&mut lir_program)?;
     crate::jit::validate_native_program(&lir_program)?;
@@ -98,7 +98,7 @@ fn is_call_arg_value(value: &LirValue) -> bool {
     )
 }
 
-fn lower_phi_in_program(program: &mut LirProgram) -> Result<()> {
+fn lower_phi_in_program(program: &mut LirBlob) -> Result<()> {
     for function in &mut program.functions {
         lower_phi_in_function(function)?;
     }

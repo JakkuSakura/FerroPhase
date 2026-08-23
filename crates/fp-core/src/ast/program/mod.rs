@@ -17,18 +17,18 @@ use std::sync::Arc;
 /// Conceptually similar to `hir::HirProgram` — both are "many packages,
 /// addressed by `PackageId`" containers — but at a different layer and
 /// lifecycle: `hir::HirProgram` is one immutable snapshot of every package's
-/// already-lowered HIR, while `WorkspaceContext` is the live, mutable
+/// already-lowered HIR, while `AstProgram` is the live, mutable
 /// registry compilation itself is built against (spanning every layer, not
 /// just HIR, and growing one `begin_package`/`import_package` call at a
 /// time as compilation proceeds).
-pub struct WorkspaceContext {
+pub struct AstProgram {
     crates: RefCell<HashMap<PackageId, Rc<RefCell<CompiledPackage>>>>,
     /// The single package provider for this workspace, required at
     /// construction and never changed afterward. Callers that need to
     /// combine several concrete providers (e.g. a language's std/libc
     /// provider plus the real input-package provider) build a
     /// `CompositeProvider` wrapping them before constructing the
-    /// workspace — `WorkspaceContext` itself never needs to search a list
+    /// workspace — `AstProgram` itself never needs to search a list
     /// of providers (previously O(providers × package-list) per lookup,
     /// called once per package in the dependency graph).
     providers: Arc<dyn PackageProvider>,
@@ -90,7 +90,7 @@ pub struct WorkspaceContext {
     hir_program: RefCell<Rc<crate::hir::HirProgram>>,
 }
 
-impl WorkspaceContext {
+impl AstProgram {
     pub fn new(provider: Arc<dyn PackageProvider>) -> Self {
         Self {
             crates: RefCell::new(HashMap::new()),
@@ -644,12 +644,12 @@ impl WorkspaceContext {
     /// the bare symbol name `main` in the merged program — native/asm
     /// emitters locate the process entry point by that final, bare symbol
     /// name (see `crate::ast::package::rename_lir_function`'s doc comment), and a
-    /// module-nested `main` built from a flattened, ad hoc `LirProgram`
+    /// module-nested `main` built from a flattened, ad hoc `LirBlob`
     /// like this one (rather than through `CompilerDriver::select_entrypoint`)
     /// otherwise never gets that renaming. Silently does nothing if `id`
     /// has no `main` (e.g. a pure library package) — this is best-effort,
     /// not a requirement every package must satisfy.
-    pub fn merged_lir_program(&self, id: &PackageId) -> crate::error::Result<crate::lir::LirProgram> {
+    pub fn merged_lir_program(&self, id: &PackageId) -> crate::error::Result<crate::lir::LirBlob> {
         let package = self.compiled_package(id).ok_or_else(|| {
             crate::error::Error::from(format!(
                 "compiled package `{id}` is unavailable for LIR merging"
@@ -662,7 +662,7 @@ impl WorkspaceContext {
             )));
         }
         let mut combined =
-            crate::lir::LirWorkspace::new(package.lir.own_artifacts.data_layout.clone());
+            crate::lir::LirUnitTable::new(package.lir.own_artifacts.data_layout.clone());
         for (dependency_id, dep_package) in self.crates.borrow().iter() {
             if dependency_id == id {
                 continue;
@@ -674,7 +674,7 @@ impl WorkspaceContext {
         combined
             .add_workspace(&package.lir.own_artifacts)
             .map_err(|error| crate::error::Error::from(error.to_string()))?;
-        let mut lir = combined.to_program();
+        let mut lir = combined.to_blob();
         if let Ok(def_id) = crate::ast::package::resolve_entrypoint_def_id(id, &package, "main") {
             crate::ast::package::rename_lir_function(&mut lir, def_id, "main");
         }

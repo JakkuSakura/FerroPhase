@@ -7,7 +7,7 @@ use fp_cli::cli::CliConfig;
 use fp_cli::commands::compile::{CompileArgs, compile_command};
 use tempfile::TempDir;
 
-// `WorkspaceContext::merged_lir_program` merges in std's global constant
+// `AstProgram::merged_lir_program` merges in std's global constant
 // data (format strings for `println!`), which `fp_ebpf::validate_program`
 // rejects outright ("globals are not supported by fp-ebpf yet"). This is
 // a pre-existing gap from the TargetBackend unification (the LIR-merge

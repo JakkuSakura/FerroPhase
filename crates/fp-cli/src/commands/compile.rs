@@ -384,10 +384,10 @@ async fn run_compile_pipeline(
     // this way (an unresolvable dependency fails its dependent), so treating
     // members the same way needs no special per-member recovery bookkeeping
     // in the shared driver.
-    let capabilities = crate::languages::backend::capabilities_for_target(target_name);
+    let backend_capabilities = backend.capabilities();
     let root_id = PackageId::new(format!("{root_name}::__workspace_root__"));
     let (executor, mut session) =
-        compiler::build_workspace_session(provider.clone(), lang, capabilities);
+        compiler::build_workspace_session(provider.clone(), lang, backend_capabilities);
     executor
         .run(session.driver().compile_workspace(&root_id, &packages))
         .map_err(|e| {

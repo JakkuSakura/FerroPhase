@@ -10,8 +10,8 @@ use fp_core::hir::PackageTypes;
 
 pub struct ComptimeRequest {
     /// Every *already-published* package's own HIR (each shared as the
-    /// same `Rc` its `CompiledPackage`/`WorkspaceContext` holds — see
-    /// `WorkspaceContext::publish_hir_program`, which maintains this
+    /// same `Rc` its `CompiledPackage`/`AstProgram` holds — see
+    /// `AstProgram::publish_hir_program`, which maintains this
     /// incrementally, one package at a time, as each finishes — never
     /// rebuilt/re-scanned on demand). `current` (below) is *not* in here
     /// yet — it's still being type-checked, not yet published — so the
@@ -61,7 +61,7 @@ pub type ComptimeResolver = std::rc::Rc<dyn Fn(ComptimeRequest) -> BoxFuture<'st
 /// parameters.
 ///
 /// Holds only typing-owned state — the compiled-package registry
-/// (`WorkspaceContext`), target ABI data (`LirDataLayout`), and the shared
+/// (`AstProgram`), target ABI data (`LirDataLayout`), and the shared
 /// task pool (`ExecutorHandle`) all live on `fp-compiler`'s `CompilerState`
 /// instead and get passed explicitly wherever typing needs them, since
 /// `TypingContext` had no real abstraction over them (every caller reached

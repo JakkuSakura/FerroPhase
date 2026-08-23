@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use fp_core::lir::LirDataLayout;
-use fp_core::ast::workspace::WorkspaceContext;
+use fp_core::ast::program::AstProgram;
 
 use crate::{CompilerDriver, CompilerExecutor};
 
@@ -10,7 +10,7 @@ use crate::{CompilerDriver, CompilerExecutor};
 /// workspaces created by the driver share this session's workspace but
 /// keep package state isolated.
 pub struct CompilerSession {
-    workspace: Rc<WorkspaceContext>,
+    workspace: Rc<AstProgram>,
     driver: CompilerDriver,
 }
 
@@ -18,14 +18,14 @@ impl CompilerSession {
     pub fn new(
         data_layout: LirDataLayout,
         executor: &CompilerExecutor,
-        workspace: Rc<WorkspaceContext>,
+        workspace: Rc<AstProgram>,
     ) -> Self {
         let driver =
             CompilerDriver::with_workspace(data_layout, executor.handle(), workspace.clone());
         Self { workspace, driver }
     }
 
-    pub fn workspace(&self) -> Rc<WorkspaceContext> {
+    pub fn workspace(&self) -> Rc<AstProgram> {
         self.workspace.clone()
     }
 

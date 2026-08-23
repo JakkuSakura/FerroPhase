@@ -28,7 +28,7 @@ This exists to validate the end-to-end integration (pipeline → object emission
 
 ## Next steps
 
-- Lower real `LirProgram` into machine code (starting with i64 arithmetic + simple control flow)
+- Lower real `LirBlob` into machine code (starting with i64 arithmetic + simple control flow)
 - Expand instruction coverage beyond trivial entry stubs
 - Add relocations + external calls (e.g. `printf`) and a small runtime library
 - Add relocations and symbol resolution for multi-object linking

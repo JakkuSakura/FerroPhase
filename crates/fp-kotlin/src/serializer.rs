@@ -318,9 +318,9 @@ impl KotlinSerializer {
 
 /// The workspace-wide facts `KotlinBackend` needs beyond a single
 /// package's own `AstPackage` — computed lazily (see `ensure_scan`)
-/// from `&WorkspaceContext` on first use and cached, instead of being
+/// from `&AstProgram` on first use and cached, instead of being
 /// force-fed at construction time. `workspace_packages` comes from
-/// `WorkspaceContext::workspace_packages()` (in turn
+/// `AstProgram::workspace_packages()` (in turn
 /// `PackageProvider::workspace_packages()`) rather than being passed by
 /// the caller — the provider is the thing that actually knows which
 /// packages are this workspace's own, as opposed to e.g. `std`.
@@ -335,11 +335,11 @@ struct KotlinScan {
 
 /// `TargetBackend` wrapper around [`KotlinSerializer`]. Kotlin needs
 /// workspace-wide context beyond what `BackendConfig` carries — the
-/// workspace-wide `KotlinScan` is read lazily from `&WorkspaceContext` on
+/// workspace-wide `KotlinScan` is read lazily from `&AstProgram` on
 /// first `emit_package_artifact`/`write_workspace_files` call, same as every
 /// other backend gets its input. `config.root_name` (the *source* project
 /// directory's name, not `config.workspace_root`, the output directory)
-/// is read straight off `self.config` — `WorkspaceContext` has no way to
+/// is read straight off `self.config` — `AstProgram` has no way to
 /// reconstruct it, it isn't package data at all.
 pub struct KotlinBackend {
     serializer: KotlinSerializer,
@@ -356,12 +356,12 @@ impl KotlinBackend {
         }
     }
 
-    /// Builds and caches the workspace-wide scan from `&WorkspaceContext`
+    /// Builds and caches the workspace-wide scan from `&AstProgram`
     /// on first call. Safe to call from any package's `emit_package_artifact` —
     /// including the very first — since `run_named_target`'s typecheck
     /// phase already ran for every package in the workspace before any
     /// `emit_package_artifact` call happens.
-    fn ensure_scan(&self, workspace: &fp_core::ast::workspace::WorkspaceContext) -> fp_core::error::Result<&KotlinScan> {
+    fn ensure_scan(&self, workspace: &fp_core::ast::program::AstProgram) -> fp_core::error::Result<&KotlinScan> {
         if let Some(scan) = self.scan.get() {
             return Ok(scan);
         }
@@ -383,9 +383,13 @@ impl KotlinBackend {
 }
 
 impl TargetBackend for KotlinBackend {
+    fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
+        crate::CAPABILITIES
+    }
+
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::ast::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
     ) -> fp_core::error::Result<()> {
         let scan = self.ensure_scan(workspace)?;
@@ -428,7 +432,7 @@ impl TargetBackend for KotlinBackend {
 
     fn write_workspace_files(
         &self,
-        workspace: &fp_core::ast::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::program::AstProgram,
     ) -> fp_core::error::Result<()> {
         let scan = self.ensure_scan(workspace)?;
         let root_name = self.config.root_name.replace('-', "_");

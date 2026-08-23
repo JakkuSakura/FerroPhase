@@ -1,10 +1,10 @@
 #![allow(dead_code)]
 use fp_core::lir::{
-    self, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram, LirTerminator, LirType,
+    self, LirBasicBlock, LirFunction, LirFunctionSignature, LirBlob, LirTerminator, LirType,
 };
 
-pub fn empty_program() -> LirProgram {
-    LirProgram {
+pub fn empty_program() -> LirBlob {
+    LirBlob {
         data_layout: lir::LirDataLayout::new(
             64,
             8,

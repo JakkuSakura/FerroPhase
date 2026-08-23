@@ -19,7 +19,7 @@ pub mod module;
 mod pat;
 pub mod package;
 pub mod path;
-pub mod workspace;
+pub mod program;
 mod pretty;
 mod schema;
 mod serialize;

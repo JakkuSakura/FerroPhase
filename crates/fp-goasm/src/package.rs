@@ -44,7 +44,7 @@ impl PackageProvider for GoPackageProvider {
 
 /// A standalone `.goasm` file (not a project directory) is Go-style native
 /// assembly text — lift it once at construction into a target-independent
-/// `LirProgram` via `fp_core::ast::package::provider::lir_from_text`, so every
+/// `LirBlob` via `fp_core::ast::package::provider::lir_from_text`, so every
 /// LIR-consuming target (native/goasm/urcl/cil/jvm-bytecode) can retarget
 /// it with no backend-specific handling. A directory input is a real
 /// multi-file project, still owned by `GoPackageProvider` (currently

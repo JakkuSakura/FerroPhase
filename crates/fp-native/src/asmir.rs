@@ -19,13 +19,13 @@ use fp_core::asmir::{
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
     Linkage, LirConstant, LirConstantAggregate, LirConstantData, LirConstantExpr, LirConstantKind,
-    LirFloat, LirInstructionKind, LirInteger, LirIntrinsicKind, LirProgram, LirTerminator,
+    LirFloat, LirInstructionKind, LirInteger, LirIntrinsicKind, LirBlob, LirTerminator,
     LirValue, LirValueKind, Name, Visibility,
 };
 use std::collections::HashMap;
 
 pub fn select_program(
-    lir_program: &LirProgram,
+    lir_program: &LirBlob,
     format: TargetFormat,
     arch: TargetArch,
 ) -> Result<AsmProgram> {
@@ -5041,7 +5041,7 @@ mod tests {
     };
     use fp_core::lir::{
         CallingConvention, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature,
-        LirInstruction, LirInstructionKind, LirInteger, LirProgram, LirRegister, LirTerminator,
+        LirInstruction, LirInstructionKind, LirInteger, LirBlob, LirRegister, LirTerminator,
         LirType, LirValue, Name,
     };
 
@@ -5082,7 +5082,7 @@ mod tests {
 
     #[test]
     fn select_program_builds_semantic_asmir() {
-        let lir = LirProgram {
+        let lir = LirBlob {
             data_layout: layout(),
             functions: vec![LirFunction {
                 def_id: None,
@@ -5137,7 +5137,7 @@ mod tests {
 
     #[test]
     fn select_program_normalizes_x86_opcode_and_operands() {
-        let lir = LirProgram {
+        let lir = LirBlob {
             data_layout: layout(),
             functions: vec![LirFunction {
                 def_id: None,
@@ -5215,7 +5215,7 @@ mod tests {
 
     #[test]
     fn select_program_records_x86_condition_and_call_target() {
-        let lir = LirProgram {
+        let lir = LirBlob {
             data_layout: layout(),
             functions: vec![LirFunction {
                 def_id: None,
@@ -5287,7 +5287,7 @@ mod tests {
 
     #[test]
     fn lower_to_aarch64_preserves_concrete_branch_and_call_metadata() {
-        let lir = LirProgram {
+        let lir = LirBlob {
             data_layout: layout(),
             functions: vec![LirFunction {
                 def_id: None,
@@ -5373,7 +5373,7 @@ mod tests {
 
     #[test]
     fn lower_to_x86_64_skips_declarations_and_maps_terminators() {
-        let lir = LirProgram {
+        let lir = LirBlob {
             data_layout: layout(),
             functions: vec![
                 LirFunction {

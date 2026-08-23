@@ -364,9 +364,13 @@ impl RustBackend {
 }
 
 impl fp_core::backend::TargetBackend for RustBackend {
+    fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
+        fp_core::capabilities::LanguageCapabilities::NATIVE
+    }
+
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::ast::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
     ) -> Result<(), fp_core::Error> {
         let package = workspace.package_source(package_id)?;

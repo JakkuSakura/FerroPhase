@@ -22,7 +22,7 @@ impl Default for JvmBackendOptions {
 }
 
 pub fn lower_program(
-    program: &mir::MirProgram,
+    program: &mir::MirModule,
     options: &JvmBackendOptions,
 ) -> Result<JvmProgram, JvmError> {
     let method_descriptors = collect_method_descriptors(program)?;
@@ -72,7 +72,7 @@ pub fn lower_program(
     })
 }
 
-fn collect_method_descriptors(program: &mir::MirProgram) -> Result<HashMap<String, String>, JvmError> {
+fn collect_method_descriptors(program: &mir::MirModule) -> Result<HashMap<String, String>, JvmError> {
     let mut descriptors = HashMap::new();
     for item in &program.items {
         if let mir::ItemKind::Function(function) = &item.kind {
@@ -465,7 +465,7 @@ mod tests {
         let int_ty = mir::ty::Ty {
             kind: mir::ty::TyKind::Int(mir::ty::IntTy::I32),
         };
-        let program = mir::MirProgram {
+        let program = mir::MirModule {
             items: vec![mir::Item {
                 mir_id: 0,
                 kind: mir::ItemKind::Function(mir::Function {

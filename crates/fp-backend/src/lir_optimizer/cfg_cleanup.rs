@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use fp_core::error::Error;
-use fp_core::lir::{BasicBlockId, LirFunction, LirProgram, LirTerminator};
+use fp_core::lir::{BasicBlockId, LirFunction, LirBlob, LirTerminator};
 
-pub fn remove_unreachable_blocks(program: &mut LirProgram) -> Result<usize, Error> {
+pub fn remove_unreachable_blocks(program: &mut LirBlob) -> Result<usize, Error> {
     let mut total_changes = 0usize;
     for function in &mut program.functions {
         total_changes += remove_unreachable_blocks_in_function(function)?;
@@ -250,12 +250,12 @@ mod tests {
     use super::*;
     use fp_core::lir::{
         CallingConvention, Linkage, LirBasicBlock, LirDataLayout, LirFunction,
-        LirFunctionSignature, LirProgram, LirTerminator, LirType, Name,
+        LirFunctionSignature, LirBlob, LirTerminator, LirType, Name,
     };
 
     #[test]
     fn removes_unreachable_blocks_and_rewrites_preds() {
-        let mut program = LirProgram {
+        let mut program = LirBlob {
             data_layout: LirDataLayout::new(
                 64,
                 8,
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn collapses_trivial_jump_blocks() {
-        let mut program = LirProgram {
+        let mut program = LirBlob {
             data_layout: LirDataLayout::new(
                 64,
                 8,

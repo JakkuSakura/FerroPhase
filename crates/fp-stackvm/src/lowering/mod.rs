@@ -1,13 +1,13 @@
 //! Bytecode → LIR lowering pass.
 //!
 //! Converts a stack-based [`BytecodeProgram`][fp_bytecode::BytecodeProgram]
-//! into the register-based SSA [`LirProgram`][fp_core::lir::LirProgram]
+//! into the register-based SSA [`LirBlob`][fp_core::lir::LirBlob]
 //! consumed by [`fp-interpret`][fp_interpret].
 //!
 //! # Architecture
 //!
 //! ```text
-//! BytecodeProgram ──▶ lower_program() ──▶ LirProgram ──▶ fp-interpret
+//! BytecodeProgram ──▶ lower_program() ──▶ LirBlob ──▶ fp-interpret
 //! ```
 //!
 //! The pass simulates the bytecode operand stack at compile time and

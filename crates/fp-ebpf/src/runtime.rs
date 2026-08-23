@@ -597,7 +597,7 @@ mod tests {
     use super::run_object;
     use fp_core::lir::{
         CallingConvention, Linkage, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature,
-        LirInstruction, LirInstructionKind, LirInteger, LirLocal, LirProgram, LirRegister,
+        LirInstruction, LirInstructionKind, LirInteger, LirLocal, LirBlob, LirRegister,
         LirTerminator, LirType, LirValue,
     };
 
@@ -614,8 +614,8 @@ mod tests {
         .unwrap()
     }
 
-    fn base_program(instructions: Vec<LirInstruction>, terminator: LirTerminator) -> LirProgram {
-        LirProgram {
+    fn base_program(instructions: Vec<LirInstruction>, terminator: LirTerminator) -> LirBlob {
+        LirBlob {
             functions: vec![LirFunction {
                 def_id: None,
                 name: fp_core::lir::Name::new("main"),

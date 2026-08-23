@@ -5,7 +5,7 @@ mod parse;
 
 use crate::config::{GoAsmConfig, GoAsmTarget};
 use fp_core::error::Result;
-use fp_core::lir::LirProgram;
+use fp_core::lir::LirBlob;
 use std::path::{Path, PathBuf};
 
 pub use parse::parse_program;
@@ -19,7 +19,7 @@ impl GoAsmEmitter {
         Self { config }
     }
 
-    pub fn emit(&self, lir_program: LirProgram, source_file: Option<&Path>) -> Result<PathBuf> {
+    pub fn emit(&self, lir_program: LirBlob, source_file: Option<&Path>) -> Result<PathBuf> {
         let _ = source_file;
         if let Some(parent) = self.config.output_path.parent() {
             std::fs::create_dir_all(parent).map_err(fp_core::error::Error::from)?;
@@ -35,9 +35,13 @@ impl GoAsmEmitter {
 }
 
 impl fp_core::backend::TargetBackend for GoAsmEmitter {
+    fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
+        fp_core::capabilities::LanguageCapabilities::NATIVE
+    }
+
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::ast::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
     ) -> Result<()> {
         let lir = workspace.merged_lir_program(package_id)?;

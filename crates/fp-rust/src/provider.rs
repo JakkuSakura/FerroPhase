@@ -218,7 +218,7 @@ impl PackageProvider for RustPackageProvider {
 /// fields, etc.) once it's a recorded dependency here, which is what lets
 /// `CompilerDriver::compile_package`'s existing dependency loop recurse
 /// into it and register it in the depending package's own workspace
-/// (`WorkspaceContext::crates()`/`hir_definitions()`). Non-path
+/// (`AstProgram::crates()`/`hir_definitions()`). Non-path
 /// dependencies (crates.io/registry deps) are skipped — there's no
 /// provider for arbitrary external crates, so recording an unresolvable
 /// `DependencyDescriptor` would just make `compile_package`'s dependency

@@ -1,11 +1,15 @@
 pub mod ident;
 pub mod layout;
+pub mod path;
 pub mod pretty;
+pub mod program;
 pub mod ty;
 
 use crate::query::{QueryExpr, QueryIrDocument, QueryIrStmt, QueryOrigin};
 use crate::span::Span;
 pub use ident::Name;
+pub use path::LirPath;
+pub use program::LirProgram;
 use std::collections::HashMap;
 pub use ty::Ty;
 pub type LirType = Ty;
@@ -61,17 +65,27 @@ impl RuntimeSymbol {
     }
 }
 
-/// A compiled LIR module — the result of lowering one module through
-/// the full pipeline. Multiple LirCompileUnits form a Package.
+/// One compiled, independently publishable module's worth of LIR — a
+/// `LirBlob` (see its own doc comment) plus the identity
+/// (`package_id`/`module_path`) needed to publish it into a
+/// `LirPackage`/`LirProgram`. Multiple `LirCompileUnit`s form a package.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirCompileUnit {
     pub package_id: crate::hir::PackageId,
     pub module_path: crate::ast::path::QualifiedPath,
-    pub program: LirProgram,
+    pub blob: LirBlob,
 }
 
+/// Flat, unidentified LIR content — every function/global/type/comptime
+/// entry/query produced for one module, with no package/module identity of
+/// its own (see `LirCompileUnit`, which pairs this with that identity).
+/// This is also `ItemKind::PrecompiledLir`'s payload: an item embedded
+/// directly in a package's AST doesn't need its own identity beyond its
+/// position in that AST, which the enclosing item/module path already give
+/// it once the driver actually publishes it (see `CompilerDriver`'s
+/// `precompiled_lir_units` handling).
 #[derive(Debug, Clone, PartialEq)]
-pub struct LirProgram {
+pub struct LirBlob {
     pub data_layout: LirDataLayout,
     pub functions: Vec<LirFunction>,
     pub globals: Vec<LirGlobal>,
@@ -80,43 +94,43 @@ pub struct LirProgram {
     pub queries: Vec<LirQuery>,
 }
 
-/// `ItemKind::PrecompiledLir` (see `fp_core::ast::item`) needs `LirProgram`
+/// `ItemKind::PrecompiledLir` (see `fp_core::ast::item`) needs `LirBlob`
 /// to satisfy the same derive bounds every other `ItemKind` payload gets
 /// via the `common_enum!` macro (`Hash`, `Serialize`, `Deserialize`) —
 /// mirrors `AsmProgram`'s identical treatment for `ItemKind::PrecompiledAsm`
 /// (`fp_core::asmir`): trivial/error stand-ins, not real implementations.
 /// An already-compiled artifact is never meant to be hashed for
 /// deduplication or serialized to disk as AST.
-impl std::hash::Hash for LirProgram {
+impl std::hash::Hash for LirBlob {
     fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
 }
 
-impl serde::Serialize for LirProgram {
+impl serde::Serialize for LirBlob {
     fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
         Err(serde::ser::Error::custom(
-            "LirProgram (ItemKind::PrecompiledLir) does not support serialization",
+            "LirBlob (ItemKind::PrecompiledLir) does not support serialization",
         ))
     }
 }
 
-impl<'de> serde::Deserialize<'de> for LirProgram {
+impl<'de> serde::Deserialize<'de> for LirBlob {
     fn deserialize<D: serde::Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
         Err(serde::de::Error::custom(
-            "LirProgram (ItemKind::PrecompiledLir) does not support deserialization",
+            "LirBlob (ItemKind::PrecompiledLir) does not support deserialization",
         ))
     }
 }
 
 /// One independently addressable LIR definition.
 #[derive(Debug, Clone, PartialEq)]
-pub struct LirArtifact {
+pub struct LirCodeUnit {
     pub package_id: crate::ast::package::PackageId,
     pub module_path: crate::ast::path::QualifiedPath,
-    pub kind: LirArtifactKind,
+    pub kind: LirCodeUnitKind,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum LirArtifactKind {
+pub enum LirCodeUnitKind {
     Function(LirFunction),
     Global(LirGlobal),
     TypeDefinition(LirTypeDefinition),
@@ -126,27 +140,27 @@ pub enum LirArtifactKind {
 
 /// Dependency-aware LIR view used by interpretation and comptime execution.
 ///
-/// The workspace is deliberately artifact-oriented. A flattened `LirProgram`
+/// The workspace is deliberately artifact-oriented. A flattened `LirBlob`
 /// is produced only at a backend boundary that requires one.
 ///
 /// Used in two conventions, both with this identical shape: **single-package**
 /// (holds exactly one `PackageId`'s own artifacts — this is what `LirPackage`
 /// embeds, one per package) and **merged** (a unioned view across every
-/// dependency, built only by `WorkspaceContext::merged_lir_program` via
+/// dependency, built only by `AstProgram::merged_lir_program` via
 /// `add_workspace`). The `(PackageId, Name)`-keyed indices support both
 /// conventions the same way; nothing else distinguishes which mode a given
 /// instance is in beyond how it was constructed.
 #[derive(Debug, Clone, PartialEq)]
-pub struct LirWorkspace {
+pub struct LirUnitTable {
     pub data_layout: LirDataLayout,
-    artifacts: Vec<LirArtifact>,
+    artifacts: Vec<LirCodeUnit>,
     functions: HashMap<(crate::ast::package::PackageId, Name), usize>,
     globals: HashMap<(crate::ast::package::PackageId, Name), usize>,
     types: HashMap<(crate::ast::package::PackageId, Name), usize>,
     comptime_entries: HashMap<(crate::ast::package::PackageId, Name), usize>,
 }
 
-impl LirWorkspace {
+impl LirUnitTable {
     pub fn new(data_layout: LirDataLayout) -> Self {
         Self {
             data_layout,
@@ -158,28 +172,28 @@ impl LirWorkspace {
         }
     }
 
-    pub fn add_artifact(&mut self, artifact: LirArtifact) -> Result<(), LirWorkspaceError> {
+    pub fn add_artifact(&mut self, artifact: LirCodeUnit) -> Result<(), LirUnitTableError> {
         let index = self.artifacts.len();
         let key = artifact.package_id.clone();
         let duplicate = match &artifact.kind {
-            LirArtifactKind::Function(function) => {
+            LirCodeUnitKind::Function(function) => {
                 self.functions.insert((key, function.name.clone()), index)
             }
-            LirArtifactKind::Global(global) => {
+            LirCodeUnitKind::Global(global) => {
                 self.globals.insert((key, global.name.clone()), index)
             }
-            LirArtifactKind::TypeDefinition(definition) => {
+            LirCodeUnitKind::TypeDefinition(definition) => {
                 self.types.insert((key, definition.name.clone()), index)
             }
-            LirArtifactKind::ComptimeEntry(entry) => self
+            LirCodeUnitKind::ComptimeEntry(entry) => self
                 .comptime_entries
                 .insert((key, entry.function.clone()), index),
-            LirArtifactKind::Query(query) => self
+            LirCodeUnitKind::Query(query) => self
                 .types
                 .insert((key, Name::new(format!("query:{}", query.query_id))), index),
         };
         if duplicate.is_some() {
-            return Err(LirWorkspaceError::DuplicateArtifact {
+            return Err(LirUnitTableError::DuplicateArtifact {
                 package_id: artifact.package_id,
                 name: artifact_name(&artifact.kind),
             });
@@ -192,73 +206,73 @@ impl LirWorkspace {
         &mut self,
         package_id: crate::ast::package::PackageId,
         module_path: crate::ast::path::QualifiedPath,
-        program: LirProgram,
-    ) -> Result<(), LirProgramError> {
+        program: LirBlob,
+    ) -> Result<(), LirBlobError> {
         if self.data_layout != program.data_layout {
-            return Err(LirProgramError::DataLayoutMismatch);
+            return Err(LirBlobError::DataLayoutMismatch);
         }
         for function in program.functions {
-            self.add_artifact(LirArtifact {
+            self.add_artifact(LirCodeUnit {
                 package_id: package_id.clone(),
                 module_path: module_path.clone(),
-                kind: LirArtifactKind::Function(function),
+                kind: LirCodeUnitKind::Function(function),
             })
-            .map_err(LirProgramError::Workspace)?;
+            .map_err(LirBlobError::Workspace)?;
         }
         for global in program.globals {
-            self.add_artifact(LirArtifact {
+            self.add_artifact(LirCodeUnit {
                 package_id: package_id.clone(),
                 module_path: module_path.clone(),
-                kind: LirArtifactKind::Global(global),
+                kind: LirCodeUnitKind::Global(global),
             })
-            .map_err(LirProgramError::Workspace)?;
+            .map_err(LirBlobError::Workspace)?;
         }
         for ty in program.type_definitions {
-            self.add_artifact(LirArtifact {
+            self.add_artifact(LirCodeUnit {
                 package_id: package_id.clone(),
                 module_path: module_path.clone(),
-                kind: LirArtifactKind::TypeDefinition(ty),
+                kind: LirCodeUnitKind::TypeDefinition(ty),
             })
-            .map_err(LirProgramError::Workspace)?;
+            .map_err(LirBlobError::Workspace)?;
         }
         for entry in program.comptime_entries {
-            self.add_artifact(LirArtifact {
+            self.add_artifact(LirCodeUnit {
                 package_id: package_id.clone(),
                 module_path: module_path.clone(),
-                kind: LirArtifactKind::ComptimeEntry(entry),
+                kind: LirCodeUnitKind::ComptimeEntry(entry),
             })
-            .map_err(LirProgramError::Workspace)?;
+            .map_err(LirBlobError::Workspace)?;
         }
         for query in program.queries {
-            self.add_artifact(LirArtifact {
+            self.add_artifact(LirCodeUnit {
                 package_id: package_id.clone(),
                 module_path: module_path.clone(),
-                kind: LirArtifactKind::Query(query),
+                kind: LirCodeUnitKind::Query(query),
             })
-            .map_err(LirProgramError::Workspace)?;
+            .map_err(LirBlobError::Workspace)?;
         }
         Ok(())
     }
 
-    pub fn artifacts(&self) -> &[LirArtifact] {
+    pub fn artifacts(&self) -> &[LirCodeUnit] {
         &self.artifacts
     }
 
-    pub fn add_workspace(&mut self, other: &LirWorkspace) -> Result<(), LirProgramError> {
+    pub fn add_workspace(&mut self, other: &LirUnitTable) -> Result<(), LirBlobError> {
         if self.data_layout != other.data_layout {
-            return Err(LirProgramError::DataLayoutMismatch);
+            return Err(LirBlobError::DataLayoutMismatch);
         }
         for artifact in &other.artifacts {
             self.add_artifact(artifact.clone())
-                .map_err(LirProgramError::Workspace)?;
+                .map_err(LirBlobError::Workspace)?;
         }
         Ok(())
     }
 
-    pub fn functions(&self) -> impl Iterator<Item = &LirArtifact> {
+    pub fn functions(&self) -> impl Iterator<Item = &LirCodeUnit> {
         self.artifacts
             .iter()
-            .filter(|artifact| matches!(artifact.kind, LirArtifactKind::Function(_)))
+            .filter(|artifact| matches!(artifact.kind, LirCodeUnitKind::Function(_)))
     }
 
     pub fn find_function(
@@ -269,7 +283,7 @@ impl LirWorkspace {
         self.functions
             .get(&(package_id, name.clone()))
             .and_then(|index| match &self.artifacts[*index].kind {
-                LirArtifactKind::Function(function) => Some(function),
+                LirCodeUnitKind::Function(function) => Some(function),
                 _ => None,
             })
     }
@@ -282,7 +296,7 @@ impl LirWorkspace {
         self.globals
             .get(&(package_id, name.clone()))
             .and_then(|index| match &self.artifacts[*index].kind {
-                LirArtifactKind::Global(global) => Some(global),
+                LirCodeUnitKind::Global(global) => Some(global),
                 _ => None,
             })
     }
@@ -295,42 +309,42 @@ impl LirWorkspace {
         self.comptime_entries
             .get(&(package_id, function.clone()))
             .and_then(|index| match &self.artifacts[*index].kind {
-                LirArtifactKind::ComptimeEntry(entry) => Some(entry),
+                LirCodeUnitKind::ComptimeEntry(entry) => Some(entry),
                 _ => None,
             })
     }
 
-    pub fn to_program(&self) -> LirProgram {
-        let mut program = LirProgram::new(self.data_layout.clone());
+    pub fn to_blob(&self) -> LirBlob {
+        let mut program = LirBlob::new(self.data_layout.clone());
         for artifact in &self.artifacts {
             match &artifact.kind {
-                LirArtifactKind::Function(function) => program.functions.push(function.clone()),
-                LirArtifactKind::Global(global) => program.globals.push(global.clone()),
-                LirArtifactKind::TypeDefinition(ty) => program.type_definitions.push(ty.clone()),
-                LirArtifactKind::ComptimeEntry(entry) => {
+                LirCodeUnitKind::Function(function) => program.functions.push(function.clone()),
+                LirCodeUnitKind::Global(global) => program.globals.push(global.clone()),
+                LirCodeUnitKind::TypeDefinition(ty) => program.type_definitions.push(ty.clone()),
+                LirCodeUnitKind::ComptimeEntry(entry) => {
                     program.comptime_entries.push(entry.clone())
                 }
-                LirArtifactKind::Query(query) => program.queries.push(query.clone()),
+                LirCodeUnitKind::Query(query) => program.queries.push(query.clone()),
             }
         }
         program
     }
 }
 
-/// One compiled package's LIR content — pairs with `LirProgram` the same way
+/// One compiled package's LIR content — pairs with `LirBlob` the same way
 /// `hir::HirPackage`/`mir::MirPackage` pair with their own layer's `Program`
-/// type. `own_artifacts` is always single-package (see `LirWorkspace`'s doc
+/// type. `own_artifacts` is always single-package (see `LirUnitTable`'s doc
 /// comment) — built fresh from just this package's own compiled units by
 /// `CompilerDriver::publish_lir_units`, never merged with a dependency's.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirPackage {
-    pub own_artifacts: LirWorkspace,
+    pub own_artifacts: LirUnitTable,
 }
 
 impl LirPackage {
     pub fn new(data_layout: LirDataLayout) -> Self {
         Self {
-            own_artifacts: LirWorkspace::new(data_layout),
+            own_artifacts: LirUnitTable::new(data_layout),
         }
     }
 }
@@ -363,15 +377,15 @@ pub enum LirDataLayoutError {
 }
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
-pub enum LirProgramError {
+pub enum LirBlobError {
     #[error("cannot merge LIR programs with different data layouts")]
     DataLayoutMismatch,
     #[error(transparent)]
-    Workspace(#[from] LirWorkspaceError),
+    Workspace(#[from] LirUnitTableError),
 }
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
-pub enum LirWorkspaceError {
+pub enum LirUnitTableError {
     #[error("duplicate LIR artifact `{name}` in package {package_id}")]
     DuplicateArtifact {
         package_id: crate::ast::package::PackageId,
@@ -379,13 +393,13 @@ pub enum LirWorkspaceError {
     },
 }
 
-fn artifact_name(kind: &LirArtifactKind) -> Name {
+fn artifact_name(kind: &LirCodeUnitKind) -> Name {
     match kind {
-        LirArtifactKind::Function(function) => function.name.clone(),
-        LirArtifactKind::Global(global) => global.name.clone(),
-        LirArtifactKind::TypeDefinition(definition) => definition.name.clone(),
-        LirArtifactKind::ComptimeEntry(entry) => entry.function.clone(),
-        LirArtifactKind::Query(query) => Name::new(format!("query:{}", query.query_id)),
+        LirCodeUnitKind::Function(function) => function.name.clone(),
+        LirCodeUnitKind::Global(global) => global.name.clone(),
+        LirCodeUnitKind::TypeDefinition(definition) => definition.name.clone(),
+        LirCodeUnitKind::ComptimeEntry(entry) => entry.function.clone(),
+        LirCodeUnitKind::Query(query) => Name::new(format!("query:{}", query.query_id)),
     }
 }
 
@@ -992,7 +1006,7 @@ pub struct DebugInfo {
 }
 
 // Implementation helpers
-impl LirProgram {
+impl LirBlob {
     pub fn new(data_layout: LirDataLayout) -> Self {
         Self {
             data_layout,
@@ -1012,9 +1026,9 @@ impl LirProgram {
         self.globals.push(global);
     }
 
-    pub fn extend(&mut self, mut other: LirProgram) -> Result<(), LirProgramError> {
+    pub fn extend(&mut self, mut other: LirBlob) -> Result<(), LirBlobError> {
         if self.data_layout != other.data_layout {
-            return Err(LirProgramError::DataLayoutMismatch);
+            return Err(LirBlobError::DataLayoutMismatch);
         }
         self.functions.append(&mut other.functions);
         self.globals.append(&mut other.globals);
@@ -1371,7 +1385,7 @@ impl LirDataLayout {
     }
 }
 
-impl LirProgram {
+impl LirBlob {
     pub fn span(&self) -> Span {
         Span::null()
     }
@@ -1409,7 +1423,7 @@ impl LirTerminator {
 
 #[cfg(test)]
 mod tests {
-    use super::{LirApInt, LirConstant, LirDataLayout, LirInteger, LirProgram, LirType};
+    use super::{LirApInt, LirConstant, LirDataLayout, LirInteger, LirBlob, LirType};
 
     fn data_layout() -> LirDataLayout {
         LirDataLayout::new(
@@ -1457,8 +1471,8 @@ mod tests {
 
     #[test]
     fn program_extend_rejects_layout_mismatch() {
-        let mut program = LirProgram::new(data_layout());
-        let other = LirProgram::new(
+        let mut program = LirBlob::new(data_layout());
+        let other = LirBlob::new(
             LirDataLayout::new(
                 32,
                 4,

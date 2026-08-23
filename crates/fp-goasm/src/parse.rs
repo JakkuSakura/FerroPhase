@@ -2,7 +2,7 @@ use crate::config::GoAsmTarget;
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
     BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature, LirInstruction,
-    LirInstructionKind, LirInteger, LirProgram, LirRegister, LirTerminator, LirType, LirValue,
+    LirInstructionKind, LirInteger, LirBlob, LirRegister, LirTerminator, LirType, LirValue,
     Name,
 };
 use std::collections::HashMap;
@@ -19,14 +19,14 @@ struct ParsedBlock {
     lines: Vec<String>,
 }
 
-/// Parse the Go assembler subset emitted by `fp-goasm` back into `LirProgram`.
+/// Parse the Go assembler subset emitted by `fp-goasm` back into `LirBlob`.
 ///
 /// This parser intentionally targets the canonical text emitted by FerroPhase
 /// (`fp-goasm/src/emit.rs`). It is not a general Plan9 assembler parser.
-pub fn parse_program(text: &str) -> Result<(LirProgram, GoAsmTarget)> {
+pub fn parse_program(text: &str) -> Result<(LirBlob, GoAsmTarget)> {
     let target = detect_target(text);
     let functions = parse_functions(text)?;
-    let mut program = LirProgram::new(data_layout());
+    let mut program = LirBlob::new(data_layout());
     for function in functions {
         program.add_function(lower_function(function, target)?);
     }

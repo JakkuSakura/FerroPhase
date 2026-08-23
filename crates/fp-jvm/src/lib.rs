@@ -23,9 +23,13 @@ pub struct JvmBackend {
 }
 
 impl fp_core::backend::TargetBackend for JvmBackend {
+    fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
+        fp_core::capabilities::LanguageCapabilities::NATIVE
+    }
+
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::ast::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
     ) -> fp_core::error::Result<()> {
         // A `.class`/`.jar` file given directly as input (see
@@ -46,9 +50,14 @@ impl fp_core::backend::TargetBackend for JvmBackend {
         let package = workspace.compiled_package(package_id).ok_or_else(|| {
             fp_core::error::Error::from(format!("package `{package_id}` is unavailable"))
         })?;
-        let mir = package.borrow().mir.program.clone().ok_or_else(|| {
-            fp_core::error::Error::from(format!("package `{package_id}` has no MIR program"))
-        })?;
+        let package_ref = package.borrow();
+        if package_ref.mir.units.is_empty() {
+            return Err(fp_core::error::Error::from(format!(
+                "package `{package_id}` has no MIR program"
+            )));
+        }
+        let mir = package_ref.mir.flatten();
+        drop(package_ref);
 
         let class_stem = package_id.as_str();
         let jvm_options = JvmBackendOptions {

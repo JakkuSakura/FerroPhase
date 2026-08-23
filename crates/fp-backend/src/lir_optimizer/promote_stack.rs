@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use fp_core::error::Error;
 use fp_core::lir::{
-    BasicBlockId, LirFunction, LirId, LirInstruction, LirInstructionKind, LirProgram,
+    BasicBlockId, LirFunction, LirId, LirInstruction, LirInstructionKind, LirBlob,
     LirTerminator, LirValue, LirValueKind,
 };
 
@@ -25,7 +25,7 @@ struct PromotionAnalysis {
     predecessor_copies: HashMap<usize, Vec<LirInstruction>>,
 }
 
-pub fn promote_stack_to_register(program: &mut LirProgram) -> Result<usize, Error> {
+pub fn promote_stack_to_register(program: &mut LirBlob) -> Result<usize, Error> {
     let mut total_changes = 0usize;
     for function in &mut program.functions {
         total_changes += promote_stack_in_function(function)?;
@@ -883,7 +883,7 @@ mod tests {
             0
         );
         assert_eq!(function, before);
-        let mut program = LirProgram::new(layout());
+        let mut program = LirBlob::new(layout());
         program.functions.push(function);
         assert_eq!(
             promote_stack_to_register(&mut program).expect("program promotion should succeed"),

@@ -3,7 +3,8 @@ use std::rc::Rc;
 
 use fp_core::{
     ast::Value,
-    ast::workspace::WorkspaceContext,
+    ast::package::PackageId,
+    ast::program::AstProgram,
     executor::ExecutorHandle,
     hir, lir, mir,
 };
@@ -11,14 +12,35 @@ use fp_typing::TypingContext;
 use fp_core::hir::PackageTypes;
 
 use crate::error::CompilerDriverError;
-use crate::{BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
+use crate::ConstValueId;
 
 pub struct CompilerState {
-    hir: BTreeMap<HirId, hir::HirPackage>,
-    hir_typeck: BTreeMap<HirId, PackageTypes>,
-    mir: BTreeMap<MirId, mir::MirProgram>,
-    lir: BTreeMap<LirId, lir::LirProgram>,
-    runtime_entrypoints: BTreeMap<LirId, hir::DefId>,
+    /// Every package's own HIR published so far this session — mirrors
+    /// `mir_program`/`lir_program` below; keyed internally by `hir::PackageId`
+    /// (see `HirProgram`/`ProgramTypes`'s own shape), not the compiler's
+    /// surface `ast::package::PackageId`, since a `hir::Package`'s identity
+    /// is always the former.
+    hir_program: hir::HirProgram,
+    hir_program_types: hir::ProgramTypes,
+    /// Every package's MIR content produced so far this session, one
+    /// `mir::MirCodeUnit` per top-level `DefId` (see `mir::MirPackage`'s
+    /// own doc comment) — replaces the old `BTreeMap<MirId, MirModule>`,
+    /// which stored one whole flattened program per artifact-id and had no
+    /// way to update just the one item a resolved comptime value actually
+    /// affects.
+    mir_program: mir::MirProgram,
+    /// Mirrors `mir_program` for LIR — one `lir::LirProgram`, a collection
+    /// of `LirPackage`s, each already a collection of `LirCodeUnit`s (via
+    /// its own `own_artifacts: LirUnitTable`, keyed by `Name`).
+    lir_program: lir::LirProgram,
+    /// Renamed, ready-to-execute `LirBlob`s built by `select_entrypoint`
+    /// (the compiled package's own artifacts, with the resolved entrypoint
+    /// function renamed to its bare linkage name) — a distinct concern from
+    /// `lir_program`: this is one specific executable variant cached by a
+    /// `lir::LirPath`, not per-package/per-`DefId` lowering output, so it
+    /// doesn't fit the `lir_program` hierarchy above.
+    runtime_programs: std::collections::HashMap<lir::LirPath, lir::LirBlob>,
+    runtime_entrypoints: std::collections::HashMap<lir::LirPath, hir::DefId>,
     const_values: BTreeMap<ConstValueId, Value>,
     /// MIR-level const values for HIR→MIR lowering seed.
     resolved_const_values: BTreeMap<String, mir::Constant>,
@@ -27,18 +49,17 @@ pub struct CompilerState {
     /// here from `TypingContext` (which held it as a bare pass-through
     /// field with no forwarding methods of its own) since this is squarely
     /// driver-owned state, not typing-owned.
-    pub workspace: Rc<WorkspaceContext>,
+    pub workspace: Rc<AstProgram>,
     /// Target ABI data shared by typing-triggered comptime blocks and
     /// normal MIR-to-LIR lowering for this compilation session — same
     /// rationale as `workspace` above.
     pub data_layout: lir::LirDataLayout,
-    runtime_values: BTreeMap<RuntimeValueId, Value>,
-    /// What the requested output target can express directly — see
-    /// `fp_core::capabilities::LanguageCapabilities`. Defaults to
-    /// `NATIVE` (nothing first-class); `fp-cli` sets the real value per
-    /// target language before compiling (`set_capabilities`).
-    capabilities: fp_core::capabilities::LanguageCapabilities,
-    bytecode: BTreeMap<BytecodeId, fp_bytecode::BytecodeProgram>,
+    /// What the active `TargetBackend` can express directly — see
+    /// `fp_core::capabilities::LanguageCapabilities`. Defaults to `NATIVE`
+    /// (nothing first-class); `fp-cli` reads the real value off its
+    /// already-constructed backend (`TargetBackend::capabilities`) and
+    /// sets it here before compiling (`set_backend_capabilities`).
+    backend_capabilities: fp_core::capabilities::LanguageCapabilities,
     /// The one shared task pool every suspendable unit of driver work runs
     /// through: per-compile-unit HIR typing tasks and compiler-owned
     /// comptime work. Lives here, not on
@@ -56,7 +77,7 @@ impl CompilerState {
         Self::with_workspace(
             data_layout,
             tasks,
-            Rc::new(WorkspaceContext::new(std::sync::Arc::new(
+            Rc::new(AstProgram::new(std::sync::Arc::new(
                 fp_core::ast::package::provider::EmptyProvider,
             ))),
         )
@@ -65,49 +86,121 @@ impl CompilerState {
     pub fn with_workspace(
         data_layout: lir::LirDataLayout,
         tasks: ExecutorHandle,
-        workspace: Rc<WorkspaceContext>,
+        workspace: Rc<AstProgram>,
     ) -> Self {
         Self {
-            hir: BTreeMap::new(),
-            hir_typeck: BTreeMap::new(),
-            mir: BTreeMap::new(),
-            lir: BTreeMap::new(),
-            runtime_entrypoints: BTreeMap::new(),
+            hir_program: hir::HirProgram::new(),
+            hir_program_types: hir::ProgramTypes::new(),
+            mir_program: mir::MirProgram::new(),
+            lir_program: lir::LirProgram::new(),
+            runtime_programs: std::collections::HashMap::new(),
+            runtime_entrypoints: std::collections::HashMap::new(),
             const_values: BTreeMap::new(),
             resolved_const_values: BTreeMap::new(),
             typing_ctx: std::rc::Rc::new(TypingContext::new()),
             workspace,
             data_layout,
-            runtime_values: BTreeMap::new(),
-            capabilities: fp_core::capabilities::LanguageCapabilities::NATIVE,
-            bytecode: BTreeMap::new(),
+            backend_capabilities: fp_core::capabilities::LanguageCapabilities::NATIVE,
             tasks,
         }
     }
 
-    pub fn insert_hir(&mut self, hir_id: HirId, hir: hir::HirPackage) {
-        self.hir.insert(hir_id, hir);
+    /// Publishes `package` under its own `id` — `HirProgram::add_package`
+    /// already keys by that, so no separate id parameter is needed.
+    pub fn insert_hir(&mut self, package: hir::HirPackage) {
+        self.hir_program.add_package(std::rc::Rc::new(package));
     }
 
-    pub fn insert_hir_typeck(&mut self, hir_id: HirId, results: PackageTypes) {
-        self.hir_typeck.insert(hir_id, results);
+    pub fn insert_hir_typeck(&mut self, hir_package_id: hir::PackageId, results: PackageTypes) {
+        self.hir_program_types.insert_package(hir_package_id, results);
     }
 
-    pub fn insert_mir(&mut self, mir_id: MirId, mir: mir::MirProgram) {
-        self.mir.insert(mir_id, mir);
+    /// Records `def_id`'s own lowered content — the only way `mir_program`
+    /// is ever written, so re-lowering one item after a comptime value
+    /// resolves is always this exact call with a fresh unit (see
+    /// `mir::MirCodeUnit`'s doc comment), never a partial in-place edit.
+    pub fn insert_mir_unit(
+        &mut self,
+        package_id: &PackageId,
+        def_id: hir::DefId,
+        unit: mir::MirCodeUnit,
+    ) {
+        self.mir_program.package_mut(package_id).insert_unit(def_id, unit);
     }
 
-    pub fn insert_lir(&mut self, lir_id: LirId, lir: lir::LirProgram) {
-        self.lir.insert(lir_id, lir);
+    pub fn mir_unit(&self, package_id: &PackageId, def_id: hir::DefId) -> Option<&mir::MirCodeUnit> {
+        self.mir_program.package(package_id)?.unit(def_id)
     }
 
-    pub fn insert_runtime_entrypoint(&mut self, lir_id: LirId, def_id: hir::DefId) {
-        self.runtime_entrypoints.insert(lir_id, def_id);
+    /// Every `MirCodeUnit` this package has produced so far, folded into
+    /// one flat `mir::MirModule` — the view `LirGenerator`/the interpreter
+    /// still need. Empty (not an error) if the package has no units yet.
+    pub fn mir_module(&self, package_id: &PackageId) -> mir::MirModule {
+        self.mir_program
+            .package(package_id)
+            .map(|package| package.flatten())
+            .unwrap_or_default()
     }
 
-    pub fn runtime_entrypoint(&self, lir_id: &LirId) -> Result<hir::DefId, CompilerDriverError> {
+    /// Records one LIR artifact into `package_id`'s own unit table — the
+    /// only way `lir_program` is ever written, mirroring `insert_mir_unit`.
+    pub fn insert_lir_unit(
+        &mut self,
+        package_id: &PackageId,
+        unit: lir::LirCodeUnit,
+    ) -> Result<(), CompilerDriverError> {
+        self.lir_program
+            .package_mut(package_id, &self.data_layout)
+            .own_artifacts
+            .add_artifact(unit)
+            .map_err(|error| CompilerDriverError::Core(error.to_string().into()))
+    }
+
+    /// Splits a whole flat `lir::LirBlob` (e.g. `LirGenerator::transform`'s
+    /// output) back into its individual artifacts and records each one via
+    /// `insert_lir_unit` — `LirUnitTable::add_program` already does exactly
+    /// this splitting, so this just routes to it instead of duplicating
+    /// the per-`LirCodeUnitKind` match here.
+    pub fn insert_lir_blob(
+        &mut self,
+        package_id: &PackageId,
+        module_path: fp_core::ast::path::QualifiedPath,
+        blob: lir::LirBlob,
+    ) -> Result<(), CompilerDriverError> {
+        self.lir_program
+            .package_mut(package_id, &self.data_layout)
+            .own_artifacts
+            .add_program(package_id.clone(), module_path, blob)
+            .map_err(|error| CompilerDriverError::Core(error.to_string().into()))
+    }
+
+    /// Every artifact `package_id` has produced so far, folded into one
+    /// flat `lir::LirBlob` — mirrors `mir_module`. Empty (not an error) if
+    /// the package has no artifacts yet.
+    pub fn lir_blob(&self, package_id: &PackageId) -> lir::LirBlob {
+        self.lir_program
+            .package(package_id)
+            .map(|package| package.own_artifacts.to_blob())
+            .unwrap_or_else(|| lir::LirBlob::new(self.data_layout.clone()))
+    }
+
+    pub fn insert_runtime_program(&mut self, lir_path: lir::LirPath, program: lir::LirBlob) {
+        self.runtime_programs.insert(lir_path, program);
+    }
+
+    pub fn runtime_program(&self, lir_path: &lir::LirPath) -> Result<&lir::LirBlob, CompilerDriverError> {
+        self.runtime_programs
+            .get(lir_path)
+            .ok_or_else(|| CompilerDriverError::MissingLir(format!("{lir_path:?}")))
+    }
+
+    pub fn insert_runtime_entrypoint(&mut self, lir_path: lir::LirPath, def_id: hir::DefId) {
+        self.runtime_entrypoints.insert(lir_path, def_id);
+    }
+
+    pub fn runtime_entrypoint(&self, lir_path: &lir::LirPath) -> Result<hir::DefId, CompilerDriverError> {
         self.runtime_entrypoints
-            .get(lir_id)
+            .get(lir_path)
             .copied()
             .ok_or_else(|| {
                 CompilerDriverError::Interpreter("program has no explicit entrypoint".to_string())
@@ -126,36 +219,34 @@ impl CompilerState {
     /// package's `PackageTypes::const_values`, keyed by the const item's
     /// own stable `DefId` — replaces the old string-name-keyed
     /// `TypingContext.resolved_consts` broadcast.
-    pub fn insert_resolved_const(&mut self, package_hir_id: HirId, def_id: hir::DefId, value: Value) {
-        self.hir_typeck
-            .entry(package_hir_id)
-            .or_default()
+    pub fn insert_resolved_const(&mut self, package_hir_id: hir::PackageId, def_id: hir::DefId, value: Value) {
+        self.hir_program_types
+            .package_or_default(package_hir_id)
+            .borrow_mut()
             .const_values
             .insert(def_id, value);
     }
 
-    pub fn insert_runtime_value(&mut self, value_id: RuntimeValueId, value: Value) {
-        self.runtime_values.insert(value_id, value);
+    pub fn set_backend_capabilities(&mut self, capabilities: fp_core::capabilities::LanguageCapabilities) {
+        self.backend_capabilities = capabilities;
     }
 
-    pub fn set_capabilities(&mut self, capabilities: fp_core::capabilities::LanguageCapabilities) {
-        self.capabilities = capabilities;
+    pub fn backend_capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
+        self.backend_capabilities
     }
 
-    pub fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
-        self.capabilities
+    pub fn hir(&self, package_id: hir::PackageId) -> Result<std::rc::Rc<hir::HirPackage>, CompilerDriverError> {
+        self.hir_program
+            .package(package_id)
+            .cloned()
+            .ok_or_else(|| CompilerDriverError::MissingHir(format!("{package_id:?}")))
     }
 
-    pub fn hir(&self, hir_id: &HirId) -> Result<&hir::HirPackage, CompilerDriverError> {
-        self.hir
-            .get(hir_id)
-            .ok_or_else(|| CompilerDriverError::MissingHir(hir_id.clone()))
-    }
-
-    pub fn hir_typeck(&self, hir_id: &HirId) -> Result<&PackageTypes, CompilerDriverError> {
-        self.hir_typeck
-            .get(hir_id)
-            .ok_or_else(|| CompilerDriverError::MissingHir(hir_id.clone()))
+    pub fn hir_typeck(&self, package_id: hir::PackageId) -> Result<PackageTypes, CompilerDriverError> {
+        self.hir_program_types
+            .package(package_id)
+            .map(|types| types.borrow().clone())
+            .ok_or_else(|| CompilerDriverError::MissingHir(format!("{package_id:?}")))
     }
 
     /// Every package's own typed results compiled so far — used by
@@ -163,20 +254,8 @@ impl CompilerState {
     /// package's own durable `PackageTypes` (see its `diagnostics` field's
     /// doc comment), not on the driver's scratch, per-package-swapped
     /// `TypingContext`.
-    pub fn all_package_types(&self) -> impl Iterator<Item = &PackageTypes> {
-        self.hir_typeck.values()
-    }
-
-    pub fn mir(&self, mir_id: &MirId) -> Result<&mir::MirProgram, CompilerDriverError> {
-        self.mir
-            .get(mir_id)
-            .ok_or_else(|| CompilerDriverError::MissingMir(mir_id.clone()))
-    }
-
-    pub fn lir(&self, lir_id: &LirId) -> Result<&lir::LirProgram, CompilerDriverError> {
-        self.lir
-            .get(lir_id)
-            .ok_or_else(|| CompilerDriverError::MissingLir(lir_id.clone()))
+    pub fn all_package_types(&self) -> impl Iterator<Item = std::rc::Rc<std::cell::RefCell<PackageTypes>>> + '_ {
+        self.hir_program_types.packages.values().cloned()
     }
 
     pub fn const_value(&self, value_id: &ConstValueId) -> Result<&Value, CompilerDriverError> {
@@ -191,42 +270,8 @@ impl CompilerState {
             .map(|(key, value)| (key.as_str(), value))
     }
 
-    pub fn runtime_value(&self, value_id: &RuntimeValueId) -> Result<&Value, CompilerDriverError> {
-        self.runtime_values
-            .get(value_id)
-            .ok_or_else(|| CompilerDriverError::MissingRuntimeValue(value_id.clone()))
-    }
-
-    pub fn hir_len(&self) -> usize {
-        self.hir.len()
-    }
-
-    pub fn mir_len(&self) -> usize {
-        self.mir.len()
-    }
-
-    pub fn lir_len(&self) -> usize {
-        self.lir.len()
-    }
-
     pub fn const_value_len(&self) -> usize {
         self.const_values.len()
     }
 
-    pub fn runtime_value_len(&self) -> usize {
-        self.runtime_values.len()
-    }
-
-    pub fn insert_bytecode(&mut self, id: BytecodeId, program: fp_bytecode::BytecodeProgram) {
-        self.bytecode.insert(id, program);
-    }
-
-    pub fn bytecode_program(
-        &self,
-        id: &BytecodeId,
-    ) -> Result<&fp_bytecode::BytecodeProgram, CompilerDriverError> {
-        self.bytecode
-            .get(id)
-            .ok_or_else(|| CompilerDriverError::MissingBytecode(id.clone()))
-    }
 }

@@ -1,7 +1,7 @@
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
     LirConstantData, LirConstantKind, LirFunction, LirInstruction, LirInstructionKind, LirInteger,
-    LirProgram, LirTerminator, LirType, LirValue, LirValueKind,
+    LirBlob, LirTerminator, LirType, LirValue, LirValueKind,
 };
 use fp_core::pretty::{PrettyOptions, pretty};
 use object::write::{Object, Relocation, Symbol, SymbolSection};
@@ -48,13 +48,13 @@ pub struct EbpfObjectMetadata {
     pub callsites: Vec<EbpfCallsiteMetadata>,
 }
 
-pub fn emit_assembly(program: &LirProgram) -> Result<String> {
+pub fn emit_assembly(program: &LirBlob) -> Result<String> {
     validate_program(program)?;
     let mut emitter = EbpfEmitter::new(program);
     emitter.emit_program()
 }
 
-pub fn emit_object(program: &LirProgram) -> Result<Vec<u8>> {
+pub fn emit_object(program: &LirBlob) -> Result<Vec<u8>> {
     validate_program(program)?;
     let runtime_abi = RuntimeAbi::from_program(program);
 
@@ -160,7 +160,7 @@ pub fn emit_object(program: &LirProgram) -> Result<Vec<u8>> {
     object.write().map_err(|err| Error::from(err.to_string()))
 }
 
-pub fn write_object(path: &Path, program: &LirProgram) -> Result<()> {
+pub fn write_object(path: &Path, program: &LirBlob) -> Result<()> {
     let bytes = emit_object(program)?;
     std::fs::write(path, bytes).map_err(Error::from)
 }
@@ -192,7 +192,7 @@ pub fn read_object_metadata(bytes: &[u8]) -> Result<EbpfObjectMetadata> {
     })
 }
 
-pub fn validate_program(program: &LirProgram) -> Result<()> {
+pub fn validate_program(program: &LirBlob) -> Result<()> {
     let mut errors = Vec::new();
 
     if !program.globals.is_empty() {
@@ -211,7 +211,7 @@ pub fn validate_program(program: &LirProgram) -> Result<()> {
 }
 
 struct EbpfEmitter<'a> {
-    program: &'a LirProgram,
+    program: &'a LirBlob,
 }
 
 struct RuntimeAbi {
@@ -241,7 +241,7 @@ struct EmittedMachineFunction {
 }
 
 impl RuntimeAbi {
-    fn from_program(program: &LirProgram) -> Self {
+    fn from_program(program: &LirBlob) -> Self {
         let mut formats = Vec::new();
         let mut format_ids = HashMap::new();
 
@@ -337,7 +337,7 @@ impl RuntimeAbi {
 }
 
 impl<'a> EbpfEmitter<'a> {
-    fn new(program: &'a LirProgram) -> Self {
+    fn new(program: &'a LirBlob) -> Self {
         Self { program }
     }
 
@@ -1621,7 +1621,7 @@ fn validate_address_value(value: &LirValue) -> Result<()> {
     }
 }
 
-fn selected_functions(program: &LirProgram) -> Vec<&LirFunction> {
+fn selected_functions(program: &LirBlob) -> Vec<&LirFunction> {
     let main_functions = program
         .functions
         .iter()
@@ -2186,9 +2186,13 @@ pub struct EbpfBackend {
 }
 
 impl fp_core::backend::TargetBackend for EbpfBackend {
+    fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
+        fp_core::capabilities::LanguageCapabilities::NATIVE
+    }
+
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::ast::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
     ) -> fp_core::error::Result<()> {
         let lir = workspace.merged_lir_program(package_id)?;
@@ -2244,7 +2248,7 @@ mod tests {
     use super::{emit_assembly, emit_object, read_object_metadata, validate_program};
     use fp_core::lir::{
         CallingConvention, Linkage, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature,
-        LirInstruction, LirInstructionKind, LirInteger, LirLocal, LirProgram, LirRegister,
+        LirInstruction, LirInstructionKind, LirInteger, LirLocal, LirBlob, LirRegister,
         LirTerminator, LirType, LirValue,
     };
 
@@ -2303,7 +2307,7 @@ mod tests {
         }
     }
 
-    fn addition_program() -> LirProgram {
+    fn addition_program() -> LirBlob {
         let mut function = base_function("main");
         function.basic_blocks.push(LirBasicBlock {
             id: 0,
@@ -2322,7 +2326,7 @@ mod tests {
             successors: Vec::new(),
         });
 
-        LirProgram {
+        LirBlob {
             functions: vec![function],
             globals: Vec::new(),
             type_definitions: Vec::new(),
@@ -2386,7 +2390,7 @@ mod tests {
             },
         ];
 
-        let program = LirProgram {
+        let program = LirBlob {
             functions: vec![function],
             globals: Vec::new(),
             type_definitions: Vec::new(),
@@ -2429,7 +2433,7 @@ mod tests {
             predecessors: Vec::new(),
             successors: Vec::new(),
         });
-        let program = LirProgram {
+        let program = LirBlob {
             functions: vec![function],
             globals: Vec::new(),
             type_definitions: Vec::new(),
@@ -2466,7 +2470,7 @@ mod tests {
             predecessors: Vec::new(),
             successors: Vec::new(),
         });
-        let program = LirProgram {
+        let program = LirBlob {
             functions: vec![function],
             globals: Vec::new(),
             type_definitions: Vec::new(),
@@ -2500,7 +2504,7 @@ mod tests {
             predecessors: Vec::new(),
             successors: Vec::new(),
         });
-        let program = LirProgram {
+        let program = LirBlob {
             functions: vec![function],
             globals: Vec::new(),
             type_definitions: Vec::new(),
@@ -2593,7 +2597,7 @@ mod tests {
             predecessors: Vec::new(),
             successors: Vec::new(),
         });
-        let program = LirProgram {
+        let program = LirBlob {
             functions: vec![function],
             globals: Vec::new(),
             type_definitions: Vec::new(),

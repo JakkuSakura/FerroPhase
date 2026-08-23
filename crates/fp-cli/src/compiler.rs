@@ -371,7 +371,7 @@ fn compile_source_file(
         vec![std_provider],
         input_provider,
     ));
-    let workspace = std::rc::Rc::new(fp_core::ast::workspace::WorkspaceContext::new(provider));
+    let workspace = std::rc::Rc::new(fp_core::ast::program::AstProgram::new(provider));
     let mut session = CompilerSession::new(data_layout(), executor, workspace);
     session.driver().pipeline = pipeline;
     executor
@@ -425,15 +425,15 @@ pub struct FrontendBundle {
 pub struct MirBundle {
     pub frontend: FrontendBundle,
     pub hir_program: fp_core::hir::HirPackage,
-    pub mir_program: fp_core::mir::MirProgram,
+    pub mir_program: fp_core::mir::MirModule,
 }
 
 #[derive(Debug, Clone)]
 pub struct LirBundle {
     pub frontend: FrontendBundle,
     pub hir_program: fp_core::hir::HirPackage,
-    pub mir_program: fp_core::mir::MirProgram,
-    pub lir_program: fp_core::lir::LirProgram,
+    pub mir_program: fp_core::mir::MirModule,
+    pub lir_program: fp_core::lir::LirBlob,
 }
 
 pub fn compile_file_to_lir_bundle(
@@ -475,12 +475,12 @@ pub fn compile_file_to_lir_bundle(
 /// compile.rs`) whole-workspace path, so a workspace compile builds this
 /// once for every member instead of once per member. Callers compile via
 /// `session.driver().compile_package`/`compile_workspace`, then read back
-/// each package's typed `AstPackage` via `WorkspaceContext::package_source`
+/// each package's typed `AstPackage` via `AstProgram::package_source`
 /// — never by hand-extracting it themselves.
 pub fn build_workspace_session(
     provider: Arc<dyn PackageProvider>,
     language: &str,
-    capabilities: fp_core::capabilities::LanguageCapabilities,
+    backend_capabilities: fp_core::capabilities::LanguageCapabilities,
 ) -> (CompilerExecutor, CompilerSession) {
     let executor = CompilerExecutor::new();
     let std_provider = std_provider_for(language);
@@ -488,10 +488,14 @@ pub fn build_workspace_session(
         vec![std_provider],
         provider,
     ));
-    let workspace = std::rc::Rc::new(fp_core::ast::workspace::WorkspaceContext::new(combined));
+    let workspace = std::rc::Rc::new(fp_core::ast::program::AstProgram::new(combined));
     let mut session = CompilerSession::new(data_layout(), &executor, workspace);
     session.driver().pipeline = PipelineMode::Transpile;
-    session.driver().state.borrow_mut().set_capabilities(capabilities);
+    session
+        .driver()
+        .state
+        .borrow_mut()
+        .set_backend_capabilities(backend_capabilities);
     (executor, session)
 }
 
@@ -570,19 +574,20 @@ impl LoweredProgram {
         })
     }
 
-    fn mir(&self) -> Result<fp_core::mir::MirProgram> {
+    fn mir(&self) -> Result<fp_core::mir::MirModule> {
         let package = self.compiled_package()?;
         let package = package.borrow();
-        package.mir.program.clone().ok_or_else(|| {
-            CliError::Compilation(format!(
+        if package.mir.units.is_empty() {
+            return Err(CliError::Compilation(format!(
                 "compiled package `{}` contains no MIR program",
                 self.package_id
-            ))
-        })
+            )));
+        }
+        Ok(package.mir.flatten())
     }
 
     /// Native/LLVM/Cranelift emitters all consume a single flattened
-    /// `LirProgram` merging every dependency's compiled LIR workspace in
+    /// `LirBlob` merging every dependency's compiled LIR workspace in
     /// before this package's own (mirroring the same merge
     /// `evaluate_comptime_lir` already does for comptime execution — a
     /// cross-package call type-checks and lowers fine on just this
@@ -591,13 +596,13 @@ impl LoweredProgram {
     /// dependency's workspace folded in too, its function *body* never
     /// reaches the emitted binary), then best-effort resolves and renames
     /// a `main` entrypoint the same way `CompilerDriver::select_entrypoint`
-    /// does — this path builds its own `LirProgram` straight from the
+    /// does — this path builds its own `LirBlob` straight from the
     /// workspace rather than going through `select_entrypoint`, so a
     /// mangled `main` needs the same rename here too. See
-    /// `fp_core::ast::workspace::WorkspaceContext::merged_lir_program`, which
+    /// `fp_core::ast::program::AstProgram::merged_lir_program`, which
     /// owns the actual merge/rename logic this delegates to (package-based,
     /// not module-based — see that method's doc comment).
-    fn lir(&self) -> Result<fp_core::lir::LirProgram> {
+    fn lir(&self) -> Result<fp_core::lir::LirBlob> {
         let workspace = self.compiled_workspace()?;
         workspace
             .merged_lir_program(&self.package_id)
@@ -621,9 +626,9 @@ impl LoweredProgram {
     }
 
     /// Every package this run's driver state knows about (dependencies and
-    /// this package itself), as a `WorkspaceContext` — the input every
+    /// this package itself), as a `AstProgram` — the input every
     /// `TargetBackend` reads from.
-    fn compiled_workspace(&self) -> Result<std::rc::Rc<fp_core::ast::workspace::WorkspaceContext>> {
+    fn compiled_workspace(&self) -> Result<std::rc::Rc<fp_core::ast::program::AstProgram>> {
         Ok(self.driver.state.borrow().workspace.clone())
     }
 

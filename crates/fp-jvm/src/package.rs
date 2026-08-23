@@ -25,7 +25,7 @@ pub fn bytecode_provider(root: &Path) -> Option<Arc<dyn PackageProvider>> {
         AstPackage::single_item(package_id.clone(), fp_core::ast::Item::precompiled_artifact(bytes.clone()));
     let lir = if is_jar {
         crate::extract_class_files_from_jar(&bytes).ok().and_then(|classes| {
-            let mut merged: Option<fp_core::lir::LirProgram> = None;
+            let mut merged: Option<fp_core::lir::LirBlob> = None;
             for class in classes {
                 let program = crate::parse_class_to_lir(&class.bytes).ok()?;
                 match merged.as_mut() {

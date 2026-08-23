@@ -15,7 +15,7 @@ use crate::target::{TargetCodegen, TargetConfig};
 use anyhow::Context as AnyhowContext;
 use fp_core::diagnostics::report_error;
 use fp_core::error::Result;
-use fp_core::lir::LirProgram;
+use fp_core::lir::LirBlob;
 use std::path::{Path, PathBuf};
 
 /// Configuration for LLVM compilation
@@ -121,7 +121,7 @@ impl LlvmCompiler {
     }
 
     /// Compile a LIR program to native code (generates LLVM IR for now)
-    pub fn compile(&self, lir_program: LirProgram, source_file: Option<&Path>) -> Result<PathBuf> {
+    pub fn compile(&self, lir_program: LirBlob, source_file: Option<&Path>) -> Result<PathBuf> {
         // Create LLVM context
         let mut llvm_ctx = LlvmContext::new(&self.config.module_name);
 
@@ -202,7 +202,7 @@ impl LlvmCompiler {
     /// reading the file back from disk.
     pub fn compile_to_string(
         &self,
-        lir_program: LirProgram,
+        lir_program: LirBlob,
         source_file: Option<&Path>,
     ) -> Result<(PathBuf, String)> {
         // Create LLVM context
@@ -286,7 +286,7 @@ pub fn is_available() -> bool {
 }
 
 /// `TargetBackend` for the `llvm-binary`/`llvm-text` targets. Reads a
-/// package's merged LIR straight off the shared `WorkspaceContext`
+/// package's merged LIR straight off the shared `AstProgram`
 /// (mirroring `fp_native::NativeEmitter`) rather than re-driving an
 /// independent compile from source, then — unless `text_only` — shells out
 /// to `clang`/`clang++` to link the final binary. That final linking step
@@ -308,9 +308,13 @@ pub struct LlvmBackend {
 }
 
 impl fp_core::backend::TargetBackend for LlvmBackend {
+    fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
+        fp_core::capabilities::LanguageCapabilities::NATIVE
+    }
+
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::ast::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
     ) -> Result<()> {
         let lir = workspace.merged_lir_program(package_id)?;

@@ -31,7 +31,7 @@ fn plan_from_sql(source: &str) -> OptimizationPlan {
     OptimizationPlan::from_sql(source).expect("plan should parse")
 }
 
-fn build_program(statements: Vec<mir::Statement>) -> mir::MirProgram {
+fn build_program(statements: Vec<mir::Statement>) -> mir::MirModule {
     let mut bodies = HashMap::new();
     let return_ty = Ty::int(IntTy::I32);
     let temp_ty = Ty::int(IntTy::I32);
@@ -52,7 +52,7 @@ fn build_program(statements: Vec<mir::Statement>) -> mir::MirProgram {
 
     bodies.insert(mir::BodyId::new(0), body);
 
-    mir::MirProgram {
+    mir::MirModule {
         items: vec![mir::Item {
             mir_id: 0,
             kind: mir::ItemKind::Function(mir::Function {
@@ -77,7 +77,7 @@ fn build_program_with_locals(
     statements: Vec<mir::Statement>,
     locals: Vec<mir::LocalDecl>,
     terminator: mir::Terminator,
-) -> mir::MirProgram {
+) -> mir::MirModule {
     let mut bodies = HashMap::new();
     let return_ty = locals
         .get(0)
@@ -91,7 +91,7 @@ fn build_program_with_locals(
     body.return_local = 0;
     bodies.insert(mir::BodyId::new(0), body);
 
-    mir::MirProgram {
+    mir::MirModule {
         items: vec![mir::Item {
             mir_id: 0,
             kind: mir::ItemKind::Function(mir::Function {
@@ -332,7 +332,7 @@ fn simplify_branches_rewrites_constant_switch() {
     body.return_local = 0;
     bodies.insert(mir::BodyId::new(0), body);
 
-    let mut program = mir::MirProgram {
+    let mut program = mir::MirModule {
         items: vec![mir::Item {
             mir_id: 0,
             kind: mir::ItemKind::Function(mir::Function {

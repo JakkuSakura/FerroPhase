@@ -310,7 +310,7 @@ pub struct CompiledPackage {
     /// This package's identity within the HIR numbering space — distinct
     /// from `ast.package_id` (the source-level `PackageId` a provider
     /// names it by), and needed before `hir_program` exists (used as the
-    /// key into `WorkspaceContext::hir_packages` and in HIR `DefId`
+    /// key into `AstProgram::hir_packages` and in HIR `DefId`
     /// construction).
     pub package_id: HirPackageId,
 
@@ -323,7 +323,7 @@ pub struct CompiledPackage {
     pub lir: crate::lir::LirPackage,
 
     /// HIR definitions published by this package. `Rc`, not owned — every
-    /// dependent package's `WorkspaceContext::hir_definitions()` call
+    /// dependent package's `AstProgram::hir_definitions()` call
     /// clones this once per package it depends on; cloning the `Rc` is
     /// O(1), unlike cloning the whole `HirPackage` it points to (every item,
     /// `def_map`, `def_paths`, `module_tree`) on every single call.
@@ -373,7 +373,7 @@ impl CompiledPackage {
 }
 
 /// Builds an `AstPackage` read-back view from a compiled package — every
-/// consumer of a typechecked package (`WorkspaceContext`, `fp-cli`'s
+/// consumer of a typechecked package (`AstProgram`, `fp-cli`'s
 /// single-package and whole-workspace typecheck paths) needs the same way:
 /// typed/normalized content is already spliced onto `package.ast.items` by
 /// `CompilerDriver::compile_package`, so there's nothing left to reconcile
@@ -406,7 +406,7 @@ pub fn package_source_from_compiled(
 /// one item in the package is named `function_name`. Pure over an
 /// already-borrowed `CompiledPackage` so both `CompilerDriver` (which owns
 /// the driver-state lookup that produces the `CompiledPackage` in the
-/// first place) and `WorkspaceContext` (which already holds one) can
+/// first place) and `AstProgram` (which already holds one) can
 /// share this without either depending on the other. See
 /// `crate::hir::HirPackage::def_paths`'s doc comment for why `sig.name` is
 /// always the bare, local identifier and disambiguation instead relies on
@@ -449,7 +449,7 @@ pub fn resolve_entrypoint_def_id(
 /// emission) by its final, bare symbol name — a linkage requirement, not a
 /// display convention — so a module-nested `main`'s mangled qualified name
 /// needs renaming back to the bare name it was resolved by.
-pub fn rename_lir_function(lir: &mut crate::lir::LirProgram, def_id: crate::hir::DefId, bare_name: &str) {
+pub fn rename_lir_function(lir: &mut crate::lir::LirBlob, def_id: crate::hir::DefId, bare_name: &str) {
     for lir_function in lir.functions.iter_mut() {
         if lir_function.def_id == Some(def_id) {
             lir_function.name = crate::lir::Name::new(bare_name.to_string());

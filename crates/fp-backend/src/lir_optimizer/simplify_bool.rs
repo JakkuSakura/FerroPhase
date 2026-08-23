@@ -1,10 +1,10 @@
 use fp_core::error::Error;
 use fp_core::lir::{
-    LirBasicBlock, LirConstantData, LirConstantKind, LirFunction, LirInstructionKind, LirProgram,
+    LirBasicBlock, LirConstantData, LirConstantKind, LirFunction, LirInstructionKind, LirBlob,
     LirTerminator, LirValue, LirValueKind,
 };
 
-pub fn simplify_bool_conditions(program: &mut LirProgram) -> Result<usize, Error> {
+pub fn simplify_bool_conditions(program: &mut LirBlob) -> Result<usize, Error> {
     let mut total_changes = 0usize;
     for function in &mut program.functions {
         total_changes += simplify_bool_conditions_in_function(function);
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn simplifies_bool_eq_true_before_condbr() {
-        let mut program = LirProgram {
+        let mut program = LirBlob {
             data_layout: layout(),
             functions: vec![test_function(vec![LirBasicBlock {
                 id: 0,
@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn simplifies_bool_eq_false_by_inverting_branch() {
-        let mut program = LirProgram {
+        let mut program = LirBlob {
             data_layout: layout(),
             functions: vec![test_function(vec![LirBasicBlock {
                 id: 0,
@@ -255,7 +255,7 @@ mod tests {
 
     #[test]
     fn simplifies_return_of_trailing_freeze() {
-        let mut program = LirProgram {
+        let mut program = LirBlob {
             data_layout: layout(),
             functions: vec![test_function(vec![LirBasicBlock {
                 id: 0,

@@ -33,7 +33,7 @@ impl ClangCodegen {
     pub fn link_with_lir(
         &self,
         c_files: &[&Path],
-        _lir_program: &lir::LirProgram,
+        _lir_program: &lir::LirBlob,
         options: &CompileOptions,
     ) -> Result<ClangModule> {
         debug!("Linking {} C/C++ files with LIR program", c_files.len());

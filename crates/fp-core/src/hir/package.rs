@@ -72,13 +72,13 @@ pub struct HirPackage {
     /// Struct `DefId`s in `items`, keyed by name — built once by
     /// `index_derived_lookups` alongside this package's other derived
     /// tables, so cross-package HIR struct lookups
-    /// (`WorkspaceContext::find_hir_struct_def_id`) are an O(1) hash lookup
+    /// (`AstProgram::find_hir_struct_def_id`) are an O(1) hash lookup
     /// per package instead of a linear scan over every item every time.
     pub struct_defs_by_name: HashMap<String, DefId>,
     /// For every method `ImplItem` in `items`, its own `DefId` mapped to
     /// the `DefId` of the enclosing `impl` item — built incrementally by
     /// `add_item`/`index_derived_lookups`, so cross-package HIR method
-    /// lookups (`WorkspaceContext::find_hir_impl_method`) are an O(1) hash
+    /// lookups (`AstProgram::find_hir_impl_method`) are an O(1) hash
     /// lookup per package instead of a linear scan over every impl block
     /// and its members every time. Keyed to the impl's own `DefId` (looked
     /// up via `def_map`), not its position in `items` — a `usize` index

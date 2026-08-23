@@ -1,5 +1,5 @@
 use fp_core::lir::{
-    CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram,
+    CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature, LirBlob,
     LirTerminator, LirType, Name,
 };
 
@@ -7,7 +7,7 @@ use fp_core::lir::{
 fn emits_and_links_minimal_exec() {
     // This test validates the end-to-end plumbing:
     // LIR -> native binary emission -> runnable executable.
-    let lir = LirProgram {
+    let lir = LirBlob {
         data_layout: fp_core::lir::LirDataLayout::new(
             64,
             8,

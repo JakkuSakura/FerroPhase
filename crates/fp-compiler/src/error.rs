@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::{BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
+use crate::ConstValueId;
 
 impl From<fp_interpret::VmError> for CompilerDriverError {
     fn from(e: fp_interpret::VmError) -> Self {
@@ -21,17 +21,11 @@ pub enum CompilerDriverError {
     #[error("interpreter error: {0}")]
     Interpreter(String),
     #[error("missing HIR {0}")]
-    MissingHir(HirId),
-    #[error("missing MIR {0}")]
-    MissingMir(MirId),
+    MissingHir(String),
     #[error("missing LIR {0}")]
-    MissingLir(LirId),
+    MissingLir(String),
     #[error("missing const value {0}")]
     MissingConstValue(ConstValueId),
-    #[error("missing runtime value {0}")]
-    MissingRuntimeValue(RuntimeValueId),
-    #[error("missing bytecode {0}")]
-    MissingBytecode(BytecodeId),
     #[error("unsupported compiler work: {0}")]
     UnsupportedWork(String),
     #[error("internal compiler error: {0}")]

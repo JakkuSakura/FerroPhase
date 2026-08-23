@@ -1,7 +1,7 @@
 use crate::error::JvmError;
 use fp_core::lir::{
     LirBasicBlock, LirConstant, LirDataLayout, LirFunction, LirFunctionSignature, LirInstruction,
-    LirInstructionKind, LirInteger, LirProgram, LirRegister, LirTerminator, LirType, LirValue,
+    LirInstructionKind, LirInteger, LirBlob, LirRegister, LirTerminator, LirType, LirValue,
     Name,
 };
 
@@ -9,16 +9,16 @@ fn invalid(message: impl std::fmt::Display) -> JvmError {
     JvmError::InvalidClassFile(message.to_string())
 }
 
-/// Parse a JVM classfile emitted by `fp-jvm` and lower a narrow subset into `LirProgram`.
+/// Parse a JVM classfile emitted by `fp-jvm` and lower a narrow subset into `LirBlob`.
 ///
 /// Scope:
 /// - Intended for FerroPhase-emitted `.class` files.
 /// - Supports a small integer/control-flow subset.
-pub fn parse_class_to_lir(bytes: &[u8]) -> Result<LirProgram, JvmError> {
+pub fn parse_class_to_lir(bytes: &[u8]) -> Result<LirBlob, JvmError> {
     let mut class = ClassReader::new(bytes)?;
     let methods = class.read_methods()?;
 
-    let mut program = LirProgram::new(
+    let mut program = LirBlob::new(
         LirDataLayout::new(
             64,
             8,

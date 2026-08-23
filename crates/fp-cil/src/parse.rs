@@ -1,18 +1,18 @@
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
     BasicBlockId, LirBasicBlock, LirConstant, LirDataLayout, LirFunction, LirFunctionSignature,
-    LirInstruction, LirInstructionKind, LirInteger, LirProgram, LirRegister, LirTerminator,
+    LirInstruction, LirInstructionKind, LirInteger, LirBlob, LirRegister, LirTerminator,
     LirType, LirValue, Name,
 };
 use std::collections::HashMap;
 
-/// Parse a narrow subset of textual CIL into `LirProgram`.
+/// Parse a narrow subset of textual CIL into `LirBlob`.
 ///
 /// Scope:
 /// - Intended for CIL emitted by FerroPhase itself.
 /// - Supports `ldc.i4`, `ldloc`, `stloc`, `add/sub/mul/div`, `ret`, `br`, `brtrue`, labels.
-pub fn parse_cil_program(text: &str) -> Result<LirProgram> {
-    let mut program = LirProgram::new(
+pub fn parse_cil_program(text: &str) -> Result<LirBlob> {
+    let mut program = LirBlob::new(
         LirDataLayout::new(
             64,
             8,

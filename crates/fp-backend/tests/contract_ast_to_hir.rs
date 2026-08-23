@@ -8,7 +8,7 @@ use fp_core::ops::BinOpKind;
 use fp_core::ast::package::graph::PackageGraph;
 use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
 use fp_core::ast::package::{PackageId, PackageItem, AstPackage};
-use fp_core::ast::workspace::WorkspaceContext;
+use fp_core::ast::program::AstProgram;
 
 mod support;
 
@@ -60,7 +60,7 @@ fn make_fn(
 /// Wraps a file's items as a one-member package, obtained via a real
 /// `PackageProvider` (`FixedPackageProvider`, wrapping an already-built
 /// `AstPackage` — no real frontend/disk parsing involved here) followed
-/// by `WorkspaceContext::begin_package`, then lowers it with
+/// by `AstProgram::begin_package`, then lowers it with
 /// `transform_package` — `ast::File`'s `path` field carries no information
 /// `transform_package` needs.
 fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::HirProgram> {
@@ -78,7 +78,7 @@ fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::HirProgram> {
     let loaded = provider
         .load_package_source(&package_id)
         .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-    let workspace = WorkspaceContext::new(std::sync::Arc::new(provider));
+    let workspace = AstProgram::new(std::sync::Arc::new(provider));
     let data_layout = LirDataLayout::new(
         64,
         8,

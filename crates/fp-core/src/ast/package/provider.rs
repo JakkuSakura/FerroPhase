@@ -58,7 +58,7 @@ pub trait PackageProvider {
 /// builds a `AstPackage` directly (e.g. `FerroPhaseProvider`'s
 /// `load_embedded_package`); this just skips the "discover it from disk"
 /// step, while still requiring callers to obtain their `CompiledPackage`
-/// through the normal `PackageProvider` -> `WorkspaceContext::begin_package`
+/// through the normal `PackageProvider` -> `AstProgram::begin_package`
 /// path rather than hand-rolling one.
 pub struct FixedPackageProvider {
     package_id: PackageId,
@@ -122,8 +122,8 @@ impl PackageProvider for FixedPackageProvider {
 
 /// A `PackageProvider` with no packages at all — for the handful of generic
 /// constructors (`CompilerDriver::new`, `CompilerState::new`, standalone
-/// tests) that need to build a `WorkspaceContext` before any real provider
-/// is known; a real one is attached later via a fresh `WorkspaceContext`
+/// tests) that need to build a `AstProgram` before any real provider
+/// is known; a real one is attached later via a fresh `AstProgram`
 /// built with it once the caller knows what it's compiling.
 pub struct EmptyProvider;
 
@@ -151,7 +151,7 @@ impl PackageProvider for EmptyProvider {
 
 /// Combines several already-chosen concrete `PackageProvider`s (e.g. a
 /// language's std/libc provider plus the real input-package provider) into
-/// one — `WorkspaceContext` holds exactly one required provider, so any
+/// one — `AstProgram` holds exactly one required provider, so any
 /// caller that needs more than one source composes them here before
 /// constructing the workspace. Not a language-dispatch mechanism: every
 /// sub-provider is picked by the caller ahead of time, same as if only one
@@ -226,13 +226,13 @@ impl PackageProvider for CompositeProvider {
 }
 
 /// Reads `root` as text and lifts it via `parse` into a target-independent
-/// `crate::lir::LirProgram`, wrapping it as a one-package, one-item
+/// `crate::lir::LirBlob`, wrapping it as a one-package, one-item
 /// provider (`AstPackage::single_item` + `Item::precompiled_lir`) — the
 /// shared shape for any language whose input parses straight to LIR
 /// (goasm, urcl, ...), with no language-specific knowledge here.
 pub fn lir_from_text(
     root: &Path,
-    parse: impl FnOnce(&str) -> crate::error::Result<crate::lir::LirProgram>,
+    parse: impl FnOnce(&str) -> crate::error::Result<crate::lir::LirBlob>,
 ) -> Option<Arc<dyn PackageProvider>> {
     let text = std::fs::read_to_string(root).ok()?;
     let lir = parse(&text).ok()?;

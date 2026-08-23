@@ -1,6 +1,6 @@
 use crate::emit::{EmitPlan, RelocKind, RelocSection, TargetArch, TargetFormat};
 use fp_core::error::{Error, Result};
-use fp_core::lir::{CallingConvention, LirInstructionKind, LirProgram, LirType};
+use fp_core::lir::{CallingConvention, LirInstructionKind, LirBlob, LirType};
 #[cfg(unix)]
 use libc;
 use std::collections::HashMap;
@@ -124,7 +124,7 @@ impl JitEngine {
         })
     }
 
-    pub fn compile(&mut self, program: &LirProgram) -> Result<JitModule> {
+    pub fn compile(&mut self, program: &LirBlob) -> Result<JitModule> {
         validate_host_program(program)?;
         let plan = crate::emit::emit_plan(program, self.format, self.arch)?;
         self.compile_plan(&plan)
@@ -196,7 +196,7 @@ impl JitEngine {
         })
     }
 
-    pub fn compile_host(&mut self, program: &LirProgram) -> Result<JitModule> {
+    pub fn compile_host(&mut self, program: &LirBlob) -> Result<JitModule> {
         let mut module = self.compile(program)?;
         module.signatures = collect_signatures(program);
         Ok(module)
@@ -440,12 +440,12 @@ impl JitEngine {
     }
 }
 
-pub fn validate_host_program(program: &LirProgram) -> Result<()> {
+pub fn validate_host_program(program: &LirBlob) -> Result<()> {
     let _ = crate::emit::host_arch(None)?;
     validate_native_program(program)
 }
 
-pub fn validate_native_program(program: &LirProgram) -> Result<()> {
+pub fn validate_native_program(program: &LirBlob) -> Result<()> {
     if !program.queries.is_empty() {
         return Err(Error::from(
             "fp-native does not support query-bearing LIR programs",
@@ -466,7 +466,7 @@ pub fn validate_native_program(program: &LirProgram) -> Result<()> {
     Ok(())
 }
 
-fn collect_signatures(program: &LirProgram) -> HashMap<String, FunctionMetadata> {
+fn collect_signatures(program: &LirBlob) -> HashMap<String, FunctionMetadata> {
     program
         .functions
         .iter()
@@ -663,7 +663,7 @@ mod tests {
     use super::{HostScalar, JitEngine, validate_native_program};
     use fp_core::lir::{
         CallingConvention, Linkage, LirBasicBlock, LirDataLayout, LirFunction,
-        LirFunctionSignature, LirInstruction, LirInstructionKind, LirProgram, LirRegister,
+        LirFunctionSignature, LirInstruction, LirInstructionKind, LirBlob, LirRegister,
         LirTerminator, LirType, LirValue, Name,
     };
     use std::ffi::c_void;
@@ -677,7 +677,7 @@ mod tests {
         .unwrap()
     }
 
-    fn minimal_program() -> LirProgram {
+    fn minimal_program() -> LirBlob {
         let func = LirFunction {
             def_id: None,
             name: Name::new("main"),
@@ -701,7 +701,7 @@ mod tests {
             is_declaration: false,
         };
 
-        LirProgram {
+        LirBlob {
             data_layout: data_layout(),
             functions: vec![func],
             globals: Vec::new(),
@@ -755,7 +755,7 @@ mod tests {
         42
     }
 
-    fn external_call_program() -> LirProgram {
+    fn external_call_program() -> LirBlob {
         let callee = LirFunction {
             def_id: None,
             name: Name::new("jit_test_add1"),
@@ -809,7 +809,7 @@ mod tests {
             linkage: Linkage::External,
             is_declaration: false,
         };
-        LirProgram {
+        LirBlob {
             data_layout: data_layout(),
             functions: vec![callee, caller],
             globals: Vec::new(),

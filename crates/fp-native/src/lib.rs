@@ -19,7 +19,7 @@ use crate::emit::{detect_target, resolve_native_target};
 use fp_core::asmir::AsmProgram;
 use fp_core::container::ContainerReader as _;
 use fp_core::error::{Error, Result};
-use fp_core::lir::LirProgram;
+use fp_core::lir::LirBlob;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -45,7 +45,7 @@ impl NativeEmitter {
     }
 
     /// Emit LIR into an object or executable.
-    pub fn emit(&self, lir_program: LirProgram, source_file: Option<&Path>) -> Result<PathBuf> {
+    pub fn emit(&self, lir_program: LirBlob, source_file: Option<&Path>) -> Result<PathBuf> {
         let _ = source_file;
 
         // Ensure output directory exists.
@@ -57,7 +57,7 @@ impl NativeEmitter {
     }
 
     /// Back-compat for older callers.
-    pub fn compile(&self, lir_program: LirProgram, source_file: Option<&Path>) -> Result<PathBuf> {
+    pub fn compile(&self, lir_program: LirBlob, source_file: Option<&Path>) -> Result<PathBuf> {
         self.emit(lir_program, source_file)
     }
 }
@@ -68,9 +68,13 @@ impl NativeEmitter {
 /// doesn't need a separate `BackendConfig` — the existing config already is
 /// the "where to write" state `TargetBackend`'s design calls for.
 impl fp_core::backend::TargetBackend for NativeEmitter {
+    fn capabilities(&self) -> fp_core::capabilities::LanguageCapabilities {
+        fp_core::capabilities::LanguageCapabilities::NATIVE
+    }
+
     fn emit_package_artifact(
         &self,
-        workspace: &fp_core::ast::workspace::WorkspaceContext,
+        workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
     ) -> Result<()> {
         if let Ok(source) = workspace.package_source(package_id) {
@@ -174,7 +178,7 @@ impl NativeEmitter {
 
     /// Emits an already-lifted object file's `AsmProgram` (see
     /// `crate::binary::lift_object_to_asmir`) — the object-transpile
-    /// counterpart to `emit_impl`, which starts from a `LirProgram`
+    /// counterpart to `emit_impl`, which starts from a `LirBlob`
     /// instead. Retargets via `emit::emit_plan_from_asmir` rather than
     /// `emit::emit_plan` (no LIR lowering involved — there's no LIR here),
     /// then writes/links exactly the same way `emit_impl` does.
@@ -358,7 +362,7 @@ int main(int argc, char **argv, char **envp) {
         Ok(())
     }
 
-    fn emit_impl(&self, lir_program: &LirProgram) -> Result<PathBuf> {
+    fn emit_impl(&self, lir_program: &LirBlob) -> Result<PathBuf> {
         let out = self.config.output_path.clone();
         resolve_native_target(
             self.config.native_target,
@@ -386,7 +390,7 @@ int main(int argc, char **argv, char **envp) {
 /// Renders `asmir` (already selected/normalized for `arch` by
 /// `emit::emit_plan`/`emit_plan_from_asmir`) as human-readable target
 /// assembly text — `EmitKind::AssemblyText`'s implementation, shared by
-/// `emit_impl` (from `LirProgram`) and `emit_precompiled` (from an
+/// `emit_impl` (from `LirBlob`) and `emit_precompiled` (from an
 /// already-compiled `AsmProgram`, e.g. lifted from asm text or an object
 /// file) since both end up with the same kind of `EmitPlan` either way.
 fn asm_program_to_text(asmir: &AsmProgram, arch: emit::TargetArch) -> String {

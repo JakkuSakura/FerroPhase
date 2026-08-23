@@ -18,9 +18,9 @@ pub use serializer::{
 
 /// What Kotlin can express directly, for `HirLoweringConfig`/`ast_to_hir`'s
 /// shared, target-agnostic desugaring passes (closure defunctionalization,
-/// `for`-loop index-`while` desugaring) to skip. Registered against
-/// `LanguageTarget::Kotlin` by `fp-cli` (`languages::backend::
-/// capabilities_for_target`) before compiling.
+/// `for`-loop index-`while` desugaring) to skip. Returned by
+/// `KotlinBackend::capabilities` (`TargetBackend`'s trait method) —
+/// `fp-cli` reads it there before compiling.
 pub const CAPABILITIES: fp_core::capabilities::LanguageCapabilities =
     fp_core::capabilities::LanguageCapabilities {
         first_class_closures: true,

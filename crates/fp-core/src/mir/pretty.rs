@@ -4,7 +4,7 @@ use crate::pretty::{PrettyCtx, PrettyPrintable};
 
 use super::{
     AggregateKind, BasicBlockData, Body, BodyId, Constant, ExecutableConst, Function, Item,
-    ItemKind, MirProgram, Operand, Place, Query, Rvalue, Statement, StatementKind, Static,
+    ItemKind, MirModule, Operand, Place, Query, Rvalue, Statement, StatementKind, Static,
     Terminator, TerminatorKind,
 };
 
@@ -19,9 +19,9 @@ fn query_statement_lines(ir: &crate::query::QueryIrDocument) -> Vec<String> {
         .unwrap_or_default()
 }
 
-impl PrettyPrintable for MirProgram {
+impl PrettyPrintable for MirModule {
     fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
-        ctx.writeln(f, "mir::MirProgram {")?;
+        ctx.writeln(f, "mir::MirModule {")?;
         ctx.with_indent(|ctx| {
             if !self.items.is_empty() {
                 ctx.writeln(f, "items:")?;

@@ -7,7 +7,7 @@ use super::*;
 /// structure, not a separate clone-and-merge pass.
 ///
 /// Packages are `Rc`, not owned — building a `HirProgram` (e.g. a
-/// `WorkspaceContext` snapshotting its already-compiled dependency
+/// `AstProgram` snapshotting its already-compiled dependency
 /// packages, each already an `Rc<HirPackage>`, for a consumer like
 /// `MirLowering` to dispatch cross-package `DefId` lookups against) is
 /// then just a handful of `Rc` clones, never a deep clone of every

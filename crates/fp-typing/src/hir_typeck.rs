@@ -28,7 +28,7 @@ pub struct TypingShared {
     /// `hir::DefId`'s own doc comment), so any lookup by id — same-package
     /// or cross-package alike — routes through this one `HirProgram` via
     /// `HirProgram::item`/`def_path`/etc.; there's no separate same-package
-    /// (`program.def_map`) vs cross-package (a `WorkspaceContext` handle)
+    /// (`program.def_map`) vs cross-package (a `AstProgram` handle)
     /// lookup path to keep in sync.
     program: Rc<hir::HirProgram>,
     /// Which entry in `program` is the package actually being checked —

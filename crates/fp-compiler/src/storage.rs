@@ -28,15 +28,4 @@ macro_rules! define_storage_id {
     };
 }
 
-define_storage_id!(HirId, "Storage identity for HIR.");
-define_storage_id!(MirId, "Storage identity for MIR.");
-define_storage_id!(LirId, "Storage identity for LIR.");
 define_storage_id!(ConstValueId, "Storage identity for a compile-time value.");
-define_storage_id!(
-    RuntimeValueId,
-    "Storage identity for a runtime interpreter value."
-);
-define_storage_id!(BytecodeId, "Storage identity for serialized bytecode.");
-define_storage_id!(NativeObjectId, "Storage identity for native object output.");
-define_storage_id!(JitObjectId, "Storage identity for JIT-ready native code.");
-define_storage_id!(SavedOutputId, "Storage identity for a saved output record.");

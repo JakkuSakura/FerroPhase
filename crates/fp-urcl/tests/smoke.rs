@@ -1,6 +1,6 @@
 use fp_core::lir::{
     CallingConvention, Linkage, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature,
-    LirInstruction, LirInstructionKind, LirInteger, LirProgram, LirRegister, LirTerminator,
+    LirInstruction, LirInstructionKind, LirInteger, LirBlob, LirRegister, LirTerminator,
     LirType, LirValue, Name,
 };
 
@@ -8,7 +8,7 @@ fn i64_value(value: u64) -> LirValue {
     LirValue::constant(LirConstant::integer(LirType::I64, LirInteger::I64(value)).unwrap())
 }
 
-fn sample_program() -> LirProgram {
+fn sample_program() -> LirBlob {
     let add_inst = LirInstruction {
         id: 1,
         kind: LirInstructionKind::Add(i64_value(40), i64_value(2)),
@@ -40,7 +40,7 @@ fn sample_program() -> LirProgram {
         linkage: Linkage::External,
         is_declaration: false,
     };
-    LirProgram {
+    LirBlob {
         functions: vec![main],
         globals: Vec::new(),
         type_definitions: Vec::new(),
@@ -55,7 +55,7 @@ fn sample_program() -> LirProgram {
     }
 }
 
-fn compare_program() -> LirProgram {
+fn compare_program() -> LirBlob {
     let cmp_inst = LirInstruction {
         id: 1,
         kind: LirInstructionKind::Eq(i64_value(1), i64_value(1)),
@@ -109,7 +109,7 @@ fn compare_program() -> LirProgram {
         linkage: Linkage::External,
         is_declaration: false,
     };
-    LirProgram {
+    LirBlob {
         functions: vec![main],
         globals: Vec::new(),
         type_definitions: Vec::new(),

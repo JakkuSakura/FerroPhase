@@ -34,10 +34,10 @@ pub struct HirToAstLifter<'a> {
     program: &'a hir::HirPackage,
     typeck: Option<&'a PackageTypes>,
     /// Cross-package lookup for a resolved `DefId`'s real identity (e.g.
-    /// `WorkspaceContext::find_hir_enum_for_variant`, consulted by
+    /// `AstProgram::find_hir_enum_for_variant`, consulted by
     /// `lift_path`) — `None` for the roundtrip/test call sites that never
     /// go through a real multi-package workspace.
-    workspace: Option<&'a fp_core::ast::workspace::WorkspaceContext>,
+    workspace: Option<&'a fp_core::ast::program::AstProgram>,
     /// Target-language (Kotlin, ...) lexical scopes currently open during a
     /// lift, one frame per emitted block — tracks which surface names have
     /// already been declared directly in that block (not nested ones),
@@ -72,7 +72,7 @@ impl<'a> HirToAstLifter<'a> {
     pub fn new(
         program: &'a hir::HirPackage,
         typeck: Option<&'a PackageTypes>,
-        workspace: Option<&'a fp_core::ast::workspace::WorkspaceContext>,
+        workspace: Option<&'a fp_core::ast::program::AstProgram>,
     ) -> Self {
         Self {
             program,
@@ -1508,7 +1508,7 @@ impl<'a> HirToAstLifter<'a> {
     /// single-segment local variable reference is the only path shape
     /// `renamed_locals` ever has an entry for. A path resolving
     /// (`hir::Res::Def`) to a real enum variant is rewritten to its real
-    /// declaring enum's name (via `WorkspaceContext::find_hir_enum_for_variant`,
+    /// declaring enum's name (via `AstProgram::find_hir_enum_for_variant`,
     /// a confirmed structural fact from the compiler's own name
     /// resolution) rather than trusting the source text's own segments,
     /// which may be module-qualified in ways Kotlin (flat-imports

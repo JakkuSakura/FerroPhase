@@ -9,7 +9,7 @@ use fp_core::ast::package::graph::PackageGraph;
 use fp_core::ast::package::provider::{FixedPackageProvider, PackageProvider};
 use fp_core::ast::package::{PackageId, AstPackage};
 use fp_core::span::Span;
-use fp_core::ast::workspace::WorkspaceContext;
+use fp_core::ast::program::AstProgram;
 use fp_typing::{ResolvedName, ResolvedNameNamespace, ResolvedNameTable};
 use std::collections::HashMap;
 
@@ -26,7 +26,7 @@ fn test_data_layout() -> LirDataLayout {
 /// one-member package, obtained the same way every real package is: via a
 /// `PackageProvider` (`FixedPackageProvider`, which just hands back an
 /// already-built `AstPackage`) followed by
-/// `WorkspaceContext::begin_package` — never a hand-rolled
+/// `AstProgram::begin_package` — never a hand-rolled
 /// `CompiledPackage`.
 fn package_from_items(items: Vec<ast::Item>) -> Result<fp_core::ast::package::CompiledPackage> {
     let package_id = PackageId::new("test");
@@ -42,7 +42,7 @@ fn package_from_items(items: Vec<ast::Item>) -> Result<fp_core::ast::package::Co
     let loaded = provider
         .load_package_source(&package_id)
         .map_err(|e| crate::error::optimization_error(e.to_string()))?;
-    let workspace = WorkspaceContext::new(std::sync::Arc::new(provider));
+    let workspace = AstProgram::new(std::sync::Arc::new(provider));
     let package = workspace.begin_package(package_id, loaded, test_data_layout());
     let package = package.borrow().clone();
     Ok(package)
@@ -70,7 +70,7 @@ fn package_from_module_items(
     let loaded = provider
         .load_package_source(&package_id)
         .map_err(|e| crate::error::optimization_error(e.to_string()))?;
-    let workspace = WorkspaceContext::new(std::sync::Arc::new(provider));
+    let workspace = AstProgram::new(std::sync::Arc::new(provider));
     let package = workspace.begin_package(package_id, loaded, test_data_layout());
     let package = package.borrow().clone();
     Ok(package)
@@ -94,7 +94,7 @@ fn package_from_items_with_paths(
     // crate-root file's own path (e.g. `alloc/lib.rs` -> `["alloc"]`),
     // which is what makes a *whole-module* import/`extern crate` alias
     // resolve at all (`module_defs` is seeded straight from this set, see
-    // `transform_package`'s own comment). `WorkspaceContext::begin_package`
+    // `transform_package`'s own comment). `AstProgram::begin_package`
     // copies `source.module_paths` verbatim (`krate.module_paths =
     // source.module_paths;`, never recomputes it from `source.graph`), so
     // setting it here is both correct and sufficient for a test — no need
@@ -115,7 +115,7 @@ fn package_from_items_with_paths(
     let loaded = provider
         .load_package_source(&package_id)
         .map_err(|e| crate::error::optimization_error(e.to_string()))?;
-    let workspace = WorkspaceContext::new(std::sync::Arc::new(provider));
+    let workspace = AstProgram::new(std::sync::Arc::new(provider));
     let package = workspace.begin_package(package_id, loaded, test_data_layout());
     let package = package.borrow().clone();
     Ok(package)

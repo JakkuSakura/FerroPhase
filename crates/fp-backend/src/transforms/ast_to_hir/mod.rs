@@ -158,7 +158,7 @@ pub struct HirGenerator {
     respect_cfg: bool,
     lowering_config: HirLoweringConfig,
     intrinsic_normalizer: Option<Box<dyn IntrinsicNormalizer>>,
-    workspace: Option<std::rc::Rc<fp_core::ast::workspace::WorkspaceContext>>,
+    workspace: Option<std::rc::Rc<fp_core::ast::program::AstProgram>>,
     /// `impl` items whose self-type didn't resolve on a *tolerant*
     /// `predeclare_items` pass because the name is only reachable through
     /// an import that hadn't been processed yet — see `transform_package`,
@@ -697,7 +697,7 @@ impl HirGenerator {
 
     pub fn with_workspace(
         mut self,
-        workspace: std::rc::Rc<fp_core::ast::workspace::WorkspaceContext>,
+        workspace: std::rc::Rc<fp_core::ast::program::AstProgram>,
     ) -> Self {
         self.workspace = Some(workspace);
         self

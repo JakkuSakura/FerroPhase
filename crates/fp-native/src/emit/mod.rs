@@ -8,7 +8,7 @@ use crate::link;
 use fp_core::asmir::AsmProgram;
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
-    CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram,
+    CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature, LirBlob,
     LirTerminator, LirType, Name,
 };
 use std::collections::HashMap;
@@ -205,7 +205,7 @@ pub struct Relocation {
 }
 
 pub fn emit_plan(
-    lir_program: &LirProgram,
+    lir_program: &LirBlob,
     format: TargetFormat,
     arch: TargetArch,
 ) -> Result<EmitPlan> {
@@ -372,7 +372,7 @@ fn dump_bytes(out: &mut String, bytes: &[u8]) {
     }
 }
 
-fn default_lir_program() -> LirProgram {
+fn default_lir_program() -> LirBlob {
     let func = LirFunction {
         def_id: None,
         name: Name::new("main"),
@@ -396,7 +396,7 @@ fn default_lir_program() -> LirProgram {
         is_declaration: false,
     };
 
-    LirProgram {
+    LirBlob {
         data_layout: fp_core::lir::LirDataLayout::new(
             64,
             8,

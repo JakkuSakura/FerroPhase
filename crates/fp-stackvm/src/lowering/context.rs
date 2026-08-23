@@ -1,17 +1,17 @@
 //! Program-level lowering context and entry point.
 //!
-//! [`LoweringContext`] owns the output [`LirProgram`] and iterates over
+//! [`LoweringContext`] owns the output [`LirBlob`] and iterates over
 //! bytecode functions, delegating per-function lowering to
 //! [`FunctionLowering`][super::function::FunctionLowering].
 
 use fp_bytecode::{BytecodeFunction, BytecodeProgram};
-use fp_core::lir::{LirDataLayout, LirProgram};
+use fp_core::lir::{LirDataLayout, LirBlob};
 
 use super::LowerResult;
 use super::function::FunctionLowering;
 
 /// Top-level entry point: convert a complete bytecode program into LIR.
-pub fn lower_program(program: &BytecodeProgram) -> LowerResult<LirProgram> {
+pub fn lower_program(program: &BytecodeProgram) -> LowerResult<LirBlob> {
     let mut ctx = LoweringContext::new(program);
     for func in &program.functions {
         let lir_func = ctx.lower_function(func)?;
@@ -20,17 +20,17 @@ pub fn lower_program(program: &BytecodeProgram) -> LowerResult<LirProgram> {
     Ok(ctx.program)
 }
 
-/// Accumulates the output [`LirProgram`] while lowering each bytecode
+/// Accumulates the output [`LirBlob`] while lowering each bytecode
 /// function in turn.
 pub(crate) struct LoweringContext<'a> {
-    pub program: LirProgram,
+    pub program: LirBlob,
     pub bytecode: &'a BytecodeProgram,
 }
 
 impl<'a> LoweringContext<'a> {
     pub fn new(bytecode: &'a BytecodeProgram) -> Self {
         Self {
-            program: LirProgram::new(
+            program: LirBlob::new(
                 LirDataLayout::new(
                     64,
                     8,
