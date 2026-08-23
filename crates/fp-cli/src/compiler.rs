@@ -119,9 +119,9 @@ fn execute_ast(
             let package_id = PackageId::new(identity.path.path().head().ok_or_else(|| {
                 CliError::Compilation("source file has no package identity".to_string())
             })?);
-            let lir_id = LirId::new(format!("lir:{}:{}", package_id.as_str(), value_key));
+            let lir_path = fp_core::lir::LirPath::new(package_id.clone(), identity.path.path().clone());
             driver
-                .execute_runtime(&lir_id)
+                .execute_runtime(&lir_path)
                 .map_err(|err| CliError::Compilation(err.to_string()))
         }
     }

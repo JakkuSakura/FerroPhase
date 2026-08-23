@@ -155,29 +155,28 @@ impl CompilerDriver {
 
     pub fn execute_runtime(
         &mut self,
-        lir_id: &LirId,
+        lir_path: &fp_core::lir::LirPath,
     ) -> Result<fp_core::ast::Value, CompilerDriverError> {
-        let lir = self.state.borrow().runtime_program(lir_id)?.clone();
+        let entrypoint = self.state.borrow().runtime_entrypoint(lir_path)?;
+        // `LirPath` already carries the real package id directly (unlike
+        // the old string-keyed `LirId`, which needed parsing back out of
+        // `"lir:{package_id}:{path}"`) — recovering it is what lets calls
+        // to any function other than the entrypoint itself resolve; see
+        // `run_entrypoint_with_package`'s doc comment.
+        let lir = self
+            .state
+            .borrow()
+            .runtime_blob(&lir_path.package_id, lir_path, entrypoint)?;
         self.interpreter = LirInterpreter::new();
         let resolved = self.collect_resolved_const_values();
         self.interpreter
             .inject_globals(&resolved)
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
-        let entrypoint = self.state.borrow().runtime_entrypoint(lir_id)?;
-        // `LirId`s are always built as `lir:{package_id}:{path}` (see the
-        // construction site below) — recovering the real package id here
-        // (rather than letting the interpreter default to an empty one)
-        // is what lets calls to any function other than the entrypoint
-        // itself resolve; see `run_entrypoint_with_package`'s doc comment.
-        let package_id = lir_id
-            .as_str()
-            .strip_prefix("lir:")
-            .and_then(|rest| rest.split_once(':'))
-            .map(|(package, _)| PackageId::new(package))
-            .unwrap_or_else(|| PackageId::new(""));
-        let value = self
-            .interpreter
-            .run_entrypoint_with_package(&lir, entrypoint, package_id)?;
+        let value = self.interpreter.run_entrypoint_with_package(
+            &lir,
+            entrypoint,
+            lir_path.package_id.clone(),
+        )?;
         Ok(value)
     }
 
@@ -205,20 +204,21 @@ impl CompilerDriver {
             .map_err(|error| CompilerDriverError::Interpreter(error.to_string()))
     }
 
-    /// Renames the LIR function identified by `def_id` to `bare_name` in
-    /// place. The process entry point is located downstream (native/asm
-    /// emission) by its final, bare symbol name — a linkage requirement,
-    /// not a display convention. Normal mangling gives a module-nested
-    /// `main` a qualified name (e.g. `module__main`), but the OS/runtime
-    /// always calls the bare `main`, so the resolved entrypoint needs
-    /// renaming back to the name it was looked up by, regardless of its
-    /// module qualification.
-    pub fn rename_lir_function(
-        lir: &mut fp_core::lir::LirBlob,
-        def_id: hir::DefId,
-        bare_name: &str,
-    ) {
-        fp_core::ast::package::rename_lir_function(lir, def_id, bare_name)
+    /// The process entry point is located downstream (native/asm emission)
+    /// by its final, bare symbol name — a linkage requirement, not a
+    /// display convention. Normal mangling gives a module-nested `main` a
+    /// qualified name (e.g. `module__main`), but the OS/runtime always
+    /// calls the bare `main`, so the resolved entrypoint's own
+    /// `LirCodeUnit` needs renaming back to the name it was looked up by,
+    /// regardless of its module qualification. Operates on the one
+    /// function directly (not a whole `LirBlob`) — see
+    /// `CompilerState::insert_runtime_program`'s doc comment for why only
+    /// this one function needs its own storage.
+    fn rename_lir_function_unit(mut unit: fp_core::lir::LirCodeUnit, bare_name: &str) -> fp_core::lir::LirCodeUnit {
+        if let fp_core::lir::LirCodeUnitKind::Function(function) = &mut unit.kind {
+            function.name = fp_core::lir::Name::new(bare_name.to_string());
+        }
+        unit
     }
 
     pub fn select_entrypoint(
@@ -226,20 +226,35 @@ impl CompilerDriver {
         package_id: &PackageId,
         module_path: &QualifiedPath,
         function_name: &str,
-    ) -> Result<LirId, CompilerDriverError> {
+    ) -> Result<fp_core::lir::LirPath, CompilerDriverError> {
         let package = self
             .state.borrow()
             .workspace
             .compiled_package(package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
         let function = self.resolve_entrypoint_def_id(package_id, module_path, function_name)?;
-        let lir_id = Self::package_module_lir_id(package_id, module_path);
-        let mut lir = package.borrow().lir.own_artifacts.to_blob();
-        Self::rename_lir_function(&mut lir, function, function_name);
-        self.state.borrow_mut().insert_runtime_program(lir_id.clone(), lir);
+        let lir_path = fp_core::lir::LirPath::new(package_id.clone(), module_path.clone());
+        let unit = package
+            .borrow()
+            .lir.own_artifacts
+            .artifacts()
+            .find(|artifact| {
+                matches!(
+                    &artifact.kind,
+                    fp_core::lir::LirCodeUnitKind::Function(f) if f.def_id == Some(function)
+                )
+            })
+            .cloned()
+            .ok_or_else(|| {
+                CompilerDriverError::Interpreter(format!(
+                    "entrypoint {function} was not emitted"
+                ))
+            })?;
+        let unit = Self::rename_lir_function_unit(unit, function_name);
+        self.state.borrow_mut().insert_runtime_program(lir_path.clone(), unit);
         self.state.borrow_mut()
-            .insert_runtime_entrypoint(lir_id.clone(), function);
-        Ok(lir_id)
+            .insert_runtime_entrypoint(lir_path.clone(), function);
+        Ok(lir_path)
     }
 
     pub async fn compile_package_module_native(
@@ -1139,17 +1154,11 @@ impl CompilerDriver {
             // directly-foldable top-level const (e.g. `const X = 1 + 2 *
             // 3;`, no `let` needed — see `MirLowering::lower_const`'s
             // constant-folding fast path) resolves its value without ever
-            // becoming a comptime entry. Surface each one the same way an
-            // interpreted entry's value already is (`insert_resolved_const`,
-            // populating `PackageTypes::const_values` so a caller looking up
-            // a const by its own `DefId` — e.g. `eval_script` — finds it)
-            // instead of unconditionally substituting a unit placeholder
-            // that looks exactly like a real "this evaluates to nothing"
-            // result.
-            let package_hir_id = HirId::new(format!(
-                "hir:{}",
-                Self::module_state_key(package_id, &QualifiedPath::new(Vec::new()))
-            ));
+            // becoming a comptime entry. Surface the last one the same way
+            // an interpreted entry's value already is (`insert_const_value`,
+            // keyed by this script/package's own path) instead of
+            // unconditionally substituting a unit placeholder that looks
+            // exactly like a real "this evaluates to nothing" result.
             let compiled_package = state.borrow().workspace.compiled_package(package_id);
             let mut last_value = None;
             if let Some(compiled_package) = compiled_package {
@@ -1162,11 +1171,6 @@ impl CompilerDriver {
                     else {
                         continue;
                     };
-                    if let Some(def_id) = package.mir.resolved_const_def(key) {
-                        state
-                            .borrow_mut()
-                            .insert_resolved_const(package_hir_id.clone(), def_id, value.clone());
-                    }
                     last_value = Some(value);
                 }
             }
@@ -1212,10 +1216,6 @@ impl CompilerDriver {
         let mut count = 0usize;
         let mut last = Value::unit();
         let mut block_values: HashMap<hir::DefId, Value> = HashMap::new();
-        let package_hir_id = HirId::new(format!(
-            "hir:{}",
-            Self::module_state_key(package_id, &QualifiedPath::new(Vec::new()))
-        ));
         let mut interpreter = LirInterpreter::new();
         let resolved = Self::resolved_const_values_snapshot(state);
         interpreter
@@ -1251,9 +1251,6 @@ impl CompilerDriver {
             state
                 .borrow_mut()
                 .insert_resolved_const_value(entry.key.clone(), constant);
-            state
-                .borrow_mut()
-                .insert_resolved_const(package_hir_id.clone(), entry.def_id, value.clone());
             if entry.const_block_hir_id.is_some() {
                 block_values.insert(entry.def_id, value.clone());
             }

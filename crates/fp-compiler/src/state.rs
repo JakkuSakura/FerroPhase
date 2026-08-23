@@ -33,13 +33,17 @@ pub struct CompilerState {
     /// of `LirPackage`s, each already a collection of `LirCodeUnit`s (via
     /// its own `own_artifacts: LirUnitTable`, keyed by `Name`).
     lir_program: lir::LirProgram,
-    /// Renamed, ready-to-execute `LirBlob`s built by `select_entrypoint`
-    /// (the compiled package's own artifacts, with the resolved entrypoint
-    /// function renamed to its bare linkage name) — a distinct concern from
-    /// `lir_program`: this is one specific executable variant cached by a
-    /// `lir::LirPath`, not per-package/per-`DefId` lowering output, so it
+    /// The one renamed entrypoint function `select_entrypoint` builds per
+    /// selection (the resolved entrypoint, renamed to its bare linkage
+    /// name) — just that one `LirCodeUnit`, not a whole duplicated
+    /// `LirBlob`: every other function it might call already lives in
+    /// `lir_program`'s own per-package storage, so only the rename itself
+    /// needs its own slot. `runtime_blob` reassembles the full executable
+    /// blob on demand by substituting this into the package's own flattened
+    /// LIR. Cached by `lir::LirPath` since it's one specific
+    /// package+entrypoint selection, not per-`DefId` lowering output, so it
     /// doesn't fit the `lir_program` hierarchy above.
-    runtime_programs: std::collections::HashMap<lir::LirPath, lir::LirBlob>,
+    runtime_programs: std::collections::HashMap<lir::LirPath, lir::LirCodeUnit>,
     runtime_entrypoints: std::collections::HashMap<lir::LirPath, hir::DefId>,
     const_values: BTreeMap<ConstValueId, Value>,
     /// MIR-level const values for HIR→MIR lowering seed.
@@ -184,14 +188,37 @@ impl CompilerState {
             .unwrap_or_else(|| lir::LirBlob::new(self.data_layout.clone()))
     }
 
-    pub fn insert_runtime_program(&mut self, lir_path: lir::LirPath, program: lir::LirBlob) {
-        self.runtime_programs.insert(lir_path, program);
+    /// Records the one renamed entrypoint function `select_entrypoint`
+    /// produced — a single `LirCodeUnit`, not a whole duplicated `LirBlob`:
+    /// every other function the entrypoint might call already lives in
+    /// this package's own `lir_program` entry, so only the one thing that
+    /// actually changed (the rename) needs its own storage.
+    pub fn insert_runtime_program(&mut self, lir_path: lir::LirPath, unit: lir::LirCodeUnit) {
+        self.runtime_programs.insert(lir_path, unit);
     }
 
-    pub fn runtime_program(&self, lir_path: &lir::LirPath) -> Result<&lir::LirBlob, CompilerDriverError> {
-        self.runtime_programs
-            .get(lir_path)
-            .ok_or_else(|| CompilerDriverError::MissingLir(format!("{lir_path:?}")))
+    /// Assembles the full, executable `LirBlob` for a selected entrypoint:
+    /// `package_id`'s own flattened LIR (`lir_blob`), with `def_id`'s
+    /// original (mangled-named) function swapped out for the one renamed
+    /// `LirCodeUnit` `select_entrypoint` recorded under `lir_path`.
+    pub fn runtime_blob(
+        &self,
+        package_id: &PackageId,
+        lir_path: &lir::LirPath,
+        def_id: hir::DefId,
+    ) -> Result<lir::LirBlob, CompilerDriverError> {
+        let unit = self.runtime_programs.get(lir_path).ok_or_else(|| {
+            CompilerDriverError::MissingLir(format!("{lir_path:?}"))
+        })?;
+        let lir::LirCodeUnitKind::Function(renamed) = &unit.kind else {
+            return Err(CompilerDriverError::Interpreter(
+                "runtime entrypoint unit is not a function".to_string(),
+            ));
+        };
+        let mut blob = self.lir_blob(package_id);
+        blob.functions.retain(|function| function.def_id != Some(def_id));
+        blob.functions.push(renamed.clone());
+        Ok(blob)
     }
 
     pub fn insert_runtime_entrypoint(&mut self, lir_path: lir::LirPath, def_id: hir::DefId) {
@@ -213,18 +240,6 @@ impl CompilerState {
 
     pub fn insert_resolved_const_value(&mut self, key: impl Into<String>, value: mir::Constant) {
         self.resolved_const_values.insert(key.into(), value);
-    }
-
-    /// Record a comptime-resolved named const's value into its own
-    /// package's `PackageTypes::const_values`, keyed by the const item's
-    /// own stable `DefId` — replaces the old string-name-keyed
-    /// `TypingContext.resolved_consts` broadcast.
-    pub fn insert_resolved_const(&mut self, package_hir_id: hir::PackageId, def_id: hir::DefId, value: Value) {
-        self.hir_program_types
-            .package_or_default(package_hir_id)
-            .borrow_mut()
-            .const_values
-            .insert(def_id, value);
     }
 
     pub fn set_backend_capabilities(&mut self, capabilities: fp_core::capabilities::LanguageCapabilities) {
