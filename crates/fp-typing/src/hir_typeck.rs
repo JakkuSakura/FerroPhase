@@ -2295,6 +2295,25 @@ impl HirTypeChecker {
             {
                 self.check_type_expr(&constant.ty)
             }
+            hir::ItemKind::Const(constant) if def_id.package_id != self.shared.program.id => {
+                // `program.def_map` is pre-seeded with every dependency
+                // package's own merged definitions (`seed_workspace_
+                // definitions`), so a foreign const's item is found here
+                // directly — but `ensure_item_checked`/`typecheck_item`
+                // (below, the same-package arm) only ever spawn a task
+                // against *this* package's own `TypingShared`/`results`,
+                // which a foreign `def_id` never populates: awaiting it
+                // would just hang or silently no-op, and `const_types`
+                // never gets an entry, surfacing as "constant type was
+                // not recorded" downstream. Check it fresh instead — the
+                // same fallback `expr_path_ty`'s cross-package branch
+                // above uses for a foreign impl method's signature.
+                let declared_ty = self.check_type_expr(&constant.ty)?;
+                self.expected_expr_types.push(declared_ty);
+                let body_result = self.check_body(&constant.body).await;
+                self.expected_expr_types.pop();
+                body_result
+            }
             hir::ItemKind::Const(_) => {
                 // A same-package `const` may be declared later in
                 // `program.items` than the item currently being checked —
