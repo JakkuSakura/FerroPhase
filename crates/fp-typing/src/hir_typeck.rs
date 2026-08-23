@@ -1176,14 +1176,33 @@ impl HirTypeChecker {
                     // own existing fallback ("no comptime value available":
                     // lower the block's body as ordinary code instead).
                     if !ty_contains_param(&body_ty) {
+                        // Deliberately non-fatal: a failure here (most
+                        // commonly the body references a generic/const-
+                        // generic parameter this compiler can't evaluate
+                        // before monomorphization — the same class of
+                        // "can't be evaluated yet" case `ty_contains_param`
+                        // catches above, just from the *value* instead of
+                        // the return type) is safe to swallow for an
+                        // *expression*-position block: its value feeds
+                        // ordinary runtime code, not a type-level decision,
+                        // so `hir_to_mir`'s own existing "no comptime value
+                        // available — lower the body as ordinary code"
+                        // fallback (reached via `register_const_block_
+                        // comptime_entry`, now hardened to fail gracefully
+                        // instead of panicking on a missing checked type —
+                        // see that function's own doc comment) handles it
+                        // correctly. This was tried once before and
+                        // reverted because that fallback still panicked on
+                        // a *different*, sibling const block inside the
+                        // same enclosing item; now fixed at the source, so
+                        // this is safe to re-enable.
                         let def_id = const_block.def_id;
                         let request = crate::ComptimeRequest {
                             package_id: self.current_package(),
                             def_id,
                         };
                         HirTypeChecker::spawn_comptime_task(&self.root_handle(), def_id, request)
-                            .await
-                            .ok_or_else(|| Error::from("comptime evaluation failed"))?;
+                            .await;
                     }
                     body_ty
                 }

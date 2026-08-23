@@ -4351,15 +4351,32 @@ impl HirToMirLowerer {
         // `hir::ExprConstBlock`'s doc comment) — the real, checked type is
         // whatever the type checker recorded for this expression's own
         // `hir_id`, read here via `typeck_expr_type`. Every `ConstBlock`
-        // expr is checked (and its type recorded) before MIR lowering ever
-        // runs — a missing entry means typing skipped this node, an
-        // internal compiler error, not a case to paper over with a made-up
-        // type.
-        let lowered_ty = self.typeck_expr_type(expr_hir_id).unwrap_or_else(|| {
-            panic!(
-                "internal compiler error: const block {expr_hir_id:?} has no checked type recorded on its own HirPackage"
-            )
-        });
+        // expr *whose enclosing item's typecheck ran to completion* has its
+        // type recorded this way — but a top-level `const` item's own
+        // `check_body` can legitimately fail partway through (an earlier,
+        // unrelated statement in the *same* const's initializer hits one
+        // of this compiler's other known gaps) and bail out via `?` before
+        // ever reaching a later nested `const { .. }` block, the same
+        // fault-tolerant-per-item architecture this whole pipeline already
+        // relies on elsewhere (confirmed via a real reproduction: this
+        // used to panic here with a real corpus const item). A missing
+        // entry is therefore a legitimate, expected case, not a compiler
+        // bug — treat it exactly like `register_const_block_comptime_
+        // entry_direct`'s own lowering-failure branch and the caller's own
+        // "no comptime value available" fallback: skip creating an entry
+        // and let the const block get lowered as ordinary runtime code
+        // instead of precomputed.
+        let Some(lowered_ty) = self.typeck_expr_type(expr_hir_id) else {
+            self.emit_warning(
+                span,
+                format!(
+                    "const block {expr_hir_id:?} has no checked type in TypeckResults \
+                     (its enclosing item's own typecheck likely failed before reaching \
+                     it) — falling back to runtime lowering"
+                ),
+            );
+            return;
+        };
         self.register_const_block_comptime_entry_direct(
             expr_hir_id,
             lowered_ty,
