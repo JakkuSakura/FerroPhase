@@ -916,38 +916,44 @@ impl HirTypeChecker {
                         }
                         arg_types.push(actual);
                     }
-                    // Fully-qualified trait-method UFCS syntax
-                    // (`Add::add(lhs, rhs)`, `Shl::shl(*self, other)`) —
-                    // generated en masse by std's `forward_ref_binop!`/
-                    // `forward_ref_unop!` macros (`internal_macros.rs`).
-                    // `Add`/`Shl`/etc. resolve to nothing at HIR-lowering
-                    // time (a trait name standing alone in value position
-                    // isn't a def/local/module the resolver knows how to
-                    // bind), so `callee_ty` is `Error` here. The first
-                    // call argument (`lhs`/`self`) is always the receiver
-                    // for this call shape, so resolve the method the same
-                    // way `.method()` call syntax already does, keyed off
-                    // its concrete type.
                     // Trait-qualified UFCS syntax (`Add::add(lhs, rhs)`,
-                    // `Shl::shl(*self, other)`) — generated en masse by
-                    // std's `forward_ref_binop!`/`forward_ref_unop!` macros
-                    // (`internal_macros.rs`). `expr_path_ty` already
-                    // resolves the base segment to the trait's own `DefId`
-                    // (see `ast_to_hir`'s type-relative path resolution),
-                    // but which *impl* of that trait applies depends on the
-                    // call's own arguments, which aren't known until here —
-                    // the first call argument (`lhs`/`self`) is always the
-                    // receiver for this call shape, so resolve the method
-                    // the same way `.method()` call syntax already does,
-                    // keyed off its concrete type.
+                    // `Ord::max(a, b)`) — generated en masse by std's
+                    // `forward_ref_binop!`/`forward_ref_unop!` macros
+                    // (`internal_macros.rs`) and used directly by default
+                    // trait methods like `Ord::max`/`min`. `expr_path_ty`
+                    // already resolves the base segment to the trait's own
+                    // `DefId` (see `ast_to_hir`'s type-relative path
+                    // resolution), but which *impl* of that trait applies
+                    // depends on the call's own arguments, which aren't
+                    // known until here — the first call argument (`lhs`/
+                    // `self`) is always the receiver for this call shape,
+                    // so resolve the method the same way `.method()` call
+                    // syntax already does, keyed off its concrete type.
                     if matches!(callee_ty.kind, TyKind::Error(_)) {
                         if let hir::ExprKind::Path(path) = &callee.kind {
                             if path.segments.len() == 2 {
                                 if let Some(receiver_ty) = arg_types.first().cloned() {
                                     let method_name = path.segments[1].name.clone();
-                                    if let Some(sig) =
+                                    // The receiver may itself still be a
+                                    // generic type parameter (`fn max<T:
+                                    // Ord>(a: T, b: T) -> T { Ord::max(a,
+                                    // b) }` — the real body of `Ord::max`'s
+                                    // own default implementation elsewhere
+                                    // in std) — there is no concrete impl
+                                    // to search in that case, so resolve
+                                    // against the parameter's own bounds
+                                    // instead, exactly like `T::method(..)`
+                                    // does when the base segment itself
+                                    // names the parameter.
+                                    let sig = if let TyKind::Param(param) = &receiver_ty.kind {
+                                        self.generic_param_bound_method_signature(
+                                            &param.name,
+                                            &method_name,
+                                        )?
+                                    } else {
                                         self.method_declared_signature_at(&receiver_ty, &method_name)?
-                                    {
+                                    };
+                                    if let Some(sig) = sig {
                                         tracing::debug!(
                                             trait_name = %path.segments[0].name,
                                             method = %method_name,
