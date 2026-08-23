@@ -1,118 +1,19 @@
-use fp_core::ast::{Ty, Value};
-use fp_core::hir;
-use fp_core::hir::HirId;
-use fp_core::hir::ty::Ty as HirTy;
+use fp_core::ast::Ty;
 use fp_core::ast::path::QualifiedPath;
 use fp_core::span::Span;
 use std::collections::HashMap;
 
-/// Semantic information produced by HIR type checking. HIR itself remains a
-/// source-shaped tree; inferred types and resolutions are keyed by HIR node.
-#[derive(Debug, Clone, Default)]
-pub struct TypeckResults {
-    pub expr_types: HashMap<HirId, HirTy>,
-    pub type_expr_types: HashMap<HirId, HirTy>,
-    pub pat_types: HashMap<HirId, HirTy>,
-    pub resolutions: HashMap<HirId, hir::Res>,
-    pub method_resolutions: HashMap<HirId, hir::DefId>,
-    pub generic_call_args: HashMap<HirId, GenericCallResolution>,
-    pub generic_method_args: HashMap<HirId, GenericCallResolution>,
-    pub const_types: HashMap<hir::DefId, HirTy>,
-    pub const_values: HashMap<hir::DefId, Value>,
-    /// Comptime-evaluated values of `const { ... }` blocks, keyed by the
-    /// block expression's own `HirId` (const-blocks are anonymous, so
-    /// unlike named const items they have no `DefId` to key by).
-    pub const_block_values: HashMap<HirId, Value>,
-}
-
-#[derive(Debug, Clone)]
-pub struct GenericCallResolution {
-    pub def_id: hir::DefId,
-    pub args: Vec<HirTy>,
-}
-
-impl TypeckResults {
-    pub fn record_expr_type(&mut self, id: HirId, ty: HirTy) {
-        self.expr_types.insert(id, ty);
+/// Builds a typing-stage diagnostic through the shared
+/// `fp_core::diagnostics::Diagnostic` type directly — no separate
+/// `TypingDiagnostic` type; typing diagnostics use the same common
+/// diagnostics manager every other pipeline stage does.
+pub fn typing_diagnostic(message: impl Into<String>, span: Option<Span>) -> fp_core::diagnostics::Diagnostic<String> {
+    let mut diagnostic =
+        fp_core::diagnostics::Diagnostic::error(message.into()).with_source_context("typing".to_string());
+    if let Some(span) = span {
+        diagnostic = diagnostic.with_span(span);
     }
-
-    pub fn record_type_expr_type(&mut self, id: HirId, ty: HirTy) {
-        self.type_expr_types.insert(id, ty);
-    }
-
-    pub fn record_pat_type(&mut self, id: HirId, ty: HirTy) {
-        self.pat_types.insert(id, ty);
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum TypingDiagnosticLevel {
-    Error,
-    Warning,
-}
-
-pub struct TypingDiagnostic {
-    pub level: TypingDiagnosticLevel,
-    pub message: String,
-    pub span: Option<Span>,
-}
-
-impl TypingDiagnostic {
-    pub fn error(message: impl Into<String>) -> Self {
-        Self {
-            level: TypingDiagnosticLevel::Error,
-            message: message.into(),
-            span: None,
-        }
-    }
-
-    pub fn error_with_span(message: impl Into<String>, span: Span) -> Self {
-        Self {
-            level: TypingDiagnosticLevel::Error,
-            message: message.into(),
-            span: Some(span),
-        }
-    }
-
-    pub fn warning(message: impl Into<String>) -> Self {
-        Self {
-            level: TypingDiagnosticLevel::Warning,
-            message: message.into(),
-            span: None,
-        }
-    }
-
-    pub fn warning_with_span(message: impl Into<String>, span: Span) -> Self {
-        Self {
-            level: TypingDiagnosticLevel::Warning,
-            message: message.into(),
-            span: Some(span),
-        }
-    }
-
-    pub fn is_error(&self) -> bool {
-        matches!(self.level, TypingDiagnosticLevel::Error)
-    }
-
-    /// Renders through the shared `fp_core::diagnostics::Diagnostic` type —
-    /// the same conversion `fp-cli`'s post-success diagnostic reporting
-    /// already performs, reused here so a pre-empted compile's error
-    /// message is built from identical formatting.
-    pub fn as_core_diagnostic(&self) -> fp_core::diagnostics::Diagnostic<String> {
-        let mut rendered = match self.level {
-            TypingDiagnosticLevel::Error => {
-                fp_core::diagnostics::Diagnostic::error(self.message.clone())
-            }
-            TypingDiagnosticLevel::Warning => {
-                fp_core::diagnostics::Diagnostic::warning(self.message.clone())
-            }
-        }
-        .with_source_context("typing".to_string());
-        if let Some(span) = self.span {
-            rendered = rendered.with_span(span);
-        }
-        rendered
-    }
+    diagnostic
 }
 
 pub struct TypingOutcome {

@@ -10,7 +10,7 @@ use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 
 use crate::TypingContext;
-use crate::types::{GenericCallResolution, TypeckResults};
+use fp_core::hir::{GenericCallResolution, PackageTypes};
 use std::rc::Rc;
 
 /// State shared by every per-item type-checking task spawned for one
@@ -20,57 +20,38 @@ use std::rc::Rc;
 /// multiple items' checks can be concurrently in-flight (one suspended
 /// awaiting another's task) on the same `ExecutorHandle`.
 pub struct TypingShared {
-    program: Rc<hir::Package>,
+    /// The whole compiled workspace's HIR, as of when this package's type
+    /// checking started: every already-published dependency package, plus
+    /// this package's own (still in-progress, not yet published) HIR,
+    /// inserted under its own `PackageId` at construction (see `new`).
+    /// Both `HirId` and `DefId` already carry their owning `PackageId` (see
+    /// `hir::DefId`'s own doc comment), so any lookup by id — same-package
+    /// or cross-package alike — routes through this one `Program` via
+    /// `Program::item`/`def_path`/etc.; there's no separate same-package
+    /// (`program.def_map`) vs cross-package (a `WorkspaceContext` handle)
+    /// lookup path to keep in sync.
+    program: Rc<hir::Program>,
+    /// Which entry in `program` is the package actually being checked —
+    /// needed for iterating just this package's own items (the initial
+    /// per-item spawn loop) and for snapshotting the package's own,
+    /// not-yet-published HIR into a `ComptimeRequest.current`.
+    current_package: hir::PackageId,
     /// Every item task writes its own contribution here as it finishes;
     /// another item's task awaiting this one (see `expr_path_ty`'s
     /// same-package `Const` lookup) reads back through the same cell —
     /// this is what makes same-package forward references resolve
     /// regardless of `program.items`' textual order.
-    results: RefCell<TypeckResults>,
-    typing_context: Option<Rc<TypingContext>>,
+    results: RefCell<PackageTypes>,
+    typing_context: Rc<TypingContext>,
     executor: ExecutorHandle,
-    /// Lazily-built, memoized snapshot of every item `method_output` scans
-    /// to find a method's owning `impl` — this program's own items plus
-    /// every other loaded package's (`typing_context`'s `env_ctx::
-    /// hir_definitions()`). Neither source changes once type checking of
-    /// this program has begun, but `method_output` runs once per method
-    /// call *expression*, and both sources were previously being cloned
-    /// (whole HIR programs, for every other package) from scratch on every
-    /// single call — for a large program (e.g. the vendored std library)
-    /// this made every method call pay an O(workspace size) cost. Built
-    /// once (shared across every item's task, since it's expensive,
-    /// read-only-once-built, and doesn't depend on which item is currently
-    /// being checked), reused as a cheap `Rc` clone for the rest of the
-    /// check.
-    impl_lookup_items: RefCell<Option<Rc<Vec<hir::Item>>>>,
-    /// Lazily-built, memoized fast-reject index over `impl_lookup_items`:
-    /// for every `impl` item whose self-type is a resolved nominal path
-    /// (`TypeExprKind::Path` with `Res::Def(def_id)` — a struct/enum's own
-    /// real `DefId`, already resolved during HIR lowering, before this
-    /// pass ever runs), maps `def_id` to that impl's index in
-    /// `impl_lookup_items`. `method_output` used to fully type-check every
-    /// impl's self-type (`check_type_expr`, plus a `generic_args_compatible`
-    /// call) before even checking whether it could possibly match the
-    /// receiver — once per method-call/index expression, over every impl
-    /// in the whole workspace. For an ADT receiver (the overwhelming common
-    /// case), only impls bucketed under that exact `DefId` can ever match
-    /// (see `method_output`'s own `matches_receiver` match arms: an ADT
-    /// receiver only ever matches an impl whose self-type also resolves to
-    /// `TyKind::Adt` with the same `did`), so this index lets that lookup
-    /// skip straight to the real candidates.
-    impl_items_by_receiver_def: RefCell<Option<Rc<HashMap<hir::DefId, Vec<usize>>>>>,
     /// Lazily-built, memoized: a member `DefId` (an impl method/
     /// assoc-const, or an enum variant) -> its enclosing *top-level*
-    /// item's own `DefId` (itself a key in `program.def_map`, unlike the
-    /// member). Same-package only — mirrors `resolve_top_level_def_id`'s
+    /// item's own `DefId` (itself a key in a package's `def_map`, unlike
+    /// the member). Current-package only — mirrors `resolve_top_level_def_id`'s
     /// and `expr_path_ty`'s two associated-lookup fallbacks' original
-    /// scope, which never looked past `program.items` either (a
-    /// cross-package impl method has its own, separate fallback via
-    /// `typing_context.env_ctx.find_hir_impl_method`). Fixes the same
-    /// O(items) linear scan (with a nested per-impl/per-enum scan)
-    /// `impl_items_by_receiver_def` already fixed for `method_output` —
-    /// previously repeated once per same-package item/const reference
-    /// expression and once per unresolved value-path expression.
+    /// scope, which never looked past the current package's own items
+    /// either (`spawn_item_task` only ever spawns tasks for this
+    /// package's own top-level items).
     member_to_owning_item: RefCell<Option<Rc<HashMap<hir::DefId, hir::DefId>>>>,
     /// Memoized `function_signature` results, keyed by the function's own
     /// `output` type's `HirId` (stable per declared function, independent
@@ -82,8 +63,8 @@ pub struct TypingShared {
     /// method called from thousands of sites across a large program like
     /// the vendored std) re-typechecked its own signature from scratch on
     /// every single call, the same class of O(workspace) blowup already
-    /// fixed once for `method_output` (see `impl_lookup_items`'s doc
-    /// comment above) but left unaddressed here.
+    /// fixed once for `method_output`'s own fast-reject candidate search
+    /// (`hir::Program::impls_for_adt`) but left unaddressed here.
     function_signature_cache: RefCell<HashMap<hir::HirId, Ty>>,
     /// Memoized `check_type_expr(&impl_item.self_ty)` results, keyed by
     /// the impl's own `self_ty` `TypeExpr`'s `HirId` (stable per declared
@@ -140,18 +121,26 @@ enum ParamSlot {
 }
 
 impl TypingShared {
-    fn new(program: hir::Package, typing_context: Option<Rc<TypingContext>>) -> Rc<Self> {
-        let executor = typing_context
-            .as_ref()
-            .map(|context| context.executor.clone())
-            .unwrap_or_else(|| fp_core::executor::CompilerExecutor::new().handle());
+    /// Builds the unified `program: Rc<hir::Program>` by cloning
+    /// `dependency_program` (a cheap `Rc`-map clone, not a deep one — see
+    /// `hir::Program`'s own `packages` field) and adding `current_package`
+    /// (still in progress, not yet published) into it last, via
+    /// `Program::add_package`.
+    pub fn new(
+        current_package: hir::Package,
+        dependency_program: Option<Rc<hir::Program>>,
+        typing_context: Rc<TypingContext>,
+        executor: ExecutorHandle,
+    ) -> Rc<Self> {
+        let package_id = current_package.id;
+        let mut program = dependency_program.as_deref().cloned().unwrap_or_default();
+        program.add_package(Rc::new(current_package));
         Rc::new(Self {
             program: Rc::new(program),
-            results: RefCell::new(TypeckResults::default()),
+            current_package: package_id,
+            results: RefCell::new(PackageTypes::default()),
             typing_context,
             executor,
-            impl_lookup_items: RefCell::new(None),
-            impl_items_by_receiver_def: RefCell::new(None),
             member_to_owning_item: RefCell::new(None),
             function_signature_cache: RefCell::new(HashMap::new()),
             checked_impl_self_ty_cache: RefCell::new(HashMap::new()),
@@ -161,10 +150,24 @@ impl TypingShared {
         })
     }
 
-    /// Read-only access to this package's own HIR — for diagnostics (e.g.
-    /// resolving a stalled task's key back to a human-readable item path).
+    /// Read-only access to the package actually being checked — for
+    /// diagnostics (e.g. resolving a stalled task's key back to a
+    /// human-readable item path) and same-package-only scans.
     pub fn program(&self) -> &hir::Package {
-        &self.program
+        self.program
+            .package(self.current_package)
+            .expect("current_package is always inserted into program at construction")
+    }
+
+    /// An owned `Rc` clone of the package actually being checked — for
+    /// callers that need to hold onto it past `self`'s own lifetime (e.g.
+    /// `ComptimeRequest.current`).
+    fn program_rc(&self) -> Rc<hir::Package> {
+        self.program
+            .packages
+            .get(&self.current_package)
+            .cloned()
+            .expect("current_package is always inserted into program at construction")
     }
 
     /// Lazily builds and memoizes `member_to_owning_item` (see its doc
@@ -173,7 +176,7 @@ impl TypingShared {
     fn member_to_owning_item(&self) -> Rc<HashMap<hir::DefId, hir::DefId>> {
         if self.member_to_owning_item.borrow().is_none() {
             let mut index = HashMap::new();
-            for item in &self.program.items {
+            for item in &self.program().items {
                 match &item.kind {
                     hir::ItemKind::Impl(impl_item) => {
                         for member in &impl_item.items {
@@ -262,12 +265,10 @@ impl HirTypeChecker {
     /// finishes to decide overall pass/fail, so this doesn't silently
     /// let a genuinely broken package look fully typed.
     fn record_error(&self, message: impl Into<String>) {
-        if let Some(context) = &self.shared.typing_context {
-            context
-                .diagnostics
-                .borrow_mut()
-                .push(crate::types::TypingDiagnostic::error(message));
-        }
+        self.shared
+            .typing_context
+            .diagnostics
+            .add_diagnostic(crate::types::typing_diagnostic(message, None));
     }
 
     /// `record_error` plus a `Ty::error()` placeholder, for `Result<Ty>`
@@ -282,12 +283,10 @@ impl HirTypeChecker {
     /// offending expression's span in scope, so the diagnostic is
     /// locatable instead of a bare, file/line-less message.
     fn record_error_with_span(&self, message: impl Into<String>, span: fp_core::span::Span) {
-        if let Some(context) = &self.shared.typing_context {
-            context
-                .diagnostics
-                .borrow_mut()
-                .push(crate::types::TypingDiagnostic::error_with_span(message, span));
-        }
+        self.shared
+            .typing_context
+            .diagnostics
+            .add_diagnostic(crate::types::typing_diagnostic(message, Some(span)));
     }
 
     /// `error_ty`, but with a real span attached — see `record_error_with_span`.
@@ -298,24 +297,18 @@ impl HirTypeChecker {
 
     /// Like `record_error`, but specifically for `typecheck_item`'s own
     /// catch — an item's `check_item` returned a hard `Err` and its check
-    /// aborted outright, leaving a real gap in `TypeckResults` for
+    /// aborted outright, leaving a real gap in `PackageTypes` for
     /// whatever that item didn't finish recording (unlike the pervasive,
     /// deliberately non-fatal `record_error`/`error_ty` calls sprinkled
     /// through `check_expr`/`check_block`, e.g. `require_same`'s isolated
-    /// mismatches, which recover and leave no gap). Also pushed onto
-    /// `item_check_failures`, a second channel `TypingContext::
-    /// has_typing_errors` keys off of specifically so it can gate later
-    /// stages on real gaps without also tripping on every recovered,
-    /// harmless mismatch.
+    /// mismatches, which recover and leave no gap). Tagged with
+    /// `ITEM_CHECK_FAILURE_CODE` so `TypingContext::has_typing_errors` can
+    /// gate later stages on real gaps without also tripping on every
+    /// recovered, harmless mismatch also sitting in the same manager.
     fn record_item_check_failure(&self, message: impl Into<String>) {
-        let message = message.into();
-        self.record_error(message.clone());
-        if let Some(context) = &self.shared.typing_context {
-            context
-                .item_check_failures
-                .borrow_mut()
-                .push(crate::types::TypingDiagnostic::error(message));
-        }
+        let diagnostic = crate::types::typing_diagnostic(message, None)
+            .with_code(crate::context::ITEM_CHECK_FAILURE_CODE);
+        self.shared.typing_context.diagnostics.add_diagnostic(diagnostic);
     }
 }
 
@@ -335,7 +328,7 @@ impl Drop for GenericScope<'_> {
 /// stays O(1) except for actual impl members) — an O(1) index lookup via
 /// `TypingShared::member_to_owning_item` otherwise (see its doc comment).
 fn resolve_top_level_def_id(shared: &TypingShared, def_id: hir::DefId) -> hir::DefId {
-    if shared.program.def_map.contains_key(&def_id) {
+    if shared.program().def_map.contains_key(&def_id) {
         return def_id;
     }
     shared
@@ -345,98 +338,50 @@ fn resolve_top_level_def_id(shared: &TypingShared, def_id: hir::DefId) -> hir::D
         .unwrap_or(def_id)
 }
 
-/// Spawn one type-checking task per top-level item in `program`, sharing
-/// results/caches across them via `TypingShared` — this is what makes
-/// same-package forward references (a `const` or comptime block referring
-/// to another item later in `program.items`) resolve regardless of textual
-/// order: each item's task, on demand, awaits whatever other item it needs
-/// via `get_or_spawn`, rather than assuming the linear walk already reached
-/// it. Read the final result back out via `finish_package_typecheck` once
-/// the returned future resolves.
-pub fn spawn_package_typecheck(
-    program: hir::Package,
-    typing_context: Option<Rc<TypingContext>>,
-) -> (Rc<TypingShared>, crate::BoxFuture<'static, Result<()>>) {
-    let shared = TypingShared::new(program, typing_context);
-    let items = shared.program.items.clone();
-    let handles: Vec<_> = items
-        .iter()
-        .map(|item| spawn_item_task(&shared, item.def_id))
-        .collect();
-    let joined: crate::BoxFuture<'static, Result<()>> = Box::pin(async move {
-        for handle in handles {
-            handle.await;
-        }
-        Ok(())
-    });
-    (shared, joined)
-}
-
-/// Read the final `(hir::Package, TypeckResults)` out of `shared` — only
-/// meaningful once every task `spawn_package_typecheck` spawned has
+/// Read the final `(hir::Package, PackageTypes)` out of `shared` — only
+/// meaningful once every per-item task (see `spawn_item_task`) has
 /// settled (i.e. its returned future resolved).
-pub fn finish_package_typecheck(shared: &Rc<TypingShared>) -> (hir::Package, TypeckResults) {
-    (
-        shared.program.as_ref().clone(),
-        shared.results.borrow().clone(),
-    )
+pub fn finish_package_typecheck(shared: &Rc<TypingShared>) -> (hir::Package, PackageTypes) {
+    (shared.program().clone(), shared.results.borrow().clone())
 }
 
 /// Get-or-spawn the task that type-checks `def_id` (resolved to its
 /// enclosing top-level item first — see `resolve_top_level_def_id`),
 /// keyed so any number of dependents (another item's task, or the initial
 /// per-package spawn loop) share the same in-flight/completed attempt
-/// instead of re-checking it.
-fn spawn_item_task(shared: &Rc<TypingShared>, def_id: hir::DefId) -> TaskHandle<()> {
+/// instead of re-checking it. Errors from checking the item itself are
+/// recorded (via `record_item_check_failure`, against this item
+/// specifically) rather than propagated — one item's failure never stops
+/// any other item's task from completing, which is what "a package almost
+/// never fails as a whole" means in practice.
+pub fn spawn_item_task(shared: &Rc<TypingShared>, def_id: hir::DefId) -> TaskHandle<()> {
     let def_id = resolve_top_level_def_id(&shared, def_id);
     let key = format!("typecheck:{def_id:?}");
     let shared = shared.clone();
-    shared
-        .executor
-        .clone()
-        .get_or_spawn(key, move || {
-            Box::pin(typecheck_item(shared, def_id)) as Pin<Box<dyn Future<Output = ()>>>
-        })
-}
-
-/// Ensure `def_id` (a same-package item referenced by whatever item is
-/// currently being checked) has been type-checked, on demand — awaiting
-/// this shares the same underlying task as every other caller asking for
-/// `def_id` (see `spawn_item_task`). A genuine cycle (this item
-/// transitively depending on the item that's awaiting it) surfaces as a
-/// stalled `ExecutorHandle` (`has_parked_tasks`), not as a hang or a wrong
-/// answer — the driver's polling loop is what turns that into a
-/// diagnostic; from this function's point of view it's just a suspend.
-pub(crate) async fn ensure_item_checked(shared: &Rc<TypingShared>, def_id: hir::DefId) {
-    spawn_item_task(shared, def_id).await
-}
-
-/// Type-check exactly one top-level item. Errors are recorded (via
-/// `record_error`, against this item specifically) rather than propagated
-/// — one item's failure never stops any other item's task from
-/// completing, which is what "a package almost never fails as a whole"
-/// means in practice.
-pub async fn typecheck_item(shared: Rc<TypingShared>, def_id: hir::DefId) {
-    let Some(item) = shared.program.def_map.get(&def_id).cloned() else {
-        return;
-    };
-    let mut checker = HirTypeChecker {
-        shared,
-        locals: vec![HashMap::new()],
-        generic_scopes: Vec::new(),
-        self_types: Vec::new(),
-        assoc_types: Vec::new(),
-        expected_expr_types: Vec::new(),
-        pending_type_const_blocks: Vec::new(),
-        refinement_hints: HashMap::new(),
-    };
-    if let Err(error) = checker.check_item(&item).await {
-        checker.record_item_check_failure(format!("{error}"));
-        return;
-    }
-    if let Err(error) = checker.resolve_pending_type_const_blocks().await {
-        checker.record_item_check_failure(format!("{error}"));
-    }
+    shared.executor.clone().get_or_spawn(key, move || {
+        Box::pin(async move {
+            let Some(item) = shared.program().def_map.get(&def_id).cloned() else {
+                return;
+            };
+            let mut checker = HirTypeChecker {
+                shared,
+                locals: vec![HashMap::new()],
+                generic_scopes: Vec::new(),
+                self_types: Vec::new(),
+                assoc_types: Vec::new(),
+                expected_expr_types: Vec::new(),
+                pending_type_const_blocks: Vec::new(),
+                refinement_hints: HashMap::new(),
+            };
+            if let Err(error) = checker.check_item(&item).await {
+                checker.record_item_check_failure(format!("{error}"));
+                return;
+            }
+            if let Err(error) = checker.resolve_pending_type_const_blocks().await {
+                checker.record_item_check_failure(format!("{error}"));
+            }
+        }) as Pin<Box<dyn Future<Output = ()>>>
+    })
 }
 
 impl HirTypeChecker {
@@ -448,9 +393,7 @@ impl HirTypeChecker {
         let pending = std::mem::take(&mut self.pending_type_const_blocks);
         for (hir_id, body) in pending {
             let body_ty = self.check_expr(&body).await?;
-            let Some(context) = self.shared.typing_context.clone() else {
-                continue;
-            };
+            let context = self.shared.typing_context.clone();
             // See the matching comment in `check_expr`'s `ConstBlock` arm:
             // snapshot-and-drop the `Ref` guard before the request, not
             // inline in its field list, or it stays borrowed across the
@@ -458,8 +401,8 @@ impl HirTypeChecker {
             let typeck_results_snapshot = self.shared.results.borrow().clone();
             let value = context
                 .request_comptime(crate::ComptimeRequest {
-                    program: context.env_ctx.hir_program(),
-                    current: self.shared.program.clone(),
+                    program: self.shared.program.clone(),
+                    current: self.shared.program_rc(),
                     typeck_results: typeck_results_snapshot,
                     block: hir::Block {
                         hir_id,
@@ -803,7 +746,7 @@ impl HirTypeChecker {
                         &callee.kind
                     {
                         path.res.as_ref().and_then(|res| match res {
-                            hir::Res::Def(def_id) => match self.shared.program.def_map.get(def_id)
+                            hir::Res::Def(def_id) => match self.shared.program.item(*def_id)
                             {
                                 Some(item) => match &item.kind {
                                     hir::ItemKind::Function(function) => {
@@ -1152,7 +1095,8 @@ impl HirTypeChecker {
                 }
                 hir::ExprKind::ConstBlock(const_block) => {
                     let body_ty = self.check_expr(&const_block.body).await?;
-                    if let Some(context) = self.shared.typing_context.clone() {
+                    let context = self.shared.typing_context.clone();
+                    {
                         // Record the outer const-block expression's own type
                         // under its own `hir_id` *before* snapshotting below —
                         // `check_expr`'s generic post-match recording (this
@@ -1176,8 +1120,8 @@ impl HirTypeChecker {
                         let typeck_results_snapshot = self.shared.results.borrow().clone();
                         let value = context
                             .request_comptime(crate::ComptimeRequest {
-                                program: context.env_ctx.hir_program(),
-                                current: self.shared.program.clone(),
+                                program: self.shared.program.clone(),
+                                current: self.shared.program_rc(),
                                 typeck_results: typeck_results_snapshot,
                                 block: hir::Block {
                                     hir_id: expr.hir_id,
@@ -1880,10 +1824,10 @@ impl HirTypeChecker {
         // `hir::Package::type_alias_targets`'s doc comment), so its
         // `DefId` has no `def_map` entry to look up; expand it in place by
         // checking its already-lowered target type expression instead.
-        if let Some(target) = self.shared.program.type_alias_targets.get(&def_id).cloned() {
+        if let Some(target) = self.shared.program.type_alias_target(def_id).cloned() {
             return self.check_type_expr(&target);
         }
-        let Some(item) = self.shared.program.def_map.get(&def_id).cloned() else {
+        let Some(item) = self.shared.program.item(def_id).cloned() else {
             return Ok(self.error_ty(format!("type definition `{def_id}` was not found")));
         };
         let (flags, variants) = match &item.kind {
@@ -2113,23 +2057,10 @@ impl HirTypeChecker {
     /// standard-library collection types that a synthesized function
     /// signature (see `collection_constructor_signature`) needs to name as
     /// its output type, since normal path resolution never runs for them.
+    /// O(1) per package via `hir::Package::struct_defs_by_name` (built once
+    /// per package, not scanned per lookup).
     fn well_known_struct_def_id(&self, name: &str) -> Option<hir::DefId> {
-        let find_in = |items: &[hir::Item]| {
-            items.iter().find_map(|item| match &item.kind {
-                hir::ItemKind::Struct(def) if def.name.as_str() == name => Some(item.def_id),
-                _ => None,
-            })
-        };
-        if let Some(def_id) = find_in(&self.shared.program.items) {
-            return Some(def_id);
-        }
-        if let Some(context) = &self.shared.typing_context {
-            // Borrows each dependency package just long enough to scan its
-            // HIR items in place, instead of `hir_definitions()`'s full
-            // clone of every package's whole HIR `Program`.
-            return context.env_ctx.find_hir_struct_def_id(name);
-        }
-        None
+        self.shared.program.struct_def_id(name)
     }
 
     fn well_known_struct_ty(&self, name: &str, args: Vec<GenericArg>) -> Option<Ty> {
@@ -2185,7 +2116,7 @@ impl HirTypeChecker {
                     .join("::")
             )));
         };
-        let Some(item) = self.shared.program.def_map.get(&def_id).cloned() else {
+        let Some(item) = self.shared.program.item(def_id).cloned() else {
             // `shared` is an owned `Rc` clone (cheap — it's the same
             // `Rc<TypingShared>` `self.shared` already is), not a borrow
             // of `self` — so `item`/`impl_item` below can stay borrowed
@@ -2196,7 +2127,7 @@ impl HirTypeChecker {
             // borrow of `self` that was never actually necessary.
             let shared = self.shared.clone();
             let owner_id = shared.member_to_owning_item().get(&def_id).copied();
-            let found = owner_id.and_then(|owner_id| shared.program.def_map.get(&owner_id)).and_then(|item| {
+            let found = owner_id.and_then(|owner_id| shared.program.item(owner_id)).and_then(|item| {
                 let hir::ItemKind::Impl(impl_item) = &item.kind else {
                     return None;
                 };
@@ -2220,32 +2151,53 @@ impl HirTypeChecker {
                 scope.self_types.pop();
                 return result;
             }
-            if let Some(context) = &self.shared.typing_context {
-                // Borrows each dependency package just long enough to scan
-                // its HIR items in place, instead of `hir_definitions()`'s
-                // full clone of every package's whole HIR `Program`. The
-                // `Rc` this returns is itself memoized by `def_id` (see
-                // `WorkspaceContext::impl_method_cache`'s doc comment), so
-                // everything below borrows out of it rather than cloning.
-                if let Some(cached) = context.env_ctx.find_hir_impl_method(def_id) {
-                    let (generics, self_ty, impl_items, function) = &*cached;
-                    let mut scope = self.generic_scope(generics);
-                    let self_ty = scope.check_type_expr(self_ty)?;
-                    scope.self_types.push(self_ty);
-                    let assoc_types = scope.impl_assoc_types(impl_items)?;
-                    scope.assoc_types.push(assoc_types);
-                    let result = scope.function_signature(function);
-                    scope.assoc_types.pop();
-                    scope.self_types.pop();
-                    return result;
-                }
+            // Any package's own `impl_method_item_index` (built once per
+            // package, see `hir::Package::index_derived_lookups`) gives the
+            // enclosing impl's item index directly — same-package or
+            // cross-package alike, since `def_id` already carries the
+            // owning `package_id` and `self.shared.program` now holds
+            // every package uniformly.
+            let cross_package_method = self
+                .shared
+                .program
+                .package(def_id.package_id)
+                .and_then(|package| {
+                    let impl_def_id = package.impl_method_item_index.get(&def_id)?;
+                    package.def_map.get(impl_def_id)
+                })
+                .and_then(|item| {
+                    let hir::ItemKind::Impl(impl_item) = &item.kind else {
+                        return None;
+                    };
+                    impl_item.items.iter().find_map(|member| {
+                        if member.def_id != def_id {
+                            return None;
+                        }
+                        match &member.kind {
+                            hir::ImplItemKind::Method(function) => {
+                                Some((impl_item.generics.clone(), impl_item.self_ty.clone(), impl_item.items.clone(), function.clone()))
+                            }
+                            _ => None,
+                        }
+                    })
+                });
+            if let Some((generics, self_ty, impl_items, function)) = cross_package_method {
+                let mut scope = self.generic_scope(&generics);
+                let self_ty = scope.check_type_expr(&self_ty)?;
+                scope.self_types.push(self_ty);
+                let assoc_types = scope.impl_assoc_types(&impl_items)?;
+                scope.assoc_types.push(assoc_types);
+                let result = scope.function_signature(&function);
+                scope.assoc_types.pop();
+                scope.self_types.pop();
+                return result;
             }
             let matched_enum_item = self
                 .shared
                 .member_to_owning_item()
                 .get(&def_id)
                 .copied()
-                .and_then(|owner_id| self.shared.program.def_map.get(&owner_id))
+                .and_then(|owner_id| self.shared.program.item(owner_id))
                 .filter(|item| matches!(&item.kind, hir::ItemKind::Enum(_)))
                 .cloned();
             if let Some(enum_item) = matched_enum_item {
@@ -2295,7 +2247,7 @@ impl HirTypeChecker {
             {
                 self.check_type_expr(&constant.ty)
             }
-            hir::ItemKind::Const(constant) if def_id.package_id != self.shared.program.id => {
+            hir::ItemKind::Const(constant) if def_id.package_id != self.shared.current_package => {
                 // `program.def_map` is pre-seeded with every dependency
                 // package's own merged definitions (`seed_workspace_
                 // definitions`), so a foreign const's item is found here
@@ -2333,7 +2285,7 @@ impl HirTypeChecker {
                     .get(&def_id)
                     .is_none()
                 {
-                    ensure_item_checked(&self.shared, def_id).await;
+                    spawn_item_task(&self.shared, def_id).await;
                 }
                 Ok(self
                     .shared
@@ -2519,27 +2471,27 @@ impl HirTypeChecker {
         def_id: hir::DefId,
         substitutions: &HashMap<ty::ParamTy, Ty>,
     ) -> Result<Option<Vec<Ty>>> {
-        let function = match self.shared.program.def_map.get(&def_id) {
+        let function = match self.shared.program.item(def_id) {
             Some(item) => match &item.kind {
                 hir::ItemKind::Function(function) => Some(function.clone()),
                 _ => None,
             },
-            // `def_map` only ever holds *top-level* items (struct/enum/fn/
-            // const/impl) — an `impl` block's own methods are never
-            // flattened into it as their own entries. A UFCS associated-
-            // function call (`HashMap::from(..)`) resolves straight to such
-            // an impl-member `DefId`, so `def_map.get` above always misses
-            // for it. Same two-step fallback `expr_path_ty` already uses to
-            // resolve the very same callee path's own type: this package's
-            // own impl blocks first (`self.shared.program.items`, since
-            // `def_map` never holds *this* package's own items either),
-            // then `find_hir_impl_method` for a dependency's.
+            // `item`/`def_map` only ever holds *top-level* items
+            // (struct/enum/fn/const/impl) — an `impl` block's own methods
+            // are never flattened into it as their own entries. A UFCS
+            // associated-function call (`HashMap::from(..)`) resolves
+            // straight to such an impl-member `DefId`, so the lookup above
+            // always misses for it — `impl_method_item_index` (built once
+            // per package) gives the enclosing impl's item index directly,
+            // same-package or cross-package alike, since `def_id` already
+            // carries its owning `package_id`.
             None => self
                 .shared
                 .program
-                .items
-                .iter()
-                .find_map(|item| {
+                .package(def_id.package_id)
+                .and_then(|package| {
+                    let impl_def_id = package.impl_method_item_index.get(&def_id)?;
+                    let item = package.def_map.get(impl_def_id)?;
                     let hir::ItemKind::Impl(impl_item) = &item.kind else {
                         return None;
                     };
@@ -2547,18 +2499,11 @@ impl HirTypeChecker {
                         if impl_member.def_id != def_id {
                             return None;
                         }
-                        let hir::ImplItemKind::Method(function) = &impl_member.kind else {
-                            return None;
-                        };
-                        Some(function.clone())
+                        match &impl_member.kind {
+                            hir::ImplItemKind::Method(function) => Some(function.clone()),
+                            _ => None,
+                        }
                     })
-                })
-                .or_else(|| {
-                    self.shared
-                        .typing_context
-                        .as_ref()
-                        .and_then(|context| context.env_ctx.find_hir_impl_method(def_id))
-                        .map(|cached| cached.3.clone())
                 }),
         };
         let Some(function) = function else {
@@ -2941,21 +2886,18 @@ impl HirTypeChecker {
             TyKind::Adt(receiver, _) => Some(receiver.did),
             _ => None,
         };
-        let impl_items = self.impl_lookup_items();
-        // See `method_output`'s matching copy of this fast-reject index
-        // lookup for why this is safe: an ADT receiver can only ever match
-        // an impl whose self-type also resolves to `TyKind::Adt` with the
-        // same `did`.
-        let candidate_indices: Vec<usize> = match receiver_def {
-            Some(def_id) => self
-                .impl_items_by_receiver_def()
-                .get(&def_id)
-                .cloned()
-                .unwrap_or_default(),
-            None => (0..impl_items.len()).collect(),
+        // `hir::Program::impls_for_adt` is the fast-reject path: an ADT
+        // receiver can only ever match an impl whose self-type also
+        // resolves to `TyKind::Adt` with the same `did` — for a
+        // non-resolved-ADT receiver, every impl in the workspace is a
+        // candidate (`all_impls`). Program cloned out first so the
+        // borrow doesn't outlive the `&mut self` calls below.
+        let program = self.shared.program.clone();
+        let candidates: Vec<hir::Item> = match receiver_def {
+            Some(def_id) => program.impls_for_adt(def_id).cloned().collect(),
+            None => program.all_impls().cloned().collect(),
         };
-        for &item_index in &candidate_indices {
-            let item = &impl_items[item_index];
+        for item in &candidates {
             let hir::ItemKind::Impl(impl_item) = &item.kind else {
                 continue;
             };
@@ -3110,24 +3052,20 @@ impl HirTypeChecker {
             TyKind::Adt(receiver, _) => Some(receiver.did),
             _ => None,
         };
-        let impl_items = self.impl_lookup_items();
         // An ADT receiver can only ever match an impl whose self-type also
         // resolves to `TyKind::Adt` with the same `did` (see the
         // `matches_receiver` match below) — go straight to that bucket via
-        // the fast-reject index instead of fully type-checking every
-        // impl's self-type in the workspace. A non-ADT receiver (rare:
-        // extension impls on primitives/tuples/etc.) falls back to
-        // checking every impl, exactly as before.
-        let candidate_indices: Vec<usize> = match receiver_def {
-            Some(def_id) => self
-                .impl_items_by_receiver_def()
-                .get(&def_id)
-                .cloned()
-                .unwrap_or_default(),
-            None => (0..impl_items.len()).collect(),
+        // `hir::Program::impls_for_adt` instead of fully type-checking
+        // every impl's self-type in the workspace. A non-ADT receiver
+        // (rare: extension impls on primitives/tuples/etc.) falls back to
+        // checking every impl, exactly as before. `program` is cloned out
+        // first so the borrow doesn't outlive the `&mut self` calls below.
+        let program = self.shared.program.clone();
+        let candidates: Vec<hir::Item> = match receiver_def {
+            Some(def_id) => program.impls_for_adt(def_id).cloned().collect(),
+            None => program.all_impls().cloned().collect(),
         };
-        for &item_index in &candidate_indices {
-            let item = &impl_items[item_index];
+        for item in &candidates {
             let hir::ItemKind::Impl(impl_item) = &item.kind else {
                 continue;
             };
@@ -3249,7 +3187,7 @@ impl HirTypeChecker {
         if let Some(cached) = self.shared.resolved_trait_defs.borrow().get(&def_id) {
             return Some(cached.clone());
         }
-        let item = self.shared.program.def_map.get(&def_id)?;
+        let item = self.shared.program.item(def_id)?;
         let hir::ItemKind::Trait(tr) = &item.kind else {
             return None;
         };
@@ -3275,14 +3213,9 @@ impl HirTypeChecker {
             TyKind::Adt(receiver, _) => receiver.did,
             _ => return None,
         };
-        let impl_items = self.impl_lookup_items();
-        let candidate_indices = self
-            .impl_items_by_receiver_def()
-            .get(&receiver_def)
-            .cloned()
-            .unwrap_or_default();
-        for item_index in candidate_indices {
-            let item = &impl_items[item_index];
+        let program = self.shared.program.clone();
+        let candidates: Vec<hir::Item> = program.impls_for_adt(receiver_def).cloned().collect();
+        for item in &candidates {
             let hir::ItemKind::Impl(impl_item) = &item.kind else {
                 continue;
             };
@@ -3321,56 +3254,6 @@ impl HirTypeChecker {
         None
     }
 
-    /// Lazily builds and memoizes `TypingShared::impl_lookup_items` (see its
-    /// doc comment) on first use — shared across every item's task, since
-    /// it's expensive and doesn't depend on which item is being checked —
-    /// then returns a cheap `Rc` clone on every later call.
-    fn impl_lookup_items(&self) -> Rc<Vec<hir::Item>> {
-        if self.shared.impl_lookup_items.borrow().is_none() {
-            let mut items = self.shared.program.items.clone();
-            if let Some(context) = &self.shared.typing_context {
-                items.extend(
-                    context
-                        .env_ctx
-                        .hir_definitions()
-                        .into_iter()
-                        .flat_map(|(_, program, _)| program.items.clone()),
-                );
-            }
-            *self.shared.impl_lookup_items.borrow_mut() = Some(Rc::new(items));
-        }
-        self.shared
-            .impl_lookup_items
-            .borrow()
-            .clone()
-            .expect("just populated above")
-    }
-
-    /// Lazily builds and memoizes `TypingShared::impl_items_by_receiver_def`
-    /// (see its doc comment) on first use, then returns a cheap `Rc` clone
-    /// on every later call.
-    fn impl_items_by_receiver_def(&self) -> Rc<HashMap<hir::DefId, Vec<usize>>> {
-        if self.shared.impl_items_by_receiver_def.borrow().is_none() {
-            let items = self.impl_lookup_items();
-            let mut index: HashMap<hir::DefId, Vec<usize>> = HashMap::new();
-            for (item_index, item) in items.iter().enumerate() {
-                let hir::ItemKind::Impl(impl_item) = &item.kind else {
-                    continue;
-                };
-                if let hir::TypeExprKind::Path(path) = &impl_item.self_ty.kind {
-                    if let Some(hir::Res::Def(def_id)) = path.res {
-                        index.entry(def_id).or_default().push(item_index);
-                    }
-                }
-            }
-            *self.shared.impl_items_by_receiver_def.borrow_mut() = Some(Rc::new(index));
-        }
-        self.shared
-            .impl_items_by_receiver_def
-            .borrow()
-            .clone()
-            .expect("just populated above")
-    }
 
     fn method_generic_args(
         &self,
@@ -3542,7 +3425,7 @@ impl HirTypeChecker {
             };
             return Ok(field_ty.clone());
         }
-        let Some(item) = self.shared.program.def_map.get(&adt.did).cloned() else {
+        let Some(item) = self.shared.program.item(adt.did).cloned() else {
             return Ok(self.error_ty("struct definition was not found"));
         };
         let hir::ItemKind::Struct(def) = item.kind else {
@@ -3624,7 +3507,7 @@ impl HirTypeChecker {
             return Ok(None);
         };
         if matches!(
-            self.shared.program.def_map.get(&adt.did).map(|item| &item.kind),
+            self.shared.program.item(adt.did).map(|item| &item.kind),
             Some(hir::ItemKind::Struct(_))
         ) {
             Ok(Some(payload))
@@ -3647,19 +3530,18 @@ impl HirTypeChecker {
         &self,
         variant_id: hir::DefId,
     ) -> Option<(hir::Item, hir::EnumVariant)> {
-        // `program.items` only ever holds *this* package's own items — a
-        // dependency's enums (e.g. `std`'s `Option`/`Result`, or any other
-        // package's own enum) are copied only into `program.def_map` by
-        // `seed_workspace_definitions` (deliberately not duplicated into
-        // `items`, see its own doc comment), so a variant scan restricted
-        // to `items` alone can never match a foreign enum's variant
-        // `DefId` — exactly the same distinction `field_ty`'s struct
-        // lookup (`program.def_map.get(&adt.did)`) already accounts for.
-        self.shared.program
-            .items
-            .iter()
-            .chain(self.shared.program.def_map.values())
-            .find_map(|item| {
+        // `enum_variant_item_index` is a direct `variant_id -> owning enum
+        // item's DefId` lookup (maintained incrementally, see
+        // `hir::Package::add_item`), so this never scans package items to
+        // find the owning enum.
+        self.shared
+            .program
+            .package(variant_id.package_id)
+            .and_then(|package| {
+                let enum_def_id = package.enum_variant_item_index.get(&variant_id)?;
+                package.def_map.get(enum_def_id)
+            })
+            .and_then(|item| {
                 let hir::ItemKind::Enum(def) = &item.kind else {
                     return None;
                 };
@@ -4225,11 +4107,23 @@ mod tests {
     }
 
     /// Test-only stand-in for the old `HirTypeChecker::new(program).check()`
-    /// single-future entry point — drives `spawn_package_typecheck`'s
-    /// per-item tasks to completion on a standalone executor (no driver,
-    /// no comptime requests expected in these tests).
-    fn typecheck_program_sync(program: hir::Package) -> Result<(hir::Package, TypeckResults)> {
-        let (shared, mut future) = spawn_package_typecheck(program, None);
+    /// single-future entry point — spawns one task per top-level item (see
+    /// `spawn_item_task`) and drives them to completion on a standalone
+    /// executor (no driver, no comptime requests expected in these tests).
+    fn typecheck_program_sync(program: hir::Package) -> Result<(hir::Package, PackageTypes)> {
+        let executor = fp_core::executor::CompilerExecutor::new().handle();
+        let shared = TypingShared::new(program, None, Rc::new(TypingContext::new()), executor);
+        let item_ids: Vec<_> = shared.program().items.iter().map(|item| item.def_id).collect();
+        let handles: Vec<_> = item_ids
+            .into_iter()
+            .map(|def_id| spawn_item_task(&shared, def_id))
+            .collect();
+        let mut future: crate::BoxFuture<'static, Result<()>> = Box::pin(async move {
+            for handle in handles {
+                handle.await;
+            }
+            Ok(())
+        });
         let waker = std::task::Waker::noop();
         let mut cx = std::task::Context::from_waker(waker);
         loop {

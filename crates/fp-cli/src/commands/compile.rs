@@ -398,7 +398,7 @@ async fn run_compile_pipeline(
             ))
         })?;
     compiler::drain_driver(session.driver())?;
-    let workspace = session.driver().state.borrow().typing_ctx.env_ctx.clone();
+    let workspace = session.driver().state.borrow().workspace.clone();
 
     // Phase 2: serialize + write every package now that the workspace-wide
     // mutability set (and any other cross-package info) is complete.

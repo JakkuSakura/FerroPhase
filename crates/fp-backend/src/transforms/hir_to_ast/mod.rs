@@ -17,7 +17,7 @@ use fp_core::hir;
 use fp_core::hir::DefId;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
-use fp_typing::TypeckResults;
+use fp_core::hir::PackageTypes;
 
 /// Lifts a typechecked `hir::Package` back into a plain item list — the
 /// shape every backend serializer (Kotlin, Python, Go, ...) already knows
@@ -27,12 +27,12 @@ use fp_typing::TypeckResults;
 /// Carries the source `&hir::Package` (needed for a couple of program-wide
 /// lookups: the single-`Query`-item check, closure-signature reconstruction,
 /// and now `DefId` → path resolution via `program.def_paths`) and an
-/// optional `&TypeckResults` — optional because two of the three call sites
+/// optional `&PackageTypes` — optional because two of the three call sites
 /// never run the typer at all (`fp-backend`'s own roundtrip helpers), so
 /// there's nothing to attach in those cases.
 pub struct HirToAstLifter<'a> {
     program: &'a hir::Package,
-    typeck: Option<&'a TypeckResults>,
+    typeck: Option<&'a PackageTypes>,
     /// Cross-package lookup for a resolved `DefId`'s real identity (e.g.
     /// `WorkspaceContext::find_hir_enum_for_variant`, consulted by
     /// `lift_path`) — `None` for the roundtrip/test call sites that never
@@ -71,7 +71,7 @@ pub struct HirToAstLifter<'a> {
 impl<'a> HirToAstLifter<'a> {
     pub fn new(
         program: &'a hir::Package,
-        typeck: Option<&'a TypeckResults>,
+        typeck: Option<&'a PackageTypes>,
         workspace: Option<&'a fp_core::ast::workspace::WorkspaceContext>,
     ) -> Self {
         Self {
@@ -785,7 +785,7 @@ impl<'a> HirToAstLifter<'a> {
             }
             hir::ExprKind::Closure(closure) => {
                 // Each param's own resolved type (if the typechecker
-                // recorded one — `TypeckResults::pat_types`, keyed by the
+                // recorded one — `PackageTypes::pat_types`, keyed by the
                 // pattern's own `HirId`) gets promoted into a real
                 // `PatternKind::Type` annotation here, since `lift_pat`
                 // itself has no typeck access and a closure param is a
@@ -946,7 +946,7 @@ impl<'a> HirToAstLifter<'a> {
                 };
                 // Prefer an explicit, fully-written source-level annotation
                 // (`let x: T = ...`); otherwise fall back to the typer's own
-                // resolved binding type (`TypeckResults::pat_types`, keyed by
+                // resolved binding type (`PackageTypes::pat_types`, keyed by
                 // the pattern's `HirId`) — needed both for bindings like
                 // `let mut x = None;` whose real type is only known once
                 // later reassignments/usage are unified, not from the

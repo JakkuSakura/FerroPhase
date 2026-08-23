@@ -18,7 +18,6 @@ use fp_core::{
     lir::LirDataLayout,
 };
 use fp_lang::FerroFrontend;
-use fp_typing::{TypingDiagnostic, TypingDiagnosticLevel};
 
 use crate::languages::in_memory::in_memory_provider;
 use crate::languages::package_provider_registry::provider_for_language;
@@ -401,7 +400,7 @@ fn compile_source_file(
 }
 
 pub fn drain_driver(driver: &mut CompilerDriver) -> Result<()> {
-    emit_typing_diagnostics(&driver.state.borrow().typing_ctx.diagnostics.borrow())
+    emit_typing_diagnostics(&driver.state.borrow().typing_ctx.diagnostics.get_diagnostics())
 }
 
 pub fn parse_expr_with_mode(source: &str, parse_mode: FrontendParseMode) -> Result<File> {
@@ -530,26 +529,21 @@ fn emit_frontend_diagnostics(diagnostics: &[Diagnostic]) -> Result<()> {
     Ok(())
 }
 
-fn emit_typing_diagnostics(diagnostics: &[TypingDiagnostic]) -> Result<()> {
-    let rendered: Vec<Diagnostic<String>> = diagnostics.iter().map(as_core_diagnostic).collect();
+fn emit_typing_diagnostics(diagnostics: &[Diagnostic]) -> Result<()> {
     DiagnosticManager::emit(
-        &rendered,
+        diagnostics,
         Some("typing"),
         &DiagnosticDisplayOptions::default(),
     );
     if diagnostics
         .iter()
-        .any(|diagnostic| matches!(diagnostic.level, TypingDiagnosticLevel::Error))
+        .any(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
     {
         return Err(CliError::Compilation(
             "typing stage failed; see diagnostics for details".to_string(),
         ));
     }
     Ok(())
-}
-
-fn as_core_diagnostic(diagnostic: &TypingDiagnostic) -> Diagnostic<String> {
-    diagnostic.as_core_diagnostic()
 }
 
 struct CompilerIdentity {
@@ -615,8 +609,7 @@ impl LoweredProgram {
         self.driver
             .state
             .borrow()
-            .typing_ctx
-            .env_ctx
+            .workspace
             .compiled_package(&self.package_id)
             .ok_or_else(|| {
                 CliError::Compilation(format!(
@@ -630,7 +623,7 @@ impl LoweredProgram {
     /// this package itself), as a `WorkspaceContext` — the input every
     /// `TargetBackend` reads from.
     fn compiled_workspace(&self) -> Result<std::rc::Rc<fp_core::ast::workspace::WorkspaceContext>> {
-        Ok(self.driver.state.borrow().typing_ctx.env_ctx.clone())
+        Ok(self.driver.state.borrow().workspace.clone())
     }
 
     #[allow(dead_code)]

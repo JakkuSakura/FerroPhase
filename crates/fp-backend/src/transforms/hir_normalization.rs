@@ -9,7 +9,7 @@
 //! `try_lift_method_call_as_intrinsic`): each checked
 //! `program.op_defs.get(def_id)` (an `OpKind`) keyed by a resolved
 //! `hir::Res::Def(def_id)` (for `Path`/`Struct`/`Call`) or
-//! `TypeckResults::method_resolutions` (for `MethodCall`), and on a hit
+//! `PackageTypes::method_resolutions` (for `MethodCall`), and on a hit
 //! built an `IntrinsicCall(CallKind::Op(op))` node. Promoting this
 //! recognition into a real HIR mutation (rather than doing it lazily,
 //! only inside the AST-lifter) lets `Native`'s `hir_to_mir` pipeline see
@@ -30,7 +30,7 @@
 use fp_core::hir;
 use fp_core::hir::DefId;
 use fp_core::intrinsics::CallKind;
-use fp_typing::TypeckResults;
+use fp_core::hir::PackageTypes;
 
 /// Resolves the promoted `CallKind` for a definition recognized purely by
 /// its own resolved identity (`DefId`) — an `#[op(...)]`-tagged
@@ -52,7 +52,7 @@ fn resolve_op_call_kind(op_defs: &std::collections::HashMap<DefId, fp_core::intr
 /// used by the `Native` pipeline, which lowers un-promoted `Op`s as
 /// ordinary calls to their real stub bodies instead (see
 /// `hir_materialization.rs` for why).
-pub fn normalize_program(program: &mut hir::Package, typeck: Option<&TypeckResults>, promote_op_only: bool) {
+pub fn normalize_program(program: &mut hir::Package, typeck: Option<&PackageTypes>, promote_op_only: bool) {
     // Snapshot `op_defs` up front: we can't hold `&program.op_defs` while
     // mutating `program.items` in place, and this map is small/cheap to
     // clone relative to the HIR it's consulted against.
@@ -65,7 +65,7 @@ pub fn normalize_program(program: &mut hir::Package, typeck: Option<&TypeckResul
 fn normalize_item(
     item: &mut hir::Item,
     op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::PortableOp>,
-    typeck: Option<&TypeckResults>,
+    typeck: Option<&PackageTypes>,
     promote_op_only: bool,
 ) {
     match &mut item.kind {
@@ -109,7 +109,7 @@ fn normalize_item(
 fn normalize_block(
     block: &mut hir::Block,
     op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::PortableOp>,
-    typeck: Option<&TypeckResults>,
+    typeck: Option<&PackageTypes>,
     promote_op_only: bool,
 ) {
     for stmt in &mut block.stmts {
@@ -123,7 +123,7 @@ fn normalize_block(
 fn normalize_stmt(
     stmt: &mut hir::Stmt,
     op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::PortableOp>,
-    typeck: Option<&TypeckResults>,
+    typeck: Option<&PackageTypes>,
     promote_op_only: bool,
 ) {
     match &mut stmt.kind {
@@ -147,7 +147,7 @@ fn normalize_stmt(
 fn normalize_expr(
     expr: &mut hir::Expr,
     op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::PortableOp>,
-    typeck: Option<&TypeckResults>,
+    typeck: Option<&PackageTypes>,
     promote_op_only: bool,
 ) {
     normalize_expr_inner(expr, op_defs, typeck, promote_op_only, true);
@@ -178,7 +178,7 @@ fn normalize_expr(
 fn normalize_expr_inner(
     expr: &mut hir::Expr,
     op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::PortableOp>,
-    typeck: Option<&TypeckResults>,
+    typeck: Option<&PackageTypes>,
     promote_op_only: bool,
     promote_self: bool,
 ) {
@@ -326,7 +326,7 @@ fn normalize_expr_inner(
 fn try_promote_op(
     expr: &mut hir::Expr,
     op_defs: &std::collections::HashMap<DefId, fp_core::intrinsics::PortableOp>,
-    typeck: Option<&TypeckResults>,
+    typeck: Option<&PackageTypes>,
 ) -> Option<hir::ExprKind> {
     match &expr.kind {
         hir::ExprKind::Path(path) => {

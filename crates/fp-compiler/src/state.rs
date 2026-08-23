@@ -1,18 +1,21 @@
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use fp_core::{
     ast::Value,
+    ast::workspace::WorkspaceContext,
     executor::ExecutorHandle,
     hir, lir, mir,
 };
-use fp_typing::{TypeckResults, TypingContext};
+use fp_typing::TypingContext;
+use fp_core::hir::PackageTypes;
 
 use crate::error::CompilerDriverError;
 use crate::{BytecodeId, ConstValueId, HirId, LirId, MirId, RuntimeValueId};
 
 pub struct CompilerState {
     hir: BTreeMap<HirId, hir::Package>,
-    hir_typeck: BTreeMap<HirId, TypeckResults>,
+    hir_typeck: BTreeMap<HirId, PackageTypes>,
     mir: BTreeMap<MirId, mir::Program>,
     lir: BTreeMap<LirId, lir::LirProgram>,
     runtime_entrypoints: BTreeMap<LirId, hir::DefId>,
@@ -20,6 +23,15 @@ pub struct CompilerState {
     /// MIR-level const values for HIR→MIR lowering seed.
     resolved_const_values: BTreeMap<String, mir::Constant>,
     pub typing_ctx: std::rc::Rc<TypingContext>,
+    /// The compiled-package registry for this compilation session — moved
+    /// here from `TypingContext` (which held it as a bare pass-through
+    /// field with no forwarding methods of its own) since this is squarely
+    /// driver-owned state, not typing-owned.
+    pub workspace: Rc<WorkspaceContext>,
+    /// Target ABI data shared by typing-triggered comptime blocks and
+    /// normal MIR-to-LIR lowering for this compilation session — same
+    /// rationale as `workspace` above.
+    pub data_layout: lir::LirDataLayout,
     runtime_values: BTreeMap<RuntimeValueId, Value>,
     /// What the requested output target can express directly — see
     /// `fp_core::capabilities::LanguageCapabilities`. Defaults to
@@ -41,6 +53,20 @@ pub struct CompilerState {
 
 impl CompilerState {
     pub fn new(data_layout: lir::LirDataLayout, tasks: ExecutorHandle) -> Self {
+        Self::with_workspace(
+            data_layout,
+            tasks,
+            Rc::new(WorkspaceContext::new(std::sync::Arc::new(
+                fp_core::ast::package::provider::EmptyProvider,
+            ))),
+        )
+    }
+
+    pub fn with_workspace(
+        data_layout: lir::LirDataLayout,
+        tasks: ExecutorHandle,
+        workspace: Rc<WorkspaceContext>,
+    ) -> Self {
         Self {
             hir: BTreeMap::new(),
             hir_typeck: BTreeMap::new(),
@@ -49,13 +75,9 @@ impl CompilerState {
             runtime_entrypoints: BTreeMap::new(),
             const_values: BTreeMap::new(),
             resolved_const_values: BTreeMap::new(),
-            typing_ctx: std::rc::Rc::new(TypingContext::new(
-                data_layout,
-                std::rc::Rc::new(fp_core::ast::workspace::WorkspaceContext::new(
-                    std::sync::Arc::new(fp_core::ast::package::provider::EmptyProvider),
-                )),
-                tasks.clone(),
-            )),
+            typing_ctx: std::rc::Rc::new(TypingContext::new()),
+            workspace,
+            data_layout,
             runtime_values: BTreeMap::new(),
             capabilities: fp_core::capabilities::LanguageCapabilities::NATIVE,
             bytecode: BTreeMap::new(),
@@ -67,7 +89,7 @@ impl CompilerState {
         self.hir.insert(hir_id, hir);
     }
 
-    pub fn insert_hir_typeck(&mut self, hir_id: HirId, results: TypeckResults) {
+    pub fn insert_hir_typeck(&mut self, hir_id: HirId, results: PackageTypes) {
         self.hir_typeck.insert(hir_id, results);
     }
 
@@ -129,7 +151,7 @@ impl CompilerState {
             .ok_or_else(|| CompilerDriverError::MissingHir(hir_id.clone()))
     }
 
-    pub fn hir_typeck(&self, hir_id: &HirId) -> Result<&TypeckResults, CompilerDriverError> {
+    pub fn hir_typeck(&self, hir_id: &HirId) -> Result<&PackageTypes, CompilerDriverError> {
         self.hir_typeck
             .get(hir_id)
             .ok_or_else(|| CompilerDriverError::MissingHir(hir_id.clone()))

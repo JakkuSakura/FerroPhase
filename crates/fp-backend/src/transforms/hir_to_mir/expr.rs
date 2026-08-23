@@ -25,7 +25,7 @@ use fp_core::mir::ty::{
 use fp_core::mir::{self, Symbol};
 use fp_core::ops::format_value_with_spec;
 use fp_core::span::Span;
-use fp_typing::TypeckResults;
+use fp_core::hir::PackageTypes;
 use std::collections::{HashMap, HashSet, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 
@@ -568,7 +568,7 @@ pub struct MirLowering {
     typeck_exprs: HashMap<hir::HirId, Ty>,
     /// Comptime-evaluated `const { ... }` block values, keyed by the
     /// block expression's own `HirId` — populated from
-    /// `TypeckResults::const_block_values`. Looked up directly when
+    /// `PackageTypes::const_block_values`. Looked up directly when
     /// lowering `hir::ExprKind::ConstBlock`/`TypeExprKind::ConstBlock`;
     /// no synthetic item, no string key.
     typeck_const_block_values: HashMap<hir::HirId, Value>,
@@ -764,7 +764,7 @@ impl MirLowering {
     /// Item-scoped lowering for exactly one pending `const { .. }` block,
     /// answering a `fp_typing::ComptimeRequest` directly from its own
     /// self-sufficient snapshot (see `ComptimeRequest`'s doc comment and
-    /// `CompilerDriver::resolve_one_comptime_request`). Unlike `transform`
+    /// `CompilerDriver::resolve_comptime_request_with`). Unlike `transform`
     /// (used for the real, whole-package compile, where every item's body
     /// genuinely needs lowering), this never lowers any function, method,
     /// or const body other than the one synthetic function built directly
@@ -1214,7 +1214,7 @@ impl MirLowering {
         self.resolved_const_values.insert(key.into(), value);
     }
 
-    pub fn with_typeck_results(mut self, results: &TypeckResults) -> Result<Self> {
+    pub fn with_typeck_results(mut self, results: &PackageTypes) -> Result<Self> {
         self.typeck_type_exprs = self.lower_ty_map(results.type_expr_types.iter());
         self.typeck_exprs = self.lower_ty_map(results.expr_types.iter());
         self.typeck_const_block_values = results.const_block_values.clone();
@@ -4202,7 +4202,7 @@ impl MirLowering {
         // `hir::ExprConstBlock` carries no declared type of its own (see
         // `hir::ExprConstBlock`'s doc comment) — the real, checked type is
         // whatever the type checker recorded for this expression's own
-        // `hir_id` in `TypeckResults::expr_types`, already loaded here via
+        // `hir_id` in `PackageTypes::expr_types`, already loaded here via
         // `with_typeck_results`/`typeck_exprs`. Every `ConstBlock` expr is
         // checked (and its type recorded) before MIR lowering ever runs —
         // a missing entry means typing skipped this node, an internal
@@ -4213,7 +4213,7 @@ impl MirLowering {
             .cloned()
             .unwrap_or_else(|| {
                 panic!(
-                    "internal compiler error: const block {expr_hir_id:?} has no checked type in TypeckResults"
+                    "internal compiler error: const block {expr_hir_id:?} has no checked type in PackageTypes"
                 )
             });
         self.register_const_block_comptime_entry_direct(
@@ -4226,7 +4226,7 @@ impl MirLowering {
 
     /// Shared by `register_const_block_comptime_entry` (found incidentally
     /// while walking a body that contains a `const { .. }` block, `ty`
-    /// already resolved from `TypeckResults`) and `transform_comptime_
+    /// already resolved from `PackageTypes`) and `transform_comptime_
     /// request` (fed directly from a `fp_typing::ComptimeRequest`'s own
     /// `typeck_results`/`block.expr`, with no body walk at all) — both just
     /// need the already-checked `ty`/`body` unboxed, not an `hir::
@@ -6275,7 +6275,7 @@ impl MirLowering {
         // fresh synthetic one: on relower (after `CompilerDriver::
         // evaluate_comptime_lir` has run this package's own comptime
         // entries through the real interpreter and `apply_resolved_
-        // comptime_block_values` fed the answer back into `TypeckResults`
+        // comptime_block_values` fed the answer back into `PackageTypes`
         // via `with_typeck_results`), the resolved value is already
         // sitting in `typeck_const_block_values` under this same `hir_id`
         // — consult it here, the same way an inline `ConstBlock` operand

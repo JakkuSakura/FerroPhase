@@ -12,7 +12,6 @@ use fp_lang::FerroIntrinsicNormalizer;
 use fp_typing::TypingContext;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::task::{Context, Poll, Waker};
 use std::rc::Rc;
 
 use crate::{
@@ -89,8 +88,7 @@ impl CompilerDriver {
     fn module_state_key_for(state: &Rc<RefCell<CompilerState>>, path: &QualifiedPath) -> String {
         let package_id = state
             .borrow()
-            .typing_ctx
-            .env_ctx
+            .workspace
             .current_package()
             .map(|package_id| package_id.as_str().to_string());
         match package_id {
@@ -114,21 +112,25 @@ impl CompilerDriver {
         tasks: ExecutorHandle,
         workspace: Rc<fp_core::ast::workspace::WorkspaceContext>,
     ) -> Self {
-        let mut state = CompilerState::new(data_layout.clone(), tasks.clone());
-        state.typing_ctx = Rc::new(TypingContext::new(data_layout, workspace, tasks));
-        Self {
-            state: Rc::new(RefCell::new(state)),
-            interpreter: LirInterpreter::new(),
-            building_packages: HashSet::new(),
-            compiled_packages: HashMap::new(),
-            next_hir_def_id: 0,
-            pipeline: PipelineMode::Native,
-        }
+        let state = CompilerState::with_workspace(data_layout, tasks, workspace);
+        Self::from_state_rc(Rc::new(RefCell::new(state)))
     }
 
     pub fn with_state(state: CompilerState) -> Self {
+        Self::from_state_rc(Rc::new(RefCell::new(state)))
+    }
+
+    /// Shared tail of `with_workspace`/`with_state` — wires up
+    /// `TypingContext`'s `ComptimeResolver` (see `make_comptime_resolver`)
+    /// against this driver's own `state`, which can only happen once `state`
+    /// is behind the same `Rc<RefCell<_>>` every other comptime-resolution
+    /// call site closes over.
+    fn from_state_rc(state: Rc<RefCell<CompilerState>>) -> Self {
+        let resolver = Self::make_comptime_resolver(&state);
+        state.borrow_mut().typing_ctx =
+            Rc::new(TypingContext::new().with_comptime_resolver(resolver));
         Self {
-            state: Rc::new(RefCell::new(state)),
+            state,
             interpreter: LirInterpreter::new(),
             building_packages: HashSet::new(),
             compiled_packages: HashMap::new(),
@@ -177,9 +179,9 @@ impl CompilerDriver {
     /// package itself and its imported dependencies remain shared through
     /// `Rc`; only the lookup context becomes package-local.
     pub fn focus_package(&mut self, package_id: PackageId) -> Result<(), CompilerDriverError> {
-        let parent_context = self.state.borrow().typing_ctx.clone();
-        let package_workspace = parent_context.env_ctx.for_package(package_id.clone());
-        for (dependency_id, package) in parent_context.env_ctx.crates().iter() {
+        let parent_workspace = self.state.borrow().workspace.clone();
+        let package_workspace = parent_workspace.for_package(package_id.clone());
+        for (dependency_id, package) in parent_workspace.crates().iter() {
             if dependency_id != &package_id {
                 package_workspace.import_package(dependency_id.clone(), package.clone());
             }
@@ -187,16 +189,14 @@ impl CompilerDriver {
         if let Some(std_package) = package_workspace.compiled_package(&PackageId::new("std")) {
             package_workspace.install_prelude(std_package);
         }
-        let package = parent_context
-            .env_ctx
+        let package = parent_workspace
             .compiled_package(&package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
         package_workspace.import_package(package_id, package);
-        self.state.borrow_mut().typing_ctx = Rc::new(TypingContext::new(
-            parent_context.data_layout.clone(),
-            Rc::new(package_workspace),
-            parent_context.executor.clone(),
-        ));
+        let resolver = Self::make_comptime_resolver(&self.state);
+        let mut state = self.state.borrow_mut();
+        state.workspace = Rc::new(package_workspace);
+        state.typing_ctx = Rc::new(TypingContext::new().with_comptime_resolver(resolver));
         Ok(())
     }
 
@@ -246,8 +246,7 @@ impl CompilerDriver {
         let _ = module_path;
         let package = self
             .state.borrow()
-            .typing_ctx
-            .env_ctx
+            .workspace
             .compiled_package(package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
         let package = package.borrow();
@@ -279,8 +278,7 @@ impl CompilerDriver {
     ) -> Result<LirId, CompilerDriverError> {
         let package = self
             .state.borrow()
-            .typing_ctx
-            .env_ctx
+            .workspace
             .compiled_package(package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
         let function = self.resolve_entrypoint_def_id(package_id, module_path, function_name)?;
@@ -322,8 +320,7 @@ impl CompilerDriver {
             let package = self
                 .state
                 .borrow()
-                .typing_ctx
-                .env_ctx
+                .workspace
                 .compiled_package(package_id)
                 .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
             let units = self.relower_cached_lir_units(&package).await?;
@@ -341,13 +338,12 @@ impl CompilerDriver {
         package_id: &PackageId,
     ) -> Result<Rc<RefCell<fp_core::ast::package::CompiledPackage>>, CompilerDriverError> {
         let parent_context = self.state.borrow().typing_ctx.clone();
+        let parent_workspace = self.state.borrow().workspace.clone();
         if let Some(package) = self.compiled_packages.get(package_id).cloned() {
-            parent_context
-                .env_ctx
-                .import_package(package_id.clone(), package.clone());
+            parent_workspace.import_package(package_id.clone(), package.clone());
             return Ok(package);
         }
-        if let Some(package) = parent_context.env_ctx.compiled_package(package_id) {
+        if let Some(package) = parent_workspace.compiled_package(package_id) {
             return Ok(package);
         }
         if !self.building_packages.insert(package_id.clone()) {
@@ -356,19 +352,19 @@ impl CompilerDriver {
             )));
         }
 
-        let package_workspace = parent_context.env_ctx.for_package(package_id.clone());
-        self.state.borrow_mut().typing_ctx = Rc::new(TypingContext::new(
-            parent_context.data_layout.clone(),
-            Rc::new(package_workspace),
-            parent_context.executor.clone(),
-        ));
+        let package_workspace = parent_workspace.for_package(package_id.clone());
+        {
+            let resolver = Self::make_comptime_resolver(&self.state);
+            let mut state = self.state.borrow_mut();
+            state.workspace = Rc::new(package_workspace);
+            state.typing_ctx = Rc::new(TypingContext::new().with_comptime_resolver(resolver));
+        }
 
         let result: Result<Rc<RefCell<fp_core::ast::package::CompiledPackage>>, CompilerDriverError> =
             async {
                 let provider = self
                     .state.borrow()
-                    .typing_ctx
-                    .env_ctx
+                    .workspace
                     .provider_for(package_id)
                     .ok_or_else(|| {
                         CompilerDriverError::UnresolvablePackage(package_id.to_string())
@@ -421,10 +417,10 @@ impl CompilerDriver {
                         _ => None,
                     })
                     .collect();
-                let package = self.state.borrow().typing_ctx.env_ctx.begin_package(
+                let package = self.state.borrow().workspace.begin_package(
                     package_id.clone(),
                     source,
-                    self.state.borrow().typing_ctx.data_layout.clone(),
+                    self.state.borrow().data_layout.clone(),
                 );
                 if !precompiled_lir_units.is_empty() {
                     Self::publish_lir_units(&package, package_id, &precompiled_lir_units)?;
@@ -468,13 +464,15 @@ impl CompilerDriver {
             .await;
 
         self.building_packages.remove(package_id);
-        self.state.borrow_mut().typing_ctx = parent_context.clone();
+        {
+            let mut state = self.state.borrow_mut();
+            state.workspace = parent_workspace.clone();
+            state.typing_ctx = parent_context;
+        }
         let package = result?;
         self.compiled_packages
             .insert(package_id.clone(), package.clone());
-        parent_context
-            .env_ctx
-            .import_package(package_id.clone(), package.clone());
+        parent_workspace.import_package(package_id.clone(), package.clone());
         Ok(package)
     }
 
@@ -499,8 +497,7 @@ impl CompilerDriver {
             if dependency_id.as_str() == "std" {
                 self.state
                     .borrow()
-                    .typing_ctx
-                    .env_ctx
+                    .workspace
                     .install_prelude(dependency_package);
             }
         }
@@ -564,13 +561,11 @@ impl CompilerDriver {
     ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
         let hir_package_id = self
             .state.borrow()
-            .typing_ctx
-            .env_ctx
+            .workspace
             .current_package()
             .and_then(|package_id| {
                 self.state.borrow()
-                    .typing_ctx
-                    .env_ctx
+                    .workspace
                     .compiled_package(package_id)
                     .map(|package| package.borrow().package_id)
             })
@@ -601,13 +596,13 @@ impl CompilerDriver {
                 // sets it, matching this field's prior behavior exactly.
                 capabilities: self.state.borrow().capabilities(),
             })
-            .with_workspace(self.state.borrow().typing_ctx.env_ctx.clone());
+            .with_workspace(self.state.borrow().workspace.clone());
         let hir_program = generator.transform_package(&package_source)?;
         self.next_hir_def_id = self.next_hir_def_id.max(generator.next_def_id_value());
         let package_exports = generator.exported_symbols();
         let type_alias_exports = generator.exported_type_aliases();
-        if let Some(package_id) = self.state.borrow().typing_ctx.env_ctx.current_package().cloned() {
-            if let Some(package) = self.state.borrow().typing_ctx.env_ctx.compiled_package(&package_id) {
+        if let Some(package_id) = self.state.borrow().workspace.current_package().cloned() {
+            if let Some(package) = self.state.borrow().workspace.compiled_package(&package_id) {
                 package.borrow_mut().hir_exports.extend(package_exports);
                 package
                     .borrow_mut()
@@ -637,8 +632,7 @@ impl CompilerDriver {
         );
         let current_package_id = self
             .state.borrow()
-            .typing_ctx
-            .env_ctx
+            .workspace
             .current_package()
             .cloned()
             .ok_or_else(|| {
@@ -652,8 +646,7 @@ impl CompilerDriver {
         self.state.borrow_mut().insert_hir_typeck(hir_id.clone(), typeck_results);
         if let Some(package) = self
             .state.borrow()
-            .typing_ctx
-            .env_ctx
+            .workspace
             .compiled_package(&current_package_id)
         {
             package
@@ -666,8 +659,7 @@ impl CompilerDriver {
             if let Some(hir_program) = package.borrow().hir_program.clone() {
                 self.state
                     .borrow()
-                    .typing_ctx
-                    .env_ctx
+                    .workspace
                     .publish_hir_program(hir_program);
             }
         }
@@ -697,7 +689,7 @@ impl CompilerDriver {
                 let lifter = fp_backend::transforms::HirToAstLifter::new(
                     hir,
                     typeck,
-                    Some(state.typing_ctx.env_ctx.as_ref()),
+                    Some(state.workspace.as_ref()),
                 );
                 // `lift_items_by_path` treats an `impl` block as an opaque
                 // placeholder — merge in each impl *method*'s own lifted
@@ -717,8 +709,7 @@ impl CompilerDriver {
             };
             if let Some(pkg) = self
                 .state.borrow()
-                .typing_ctx
-                .env_ctx
+                .workspace
                 .compiled_package(&current_package_id)
             {
                 let mut pkg = pkg.borrow_mut();
@@ -795,8 +786,7 @@ impl CompilerDriver {
                 Ok((mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes, resolved_const_values)) => {
                     if let Some(package) = self
                         .state.borrow()
-                        .typing_ctx
-                        .env_ctx
+                        .workspace
                         .compiled_package(&current_package_id)
                     {
                         package.borrow_mut().mir.program = Some(self.state.borrow().mir(&mir_id)?.clone());
@@ -853,8 +843,7 @@ impl CompilerDriver {
             self.lower_to_mir(&hir_id, &fqp).await?;
         if let Some(package) = self
             .state.borrow()
-            .typing_ctx
-            .env_ctx
+            .workspace
             .compiled_package(&current_package_id)
         {
             package.borrow_mut().mir.program = Some(self.state.borrow().mir(&mir_id)?.clone());
@@ -889,7 +878,7 @@ impl CompilerDriver {
     }
 
     /// Writes `evaluate_comptime_lir`'s real, interpreter-computed values
-    /// back into this package's stored `TypeckResults::const_block_values`
+    /// back into this package's stored `PackageTypes::const_block_values`
     /// (keyed by each block's own `HirId`, via `const_block_hir_id`),
     /// before `relower_cached_lir_units` re-lowers HIR->MIR a second time.
     /// That second lowering pass already has a fast path
@@ -920,8 +909,7 @@ impl CompilerDriver {
     ) -> Result<Vec<fp_core::lir::LirCompileUnit>, CompilerDriverError> {
         let package_id = self
             .state.borrow()
-            .typing_ctx
-            .env_ctx
+            .workspace
             .current_package()
             .cloned()
             .ok_or_else(|| {
@@ -931,8 +919,7 @@ impl CompilerDriver {
             })?;
         let hir_package_id = self
             .state.borrow()
-            .typing_ctx
-            .env_ctx
+            .workspace
             .compiled_package(&package_id)
             .map(|package| package.borrow().package_id)
             .unwrap_or_default();
@@ -966,145 +953,88 @@ impl CompilerDriver {
     }
 
     /// Type-checks `program`. Each `const { .. }` block's `ComptimeRequest`
-    /// (`hir_typeck.rs`'s two `ConstBlock` arms, both genuinely `.await` it —
-    /// suspending there is what lets the executor make progress on other,
-    /// independent items in the meantime, exactly like any other suspend
-    /// point) is answered with a *real* value computed by the interpreter,
-    /// never a placeholder — and answered immediately, not deferred until
-    /// the executor stalls: a `ComptimeRequest` carries its own
-    /// self-sufficient snapshot (`request.program`/`request.typeck_results`,
-    /// captured right after its own body finished type-checking), so
-    /// nothing is gained by waiting. Every request drained this round is
-    /// resolved right here via `resolve_one_comptime_request` (item-scoped —
-    /// see that method's doc comment) and completed on the spot, `Ok` or
-    /// `Err`; a request's own failure only fails the specific item awaiting
-    /// it (per-item isolation, matching `typecheck_item`), not the whole
-    /// package. If a tick makes no executor progress *and* there were no
-    /// requests to resolve, that's a genuine stall — a real dependency
-    /// cycle among same-package items with no comptime request involved at
-    /// all — and the whole type-check fails.
+    /// (`hir_typeck.rs`'s two `ConstBlock` arms, both genuinely `.await` it)
+    /// is answered with a *real* value computed by the interpreter, never a
+    /// placeholder, via `TypingContext`'s `ComptimeResolver`
+    /// (`make_comptime_resolver`) — so an item's task suspends on it and
+    /// resumes naturally, exactly like any other `.await`, with no
+    /// driver-side polling loop involved. A request's own failure only
+    /// fails the specific item awaiting it (per-item isolation, matching
+    /// `typecheck_item`), not the whole package. Same-package items awaiting
+    /// each other (a `const` referencing another item declared later in
+    /// `program.items`) resolve regardless of textual order via
+    /// `fp_typing::spawn_item_task`; a genuine dependency cycle among them
+    /// (impossible to make progress on) surfaces as the ambient
+    /// `CompilerExecutor::run` driving this whole call stalling, not as a
+    /// return from here.
     async fn type_check_program(
         &mut self,
         program: hir::Package,
-    ) -> fp_core::Result<(hir::Package, fp_typing::TypeckResults)> {
+    ) -> fp_core::Result<(hir::Package, fp_core::hir::PackageTypes)> {
         let context = self.state.borrow().typing_ctx.clone();
-        let (shared, mut future) =
-            fp_typing::spawn_package_typecheck(program, Some(context.clone()));
-        loop {
-            let poll = {
-                let waker = Waker::noop();
-                let mut cx = Context::from_waker(waker);
-                future.as_mut().poll(&mut cx)
-            };
-            match poll {
-                Poll::Ready(result) => {
-                    result?;
-                    // rustc-style `tcx.sess.has_errors()` gate: a per-item
-                    // task that hit a real typecheck error still resolves
-                    // the joined future `Ok(())` (see `typecheck_item`'s
-                    // deliberate per-item isolation in `fp-typing`), so
-                    // without this check the resulting, incomplete
-                    // `TypeckResults` would be handed straight to
-                    // HIR->MIR lowering — whose own, unrelated failure
-                    // (triggered by the exact gap this item's aborted
-                    // check left behind) would then mask the real,
-                    // specific diagnostic recorded here.
-                    if context.has_typing_errors() {
-                        // Every diagnostic accumulated so far — not just the
-                        // hard item-check aborts folded into the returned
-                        // `Err` below — goes to stderr, so a recovered/
-                        // non-fatal mismatch elsewhere in the same package
-                        // (which never aborts an item's check, so never
-                        // makes it into the combined `Err` message) is
-                        // still visible when diagnosing a failure.
-                        Self::emit_typing_diagnostics_to_stderr(&context);
-                        let combined = context
-                            .item_check_failures
-                            .borrow()
-                            .iter()
-                            .map(|diagnostic| diagnostic.as_core_diagnostic().to_string())
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        // A real error anywhere is a hard failure: this
-                        // package's `TypeckResults` would otherwise be
-                        // handed straight to HIR->MIR lowering with the
-                        // failed item's types missing.
-                        return Err(fp_core::error::Error::diagnostic(
-                            fp_core::diagnostics::Diagnostic::error(combined),
-                        ));
-                    }
-                    return Ok(fp_typing::finish_package_typecheck(&shared));
-                }
-                Poll::Pending => {
-                    // Drive whichever per-item typecheck tasks are ready —
-                    // this is what lets one item's task (e.g. a same-package
-                    // `const` referencing another declared later in
-                    // `program.items`) await another item's task and make
-                    // real progress, instead of depending on textual order.
-                    let mut progressed = false;
-                    while context.executor.tick().is_some() {
-                        progressed = true;
-                    }
-                    let requests = self.state.borrow().typing_ctx.take_comptime_requests();
-                    for request in requests {
-                        let result = self
-                            .resolve_one_comptime_request(request.request())
-                            .await
-                            .map_err(|error| fp_core::error::Error::from(error.to_string()));
-                        request.complete(result);
-                        progressed = true;
-                    }
-                    if progressed {
-                        continue;
-                    }
-                    if context.executor.has_parked_tasks() {
-                        // A stall has no combined-`Err` diagnostic message
-                        // of its own (unlike the `has_typing_errors` branch
-                        // above) — whatever real, specific diagnostics did
-                        // get recorded before the stall are the only lead on
-                        // *why* the cycle happened, so they must reach
-                        // stderr here or they're lost entirely.
-                        Self::emit_typing_diagnostics_to_stderr(&context);
-                        let keys = context.executor.parked_task_keys();
-                        eprintln!("fp-compiler: {} task(s) still parked at stall:", keys.len());
-                        let key_to_path: std::collections::HashMap<String, String> = shared
-                            .program()
-                            .def_paths
-                            .iter()
-                            .map(|(def_id, path)| (format!("typecheck:{def_id:?}"), path.to_string()))
-                            .collect();
-                        for key in &keys {
-                            let resolved = key_to_path.get(key).cloned().or_else(|| {
-                                Self::find_item_label_by_key(shared.program(), key)
-                            });
-                            eprintln!(
-                                "  {key} -> {}",
-                                resolved.as_deref().unwrap_or("? (not found)")
-                            );
-                        }
-                        return Err(fp_core::error::Error::from(
-                            "HIR type checking stalled: a genuine dependency cycle among \
-                             same-package items prevented further progress",
-                        ));
-                    }
-                    Self::emit_typing_diagnostics_to_stderr(&context);
-                    return Err(fp_core::error::Error::from(
-                        "HIR type checking suspended without a comptime request",
-                    ));
-                }
-            }
+        let env_ctx = self.state.borrow().workspace.clone();
+        let executor = self.state.borrow().tasks.clone();
+        let dependency_program = env_ctx.hir_program();
+        let shared = fp_typing::TypingShared::new(
+            program,
+            Some(dependency_program),
+            context.clone(),
+            executor,
+        );
+        let item_ids: Vec<_> = shared.program().items.iter().map(|item| item.def_id).collect();
+        let handles: Vec<_> = item_ids
+            .into_iter()
+            .map(|def_id| fp_typing::spawn_item_task(&shared, def_id))
+            .collect();
+        for handle in handles {
+            handle.await;
         }
+        // rustc-style `tcx.sess.has_errors()` gate: a per-item task that hit
+        // a real typecheck error still resolves its own `TaskHandle`
+        // successfully (see `typecheck_item`'s deliberate per-item isolation
+        // in `fp-typing`), so without this check the resulting, incomplete
+        // `PackageTypes` would be handed straight to HIR->MIR lowering —
+        // whose own, unrelated failure (triggered by the exact gap this
+        // item's aborted check left behind) would then mask the real,
+        // specific diagnostic recorded here.
+        if context.has_typing_errors() {
+            // Every diagnostic accumulated so far — not just the hard
+            // item-check aborts folded into the returned `Err` below — goes
+            // to stderr, so a recovered/non-fatal mismatch elsewhere in the
+            // same package (which never aborts an item's check, so never
+            // makes it into the combined `Err` message) is still visible
+            // when diagnosing a failure.
+            Self::emit_typing_diagnostics_to_stderr(&context);
+            let combined = context
+                .diagnostics
+                .get_diagnostics()
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.code.as_deref() == Some(fp_typing::context::ITEM_CHECK_FAILURE_CODE)
+                })
+                .map(|diagnostic| diagnostic.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            // A real error anywhere is a hard failure: this package's
+            // `PackageTypes` would otherwise be handed straight to HIR->MIR
+            // lowering with the failed item's types missing.
+            return Err(fp_core::error::Error::diagnostic(
+                fp_core::diagnostics::Diagnostic::error(combined),
+            ));
+        }
+        Ok(fp_typing::finish_package_typecheck(&shared))
     }
 
     /// Prints every diagnostic accumulated on `context` so far to stderr,
-    /// one per line — both the hard item-check aborts (`item_check_failures`)
-    /// and every other recovered/non-fatal mismatch recorded along the way
-    /// (`diagnostics`), since either category can be the real lead on why a
-    /// package's typecheck ultimately failed or stalled, and previously
-    /// neither was visible outside the one combined message folded into a
-    /// success-path `Err` (never emitted at all on the stall path).
+    /// one per line — both the hard item-check aborts and every other
+    /// recovered/non-fatal mismatch recorded along the way (all in the one
+    /// unified `diagnostics` manager), since either category can be the
+    /// real lead on why a package's typecheck ultimately failed or stalled,
+    /// and previously neither was visible outside the one combined message
+    /// folded into a success-path `Err` (never emitted at all on the stall
+    /// path).
     fn emit_typing_diagnostics_to_stderr(context: &fp_typing::TypingContext) {
-        let diagnostics = context.diagnostics.borrow();
+        let diagnostics = context.diagnostics.get_diagnostics();
         if diagnostics.is_empty() {
             return;
         }
@@ -1112,75 +1042,33 @@ impl CompilerDriver {
             "fp-compiler: {} typing diagnostic(s) recorded before failure:",
             diagnostics.len()
         );
-        for diagnostic in diagnostics.iter() {
-            eprintln!("  {}", diagnostic.as_core_diagnostic());
+        for diagnostic in &diagnostics {
+            eprintln!("  {}", diagnostic);
         }
     }
 
-    /// Best-effort fallback for a stalled task's key that `def_paths` has no
-    /// entry for — the common case is a function-local item statement,
-    /// which deliberately never gets a module-qualified registration (see
-    /// `suppress_global_registration_depth` in `ast_to_hir`) and so has no
-    /// `def_paths` entry either. Walks every item (recursing one level into
-    /// function/method bodies, where a local item statement actually
-    /// lives) looking for a matching `DefId`, and reports it by its own
-    /// `HirId`/kind — not a real qualified path (there isn't one), just
-    /// enough to identify which declaration is stuck.
-    fn find_item_label_by_key(program: &hir::Package, key: &str) -> Option<String> {
-        fn scan_block(block: &hir::Block, target: &str, found: &mut Option<String>) {
-            if found.is_some() {
-                return;
-            }
-            for stmt in &block.stmts {
-                if let hir::StmtKind::Item(item) = &stmt.kind {
-                    if format!("typecheck:{:?}", item.def_id) == target {
-                        *found = Some(format!("<local item, kind {:?}>", item.kind));
-                        return;
-                    }
-                    scan_item(item, target, found);
-                }
-            }
-        }
-        fn scan_item(item: &hir::Item, target: &str, found: &mut Option<String>) {
-            if found.is_some() {
-                return;
-            }
-            match &item.kind {
-                hir::ItemKind::Function(function) => {
-                    if let Some(body) = &function.body {
-                        scan_block(body, target, found);
-                    }
-                }
-                hir::ItemKind::Impl(impl_item) => {
-                    for member in &impl_item.items {
-                        if format!("typecheck:{:?}", member.def_id) == target {
-                            *found = Some(format!("<impl member, kind {:?}>", member.kind));
-                            return;
-                        }
-                        if let hir::ImplItemKind::Method(function) = &member.kind {
-                            if let Some(body) = &function.body {
-                                scan_block(body, target, found);
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        let mut found = None;
-        for item in &program.items {
-            if format!("typecheck:{:?}", item.def_id) == key {
-                return Some(format!("<top-level item, kind {:?}>", item.kind));
-            }
-            scan_item(item, key, &mut found);
-            if found.is_some() {
-                break;
-            }
-        }
-        found
+    /// Builds the `fp_typing::ComptimeResolver` a package's `TypingContext`
+    /// awaits directly from `request_comptime` — this is what lets an
+    /// item's typecheck task suspend on a real `const { .. }` block and
+    /// resume naturally once it's answered, with no driver-side polling
+    /// loop pumping a request queue. Only needs `state` (not a full
+    /// `CompilerDriver`, so it can be captured by a `'static` closure and
+    /// handed to `fp-typing` independent of any particular
+    /// `&mut CompilerDriver` call) — every step below already goes through
+    /// `state` via the `_with`-suffixed associated functions.
+    fn make_comptime_resolver(state: &Rc<RefCell<CompilerState>>) -> fp_typing::ComptimeResolver {
+        let state = state.clone();
+        Rc::new(move |request: fp_typing::ComptimeRequest| {
+            let state = state.clone();
+            Box::pin(async move {
+                Self::resolve_comptime_request_with(&state, request)
+                    .await
+                    .map_err(|error| fp_core::error::Error::from(error.to_string()))
+            })
+        })
     }
 
-    /// Resolves exactly one pending comptime request, using only its own
+    /// Resolves exactly one comptime request, using only its own
     /// self-sufficient snapshot — `request.program`/`request.typeck_results`,
     /// captured at the moment its own body finished type-checking (see
     /// `fp_typing::ComptimeRequest`'s doc comment: everything that body can
@@ -1189,21 +1077,18 @@ impl CompilerDriver {
     /// any item's body other than the one synthetic function built from
     /// this request's own `block`/`expected_ty`
     /// (`MirLowering::transform_comptime_request`, via
-    /// `lower_to_mir_for_comptime_request_with`) — called immediately for
-    /// every request as soon as it's dequeued (`type_check_program`'s
-    /// `Poll::Pending` arm), not deferred until the executor stalls. A
-    /// genuine failure here (not "try again later" — there is no "later"
-    /// for this call, its inputs are already final) only fails the one
-    /// item awaiting this specific request, via `request.complete(Err(..))`
-    /// — the same per-item isolation `typecheck_item` already relies on.
-    async fn resolve_one_comptime_request(
-        &mut self,
-        request: &fp_typing::ComptimeRequest,
+    /// `lower_to_mir_for_comptime_request_with`). A genuine failure here
+    /// (not "try again later" — there is no "later" for this call, its
+    /// inputs are already final) only fails the one item awaiting this
+    /// specific request, via the `Err` it returns to its `.await` point —
+    /// the same per-item isolation `typecheck_item` already relies on.
+    async fn resolve_comptime_request_with(
+        state: &Rc<RefCell<CompilerState>>,
+        request: fp_typing::ComptimeRequest,
     ) -> Result<Value, CompilerDriverError> {
-        let package_id = self
-            .state.borrow()
-            .typing_ctx
-            .env_ctx
+        let package_id = state
+            .borrow()
+            .workspace
             .current_package()
             .cloned()
             .ok_or_else(|| {
@@ -1223,7 +1108,7 @@ impl CompilerDriver {
         // to immediately clone it right back out again. Passing them
         // straight through skips that whole round trip.
         let (mir_id, struct_layouts, full_layouts, adt_defs, opaque_payload_sizes, resolved_const_values) =
-            Self::lower_to_mir_for_comptime_request_with(&self.state, &fqp, request)
+            Self::lower_to_mir_for_comptime_request_with(state, &fqp, &request)
                 .await?;
         // Merge onto the current package the same way `compile_package`'s
         // own `lower_to_mir` callers already do — otherwise a struct/enum
@@ -1231,10 +1116,9 @@ impl CompilerDriver {
         // like `Vec::new()` mid-typecheck) never reaches `mir_struct_fields`/
         // `mir_adt_defs`, and `value_to_const_value`'s Adt lookup misses
         // for exactly the case that matters.
-        if let Some(package) = self
-            .state.borrow()
-            .typing_ctx
-            .env_ctx
+        if let Some(package) = state
+            .borrow()
+            .workspace
             .compiled_package(&package_id)
         {
             package.borrow_mut().mir.struct_fields.extend(struct_layouts);
@@ -1244,14 +1128,15 @@ impl CompilerDriver {
                 .mir.resolved_const_values
                 .extend(resolved_const_values);
         }
-        let lir_id = self.lower_to_lir(
+        let lir_id = Self::lower_to_lir_with(
+            state,
             &mir_id,
             &fqp,
             &package_id,
             &full_layouts,
             &opaque_payload_sizes,
         )?;
-        let values = self.evaluate_comptime_lir(&lir_id, &fqp).await?;
+        let values = Self::evaluate_comptime_lir_with(state, &lir_id, &fqp)?;
         values.get(&request.expression_id).cloned().ok_or_else(|| {
             CompilerDriverError::UnresolvableComptime(format!(
                 "expression {} did not produce a comptime value",
@@ -1296,8 +1181,7 @@ impl CompilerDriver {
 
         let package_id = state
             .borrow()
-            .typing_ctx
-            .env_ctx
+            .workspace
             .current_package()
             .cloned()
             .ok_or_else(|| {
@@ -1320,8 +1204,7 @@ impl CompilerDriver {
             // exactly like a real "this evaluates to nothing" result.
             let folded = state
                 .borrow()
-                .typing_ctx
-                .env_ctx
+                .workspace
                 .compiled_package(&package_id)
                 .map(|package| package.borrow().mir.resolved_const_values.clone())
                 .unwrap_or_default();
@@ -1343,8 +1226,7 @@ impl CompilerDriver {
         // now accepts a chain and checks each in turn.
         let dependency_packages: Vec<_> = state
             .borrow()
-            .typing_ctx
-            .env_ctx
+            .workspace
             .crates()
             .values()
             .cloned()
@@ -1706,13 +1588,12 @@ impl CompilerDriver {
         // for the same data a few lines later.
         let dependency_packages: Vec<_> = state
             .borrow()
-            .typing_ctx
-            .env_ctx
+            .workspace
             .crates()
             .iter()
             .map(|(id, package)| (id.clone(), package.clone()))
             .collect();
-        let mut lowering = LirGenerator::new(state.borrow().typing_ctx.data_layout.clone())
+        let mut lowering = LirGenerator::new(state.borrow().data_layout.clone())
             .with_package_id(package_id.clone())
             .with_module_path(path.path().to_key())
             .with_full_layouts(full_layouts.clone())

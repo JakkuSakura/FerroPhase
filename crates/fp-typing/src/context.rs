@@ -1,14 +1,13 @@
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
-use std::task::Poll;
+use std::collections::HashMap;
 use std::task::Waker;
 
 use fp_core::ast::{TypeStruct, Value};
-use fp_core::lir::LirDataLayout;
-use fp_core::ast::workspace::WorkspaceContext;
+use fp_core::diagnostics::DiagnosticManager;
 
-use crate::TypingDiagnostic;
-use crate::types::{GenericMonorph, TypeckResults};
+use crate::types::GenericMonorph;
+use crate::BoxFuture;
+use fp_core::hir::PackageTypes;
 
 pub struct ComptimeRequest {
     /// Every *already-published* package's own HIR (each shared as the
@@ -26,7 +25,7 @@ pub struct ComptimeRequest {
     /// This request's own package — same `Rc` `TypingShared::program`
     /// already is, so this is an `Rc` clone, not a deep clone.
     pub current: std::rc::Rc<fp_core::hir::Package>,
-    pub typeck_results: TypeckResults,
+    pub typeck_results: PackageTypes,
     /// The exact HIR block encountered by the type checker. The driver may
     /// provide a backend entrypoint for it, but must not reconstruct the
     /// block through a synthetic const or a definition lookup.
@@ -37,31 +36,15 @@ pub struct ComptimeRequest {
     pub expected_ty: fp_core::hir::TypeExpr,
 }
 
-pub struct PendingComptimeRequest {
-    pub request: ComptimeRequest,
-    reply: std::rc::Rc<RefCell<ComptimeReply>>,
-}
-
-struct ComptimeReply {
-    result: Option<fp_core::Result<Value>>,
-    wakers: Vec<Waker>,
-}
-
-impl PendingComptimeRequest {
-    pub fn request(&self) -> &ComptimeRequest {
-        &self.request
-    }
-
-    pub fn complete(self, result: fp_core::Result<Value>) {
-        let mut reply = self.reply.borrow_mut();
-        reply.result = Some(result);
-        let wakers = std::mem::take(&mut reply.wakers);
-        drop(reply);
-        for waker in wakers {
-            waker.wake();
-        }
-    }
-}
+/// Resolves one comptime request end-to-end (HIR->MIR->LIR lowering plus
+/// interpretation) — supplied by `fp-compiler` at `TypingContext`
+/// construction, since only the driver's `CompilerState` knows how to do
+/// that; `fp-typing` only knows *when* a request is needed
+/// (`request_comptime`), not how to answer it. Living behind this closure
+/// (rather than a queue the driver polls) is what lets `request_comptime`
+/// just `.await` the answer directly, instead of parking on a reply and
+/// relying on driver-level code to notice and drain a side queue.
+pub type ComptimeResolver = std::rc::Rc<dyn Fn(ComptimeRequest) -> BoxFuture<'static, fp_core::Result<Value>>>;
 
 /// Shared mutable state between the compiler driver and the type inferencer.
 ///
@@ -69,10 +52,15 @@ impl PendingComptimeRequest {
 /// after comptime evaluation).  `RefCell` interior mutability allows both the
 /// driver and the typer to read/write without threading state through function
 /// parameters.
+///
+/// Holds only typing-owned state — the compiled-package registry
+/// (`WorkspaceContext`), target ABI data (`LirDataLayout`), and the shared
+/// task pool (`ExecutorHandle`) all live on `fp-compiler`'s `CompilerState`
+/// instead and get passed explicitly wherever typing needs them, since
+/// `TypingContext` had no real abstraction over them (every caller reached
+/// straight through the field) and `CompilerState` already owns the task
+/// pool independently.
 pub struct TypingContext {
-    /// Target ABI data shared by typing-triggered comptime blocks and normal
-    /// MIR-to-LIR lowering for this compilation session.
-    pub data_layout: LirDataLayout,
     /// Comptime-evaluated const values, keyed by const name.
     /// Driver writes after each comptime pass; typer reads on next pass.
     pub resolved_consts: RefCell<HashMap<String, Value>>,
@@ -81,27 +69,21 @@ pub struct TypingContext {
     /// Driver writes after comptime pass; typer merges into `struct_defs`.
     pub resolved_types: RefCell<HashMap<String, TypeStruct>>,
 
-    /// Compiled dependency crates in topological order.
-    /// The typer queries this for fully-qualified symbol lookups.
-    pub env_ctx: std::rc::Rc<WorkspaceContext>,
-
     /// Accumulated typing diagnostics (warnings + errors) — includes both
     /// genuinely fatal item-check aborts and deliberately non-fatal,
     /// recovered mismatches (e.g. `require_same`'s isolated type
     /// mismatches, recorded via plain `record_error` specifically so one
     /// bad expression doesn't abort the whole item's check). Typer appends
-    /// during inference; driver reads after each pass.
-    pub diagnostics: RefCell<Vec<TypingDiagnostic>>,
-
-    /// Subset of `diagnostics`: only the ones from `typecheck_item`'s own
-    /// catch (`record_item_check_failure`) — i.e. an item's `check_item`
-    /// returned a hard `Err` and the item's check aborted outright, which
-    /// leaves a real gap in `TypeckResults` for whatever that item didn't
-    /// finish recording. Unlike the rest of `diagnostics`, this is safe to
-    /// gate HIR->MIR lowering on (`TypingContext::has_typing_errors`) —
-    /// gating on all of `diagnostics` would also trip on every isolated,
-    /// already-recovered mismatch that never actually left a gap.
-    pub item_check_failures: RefCell<Vec<TypingDiagnostic>>,
+    /// during inference; driver reads after each pass. Backed by the same
+    /// `fp_core::diagnostics::DiagnosticManager` every other pipeline stage
+    /// (frontend parsing, etc.) uses — one unified manager per package's
+    /// typing session (`TypingContext` itself is reset per package by the
+    /// driver), rather than a typing-specific type plus a second, separate
+    /// manager. `record_item_check_failure`'s hard-abort diagnostics are
+    /// tagged with `ITEM_CHECK_FAILURE_CODE` so `has_typing_errors` can
+    /// still distinguish them from an isolated, already-recovered mismatch
+    /// without a second manager.
+    pub diagnostics: DiagnosticManager,
 
     /// Wakers of typing tasks currently suspended on a comptime value (keyed
     /// by const/type-alias name) not yet resolved — see
@@ -122,40 +104,32 @@ pub struct TypingContext {
     /// resolves.
     pub ready_generics: RefCell<HashMap<String, GenericMonorph>>,
 
-    /// Requests made by HIR while checking compile-time constants. The
-    /// driver drains this queue and completes each request; the result is
-    /// delivered to the awaiting checker rather than read from a cache.
-    comptime_requests: RefCell<VecDeque<PendingComptimeRequest>>,
-
-    /// The one shared task pool every suspendable unit of compiler work
-    /// runs through, from HIR typing (one task per item, so a same-package
-    /// forward reference resolves by awaiting that item's own task instead
-    /// of depending on textual order) up through HIR->MIR/MIR->LIR
-    /// per-item lowering and comptime resolution. Living in `fp-core`
-    /// (`fp_core::executor`) is what lets `fp-typing` hold the same
-    /// executor instance the driver (`fp-compiler`) and `fp-backend` also
-    /// hold, without a circular crate dependency.
-    pub executor: fp_core::executor::ExecutorHandle,
+    /// Answers requests made by HIR while checking compile-time constants —
+    /// see `ComptimeResolver`'s doc comment. `None` until `fp-compiler` wires
+    /// one up via `with_comptime_resolver`; calling `request_comptime` before
+    /// that is a caller bug (there is no compile-time value to hand back).
+    comptime_resolver: RefCell<Option<ComptimeResolver>>,
 }
 
 impl TypingContext {
-    pub fn new(
-        data_layout: LirDataLayout,
-        env_ctx: std::rc::Rc<WorkspaceContext>,
-        executor: fp_core::executor::ExecutorHandle,
-    ) -> Self {
+    pub fn new() -> Self {
         Self {
-            data_layout,
             resolved_consts: RefCell::new(HashMap::new()),
             resolved_types: RefCell::new(HashMap::new()),
-            env_ctx,
-            diagnostics: RefCell::new(Vec::new()),
-            item_check_failures: RefCell::new(Vec::new()),
+            diagnostics: DiagnosticManager::new(),
             comptime_wakers: RefCell::new(HashMap::new()),
             ready_generics: RefCell::new(HashMap::new()),
-            comptime_requests: RefCell::new(VecDeque::new()),
-            executor,
+            comptime_resolver: RefCell::new(None),
         }
+    }
+
+    /// Wires up how `request_comptime` answers a request — called once by
+    /// `fp-compiler` right after constructing a package's `TypingContext`
+    /// (it's the only side that can build a `ComptimeResolver`, since
+    /// answering one requires `CompilerState`).
+    pub fn with_comptime_resolver(self, resolver: ComptimeResolver) -> Self {
+        *self.comptime_resolver.borrow_mut() = Some(resolver);
+        self
     }
 
     /// Wake every task parked on `name`'s comptime value — call this right
@@ -177,73 +151,55 @@ impl TypingContext {
         }
     }
 
-    /// Request a compile-time value. The first request for a key is exposed
-    /// to the compiler driver; subsequent awaiters share the driver's answer.
+    /// Request a compile-time value — awaits `ComptimeResolver` directly, so
+    /// the caller (an item's typecheck task) just suspends naturally until
+    /// the answer is ready, with no manual queue-draining/polling by
+    /// driver-level code required.
     pub async fn request_comptime(&self, request: ComptimeRequest) -> fp_core::Result<Value> {
-        let reply = std::rc::Rc::new(RefCell::new(ComptimeReply {
-            result: None,
-            wakers: Vec::new(),
-        }));
-        let mut request = Some(request);
-        let reply_for_poll = reply.clone();
-        std::future::poll_fn(|cx| {
-            if let Some(result) = reply_for_poll.borrow_mut().result.take() {
-                return Poll::Ready(result);
-            }
-            if let Some(request) = request.take() {
-                self.comptime_requests
-                    .borrow_mut()
-                    .push_back(PendingComptimeRequest {
-                        request,
-                        reply: reply_for_poll.clone(),
-                    });
-            }
-            reply_for_poll.borrow_mut().wakers.push(cx.waker().clone());
-            Poll::Pending
-        })
-        .await
-    }
-
-    pub fn take_comptime_requests(&self) -> Vec<PendingComptimeRequest> {
-        self.comptime_requests.borrow_mut().drain(..).collect()
-    }
-
-    pub fn has_comptime_requests(&self) -> bool {
-        !self.comptime_requests.borrow().is_empty()
+        let resolver = self
+            .comptime_resolver
+            .borrow()
+            .clone()
+            .expect("TypingContext::request_comptime called before with_comptime_resolver");
+        resolver(request).await
     }
 
     /// `tcx.sess.has_errors()`-style query: true once any item's check has
-    /// hard-aborted (see `item_check_failures`'s doc comment) — the only
-    /// category that leaves a real `TypeckResults` gap, and thus the only
-    /// category safe to gate later stages on.
+    /// hard-aborted (tagged `ITEM_CHECK_FAILURE_CODE`, see `diagnostics`'s
+    /// doc comment) — the only category that leaves a real `PackageTypes`
+    /// gap, and thus the only category safe to gate later stages on.
     pub fn has_typing_errors(&self) -> bool {
-        !self.item_check_failures.borrow().is_empty()
+        self.diagnostics
+            .get_diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_deref() == Some(ITEM_CHECK_FAILURE_CODE))
+    }
+}
+
+/// Tags a diagnostic as a hard item-check abort (see `record_item_check_failure`)
+/// within `TypingContext::diagnostics`'s single unified manager.
+pub const ITEM_CHECK_FAILURE_CODE: &str = "item-check-failure";
+
+impl Default for TypingContext {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fp_core::ast::workspace::WorkspaceContext;
     use std::future::Future;
 
     #[test]
-    fn comptime_request_returns_driver_value_directly() {
-        let context = TypingContext::new(
-            LirDataLayout {
-                pointer_size_bits: 64,
-                pointer_alignment: 8,
-                integer_alignments: vec![(8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
-            },
-            std::rc::Rc::new(WorkspaceContext::new(std::sync::Arc::new(
-                fp_core::ast::package::provider::EmptyProvider,
-            ))),
-            fp_core::executor::CompilerExecutor::new().handle(),
-        );
+    fn comptime_request_returns_resolver_value_directly() {
+        let context = TypingContext::new().with_comptime_resolver(std::rc::Rc::new(|_request| {
+            Box::pin(async { Ok(Value::unit()) })
+        }));
         let request = ComptimeRequest {
             program: std::rc::Rc::new(fp_core::hir::Program::new()),
             current: std::rc::Rc::new(fp_core::hir::Package::new()),
-            typeck_results: TypeckResults::default(),
+            typeck_results: PackageTypes::default(),
             block: fp_core::hir::Block {
                 hir_id: fp_core::hir::HirId::new(fp_core::hir::PackageId(0), 0),
                 stmts: Vec::new(),
@@ -259,16 +215,9 @@ mod tests {
         let mut future = Box::pin(context.request_comptime(request));
         let waker = std::task::Waker::noop();
         let mut cx = std::task::Context::from_waker(waker);
-        assert!(matches!(future.as_mut().poll(&mut cx), Poll::Pending));
-        let pending = context
-            .take_comptime_requests()
-            .into_iter()
-            .next()
-            .expect("comptime request");
-        pending.complete(Ok(Value::unit()));
         let value = match future.as_mut().poll(&mut cx) {
-            Poll::Ready(result) => result.expect("comptime value"),
-            Poll::Pending => panic!("completed comptime request remained pending"),
+            std::task::Poll::Ready(result) => result.expect("comptime value"),
+            std::task::Poll::Pending => panic!("resolver-backed comptime request should resolve immediately"),
         };
         assert!(value.is_unit());
     }
