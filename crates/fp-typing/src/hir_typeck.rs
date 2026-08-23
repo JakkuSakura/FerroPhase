@@ -2561,6 +2561,43 @@ impl HirTypeChecker {
             return Ok(self.error_ty(format!("value definition `{def_id}` was not found")));
         };
         match &item.kind {
+            // A tuple struct's name used in value position (`Wrapping(x)`,
+            // `TryFromIntError(())`) is its own constructor function, not
+            // a bare type — its fields have no names of their own
+            // (positional `0`, `1`, ... assigned by lowering), so build
+            // the constructor's `FnPtr` (fields as inputs, the struct
+            // itself as output) instead of falling through to `path_ty`'s
+            // bare-type answer, which left every such call with an `Adt`
+            // callee and no signature to check the call against at all.
+            hir::ItemKind::Struct(def)
+                if !def.fields.is_empty()
+                    && def
+                        .fields
+                        .iter()
+                        .enumerate()
+                        .all(|(index, field)| field.name.as_str() == index.to_string()) =>
+            {
+                let output = self.path_ty(path).await?;
+                let fields = def.fields.clone();
+                let mut inputs = Vec::with_capacity(fields.len());
+                for field in &fields {
+                    inputs.push(Box::new(self.check_type_expr(&field.ty).await?));
+                }
+                Ok(Ty {
+                    kind: TyKind::FnPtr(ty::PolyFnSig {
+                        binder: ty::Binder {
+                            value: ty::FnSig {
+                                inputs,
+                                output: Box::new(output),
+                                c_variadic: false,
+                                unsafety: ty::Unsafety::Normal,
+                                abi: ty::Abi::Rust,
+                            },
+                            bound_vars: Vec::new(),
+                        },
+                    }),
+                })
+            }
             hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) => self.path_ty(path).await,
             hir::ItemKind::Const(constant)
                 if matches!(
