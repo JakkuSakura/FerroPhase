@@ -2448,6 +2448,30 @@ impl HirTypeChecker {
                 }
             }
         }
+        // A primitive named directly (`u8::MAX`, `u8::from_str_radix(..)`)
+        // — the same type-relative shape as `Map::new`/`Add::add`, but the
+        // base has no `DefId` at all (see `ast_to_hir`'s `Res::Builtin
+        // (BuiltinSelfType::Primitive(..))` fallback). The receiver type
+        // is simply the primitive itself; resolve the tail the same way
+        // `Self::`/struct bases already do.
+        if let Some(hir::Res::Builtin(hir::BuiltinSelfType::Primitive(name))) = &path.res {
+            if let (Some(receiver_ty), Some(tail)) =
+                (primitive_path_ty(name), path.segments.get(1))
+            {
+                if path.segments.len() == 2 {
+                    if let Some(sig) = self
+                        .method_declared_signature_at(&receiver_ty, &tail.name)
+                        .await?
+                    {
+                        return Ok(sig);
+                    }
+                    return Ok(self.error_ty(format!(
+                        "no item named `{}` found on primitive `{}`",
+                        tail.name, name
+                    )));
+                }
+            }
+        }
         if let Some(hir::Res::Local(local)) = path.res {
             if let Some(name) = path.segments.last().map(|segment| &segment.name) {
                 if let Some(ty) = self.locals.get(name) {
@@ -3523,16 +3547,25 @@ impl HirTypeChecker {
                 continue;
             }
             for impl_item in &impl_item.items {
-                let hir::ImplItemKind::Method(function) = &impl_item.kind else {
-                    continue;
-                };
-                if impl_item.name == *method {
-                    return Self::method_declared_signature_apply_receiver(
-                        &mut scope,
-                        receiver_ty,
-                        function,
-                    )
-                    .await;
+                match &impl_item.kind {
+                    hir::ImplItemKind::Method(function) if impl_item.name == *method => {
+                        return Self::method_declared_signature_apply_receiver(
+                            &mut scope,
+                            receiver_ty,
+                            function,
+                        )
+                        .await;
+                    }
+                    // An associated const looked up through the same
+                    // type-relative path shape (`u8::MAX`, `Layout::
+                    // MIN_SIZE`) — not a callable method, but the same
+                    // "name declared inside this receiver's own impl"
+                    // lookup answers it: the const's own declared type.
+                    hir::ImplItemKind::AssocConst(constant) if impl_item.name == *method => {
+                        let mut scope = scope.with_self_type(checked_self_ty.clone());
+                        return Ok(Some(scope.check_type_expr(&constant.ty).await?));
+                    }
+                    _ => {}
                 }
             }
             // Not redeclared in this impl's own items — same

@@ -738,7 +738,7 @@ pub enum Res {
     Builtin(BuiltinSelfType),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuiltinSelfType {
     Reference { mutable: bool },
     Slice,
@@ -754,10 +754,21 @@ pub enum BuiltinSelfType {
     /// Any function-pointer type (`fn(T) -> Ret`) — arity-blind, same
     /// accepted imprecision.
     Function,
+    /// A primitive scalar named directly (`u8`, `i32`, `bool`, `str`, ...) —
+    /// unlike the other variants here, this one *is* precise (the name
+    /// picks an exact primitive, not a shape shared by many types), but it
+    /// still has no `DefId` of its own to resolve through `Res::Def` the
+    /// way a struct/enum/trait does. Exists so a value-position path like
+    /// `u8::MAX`/`u8::from_str_radix(..)` (real std's own inherent
+    /// consts/methods on primitives, reached via the same type-relative
+    /// path shape as `Map::new`/`T::default`) has a `Res` to resolve
+    /// through at all — see `name_to_hir_path_with_scope`'s type-relative
+    /// fallback.
+    Primitive(String),
 }
 
 impl BuiltinSelfType {
-    pub fn bucket_key(&self) -> &'static str {
+    pub fn bucket_key(&self) -> &str {
         match self {
             BuiltinSelfType::Reference { mutable: false } => "&",
             BuiltinSelfType::Reference { mutable: true } => "&mut",
@@ -769,6 +780,7 @@ impl BuiltinSelfType {
             BuiltinSelfType::Unit => "()",
             BuiltinSelfType::Tuple => "(,)",
             BuiltinSelfType::Function => "fn(..)",
+            BuiltinSelfType::Primitive(name) => name.as_str(),
         }
     }
 }

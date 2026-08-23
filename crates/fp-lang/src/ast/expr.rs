@@ -664,7 +664,7 @@ fn parse_scope_field_suffix(input: &mut &[Token]) -> ModalResult<Postfix> {
     skip_symbol(&mut probe, "::")?;
     let field = ident_like(&mut probe)?;
     *input = probe;
-    Ok(Postfix::Field(field))
+    Ok(Postfix::ConstField(field))
 }
 
 fn parse_turbofish_suffix(input: &mut &[Token]) -> ModalResult<Postfix> {
@@ -1027,6 +1027,13 @@ fn parse_name_expr(input: &mut &[Token]) -> ModalResult<Expr> {
 enum Postfix {
     Try,
     Field(Ident),
+    /// A `::name` postfix (`parse_scope_field_suffix`) — syntactically the
+    /// same "select a name off the preceding expression" shape as `.name`,
+    /// but semantically a *path* continuation (`u8::MAX`, `Map::new`), never
+    /// a runtime field access. Kept distinct from `Field` from parsing
+    /// onward so `apply_postfixes`/AST-to-HIR lowering can tell them apart
+    /// instead of only being able to distinguish them once resolved.
+    ConstField(Ident),
     Turbofish,
     Call(Vec<Expr>, Vec<ExprKwArg>),
     Index(Expr),
@@ -1048,6 +1055,13 @@ fn apply_postfixes(mut expr: Expr, suffixes: Vec<Postfix>) -> Expr {
                 obj: Box::new(expr),
                 field,
                 select: ExprSelectType::Field,
+            })
+            .into(),
+            Postfix::ConstField(field) => ExprKind::Select(ExprSelect {
+                span: span_from_expr(&expr),
+                obj: Box::new(expr),
+                field,
+                select: ExprSelectType::Const,
             })
             .into(),
             Postfix::Turbofish => expr,

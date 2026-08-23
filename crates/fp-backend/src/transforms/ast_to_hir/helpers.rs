@@ -789,6 +789,16 @@ impl AstToHirLowerer {
         if resolved.is_none() && segments.len() > 1 && path_prefix == PathPrefix::Plain {
             if let Some(hir::Res::Def(def_id)) = self.resolve_type_symbol(segments[0].name.as_str()) {
                 resolved = Some(hir::Res::Def(def_id));
+            } else if is_primitive_type_name(segments[0].name.as_str()) {
+                // A primitive named directly (`u8::MAX`, `u8::from_str_
+                // radix(..)`) is the same type-relative shape, just with
+                // no `DefId` at all to resolve through `Res::Def` — real
+                // std leans on this constantly for every integer
+                // primitive's own inherent consts/methods (`MAX`/`MIN`/
+                // `BITS`, `wrapping_add`, ...).
+                resolved = Some(hir::Res::Builtin(hir::BuiltinSelfType::Primitive(
+                    segments[0].name.as_str().to_string(),
+                )));
             }
         }
 
@@ -1029,4 +1039,33 @@ impl AstToHirLowerer {
             args,
         }
     }
+}
+
+/// Every primitive scalar name real Rust reserves — mirrors `fp-typing`'s
+/// own `primitive_path_ty` name list (kept in sync deliberately; that one
+/// maps the name to a `Ty`, this one only needs to recognize the name at
+/// HIR-lowering time, before any `Ty` exists).
+fn is_primitive_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "bool"
+            | "char"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "f16"
+            | "f32"
+            | "f64"
+            | "f128"
+            | "str"
+    )
 }

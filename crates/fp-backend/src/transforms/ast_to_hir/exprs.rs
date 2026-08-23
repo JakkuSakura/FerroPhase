@@ -871,6 +871,23 @@ impl AstToHirLowerer {
         &mut self,
         select: &ast::ExprSelect,
     ) -> Result<hir::ExprKind> {
+        // A `::name` select (`u8::MAX`, `Map::SOME_CONST`) — syntactically
+        // identical to `.name` in this parser (both fold into `ExprSelect`;
+        // see `Postfix::ConstField`'s doc comment), but semantically a
+        // *path* continuation, never a runtime field access. Build it the
+        // same way a call's callee/a struct literal's name already does
+        // (`ast_expr_to_hir_path`), rather than always lowering to
+        // `FieldAccess` — the previous unconditional `FieldAccess` here
+        // left every non-call, non-struct use of `Type::CONST` (an
+        // ordinary value read, not immediately called) permanently
+        // unresolvable, since a plain runtime field access has no notion
+        // of a type-relative base at all.
+        if matches!(select.select, ast::ExprSelectType::Const) {
+            let mut path = self.ast_expr_to_hir_path(&select.obj, PathResolutionScope::Value)?;
+            let seg = self.make_path_segment(&select.field.name, None);
+            path.segments.push(seg);
+            return Ok(hir::ExprKind::Path(path));
+        }
         let expr = Box::new(self.transform_expr_to_hir(&select.obj)?);
         let field = select.field.clone().into();
 
