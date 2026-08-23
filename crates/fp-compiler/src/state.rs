@@ -158,6 +158,15 @@ impl CompilerState {
             .ok_or_else(|| CompilerDriverError::MissingHir(hir_id.clone()))
     }
 
+    /// Every package's own typed results compiled so far — used by
+    /// `drain_driver` to report typing diagnostics, which live on each
+    /// package's own durable `PackageTypes` (see its `diagnostics` field's
+    /// doc comment), not on the driver's scratch, per-package-swapped
+    /// `TypingContext`.
+    pub fn all_package_types(&self) -> impl Iterator<Item = &PackageTypes> {
+        self.hir_typeck.values()
+    }
+
     pub fn mir(&self, mir_id: &MirId) -> Result<&mir::Program, CompilerDriverError> {
         self.mir
             .get(mir_id)

@@ -1156,6 +1156,16 @@ pub struct PackageTypes {
     /// `ExprConstBlock::def_id`) — the same identity kind named consts use,
     /// via `const_values`.
     pub const_block_values: HashMap<DefId, Value>,
+    /// This package's typing diagnostics (warnings and recovered, non-fatal
+    /// mismatches — see `fp_typing::TypingContext::diagnostics`'s doc
+    /// comment for the full split with hard item-check aborts). Copied out
+    /// of the per-package `TypingContext` the moment its typecheck finishes
+    /// (`CompilerDriver::type_check_program`), since that `TypingContext`
+    /// itself is scratch state the driver discards/replaces per package —
+    /// living here instead, on the durable per-package `PackageTypes`,
+    /// means a diagnostic survives long enough for `drain_driver` to
+    /// actually report it.
+    pub diagnostics: crate::diagnostics::DiagnosticManager,
 }
 
 impl PackageTypes {

@@ -1013,7 +1013,14 @@ impl CompilerDriver {
                 fp_core::diagnostics::Diagnostic::error(combined),
             ));
         }
-        Ok(fp_typing::finish_package_typecheck(&shared))
+        let (hir_program, mut typeck_results) = fp_typing::finish_package_typecheck(&shared);
+        // `context` (this package's own `TypingContext`) is scratch state —
+        // `compile_package` swaps `state.typing_ctx` back to the caller's
+        // once this returns — so its diagnostics must be copied onto the
+        // durable `PackageTypes` here or they're lost before `drain_driver`
+        // ever gets a chance to report them.
+        typeck_results.diagnostics = context.diagnostics.clone();
+        Ok((hir_program, typeck_results))
     }
 
     /// Prints every diagnostic accumulated on `context` so far to stderr,

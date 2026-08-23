@@ -170,7 +170,15 @@ impl DiagnosticManager {
             diagnostics: Arc::new(Mutex::new(Vec::new())),
         }
     }
+}
 
+impl Default for DiagnosticManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DiagnosticManager {
     pub fn error(&self, diagnostic: Diagnostic) {
         self.add_diagnostic(diagnostic);
     }

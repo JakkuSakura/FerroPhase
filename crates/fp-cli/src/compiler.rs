@@ -395,7 +395,17 @@ fn compile_source_file(
 }
 
 pub fn drain_driver(driver: &mut CompilerDriver) -> Result<()> {
-    emit_typing_diagnostics(&driver.state.borrow().typing_ctx.diagnostics.get_diagnostics())
+    // Typing diagnostics live on each compiled package's own `PackageTypes`
+    // (see its `diagnostics` field's doc comment), not on the driver's
+    // scratch, per-package-swapped `typing_ctx` — that context is discarded
+    // the moment each package's compile finishes, before this ever runs.
+    let diagnostics: Vec<_> = driver
+        .state
+        .borrow()
+        .all_package_types()
+        .flat_map(|types| types.diagnostics.get_diagnostics())
+        .collect();
+    emit_typing_diagnostics(&diagnostics)
 }
 
 pub fn parse_expr_with_mode(source: &str, parse_mode: FrontendParseMode) -> Result<File> {
