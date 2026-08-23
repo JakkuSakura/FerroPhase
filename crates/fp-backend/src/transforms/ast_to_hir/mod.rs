@@ -4805,6 +4805,25 @@ impl AstToHirLowerer {
                     .collect();
                 vec![ast::Item::from(ItemKind::Module(module))]
             }
+            // An `impl` block's own item list can itself contain macro
+            // invocations (real std's `impl u32 { int_impl! { .. } }`,
+            // `impl u8 { uint_impl! { .. } }` — every integer primitive's
+            // inherent methods, wrapping_add/checked_sub/rotate_left/
+            // swap_bytes/etc., are generated exactly this way, one macro
+            // invocation per impl). Previously only `Module` bodies were
+            // recursed into here, so every impl-nested invocation was left
+            // as an unexpanded `ItemKind::Macro` and silently dropped by
+            // `predeclare_items`'s "unknown item macro" handling — the
+            // dominant cause of "method `X` was not found" for primitive
+            // methods in the full corpus.
+            ItemKind::Impl(mut impl_block) => {
+                impl_block.items = impl_block
+                    .items
+                    .into_iter()
+                    .flat_map(|inner| self.expand_item_macros_in_item(inner, normalizer, defs))
+                    .collect();
+                vec![ast::Item::from(ItemKind::Impl(impl_block))]
+            }
             kind => vec![ast::Item { kind, ..item }],
         }
     }
