@@ -755,104 +755,10 @@ impl Default for Generics {
 
 /// A generic function/method call whose concrete type arguments have been
 /// resolved and are ready for monomorphization.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GenericCallResolution {
     pub def_id: DefId,
     pub args: Vec<Ty>,
-}
-
-/// Semantic information produced by HIR type checking for one package. HIR
-/// itself remains a source-shaped tree; inferred types and resolutions are
-/// keyed by HIR node. Shared, writable state — `Rc<RefCell<PackageTypes>>`,
-/// mirroring `HirPackage`'s own `Rc` sharing — so the concurrent per-item
-/// checking tasks type checking spawns (see `fp_typing::TypingShared`) can
-/// each contribute their own item's results into the same package-wide
-/// sink.
-#[derive(Debug, Clone, Default)]
-pub struct PackageTypes {
-    pub expr_types: HashMap<HirId, Ty>,
-    pub type_expr_types: HashMap<HirId, Ty>,
-    pub pat_types: HashMap<HirId, Ty>,
-    pub resolutions: HashMap<HirId, Res>,
-    pub method_resolutions: HashMap<HirId, DefId>,
-    pub generic_call_args: HashMap<HirId, GenericCallResolution>,
-    pub generic_method_args: HashMap<HirId, GenericCallResolution>,
-    pub const_types: HashMap<DefId, Ty>,
-    pub const_values: HashMap<DefId, Value>,
-    /// Comptime-evaluated values of `const { ... }` blocks, keyed by the
-    /// block's own `DefId` (minted during AST-to-HIR lowering, see
-    /// `ExprConstBlock::def_id`) — the same identity kind named consts use,
-    /// via `const_values`.
-    pub const_block_values: HashMap<DefId, Value>,
-    /// This package's typing diagnostics (warnings and recovered, non-fatal
-    /// mismatches — see `fp_typing::TypingShared::diagnostics`'s doc
-    /// comment for the full split with hard item-check aborts). Copied out
-    /// of the per-package `TypingShared` the moment its typecheck finishes
-    /// (`CompilerDriver::type_check_program`), since that `TypingShared`
-    /// itself is scratch state the driver discards/replaces per package —
-    /// living here instead, on the durable per-package `PackageTypes`,
-    /// means a diagnostic survives long enough for `drain_driver` to
-    /// actually report it.
-    pub diagnostics: crate::diagnostics::DiagnosticManager,
-}
-
-impl PackageTypes {
-    pub fn record_expr_type(&mut self, id: HirId, ty: Ty) {
-        self.expr_types.insert(id, ty);
-    }
-
-    pub fn record_type_expr_type(&mut self, id: HirId, ty: Ty) {
-        self.type_expr_types.insert(id, ty);
-    }
-
-    pub fn record_pat_type(&mut self, id: HirId, ty: Ty) {
-        self.pat_types.insert(id, ty);
-    }
-}
-
-/// Every package's typed results for one compilation session — the
-/// `PackageTypes` counterpart to `Program`'s own per-package HIR map, same
-/// `Rc`-sharing rationale: a package's own entry is written to by many
-/// concurrent per-item tasks while it's being checked, and read by name
-/// (never deep-cloned) by every dependent that needs its results.
-#[derive(Debug, Clone, Default)]
-pub struct ProgramTypes {
-    pub packages: HashMap<PackageId, std::rc::Rc<std::cell::RefCell<PackageTypes>>>,
-}
-
-impl ProgramTypes {
-    pub fn new() -> Self {
-        Self {
-            packages: HashMap::new(),
-        }
-    }
-
-    pub fn package(&self, id: PackageId) -> Option<std::rc::Rc<std::cell::RefCell<PackageTypes>>> {
-        self.packages.get(&id).cloned()
-    }
-
-    /// Replaces (or inserts) `id`'s own typed results wholesale — the
-    /// driver's per-package typecheck pass produces one final
-    /// `PackageTypes` per package, not an incremental merge, so this always
-    /// overwrites rather than folding into whatever was there before.
-    pub fn insert_package(&mut self, id: PackageId, types: PackageTypes) {
-        self.packages
-            .insert(id, std::rc::Rc::new(std::cell::RefCell::new(types)));
-    }
-
-    /// Get-or-create `id`'s own typed results — for a caller that wants to
-    /// mutate one package's already-published `PackageTypes` in place
-    /// (e.g. recording a newly comptime-resolved const's value) rather than
-    /// replace it outright.
-    pub fn package_or_default(
-        &mut self,
-        id: PackageId,
-    ) -> std::rc::Rc<std::cell::RefCell<PackageTypes>> {
-        self.packages
-            .entry(id)
-            .or_insert_with(|| std::rc::Rc::new(std::cell::RefCell::new(PackageTypes::default())))
-            .clone()
-    }
 }
 
 impl Function {

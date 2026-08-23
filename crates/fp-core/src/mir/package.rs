@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::{ty, Constant, DefId, MirCodeUnit, MirModule, Ty};
+use super::{ty, Constant, DefId, Function, ItemKind, MirCodeUnit, MirModule, Ty};
 
 /// One compiled package's MIR content — its lowered items, one
 /// `MirCodeUnit` per top-level `DefId`, plus the derived tables
@@ -48,14 +48,32 @@ pub struct MirPackage {
     /// this is what tells it exactly which single item needs re-lowering
     /// to fold that value in — instead of re-lowering the whole package.
     pub const_block_owners: HashMap<DefId, DefId>,
+    /// Each top-level function's own `mir::Function` (name/sig/substs/abi),
+    /// keyed by the same `DefId` as `units` — maintained incrementally as
+    /// units are inserted, not swept eagerly over a whole `MirModule`. This
+    /// is what lets `LirGenerator` resolve a callee's LIR signature lazily,
+    /// on first reference (see `LirGenerator::with_signature_resolver`),
+    /// instead of requiring every function in the package to be predeclared
+    /// up front before any body is lowered.
+    pub sigs: HashMap<DefId, Function>,
 }
 
 impl MirPackage {
     /// Replaces (or inserts) the `MirCodeUnit` produced for `def_id` — the
     /// only way this package's `units` map is ever written, so re-lowering
     /// one item after a comptime value resolves is always this exact call
-    /// with a fresh unit, never a partial in-place edit.
+    /// with a fresh unit, never a partial in-place edit. Also (re)records
+    /// the unit's own function signature into `sigs`, if it lowered to a
+    /// `Function` item — the incremental counterpart to a whole-module
+    /// predeclare sweep.
     pub fn insert_unit(&mut self, def_id: DefId, unit: MirCodeUnit) {
+        for item in &unit.items {
+            if let ItemKind::Function(func) = &item.kind {
+                if func.def_id == Some(def_id) {
+                    self.sigs.insert(def_id, func.clone());
+                }
+            }
+        }
         self.units.insert(def_id, unit);
     }
 

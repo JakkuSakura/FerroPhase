@@ -163,6 +163,45 @@ pub struct HirPackage {
     /// instead of consulting `def_map`. Lazily filled by `fp_typing`, same
     /// reasoning as `checked_impl_self_ty_cache`.
     local_struct_fields: RefCell<HashMap<DefId, Vec<(Symbol, Ty)>>>,
+    /// Semantic information produced by HIR type checking for this package
+    /// — HIR itself remains a source-shaped tree; inferred types and
+    /// resolutions are recorded here, keyed by HIR node, rather than
+    /// mutating the tree in place. Written by many concurrent per-item
+    /// tasks while `fp_typing::TypingShared` is checking this exact
+    /// `HirPackage` (`TypingShared` holds the same `Rc` this struct is
+    /// wrapped in, so every write lands directly here, not into a
+    /// separate side table copied out at the end of typecheck).
+    expr_types: RefCell<HashMap<HirId, Ty>>,
+    type_expr_types: RefCell<HashMap<HirId, Ty>>,
+    pat_types: RefCell<HashMap<HirId, Ty>>,
+    /// A `MethodCall` expr's own `hir_id` -> the concrete method `DefId`
+    /// it resolved to (never the receiver's/type's `DefId`).
+    method_resolutions: RefCell<HashMap<HirId, DefId>>,
+    generic_call_args: RefCell<HashMap<HirId, GenericCallResolution>>,
+    generic_method_args: RefCell<HashMap<HirId, GenericCallResolution>>,
+    const_types: RefCell<HashMap<DefId, Ty>>,
+    const_values: RefCell<HashMap<DefId, Value>>,
+    /// Comptime-evaluated values of `const { ... }` blocks, keyed by the
+    /// block's own `DefId` (minted during AST-to-HIR lowering, see
+    /// `ExprConstBlock::def_id`) — the same identity kind named consts use,
+    /// via `const_values`.
+    const_block_values: RefCell<HashMap<DefId, Value>>,
+    /// A `const { .. }` block's own not-yet-published HIR body, recorded
+    /// under its own `DefId` the moment the type checker builds a
+    /// `ComptimeRequest` for it — since the request itself carries only
+    /// `package_id`/`def_id` (see `fp_typing::ComptimeRequest`'s doc
+    /// comment), this is how the driver's comptime resolver recovers the
+    /// exact block to lower, the same shared-package lookup every other
+    /// typed result already goes through.
+    pending_comptime_blocks: RefCell<HashMap<DefId, Block>>,
+    /// This package's typing diagnostics (warnings and recovered, non-fatal
+    /// mismatches — see `fp_typing::TypingShared::record_error`'s doc
+    /// comment for the full split with hard item-check aborts). Lives here
+    /// directly (not copied out of a scratch `TypingShared` at the end of
+    /// typecheck) since `TypingShared` writes straight through to this same
+    /// `Rc<HirPackage>` — so a diagnostic survives as long as the package
+    /// itself does, with nothing to keep in sync.
+    pub diagnostics: crate::diagnostics::DiagnosticManager,
 }
 
 impl HirPackage {
@@ -188,6 +227,17 @@ impl HirPackage {
             resolved_trait_defs: RefCell::new(HashMap::new()),
             refinement_hints: RefCell::new(HashMap::new()),
             local_struct_fields: RefCell::new(HashMap::new()),
+            expr_types: RefCell::new(HashMap::new()),
+            type_expr_types: RefCell::new(HashMap::new()),
+            pat_types: RefCell::new(HashMap::new()),
+            method_resolutions: RefCell::new(HashMap::new()),
+            generic_call_args: RefCell::new(HashMap::new()),
+            generic_method_args: RefCell::new(HashMap::new()),
+            const_types: RefCell::new(HashMap::new()),
+            const_values: RefCell::new(HashMap::new()),
+            const_block_values: RefCell::new(HashMap::new()),
+            pending_comptime_blocks: RefCell::new(HashMap::new()),
+            diagnostics: crate::diagnostics::DiagnosticManager::new(),
         }
     }
 
@@ -344,6 +394,134 @@ impl HirPackage {
 
     pub fn insert_local_struct_fields(&self, def_id: DefId, fields: Vec<(Symbol, Ty)>) {
         self.local_struct_fields.borrow_mut().insert(def_id, fields);
+    }
+
+    // --- Typed results (formerly `PackageTypes`) --------------------------
+    //
+    // Single-entry get/insert pairs for the common "does this one node have
+    // a recorded type/resolution yet" query typing itself makes constantly,
+    // plus a whole-map snapshot getter for the few bulk consumers (backend
+    // lowering, tests) that need every entry at once.
+
+    pub fn expr_type(&self, hir_id: HirId) -> Option<Ty> {
+        self.expr_types.borrow().get(&hir_id).cloned()
+    }
+
+    pub fn record_expr_type(&self, hir_id: HirId, ty: Ty) {
+        self.expr_types.borrow_mut().insert(hir_id, ty);
+    }
+
+    pub fn expr_types(&self) -> HashMap<HirId, Ty> {
+        self.expr_types.borrow().clone()
+    }
+
+    pub fn type_expr_type(&self, hir_id: HirId) -> Option<Ty> {
+        self.type_expr_types.borrow().get(&hir_id).cloned()
+    }
+
+    pub fn record_type_expr_type(&self, hir_id: HirId, ty: Ty) {
+        self.type_expr_types.borrow_mut().insert(hir_id, ty);
+    }
+
+    pub fn type_expr_types(&self) -> HashMap<HirId, Ty> {
+        self.type_expr_types.borrow().clone()
+    }
+
+    pub fn pat_type(&self, hir_id: HirId) -> Option<Ty> {
+        self.pat_types.borrow().get(&hir_id).cloned()
+    }
+
+    pub fn record_pat_type(&self, hir_id: HirId, ty: Ty) {
+        self.pat_types.borrow_mut().insert(hir_id, ty);
+    }
+
+    pub fn pat_types(&self) -> HashMap<HirId, Ty> {
+        self.pat_types.borrow().clone()
+    }
+
+    /// A `MethodCall` expr's own `hir_id` -> the concrete method `DefId` it
+    /// resolved to.
+    pub fn method_resolution(&self, hir_id: HirId) -> Option<DefId> {
+        self.method_resolutions.borrow().get(&hir_id).copied()
+    }
+
+    pub fn record_method_resolution(&self, hir_id: HirId, def_id: DefId) {
+        self.method_resolutions.borrow_mut().insert(hir_id, def_id);
+    }
+
+    pub fn method_resolutions(&self) -> HashMap<HirId, DefId> {
+        self.method_resolutions.borrow().clone()
+    }
+
+    pub fn generic_call_arg(&self, hir_id: HirId) -> Option<GenericCallResolution> {
+        self.generic_call_args.borrow().get(&hir_id).cloned()
+    }
+
+    pub fn record_generic_call_arg(&self, hir_id: HirId, resolution: GenericCallResolution) {
+        self.generic_call_args.borrow_mut().insert(hir_id, resolution);
+    }
+
+    pub fn generic_call_args(&self) -> HashMap<HirId, GenericCallResolution> {
+        self.generic_call_args.borrow().clone()
+    }
+
+    pub fn generic_method_arg(&self, hir_id: HirId) -> Option<GenericCallResolution> {
+        self.generic_method_args.borrow().get(&hir_id).cloned()
+    }
+
+    pub fn record_generic_method_arg(&self, hir_id: HirId, resolution: GenericCallResolution) {
+        self.generic_method_args.borrow_mut().insert(hir_id, resolution);
+    }
+
+    pub fn generic_method_args(&self) -> HashMap<HirId, GenericCallResolution> {
+        self.generic_method_args.borrow().clone()
+    }
+
+    pub fn const_type(&self, def_id: DefId) -> Option<Ty> {
+        self.const_types.borrow().get(&def_id).cloned()
+    }
+
+    pub fn record_const_type(&self, def_id: DefId, ty: Ty) {
+        self.const_types.borrow_mut().insert(def_id, ty);
+    }
+
+    pub fn const_types(&self) -> HashMap<DefId, Ty> {
+        self.const_types.borrow().clone()
+    }
+
+    pub fn const_value(&self, def_id: DefId) -> Option<Value> {
+        self.const_values.borrow().get(&def_id).cloned()
+    }
+
+    pub fn record_const_value(&self, def_id: DefId, value: Value) {
+        self.const_values.borrow_mut().insert(def_id, value);
+    }
+
+    pub fn const_values(&self) -> HashMap<DefId, Value> {
+        self.const_values.borrow().clone()
+    }
+
+    /// Comptime-evaluated value of a `const { ... }` block, keyed by its
+    /// own `DefId` — see `const_block_values`'s doc comment.
+    pub fn const_block_value(&self, def_id: DefId) -> Option<Value> {
+        self.const_block_values.borrow().get(&def_id).cloned()
+    }
+
+    pub fn record_const_block_value(&self, def_id: DefId, value: Value) {
+        self.const_block_values.borrow_mut().insert(def_id, value);
+    }
+
+    pub fn const_block_values(&self) -> HashMap<DefId, Value> {
+        self.const_block_values.borrow().clone()
+    }
+
+    /// See `pending_comptime_blocks`'s doc comment.
+    pub fn record_pending_comptime_block(&self, def_id: DefId, block: Block) {
+        self.pending_comptime_blocks.borrow_mut().insert(def_id, block);
+    }
+
+    pub fn pending_comptime_block(&self, def_id: DefId) -> Option<Block> {
+        self.pending_comptime_blocks.borrow().get(&def_id).cloned()
     }
 }
 

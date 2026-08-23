@@ -67,7 +67,7 @@ pub fn roundtrip_items_via_hir(
     let mut generator = transforms::ast_to_hir::HirGenerator::new();
     generator.set_cfg_filtering(false);
     let program = generator.transform_package(&package)?;
-    transforms::hir_to_ast::HirToAstLifter::new(&program, None, None).lift_items()
+    transforms::hir_to_ast::HirToAstLifter::new(&program, None).lift_items()
 }
 
 pub fn roundtrip_items_via_hir_dce(
@@ -78,7 +78,7 @@ pub fn roundtrip_items_via_hir_dce(
     generator.set_cfg_filtering(false);
     let mut program = generator.transform_package(&package)?;
     optimizer::hir::eliminate_dead_code(&mut program, None);
-    transforms::hir_to_ast::HirToAstLifter::new(&program, None, None).lift_items()
+    transforms::hir_to_ast::HirToAstLifter::new(&program, None).lift_items()
 }
 
 #[cfg(test)]

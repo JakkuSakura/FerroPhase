@@ -10,8 +10,7 @@ use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 
 use crate::context::{ComptimeRequest, ComptimeResolver, ITEM_CHECK_FAILURE_CODE};
-use fp_core::diagnostics::DiagnosticManager;
-use fp_core::hir::{GenericCallResolution, PackageTypes};
+use fp_core::hir::GenericCallResolution;
 use std::rc::Rc;
 
 /// State shared by every per-item type-checking task spawned for one
@@ -37,25 +36,6 @@ pub struct TypingShared {
     /// per-item spawn loop) and for snapshotting the package's own,
     /// not-yet-published HIR into a `ComptimeRequest.current`.
     current_package: hir::PackageId,
-    /// Every item task writes its own contribution here as it finishes;
-    /// another item's task awaiting this one (see `expr_path_ty`'s
-    /// same-package `Const` lookup) reads back through the same cell —
-    /// this is what makes same-package forward references resolve
-    /// regardless of `program.items`' textual order.
-    results: RefCell<PackageTypes>,
-    /// Accumulated typing diagnostics (warnings + errors) — includes both
-    /// genuinely fatal item-check aborts and deliberately non-fatal,
-    /// recovered mismatches (e.g. `require_same`'s isolated type
-    /// mismatches, recorded via plain `record_error` specifically so one
-    /// bad expression doesn't abort the whole item's check). Typer appends
-    /// during inference; driver reads after each pass via `has_typing_errors`.
-    /// Backed by the same `fp_core::diagnostics::DiagnosticManager` every
-    /// other pipeline stage (frontend parsing, etc.) uses.
-    /// `record_item_check_failure`'s hard-abort diagnostics are tagged with
-    /// `ITEM_CHECK_FAILURE_CODE` so `has_typing_errors` can still
-    /// distinguish them from an isolated, already-recovered mismatch
-    /// without a second manager.
-    pub diagnostics: DiagnosticManager,
     /// Answers requests made by HIR while checking compile-time constants —
     /// see `ComptimeResolver`'s doc comment. `None` when no resolver was
     /// supplied at construction; calling `request_comptime` in that case is
@@ -95,8 +75,6 @@ impl TypingShared {
         Rc::new(Self {
             program: Rc::new(program),
             current_package: package_id,
-            results: RefCell::new(PackageTypes::default()),
-            diagnostics: DiagnosticManager::new(),
             comptime_resolver,
             executor,
             function_signature_cache: RefCell::new(HashMap::new()),
@@ -113,14 +91,31 @@ impl TypingShared {
     }
 
     /// An owned `Rc` clone of the package actually being checked — for
-    /// callers that need to hold onto it past `self`'s own lifetime (e.g.
-    /// `ComptimeRequest.current`).
+    /// callers that need to hold onto it past `self`'s own lifetime.
     fn program_rc(&self) -> Rc<hir::HirPackage> {
         self.program
             .packages
             .get(&self.current_package)
             .cloned()
             .expect("current_package is always inserted into program at construction")
+    }
+
+    /// The `PackageId` `ComptimeRequest`s built while checking this package
+    /// name themselves under — the driver's comptime resolver looks the
+    /// still-in-progress package back up by this id (see
+    /// `CompilerState::in_progress_hir_program`), since the request itself
+    /// no longer carries the package's own `Rc` directly.
+    pub fn current_package_id(&self) -> hir::PackageId {
+        self.current_package
+    }
+
+    /// The whole workspace `HirProgram` this package is being checked
+    /// against (every already-published dependency, plus this package's
+    /// own still-in-progress HIR) — handed to `CompilerState` for the
+    /// duration of this package's typecheck so a mid-typecheck
+    /// `ComptimeRequest` can resolve its own package by id.
+    pub fn program_handle(&self) -> Rc<hir::HirProgram> {
+        self.program.clone()
     }
 
     /// Request a compile-time value — awaits `ComptimeResolver` directly, so
@@ -136,21 +131,26 @@ impl TypingShared {
     }
 
     /// `tcx.sess.has_errors()`-style query: true once any item's check has
-    /// hard-aborted (tagged `ITEM_CHECK_FAILURE_CODE`, see `diagnostics`'s
-    /// doc comment) — the only category that leaves a real `PackageTypes`
-    /// gap, and thus the only category safe to gate later stages on.
+    /// hard-aborted (tagged `ITEM_CHECK_FAILURE_CODE`, see `HirPackage::
+    /// diagnostics`'s doc comment) — the only category that leaves a real
+    /// typed-results gap, and thus the only category safe to gate later
+    /// stages on.
     pub fn has_typing_errors(&self) -> bool {
-        self.diagnostics
+        self.program()
+            .diagnostics
             .get_diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.code.as_deref() == Some(ITEM_CHECK_FAILURE_CODE))
     }
 }
 
-/// Type checks resolved HIR and records semantic types outside the side
-/// table (`TypingShared::results`, shared across every item's task). This
-/// is deliberately a side-table pass: HIR nodes remain source-shaped and
-/// MIR lowering can consume the results without an AST round trip.
+/// Type checks resolved HIR and records semantic types outside the tree
+/// itself, directly onto the same package's own typed-results fields (see
+/// `hir::HirPackage`'s doc comments — `expr_types`, `pat_types`, ...),
+/// shared across every item's task via the one `Rc<HirPackage>` `TypingShared`
+/// wraps. This is deliberately a side-table pass: HIR nodes remain
+/// source-shaped and MIR lowering can consume the results without an AST
+/// round trip.
 ///
 /// One `HirTypeChecker` instance checks exactly one item — its fields below
 /// are the item-local recursion state (locals in scope, generic
@@ -205,14 +205,13 @@ impl HirTypeChecker {
     /// Records a typing diagnostic instead of hard-aborting the whole
     /// package's typecheck over one error — mirrors `ast_to_hir`'s
     /// `error_placeholder_expr_kind` precedent (`fp-backend/src/
-    /// transforms/ast_to_hir/exprs.rs`). `self.shared.diagnostics` (already
-    /// carried by every `HirTypeChecker`) is the real sink
-    /// (previously never populated by
-    /// anything); `typecheck_package` inspects it after the whole pass
-    /// finishes to decide overall pass/fail, so this doesn't silently
+    /// transforms/ast_to_hir/exprs.rs`). `self.shared.program().diagnostics`
+    /// is the real sink; `typecheck_package` inspects it after the whole
+    /// pass finishes to decide overall pass/fail, so this doesn't silently
     /// let a genuinely broken package look fully typed.
     fn record_error(&self, message: impl Into<String>) {
         self.shared
+            .program()
             .diagnostics
             .add_diagnostic(crate::types::typing_diagnostic(message, None));
     }
@@ -230,6 +229,7 @@ impl HirTypeChecker {
     /// locatable instead of a bare, file/line-less message.
     fn record_error_with_span(&self, message: impl Into<String>, span: fp_core::span::Span) {
         self.shared
+            .program()
             .diagnostics
             .add_diagnostic(crate::types::typing_diagnostic(message, Some(span)));
     }
@@ -242,18 +242,18 @@ impl HirTypeChecker {
 
     /// Like `record_error`, but specifically for `typecheck_item`'s own
     /// catch — an item's `check_item` returned a hard `Err` and its check
-    /// aborted outright, leaving a real gap in `PackageTypes` for
-    /// whatever that item didn't finish recording (unlike the pervasive,
-    /// deliberately non-fatal `record_error`/`error_ty` calls sprinkled
-    /// through `check_expr`/`check_block`, e.g. `require_same`'s isolated
-    /// mismatches, which recover and leave no gap). Tagged with
+    /// aborted outright, leaving a real gap in the package's typed results
+    /// for whatever that item didn't finish recording (unlike the
+    /// pervasive, deliberately non-fatal `record_error`/`error_ty` calls
+    /// sprinkled through `check_expr`/`check_block`, e.g. `require_same`'s
+    /// isolated mismatches, which recover and leave no gap). Tagged with
     /// `ITEM_CHECK_FAILURE_CODE` so `TypingShared::has_typing_errors` can
     /// gate later stages on real gaps without also tripping on every
     /// recovered, harmless mismatch also sitting in the same manager.
     fn record_item_check_failure(&self, message: impl Into<String>) {
         let diagnostic = crate::types::typing_diagnostic(message, None)
             .with_code(crate::context::ITEM_CHECK_FAILURE_CODE);
-        self.shared.diagnostics.add_diagnostic(diagnostic);
+        self.shared.program().diagnostics.add_diagnostic(diagnostic);
     }
 }
 
@@ -281,11 +281,15 @@ fn resolve_top_level_def_id(shared: &TypingShared, def_id: hir::DefId) -> hir::D
     program.member_owner(def_id).unwrap_or(def_id)
 }
 
-/// Read the final `(hir::HirPackage, PackageTypes)` out of `shared` — only
-/// meaningful once every per-item task (see `spawn_item_task`) has
-/// settled (i.e. its returned future resolved).
-pub fn finish_package_typecheck(shared: &Rc<TypingShared>) -> (hir::HirPackage, PackageTypes) {
-    (shared.program().clone(), shared.results.borrow().clone())
+/// Read the final `hir::HirPackage` out of `shared` — only meaningful once
+/// every per-item task (see `spawn_item_task`) has settled (i.e. its
+/// returned future resolved). Every typed result (expr/pat types,
+/// resolutions, diagnostics, ...) is already embedded directly on this same
+/// package (`TypingShared` writes straight through to it — see `HirPackage`'s
+/// own typed-results fields), so a plain clone is the whole snapshot; there's
+/// no separate side table to read back alongside it.
+pub fn finish_package_typecheck(shared: &Rc<TypingShared>) -> hir::HirPackage {
+    shared.program().clone()
 }
 
 /// Get-or-spawn the task that type-checks `def_id` (resolved to its
@@ -347,11 +351,7 @@ pub fn spawn_comptime_task(
         Box::pin(async move {
             let request = build_request();
             let value = shared.request_comptime(request).await.ok()?;
-            shared
-                .results
-                .borrow_mut()
-                .const_block_values
-                .insert(def_id, value.clone());
+            shared.program().record_const_block_value(def_id, value.clone());
             Some(value)
         }) as Pin<Box<dyn Future<Output = Option<hir::Value>>>>
     })
@@ -370,32 +370,28 @@ impl HirTypeChecker {
             let shared_for_task = shared.clone();
             let value = spawn_comptime_task(&shared, def_id, move || {
                 let shared = shared_for_task;
-                // See the matching comment in `check_expr`'s `ConstBlock`
-                // arm: snapshot-and-drop the `Ref` guard before the
-                // request, not inline in its field list, or it stays
-                // borrowed across the `.await` inside `spawn_comptime_task`.
-                let typeck_results_snapshot = shared.results.borrow().clone();
-                crate::ComptimeRequest {
-                    program: shared.program.clone(),
-                    current: shared.program_rc(),
-                    typeck_results: typeck_results_snapshot,
+                shared.program().record_pending_comptime_block(
                     def_id,
-                    block: hir::Block {
+                    hir::Block {
                         hir_id,
                         stmts: Vec::new(),
                         expr: Some(Box::new(body)),
                     },
+                );
+                crate::ComptimeRequest {
+                    package_id: shared.current_package_id(),
+                    def_id,
                 }
             })
             .await
             .ok_or_else(|| Error::from("comptime evaluation failed"))?;
-            let mut results = self.shared.results.borrow_mut();
-            results.const_block_values.insert(def_id, value);
+            let package = self.shared.program();
+            package.record_const_block_value(def_id, value);
             // Replace the `Infer` placeholder `check_type_expr` recorded for
             // this node with the body's actual checked type, now that it's
             // known — matches expression-position const-blocks, whose own
             // type is likewise the checked type of their body.
-            results.record_type_expr_type(hir_id, body_ty);
+            package.record_type_expr_type(hir_id, body_ty);
         }
         Ok(())
     }
@@ -431,10 +427,9 @@ impl HirTypeChecker {
                     let body_result = self.check_body(&constant.body).await;
                     self.expected_expr_types.pop();
                     let body_ty = body_result?;
-                    self.shared.results.borrow_mut()
-                        .type_expr_types
-                        .insert(constant.ty.hir_id, body_ty.clone());
-                    self.shared.results.borrow_mut().const_types.insert(item.def_id, body_ty);
+                    let package = self.shared.program();
+                    package.record_type_expr_type(constant.ty.hir_id, body_ty.clone());
+                    package.record_const_type(item.def_id, body_ty);
                 }
                 hir::ItemKind::Impl(impl_item) => {
                     let mut scope = self.generic_scope(&impl_item.generics);
@@ -823,7 +818,7 @@ impl HirTypeChecker {
                                 .generic_call_args(*def_id, &substitutions)?
                                 .or_else(|| self.callable_output_args(&callee_ty, &substitutions));
                             if let Some(args) = args {
-                                self.shared.results.borrow_mut().generic_call_args.insert(
+                                self.shared.program().record_generic_call_arg(
                                     expr.hir_id,
                                     GenericCallResolution {
                                         def_id: *def_id,
@@ -880,11 +875,10 @@ impl HirTypeChecker {
                     // one catch point covers all of them.
                     match self.method_output(&receiver_ty, method, &arg_types) {
                         Ok((method_def_id, generic_args, output)) => {
-                            self.shared.results.borrow_mut()
-                                .method_resolutions
-                                .insert(expr.hir_id, method_def_id);
+                            let package = self.shared.program();
+                            package.record_method_resolution(expr.hir_id, method_def_id);
                             if let Some(args) = generic_args {
-                                self.shared.results.borrow_mut().generic_method_args.insert(
+                                package.record_generic_method_arg(
                                     expr.hir_id,
                                     GenericCallResolution {
                                         def_id: method_def_id,
@@ -962,11 +956,10 @@ impl HirTypeChecker {
                                 &arg_types,
                             ) {
                                 Ok((method_def_id, generic_args, output)) => {
-                                    self.shared.results.borrow_mut()
-                                        .method_resolutions
-                                        .insert(expr.hir_id, method_def_id);
+                                    let package = self.shared.program();
+                                    package.record_method_resolution(expr.hir_id, method_def_id);
                                     if let Some(args) = generic_args {
-                                        self.shared.results.borrow_mut().generic_method_args.insert(
+                                        package.record_generic_method_arg(
                                             expr.hir_id,
                                             GenericCallResolution {
                                                 def_id: method_def_id,
@@ -1067,17 +1060,14 @@ impl HirTypeChecker {
                     let body_ty = self.check_expr(&const_block.body).await?;
                     {
                         // Record the outer const-block expression's own type
-                        // under its own `hir_id` *before* snapshotting below —
-                        // `check_expr`'s generic post-match recording (this
-                        // function's tail call) hasn't run yet for `expr`
-                        // itself at this point, and the driver-side comptime
-                        // entry (`register_const_block_comptime_entry`/
+                        // under its own `hir_id` *before* building the
+                        // request below — the driver-side comptime entry
+                        // (`register_const_block_comptime_entry`/
                         // `transform_comptime_request`) needs this exact
-                        // `hir_id` to find the checked type in the snapshot.
-                        self.shared
-                            .results
-                            .borrow_mut()
-                            .record_expr_type(expr.hir_id, body_ty.clone());
+                        // `hir_id` to find the checked type on `request.
+                        // current` (the same `Rc<HirPackage>` this writes
+                        // onto).
+                        self.shared.program().record_expr_type(expr.hir_id, body_ty.clone());
                         let shared = self.shared.clone();
                         let hir_id = expr.hir_id;
                         let def_id = const_block.def_id;
@@ -1085,32 +1075,22 @@ impl HirTypeChecker {
                         let shared_for_task = shared.clone();
                         let value = spawn_comptime_task(&shared, def_id, move || {
                             let shared = shared_for_task;
-                            // Snapshot and drop the `Ref` guard *before*
-                            // constructing the request, not inline inside
-                            // its field list — a temporary borrow created
-                            // there would otherwise stay alive until the
-                            // end of this whole statement (Rust's
-                            // temporary-lifetime rule), i.e. across the
-                            // `.await` inside `spawn_comptime_task`, and
-                            // panic when another task polled during that
-                            // suspension tries its own `borrow_mut()` on
-                            // the same `RefCell`.
-                            let typeck_results_snapshot = shared.results.borrow().clone();
-                            crate::ComptimeRequest {
-                                program: shared.program.clone(),
-                                current: shared.program_rc(),
-                                typeck_results: typeck_results_snapshot,
+                            shared.program().record_pending_comptime_block(
                                 def_id,
-                                block: hir::Block {
+                                hir::Block {
                                     hir_id,
                                     stmts: Vec::new(),
                                     expr: Some(body),
                                 },
+                            );
+                            crate::ComptimeRequest {
+                                package_id: shared.current_package_id(),
+                                def_id,
                             }
                         })
                         .await
                         .ok_or_else(|| Error::from("comptime evaluation failed"))?;
-                        self.shared.results.borrow_mut().const_block_values.insert(def_id, value);
+                        self.shared.program().record_const_block_value(def_id, value);
                     }
                     body_ty
                 }
@@ -1359,7 +1339,7 @@ impl HirTypeChecker {
                     }
                 }
             };
-            self.shared.results.borrow_mut().record_expr_type(expr.hir_id, ty.clone());
+            self.shared.program().record_expr_type(expr.hir_id, ty.clone());
             Ok(ty)
         })
     }
@@ -1472,7 +1452,7 @@ impl HirTypeChecker {
                                     "type mismatch: expected `{ty}`, found `{resolved_init}`"
                                 )));
                             }
-                            self.shared.results.borrow_mut().record_expr_type(init.hir_id, resolved_init.clone());
+                            self.shared.program().record_expr_type(init.hir_id, resolved_init.clone());
                             resolved_init
                         }
                         (Some(annotation), None) => self.check_type_expr(annotation)?,
@@ -1642,7 +1622,7 @@ impl HirTypeChecker {
                 base_ty
             }
         };
-        self.shared.results.borrow_mut().record_type_expr_type(expr.hir_id, ty.clone());
+        self.shared.program().record_type_expr_type(expr.hir_id, ty.clone());
         Ok(ty)
     }
 
@@ -1664,14 +1644,7 @@ impl HirTypeChecker {
             // `const_block_values` entry, so this only fires for the
             // comptime-local case; everything else falls through to the
             // ordinary `def_map`-based resolution below.
-            if let Some(value) = self
-                .shared
-                .results
-                .borrow()
-                .const_block_values
-                .get(&def_id)
-                .cloned()
-            {
+            if let Some(value) = self.shared.program().const_block_value(def_id) {
                 return Ok(match value {
                     fp_core::ast::Value::Type(fp_core::ast::Ty::Struct(struct_ty)) => {
                         let fields: Vec<(hir::Symbol, Ty)> = struct_ty
@@ -2246,23 +2219,13 @@ impl HirTypeChecker {
                 // needs `const A`) surfaces as a stalled executor, not a
                 // wrong answer — this `.await` just suspends like any
                 // other.
-                if self
-                    .shared
-                    .results
-                    .borrow()
-                    .const_types
-                    .get(&def_id)
-                    .is_none()
-                {
+                if self.shared.program().const_type(def_id).is_none() {
                     spawn_item_task(&self.shared, def_id).await;
                 }
                 Ok(self
                     .shared
-                    .results
-                    .borrow()
-                    .const_types
-                    .get(&def_id)
-                    .cloned()
+                    .program()
+                    .const_type(def_id)
                     .unwrap_or_else(|| self.error_ty("constant type was not recorded")))
             }
             hir::ItemKind::Function(function) => self.function_signature(function),
@@ -3271,7 +3234,7 @@ impl HirTypeChecker {
     }
 
     fn bind_pattern(&mut self, pattern: &hir::Pat, ty: Ty) -> Result<()> {
-        self.shared.results.borrow_mut().record_pat_type(pattern.hir_id, ty.clone());
+        self.shared.program().record_pat_type(pattern.hir_id, ty.clone());
         // Match ergonomics: an ADT-shaped pattern (`Value::Null`, `Point {
         // x, y }`, a tuple) matches against a `&Value`/`&(A, B)` scrutinee
         // the same way it matches a bare one — e.g. matching on `self`
@@ -4062,7 +4025,7 @@ mod tests {
     /// single-future entry point — spawns one task per top-level item (see
     /// `spawn_item_task`) and drives them to completion on a standalone
     /// executor (no driver, no comptime requests expected in these tests).
-    fn typecheck_program_sync(program: hir::HirPackage) -> Result<(hir::HirPackage, PackageTypes)> {
+    fn typecheck_program_sync(program: hir::HirPackage) -> Result<hir::HirPackage> {
         let executor = fp_core::executor::CompilerExecutor::new().handle();
         let shared = TypingShared::new(program, None, None, executor);
         let item_ids: Vec<_> = shared.program().items.iter().map(|item| item.def_id).collect();
@@ -4178,16 +4141,13 @@ mod tests {
         program.def_map.insert(a_def_id, a_item);
         program.def_map.insert(b_def_id, b_item);
 
-        let (_, results) = typecheck_program_sync(program).expect("HIR type check");
+        let results = typecheck_program_sync(program).expect("HIR type check");
         assert_eq!(
-            results.const_types.get(&a_def_id),
-            Some(&Ty::int(ty::IntTy::I64)),
+            results.const_type(a_def_id),
+            Some(Ty::int(ty::IntTy::I64)),
             "forward-referenced const B's type must resolve, not fall back to error_ty"
         );
-        assert_eq!(
-            results.const_types.get(&b_def_id),
-            Some(&Ty::int(ty::IntTy::I64))
-        );
+        assert_eq!(results.const_type(b_def_id), Some(Ty::int(ty::IntTy::I64)));
     }
 
     #[test]
@@ -4214,8 +4174,8 @@ mod tests {
         // to mirror that.
         program.def_map.insert(item.def_id, item);
 
-        let (_, results) = typecheck_program_sync(program).expect("HIR type check");
-        assert_eq!(results.expr_types.get(&hid(7)), Some(&Ty::int(ty::IntTy::I64)));
+        let results = typecheck_program_sync(program).expect("HIR type check");
+        assert_eq!(results.expr_type(hid(7)), Some(Ty::int(ty::IntTy::I64)));
     }
 
     #[test]
@@ -4251,8 +4211,8 @@ mod tests {
         program.items.push(item.clone());
         program.def_map.insert(item.def_id, item);
 
-        let (_, results) = typecheck_program_sync(program).expect("HIR type check");
-        assert_eq!(results.pat_types.get(&hid(8)), Some(&Ty::int(ty::IntTy::I64)));
+        let results = typecheck_program_sync(program).expect("HIR type check");
+        assert_eq!(results.pat_type(hid(8)), Some(Ty::int(ty::IntTy::I64)));
     }
 
     /// `f16`/`f128` are real, stabilized Rust primitive float types (same
@@ -4315,15 +4275,15 @@ mod tests {
         program.def_map.insert(f16_def_id, f16_item);
         program.def_map.insert(f128_def_id, f128_item);
 
-        let (_, results) = typecheck_program_sync(program).expect("HIR type check");
+        let results = typecheck_program_sync(program).expect("HIR type check");
         assert_eq!(
-            results.pat_types.get(&hid(11)),
-            Some(&Ty::float(ty::FloatTy::F16)),
+            results.pat_type(hid(11)),
+            Some(Ty::float(ty::FloatTy::F16)),
             "bare `f16` type path must resolve to the f16 primitive, not an unresolved-path error type"
         );
         assert_eq!(
-            results.pat_types.get(&hid(21)),
-            Some(&Ty::float(ty::FloatTy::F128)),
+            results.pat_type(hid(21)),
+            Some(Ty::float(ty::FloatTy::F128)),
             "bare `f128` type path must resolve to the f128 primitive, not an unresolved-path error type"
         );
     }
@@ -4334,15 +4294,8 @@ mod tests {
             Rc::new(|_request| Box::pin(async { Ok(fp_core::ast::Value::unit()) }));
         let shared = TypingShared::new(hir::HirPackage::new(), None, Some(resolver), fp_core::executor::CompilerExecutor::new().handle());
         let request = ComptimeRequest {
-            program: std::rc::Rc::new(fp_core::hir::HirProgram::new()),
-            current: std::rc::Rc::new(fp_core::hir::HirPackage::new()),
-            typeck_results: PackageTypes::default(),
+            package_id: hir::PackageId(0),
             def_id: hir::DefId::new(hir::PackageId(0), 0),
-            block: hir::Block {
-                hir_id: hid(0),
-                stmts: Vec::new(),
-                expr: None,
-            },
         };
         let mut future = Box::pin(shared.request_comptime(request));
         let waker = std::task::Waker::noop();

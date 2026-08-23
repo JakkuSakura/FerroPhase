@@ -9,20 +9,18 @@ use fp_core::ast::Value;
 use fp_core::mir;
 use fp_core::mir::ty::{FloatTy, IntTy, TyKind, UintTy};
 use fp_core::span::Span;
-use fp_core::{ast, hir};
-use std::cell::RefCell;
-use std::rc::Rc;
+use fp_core::hir;
 
 /// Owns exactly the context this lift direction needs: every already-
 /// compiled package's `MirPackage::adt_defs`, consulted only when a
 /// comptime result's declared type is a nominal `Adt` and its real field
 /// layout is needed to shape a `ConstValue::Struct`.
 pub struct LirToMir {
-    packages: Vec<Rc<RefCell<ast::package::CompiledPackage>>>,
+    packages: Vec<mir::MirPackage>,
 }
 
 impl LirToMir {
-    pub fn new(packages: Vec<Rc<RefCell<ast::package::CompiledPackage>>>) -> Self {
+    pub fn new(packages: Vec<mir::MirPackage>) -> Self {
         Self { packages }
     }
 
@@ -36,7 +34,7 @@ impl LirToMir {
     fn lookup_real_adt_def(&self, def_id: hir::DefId) -> Option<mir::ty::AdtDef> {
         self.packages
             .iter()
-            .find_map(|p| p.borrow().mir.adt_defs.get(&def_id).cloned())
+            .find_map(|p| p.adt_defs.get(&def_id).cloned())
     }
 
     pub fn value_to_mir_constant(&self, value: &Value, ty: &mir::Ty) -> Option<mir::Constant> {

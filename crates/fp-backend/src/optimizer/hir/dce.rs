@@ -696,20 +696,11 @@ mod tests {
             .iter()
             .map(|item| (item.def_id, item.clone()))
             .collect();
-        HirPackage {
-            id: hir::PackageId::default(),
-            module_tree: hir::ModuleTree::new(),
-            items,
-            def_map,
-            next_hir_id: 100,
-            def_paths: HashMap::new(),
-            placeholder_defs: HashSet::new(),
-            op_defs: HashMap::new(),
-            intrinsic_defs: HashMap::new(),
-            type_alias_targets: HashMap::new(),
-            struct_defs_by_name: HashMap::new(),
-            impl_method_item_index: HashMap::new(),
-        }
+        let mut package = HirPackage::new();
+        package.items = items;
+        package.def_map = def_map;
+        package.next_hir_id = 100;
+        package
     }
 
     #[test]

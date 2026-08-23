@@ -408,7 +408,7 @@ impl TargetBackend for KotlinBackend {
                 ))
             })?;
             let mut compiled = compiled.borrow_mut();
-            for pkg_item in &mut compiled.ast.items {
+            for pkg_item in &mut compiled.items {
                 pkg_item.item = fp_core::intrinsics::materialize_item(
                     pkg_item.item.clone(),
                     &crate::KotlinMaterializer,

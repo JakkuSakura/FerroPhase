@@ -133,6 +133,105 @@ impl HirProgram {
         }
     }
 
+    // --- Typed results (formerly `PackageTypes`/`ProgramTypes`) -----------
+    //
+    // Cross-package counterparts of `HirPackage`'s own single-entry
+    // get/record pairs, routed by the `HirId`/`DefId`'s own `package_id` —
+    // same convention as `member_owner`/`checked_impl_self_ty` above. A
+    // record call against a package this `HirProgram` doesn't know about is
+    // silently a no-op (mirrors `cache_checked_impl_self_ty`'s shape); every
+    // real caller already owns the package it's recording against.
+
+    pub fn expr_type(&self, hir_id: HirId) -> Option<Ty> {
+        self.package(hir_id.package_id)?.expr_type(hir_id)
+    }
+
+    pub fn record_expr_type(&self, hir_id: HirId, ty: Ty) {
+        if let Some(package) = self.package(hir_id.package_id) {
+            package.record_expr_type(hir_id, ty);
+        }
+    }
+
+    pub fn type_expr_type(&self, hir_id: HirId) -> Option<Ty> {
+        self.package(hir_id.package_id)?.type_expr_type(hir_id)
+    }
+
+    pub fn record_type_expr_type(&self, hir_id: HirId, ty: Ty) {
+        if let Some(package) = self.package(hir_id.package_id) {
+            package.record_type_expr_type(hir_id, ty);
+        }
+    }
+
+    pub fn pat_type(&self, hir_id: HirId) -> Option<Ty> {
+        self.package(hir_id.package_id)?.pat_type(hir_id)
+    }
+
+    pub fn record_pat_type(&self, hir_id: HirId, ty: Ty) {
+        if let Some(package) = self.package(hir_id.package_id) {
+            package.record_pat_type(hir_id, ty);
+        }
+    }
+
+    pub fn method_resolution(&self, hir_id: HirId) -> Option<DefId> {
+        self.package(hir_id.package_id)?.method_resolution(hir_id)
+    }
+
+    pub fn record_method_resolution(&self, hir_id: HirId, def_id: DefId) {
+        if let Some(package) = self.package(hir_id.package_id) {
+            package.record_method_resolution(hir_id, def_id);
+        }
+    }
+
+    pub fn generic_call_arg(&self, hir_id: HirId) -> Option<GenericCallResolution> {
+        self.package(hir_id.package_id)?.generic_call_arg(hir_id)
+    }
+
+    pub fn record_generic_call_arg(&self, hir_id: HirId, resolution: GenericCallResolution) {
+        if let Some(package) = self.package(hir_id.package_id) {
+            package.record_generic_call_arg(hir_id, resolution);
+        }
+    }
+
+    pub fn generic_method_arg(&self, hir_id: HirId) -> Option<GenericCallResolution> {
+        self.package(hir_id.package_id)?.generic_method_arg(hir_id)
+    }
+
+    pub fn record_generic_method_arg(&self, hir_id: HirId, resolution: GenericCallResolution) {
+        if let Some(package) = self.package(hir_id.package_id) {
+            package.record_generic_method_arg(hir_id, resolution);
+        }
+    }
+
+    pub fn const_type(&self, def_id: DefId) -> Option<Ty> {
+        self.package(def_id.package_id)?.const_type(def_id)
+    }
+
+    pub fn record_const_type(&self, def_id: DefId, ty: Ty) {
+        if let Some(package) = self.package(def_id.package_id) {
+            package.record_const_type(def_id, ty);
+        }
+    }
+
+    pub fn const_value(&self, def_id: DefId) -> Option<Value> {
+        self.package(def_id.package_id)?.const_value(def_id)
+    }
+
+    pub fn record_const_value(&self, def_id: DefId, value: Value) {
+        if let Some(package) = self.package(def_id.package_id) {
+            package.record_const_value(def_id, value);
+        }
+    }
+
+    pub fn const_block_value(&self, def_id: DefId) -> Option<Value> {
+        self.package(def_id.package_id)?.const_block_value(def_id)
+    }
+
+    pub fn record_const_block_value(&self, def_id: DefId, value: Value) {
+        if let Some(package) = self.package(def_id.package_id) {
+            package.record_const_block_value(def_id, value);
+        }
+    }
+
     pub fn op_def(&self, def_id: DefId) -> Option<&crate::intrinsics::PortableOp> {
         self.package(def_id.package_id)?.op_defs.get(&def_id)
     }

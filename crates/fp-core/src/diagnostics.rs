@@ -172,6 +172,19 @@ impl DiagnosticManager {
     }
 }
 
+/// Identity equality on the shared `Arc`, not a deep comparison of
+/// accumulated diagnostics — this only exists so `HirPackage` (which holds
+/// one of these) can keep deriving `PartialEq` for its own, unrelated
+/// structural fields; `Diagnostic` itself isn't `PartialEq`, and diagnostics
+/// are mutated through shared handles precisely so every clone sees the
+/// same underlying log, so "same log" is the only equality that makes sense
+/// here.
+impl PartialEq for DiagnosticManager {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.diagnostics, &other.diagnostics)
+    }
+}
+
 impl Default for DiagnosticManager {
     fn default() -> Self {
         Self::new()

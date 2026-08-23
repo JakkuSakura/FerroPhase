@@ -9,7 +9,6 @@ use fp_core::{
     hir, lir, mir,
 };
 use fp_typing::ComptimeResolver;
-use fp_core::hir::PackageTypes;
 
 use crate::error::CompilerDriverError;
 use crate::ConstValueId;
@@ -21,7 +20,13 @@ pub struct CompilerState {
     /// surface `ast::package::PackageId`, since a `hir::Package`'s identity
     /// is always the former.
     hir_program: hir::HirProgram,
-    hir_program_types: hir::ProgramTypes,
+    /// The whole workspace `HirProgram` a package's `TypingShared` is
+    /// checking against, published only for the duration of that package's
+    /// typecheck (see `fp_typing::TypingShared::program_handle`) — this is
+    /// what lets a mid-typecheck `ComptimeRequest` (which only carries
+    /// `package_id`/`def_id`, not its own `Rc<HirPackage>`) resolve its own
+    /// still-unpublished package back by id.
+    in_progress_hir_program: Option<Rc<hir::HirProgram>>,
     /// Every package's MIR content produced so far this session, one
     /// `mir::MirCodeUnit` per top-level `DefId` (see `mir::MirPackage`'s
     /// own doc comment) — replaces the old `BTreeMap<MirId, MirModule>`,
@@ -95,7 +100,7 @@ impl CompilerState {
     ) -> Self {
         Self {
             hir_program: hir::HirProgram::new(),
-            hir_program_types: hir::ProgramTypes::new(),
+            in_progress_hir_program: None,
             mir_program: mir::MirProgram::new(),
             lir_program: lir::LirProgram::new(),
             runtime_programs: std::collections::HashMap::new(),
@@ -116,8 +121,20 @@ impl CompilerState {
         self.hir_program.add_package(std::rc::Rc::new(package));
     }
 
-    pub fn insert_hir_typeck(&mut self, hir_package_id: hir::PackageId, results: PackageTypes) {
-        self.hir_program_types.insert_package(hir_package_id, results);
+    /// Publishes `program` (every already-published dependency, plus the
+    /// package currently being type-checked) for the duration of that
+    /// package's typecheck — see `in_progress_hir_program`'s doc comment.
+    pub fn set_in_progress_hir_program(&mut self, program: Option<Rc<hir::HirProgram>>) {
+        self.in_progress_hir_program = program;
+    }
+
+    /// The whole workspace `HirProgram` a package's typecheck is currently
+    /// in progress against, if any — the mid-typecheck counterpart of
+    /// `hir_program`'s already-published packages, for resolving a
+    /// `ComptimeRequest` whose own package hasn't finished typechecking
+    /// (and so isn't in `hir_program` yet).
+    pub fn in_progress_hir_program(&self) -> Option<Rc<hir::HirProgram>> {
+        self.in_progress_hir_program.clone()
     }
 
     /// Records `def_id`'s own lowered content — the only way `mir_program`
@@ -135,6 +152,45 @@ impl CompilerState {
 
     pub fn mir_unit(&self, package_id: &PackageId, def_id: hir::DefId) -> Option<&mir::MirCodeUnit> {
         self.mir_program.package(package_id)?.unit(def_id)
+    }
+
+    /// Read-only view of every package's MIR compiled so far this session —
+    /// used by `LirGenerator`'s lazy signature resolver (see
+    /// `CompilerDriver::new_lir_generator`) to look a callee's signature up
+    /// by `DefId`, in this package first and then every other loaded
+    /// package, without requiring a whole-program predeclare sweep.
+    pub fn mir_program(&self) -> &mir::MirProgram {
+        &self.mir_program
+    }
+
+    /// Folds `struct_fields`/`adt_defs`/`resolved_const_values`/
+    /// `resolved_const_defs` produced while lowering `package_id`'s HIR into
+    /// its `mir::MirPackage` — the per-package tables `LirGenerator`/
+    /// `evaluate_comptime_lir` read alongside the package's lowered units.
+    pub fn extend_mir_package(
+        &mut self,
+        package_id: &PackageId,
+        struct_fields: impl IntoIterator<Item = (mir::DefId, Vec<mir::Ty>)>,
+        adt_defs: impl IntoIterator<Item = (hir::DefId, mir::ty::AdtDef)>,
+        resolved_const_values: impl IntoIterator<Item = (String, mir::Constant)>,
+        resolved_const_defs: impl IntoIterator<Item = (String, mir::DefId)>,
+    ) {
+        let package = self.mir_program.package_mut(package_id);
+        package.extend_struct_fields(struct_fields);
+        package.extend_adt_defs(adt_defs);
+        package.extend_resolved_const_values(resolved_const_values);
+        package.extend_resolved_const_defs(resolved_const_defs);
+    }
+
+    /// Resets `package_id`'s LIR artifacts back to empty — used when
+    /// re-lowering a whole package after a comptime value resolves
+    /// (`CompilerDriver::relower_cached_lir_units`), since
+    /// `LirUnitTable::add_program` errors on a duplicate artifact name
+    /// rather than silently overwriting the previous lowering.
+    pub fn reset_lir_package(&mut self, package_id: &PackageId) {
+        self.lir_program
+            .packages
+            .insert(package_id.clone(), lir::LirPackage::new(self.data_layout.clone()));
     }
 
     /// Every `MirCodeUnit` this package has produced so far, folded into
@@ -268,27 +324,19 @@ impl CompilerState {
         self.backend_capabilities
     }
 
-    pub fn hir(&self, package_id: hir::PackageId) -> Result<std::rc::Rc<hir::HirPackage>, CompilerDriverError> {
+    pub fn hir(&self, package_id: hir::PackageId) -> Result<hir::HirPackage, CompilerDriverError> {
         self.hir_program
             .package(package_id)
             .cloned()
             .ok_or_else(|| CompilerDriverError::MissingHir(format!("{package_id:?}")))
     }
 
-    pub fn hir_typeck(&self, package_id: hir::PackageId) -> Result<PackageTypes, CompilerDriverError> {
-        self.hir_program_types
-            .package(package_id)
-            .map(|types| types.borrow().clone())
-            .ok_or_else(|| CompilerDriverError::MissingHir(format!("{package_id:?}")))
-    }
-
-    /// Every package's own typed results compiled so far — used by
-    /// `drain_driver` to report typing diagnostics, which live on each
-    /// package's own durable `PackageTypes` (see its `diagnostics` field's
-    /// doc comment), not on the driver's scratch, per-package
-    /// `TypingShared`.
-    pub fn all_package_types(&self) -> impl Iterator<Item = std::rc::Rc<std::cell::RefCell<PackageTypes>>> + '_ {
-        self.hir_program_types.packages.values().cloned()
+    /// Every package's own HIR compiled so far — used by `drain_driver` to
+    /// report typing diagnostics, which live directly on each package
+    /// (see `hir::HirPackage::diagnostics`'s doc comment), not on the
+    /// driver's scratch, per-package `TypingShared`.
+    pub fn all_packages(&self) -> impl Iterator<Item = &Rc<hir::HirPackage>> {
+        self.hir_program.packages.values()
     }
 
     pub fn const_value(&self, value_id: &ConstValueId) -> Result<&Value, CompilerDriverError> {

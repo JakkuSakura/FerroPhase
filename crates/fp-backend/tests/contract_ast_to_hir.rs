@@ -63,7 +63,7 @@ fn make_fn(
 /// by `AstProgram::begin_package`, then lowers it with
 /// `transform_package` — `ast::File`'s `path` field carries no information
 /// `transform_package` needs.
-fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::HirProgram> {
+fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::HirPackage> {
     let package_id = PackageId::new("test");
     let mut source = AstPackage::new(package_id.clone(), "test", PackageGraph::new(Vec::new()));
     source.items = file
@@ -449,7 +449,7 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
     Ok(())
 }
 
-fn find_function<'a>(program: &'a hir::HirProgram, name: &str) -> &'a hir::Function {
+fn find_function<'a>(program: &'a hir::HirPackage, name: &str) -> &'a hir::Function {
     program
         .items
         .iter()

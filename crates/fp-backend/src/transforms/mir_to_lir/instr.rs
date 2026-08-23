@@ -56,12 +56,28 @@ pub struct LirGenerator {
     function_package_ids: HashMap<String, fp_core::ast::package::PackageId>,
     runtime_symbol_map: fn(&str) -> Option<lir::RuntimeSymbol>,
     /// Dependency packages, queried lazily by `lookup_adt_def` on a
-    /// local-lookup miss — a cheap `Rc` snapshot,
-    /// not a copy of their MIR data. Replaces eagerly flattening every
-    /// dependency's `mir_adt_defs`/`mir_struct_fields` into `adt_defs`/a
-    /// local layout map up front (see `driver.rs`'s old `all_adt_defs`/
-    /// `all_layouts`).
-    dependency_packages: Vec<std::rc::Rc<RefCell<fp_core::ast::package::CompiledPackage>>>,
+    /// local-lookup miss — an owned snapshot of each dependency's own
+    /// already-lowered `mir::MirPackage`, not a copy of their MIR data.
+    /// Replaces eagerly flattening every dependency's `mir_adt_defs`/
+    /// `mir_struct_fields` into `adt_defs`/a local layout map up front (see
+    /// `driver.rs`'s old `all_adt_defs`/`all_layouts`).
+    dependency_packages: Vec<mir::MirPackage>,
+    /// Lazy, on-demand fallback for a callee whose signature hasn't been
+    /// predeclared yet — called from the one real miss site (a `FnDef`
+    /// operand whose `def_id` isn't yet in `function_def_map`, see
+    /// `transform_operand`), mirroring `MirLowering::resolve_callee_path`'s
+    /// own "signature-only registration on demand" fallback. Returns the
+    /// callee's own `mir::Function` (so its signature can be lowered to LIR
+    /// with this generator's own type-lowering state, exactly like
+    /// `predeclare_function_signatures_impl` already does) plus its owning
+    /// package, if it isn't this generator's own `package_id` — `None`
+    /// there means "local", matching `function_package_ids`'s own
+    /// convention. A successful resolution is cached into
+    /// `function_def_map`/`function_signatures`/`function_package_ids` so a
+    /// second reference to the same `DefId` hits the ordinary fast path.
+    resolve_signature: Option<
+        Box<dyn Fn(mir::DefId) -> Option<(mir::Function, Option<fp_core::ast::package::PackageId>)>>,
+    >,
 }
 
 #[derive(Clone)]
@@ -133,6 +149,7 @@ impl LirGenerator {
             function_package_ids: HashMap::new(),
             runtime_symbol_map,
             dependency_packages: Vec::new(),
+            resolve_signature: None,
         }
     }
 
@@ -164,17 +181,28 @@ impl LirGenerator {
     /// `driver.rs`'s callers, which extend it with this exact package's
     /// freshly-computed ADT defs/struct fields before calling in here), so
     /// there's no separate local map to check first.
-    pub fn with_dependency_packages(
-        mut self,
-        packages: Vec<std::rc::Rc<RefCell<fp_core::ast::package::CompiledPackage>>>,
-    ) -> Self {
+    pub fn with_dependency_packages(mut self, packages: Vec<mir::MirPackage>) -> Self {
         self.dependency_packages = packages;
+        self
+    }
+
+    /// Registers `resolve_signature` (see its own doc comment) — set by the
+    /// driver once, before lowering any unit, so a forward/cross-package
+    /// call resolves lazily on first reference instead of requiring a
+    /// whole-program predeclare sweep first.
+    pub fn with_signature_resolver(
+        mut self,
+        resolver: Box<
+            dyn Fn(mir::DefId) -> Option<(mir::Function, Option<fp_core::ast::package::PackageId>)>,
+        >,
+    ) -> Self {
+        self.resolve_signature = Some(resolver);
         self
     }
 
     fn lookup_adt_def(&self, def_id: &mir::DefId) -> Option<mir::ty::AdtDef> {
         for package in &self.dependency_packages {
-            if let Some(def) = package.borrow().mir.adt_defs.get(def_id) {
+            if let Some(def) = package.adt_defs.get(def_id) {
                 return Some(def.clone());
             }
         }
@@ -456,51 +484,67 @@ impl LirGenerator {
     ) {
         for item in &program.items {
             if let mir::ItemKind::Function(func) = &item.kind {
-                if func
-                    .sig
-                    .inputs
-                    .iter()
-                    .chain(std::iter::once(&func.sig.output))
-                    .any(|ty| self.contains_unresolved_param(ty))
-                {
-                    continue;
-                }
-                let name = self.mangle_function_name(func);
-                if let Some(def_id) = func.def_id {
-                    self.function_def_map
-                        .entry((def_id, func.substs.clone()))
-                        .or_insert_with(|| name.clone());
-                }
-                let signature = lir::LirFunctionSignature {
-                    params: func
-                        .sig
-                        .inputs
-                        .iter()
-                        .map(|ty| self.lir_type_from_ty(ty))
-                        .collect(),
-                    return_type: self.lir_type_from_ty(&func.sig.output),
-                    is_variadic: false,
-                };
-                self.function_signatures
-                    .entry(name.clone())
-                    .or_insert(signature);
-                let cc = self.calling_convention_for_abi(&func.abi);
-                self.function_call_conventions
-                    .entry(func.name.as_str().to_string())
-                    .or_insert(cc.clone());
-                self.function_call_conventions
-                    .entry(name.clone())
-                    .or_insert(cc);
-                self.function_declarations
-                    .entry(name.clone())
-                    .or_insert(func.is_extern);
-                if let Some(package_id) = &package_id {
-                    self.function_package_ids
-                        .entry(name)
-                        .or_insert_with(|| package_id.clone());
-                }
+                self.register_function_signature(func, package_id.clone());
             }
         }
+    }
+
+    /// Registers one function's mangled name/LIR signature/calling
+    /// convention/package ownership into the generator's lookup maps —
+    /// shared body of `predeclare_function_signatures_impl`'s whole-module
+    /// sweep and `resolve_signature`'s lazy, per-`DefId` fallback (see
+    /// `transform_operand`'s `FnDef` arm). Returns `None` (registering
+    /// nothing) for a still-generic template signature — only a concrete,
+    /// fully-substituted `mir::Function` can be given a real LIR type.
+    fn register_function_signature(
+        &mut self,
+        func: &mir::Function,
+        package_id: Option<fp_core::ast::package::PackageId>,
+    ) -> Option<String> {
+        if func
+            .sig
+            .inputs
+            .iter()
+            .chain(std::iter::once(&func.sig.output))
+            .any(|ty| self.contains_unresolved_param(ty))
+        {
+            return None;
+        }
+        let name = self.mangle_function_name(func);
+        if let Some(def_id) = func.def_id {
+            self.function_def_map
+                .entry((def_id, func.substs.clone()))
+                .or_insert_with(|| name.clone());
+        }
+        let signature = lir::LirFunctionSignature {
+            params: func
+                .sig
+                .inputs
+                .iter()
+                .map(|ty| self.lir_type_from_ty(ty))
+                .collect(),
+            return_type: self.lir_type_from_ty(&func.sig.output),
+            is_variadic: false,
+        };
+        self.function_signatures
+            .entry(name.clone())
+            .or_insert(signature);
+        let cc = self.calling_convention_for_abi(&func.abi);
+        self.function_call_conventions
+            .entry(func.name.as_str().to_string())
+            .or_insert(cc.clone());
+        self.function_call_conventions
+            .entry(name.clone())
+            .or_insert(cc);
+        self.function_declarations
+            .entry(name.clone())
+            .or_insert(func.is_extern);
+        if let Some(package_id) = &package_id {
+            self.function_package_ids
+                .entry(name.clone())
+                .or_insert_with(|| package_id.clone());
+        }
+        Some(name)
     }
 
     /// Transform a MIR function to LIR
@@ -3217,16 +3261,37 @@ impl LirGenerator {
             }
             mir::Operand::Constant(constant) => match &constant.literal {
                 mir::ConstantKind::FnDef(def_id, substs) => {
-                    let name = self
-                        .function_def_map
-                        .get(&(*def_id, substs.clone()))
-                        .cloned()
-                        .ok_or_else(|| {
-                            fp_core::error::Error::from(format!(
-                                "missing MIR function definition {} with substitutions {:?}",
-                                def_id, substs
-                            ))
-                        })?;
+                    let name = match self.function_def_map.get(&(*def_id, substs.clone())) {
+                        Some(name) => name.clone(),
+                        // Never predeclared (no whole-program sweep ran, or
+                        // this is a forward/cross-package reference that
+                        // sweep wouldn't have covered anyway) — resolve it
+                        // lazily via `resolve_signature`, exactly mirroring
+                        // `MirLowering::resolve_callee_path`'s own
+                        // signature-only registration on demand. Cached
+                        // into `function_def_map`/`function_signatures`/
+                        // `function_package_ids` by `register_function_signature`,
+                        // so a second reference to the same `def_id` hits
+                        // the ordinary fast path above.
+                        None => {
+                            let resolved = self
+                                .resolve_signature
+                                .as_ref()
+                                .and_then(|resolve| resolve(*def_id));
+                            let (func, package_id) = resolved.ok_or_else(|| {
+                                fp_core::error::Error::from(format!(
+                                    "missing MIR function definition {} with substitutions {:?}",
+                                    def_id, substs
+                                ))
+                            })?;
+                            self.register_function_signature(&func, package_id).ok_or_else(|| {
+                                fp_core::error::Error::from(format!(
+                                    "unresolved generic signature for function definition {} with substitutions {:?}",
+                                    def_id, substs
+                                ))
+                            })?
+                        }
+                    };
                     self.function_value(name)
                 }
                 mir::ConstantKind::Fn(name) => {

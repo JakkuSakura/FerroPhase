@@ -25,7 +25,6 @@ use fp_core::mir::ty::{
 use fp_core::mir::{self, Symbol};
 use fp_core::ops::format_value_with_spec;
 use fp_core::span::Span;
-use fp_core::hir::PackageTypes;
 use std::collections::{HashMap, HashSet, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 
@@ -576,17 +575,6 @@ pub struct MirLowering {
     opaque_ty_sizes: HashMap<String, u64>,
     synthetic_runtime_functions: HashSet<String>,
     next_synthetic_hir_def_id: hir::DefId,
-    typeck_type_exprs: HashMap<hir::HirId, Ty>,
-    typeck_exprs: HashMap<hir::HirId, Ty>,
-    /// Comptime-evaluated `const { ... }` block values, keyed by the
-    /// block's own `DefId` (see `hir::ExprConstBlock::def_id`) — populated
-    /// from `PackageTypes::const_block_values`. Looked up directly when
-    /// lowering `hir::ExprKind::ConstBlock`/`TypeExprKind::ConstBlock`;
-    /// no synthetic item, no string key.
-    typeck_const_block_values: HashMap<hir::DefId, Value>,
-    typeck_method_resolutions: HashMap<hir::HirId, hir::DefId>,
-    typeck_generic_call_args: HashMap<hir::HirId, Vec<Ty>>,
-    typeck_generic_method_args: HashMap<hir::HirId, Vec<Ty>>,
     adt_defs: HashMap<hir::DefId, mir::ty::AdtDef>,
     /// Snapshot of the whole-workspace `hir::HirPackage.def_map`/`def_paths`
     /// (local items + every dependency's, via `seed_workspace_definitions`),
@@ -693,21 +681,30 @@ impl MirLowering {
             extra_items: Vec::new(),
             extra_bodies: Vec::new(),
             lowered_items: HashSet::new(),
+            current_lowering_def_id: None,
+            const_block_owners: HashMap::new(),
             opaque_types: HashMap::new(),
             opaque_ty_sizes: HashMap::new(),
             synthetic_runtime_functions: HashSet::new(),
             next_synthetic_hir_def_id: hir::DefId::local(1),
-            typeck_type_exprs: HashMap::new(),
-            typeck_exprs: HashMap::new(),
-            typeck_const_block_values: HashMap::new(),
-            typeck_method_resolutions: HashMap::new(),
-            typeck_generic_call_args: HashMap::new(),
-            typeck_generic_method_args: HashMap::new(),
             adt_defs: HashMap::new(),
             hir_program: std::rc::Rc::new(hir::HirProgram::new()),
             current_package: std::rc::Rc::new(hir::HirPackage::new()),
             current_package_id: None,
         }
+    }
+
+    /// Same idea as `typeck_expr_type`, for a `MethodCall` expr's own
+    /// resolved callee `DefId` — read straight off `current_package`, no
+    /// lowering step needed.
+    fn typeck_method_resolution(&self, hir_id: hir::HirId) -> Option<hir::DefId> {
+        self.current_package.method_resolution(hir_id)
+    }
+
+    /// Same idea as `typeck_expr_type`, for a `const { .. }` block's
+    /// already-resolved comptime value.
+    fn typeck_const_block_value(&self, def_id: hir::DefId) -> Option<Value> {
+        self.current_package.const_block_value(def_id)
     }
 
     /// Point `DefId` lookup — checks `current_package` first (its own
@@ -781,7 +778,7 @@ impl MirLowering {
     /// (used for the real, whole-package compile, where every item's body
     /// genuinely needs lowering), this never lowers any function, method,
     /// or const body other than the one synthetic function built directly
-    /// from `request.block`/`request.expected_ty` — no walk of `main`'s or
+    /// from `request.block` — no walk of `main`'s or
     /// any other item's own body at all. Whatever that one body actually
     /// references (other consts, plain functions, generic methods)
     /// resolves correctly and on demand via `register_const_value`/
@@ -789,17 +786,18 @@ impl MirLowering {
     /// `ensure_function_specialization`'s existing lazy mechanisms.
     pub fn transform_comptime_request(
         &mut self,
-        request: &fp_typing::ComptimeRequest,
+        hir_program: std::rc::Rc<hir::HirProgram>,
+        current_package: std::rc::Rc<hir::HirPackage>,
+        def_id: hir::DefId,
     ) -> Result<mir::MirModule> {
-        // Sharing the caller's own `Rc`s (`ComptimeRequest::program`/
-        // `current` are already `Rc`s) instead of cloning `def_map`/
+        // Sharing the caller's own `Rc`s instead of cloning `def_map`/
         // `def_paths` out of them — every item, keyed by `DefId`, across
         // the whole workspace — fresh on every single `const { .. }`
-        // block. `current_package` stays un-merged with `program`'s
+        // block. `current_package` stays un-merged with `hir_program`'s
         // dependency packages (see `hir_item`'s doc comment); only its
         // own `DefId`s are used for the bookkeeping below.
-        self.hir_program = request.program.clone();
-        self.current_package = request.current.clone();
+        self.hir_program = hir_program;
+        self.current_package = current_package;
         self.current_package_id = Some(self.current_package.id);
         // `current_package.items` only lists *top-level* items — a local
         // `const` binding inside a function body (or any other nested
@@ -856,36 +854,35 @@ impl MirLowering {
         // comment already scopes itself to, just reached lazily instead
         // of unconditionally for methods this request never references.
 
-        let body = request.block.expr.as_ref().ok_or_else(|| {
+        // The exact HIR block the type checker encountered, recorded onto
+        // this package under its own `def_id` the moment it built this
+        // request (see `HirPackage::pending_comptime_block`'s doc comment)
+        // — the request itself only names `package_id`/`def_id`, never
+        // carries its own block.
+        let block = current_package.pending_comptime_block(def_id).ok_or_else(|| {
+            fp_core::error::Error::from(format!(
+                "internal compiler error: no pending comptime block recorded for {def_id:?}"
+            ))
+        })?;
+        let body = block.expr.as_ref().ok_or_else(|| {
             fp_core::error::Error::from(
                 "internal compiler error: comptime request block has no body expression",
             )
         })?;
-        // `request.expected_ty` is only ever a placeholder (`Infer`) these
-        // days — the real, checked type lives in the request's own
-        // `typeck_results` snapshot, keyed by `expression_id`, exactly like
-        // `register_const_block_comptime_entry` reads it out of `self.
-        // typeck_exprs` for the whole-package walk. The type checker
-        // unconditionally records this entry before ever building the
-        // request, so a missing/unlowerable entry here is an internal
-        // compiler error, not a normal "might not be there" case.
-        let ty = request
-            .typeck_results
-            .expr_types
-            .get(&request.expression_id)
-            .ok_or_else(|| {
-                fp_core::error::Error::from(format!(
-                    "internal compiler error: comptime request for {:?} has no checked type in typeck_results",
-                    request.expression_id
-                ))
-            })
-            .and_then(|ty| lower_hir_ty(ty))?;
-        self.register_const_block_comptime_entry_direct(
-            request.expression_id,
-            ty,
-            body,
-            body.span,
-        );
+        // The real, checked type already lives directly on `current_package`
+        // (`typeck_expr_type`), keyed by the block's own `hir_id`, exactly like
+        // `register_const_block_comptime_entry` reads it for the
+        // whole-package walk. The type checker unconditionally records
+        // this entry before ever building the request, so a missing entry
+        // here is an internal compiler error, not a normal "might not be
+        // there" case.
+        let ty = self.typeck_expr_type(block.hir_id).ok_or_else(|| {
+            fp_core::error::Error::from(format!(
+                "internal compiler error: comptime request for {:?} has no checked type",
+                block.hir_id
+            ))
+        })?;
+        self.register_const_block_comptime_entry_direct(block.hir_id, ty, body, body.span);
 
         let mut mir_program = mir::MirModule::new();
         self.flush_extra_items(&mut mir_program);
@@ -1233,70 +1230,73 @@ impl MirLowering {
         self.resolved_const_values.insert(key.into(), value);
     }
 
-    pub fn with_typeck_results(mut self, results: &PackageTypes) -> Result<Self> {
-        self.typeck_type_exprs = self.lower_ty_map(results.type_expr_types.iter());
-        self.typeck_exprs = self.lower_ty_map(results.expr_types.iter());
-        self.typeck_const_block_values = results.const_block_values.clone();
-        self.typeck_method_resolutions = results.method_resolutions.clone();
-        self.typeck_generic_call_args = self.lower_generic_args_map(results.generic_call_args.iter());
-        self.typeck_generic_method_args =
-            self.lower_generic_args_map(results.generic_method_args.iter());
-        Ok(self)
+    /// `fp_typing`'s checked type for `hir_id`, read straight off
+    /// `self.current_package` (the same `Rc<HirPackage>` it wrote it onto —
+    /// no separate copy-and-lower-everything-up-front pass here anymore,
+    /// see this type's own doc comment for why that used to exist) and
+    /// lowered to a MIR `Ty` on demand. A single unresolvable type must not
+    /// block MIR lowering for every *other*, independently-correct item —
+    /// this just skips it (recording a diagnostic) and returns `None`,
+    /// exactly like a genuinely-never-recorded entry would.
+    fn typeck_expr_type(&mut self, hir_id: hir::HirId) -> Option<Ty> {
+        let ty = self.current_package.expr_type(hir_id)?;
+        match lower_hir_ty(&ty) {
+            Ok(lowered) => Some(lowered),
+            Err(error) => {
+                self.emit_warning(
+                    Span::default(),
+                    format!("skipping unresolvable type for HIR node {hir_id:?}: {error}"),
+                );
+                None
+            }
+        }
     }
 
-    /// A single unresolvable type recorded elsewhere in this package's
-    /// typeck results (e.g. an unrelated item that failed to typecheck)
-    /// must not block MIR lowering for every *other*, independently-correct
-    /// item — skip just that one hir_id's entry (recording a diagnostic)
-    /// instead of aborting the whole map. Every real consumer of these maps
-    /// already looks entries up via `.get(&hir_id) -> Option<_>`, so a
-    /// missing entry here is the same sparse-map shape they already
-    /// tolerate — not a new kind of gap.
-    fn lower_ty_map<'a>(
-        &mut self,
-        entries: impl Iterator<Item = (&'a hir::HirId, &'a hir::ty::Ty)>,
-    ) -> HashMap<hir::HirId, Ty> {
-        entries
-            .filter_map(|(id, ty)| match lower_hir_ty(ty) {
-                Ok(lowered) => Some((*id, lowered)),
-                Err(error) => {
-                    self.emit_warning(
-                        Span::default(),
-                        format!("skipping unresolvable type for HIR node {id:?}: {error}"),
-                    );
-                    None
-                }
-            })
-            .collect()
+    /// Same as `typeck_expr_type`, for a type-position `TypeExpr`'s own
+    /// checked type instead of a value expr's.
+    fn typeck_type_expr_type(&mut self, hir_id: hir::HirId) -> Option<Ty> {
+        let ty = self.current_package.type_expr_type(hir_id)?;
+        match lower_hir_ty(&ty) {
+            Ok(lowered) => Some(lowered),
+            Err(error) => {
+                self.emit_warning(
+                    Span::default(),
+                    format!("skipping unresolvable type for HIR node {hir_id:?}: {error}"),
+                );
+                None
+            }
+        }
     }
 
-    /// Same reasoning as `lower_ty_map`, for the generic-args resolution
-    /// maps: if any one argument in a resolution fails to lower, that
-    /// resolution as a whole is skipped (a partial arg list would be
-    /// nonsensical), but other hir_ids' resolutions are unaffected.
-    fn lower_generic_args_map<'a>(
-        &mut self,
-        entries: impl Iterator<Item = (&'a hir::HirId, &'a fp_typing::types::GenericCallResolution)>,
-    ) -> HashMap<hir::HirId, Vec<Ty>> {
-        entries
-            .filter_map(|(id, resolution)| {
-                match resolution
-                    .args
-                    .iter()
-                    .map(lower_hir_ty)
-                    .collect::<Result<Vec<_>>>()
-                {
-                    Ok(args) => Some((*id, args)),
-                    Err(error) => {
-                        self.emit_warning(
-                            Span::default(),
-                            format!("skipping unresolvable generic args for HIR node {id:?}: {error}"),
-                        );
-                        None
-                    }
-                }
-            })
-            .collect()
+    /// Same idea, for a resolved generic call/method call's own concrete
+    /// type arguments — if any one argument fails to lower, the whole
+    /// resolution is skipped (a partial arg list would be nonsensical).
+    fn typeck_generic_call_arg(&mut self, hir_id: hir::HirId) -> Option<Vec<Ty>> {
+        let resolution = self.current_package.generic_call_arg(hir_id)?;
+        match resolution.args.iter().map(lower_hir_ty).collect::<Result<Vec<_>>>() {
+            Ok(args) => Some(args),
+            Err(error) => {
+                self.emit_warning(
+                    Span::default(),
+                    format!("skipping unresolvable generic args for HIR node {hir_id:?}: {error}"),
+                );
+                None
+            }
+        }
+    }
+
+    fn typeck_generic_method_arg(&mut self, hir_id: hir::HirId) -> Option<Vec<Ty>> {
+        let resolution = self.current_package.generic_method_arg(hir_id)?;
+        match resolution.args.iter().map(lower_hir_ty).collect::<Result<Vec<_>>>() {
+            Ok(args) => Some(args),
+            Err(error) => {
+                self.emit_warning(
+                    Span::default(),
+                    format!("skipping unresolvable generic args for HIR node {hir_id:?}: {error}"),
+                );
+                None
+            }
+        }
     }
 
     /// Convert a comptime-evaluated `Value` (from `const { ... }` block
@@ -4348,15 +4348,11 @@ impl MirLowering {
         // checked (and its type recorded) before MIR lowering ever runs —
         // a missing entry means typing skipped this node, an internal
         // compiler error, not a case to paper over with a made-up type.
-        let lowered_ty = self
-            .typeck_exprs
-            .get(&expr_hir_id)
-            .cloned()
-            .unwrap_or_else(|| {
-                panic!(
-                    "internal compiler error: const block {expr_hir_id:?} has no checked type in PackageTypes"
-                )
-            });
+        let lowered_ty = self.typeck_expr_type(expr_hir_id).unwrap_or_else(|| {
+            panic!(
+                "internal compiler error: const block {expr_hir_id:?} has no checked type recorded on its own HirPackage"
+            )
+        });
         self.register_const_block_comptime_entry_direct(
             expr_hir_id,
             lowered_ty,
@@ -4445,8 +4441,8 @@ impl MirLowering {
                 return self.lower_path_type(path, ty_expr.span);
             }
         }
-        if let Some(ty) = self.typeck_type_exprs.get(&ty_expr.hir_id) {
-            return ty.clone();
+        if let Some(ty) = self.typeck_type_expr_type(ty_expr.hir_id) {
+            return ty;
         }
         match &ty_expr.kind {
             hir::TypeExprKind::Primitive(primitive) => {
@@ -6283,9 +6279,7 @@ impl MirLowering {
             hir::TypeExprKind::Infer => self.error_ty(),
             hir::TypeExprKind::Error => self.error_ty(),
             hir::TypeExprKind::ConstBlock(_, _) => self
-                .typeck_type_exprs
-                .get(&ty_expr.hir_id)
-                .cloned()
+                .typeck_type_expr_type(ty_expr.hir_id)
                 .unwrap_or_else(|| self.error_ty()),
             hir::TypeExprKind::Type => Ty { kind: TyKind::Type },
             hir::TypeExprKind::Any => Ty { kind: TyKind::Any },
@@ -6416,17 +6410,17 @@ impl MirLowering {
         // fresh synthetic one: on relower (after `CompilerDriver::
         // evaluate_comptime_lir` has run this package's own comptime
         // entries through the real interpreter and `apply_resolved_
-        // comptime_block_values` fed the answer back into `PackageTypes`
-        // via `with_typeck_results`), the resolved value is already
-        // sitting in `typeck_const_block_values` under this same `def_id`
-        // — consult it here, the same way an inline `ConstBlock` operand
-        // does (`lower_operand`'s `ConstBlock` arm) — before falling back
-        // to registering a comptime entry for the *next* pass to resolve.
-        // Without this, a non-foldable top-level const's initializer is
-        // silently dropped: no MIR item, no LIR global, no compile-time
-        // error — only a runtime "missing global" once something actually
-        // reads it.
-        if let Some(value) = self.typeck_const_block_values.get(&def_id).cloned() {
+        // comptime_block_values` fed the answer back onto the package
+        // directly), the resolved value is already sitting on
+        // `self.current_package`'s own `const_block_values` under this same
+        // `def_id` — consult it here, the same way an inline `ConstBlock`
+        // operand does (`lower_operand`'s `ConstBlock` arm) — before
+        // falling back to registering a comptime entry for the *next* pass
+        // to resolve. Without this, a non-foldable top-level const's
+        // initializer is silently dropped: no MIR item, no LIR global, no
+        // compile-time error — only a runtime "missing global" once
+        // something actually reads it.
+        if let Some(value) = self.current_package.const_block_value(def_id) {
             if let Some(constant) = self.const_block_value_to_mir_constant(&value, konst.body.value.span) {
                 self.const_values.insert(def_id, ConstInfo { ty, value: constant });
                 return;
@@ -7037,7 +7031,7 @@ impl MirLowering {
     ) -> Option<mir::Constant> {
         let constant_ty = expected_ty
             .cloned()
-            .or_else(|| self.typeck_exprs.get(&expr.hir_id).cloned());
+            .or_else(|| self.typeck_expr_type(expr.hir_id));
         match &expr.kind {
             hir::ExprKind::Literal(lit) => Some(mir::Constant {
                 span: expr.span,
@@ -8622,12 +8616,12 @@ impl MirLowering {
     /// would) whenever there's no cached entry, the cached type isn't this
     /// same struct, or composing `type_substs` still leaves it unresolved.
     fn adt_ty_args_from_typeck_cache(
-        &self,
+        &mut self,
         hir_id: hir::HirId,
         def_id: hir::DefId,
         type_substs: &HashMap<String, Ty>,
     ) -> Option<Vec<Ty>> {
-        let cached = self.typeck_exprs.get(&hir_id)?;
+        let cached = self.typeck_expr_type(hir_id)?;
         let TyKind::Adt(adt, args) = &cached.kind else {
             return None;
         };
@@ -9775,7 +9769,7 @@ impl<'a> BodyBuilder<'a> {
                 return self.lowering.string_slice_ty();
             }
         }
-        if let Some(ty) = self.lowering.typeck_type_exprs.get(&ty_expr.hir_id) {
+        if let Some(ty) = self.lowering.typeck_type_expr_type(ty_expr.hir_id) {
             // The type checker type-checks a generic method body once,
             // abstractly, before any monomorphization exists as a concept —
             // its cached type for a bare generic-param reference inside
@@ -9787,9 +9781,9 @@ impl<'a> BodyBuilder<'a> {
             // still contain something `type_substs` would otherwise
             // resolve.
             let trust_cache = !matches!(ty.kind, TyKind::Error(_))
-                && (self.type_substs.is_empty() || !self.lowering.has_unresolved_ty(ty));
+                && (self.type_substs.is_empty() || !self.lowering.has_unresolved_ty(&ty));
             if trust_cache {
-                return ty.clone();
+                return ty;
             }
         }
         // NOTE(jakku): This is the key hook for generic lowering. When
@@ -12019,18 +12013,13 @@ impl<'a> BodyBuilder<'a> {
         Ok(())
     }
 
-    fn implicit_local_init_ty(&self, expr: &hir::Expr) -> Result<Ty> {
-        let ty = self
-            .lowering
-            .typeck_exprs
-            .get(&expr.hir_id)
-            .cloned()
-            .ok_or_else(|| {
-                fp_core::error::Error::from(format!(
-                    "missing HIR type for local initializer {}",
-                    expr.hir_id
-                ))
-            })?;
+    fn implicit_local_init_ty(&mut self, expr: &hir::Expr) -> Result<Ty> {
+        let ty = self.lowering.typeck_expr_type(expr.hir_id).ok_or_else(|| {
+            fp_core::error::Error::from(format!(
+                "missing HIR type for local initializer {}",
+                expr.hir_id
+            ))
+        })?;
         // Same concern as `lower_type_expr`'s typeck-cache check: the type
         // checker's cached type for this initializer expression comes from
         // type-checking the generic body once, abstractly — inside a
@@ -12102,7 +12091,7 @@ impl<'a> BodyBuilder<'a> {
                 // receiver's type without lowering it (no side effects
                 // from lowering something we might not use).
                 if let hir::ExprKind::Index(receiver, index) = &place_expr.kind {
-                    let receiver_ty = self.lowering.typeck_exprs.get(&receiver.hir_id).cloned();
+                    let receiver_ty = self.lowering.typeck_expr_type(receiver.hir_id);
                     if let Some(struct_def_id) = receiver_ty
                         .as_ref()
                         .and_then(|ty| self.real_indexable_struct_def_id(ty))
@@ -14423,7 +14412,7 @@ impl<'a> BodyBuilder<'a> {
                 explicit_args = self.lowering.lower_generic_args(Some(args), expr.span);
             }
             if explicit_args.is_empty() {
-                if let Some(args) = self.lowering.typeck_generic_call_args.get(&expr.hir_id) {
+                if let Some(args) = self.lowering.typeck_generic_call_arg(expr.hir_id) {
                     // The type checker's own cached inference for this call
                     // can itself still be `Param`-relative rather than
                     // fully concrete: when the call is nested inside
@@ -15912,7 +15901,7 @@ impl<'a> BodyBuilder<'a> {
 
     fn lower_operand(&mut self, expr: &hir::Expr, expected: Option<&Ty>) -> Result<OperandInfo> {
         let inferred_expected = if expected.is_none() {
-            self.lowering.typeck_exprs.get(&expr.hir_id).cloned()
+            self.lowering.typeck_expr_type(expr.hir_id)
         } else {
             None
         };
@@ -17292,10 +17281,10 @@ impl<'a> BodyBuilder<'a> {
                 // `HirTypeChecker::check_expr`'s `ConstBlock` arm) and handed
                 // here keyed by this block's own `def_id` — no synthetic
                 // item, no string key.
-                if let Some(value) = self.lowering.typeck_const_block_values.get(&const_block.def_id) {
+                if let Some(value) = self.lowering.typeck_const_block_value(const_block.def_id) {
                     if let Some(constant) = self
                         .lowering
-                        .const_block_value_to_mir_constant(&value.clone(), expr.span)
+                        .const_block_value_to_mir_constant(&value, expr.span)
                     {
                         let ty = expected
                             .cloned()
@@ -20376,7 +20365,7 @@ impl<'a> BodyBuilder<'a> {
                 let mut resolved_info: Option<(MethodLoweringInfo, Option<PlaceInfo>)> = None;
                 let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
 
-                if let Some(def_id) = self.lowering.typeck_method_resolutions.get(&expr.hir_id).copied() {
+                if let Some(def_id) = self.lowering.typeck_method_resolution(expr.hir_id) {
                     // `ensure_method_info` is the uniform lookup, same
                     // shape as `compute_adt_layout` — see `resolve_callee_path`'s
                     // matching comment.
@@ -20900,10 +20889,8 @@ impl<'a> BodyBuilder<'a> {
                         if let Some(_struct_entry) = self.lowering.struct_defs.get(&def_id) {
                             let method_def = self
                                 .lowering
-                                .typeck_method_resolutions
-                                .get(&expr.hir_id)
-                                .and_then(|def_id| self.lowering.method_defs_by_def.get(def_id))
-                                .cloned();
+                                .typeck_method_resolution(expr.hir_id)
+                                .and_then(|def_id| self.lowering.method_defs_by_def.get(&def_id).cloned());
                             if let Some(def) = method_def {
                                 let method_ctx = self.lowering.make_method_context(&def.self_ty, &def.assoc_types);
                                 let tentative_sig = self
@@ -20940,9 +20927,7 @@ impl<'a> BodyBuilder<'a> {
 
                                 let generic_args = self
                                     .lowering
-                                    .typeck_generic_method_args
-                                    .get(&expr.hir_id)
-                                    .cloned()
+                                    .typeck_generic_method_arg(expr.hir_id)
                                     .ok_or_else(|| {
                                         crate::error::optimization_error(
                                             "missing HIR generic method substitutions",
@@ -20998,10 +20983,8 @@ impl<'a> BodyBuilder<'a> {
                         if let Some(_enum_entry) = self.lowering.enum_defs.get(&enum_def) {
                             let method_def = self
                                 .lowering
-                                .typeck_method_resolutions
-                                .get(&expr.hir_id)
-                                .and_then(|def_id| self.lowering.method_defs_by_def.get(def_id))
-                                .cloned();
+                                .typeck_method_resolution(expr.hir_id)
+                                .and_then(|def_id| self.lowering.method_defs_by_def.get(&def_id).cloned());
                             if let Some(def) = method_def {
                                 let method_ctx = self.lowering.make_method_context(&def.self_ty, &def.assoc_types);
                                 let tentative_sig = self
@@ -21038,9 +21021,7 @@ impl<'a> BodyBuilder<'a> {
 
                                 let generic_args = self
                                     .lowering
-                                    .typeck_generic_method_args
-                                    .get(&expr.hir_id)
-                                    .cloned()
+                                    .typeck_generic_method_arg(expr.hir_id)
                                     .ok_or_else(|| {
                                         crate::error::optimization_error(
                                             "missing HIR generic method substitutions",

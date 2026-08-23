@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fp_compiler::{
-    CompilerDriver, CompilerExecutor, CompilerSession, ConstValueId, FullyQualifiedPath, LirId,
+    CompilerDriver, CompilerExecutor, CompilerSession, ConstValueId, FullyQualifiedPath,
     PipelineMode,
 };
 use fp_core::ast::path::QualifiedPath;
@@ -391,15 +391,15 @@ fn compile_source_file(
 }
 
 pub fn drain_driver(driver: &mut CompilerDriver) -> Result<()> {
-    // Typing diagnostics live on each compiled package's own `PackageTypes`
+    // Typing diagnostics live on each compiled package's own `HirPackage`
     // (see its `diagnostics` field's doc comment), not on the driver's
     // scratch, per-package `TypingShared` — that's discarded the moment
     // each package's compile finishes, before this ever runs.
     let diagnostics: Vec<_> = driver
         .state
         .borrow()
-        .all_package_types()
-        .flat_map(|types| types.diagnostics.get_diagnostics())
+        .all_packages()
+        .flat_map(|package| package.diagnostics.get_diagnostics())
         .collect();
     emit_typing_diagnostics(&diagnostics)
 }
@@ -570,7 +570,6 @@ impl LoweredProgram {
             .state
             .borrow()
             .hir(hir_package_id)
-            .map(|package| (*package).clone())
             .map_err(|_| {
                 CliError::Compilation(format!(
                     "compiled package `{}` contains no HIR program",
