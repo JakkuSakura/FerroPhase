@@ -14,7 +14,7 @@
 //! at line ~778, the multi-file `--target` path at line ~954). The AST it
 //! materializes over is produced by `HirToAstLifter` from the shared,
 //! `hir_normalization`-promoted HIR (`promote_op_only: true` for
-//! `TypecheckedTranspile`, which Kotlin transpilation always uses), so by
+//! `Transpile`, which Kotlin transpilation always uses), so by
 //! the time `KotlinMaterializer::materialize_call` sees an
 //! `ExprIntrinsicCall`, its `kind` is already the promoted `CallKind::Op`
 //! (or a genuine `CallKind::Intrinsic`) — no logic change needed here.

@@ -489,7 +489,7 @@ pub fn build_workspace_session(
     ));
     let workspace = std::rc::Rc::new(fp_core::ast::workspace::WorkspaceContext::new(combined));
     let mut session = CompilerSession::new(data_layout(), &executor, workspace);
-    session.driver().pipeline = PipelineMode::TypecheckedTranspile;
+    session.driver().pipeline = PipelineMode::Transpile;
     session.driver().state.borrow_mut().set_capabilities(capabilities);
     (executor, session)
 }

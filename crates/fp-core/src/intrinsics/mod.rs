@@ -46,7 +46,7 @@ pub fn extract_op_attr(attrs: &[Attribute], key: &str) -> Option<String> {
 pub enum IntrinsicNormalizationMode {
     Compile,
     Transpile,
-    /// `PipelineMode::TypecheckedTranspile` specifically — plain-call/
+    /// `PipelineMode::Transpile` specifically — plain-call/
     /// method-call portable-op detection is handled post-typecheck by
     /// `HirToAstLifter` directly consulting `hir::Package.op_defs` instead
     /// (real resolved callee/method `DefId`s available there, so a

@@ -114,7 +114,7 @@ enum Commands {
 }
 
 /// Compiler-driving code (`fp-typing`'s recursive-descent type checker,
-/// driven synchronously via `CompilerDriver::compile_native_sync`) recurses once per AST
+/// driven via `CompilerExecutor::run` over `CompilerDriver::compile_native`) recurses once per AST
 /// node through boxed `Future`s, whose generated state machines are
 /// considerably larger per frame than a plain function call -- so a modestly
 /// deep source expression can need more stack than a thread's default. Give

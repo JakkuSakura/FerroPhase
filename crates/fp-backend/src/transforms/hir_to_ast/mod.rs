@@ -21,7 +21,7 @@ use fp_core::hir::PackageTypes;
 
 /// Lifts a typechecked `hir::Package` back into a plain item list — the
 /// shape every backend serializer (Kotlin, Python, Go, ...) already knows
-/// how to consume, so `PipelineMode::TypecheckedTranspile` can reuse those
+/// how to consume, so `PipelineMode::Transpile` can reuse those
 /// serializers unchanged rather than each needing its own HIR-consuming path.
 ///
 /// Carries the source `&hir::Package` (needed for a couple of program-wide

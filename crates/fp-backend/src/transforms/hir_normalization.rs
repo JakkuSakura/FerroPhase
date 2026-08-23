@@ -1,6 +1,6 @@
 //! Formalizes HIR-level `#[op(...)]` recognition as a standalone,
 //! HIR-mutating pass that runs once, post-typecheck, on the shared HIR
-//! before either pipeline (`TypecheckedTranspile`/Kotlin AST-lift, or
+//! before either pipeline (`Transpile`/Kotlin AST-lift, or
 //! `Native`/`hir_to_mir`) consumes it.
 //!
 //! This formalizes what used to be four private methods on

@@ -825,7 +825,7 @@ impl HirGenerator {
                 // name/path) happens post-typecheck instead — see
                 // `hir_to_mir::expr::lower_call` (`Native`) and
                 // `HirToAstLifter::try_lift_call_as_intrinsic`
-                // (`TypecheckedTranspile`), both consulting the same
+                // (`Transpile`), both consulting the same
                 // `program.op_defs`/`intrinsic_defs` tables via
                 // `transforms::resolve_call_kind`.
                 let func_expr = hir::Expr {

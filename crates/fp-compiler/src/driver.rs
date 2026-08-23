@@ -72,10 +72,8 @@ pub struct CompilerDriver {
 pub enum PipelineMode {
     /// Full native compilation: AST → HIR → MIR → LIR
     Native,
-    /// Stop after parsing: resolve modules, parse sources, return AST items
-    NominalTranspile,
     /// HIR typing + lift back to AST: AST → HIR → typing → AST
-    TypecheckedTranspile,
+    Transpile,
 }
 
 impl CompilerDriver {
@@ -157,22 +155,6 @@ impl CompilerDriver {
             ))
         })?;
         fp_bytecode::lower_program(&mir).map_err(CompilerDriverError::from)
-    }
-
-    pub fn compile_native_sync(
-        &mut self,
-        package_id: &PackageId,
-    ) -> Result<Rc<RefCell<fp_core::ast::package::CompiledPackage>>, CompilerDriverError> {
-        let executor = self.state.borrow().tasks.clone();
-        executor.run(self.compile_native(package_id))
-    }
-
-    pub fn compile_bytecode_sync(
-        &mut self,
-        package_id: &PackageId,
-    ) -> Result<fp_bytecode::BytecodeProgram, CompilerDriverError> {
-        let executor = self.state.borrow().tasks.clone();
-        executor.run(self.compile_bytecode(package_id))
     }
 
     /// Focus subsequent module work on an already compiled package. The
@@ -424,8 +406,8 @@ impl CompilerDriver {
                 );
                 if !precompiled_lir_units.is_empty() {
                     Self::publish_lir_units(&package, package_id, &precompiled_lir_units)?;
-                } else if matches!(self.pipeline, PipelineMode::Native | PipelineMode::TypecheckedTranspile) {
-                    // `TypecheckedTranspile` needs HIR generation + typing too (it lifts the
+                } else if matches!(self.pipeline, PipelineMode::Native | PipelineMode::Transpile) {
+                    // `Transpile` needs HIR generation + typing too (it lifts the
                     // typed HIR back to AST inside `compile_items_to_lir_units`) — it now also
                     // attempts MIR/LIR lowering there so any comptime entries (e.g. `const
                     // { .. }` blocks) get resolved and relowered the same way `Native` does,
@@ -620,11 +602,11 @@ impl CompilerDriver {
             })?;
         // Formalized post-typecheck `#[op(...)]` promotion (see
         // `hir_normalization` for the full rationale): only
-        // `TypecheckedTranspile` (Kotlin/Shell AST-lift) promotes
+        // `Transpile` (Kotlin/Shell AST-lift) promotes
         // pure-`Op`-only calls to `IntrinsicCall(CallKind::Op(..))` in
         // place. `Native` leaves them as ordinary calls to their real stub
         // bodies (see `hir_materialization` for why that's correct here).
-        let promote_op_only = matches!(self.pipeline, PipelineMode::TypecheckedTranspile);
+        let promote_op_only = matches!(self.pipeline, PipelineMode::Transpile);
         fp_backend::transforms::hir_normalization::normalize_program(
             &mut hir_program,
             Some(&typeck_results),
@@ -664,10 +646,10 @@ impl CompilerDriver {
             }
         }
 
-        // TypecheckedTranspile: lift typed HIR back to AST — this is what
+        // Transpile: lift typed HIR back to AST — this is what
         // the Kotlin backend actually reads, and doesn't depend on
         // anything below succeeding.
-        if self.pipeline == PipelineMode::TypecheckedTranspile {
+        if self.pipeline == PipelineMode::Transpile {
             // Scoped narrowly (dropped before the `lower_to_mir`/`lower_to_lir`
             // calls below, which need their own `self.state` borrows) —
             // `lift_items_by_path`/`referenced_paths_by_path` return owned
@@ -1147,8 +1129,8 @@ impl CompilerDriver {
 
     /// Interprets every comptime entry in `lir_id`'s `LirProgram` for real
     /// and returns each const block's resolved value keyed by its own
-    /// `HirId` (`LirComptimeEntry::const_block_hir_id`, threaded through
-    /// structurally from `register_const_block_comptime_entry` via
+    /// `DefId` (`LirComptimeEntry::def_id`, threaded through structurally
+    /// from `register_const_block_comptime_entry`/`lower_const` via
     /// `mir::ExecutableConst`). Two callers: `resolve_comptime_values_now`
     /// (mid-typing-pass, on a scratch HIR/MIR/LIR slot, to answer pending
     /// `ComptimeRequest`s for real — see `type_check_program`) and
@@ -1159,7 +1141,7 @@ impl CompilerDriver {
         &mut self,
         lir_id: &LirId,
         path: &FullyQualifiedPath,
-    ) -> Result<HashMap<hir::HirId, Value>, CompilerDriverError> {
+    ) -> Result<HashMap<hir::DefId, Value>, CompilerDriverError> {
         Self::evaluate_comptime_lir_with(&self.state, lir_id, path)
     }
 
@@ -1172,7 +1154,7 @@ impl CompilerDriver {
         state: &Rc<RefCell<CompilerState>>,
         lir_id: &LirId,
         path: &FullyQualifiedPath,
-    ) -> Result<HashMap<hir::HirId, Value>, CompilerDriverError> {
+    ) -> Result<HashMap<hir::DefId, Value>, CompilerDriverError> {
         let lir = state.borrow().lir(lir_id)?.clone();
         // Only `comptime_entries` is needed after `lir` itself is moved into
         // `all_units` below — clone just that (much smaller than the whole
@@ -1197,21 +1179,31 @@ impl CompilerDriver {
             // 3;`, no `let` needed — see `MirLowering::lower_const`'s
             // constant-folding fast path) resolves its value without ever
             // becoming a comptime entry. Surface each one the same way an
-            // interpreted entry's value already is (`insert_typing_const`,
-            // populating `resolved_consts` so a caller looking up a const
-            // by name — e.g. `eval_script` — finds it) instead of
-            // unconditionally substituting a unit placeholder that looks
-            // exactly like a real "this evaluates to nothing" result.
-            let folded = state
+            // interpreted entry's value already is (`insert_resolved_const`,
+            // populating `PackageTypes::const_values` so a caller looking up
+            // a const by its own `DefId` — e.g. `eval_script` — finds it)
+            // instead of unconditionally substituting a unit placeholder
+            // that looks exactly like a real "this evaluates to nothing"
+            // result.
+            let package_hir_id =
+                HirId::new(format!("hir:{}", Self::module_state_key_for(state, &QualifiedPath::new(Vec::new()))));
+            let (folded, folded_defs) = state
                 .borrow()
                 .workspace
                 .compiled_package(&package_id)
-                .map(|package| package.borrow().mir.resolved_const_values.clone())
+                .map(|package| {
+                    let mir = &package.borrow().mir;
+                    (mir.resolved_const_values.clone(), mir.resolved_const_defs.clone())
+                })
                 .unwrap_or_default();
             let mut last_value = None;
             for (key, constant) in &folded {
                 if let Some(value) = Self::mir_constant_to_value(constant) {
-                    state.borrow_mut().insert_typing_const(key.clone(), value.clone());
+                    if let Some(def_id) = folded_defs.get(key) {
+                        state
+                            .borrow_mut()
+                            .insert_resolved_const(package_hir_id.clone(), *def_id, value.clone());
+                    }
                     last_value = Some(value);
                 }
             }
@@ -1255,7 +1247,9 @@ impl CompilerDriver {
 
         let mut count = 0usize;
         let mut last = Value::unit();
-        let mut block_values: HashMap<hir::HirId, Value> = HashMap::new();
+        let mut block_values: HashMap<hir::DefId, Value> = HashMap::new();
+        let package_hir_id =
+            HirId::new(format!("hir:{}", Self::module_state_key_for(state, &QualifiedPath::new(Vec::new()))));
         let mut interpreter = LirInterpreter::new();
         let resolved = Self::resolved_const_values_snapshot(&state.borrow().typing_ctx);
         interpreter
@@ -1282,19 +1276,6 @@ impl CompilerDriver {
             value = interpreter
                 .read_typed_const_value(value, &entry_lir_ty)
                 .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
-            // Store struct types from ALL entries, not just the last one.
-            // Each const-block type alias produces its own struct.
-            let entry_struct = Self::extract_struct_type(&value);
-            if let Some(ref struct_ty) = entry_struct {
-                let name = struct_ty.name.as_str().to_string();
-                state
-                    .borrow()
-                    .typing_ctx
-                    .resolved_types
-                    .borrow_mut()
-                    .insert(name.clone(), struct_ty.clone());
-                state.borrow().typing_ctx.wake_comptime(&name);
-            }
             let constant = Self::value_to_mir_constant(&value, &entry.ty, &dependency_packages).ok_or_else(|| {
                 CompilerDriverError::UnsupportedWork(format!(
                     "unsupported comptime result for {}",
@@ -1306,9 +1287,9 @@ impl CompilerDriver {
                 .insert_resolved_const_value(entry.key.clone(), constant);
             state
                 .borrow_mut()
-                .insert_typing_const(entry.key.clone(), value.clone());
-            if let Some(hir_id) = entry.const_block_hir_id {
-                block_values.insert(hir_id, value.clone());
+                .insert_resolved_const(package_hir_id.clone(), entry.def_id, value.clone());
+            if entry.const_block_hir_id.is_some() {
+                block_values.insert(entry.def_id, value.clone());
             }
             let mut newly_resolved = HashMap::new();
             newly_resolved.insert(entry.key.clone(), value.clone());
