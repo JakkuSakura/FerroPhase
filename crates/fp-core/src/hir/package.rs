@@ -132,6 +132,14 @@ pub struct HirPackage {
     /// actually visits each impl's self-type, not eagerly at HIR
     /// construction, so it's a `RefCell`, not maintained incrementally.
     checked_impl_self_ty_cache: RefCell<HashMap<HirId, Ty>>,
+    /// Memoized `fp_typing::function_signature` results, keyed by the
+    /// function's own `output` type's `HirId` (stable per declared
+    /// function, independent of any particular call site — a function's
+    /// signature is checked once against its own generics, never against a
+    /// specific call site, so the result is call-site-independent and safe
+    /// to share). Lazily filled by `fp_typing`, same reasoning as
+    /// `checked_impl_self_ty_cache`.
+    function_signature_cache: RefCell<HashMap<HirId, Ty>>,
     /// Memoized `resolve_trait_def` results, keyed by the trait's own
     /// `DefId`. A trait definition (its full `items: Vec<TraitItem>` —
     /// every default method, potentially large for a trait like
@@ -155,6 +163,19 @@ pub struct HirPackage {
     /// against it. Lazily filled by `fp_typing`, same reasoning as
     /// `checked_impl_self_ty_cache`.
     refinement_hints: RefCell<HashMap<(HirId, ParamSlot), RefinementHint>>,
+    /// Raw refinement annotations encountered by `fp_typing::check_type_expr`
+    /// (which is synchronous), keyed by the `TypeExpr`'s own `hir_id` —
+    /// staging for `refinement_hints` above, not a replacement for it: a
+    /// caller that still has the same `TypeExpr` in hand right after
+    /// `check_type_expr` returns (e.g. the `Let` arm) takes it straight out
+    /// by that raw `hir_id`, while `function_signature` instead re-keys it
+    /// by `(function_hir_id, ParamSlot)` into `refinement_hints` so a
+    /// *different* checker instance, at a later call site, can still
+    /// discharge it. Globally unique per `HirId` (never per-item-scoped),
+    /// so sharing this on the package is safe even with multiple items'
+    /// checks running concurrently — no two items' `TypeExpr`s ever share a
+    /// `hir_id`.
+    raw_refinement_hints: RefCell<HashMap<HirId, RefinementHint>>,
     /// Field shapes for a `type X = const { .. };` whose RHS resolves via
     /// `Res::Local(hir_id)` rather than a real `def_map` item — keyed by
     /// that same definition's `DefId`, which `fp_typing::field_ty` recovers
@@ -224,8 +245,10 @@ impl HirPackage {
             member_to_owning_item: HashMap::new(),
             hir_exports: HashMap::new(),
             checked_impl_self_ty_cache: RefCell::new(HashMap::new()),
+            function_signature_cache: RefCell::new(HashMap::new()),
             resolved_trait_defs: RefCell::new(HashMap::new()),
             refinement_hints: RefCell::new(HashMap::new()),
+            raw_refinement_hints: RefCell::new(HashMap::new()),
             local_struct_fields: RefCell::new(HashMap::new()),
             expr_types: RefCell::new(HashMap::new()),
             type_expr_types: RefCell::new(HashMap::new()),
@@ -369,6 +392,15 @@ impl HirPackage {
         self.checked_impl_self_ty_cache.borrow_mut().insert(hir_id, ty);
     }
 
+    /// See `function_signature_cache`'s doc comment.
+    pub fn function_signature(&self, hir_id: HirId) -> Option<Ty> {
+        self.function_signature_cache.borrow().get(&hir_id).cloned()
+    }
+
+    pub fn cache_function_signature(&self, hir_id: HirId, ty: Ty) {
+        self.function_signature_cache.borrow_mut().insert(hir_id, ty);
+    }
+
     /// See `resolved_trait_defs`'s doc comment.
     pub fn resolved_trait_def(&self, def_id: DefId) -> Option<Rc<Trait>> {
         self.resolved_trait_defs.borrow().get(&def_id).cloned()
@@ -385,6 +417,18 @@ impl HirPackage {
 
     pub fn insert_refinement_hint(&self, hir_id: HirId, slot: ParamSlot, hint: RefinementHint) {
         self.refinement_hints.borrow_mut().insert((hir_id, slot), hint);
+    }
+
+    /// See `raw_refinement_hints`'s doc comment. Take, not peek — a raw hint
+    /// is staging for exactly one later consumer (the `Let` arm, or
+    /// `function_signature` re-keying it into `refinement_hints`), never
+    /// read twice.
+    pub fn take_raw_refinement_hint(&self, hir_id: HirId) -> Option<RefinementHint> {
+        self.raw_refinement_hints.borrow_mut().remove(&hir_id)
+    }
+
+    pub fn insert_raw_refinement_hint(&self, hir_id: HirId, hint: RefinementHint) {
+        self.raw_refinement_hints.borrow_mut().insert(hir_id, hint);
     }
 
     /// See `local_struct_fields`'s doc comment.

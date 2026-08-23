@@ -6,5 +6,5 @@ pub mod refinement;
 pub mod types;
 
 pub use context::{ComptimeRequest, ComptimeResolver};
-pub use hir_typeck::{HirTypeChecker, TypingShared, finish_package_typecheck, spawn_item_task};
+pub use hir_typeck::{HirTypeChecker, ItemTypeChecker};
 pub use support::{BoxFuture, default_extern_prelude, impl_self_ty_name};

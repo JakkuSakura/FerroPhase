@@ -1914,7 +1914,7 @@ impl HirGenerator {
         &mut self,
         module_path: &fp_core::ast::path::QualifiedPath,
         items: &[ast::Item],
-        typing_shared: std::rc::Rc<fp_typing::TypingShared>,
+        typing_shared: std::rc::Rc<std::cell::RefCell<fp_typing::HirTypeChecker>>,
     ) -> Result<hir::HirPackage> {
         let _ = typing_shared;
         self.transform_module(module_path, items)

@@ -100,6 +100,17 @@ impl HirProgram {
         }
     }
 
+    /// Cross-package counterpart of `HirPackage::function_signature`.
+    pub fn function_signature(&self, hir_id: HirId) -> Option<Ty> {
+        self.package(hir_id.package_id)?.function_signature(hir_id)
+    }
+
+    pub fn cache_function_signature(&self, hir_id: HirId, ty: Ty) {
+        if let Some(package) = self.package(hir_id.package_id) {
+            package.cache_function_signature(hir_id, ty);
+        }
+    }
+
     /// Cross-package counterpart of `HirPackage::resolved_trait_def`.
     pub fn resolved_trait_def(&self, def_id: DefId) -> Option<std::rc::Rc<Trait>> {
         self.package(def_id.package_id)?.resolved_trait_def(def_id)
@@ -119,6 +130,22 @@ impl HirProgram {
     pub fn insert_refinement_hint(&self, hir_id: HirId, slot: ParamSlot, hint: RefinementHint) {
         if let Some(package) = self.package(hir_id.package_id) {
             package.insert_refinement_hint(hir_id, slot, hint);
+        }
+    }
+
+    /// Cross-package counterpart of `HirPackage::take_raw_refinement_hint`.
+    /// Cross-package use is not actually expected here (a raw hint is
+    /// always taken by the same package's own in-progress check, right
+    /// after `check_type_expr` populates it), but routes through
+    /// `hir_id.package_id` anyway for consistency with every other
+    /// per-`HirId` accessor on this type.
+    pub fn take_raw_refinement_hint(&self, hir_id: HirId) -> Option<RefinementHint> {
+        self.package(hir_id.package_id)?.take_raw_refinement_hint(hir_id)
+    }
+
+    pub fn insert_raw_refinement_hint(&self, hir_id: HirId, hint: RefinementHint) {
+        if let Some(package) = self.package(hir_id.package_id) {
+            package.insert_raw_refinement_hint(hir_id, hint);
         }
     }
 

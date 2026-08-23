@@ -701,7 +701,7 @@ impl CompilerDriver {
     /// `typecheck_item`), not the whole package. Same-package items awaiting
     /// each other (a `const` referencing another item declared later in
     /// `program.items`) resolve regardless of textual order via
-    /// `fp_typing::spawn_item_task`; a genuine dependency cycle among them
+    /// `fp_typing::HirTypeChecker::spawn_item_task`; a genuine dependency cycle among them
     /// (impossible to make progress on) surfaces as the ambient
     /// `CompilerExecutor::run` driving this whole call stalling, not as a
     /// return from here.
@@ -712,7 +712,8 @@ impl CompilerDriver {
         let comptime_resolver = self.state.borrow().comptime_resolver.clone();
         let dependency_program = Rc::new(self.state.borrow().hir_program().clone());
         let executor = self.state.borrow().tasks.clone();
-        let shared = fp_typing::TypingShared::new(program, Some(dependency_program), comptime_resolver, executor);
+        let checker =
+            fp_typing::HirTypeChecker::new(program, Some(dependency_program), comptime_resolver, executor);
         // Published for the duration of this package's typecheck so a
         // mid-typecheck `ComptimeRequest` (which only names its own
         // `package_id`/`def_id`, see `fp_typing::ComptimeRequest`'s doc
@@ -720,11 +721,17 @@ impl CompilerDriver {
         // cleared below regardless of how this function returns.
         self.state
             .borrow_mut()
-            .set_in_progress_hir_program(Some(shared.program_handle()));
-        let item_ids: Vec<_> = shared.program().items.iter().map(|item| item.def_id).collect();
+            .set_in_progress_hir_program(Some(checker.borrow().program_handle()));
+        let item_ids: Vec<_> = checker
+            .borrow()
+            .package()
+            .items
+            .iter()
+            .map(|item| item.def_id)
+            .collect();
         let handles: Vec<_> = item_ids
             .into_iter()
-            .map(|def_id| fp_typing::spawn_item_task(&shared, def_id))
+            .map(|def_id| fp_typing::HirTypeChecker::spawn_item_task(&checker, def_id))
             .collect();
         for handle in handles {
             handle.await;
@@ -738,10 +745,10 @@ impl CompilerDriver {
         // whose own, unrelated failure (triggered by the exact gap this
         // item's aborted check left behind) would then mask the real,
         // specific diagnostic recorded here.
-        if shared.has_typing_errors() {
-            Self::emit_typing_diagnostics_to_stderr(&shared);
-            let combined = shared
-                .program()
+        if checker.borrow().has_typing_errors() {
+            let package = checker.borrow().finish();
+            Self::emit_typing_diagnostics_to_stderr(&package);
+            let combined = package
                 .diagnostics
                 .get_diagnostics()
                 .iter()
@@ -755,16 +762,16 @@ impl CompilerDriver {
                 fp_core::diagnostics::Diagnostic::error(combined),
             ));
         }
-        Ok(fp_typing::finish_package_typecheck(&shared))
+        Ok(checker.borrow().finish())
     }
 
-    /// Prints every diagnostic accumulated on `shared` so far to stderr, one
+    /// Prints every diagnostic accumulated on `package` so far to stderr, one
     /// per line — both the hard item-check aborts and every other
     /// recovered/non-fatal mismatch recorded along the way (all in the one
     /// unified `diagnostics` manager), since either category can be the
     /// real lead on why a package's typecheck ultimately failed or stalled.
-    fn emit_typing_diagnostics_to_stderr(shared: &Rc<fp_typing::TypingShared>) {
-        let diagnostics = shared.program().diagnostics.get_diagnostics();
+    fn emit_typing_diagnostics_to_stderr(package: &hir::HirPackage) {
+        let diagnostics = package.diagnostics.get_diagnostics();
         if diagnostics.is_empty() {
             return;
         }
@@ -777,7 +784,7 @@ impl CompilerDriver {
         }
     }
 
-    /// Builds the `fp_typing::ComptimeResolver` a package's `TypingShared`
+    /// Builds the `fp_typing::ComptimeResolver` a package's typecheck
     /// awaits directly from `request_comptime` — this is what lets an
     /// item's typecheck task suspend on a real `const { .. }` block and
     /// resume naturally once it's answered, with no driver-side polling
