@@ -1,4 +1,6 @@
 use super::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// One compiled package's HIR content — items, definitions, and (as of the
 /// `ModuleTree` migration) its own module/name-resolution tree. Several of
@@ -120,6 +122,47 @@ pub struct HirPackage {
     /// package for cross-package bare-name resolution (`AstProgram`'s old
     /// `find_export`/`find_export_by_suffix`, now `HirProgram`'s).
     pub hir_exports: HashMap<String, Res>,
+    /// Memoized `check_type_expr(&impl_item.self_ty)` results, keyed by the
+    /// impl's own `self_ty` `TypeExpr`'s `HirId` (stable per declared impl,
+    /// independent of any particular call site — an impl's self-type
+    /// declaration is checked once against its own generics, never against
+    /// a specific receiver, so the result is call-site-independent and safe
+    /// to share). Populated by `fp_typing`, not `ast_to_hir`/`add_item` —
+    /// unlike the derived indices above, this fills in lazily as typing
+    /// actually visits each impl's self-type, not eagerly at HIR
+    /// construction, so it's a `RefCell`, not maintained incrementally.
+    checked_impl_self_ty_cache: RefCell<HashMap<HirId, Ty>>,
+    /// Memoized `resolve_trait_def` results, keyed by the trait's own
+    /// `DefId`. A trait definition (its full `items: Vec<TraitItem>` —
+    /// every default method, potentially large for a trait like
+    /// `Iterator`) never changes once loaded, so cloning it out of
+    /// `def_map` is safe to do at most once per trait, not once per
+    /// method-call/UFCS-call expression that falls through to a trait's
+    /// default-method resolution. `Rc`, not owned, since the whole point is
+    /// for repeat callers to share one clone instead of each paying for
+    /// their own. Lazily filled by `fp_typing`, same reasoning as
+    /// `checked_impl_self_ty_cache`.
+    resolved_trait_defs: RefCell<HashMap<DefId, Rc<Trait>>>,
+    /// Refinement-type hints for function parameters/return types,
+    /// persisted across items — a per-item `HirTypeChecker`'s own transient
+    /// hint bookkeeping only lives for the duration of whichever item's
+    /// check happens to populate it, but this needs to be discharged
+    /// against every later call site of an already-checked function too.
+    /// Keyed by the function's own `output` `TypeExpr`'s `HirId` (stable
+    /// per declaration) plus a `ParamSlot` discriminating which
+    /// parameter/the output the hint belongs to, so every later call site —
+    /// even from a different item's checker instance — can still discharge
+    /// against it. Lazily filled by `fp_typing`, same reasoning as
+    /// `checked_impl_self_ty_cache`.
+    refinement_hints: RefCell<HashMap<(HirId, ParamSlot), RefinementHint>>,
+    /// Field shapes for a `type X = const { .. };` whose RHS resolves via
+    /// `Res::Local(hir_id)` rather than a real `def_map` item — keyed by
+    /// that same definition's `DefId`, which `fp_typing::field_ty` recovers
+    /// from the `Ty`'s own `AdtDef.did` (constructed with identical
+    /// `package_id`/`index`) whenever `AdtFlags::IS_COMPTIME_LOCAL` is set,
+    /// instead of consulting `def_map`. Lazily filled by `fp_typing`, same
+    /// reasoning as `checked_impl_self_ty_cache`.
+    local_struct_fields: RefCell<HashMap<DefId, Vec<(Symbol, Ty)>>>,
 }
 
 impl HirPackage {
@@ -141,6 +184,10 @@ impl HirPackage {
             enum_variant_item_index: HashMap::new(),
             member_to_owning_item: HashMap::new(),
             hir_exports: HashMap::new(),
+            checked_impl_self_ty_cache: RefCell::new(HashMap::new()),
+            resolved_trait_defs: RefCell::new(HashMap::new()),
+            refinement_hints: RefCell::new(HashMap::new()),
+            local_struct_fields: RefCell::new(HashMap::new()),
         }
     }
 
@@ -261,6 +308,42 @@ impl HirPackage {
     /// a `def_map` key — see `member_to_owning_item`'s doc comment.
     pub fn member_owner(&self, def_id: DefId) -> Option<DefId> {
         self.member_to_owning_item.get(&def_id).copied()
+    }
+
+    /// See `checked_impl_self_ty_cache`'s doc comment.
+    pub fn checked_impl_self_ty(&self, hir_id: HirId) -> Option<Ty> {
+        self.checked_impl_self_ty_cache.borrow().get(&hir_id).cloned()
+    }
+
+    pub fn cache_checked_impl_self_ty(&self, hir_id: HirId, ty: Ty) {
+        self.checked_impl_self_ty_cache.borrow_mut().insert(hir_id, ty);
+    }
+
+    /// See `resolved_trait_defs`'s doc comment.
+    pub fn resolved_trait_def(&self, def_id: DefId) -> Option<Rc<Trait>> {
+        self.resolved_trait_defs.borrow().get(&def_id).cloned()
+    }
+
+    pub fn cache_resolved_trait_def(&self, def_id: DefId, trait_def: Rc<Trait>) {
+        self.resolved_trait_defs.borrow_mut().insert(def_id, trait_def);
+    }
+
+    /// See `refinement_hints`'s doc comment.
+    pub fn refinement_hint(&self, hir_id: HirId, slot: ParamSlot) -> Option<RefinementHint> {
+        self.refinement_hints.borrow().get(&(hir_id, slot)).cloned()
+    }
+
+    pub fn insert_refinement_hint(&self, hir_id: HirId, slot: ParamSlot, hint: RefinementHint) {
+        self.refinement_hints.borrow_mut().insert((hir_id, slot), hint);
+    }
+
+    /// See `local_struct_fields`'s doc comment.
+    pub fn local_struct_fields(&self, def_id: DefId) -> Option<Vec<(Symbol, Ty)>> {
+        self.local_struct_fields.borrow().get(&def_id).cloned()
+    }
+
+    pub fn insert_local_struct_fields(&self, def_id: DefId, fields: Vec<(Symbol, Ty)>) {
+        self.local_struct_fields.borrow_mut().insert(def_id, fields);
     }
 }
 

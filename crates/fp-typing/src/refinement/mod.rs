@@ -16,15 +16,11 @@ use fp_core::hir;
 use fp_core::hir::ty::Ty;
 use std::collections::HashMap;
 
-/// A refinement annotation encountered by `check_type_expr`, recorded so a
-/// caller that still has the same `TypeExpr` (e.g. the `Let` arm) can look
-/// it up and discharge it against the value actually being coerced.
-#[derive(Debug, Clone)]
-pub struct RefinementHint {
-    pub binder: hir::Symbol,
-    pub predicate: hir::Expr,
-    pub base: Ty,
-}
+/// Cached on `HirPackage` (see `fp_core::hir::refinement`'s doc comment for
+/// why the type itself lives in `fp-core`), so re-exported here as this
+/// crate's own name for it — every discharge site in `fp-typing` still
+/// spells it `crate::refinement::RefinementHint`.
+pub use fp_core::hir::RefinementHint;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefinementOutcome {

@@ -89,6 +89,50 @@ impl HirProgram {
         self.package(def_id.package_id)?.member_owner(def_id)
     }
 
+    /// Cross-package counterpart of `HirPackage::checked_impl_self_ty`.
+    pub fn checked_impl_self_ty(&self, hir_id: HirId) -> Option<Ty> {
+        self.package(hir_id.package_id)?.checked_impl_self_ty(hir_id)
+    }
+
+    pub fn cache_checked_impl_self_ty(&self, hir_id: HirId, ty: Ty) {
+        if let Some(package) = self.package(hir_id.package_id) {
+            package.cache_checked_impl_self_ty(hir_id, ty);
+        }
+    }
+
+    /// Cross-package counterpart of `HirPackage::resolved_trait_def`.
+    pub fn resolved_trait_def(&self, def_id: DefId) -> Option<std::rc::Rc<Trait>> {
+        self.package(def_id.package_id)?.resolved_trait_def(def_id)
+    }
+
+    pub fn cache_resolved_trait_def(&self, def_id: DefId, trait_def: std::rc::Rc<Trait>) {
+        if let Some(package) = self.package(def_id.package_id) {
+            package.cache_resolved_trait_def(def_id, trait_def);
+        }
+    }
+
+    /// Cross-package counterpart of `HirPackage::refinement_hint`.
+    pub fn refinement_hint(&self, hir_id: HirId, slot: ParamSlot) -> Option<RefinementHint> {
+        self.package(hir_id.package_id)?.refinement_hint(hir_id, slot)
+    }
+
+    pub fn insert_refinement_hint(&self, hir_id: HirId, slot: ParamSlot, hint: RefinementHint) {
+        if let Some(package) = self.package(hir_id.package_id) {
+            package.insert_refinement_hint(hir_id, slot, hint);
+        }
+    }
+
+    /// Cross-package counterpart of `HirPackage::local_struct_fields`.
+    pub fn local_struct_fields(&self, def_id: DefId) -> Option<Vec<(Symbol, Ty)>> {
+        self.package(def_id.package_id)?.local_struct_fields(def_id)
+    }
+
+    pub fn insert_local_struct_fields(&self, def_id: DefId, fields: Vec<(Symbol, Ty)>) {
+        if let Some(package) = self.package(def_id.package_id) {
+            package.insert_local_struct_fields(def_id, fields);
+        }
+    }
+
     pub fn op_def(&self, def_id: DefId) -> Option<&crate::intrinsics::PortableOp> {
         self.package(def_id.package_id)?.op_defs.get(&def_id)
     }

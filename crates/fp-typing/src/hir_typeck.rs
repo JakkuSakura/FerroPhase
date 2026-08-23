@@ -87,58 +87,6 @@ pub struct TypingShared {
     /// fixed once for `method_output`'s own fast-reject candidate search
     /// (`hir::HirProgram::impls_for_adt`) but left unaddressed here.
     function_signature_cache: RefCell<HashMap<hir::HirId, Ty>>,
-    /// Memoized `check_type_expr(&impl_item.self_ty)` results, keyed by
-    /// the impl's own `self_ty` `TypeExpr`'s `HirId` (stable per declared
-    /// impl, independent of any particular call site — same reasoning as
-    /// `function_signature_cache`: an impl's self-type declaration is
-    /// checked once against its own generics, never against a specific
-    /// receiver, so the result is call-site-independent and safe to
-    /// share). `method_output_at`/`method_declared_signature_at` both
-    /// re-checked the same impl's self-type from scratch on every single
-    /// method-call/UFCS-call expression before this cache existed — the
-    /// same O(workspace) blowup `function_signature_cache` already fixed
-    /// for a method's own signature, just not yet applied to the impl's
-    /// self-type check both functions do first.
-    checked_impl_self_ty_cache: RefCell<HashMap<hir::HirId, Ty>>,
-    /// Memoized `resolve_trait_def` results, keyed by the trait's own
-    /// `DefId`. A trait definition (its full `items: Vec<TraitItem>` —
-    /// every default method, potentially large for a trait like
-    /// `Iterator`) never changes once loaded, so — same reasoning as
-    /// `function_signature_cache`/`checked_impl_self_ty_cache` — cloning
-    /// it out of `program.def_map` is safe to do at most once per trait,
-    /// not once per method-call/UFCS-call expression that falls through
-    /// to a trait's default-method resolution. `Rc`, not owned, since the
-    /// whole point is for repeat callers to share one clone instead of
-    /// each paying for their own.
-    resolved_trait_defs: RefCell<HashMap<hir::DefId, Rc<hir::Trait>>>,
-    /// Refinement-type hints for function parameters/return types,
-    /// persisted across items — `HirTypeChecker::refinement_hints` (a
-    /// per-instance field) only lives for the duration of whichever
-    /// item's check happens to populate it, but `function_signature`'s own
-    /// cache (above) means only the *first* call site to a given function
-    /// actually re-invokes `check_type_expr` on its parameter/output
-    /// `TypeExpr`s. Keyed the same way `function_signature_cache` is (the
-    /// function's own `output` `TypeExpr`'s `HirId`, stable per
-    /// declaration) plus a `ParamSlot` discriminating which
-    /// parameter/the output the hint belongs to, so every later call site
-    /// — even from a different item's `HirTypeChecker` instance — can
-    /// still discharge against it.
-    refinement_hints: RefCell<HashMap<(hir::HirId, ParamSlot), crate::refinement::RefinementHint>>,
-    /// Field shapes for a `type X = const { .. };` whose RHS resolves via
-    /// `Res::Local(hir_id)` rather than a real `def_map` item (see
-    /// `path_ty`'s `Res::Local` arm) — keyed by that same `hir_id`, which
-    /// `field_ty` recovers from the `Ty`'s own `AdtDef.did` (constructed
-    /// with identical `package_id`/`index`) whenever `AdtFlags::
-    /// IS_COMPTIME_LOCAL` is set, instead of consulting `def_map`.
-    local_struct_fields: RefCell<HashMap<hir::DefId, Vec<(hir::Symbol, Ty)>>>,
-}
-
-/// Which part of a function's signature a persisted `RefinementHint`
-/// belongs to — see `TypingShared::refinement_hints`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum ParamSlot {
-    Input(usize),
-    Output,
 }
 
 impl TypingShared {
@@ -165,10 +113,6 @@ impl TypingShared {
             comptime_resolver,
             executor,
             function_signature_cache: RefCell::new(HashMap::new()),
-            checked_impl_self_ty_cache: RefCell::new(HashMap::new()),
-            resolved_trait_defs: RefCell::new(HashMap::new()),
-            refinement_hints: RefCell::new(HashMap::new()),
-            local_struct_fields: RefCell::new(HashMap::new()),
         })
     }
 
@@ -453,12 +397,6 @@ impl HirTypeChecker {
                         hir_id,
                         stmts: Vec::new(),
                         expr: Some(Box::new(body)),
-                    },
-                    expression_id: hir_id,
-                    expected_ty: hir::TypeExpr {
-                        hir_id,
-                        kind: hir::TypeExprKind::Infer,
-                        span: fp_core::span::Span::null(),
                     },
                 }
             })
@@ -848,10 +786,8 @@ impl HirTypeChecker {
                         if let Some(cache_key) = callee_refinement_cache_key {
                             let hint = self
                                 .shared
-                                .refinement_hints
-                                .borrow()
-                                .get(&(cache_key, ParamSlot::Input(index)))
-                                .cloned();
+                                .program
+                                .refinement_hint(cache_key, hir::ParamSlot::Input(index));
                             if let Some(hint) = &hint {
                                 self.discharge_refinement(hint, &arg.value)?;
                             }
@@ -1182,19 +1118,6 @@ impl HirTypeChecker {
                                     hir_id,
                                     stmts: Vec::new(),
                                     expr: Some(body),
-                                },
-                                expression_id: hir_id,
-                                // Matches `resolve_pending_type_const_blocks`'s
-                                // own placeholder below — no declared type is
-                                // carried on the HIR node itself any more (it
-                                // was pure redundancy with `body_ty`, checked
-                                // just above); the driver-side consumer reads
-                                // the real checked type out of
-                                // `typeck_results.expr_types` instead.
-                                expected_ty: hir::TypeExpr {
-                                    hir_id,
-                                    kind: hir::TypeExprKind::Infer,
-                                    span: fp_core::span::Span::null(),
                                 },
                             }
                         })
@@ -1777,9 +1700,8 @@ impl HirTypeChecker {
                             })
                             .collect();
                         self.shared
-                            .local_struct_fields
-                            .borrow_mut()
-                            .insert(def_id, fields.clone());
+                            .program
+                            .insert_local_struct_fields(def_id, fields.clone());
                         let variant = ty::VariantDef {
                             def_id,
                             ctor_def_id: None,
@@ -2448,9 +2370,8 @@ impl HirTypeChecker {
             if let Some(hint) = scope.refinement_hints.remove(&input.ty.hir_id) {
                 scope
                     .shared
-                    .refinement_hints
-                    .borrow_mut()
-                    .insert((cache_key, ParamSlot::Input(index)), hint);
+                    .program
+                    .insert_refinement_hint(cache_key, hir::ParamSlot::Input(index), hint);
             }
             inputs.push(Box::new(ty));
         }
@@ -2458,9 +2379,8 @@ impl HirTypeChecker {
         if let Some(hint) = scope.refinement_hints.remove(&function.sig.output.hir_id) {
             scope
                 .shared
-                .refinement_hints
-                .borrow_mut()
-                .insert((cache_key, ParamSlot::Output), hint);
+                .program
+                .insert_refinement_hint(cache_key, hir::ParamSlot::Output, hint);
         }
         drop(scope);
         let signature = Ty {
@@ -2485,20 +2405,19 @@ impl HirTypeChecker {
     }
 
     /// `check_type_expr(self_ty)` for an impl's own self-type declaration,
-    /// memoized by its `HirId` (see `TypingShared::checked_impl_self_ty_cache`'s
+    /// memoized by its `HirId` (see `hir::HirPackage::checked_impl_self_ty_cache`'s
     /// doc comment) — same caching shape as `function_signature`, just for
     /// the self-type check `method_output_at`/`method_declared_signature_at`
     /// both do before ever looking at a call site's actual receiver.
     fn checked_impl_self_ty(&mut self, self_ty: &hir::TypeExpr) -> Result<Ty> {
         let cache_key = self_ty.hir_id;
-        if let Some(cached) = self.shared.checked_impl_self_ty_cache.borrow().get(&cache_key) {
-            return Ok(cached.clone());
+        if let Some(cached) = self.shared.program.checked_impl_self_ty(cache_key) {
+            return Ok(cached);
         }
         let checked = self.check_type_expr(self_ty)?;
         self.shared
-            .checked_impl_self_ty_cache
-            .borrow_mut()
-            .insert(cache_key, checked.clone());
+            .program
+            .cache_checked_impl_self_ty(cache_key, checked.clone());
         Ok(checked)
     }
 
@@ -3244,18 +3163,15 @@ impl HirTypeChecker {
         let hir::Res::Def(def_id) = path.res.clone()? else {
             return None;
         };
-        if let Some(cached) = self.shared.resolved_trait_defs.borrow().get(&def_id) {
-            return Some(cached.clone());
+        if let Some(cached) = self.shared.program.resolved_trait_def(def_id) {
+            return Some(cached);
         }
         let item = self.shared.program.item(def_id)?;
         let hir::ItemKind::Trait(tr) = &item.kind else {
             return None;
         };
         let tr = Rc::new(tr.clone());
-        self.shared
-            .resolved_trait_defs
-            .borrow_mut()
-            .insert(def_id, tr.clone());
+        self.shared.program.cache_resolved_trait_def(def_id, tr.clone());
         Some(tr)
     }
 
@@ -3475,8 +3391,7 @@ impl HirTypeChecker {
             // comptime-evaluated local type alias — the field shapes it
             // recorded then are the only source of truth here, `def_map`
             // was never involved in producing this `Ty` at all.
-            let fields = self.shared.local_struct_fields.borrow();
-            let Some(fields) = fields.get(&adt.did) else {
+            let Some(fields) = self.shared.program.local_struct_fields(adt.did) else {
                 return Ok(self.error_ty("comptime-constructed struct's field shape was not found"));
             };
             let Some((_, field_ty)) = fields.iter().find(|(name, _)| name == field) else {
@@ -4440,12 +4355,6 @@ mod tests {
                 hir_id: hid(0),
                 stmts: Vec::new(),
                 expr: None,
-            },
-            expression_id: hid(0),
-            expected_ty: hir::TypeExpr {
-                hir_id: hid(0),
-                kind: hir::TypeExprKind::Tuple(Vec::new()),
-                span: fp_core::span::Span::null(),
             },
         };
         let mut future = Box::pin(shared.request_comptime(request));
