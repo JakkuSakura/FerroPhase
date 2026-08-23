@@ -787,7 +787,57 @@ impl HirTypeChecker {
                     }
                 }
                 hir::ExprKind::Call(callee, args) => {
-                    let callee_ty = self.check_expr(callee).await?;
+                    let mut callee_ty = self.check_expr(callee).await?;
+                    // A direct call through a still-generic parameter
+                    // itself (`f(x)` where `f: F` and `F: FnMut(T) -> R`,
+                    // `Fn(...)`, or `FnOnce(...)`) — by far the most common
+                    // call shape in generic functional/iterator code
+                    // (`fold`, `map`, `filter`, `partition`'s own inner
+                    // `extend` helper, ...). `check_expr` on a local bound
+                    // to a generic parameter only ever returns the bare
+                    // `TyKind::Param`, never expanded to the callable
+                    // signature its own `Fn`-sugar bound declares — this
+                    // was the single largest remaining unresolved-call
+                    // bucket in the full corpus (10,000+ occurrences),
+                    // dwarfing every other case fixed this session,
+                    // because it fires on every generic higher-order
+                    // function that calls its own closure parameter.
+                    // Resolve it the same way `assoc_type_from_generic_
+                    // param_bounds` already resolves `F::Output` from the
+                    // identical bound — just for the callee's own
+                    // signature instead of one associated type.
+                    if let TyKind::Param(param) = &callee_ty.kind {
+                        if let Some(fn_ptr) = self
+                            .generic_param_bounds(&param.name)
+                            .map(<[_]>::to_vec)
+                            .and_then(|bounds| {
+                                bounds.iter().find_map(|bound| match &bound.kind {
+                                    hir::TypeExprKind::FnPtr(fn_ptr) => Some(fn_ptr.clone()),
+                                    _ => None,
+                                })
+                            })
+                        {
+                            let mut inputs = Vec::with_capacity(fn_ptr.inputs.len());
+                            for input in &fn_ptr.inputs {
+                                inputs.push(Box::new(self.check_type_expr(input)?));
+                            }
+                            let output = Box::new(self.check_type_expr(&fn_ptr.output)?);
+                            callee_ty = Ty {
+                                kind: TyKind::FnPtr(ty::PolyFnSig {
+                                    binder: ty::Binder {
+                                        value: ty::FnSig {
+                                            inputs,
+                                            output,
+                                            c_variadic: false,
+                                            unsafety: ty::Unsafety::Normal,
+                                            abi: ty::Abi::Rust,
+                                        },
+                                        bound_vars: Vec::new(),
+                                    },
+                                }),
+                            };
+                        }
+                    }
                     let expected_inputs = match &callee_ty.kind {
                         TyKind::FnPtr(signature) => Some(signature.binder.value.inputs.clone()),
                         _ => None,
