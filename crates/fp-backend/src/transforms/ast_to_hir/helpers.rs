@@ -774,19 +774,31 @@ impl AstToHirLowerer {
         }
 
         // Type-relative value path (`Map::new(..)`, `Add::add(a, b)`,
-        // `T::default()`) — mirrors rustc's `QPath::TypeRelative`: name
-        // resolution only ever resolves the *base* segment, in the type
-        // namespace (structs/enums/traits/generic type parameters all live
-        // there and all have a real `DefId` — see `type_scopes`, which
-        // already registers a generic param's name this way). The trailing
-        // segment (the method/assoc-fn name) is deliberately left
-        // unresolved here; only type-checking has enough information
-        // (impl/bound probing) to resolve it, exactly like the existing
-        // `Self::` case above. Tried only as a last resort, after every
-        // value-scope lookup above has already failed, so it can never
-        // shadow a genuine value (a real module-qualified constant/function
-        // takes priority).
-        if resolved.is_none() && segments.len() > 1 && path_prefix == PathPrefix::Plain {
+        // `T::default()`, `u8::MAX`) — mirrors rustc's `QPath::
+        // TypeRelative`: name resolution only ever resolves the *base*
+        // segment, in the type namespace (structs/enums/traits/generic
+        // type parameters all live there and all have a real `DefId` —
+        // see `type_scopes`, which already registers a generic param's
+        // name this way). The trailing segment (the method/assoc-fn name)
+        // is deliberately left unresolved here; only type-checking has
+        // enough information (impl/bound probing) to resolve it, exactly
+        // like the existing `Self::` case above. Tried only as a last
+        // resort, after every value-scope lookup above has already
+        // failed, so it can never shadow a genuine value (a real
+        // module-qualified constant/function takes priority).
+        //
+        // Applies even when this call's own `segments` has only *one*
+        // entry: a `Select` chain (`u8::MAX`, `<$SelfT>::MAX`) is built
+        // incrementally by `ast_expr_to_hir_path`'s own recursion — the
+        // base (`u8` alone) is resolved by a separate call to this
+        // function *before* the caller appends the trailing segment, so
+        // gating this on `segments.len() > 1` here would only ever catch
+        // a path whose *entire* multi-segment shape was already known
+        // when lowering started (a call's callee, built as one compound
+        // `Name` up front) and miss every incrementally-built one. A bare
+        // single-segment name that isn't a type either falls through
+        // unresolved exactly as before — this is purely additive.
+        if resolved.is_none() && path_prefix == PathPrefix::Plain {
             if let Some(hir::Res::Def(def_id)) = self.resolve_type_symbol(segments[0].name.as_str()) {
                 resolved = Some(hir::Res::Def(def_id));
             } else if is_primitive_type_name(segments[0].name.as_str()) {
