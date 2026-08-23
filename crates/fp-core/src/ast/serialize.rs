@@ -2,7 +2,6 @@ use crate::ast::SchemaDocument;
 use crate::ast::{BExpr, BlockStmt, Expr, ExprBlock, ExprInvoke, Item, ItemDefFunction, Module};
 use crate::ast::{Ty, Value, ValueFunction};
 use crate::query::QueryDocument;
-use crate::ast::workspace::WorkspaceDocument;
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -70,9 +69,6 @@ pub trait AstSerializer: Send + Sync {
     }
     fn serialize_schema(&self, node: &SchemaDocument) -> Result<String, crate::Error> {
         bail!("not implemented: serialize_schema")
-    }
-    fn serialize_workspace(&self, node: &WorkspaceDocument) -> Result<String, crate::Error> {
-        bail!("not implemented: serialize_workspace")
     }
 }
 
