@@ -928,9 +928,21 @@ impl HirTypeChecker {
                     // for this call shape, so resolve the method the same
                     // way `.method()` call syntax already does, keyed off
                     // its concrete type.
+                    // Trait-qualified UFCS syntax (`Add::add(lhs, rhs)`,
+                    // `Shl::shl(*self, other)`) — generated en masse by
+                    // std's `forward_ref_binop!`/`forward_ref_unop!` macros
+                    // (`internal_macros.rs`). `expr_path_ty` already
+                    // resolves the base segment to the trait's own `DefId`
+                    // (see `ast_to_hir`'s type-relative path resolution),
+                    // but which *impl* of that trait applies depends on the
+                    // call's own arguments, which aren't known until here —
+                    // the first call argument (`lhs`/`self`) is always the
+                    // receiver for this call shape, so resolve the method
+                    // the same way `.method()` call syntax already does,
+                    // keyed off its concrete type.
                     if matches!(callee_ty.kind, TyKind::Error(_)) {
                         if let hir::ExprKind::Path(path) = &callee.kind {
-                            if path.res.is_none() && path.segments.len() == 2 {
+                            if path.segments.len() == 2 {
                                 if let Some(receiver_ty) = arg_types.first().cloned() {
                                     let method_name = path.segments[1].name.clone();
                                     if let Some(sig) =
@@ -2409,6 +2421,51 @@ impl HirTypeChecker {
                     .join("::")
             )));
         };
+        // Type-relative value path (`Map::new(..)`, `T::default()`) —
+        // `ast_to_hir` resolves only the *base* segment (mirroring rustc's
+        // `QPath::TypeRelative`: the resolver settles the type, typeck
+        // settles the method), so `def_id` here names the struct/enum/
+        // trait/generic-param the path starts from, not the method itself.
+        if path.segments.len() > 1 {
+            let tail_method = &path.segments.last().unwrap().name;
+            // A generic type parameter base (`T::default()` where
+            // `T: Default`) — there is no impl to search (`T` is still
+            // abstract), so resolve the method against the parameter's own
+            // trait bounds instead, the same way `assoc_type_from_generic_
+            // param_bounds` resolves `T::AssocType` for the analogous
+            // associated-type case.
+            if let Some(sig) = self
+                .generic_param_bound_method_signature(&path.segments[0].name, tail_method)
+                .await?
+            {
+                return Ok(sig);
+            }
+            // A struct/enum base (`Map::new(iter, f)`) — the receiver type
+            // is the struct/enum itself (still generic if it declares type
+            // parameters), known immediately with no argument context
+            // needed, unlike the trait-qualified case below.
+            let is_struct_or_enum = self
+                .program_rc()
+                .item(def_id)
+                .map(|item| matches!(&item.kind, hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_)))
+                .unwrap_or(false);
+            if is_struct_or_enum {
+                let receiver_ty = self.path_ty(path).await?;
+                if let Some(sig) = self
+                    .method_declared_signature_at(&receiver_ty, tail_method)
+                    .await?
+                {
+                    return Ok(sig);
+                }
+            }
+            // A trait base (`Add::add(a, b)`) — which impl to search
+            // depends on the concrete receiver, which isn't known until
+            // the call's own arguments are checked. Fall through to the
+            // ordinary per-`ItemKind` handling below (a `Trait` item hits
+            // its catch-all "resolved path is not a value" `Error`), and
+            // let the `Call` arm's argument-typed fallback resolve it once
+            // it has the first argument's type to search impls with.
+        }
         let Some(item) = self.program_rc().item(def_id).cloned() else {
             // `program` is an owned `Rc` clone (cheap — it's the same
             // `Rc<HirProgram>` `self.program` already is), not a borrow
@@ -3559,6 +3616,58 @@ impl HirTypeChecker {
                         name: assoc_name.clone(),
                     }),
                 }));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Resolves `T::method_name(..)` where `T` is a still-generic type
+    /// parameter currently in scope (`T::default()` with `T: Default`,
+    /// e.g.) — the analogous case to `assoc_type_from_generic_param_bounds`
+    /// but for a *method* rather than an associated type. There is no impl
+    /// to search here (`T` is abstract, not a concrete receiver), so this
+    /// walks the parameter's own trait bounds and returns the bound
+    /// trait's declared signature directly, with `Self` resolving to the
+    /// parameter's own `TyKind::Param` — deliberately does not require a
+    /// method body the way `method_declared_signature_at`'s trait-default
+    /// fallback does, since the call is only checked against the trait's
+    /// abstract signature (real dispatch happens at monomorphization,
+    /// which this checker doesn't perform).
+    async fn generic_param_bound_method_signature(
+        &mut self,
+        param_name: &hir::Symbol,
+        method_name: &hir::Symbol,
+    ) -> Result<Option<Ty>> {
+        let Some(bounds) = self.generic_param_bounds(param_name).map(<[_]>::to_vec) else {
+            return Ok(None);
+        };
+        let param_ty = Ty {
+            kind: TyKind::Param(ty::ParamTy {
+                index: u32::MAX,
+                name: param_name.clone(),
+            }),
+        };
+        for bound in &bounds {
+            let hir::TypeExprKind::Path(path) = &bound.kind else {
+                continue;
+            };
+            let Some(hir::Res::Def(trait_def_id)) = &path.res else {
+                continue;
+            };
+            let Some(item) = self.program_rc().item(*trait_def_id).cloned() else {
+                continue;
+            };
+            let hir::ItemKind::Trait(trait_def) = &item.kind else {
+                continue;
+            };
+            for trait_item in &trait_def.items {
+                let hir::TraitItemKind::Method(function) = &trait_item.kind else {
+                    continue;
+                };
+                if trait_item.name == *method_name {
+                    let mut scope = self.with_self_type(param_ty.clone());
+                    return Ok(Some(scope.function_signature(function).await?));
+                }
             }
         }
         Ok(None)

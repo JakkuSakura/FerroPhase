@@ -773,6 +773,25 @@ impl AstToHirLowerer {
             }
         }
 
+        // Type-relative value path (`Map::new(..)`, `Add::add(a, b)`,
+        // `T::default()`) — mirrors rustc's `QPath::TypeRelative`: name
+        // resolution only ever resolves the *base* segment, in the type
+        // namespace (structs/enums/traits/generic type parameters all live
+        // there and all have a real `DefId` — see `type_scopes`, which
+        // already registers a generic param's name this way). The trailing
+        // segment (the method/assoc-fn name) is deliberately left
+        // unresolved here; only type-checking has enough information
+        // (impl/bound probing) to resolve it, exactly like the existing
+        // `Self::` case above. Tried only as a last resort, after every
+        // value-scope lookup above has already failed, so it can never
+        // shadow a genuine value (a real module-qualified constant/function
+        // takes priority).
+        if resolved.is_none() && segments.len() > 1 && path_prefix == PathPrefix::Plain {
+            if let Some(hir::Res::Def(def_id)) = self.resolve_type_symbol(segments[0].name.as_str()) {
+                resolved = Some(hir::Res::Def(def_id));
+            }
+        }
+
         Ok(hir::Path {
             segments,
             res: resolved,
