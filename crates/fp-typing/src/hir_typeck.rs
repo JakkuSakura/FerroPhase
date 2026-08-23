@@ -1158,14 +1158,29 @@ impl HirTypeChecker {
                     // current` (the same `Rc<HirPackage>` this writes
                     // onto).
                     self.package().record_expr_type(expr.hir_id, body_ty.clone());
-                    let def_id = const_block.def_id;
-                    let request = crate::ComptimeRequest {
-                        package_id: self.current_package(),
-                        def_id,
-                    };
-                    HirTypeChecker::spawn_comptime_task(&self.root_handle(), def_id, request)
-                        .await
-                        .ok_or_else(|| Error::from("comptime evaluation failed"))?;
+                    // A `const { .. }` block whose value still depends on
+                    // an uninstantiated generic parameter of the enclosing
+                    // (still-generic) function/impl can't be evaluated yet
+                    // — real Rust defers exactly this case to
+                    // monomorphization, evaluating it once per concrete
+                    // instantiation. This compiler has no per-instantiation
+                    // comptime re-evaluation machinery yet, so requesting
+                    // evaluation here would reach a genuinely unresolved
+                    // `TyKind::Param` downstream and crash instead of
+                    // failing gracefully. Skip the request — leaving no
+                    // comptime value recorded routes through `hir_to_mir`'s
+                    // own existing fallback ("no comptime value available":
+                    // lower the block's body as ordinary code instead).
+                    if !ty_contains_param(&body_ty) {
+                        let def_id = const_block.def_id;
+                        let request = crate::ComptimeRequest {
+                            package_id: self.current_package(),
+                            def_id,
+                        };
+                        HirTypeChecker::spawn_comptime_task(&self.root_handle(), def_id, request)
+                            .await
+                            .ok_or_else(|| Error::from("comptime evaluation failed"))?;
+                    }
                     body_ty
                 }
                 hir::ExprKind::While(condition, block) => {
@@ -1673,13 +1688,30 @@ impl HirTypeChecker {
                     let def_id = *def_id;
                     let hir_id = expr.hir_id;
                     let body_ty = self.check_expr(body).await?;
-                    let request = crate::ComptimeRequest {
-                        package_id: self.current_package(),
-                        def_id,
-                    };
-                    HirTypeChecker::spawn_comptime_task(&self.root_handle(), def_id, request)
-                        .await
-                        .ok_or_else(|| Error::from("comptime evaluation failed"))?;
+                    // A `const { .. }` block whose value still depends on
+                    // an uninstantiated generic parameter of the enclosing
+                    // (still-generic) function/impl can't be evaluated yet
+                    // — real Rust defers exactly this case to
+                    // monomorphization, evaluating it once per concrete
+                    // instantiation. This compiler has no per-instantiation
+                    // comptime re-evaluation machinery yet, so requesting
+                    // evaluation here would reach a genuinely unresolved
+                    // `TyKind::Param` downstream and crash instead of
+                    // failing gracefully. Skip the request — leaving no
+                    // comptime value recorded routes through `hir_to_mir`'s
+                    // own existing fallback ("no comptime value available":
+                    // lower the block's body as ordinary code instead),
+                    // correct for a value that isn't const-critical outside
+                    // a monomorphized instantiation.
+                    if !ty_contains_param(&body_ty) {
+                        let request = crate::ComptimeRequest {
+                            package_id: self.current_package(),
+                            def_id,
+                        };
+                        HirTypeChecker::spawn_comptime_task(&self.root_handle(), def_id, request)
+                            .await
+                            .ok_or_else(|| Error::from("comptime evaluation failed"))?;
+                    }
                     // Replace the `Infer` placeholder just below with the
                     // body's actual checked type, now that it's known —
                     // matches expression-position const-blocks, whose own
