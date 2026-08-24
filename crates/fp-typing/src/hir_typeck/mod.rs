@@ -2533,26 +2533,38 @@ impl HirTypeChecker {
         // `Self::helper(self, ..)`) — resolve it the same way `.method()`
         // call syntax already does, via `method_declared_signature_at`.
         if matches!(path.res, Some(hir::Res::SelfTy)) {
-            if let (Some(self_ty), Some(method_segment)) =
-                (self.self_type.clone(), path.segments.get(1))
-            {
-                if path.segments.len() == 2 {
-                    let found = self
-                        .method_declared_signature_at(&self_ty, &method_segment.name)
-                        .await?;
-                    tracing::debug!(
-                        method = %method_segment.name,
-                        ?self_ty,
-                        found = found.is_some(),
-                        "Self::method lookup"
-                    );
-                    if let Some(sig) = found {
-                        return Ok(sig);
+            if let Some(self_ty) = self.self_type.clone() {
+                match path.segments.len() {
+                    // A bare `Self` value path — the callee of a
+                    // tuple-struct-style constructor call (`Self(x)`, real
+                    // std's own idiom throughout, e.g. wrapper types built
+                    // as `Self(value)` inside their own inherent impl) or
+                    // any other position that names `Self` as a plain
+                    // value rather than a member of it. `Self` unqualified
+                    // simply *is* the enclosing impl's own type — no
+                    // method/const lookup needed, unlike the `Self::name`
+                    // case below.
+                    1 => return Ok(self_ty),
+                    2 => {
+                        let method_segment = &path.segments[1];
+                        let found = self
+                            .method_declared_signature_at(&self_ty, &method_segment.name)
+                            .await?;
+                        tracing::debug!(
+                            method = %method_segment.name,
+                            ?self_ty,
+                            found = found.is_some(),
+                            "Self::method lookup"
+                        );
+                        if let Some(sig) = found {
+                            return Ok(sig);
+                        }
+                        return Ok(self.error_ty(format!(
+                            "method `{}` not found on `Self` (self type: {:?})",
+                            method_segment.name, self_ty
+                        )));
                     }
-                    return Ok(self.error_ty(format!(
-                        "method `{}` not found on `Self` (self type: {:?})",
-                        method_segment.name, self_ty
-                    )));
+                    _ => {}
                 }
             }
         }
