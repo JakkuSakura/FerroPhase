@@ -2374,7 +2374,29 @@ impl HirTypeChecker {
             return self.check_type_expr(&target).await;
         }
         let Some(item) = self.program_rc().item(def_id.clone()).cloned() else {
-            return Ok(self.error_ty(format!("type definition `{def_id}` was not found")));
+            // No `hir::Item`/`def_path` at all for this `DefId` — real
+            // vendored std's dominant case is a trait's own *associated
+            // type declaration* (`trait Iterator { type Item; }`)
+            // referenced directly by its declaring `DefId` (e.g. from
+            // within the trait's own default method bodies/signatures,
+            // where there's no concrete impl yet to substitute the
+            // projection through) — HIR has no first-class item for an
+            // associated-type declaration itself, only for the *trait*
+            // that owns it. Approximate the same way a bare trait
+            // reference does just above: a nominal `Param` placeholder
+            // keyed by the name actually referenced, so every use of it
+            // unifies consistently instead of hard-erroring.
+            let name = path
+                .segments
+                .last()
+                .map(|segment| segment.name.clone())
+                .unwrap_or_else(|| hir::Symbol::new("_"));
+            return Ok(Ty {
+                kind: TyKind::Param(ty::ParamTy {
+                    index: u32::MAX,
+                    name,
+                }),
+            });
         };
         let (flags, variants) = match &item.kind {
             hir::ItemKind::Struct(_) => (AdtFlags::IS_STRUCT, Vec::new()),
