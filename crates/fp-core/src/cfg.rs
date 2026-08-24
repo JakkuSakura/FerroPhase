@@ -99,6 +99,20 @@ pub fn cfg_meta_enabled(meta: &ast::AttrMeta, env: &TargetEnv) -> bool {
         ast::AttrMeta::Path(path) => match path.last().as_str() {
             "unix" => env.os == "linux" || env.os == "macos",
             "windows" => env.os == "windows",
+            // Real vendored std gates every atomic width behind these
+            // (bare `#[cfg(target_has_atomic)]` and friends) — every host
+            // this transpiler actually runs on supports full-width atomics,
+            // and this compiler has no real cross-compilation target for
+            // any of these to meaningfully vary by anyway (see `TargetEnv`'s
+            // own doc comment), so treat them as always satisfied rather
+            // than falling into the generic "unrecognized bare flag is
+            // false" default below, which silently dropped every atomic
+            // intrinsic wrapper (`atomic_xor`, `atomic_compare_exchange`,
+            // ...) and their callers' bodies along with it.
+            "target_has_atomic"
+            | "target_has_atomic_load_store"
+            | "target_has_atomic_equal_alignment"
+            | "target_has_atomic_primitive_alignment" => true,
             _ => false,
         },
         ast::AttrMeta::NameValue(nv) => {
@@ -109,6 +123,12 @@ pub fn cfg_meta_enabled(meta: &ast::AttrMeta, env: &TargetEnv) -> bool {
                 "target_os" => value == env.os,
                 "target_lang" => env.lang.as_deref() == Some(value.as_str()),
                 "target_pointer_width" => value == env.pointer_width,
+                // See the bare-flag arm above — same reasoning, just the
+                // `= "<width>"` form (`target_has_atomic = "64"`, ...).
+                "target_has_atomic"
+                | "target_has_atomic_load_store"
+                | "target_has_atomic_equal_alignment"
+                | "target_has_atomic_primitive_alignment" => true,
                 _ => false,
             }
         }
