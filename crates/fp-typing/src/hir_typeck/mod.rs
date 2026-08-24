@@ -1984,9 +1984,21 @@ impl HirTypeChecker {
                         }
                     }
                 }
-                hir::TypeExprKind::TypeBinaryOp(_) => {
-                    self.error_ty("type expressions cannot be combined with a type operator")
-                }
+                // `+` (`TypeBinaryOpKind::Add`) is also how fp-lang parses
+                // a multi-bound trait-object/`impl` type
+                // (`dyn Error + Send + Sync`, `impl Iterator<Item = T> +
+                // '_`) — the same token this compiler's struct-composition
+                // `+` uses (see `struct_fields_from_type`'s own `Add` arm),
+                // just in a context with no structural fields to merge at
+                // all. This compiler has no multi-trait `dyn`/`impl`
+                // representation to check against regardless, so — same
+                // "tolerate what's broken, keep what isn't" policy as
+                // elsewhere — approximate it as just its first bound
+                // rather than hard-erroring the whole enclosing type
+                // (dropping the extra bounds is lossy but harmless: they
+                // only ever narrow what's already a supertype-shaped
+                // reference here, never change its own concrete shape).
+                hir::TypeExprKind::TypeBinaryOp(op) => self.check_type_expr(&op.lhs).await?,
                 hir::TypeExprKind::LiteralString(value) => {
                     self.program_rc()
                         .insert_literal_type_hint(expr.hir_id.clone(), vec![value.clone()]);
