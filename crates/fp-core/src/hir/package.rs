@@ -364,6 +364,33 @@ fn classify_impl_shape(impl_item: &Impl) -> ImplShapeClass {
         }
         return ImplShapeClass::Unclassified;
     }
+    // A compound self-type (`impl Trait for &T`/`[T]`/`(A, B)`/`fn(..)
+    // -> R`/...) lowers straight to its own native `TypeExprKind` variant
+    // via `transform_impl`'s `transform_type_to_hir` call — it never goes
+    // through `ast_expr_to_hir_path`'s `Res::Builtin`-tagged `Path`
+    // machinery at all (that's only reached for a self-type built via
+    // *that* function, e.g. `predeclare_items`'s canonical-method-path
+    // computation, a separate concern from this item's own stored
+    // `self_ty`). Without these arms every impl on one of these shapes
+    // (extremely common throughout real vendored std — `impl<T> PartialEq
+    // for &T`, `impl<T> Iterator for &mut [T]`, every `impl<Args> FnMut
+    // <Args> for fn(Args) -> R`, ...) was silently unindexed. Reuses the
+    // exact same bucket keys `Res::Builtin`'s own `bucket_key()` already
+    // established, so a self-type reaching either route still lands in
+    // the same bucket.
+    match &impl_item.self_ty.kind {
+        TypeExprKind::Ref(_) => return ImplShapeClass::Shape("&".to_string()),
+        TypeExprKind::Ptr(_) => return ImplShapeClass::Shape("*const".to_string()),
+        TypeExprKind::Slice(_) => return ImplShapeClass::Shape("[]".to_string()),
+        TypeExprKind::Array(_, _) => return ImplShapeClass::Shape("[;N]".to_string()),
+        TypeExprKind::Tuple(elems) if !elems.is_empty() => {
+            return ImplShapeClass::Shape("(,)".to_string());
+        }
+        TypeExprKind::Tuple(_) => return ImplShapeClass::Shape("()".to_string()),
+        TypeExprKind::FnPtr(_) => return ImplShapeClass::Shape("fn(..)".to_string()),
+        TypeExprKind::Never => return ImplShapeClass::Shape("!".to_string()),
+        _ => {}
+    }
     let TypeExprKind::Path(path) = &impl_item.self_ty.kind else {
         return ImplShapeClass::Unclassified;
     };
