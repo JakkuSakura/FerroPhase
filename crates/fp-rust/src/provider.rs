@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use fp_core::ast::{AttrMeta, Attribute, Item, ItemKind, register_threadlocal_serializer};
+use fp_core::cfg::{TargetEnv, item_enabled_by_cfg};
 use fp_core::frontend::LanguageFrontend;
 use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
@@ -39,16 +40,6 @@ enum MemberRoot {
 }
 
 impl MemberRoot {
-    /// `(relative_path_tag, absolute_path)` pairs — a single-file member
-    /// is always exactly one entry, whose relative tag is the empty string
-    /// (so `rs_relative_to_module_path` doesn't need a special case).
-    fn sources(&self) -> Vec<(String, PathBuf)> {
-        match self {
-            MemberRoot::Dir(dir) => project::list_sources(dir),
-            MemberRoot::File(path) => vec![(String::new(), path.clone())],
-        }
-    }
-
     fn manifest_path(&self) -> PathBuf {
         match self {
             MemberRoot::Dir(dir) => dir.join("Cargo.toml"),
@@ -136,11 +127,20 @@ impl PackageProvider for RustPackageProvider {
 
     fn load_package_metadata(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
         let member_root = self.resolve_root(id)?;
-        let mut module_ids = Vec::new();
-        for (rel, _) in member_root.sources() {
-            let path = rs_relative_to_module_path(&rel);
-            module_ids.push(ModuleId::new(&path.to_key()));
-        }
+        // Real module discovery (below, in `load_package_source`) walks
+        // `mod` declarations from the crate root, which this method has no
+        // reason to duplicate — run it once here too and let its result
+        // land in `self.cache`, so `load_package_source`'s own cache check
+        // picks it straight back up instead of re-walking.
+        let items = self.package_items(id, member_root)?;
+        let module_ids: Vec<_> = {
+            use std::collections::HashSet;
+            let paths: HashSet<_> = items.iter().map(|item| item.module_path.clone()).collect();
+            paths
+                .into_iter()
+                .map(|path| ModuleId::new(&path.to_key()))
+                .collect()
+        };
         let mut metadata = PackageMetadata::default();
         metadata.dependencies.push(DependencyDescriptor {
             package: "std".to_string(),
@@ -175,46 +175,85 @@ impl PackageProvider for RustPackageProvider {
     }
 
     fn load_package_source(&self, id: &PackageId) -> ProviderResult<AstPackage> {
+        let member_root = self.resolve_root(id)?;
+        let items = self.package_items(id, member_root)?;
+        Ok(package_source_from_items(id, &items))
+    }
+}
+
+impl RustPackageProvider {
+    /// Real module discovery: start at this member's crate-root file
+    /// (`src/lib.rs`/`src/main.rs` by convention, or the file itself for a
+    /// standalone single-file member) and recursively resolve every `mod
+    /// name;` it transitively declares to its backing file — a `#[path]`
+    /// override first, else the `name.rs`/`name/mod.rs` convention —
+    /// instead of independently guessing each on-disk file's module path
+    /// from its own filesystem location (`project::list_sources` has no
+    /// `mod`-graph awareness at all). Cached per package id, shared by
+    /// `load_package_metadata` and `load_package_source` so whichever
+    /// runs first does the real work.
+    fn package_items(
+        &self,
+        id: &PackageId,
+        member_root: &MemberRoot,
+    ) -> ProviderResult<Vec<PackageItem>> {
         if let Ok(c) = self.cache.read() {
             if let Some(items) = c.get(id.as_str()) {
-                return Ok(package_source_from_items(id, items));
+                return Ok(items.clone());
             }
         }
 
-        let member_root = self.resolve_root(id)?;
-        let frontend = RustFrontend::new();
-        let mut items = Vec::new();
+        let (root_file, base_dir) = match member_root {
+            MemberRoot::Dir(dir) => {
+                let src = dir.join("src");
+                let lib_rs = src.join("lib.rs");
+                let root_file = if lib_rs.is_file() {
+                    lib_rs
+                } else {
+                    src.join("main.rs")
+                };
+                (root_file, src)
+            }
+            MemberRoot::File(path) => (
+                path.clone(),
+                path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+            ),
+        };
 
-        for (rel, abs) in member_root.sources() {
-            let source = std::fs::read_to_string(&abs)
-                .map_err(|e| ProviderError::other(format!("read {}: {}", abs.display(), e)))?;
+        let env = TargetEnv::host();
+        let mut parse = |path: &Path, source: &str| -> ProviderResult<Vec<Item>> {
+            let frontend = RustFrontend::new();
             let result = frontend
-                .parse_file(&source, &abs)
-                .map_err(|e| ProviderError::other(format!("parse {}: {}", abs.display(), e)))?;
+                .parse_file(source, path)
+                .map_err(|e| ProviderError::other(format!("parse {}: {}", path.display(), e)))?;
             // The typed-HIR pipeline (Display/Debug-formatting AST nodes for
             // diagnostics, etc.) panics without a thread-local serializer
             // registered — `parse_file_with_context`'s single-file path
             // already does this; this provider-based path didn't.
             register_threadlocal_serializer(result.serializer.clone());
-            let path = rs_relative_to_module_path(&rel);
-            items.extend(
-                result
-                    .ast
-                    .items
-                    .into_iter()
-                    .filter(|item| !is_cfg_test(item_attrs(item)))
-                    .map(|item| PackageItem {
-                        module_path: path.clone(),
-                        item,
-                    }),
-            );
+            Ok(result.ast.items)
+        };
+        let read = |path: &Path| -> Option<String> { std::fs::read_to_string(path).ok() };
+
+        let mut items = Vec::new();
+        if let Some(source) = read(&root_file) {
+            let root_items = parse(&root_file, &source)?;
+            discover_items(
+                &read,
+                &mut parse,
+                &env,
+                &base_dir,
+                &QualifiedPath::new(Vec::new()),
+                &root_items,
+                None,
+                &mut items,
+            )?;
         }
 
         if let Ok(mut c) = self.cache.write() {
             c.insert(id.as_str().to_string(), items.clone());
         }
-
-        Ok(package_source_from_items(id, &items))
+        Ok(items)
     }
 }
 
@@ -449,6 +488,199 @@ impl PackageProvider for RustStdProvider {
     }
 }
 
+/// Collapses `..`/`.` components in `path` without touching the
+/// filesystem — needed before handing a `#[path = "../unix/sync"]`-style
+/// redirect (real vendored std uses several of these) to `embedded_std::
+/// read`, which rejects any raw `ParentDir` component outright.
+fn normalize_path_components(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+fn string_literal(expr: &fp_core::ast::Expr) -> Option<String> {
+    match expr.kind() {
+        fp_core::ast::ExprKind::Value(value) => match value.as_ref() {
+            fp_core::ast::Value::String(s) => Some(s.value.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Finds this `mod` item's own `#[path = "..."]` redirect, if any — a bare
+/// `path = "..."` always applies; a `#[cfg_attr(cond, path = "...")]`
+/// applies only when `cond` holds (real vendored std's `core::io::error`'s
+/// `mod repr;` picks between two backing files this way, by pointer
+/// width). Uses the exact same predicate evaluation
+/// (`fp_core::cfg::cfg_meta_enabled`/`TargetEnv`) already used everywhere
+/// else `#[cfg(..)]` is evaluated in this pipeline — no separate cfg
+/// engine needed.
+fn mod_path_attr(attrs: &[Attribute], env: &TargetEnv) -> Option<String> {
+    for attr in attrs {
+        match &attr.meta {
+            AttrMeta::NameValue(nv) if nv.name.last().as_str() == "path" => {
+                if let Some(value) = string_literal(&nv.value) {
+                    return Some(value);
+                }
+            }
+            AttrMeta::List(list) if list.name.last().as_str() == "cfg_attr" => {
+                let [cond, rest @ ..] = list.items.as_slice() else {
+                    continue;
+                };
+                if !fp_core::cfg::cfg_meta_enabled(cond, env) {
+                    continue;
+                }
+                for item in rest {
+                    if let AttrMeta::NameValue(nv) = item {
+                        if nv.name.last().as_str() == "path" {
+                            if let Some(value) = string_literal(&nv.value) {
+                                return Some(value);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Resolves one child `mod name;`'s backing file and the directory *its
+/// own* nested external `mod`s resolve against — mirrors real rustc: a
+/// `#[path]` redirect's children resolve next to the redirected file
+/// itself (or, for a directory-shaped redirect like `path = "../unix/
+/// sync"`, inside that directory directly), never in a `name/`
+/// subdirectory of the *declaring* module the way the ordinary
+/// convention works. Returns `None` when nothing backs this `mod` at all
+/// (an intentionally-empty inline `mod name {}`, or a `#[path]` pointing
+/// outside the vendored corpus entirely — e.g. real vendored std's own
+/// `stdarch`/`portable-simd`/`backtrace` sibling-crate redirects) — the
+/// caller treats that identically to a real empty module, no error.
+fn resolve_external_mod(
+    read: &dyn Fn(&Path) -> Option<String>,
+    base_dir: &Path,
+    mod_name: &str,
+    attrs: &[Attribute],
+    env: &TargetEnv,
+) -> Option<(PathBuf, PathBuf, String)> {
+    if let Some(redirect) = mod_path_attr(attrs, env) {
+        let target = normalize_path_components(&base_dir.join(redirect));
+        if let Some(source) = read(&target) {
+            let child_base = target.parent().unwrap_or(base_dir).to_path_buf();
+            return Some((target, child_base, source));
+        }
+        let mod_rs = target.join("mod.rs");
+        if let Some(source) = read(&mod_rs) {
+            return Some((mod_rs, target, source));
+        }
+        return None;
+    }
+    let name_rs = base_dir.join(format!("{mod_name}.rs"));
+    if let Some(source) = read(&name_rs) {
+        return Some((name_rs, base_dir.join(mod_name), source));
+    }
+    let mod_rs = base_dir.join(mod_name).join("mod.rs");
+    if let Some(source) = read(&mod_rs) {
+        return Some((mod_rs, base_dir.join(mod_name), source));
+    }
+    None
+}
+
+/// Recursively resolves a module's item list — walking into every inline
+/// `mod name { .. }` body directly, and resolving every external `mod
+/// name;` (no body of its own in the parsed AST at all) to its backing
+/// file via `resolve_external_mod`, parsing that file (through `parse`,
+/// which owns whatever caching the caller wants) and recursing into it.
+/// This is the one piece of logic real rustc-style module discovery
+/// needs that a flat, path-derived filesystem scan structurally cannot
+/// have — everything else (which package a file belongs to, its
+/// `PackageItem` tagging) falls out of walking this exactly once.
+#[allow(clippy::too_many_arguments)]
+fn discover_items(
+    read: &dyn Fn(&Path) -> Option<String>,
+    parse: &mut dyn FnMut(&Path, &str) -> ProviderResult<Vec<Item>>,
+    env: &TargetEnv,
+    base_dir: &Path,
+    module_path: &QualifiedPath,
+    items: &[Item],
+    descriptor_ctx: Option<(&PackageId, ModuleLanguage, &mut Vec<ModuleDescriptor>)>,
+    items_out: &mut Vec<PackageItem>,
+) -> ProviderResult<()> {
+    let mut descriptor_ctx = descriptor_ctx;
+    for item in items {
+        if !item_enabled_by_cfg(item, env) {
+            continue;
+        }
+        let ItemKind::Module(module) = item.kind() else {
+            items_out.push(PackageItem {
+                module_path: module_path.clone(),
+                item: item.clone(),
+            });
+            continue;
+        };
+        let child_path = module_path.with_segment(module.name.as_str().to_owned());
+        if !module.items.is_empty() {
+            // An inline body still establishes `base_dir/name` for its
+            // *own* nested external mods — identical to a file-backed
+            // module's convention, just with no new file to parse here.
+            let child_base_dir = base_dir.join(module.name.as_str());
+            discover_items(
+                read,
+                parse,
+                env,
+                &child_base_dir,
+                &child_path,
+                &module.items,
+                descriptor_ctx
+                    .as_mut()
+                    .map(|(id, lang, descs)| (*id, lang.clone(), &mut **descs)),
+                items_out,
+            )?;
+            continue;
+        }
+        let Some((target_file, child_base_dir, source)) =
+            resolve_external_mod(read, base_dir, module.name.as_str(), &module.attrs, env)
+        else {
+            continue;
+        };
+        let file_items = parse(&target_file, &source)?;
+        if let Some((package_id, language, descriptors)) = descriptor_ctx.as_mut() {
+            descriptors.push(ModuleDescriptor {
+                id: ModuleId::new(&child_path.to_key()),
+                package: (*package_id).clone(),
+                language: (*language).clone(),
+                module_path: child_path.segments.clone(),
+                source: VirtualPath::from_path(&target_file),
+                exports: Vec::new(),
+                requires_features: Vec::new(),
+            });
+        }
+        discover_items(
+            read,
+            parse,
+            env,
+            &child_base_dir,
+            &child_path,
+            &file_items,
+            descriptor_ctx
+                .as_mut()
+                .map(|(id, lang, descs)| (*id, lang.clone(), &mut **descs)),
+            items_out,
+        )?;
+    }
+    Ok(())
+}
+
 fn flatten_items(path: &QualifiedPath, items: &[Item], output: &mut Vec<PackageItem>) {
     for item in items {
         if is_cfg_test(item_attrs(item)) {
@@ -568,89 +800,108 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
     // `core`/`alloc` absolute paths real Rust code actually uses resolve
     // to a different qualified key than where their definitions actually
     // live).
-    for relative_str in crate::embedded_std::module_paths() {
-        if relative_str.split('/').next() != Some(crate_name) {
-            continue;
-        }
-        // A file named `tests.rs`/`test.rs` is only ever reachable through
-        // its parent's `#[cfg(test)] mod tests;` declaration — real std
-        // doesn't restate `#[cfg(test)]` on every item inside such a file,
-        // since inclusion is already gated at the `mod` declaration site in
-        // a *different* file. `flatten_items`/`is_cfg_test` below only see
-        // this file's own item attributes, so a whole file like this slips
-        // through as if it were ordinary production code, and its test-only
-        // helpers (e.g. `alloc/collections/btree/map/tests.rs`'s
-        // `test_all_refs`, built on constructs real rustc accepts but this
-        // typechecker doesn't) can poison an entire package's typecheck
-        // under lossy mode. Skip by filename convention instead.
-        if matches!(
-            std::path::Path::new(relative_str).file_stem().and_then(|s| s.to_str()),
-            Some("tests") | Some("test")
-        ) {
-            continue;
-        }
-        let path = root.join(relative_str);
-        let Some(source) = crate::embedded_std::read(&path) else {
-            continue;
-        };
-        let module_path = rs_relative_to_module_segments(crate_name, relative_str);
-        if module_path.is_empty() {
-            continue;
-        }
+    //
+    // Discovery itself now follows real rustc semantics: start at the
+    // crate root file and recursively resolve every `mod name;` it
+    // (transitively) declares to its backing file — a `#[path]` override
+    // first, else the `name.rs`/`name/mod.rs` convention — rather than
+    // independently guessing every embedded file's module path from its
+    // own filesystem location. This is what lets a `#[path]`-redirected
+    // module (`core::io::error`'s `mod repr;`, `core::lib.rs`'s `mod
+    // legacy_int_modules;`) end up reachable under the name the rest of
+    // the crate actually references it by, instead of only under its own
+    // unrelated file path. It also makes the old `tests.rs`/`test.rs`
+    // filename-convention skip unnecessary: a `#[cfg(test)] mod tests;`
+    // is now simply never visited by `item_enabled_by_cfg`'s ordinary
+    // cfg-filtering, the same way any other disabled item is skipped.
+    let env = TargetEnv::host();
+    let root_file = root.join(crate_name).join("lib.rs");
+    let base_dir = root.join(crate_name);
+
+    let mut parse = |path: &Path, source: &str| -> ProviderResult<Vec<Item>> {
+        let relative = path
+            .strip_prefix(&root)
+            .ok()
+            .and_then(|p| p.to_str())
+            .unwrap_or_default()
+            .to_string();
         // A fresh frontend per file, not one shared across the whole
-        // loop — each `.rs` file is its own independent translation unit,
-        // and a parser is free to accumulate internal recovery/nesting
-        // state across `parse_file` calls since nothing about its public
-        // API promises isolation between them. A syntax error in one file
-        // (there are, unfortunately, real ones among these — see
-        // `FP_STD_PARSE_VERBOSE`) must never leave that state dirty enough
-        // to spuriously fail the *next* file's otherwise-valid parse.
+        // walk — each `.rs` file is its own independent translation
+        // unit, and a parser is free to accumulate internal
+        // recovery/nesting state across `parse_file` calls since nothing
+        // about its public API promises isolation between them. A syntax
+        // error in one file (there are, unfortunately, real ones among
+        // these — see `FP_STD_PARSE_VERBOSE`) must never leave that
+        // state dirty enough to spuriously fail the *next* file's
+        // otherwise-valid parse.
         let frontend = RustFrontend::new();
-        let file_items = if let Some(cached) = cache.get(*relative_str) {
-            frontend.register_file_only(source, &path);
+        if let Some(cached) = cache.get(&relative) {
+            frontend.register_file_only(source, path);
             cache_hits += 1;
-            cached.clone()
-        } else {
-            match frontend.parse_file(source, &path) {
-                Ok(result) => {
-                    register_threadlocal_serializer(result.serializer.clone());
-                    parsed += 1;
-                    if dump_path.is_some() {
-                        fresh_cache.insert(relative_str.to_string(), result.ast.items.clone());
-                    }
-                    result.ast.items
+            return Ok(cached.clone());
+        }
+        match frontend.parse_file(source, path) {
+            Ok(result) => {
+                register_threadlocal_serializer(result.serializer.clone());
+                parsed += 1;
+                if dump_path.is_some() {
+                    fresh_cache.insert(relative, result.ast.items.clone());
                 }
-                Err(err) => {
-                    skipped += 1;
-                    // Verbose per-file diagnostics are opt-in (`358 skipped`
-                    // on every run would otherwise be noisy) — but the
-                    // failure itself is silent by default beyond that
-                    // aggregate count, which makes a *specific* regression
-                    // (e.g. one file losing a syntax construct it used to
-                    // support) invisible until something downstream that
-                    // depended on it breaks. Set `FP_STD_PARSE_VERBOSE=1` to
-                    // see exactly which file and why.
-                    if std::env::var("FP_STD_PARSE_VERBOSE").is_ok() {
-                        eprintln!("fp-rust: failed to parse {}: {err}", path.display());
-                    }
-                    continue;
-                }
+                Ok(result.ast.items)
             }
-        };
-        flatten_items(
-            &QualifiedPath::new(module_path.clone()),
-            &file_items,
-            &mut items,
-        );
+            Err(err) => {
+                skipped += 1;
+                // Verbose per-file diagnostics are opt-in (`358 skipped`
+                // on every run would otherwise be noisy) — but the
+                // failure itself is silent by default beyond that
+                // aggregate count, which makes a *specific* regression
+                // (e.g. one file losing a syntax construct it used to
+                // support) invisible until something downstream that
+                // depended on it breaks. Set `FP_STD_PARSE_VERBOSE=1` to
+                // see exactly which file and why. Real vendored std is
+                // far too irregular to hard-fail the whole crate on one
+                // unparseable file — skip it (empty item list) and keep
+                // going, exactly as before.
+                if std::env::var("FP_STD_PARSE_VERBOSE").is_ok() {
+                    eprintln!("fp-rust: failed to parse {}: {err}", path.display());
+                }
+                Ok(Vec::new())
+            }
+        }
+    };
+    let read = |path: &Path| -> Option<String> {
+        crate::embedded_std::read(path).map(|s| s.to_string())
+    };
+
+    // Real rustc absolute paths this corpus actually uses (`core::option::
+    // Option`, `std::result::Result`, ...) name each sub-crate as an
+    // explicit leading segment — the crate root's *own* qualified path is
+    // therefore `[crate_name]` (e.g. `["core"]`), not empty; only a plain
+    // on-disk Cargo project's own crate root (a single, self-contained
+    // package with no shared cross-crate namespace) collapses to `[]` (see
+    // `rs_relative_to_module_path`, used there instead).
+    let root_module_path = QualifiedPath::new(vec![crate_name.to_string()]);
+    if let Some(source) = read(&root_file) {
+        let root_items = parse(&root_file, &source)?;
         descriptors.push(ModuleDescriptor {
-            id: ModuleId::new(module_path.join("::")),
+            id: ModuleId::new(&root_module_path.to_key()),
             package: package_id.clone(),
             language: ModuleLanguage::Rust,
-            module_path,
-            source: VirtualPath::from_path(&path),
+            module_path: root_module_path.segments.clone(),
+            source: VirtualPath::from_path(&root_file),
             exports: Vec::new(),
             requires_features: Vec::new(),
         });
+        discover_items(
+            &read,
+            &mut parse,
+            &env,
+            &base_dir,
+            &root_module_path,
+            &root_items,
+            Some((&package_id, ModuleLanguage::Rust, &mut descriptors)),
+            &mut items,
+        )?;
     }
     eprintln!(
         "fp-rust: real {crate_name} parse result — {parsed} file(s) parsed, {cache_hits} from cache, {skipped} skipped (parse errors)"
@@ -748,40 +999,6 @@ fn load_embedded_fp_package(
     let mut krate = AstPackage::new(PackageId::new(package_name), package_name, graph);
     krate.items = items;
     Ok(krate)
-}
-
-/// `("core", "core/option.rs")` -> `["core", "option"]`,
-/// `("alloc", "alloc/vec/mod.rs")` -> `["alloc", "vec"]`,
-/// `("std", "std/sync/mod.rs")` -> `["std", "sync"]` — `relative`'s own
-/// leading path segment is always `crate_name` (the caller already
-/// filtered `module_paths()` down to that crate's own files), so it's
-/// dropped and replaced by `crate_name` itself as the qualified path's
-/// root, rather than nested a second time underneath it.
-fn rs_relative_to_module_segments(crate_name: &str, relative: &str) -> Vec<String> {
-    let mut segments: Vec<String> = vec![crate_name.to_string()];
-    let stem = relative.trim_end_matches(".rs");
-    let parts: Vec<&str> = stem.split('/').collect();
-    // `<crate>/lib.rs` is the crate root, exactly like `<module>/mod.rs`
-    // collapses to that module's own path — real Cargo semantics, and
-    // the only place `lib.rs` legitimately appears in a crate at all.
-    // Left uncollapsed, a top-level `pub use core::result;` in
-    // `std/lib.rs` registers under `std::lib::result` instead of
-    // `std::result`, making it unreachable by anything resolving
-    // `crate::result` from that crate (the exact gap that broke
-    // `Ok`/`Err`/`Some`/`None` resolution for every consumer of `std`).
-    let last_index = parts.len().saturating_sub(1);
-    for (i, part) in parts.into_iter().enumerate() {
-        if i == 0 {
-            // The crate-root directory itself (`core`/`alloc`/`std`) —
-            // already accounted for by seeding `segments` with `crate_name`.
-            continue;
-        }
-        if part.is_empty() || part == "mod" || (part == "lib" && i == last_index) {
-            continue;
-        }
-        segments.push(part.to_string());
-    }
-    segments
 }
 
 fn fp_relative_to_module_segments(package_name: &str, relative: &str) -> Vec<String> {

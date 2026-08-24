@@ -877,6 +877,19 @@ impl AstToHirLowerer {
     /// local/function-scoped shadow the way a bare reference correctly
     /// does.
     fn resolve_global_type_symbol(&self, name: &str) -> Option<hir::Res> {
+        // A primitive type name is never shadowable by a same-named
+        // module or re-export in type position — real Rust's own rule
+        // (`isize::MAX` always means the primitive, even where vendored
+        // std's own crate-root `pub use legacy_int_modules::{isize, ..}`
+        // re-export makes a real, reachable module named `isize` exist
+        // too). Without this, `lookup_symbol`/the ambiguous-export
+        // fallback below would happily resolve the re-exported module
+        // instead, and every ordinary `isize::`-prefixed UFCS/associated-
+        // item reference elsewhere in the corpus would silently mean the
+        // wrong thing.
+        if is_primitive_type_name(name) {
+            return None;
+        }
         let qualified = self.module_path.with_segment(name.to_string()).to_key();
         self.lookup_symbol(&qualified, hir::Namespace::Type)
             .or_else(|| {

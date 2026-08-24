@@ -464,7 +464,22 @@ impl AstToHirLowerer {
             });
         }
 
-        if segments.len() > 1 && path_prefix == PathPrefix::Plain {
+        // A primitive-named first segment (`isize::Output`, from a UFCS-
+        // flattened `<isize as Not>::Output`) must never be treated as a
+        // module-relative or absolute path lookup, even where a real,
+        // reachable module of that exact name also exists (vendored
+        // std's own crate-root `pub use legacy_int_modules::{isize, ..}`
+        // re-export) — real Rust's primitive names are never shadowable
+        // this way. Skip straight to the generic fallback below (which
+        // ultimately reaches `fp-typing`'s own primitive-first UFCS
+        // handling) instead of resolving to the wrong module here.
+        let first_is_shadowable_primitive = scope == PathResolutionScope::Type
+            && segments
+                .first()
+                .is_some_and(|s| is_primitive_type_name(s.name.as_str()));
+
+        if segments.len() > 1 && path_prefix == PathPrefix::Plain && !first_is_shadowable_primitive
+        {
             let local_path = self.module_path.join(
                 &segments
                     .iter()
