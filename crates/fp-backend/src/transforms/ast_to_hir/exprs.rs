@@ -1859,7 +1859,38 @@ impl AstToHirLowerer {
             // package's `Option::Some` vs. std's
             // `core::option::Option::Some`) — fall back to a suffix
             // match across every package's exports.
+<<<<<<< HEAD
             .or_else(|| self.hir_program.find_export_by_suffix(&key))
+            .or_else(|| {
+                if scope == PathResolutionScope::Value && path.segments.len() > 1 {
+                    self.lookup_symbol(&key, hir::Namespace::Type)
+                } else {
+                    None
+                }
+            })
+=======
+            .or_else(|| self.hir_program.as_ref()?.find_export_by_suffix(&key))
+            // A qualified *value* path's non-final segments always name a
+            // type/module in real Rust, regardless of which namespace the
+            // path's own final segment is expected to land in (`ops::
+            // Range::from(x)` — `Range` names the *type* `from` is
+            // relative to, a UFCS static-method call, not a value of its
+            // own). A plain named-field struct/enum is only ever bound in
+            // the *type* namespace (there's no callable/constructor value
+            // for one to register in the value namespace at all, unlike a
+            // tuple/unit struct), so a `Value`-scoped multi-segment lookup
+            // here always missed it. Retry in the type namespace for
+            // exactly this shape — a single-segment path is left alone
+            // (a bare name's own namespace is meaningful there, e.g.
+            // telling a function from a same-named type apart).
+            .or_else(|| {
+                if scope == PathResolutionScope::Value && path.segments.len() > 1 {
+                    self.lookup_symbol(&key, hir::Namespace::Type)
+                } else {
+                    None
+                }
+            })
+>>>>>>> bb507520b (ast_to_hir: fall back to type namespace for a multi-segment value path base)
     }
 
     // make_path_segment moved to helpers.rs
