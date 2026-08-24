@@ -66,7 +66,7 @@ fn sql_query_document_lowers_to_hir_and_mir_query_items() {
         Some(QueryIrStmt::Query(_))
     ));
 
-    let mut lir_generator = MirToLirLowerer::new(test_layout());
+    let mut lir_generator = MirToLirLowerer::new(test_layout(), std::rc::Rc::new(mir::MirProgram::new()), std::rc::Rc::new(fp_core::lir::LirProgram::new()));
     let lir_program = lir_generator
         .transform(mir_program)
         .expect("lir program");
@@ -135,7 +135,7 @@ fn prql_query_document_lowers_to_hir_and_mir_query_items() {
         Some(QueryIrStmt::Query(_))
     ));
 
-    let mut lir_generator = MirToLirLowerer::new(test_layout());
+    let mut lir_generator = MirToLirLowerer::new(test_layout(), std::rc::Rc::new(mir::MirProgram::new()), std::rc::Rc::new(fp_core::lir::LirProgram::new()));
     let lir_program = lir_generator
         .transform(mir_program)
         .expect("lir program");
@@ -180,7 +180,7 @@ fn fp_query_feature_lowers_in_ast_to_hir_pass() {
         Some(QueryIrStmt::Query(_))
     ));
 
-    let mut lir_generator = MirToLirLowerer::new(test_layout());
+    let mut lir_generator = MirToLirLowerer::new(test_layout(), std::rc::Rc::new(mir::MirProgram::new()), std::rc::Rc::new(fp_core::lir::LirProgram::new()));
     let lir_program = lir_generator
         .transform(mir_program)
         .expect("lir program");

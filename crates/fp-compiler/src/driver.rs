@@ -659,7 +659,7 @@ impl CompilerDriver {
                     .package(&current_package_id)
                     .map(|package| package.units.keys().cloned().collect())
                     .unwrap_or_default();
-                let mut lir_gen = Self::new_lir_generator(&state, &current_package_id, None, full_layouts, opaque_payload_sizes);
+                let mut lir_gen = Self::new_lir_generator(&state, &current_package_id, full_layouts, opaque_payload_sizes);
                 for def_id in def_ids {
                     Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id).await?;
                 }
@@ -715,7 +715,7 @@ impl CompilerDriver {
             .package(&current_package_id)
             .map(|package| package.units.keys().cloned().collect())
             .unwrap_or_default();
-        let mut lir_gen = Self::new_lir_generator(&state, &current_package_id, None, full_layouts, opaque_payload_sizes);
+        let mut lir_gen = Self::new_lir_generator(&state, &current_package_id, full_layouts, opaque_payload_sizes);
         for def_id in def_ids {
             Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id).await?;
         }
@@ -797,7 +797,7 @@ impl CompilerDriver {
             .package(package_id)
             .map(|package| package.units.keys().cloned().collect())
             .unwrap_or_default();
-        let mut lir_gen = Self::new_lir_generator(&state, package_id, None, full_layouts, opaque_payload_sizes);
+        let mut lir_gen = Self::new_lir_generator(&state, package_id, full_layouts, opaque_payload_sizes);
         for def_id in def_ids {
             Self::lower_package_to_lir_with(&state, package_id, &mut lir_gen, def_id).await?;
         }
@@ -971,7 +971,7 @@ impl CompilerDriver {
         let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
         state.borrow_mut().extend_mir_package(&package_id, struct_layouts, adt_defs);
 
-        let mut lir_gen = Self::new_lir_generator(state, &package_id, None, full_layouts, opaque_payload_sizes);
+        let mut lir_gen = Self::new_lir_generator(state, &package_id, full_layouts, opaque_payload_sizes);
         Self::lower_package_to_lir_with(state, &package_id, &mut lir_gen, request.def_id.clone()).await?;
 
         Self::evaluate_comptime_lir(state, &request.def_id)
@@ -1066,52 +1066,18 @@ impl CompilerDriver {
     fn new_lir_generator(
         state: &Rc<RefCell<CompilerState>>,
         package_id: &PackageId,
-        module_path: Option<&QualifiedPath>,
         full_layouts: HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>,
         opaque_payload_sizes: HashMap<String, u64>,
     ) -> MirToLirLowerer {
-        let dependency_packages: Vec<mir::MirPackage> =
-            state.borrow().mir_program().packages.values().cloned().collect();
-        let own_units = state
-            .borrow()
-            .mir_program()
-            .package(package_id)
-            .map(|package| package.units.clone())
-            .unwrap_or_default();
-        let resolver_state = state.clone();
-        let resolver_package_id = package_id.clone();
-        let resolve_signature: Box<
-            dyn Fn(mir::DefId) -> Option<(mir::Function, Option<PackageId>)>,
-        > = Box::new(move |def_id: mir::DefId| {
-            let state = resolver_state.borrow();
-            let mir_program = state.mir_program();
-            if let Some(func) = mir_program
-                .package(&resolver_package_id)
-                .and_then(|package| package.sigs.get(&def_id))
-            {
-                return Some((func.clone(), None));
-            }
-            mir_program.packages.iter().find_map(|(dep_id, dep_package)| {
-                if dep_id == &resolver_package_id {
-                    return None;
-                }
-                dep_package
-                    .sigs
-                    .get(&def_id)
-                    .map(|func| (func.clone(), Some(dep_id.clone())))
-            })
-        });
-        let generator = MirToLirLowerer::new(state.borrow().data_layout.clone())
-            .with_package_id(package_id.clone())
-            .with_full_layouts(full_layouts)
-            .with_opaque_payload_sizes(opaque_payload_sizes)
-            .with_dependency_packages(dependency_packages)
-            .with_own_units(own_units)
-            .with_signature_resolver(resolve_signature);
-        match module_path {
-            Some(module_path) => generator.with_module_path(module_path.to_key()),
-            None => generator,
-        }
+        let state = state.borrow();
+        MirToLirLowerer::new(
+            state.data_layout.clone(),
+            state.mir_program_rc(),
+            state.lir_program_rc(),
+        )
+        .with_package_id(package_id.clone())
+        .with_full_layouts(full_layouts)
+        .with_opaque_payload_sizes(opaque_payload_sizes)
     }
 
     /// Runs `def_id`'s own comptime function through the shared

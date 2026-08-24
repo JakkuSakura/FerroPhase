@@ -35,8 +35,11 @@ pub struct CompilerState {
     /// own doc comment) — replaces the old `BTreeMap<MirId, MirModule>`,
     /// which stored one whole flattened program per artifact-id and had no
     /// way to update just the one item a resolved comptime value actually
-    /// affects.
-    mir_program: mir::MirProgram,
+    /// affects. `Rc`-wrapped for the same reason as `lir_program` below —
+    /// `MirToLirLowerer` owns a cloned handle directly (`with_mir_program`)
+    /// instead of the driver cloning `dependency_packages`/`own_units` out
+    /// of it on every call.
+    mir_program: Rc<mir::MirProgram>,
     /// Mirrors `mir_program` for LIR — one `lir::LirProgram`, a collection
     /// of `LirPackage`s, each already a collection of `LirCodeUnit`s (via
     /// its own `own_artifacts: LirUnitTable`, keyed by `Name`). `Rc`-wrapped
@@ -114,7 +117,7 @@ impl CompilerState {
         Self {
             hir_program: Rc::new(hir::HirProgram::new()),
             in_progress_hir_program: None,
-            mir_program: mir::MirProgram::new(),
+            mir_program: Rc::new(mir::MirProgram::new()),
             lir_program: Rc::new(lir::LirProgram::new()),
             runtime_programs: std::collections::HashMap::new(),
             runtime_entrypoints: std::collections::HashMap::new(),
@@ -165,20 +168,28 @@ impl CompilerState {
         def_id: hir::DefId,
         unit: mir::MirCodeUnit,
     ) {
-        self.mir_program.package_mut(package_id).insert_unit(def_id, unit);
+        Rc::make_mut(&mut self.mir_program)
+            .package_mut(package_id)
+            .insert_unit(def_id, unit);
     }
 
     pub fn mir_unit(&self, package_id: &PackageId, def_id: hir::DefId) -> Option<&mir::MirCodeUnit> {
         self.mir_program.package(package_id)?.unit(def_id)
     }
 
-    /// Read-only view of every package's MIR compiled so far this session —
-    /// used by `MirToLirLowerer`'s lazy signature resolver (see
-    /// `CompilerDriver::new_lir_generator`) to look a callee's signature up
-    /// by `DefId`, in this package first and then every other loaded
-    /// package, without requiring a whole-program predeclare sweep.
+    /// Read-only view of every package's MIR compiled so far this session.
     pub fn mir_program(&self) -> &mir::MirProgram {
         &self.mir_program
+    }
+
+    /// Cheap `Rc` clone of the whole session's `mir::MirProgram` — what
+    /// `MirToLirLowerer::with_mir_program` owns directly (its lazy
+    /// callee-signature/ADT-def lookups read straight off this, in this
+    /// package first and then every other loaded package, without
+    /// requiring a whole-program predeclare sweep or the driver cloning
+    /// `dependency_packages`/`own_units` out on every call).
+    pub fn mir_program_rc(&self) -> Rc<mir::MirProgram> {
+        self.mir_program.clone()
     }
 
     /// Folds `struct_fields`/`adt_defs` produced while lowering
@@ -191,7 +202,7 @@ impl CompilerState {
         struct_fields: impl IntoIterator<Item = (mir::DefId, Vec<mir::Ty>)>,
         adt_defs: impl IntoIterator<Item = (hir::DefId, mir::ty::AdtDef)>,
     ) {
-        let package = self.mir_program.package_mut(package_id);
+        let package = Rc::make_mut(&mut self.mir_program).package_mut(package_id);
         package.extend_struct_fields(struct_fields);
         package.extend_adt_defs(adt_defs);
     }

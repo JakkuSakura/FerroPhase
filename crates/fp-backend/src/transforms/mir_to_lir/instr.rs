@@ -7,6 +7,7 @@ use fp_core::mir::ty::{
 use fp_core::{lir, mir};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::rc::Rc;
 
 use crate::abi;
 
@@ -15,7 +16,6 @@ use crate::abi;
 /// Generator for transforming MIR to LIR (Low-level IR)
 pub struct MirToLirLowerer {
     package_id: fp_core::ast::package::PackageId,
-    module_path: Option<String>,
     data_layout: lir::LirDataLayout,
     next_lir_id: lir::LirId,
     next_label: u32,
@@ -55,34 +55,21 @@ pub struct MirToLirLowerer {
     /// cross-package functions.
     function_package_ids: HashMap<String, fp_core::ast::package::PackageId>,
     runtime_symbol_map: fn(&str) -> Option<lir::RuntimeSymbol>,
-    /// Dependency packages, queried lazily by `lookup_adt_def` on a
-    /// local-lookup miss — an owned snapshot of each dependency's own
-    /// already-lowered `mir::MirPackage`, not a copy of their MIR data.
-    /// Replaces eagerly flattening every dependency's `mir_adt_defs`/
-    /// `mir_struct_fields` into `adt_defs`/a local layout map up front (see
-    /// `driver.rs`'s old `all_adt_defs`/`all_layouts`).
-    dependency_packages: Vec<mir::MirPackage>,
-    /// This package's own lowered MIR, one `MirCodeUnit` per top-level
-    /// `DefId` — what `transform_unit` looks a `DefId` up in, so a driver
-    /// loop can hand this generator just the `DefId` it wants lowered
-    /// instead of first fetching the unit and its bodies itself.
-    own_units: HashMap<mir::DefId, mir::MirCodeUnit>,
-    /// Lazy, on-demand fallback for a callee whose signature hasn't been
-    /// predeclared yet — called from the one real miss site (a `FnDef`
-    /// operand whose `def_id` isn't yet in `function_def_map`, see
-    /// `transform_operand`), mirroring `HirToMirLowerer::resolve_callee_path`'s
-    /// own "signature-only registration on demand" fallback. Returns the
-    /// callee's own `mir::Function` (so its signature can be lowered to LIR
-    /// with this generator's own type-lowering state, exactly like
-    /// `predeclare_function_signatures_impl` already does) plus its owning
-    /// package, if it isn't this generator's own `package_id` — `None`
-    /// there means "local", matching `function_package_ids`'s own
-    /// convention. A successful resolution is cached into
-    /// `function_def_map`/`function_signatures`/`function_package_ids` so a
-    /// second reference to the same `DefId` hits the ordinary fast path.
-    resolve_signature: Option<
-        Box<dyn Fn(mir::DefId) -> Option<(mir::Function, Option<fp_core::ast::package::PackageId>)>>,
-    >,
+    /// The whole session's MIR, owned directly (`new_with_programs`)
+    /// instead of the driver cloning `dependency_packages`/`own_units` out
+    /// of it on every call — `lookup_adt_def`, `transform_unit`, and the
+    /// lazy cross-package callee-signature fallback (`transform_operand`'s
+    /// `FnDef` arm) all read straight off this. Includes this generator's
+    /// own package too (see `driver.rs`'s callers, which call
+    /// `extend_mir_package` for this exact package's freshly-computed ADT
+    /// defs/struct fields before handing this `Rc` over), so there's no
+    /// separate local map to check first.
+    mir_program: Rc<mir::MirProgram>,
+    /// The whole session's already-lowered LIR, owned directly for the same
+    /// reason as `mir_program` — supplied by the driver at construction
+    /// time (`new_with_programs`) rather than read back out of
+    /// `CompilerState` on demand.
+    lir_program: Rc<lir::LirProgram>,
 }
 
 #[derive(Clone)]
@@ -113,19 +100,19 @@ enum PlaceAccess {
 impl MirToLirLowerer {
     const DIAGNOSTIC_CONTEXT: &'static str = "mir→lir";
 
-    /// Create a new LIR generator
-    pub fn new(data_layout: lir::LirDataLayout) -> Self {
-        Self::new_with_runtime_symbol_map(data_layout, |_| None)
-    }
-
-    /// Create a new LIR generator with a backend-specific runtime symbol mapper.
-    pub fn new_with_runtime_symbol_map(
+    /// Create a new LIR generator, owning `mir_program`/`lir_program`
+    /// directly (see their own doc comments) — the caller (`driver.rs`'s
+    /// `new_lir_generator`) supplies the whole session's current
+    /// `Rc<mir::MirProgram>`/`Rc<lir::LirProgram>` handles up front instead
+    /// of setting them post-construction; a caller with nothing to see yet
+    /// (e.g. a test) just passes fresh, empty ones.
+    pub fn new(
         data_layout: lir::LirDataLayout,
-        runtime_symbol_map: fn(&str) -> Option<lir::RuntimeSymbol>,
+        mir_program: Rc<mir::MirProgram>,
+        lir_program: Rc<lir::LirProgram>,
     ) -> Self {
         Self {
             package_id: fp_core::ast::package::PackageId::new(""),
-            module_path: None,
             data_layout,
             next_lir_id: 0,
             next_label: 0,
@@ -152,20 +139,14 @@ impl MirToLirLowerer {
             function_call_conventions: HashMap::new(),
             function_declarations: HashMap::new(),
             function_package_ids: HashMap::new(),
-            runtime_symbol_map,
-            dependency_packages: Vec::new(),
-            own_units: HashMap::new(),
-            resolve_signature: None,
+            runtime_symbol_map: |_| None,
+            mir_program,
+            lir_program,
         }
     }
 
     pub fn with_package_id(mut self, package_id: fp_core::ast::package::PackageId) -> Self {
         self.package_id = package_id;
-        self
-    }
-
-    pub fn with_module_path(mut self, module_path: impl Into<String>) -> Self {
-        self.module_path = Some(module_path.into());
         self
     }
 
@@ -182,53 +163,15 @@ impl MirToLirLowerer {
         self
     }
 
-    /// Dependency packages to fall back to, lazily, for `lookup_adt_def` —
-    /// includes this package's own entry too (see
-    /// `driver.rs`'s callers, which extend it with this exact package's
-    /// freshly-computed ADT defs/struct fields before calling in here), so
-    /// there's no separate local map to check first.
-    pub fn with_dependency_packages(mut self, packages: Vec<mir::MirPackage>) -> Self {
-        self.dependency_packages = packages;
-        self
-    }
-
-    /// This package's own lowered units, keyed by `DefId` — see
-    /// `transform_unit`/`own_units`'s own doc comments.
-    pub fn with_own_units(mut self, units: HashMap<mir::DefId, mir::MirCodeUnit>) -> Self {
-        self.own_units = units;
-        self
-    }
-
-    /// Registers `resolve_signature` (see its own doc comment) — set by the
-    /// driver once, before lowering any unit, so a forward/cross-package
-    /// call resolves lazily on first reference instead of requiring a
-    /// whole-program predeclare sweep first.
-    pub fn with_signature_resolver(
-        mut self,
-        resolver: Box<
-            dyn Fn(mir::DefId) -> Option<(mir::Function, Option<fp_core::ast::package::PackageId>)>,
-        >,
-    ) -> Self {
-        self.resolve_signature = Some(resolver);
-        self
-    }
-
     fn lookup_adt_def(&self, def_id: &mir::DefId) -> Option<mir::ty::AdtDef> {
-        for package in &self.dependency_packages {
-            if let Some(def) = package.adt_defs.get(def_id) {
-                return Some(def.clone());
-            }
-        }
-        None
+        self.mir_program
+            .packages
+            .values()
+            .find_map(|package| package.adt_defs.get(def_id).cloned())
     }
 
     fn resolve_global_symbol(&self, path: &mir::Path) -> lir::Name {
-        match &self.module_path {
-            Some(module_path) if path.segments.len() == 1 => {
-                lir::Name::new(format!("{module_path}::{}", path.segments[0]))
-            }
-            _ => lir::Name::new(path.to_string()),
-        }
+        lir::Name::new(path.to_string())
     }
 
     fn function_value(&self, name: String) -> Result<lir::LirValue> {
@@ -359,14 +302,20 @@ impl MirToLirLowerer {
         Ok(lir_program)
     }
 
-    /// Lowers `def_id`'s own unit (looked up in `own_units`, set via
-    /// `with_own_units`) straight to its independently publishable LIR
-    /// blobs — the def-id-only counterpart to `transform_items` a driver
-    /// loop can call with just the `DefId` it wants lowered, no separate
-    /// unit/bodies fetch of its own. A `DefId` with no unit (nothing lowered
-    /// for it, or already consumed) lowers to no blobs, not an error.
+    /// Lowers `def_id`'s own unit (looked up in this generator's own
+    /// `package_id`'s entry of `mir_program`) straight to its independently
+    /// publishable LIR blobs — the def-id-only counterpart to
+    /// `transform_items` a driver loop can call with just the `DefId` it
+    /// wants lowered, no separate unit/bodies fetch of its own. A `DefId`
+    /// with no unit (nothing lowered for it, or already consumed) lowers to
+    /// no blobs, not an error.
     pub fn transform_unit(&mut self, def_id: mir::DefId) -> Result<Vec<lir::LirBlob>> {
-        let Some(unit) = self.own_units.get(&def_id).cloned() else {
+        let Some(unit) = self
+            .mir_program
+            .package(&self.package_id)
+            .and_then(|package| package.unit(def_id))
+            .cloned()
+        else {
             return Ok(Vec::new());
         };
         self.transform_items(unit)
@@ -765,10 +714,7 @@ impl MirToLirLowerer {
 
     /// Transform a MIR static to LIR global
     fn transform_static(&mut self, mir_static: mir::Static) -> Result<lir::LirGlobal> {
-        let name = lir::Name::new(match &self.module_path {
-            Some(module_path) => format!("{module_path}::{}", mir_static.name),
-            None => mir_static.name.as_str().to_string(),
-        });
+        let name = lir::Name::new(mir_static.name.as_str().to_string());
         let lir_ty = self.lir_type_from_ty(&mir_static.ty);
         let raw_initializer = self.convert_static_initializer(&mir_static.init, &mir_static.ty)?;
         let (initializer, relocations) =
@@ -3289,18 +3235,33 @@ impl MirToLirLowerer {
                         // Never predeclared (no whole-program sweep ran, or
                         // this is a forward/cross-package reference that
                         // sweep wouldn't have covered anyway) — resolve it
-                        // lazily via `resolve_signature`, exactly mirroring
-                        // `HirToMirLowerer::resolve_callee_path`'s own
-                        // signature-only registration on demand. Cached
+                        // lazily off `self.mir_program` instead, exactly
+                        // mirroring `HirToMirLowerer::resolve_callee_path`'s
+                        // own signature-only registration on demand: this
+                        // package's own `sigs` first (a forward reference
+                        // within the same package), then every other
+                        // loaded package's (a cross-package call). Cached
                         // into `function_def_map`/`function_signatures`/
                         // `function_package_ids` by `register_function_signature`,
                         // so a second reference to the same `def_id` hits
                         // the ordinary fast path above.
                         None => {
                             let resolved = self
-                                .resolve_signature
-                                .as_ref()
-                                .and_then(|resolve| resolve(def_id.clone()));
+                                .mir_program
+                                .package(&self.package_id)
+                                .and_then(|package| package.sigs.get(def_id))
+                                .map(|func| (func.clone(), None))
+                                .or_else(|| {
+                                    self.mir_program.packages.iter().find_map(|(dep_id, dep_package)| {
+                                        if dep_id == &self.package_id {
+                                            return None;
+                                        }
+                                        dep_package
+                                            .sigs
+                                            .get(def_id)
+                                            .map(|func| (func.clone(), Some(dep_id.clone())))
+                                    })
+                                });
                             let (func, package_id) = resolved.ok_or_else(|| {
                                 fp_core::error::Error::from(format!(
                                     "missing MIR function definition {} with substitutions {:?}",

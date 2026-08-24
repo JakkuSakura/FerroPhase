@@ -19,6 +19,8 @@ fn generator() -> MirToLirLowerer {
             vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
         )
         .unwrap(),
+        std::rc::Rc::new(mir::MirProgram::new()),
+        std::rc::Rc::new(fp_core::lir::LirProgram::new()),
     )
 }
 
