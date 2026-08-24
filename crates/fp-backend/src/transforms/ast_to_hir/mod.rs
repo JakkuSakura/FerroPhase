@@ -878,25 +878,51 @@ impl AstToHirLowerer {
             .filter(|(key, _)| key.rsplit("::").next().unwrap_or(key.as_str()) == name)
             .collect();
         candidates.sort_by(|(a, _), (b, _)| a.cmp(b));
-        candidates
-            .into_iter()
-            .min_by_key(|(_, res)| {
-                let hir::Res::Def(def_id) = res else {
-                    // Non-`Def` resolutions (a module, a local, ...) have no
-                    // alias/depth to compare — treat as maximally preferred
-                    // among themselves via stable key order alone.
-                    return (0usize, 0usize);
-                };
-                // A transparent alias (`type Result<T> = result::Result<T, Error>;`)
-                // ranks behind a real nominal declaration (`enum Result`).
-                let is_alias = hir_program.type_alias_target(def_id.clone()).is_some() as usize;
-                let depth = hir_program
-                    .def_path(def_id.clone())
-                    .map(|path| path.segments.len())
-                    .unwrap_or(usize::MAX);
-                (is_alias, depth)
-            })
-            .map(|(_, res)| res)
+        candidates.into_iter().min_by_key(|(_, res)| {
+            let hir::Res::Def(def_id) = res else {
+                // Non-`Def` resolutions (a module, a local, ...) have no
+                // alias/depth to compare — treat as maximally preferred
+                // among themselves via stable key order alone.
+                return (0usize, 0usize, 0usize);
+            };
+            // A trait (real std has both `core::error::Error` the trait and
+            // `fmt::Error`/`io::Error` distinct structs sharing the bare
+            // name `Error`) ranks behind a real nominal type — a bare type
+            // reference almost always means the concrete type, not the
+            // trait (a trait bound/object position spells it `dyn Error`/
+            // a generic bound instead, resolved separately). HIR has no
+            // first-class trait item — a trait's own `DefId` is a
+            // placeholder `Const`, never a real Struct/Enum, so
+            // `placeholder_defs`/`is_placeholder_def` is the same signal,
+            // checked against this in-progress package first (a trait
+            // declared in *this* package is placeholder-tagged there, not
+            // in `hir_program`, which only ever holds already-published
+            // dependencies).
+            let is_trait = self.package.placeholder_defs.contains(def_id)
+                || self
+                    .hir_program
+                    .as_ref()
+                    .is_some_and(|program| program.is_placeholder_def(def_id.clone()));
+            // A transparent alias (`type Result<T> = result::Result<T, Error>;`)
+            // ranks behind a real nominal declaration (`enum Result`).
+            let is_alias = self.package.type_alias_targets.contains_key(def_id)
+                || self
+                    .hir_program
+                    .as_ref()
+                    .is_some_and(|program| program.type_alias_target(def_id.clone()).is_some());
+            let depth = self
+                .package
+                .def_paths
+                .get(def_id)
+                .or_else(|| {
+                    self.hir_program
+                        .as_ref()
+                        .and_then(|program| program.def_path(def_id.clone()))
+                })
+                .map(|path| path.segments.len())
+                .unwrap_or(usize::MAX);
+            (is_trait as usize, is_alias as usize, depth)
+        }).map(|(_, res)| res)
     }
 
     fn resolve_type_symbol(&self, name: &str) -> Option<hir::Res> {
