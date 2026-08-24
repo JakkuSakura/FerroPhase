@@ -22,17 +22,6 @@ pub struct MirPackage {
     /// Struct field types keyed by `DefId`, computed during MIR lowering.
     pub struct_fields: HashMap<DefId, Vec<Ty>>,
     pub adt_defs: HashMap<crate::hir::DefId, ty::AdtDef>,
-    /// For a `const { .. }` block found incidentally while lowering some
-    /// other item's body, maps that block's own synthetic comptime probe
-    /// `DefId` (`mir::ExecutableConst::def_id`/`lir::LirComptimeEntry::
-    /// def_id` — freshly minted per block, unrelated to any real item) to
-    /// the top-level `DefId` of the item whose body actually contains it
-    /// (`HirToMirLowerer::current_lowering_def_id` at the moment the block is
-    /// found). Once the driver resolves a block's real value
-    /// (`evaluate_comptime_lir`, keyed by this same synthetic `DefId`),
-    /// this is what tells it exactly which single item needs re-lowering
-    /// to fold that value in — instead of re-lowering the whole package.
-    pub const_block_owners: HashMap<DefId, DefId>,
     /// Each top-level function's own `mir::Function` (name/sig/substs/abi),
     /// keyed by the same `DefId` as `units` — maintained incrementally as
     /// units are inserted, not swept eagerly over a whole package. This
@@ -106,9 +95,5 @@ impl MirPackage {
 
     pub fn extend_adt_defs(&mut self, entries: impl IntoIterator<Item = (crate::hir::DefId, ty::AdtDef)>) {
         self.adt_defs.extend(entries);
-    }
-
-    pub fn extend_const_block_owners(&mut self, entries: impl IntoIterator<Item = (DefId, DefId)>) {
-        self.const_block_owners.extend(entries);
     }
 }

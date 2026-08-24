@@ -471,8 +471,8 @@ impl CompilerDriver {
     }
 
     /// Runs a whole package's HIR generation + typing, then per-`DefId`
-    /// HIR->MIR->LIR lowering (`lower_package_to_lir`) — every step one
-    /// `DefId` in, one unit out, stored straight into the shared
+    /// HIR->MIR->LIR lowering (`lower_package_to_mir`/`lower_package_to_lir_with`)
+    /// — every step one `DefId` in, one unit out, stored straight into the shared
     /// `CompilerState` as it goes (see this module's own data-flow doc
     /// comment for the full picture). Never predeclares/lowers the whole
     /// package as one flat blob.
@@ -619,9 +619,52 @@ impl CompilerDriver {
             // simply produces no LIR (comptime validation is skipped for
             // it), matching this pipeline's prior behavior; the lifted AST
             // above is already complete regardless.
-            if let Err(error) =
-                Self::lower_package_to_lir(&self.state, &current_package_id, hir_package_id)
-                    .await
+            let state = self.state.clone();
+            if let Err(error) = (async {
+                let hir_program = state.borrow().hir_program_rc();
+                let mut lowering = HirToMirLowerer::new(hir_program, hir_package_id.clone());
+                lowering.register_package_items();
+                let current_package = lowering.current_package_handle();
+                for item in &current_package.items {
+                    Self::lower_package_to_mir(&state, &current_package_id, &mut lowering, item.def_id.clone()).await?;
+                }
+                let sentinel = hir::DefId::new(hir_package_id.clone(), u32::MAX);
+                let mut leftover = lowering.take_unit(sentinel.clone());
+                lowering.append_runtime_stubs(&mut leftover);
+                if !leftover.items.is_empty() || !leftover.bodies.is_empty() {
+                    lowering.walk_program_types_for_layouts(&leftover);
+                    state.borrow_mut().insert_mir_unit(&current_package_id, sentinel, leftover);
+                }
+                let (diagnostics, had_errors) = lowering.take_diagnostics();
+                if had_errors {
+                    let details = diagnostics_summary(&diagnostics);
+                    return Err(CompilerDriverError::InternalCompilerError(format!(
+                        "HIR-to-MIR lowering reported diagnostics: {details}"
+                    )));
+                }
+                let adt_defs = lowering.take_adt_defs();
+                let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
+                    lowering.all_adt_field_tys().into_iter().collect();
+                let full_layouts = Self::collect_full_layouts(&lowering);
+                let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
+                state.borrow_mut().extend_mir_package(&current_package_id, struct_layouts, adt_defs);
+
+                // --- MIR -> LIR: per-`DefId`, lazy signature resolution, no
+                // whole-program predeclare sweep (see `MirToLirLowerer::
+                // with_signature_resolver`'s own doc comment) ---
+                state.borrow_mut().reset_lir_package(&current_package_id);
+                let def_ids: Vec<_> = state
+                    .borrow()
+                    .mir_program()
+                    .package(&current_package_id)
+                    .map(|package| package.units.keys().cloned().collect())
+                    .unwrap_or_default();
+                let mut lir_gen = Self::new_lir_generator(&state, &current_package_id, None, full_layouts, opaque_payload_sizes);
+                for def_id in def_ids {
+                    Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id).await?;
+                }
+                Ok(())
+            }).await
             {
                 fp_core::diagnostics::report_warning_with_context(
                     "const-eval".to_string(),
@@ -633,7 +676,50 @@ impl CompilerDriver {
             return Ok(());
         }
 
-        Self::lower_package_to_lir(&self.state, &current_package_id, hir_package_id).await
+        let state = self.state.clone();
+        let hir_program = state.borrow().hir_program_rc();
+        let mut lowering = HirToMirLowerer::new(hir_program, hir_package_id.clone());
+        lowering.register_package_items();
+        let current_package = lowering.current_package_handle();
+        for item in &current_package.items {
+            Self::lower_package_to_mir(&state, &current_package_id, &mut lowering, item.def_id.clone()).await?;
+        }
+        let sentinel = hir::DefId::new(hir_package_id.clone(), u32::MAX);
+        let mut leftover = lowering.take_unit(sentinel.clone());
+        lowering.append_runtime_stubs(&mut leftover);
+        if !leftover.items.is_empty() || !leftover.bodies.is_empty() {
+            lowering.walk_program_types_for_layouts(&leftover);
+            state.borrow_mut().insert_mir_unit(&current_package_id, sentinel, leftover);
+        }
+        let (diagnostics, had_errors) = lowering.take_diagnostics();
+        if had_errors {
+            let details = diagnostics_summary(&diagnostics);
+            return Err(CompilerDriverError::InternalCompilerError(format!(
+                "HIR-to-MIR lowering reported diagnostics: {details}"
+            )));
+        }
+        let adt_defs = lowering.take_adt_defs();
+        let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
+            lowering.all_adt_field_tys().into_iter().collect();
+        let full_layouts = Self::collect_full_layouts(&lowering);
+        let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
+        state.borrow_mut().extend_mir_package(&current_package_id, struct_layouts, adt_defs);
+
+        // --- MIR -> LIR: per-`DefId`, lazy signature resolution, no
+        // whole-program predeclare sweep (see `MirToLirLowerer::
+        // with_signature_resolver`'s own doc comment) ---
+        state.borrow_mut().reset_lir_package(&current_package_id);
+        let def_ids: Vec<_> = state
+            .borrow()
+            .mir_program()
+            .package(&current_package_id)
+            .map(|package| package.units.keys().cloned().collect())
+            .unwrap_or_default();
+        let mut lir_gen = Self::new_lir_generator(&state, &current_package_id, None, full_layouts, opaque_payload_sizes);
+        for def_id in def_ids {
+            Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id).await?;
+        }
+        Ok(())
     }
 
     /// Writes `evaluate_comptime_lir`'s real, interpreter-computed values
@@ -659,19 +745,63 @@ impl CompilerDriver {
         Ok(())
     }
 
-    /// Re-runs `lower_package_to_lir` for `package_id` now that
-    /// `apply_resolved_comptime_block_values` has recorded a real value for
-    /// each `const { .. }` block — every `DefId` is re-lowered against the
-    /// now-resolved typeck results, replacing its previous unit in place
-    /// (`insert_mir_unit`) and its previous LIR artifacts
-    /// (`lower_package_to_lir` resets the package's LIR table first, so a
-    /// repeat lowering never collides with the stale one it's replacing).
+    /// Re-runs the per-`DefId` HIR->MIR->LIR pipeline
+    /// (`lower_package_to_mir`/`lower_package_to_lir_with`) for `package_id`
+    /// now that `apply_resolved_comptime_block_values` has recorded a real
+    /// value for each `const { .. }` block — every `DefId` is re-lowered
+    /// against the now-resolved typeck results, replacing its previous unit
+    /// in place (`insert_mir_unit`) and its previous LIR artifacts
+    /// (`reset_lir_package` runs first, so a repeat lowering never collides
+    /// with the stale one it's replacing).
     async fn relower_cached_lir_units(
         &mut self,
         package_id: &PackageId,
         hir_package_id: hir::PackageId,
     ) -> Result<(), CompilerDriverError> {
-        Self::lower_package_to_lir(&self.state, package_id, hir_package_id).await
+        let state = self.state.clone();
+        let hir_program = state.borrow().hir_program_rc();
+        let mut lowering = HirToMirLowerer::new(hir_program, hir_package_id.clone());
+        lowering.register_package_items();
+        let current_package = lowering.current_package_handle();
+        for item in &current_package.items {
+            Self::lower_package_to_mir(&state, package_id, &mut lowering, item.def_id.clone()).await?;
+        }
+        let sentinel = hir::DefId::new(hir_package_id, u32::MAX);
+        let mut leftover = lowering.take_unit(sentinel.clone());
+        lowering.append_runtime_stubs(&mut leftover);
+        if !leftover.items.is_empty() || !leftover.bodies.is_empty() {
+            lowering.walk_program_types_for_layouts(&leftover);
+            state.borrow_mut().insert_mir_unit(package_id, sentinel, leftover);
+        }
+        let (diagnostics, had_errors) = lowering.take_diagnostics();
+        if had_errors {
+            let details = diagnostics_summary(&diagnostics);
+            return Err(CompilerDriverError::InternalCompilerError(format!(
+                "HIR-to-MIR lowering reported diagnostics: {details}"
+            )));
+        }
+        let adt_defs = lowering.take_adt_defs();
+        let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
+            lowering.all_adt_field_tys().into_iter().collect();
+        let full_layouts = Self::collect_full_layouts(&lowering);
+        let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
+        state.borrow_mut().extend_mir_package(package_id, struct_layouts, adt_defs);
+
+        // --- MIR -> LIR: per-`DefId`, lazy signature resolution, no
+        // whole-program predeclare sweep (see `MirToLirLowerer::
+        // with_signature_resolver`'s own doc comment) ---
+        state.borrow_mut().reset_lir_package(package_id);
+        let def_ids: Vec<_> = state
+            .borrow()
+            .mir_program()
+            .package(package_id)
+            .map(|package| package.units.keys().cloned().collect())
+            .unwrap_or_default();
+        let mut lir_gen = Self::new_lir_generator(&state, package_id, None, full_layouts, opaque_payload_sizes);
+        for def_id in def_ids {
+            Self::lower_package_to_lir_with(&state, package_id, &mut lir_gen, def_id).await?;
+        }
+        Ok(())
     }
 
     /// Type-checks `program`. Each `const { .. }` block's `ComptimeRequest`
@@ -798,37 +928,27 @@ impl CompilerDriver {
 
     /// Resolves exactly one comptime request. This is *not* a separate,
     /// isolated pipeline — it's the exact same per-`DefId` compile+store+
-    /// execute steps `lower_package_to_lir` uses for a whole package,
-    /// run for one specific `DefId` (the synthetic function built from this
-    /// request's own `block`/`expected_ty`), touching the same shared
-    /// `CompilerState` — so the result is cached/reused like any other
-    /// compiled item, not recomputed the next time something references it.
-    /// Only carries its own `package_id`/`def_id` (see
-    /// `fp_typing::ComptimeRequest`'s doc comment) — everything else (the
-    /// still-in-progress package's own HIR, its typed results, the pending
-    /// `const { .. }` block itself) is looked up here, from `state`, by
-    /// that id, never lowers any item's body other than this one synthetic
-    /// function (`HirToMirLowerer::transform_comptime_request`). A genuine
-    /// failure here only fails the one item awaiting this specific
-    /// request, via the `Err` it returns to its `.await` point — the same
-    /// per-item isolation `typecheck_item` already relies on.
+    /// execute steps `compile_items_to_lir_units`/`relower_cached_lir_units`
+    /// use for a whole package, run for one specific `DefId` (the block's
+    /// own, real one — see `HirToMirLowerer::ensure_const_block_lowered`),
+    /// touching the same shared `CompilerState` — so the result is
+    /// cached/reused like any other compiled item, not recomputed the next
+    /// time something references it. `HirToMirLowerer` has no separate
+    /// comptime-request entry point of its own: `ensure_item_lowered`
+    /// (via `lower_package_to_mir`) already falls back to lowering a
+    /// const-block `DefId` when it isn't a top-level item, so a comptime
+    /// request is lowered exactly the same way any other item is. A
+    /// genuine failure here only fails the one item awaiting this
+    /// specific request, via the `Err` it returns to its `.await` point —
+    /// the same per-item isolation `typecheck_item` already relies on.
     async fn resolve_comptime_request_with(
         state: &Rc<RefCell<CompilerState>>,
         request: fp_typing::ComptimeRequest,
     ) -> Result<Value, CompilerDriverError> {
-        // The request already names its own package via `def_id` — no need
-        // for the workspace to have any package "focused" first.
-        let package_id = state
-            .borrow()
-            .workspace
-            .compiled_package_for_def(request.def_id.clone())
-            .map(|package| package.borrow().package_id.clone())
-            .ok_or_else(|| {
-                CompilerDriverError::UnresolvablePackage(format!(
-                    "no compiled package owns comptime request {:?}",
-                    request.def_id
-                ))
-            })?;
+        // The request's own `def_id` already carries its owning package's
+        // id — no need to look the compiled package up in the workspace
+        // just to recover an id it already has.
+        let package_id = PackageId::new(request.def_id.package_id.as_str());
 
         let hir_program = state
             .borrow()
@@ -839,33 +959,11 @@ impl CompilerDriver {
                     request.def_id
                 ))
             })?;
-        let current_package = hir_program
-            .packages
-            .get(&request.package_id)
-            .cloned()
-            .ok_or_else(|| CompilerDriverError::MissingHir(format!("{:?}", request.package_id)))?;
 
-        let mut lowering = HirToMirLowerer::new(hir_program.clone(), request.package_id.clone());
-        let mir_module = match lowering.transform_comptime_request(hir_program, current_package, request.def_id.clone()) {
-            Ok(module) => module,
-            Err(error) => {
-                let (diagnostics, _) = lowering.take_diagnostics();
-                let details = diagnostics_summary(&diagnostics);
-                return Err(CompilerDriverError::InternalCompilerError(if details.is_empty() {
-                    format!("HIR-to-MIR lowering failed: {error}")
-                } else {
-                    format!("HIR-to-MIR lowering failed: {error}; diagnostics: {details}")
-                }));
-            }
-        };
-        lowering.walk_program_types_for_layouts(&mir_module);
-        let (diagnostics, had_errors) = lowering.take_diagnostics();
-        if had_errors {
-            let details = diagnostics_summary(&diagnostics);
-            return Err(CompilerDriverError::InternalCompilerError(format!(
-                "HIR-to-MIR lowering reported diagnostics: {details}"
-            )));
-        }
+        let mut lowering = HirToMirLowerer::new(hir_program, request.package_id.clone());
+        lowering.register_package_items();
+        Self::lower_package_to_mir(state, &package_id, &mut lowering, request.def_id.clone()).await?;
+
         let adt_defs = lowering.take_adt_defs();
         let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
             lowering.all_adt_field_tys().into_iter().collect();
@@ -873,27 +971,8 @@ impl CompilerDriver {
         let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
         state.borrow_mut().extend_mir_package(&package_id, struct_layouts, adt_defs);
 
-        // Store this request's synthetic unit keyed by its own `DefId`,
-        // into the shared `CompilerState` — a normal, cached compile, not
-        // an isolated in-memory-only side channel.
-        let unit = mir::MirCodeUnit {
-            items: mir_module.items,
-            bodies: mir_module.bodies,
-        };
-        state.borrow_mut().insert_mir_unit(&package_id, request.def_id.clone(), unit.clone());
-
-        let module_path = QualifiedPath::new(vec!["__comptime_probe__".to_string()]);
-        let mut lir_gen = Self::new_lir_generator(state, &package_id, Some(&module_path), full_layouts, opaque_payload_sizes);
-        for item in unit.items.iter().cloned() {
-            let blob = lir_gen.transform_item(item, &unit.bodies).map_err(|error| {
-                CompilerDriverError::InternalCompilerError(format!(
-                    "MIR-to-LIR lowering failed for comptime request: {error}"
-                ))
-            })?;
-            state
-                .borrow_mut()
-                .insert_lir_blob(&package_id, module_path.clone(), blob)?;
-        }
+        let mut lir_gen = Self::new_lir_generator(state, &package_id, None, full_layouts, opaque_payload_sizes);
+        Self::lower_package_to_lir_with(state, &package_id, &mut lir_gen, request.def_id.clone()).await?;
 
         Self::evaluate_comptime_lir(state, &request.def_id)
     }
@@ -929,82 +1008,12 @@ impl CompilerDriver {
         Ok(())
     }
 
-    /// Runs `lower_package_to_mir` for every top-level `DefId` in
-    /// `hir_package_id`'s own HIR, plus one reserved sentinel `DefId` for
-    /// anything `ensure_item_lowered` pulled in without itself being a
-    /// top-level item (e.g. synthetic runtime stub functions —
-    /// `append_runtime_stubs`) — the shared MIR-side core of
-    /// `compile_items_to_lir_units` and `relower_cached_lir_units`. Returns
-    /// the `(full_layouts, opaque_payload_sizes)` pair `new_lir_generator`
-    /// needs — only available once every item's types have been walked,
-    /// since an earlier item's own body can reference a struct/enum only
-    /// fully laid out while walking a later one, so the MIR->LIR step
-    /// (`lower_package_to_lir_with`) can't safely start on *any* `DefId`
-    /// until this whole-package pass finishes.
-    async fn lower_package_to_mir_units(
-        state: &Rc<RefCell<CompilerState>>,
-        package_id: &PackageId,
-        hir_package_id: hir::PackageId,
-    ) -> Result<
-        (
-            HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>,
-            HashMap<String, u64>,
-        ),
-        CompilerDriverError,
-    > {
-        // HIR has already passed type checking at this boundary. Lowering is
-        // therefore strict: a failure is an internal compiler error, never a
-        // recoverable source diagnostic. `new` resolves `current_package`
-        // straight off the shared, `Rc`-held `hir_program` (no separate
-        // per-call clone of this package's own `HirPackage`).
-        let hir_program = state.borrow().hir_program_rc();
-        let mut lowering = HirToMirLowerer::new(hir_program, hir_package_id.clone());
-        lowering.register_package_items();
-        // Lower every top-level item on demand by its own `DefId` — the
-        // same `ensure_item_lowered` primitive a single comptime request's
-        // item-scoped lowering already goes through, rather than one eager
-        // whole-package `.transform()` sweep. A full-package compile still
-        // needs every item lowered (no `main`-rooted reachability pruning
-        // here); each item's own unit is stored into `state` the moment
-        // it's produced, not assembled into one flat module first.
-        let current_package = lowering.current_package_handle();
-        let def_ids: Vec<_> = current_package.items.iter().map(|item| item.def_id.clone()).collect();
-        for def_id in def_ids {
-            Self::lower_package_to_mir(state, package_id, &mut lowering, def_id).await?;
-        }
-        // Anything left over (e.g. synthetic runtime stub functions —
-        // `append_runtime_stubs` — pulled in by an item's body but not
-        // themselves any top-level `DefId`) is stored under one reserved
-        // sentinel `DefId` local to this package's HIR numbering space, so
-        // it still gets its own LIR unit lowered below.
-        let sentinel = hir::DefId::new(hir_package_id, u32::MAX);
-        let mut leftover = lowering.take_unit(sentinel.clone());
-        lowering.append_runtime_stubs(&mut leftover);
-        if !leftover.items.is_empty() || !leftover.bodies.is_empty() {
-            lowering.walk_program_types_for_layouts(&leftover);
-            state.borrow_mut().insert_mir_unit(package_id, sentinel, leftover);
-        }
-        let (diagnostics, had_errors) = lowering.take_diagnostics();
-        if had_errors {
-            let details = diagnostics_summary(&diagnostics);
-            return Err(CompilerDriverError::InternalCompilerError(format!(
-                "HIR-to-MIR lowering reported diagnostics: {details}"
-            )));
-        }
-        let adt_defs = lowering.take_adt_defs();
-        let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
-            lowering.all_adt_field_tys().into_iter().collect();
-        let full_layouts = Self::collect_full_layouts(&lowering);
-        let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
-        state.borrow_mut().extend_mir_package(package_id, struct_layouts, adt_defs);
-        Ok((full_layouts, opaque_payload_sizes))
-    }
-
     /// One `DefId`'s own MIR->LIR lowering — call once per `DefId` already
-    /// stored under `package_id` by `lower_package_to_mir_units`, sharing
-    /// the same `lir_gen` across the whole package's own loop so its predeclared
-    /// signatures/`own_units` lookup stay populated. Every produced blob is
-    /// stored directly into `state` as it's produced (`insert_lir_blob_for_package`).
+    /// stored under `package_id`, sharing the same `lir_gen` across a whole
+    /// package's own loop (see `compile_items_to_lir_units`/
+    /// `relower_cached_lir_units`) so its predeclared signatures/
+    /// `own_units` lookup stay populated. Every produced blob is stored
+    /// directly into `state` as it's produced (`insert_lir_blob_for_package`).
     async fn lower_package_to_lir_with(
         state: &Rc<RefCell<CompilerState>>,
         package_id: &PackageId,
@@ -1018,37 +1027,6 @@ impl CompilerDriver {
         })?;
         for blob in blobs {
             state.borrow_mut().insert_lir_blob_for_package(package_id, blob)?;
-        }
-        Ok(())
-    }
-
-    /// Runs `lower_package_to_mir_units` then `lower_package_to_lir_with`
-    /// for every `DefId` the MIR phase produced — the shared whole-package
-    /// pipeline `compile_items_to_lir_units`/`relower_cached_lir_units`/the
-    /// `Transpile`-pipeline comptime-validation pass all delegate to.
-    /// `state.lir_blob` recovers the flattened LIR view on demand for
-    /// anything that still needs it (the interpreter, `fp-bytecode`, ...).
-    async fn lower_package_to_lir(
-        state: &Rc<RefCell<CompilerState>>,
-        package_id: &PackageId,
-        hir_package_id: hir::PackageId,
-    ) -> Result<(), CompilerDriverError> {
-        let (full_layouts, opaque_payload_sizes) =
-            Self::lower_package_to_mir_units(state, package_id, hir_package_id).await?;
-
-        // --- MIR -> LIR: per-`DefId`, lazy signature resolution, no
-        // whole-program predeclare sweep (see `MirToLirLowerer::
-        // with_signature_resolver`'s own doc comment) ---
-        state.borrow_mut().reset_lir_package(package_id);
-        let def_ids: Vec<_> = state
-            .borrow()
-            .mir_program()
-            .package(package_id)
-            .map(|package| package.units.keys().cloned().collect())
-            .unwrap_or_default();
-        let mut lir_gen = Self::new_lir_generator(state, package_id, None, full_layouts, opaque_payload_sizes);
-        for def_id in def_ids {
-            Self::lower_package_to_lir_with(state, package_id, &mut lir_gen, def_id).await?;
         }
         Ok(())
     }

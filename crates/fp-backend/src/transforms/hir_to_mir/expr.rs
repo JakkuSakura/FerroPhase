@@ -551,17 +551,6 @@ pub struct HirToMirLowerer {
     /// call-site lazy fallback, the impl signature pre-pass) with no body
     /// ever lowered.
     lowered_items: HashSet<hir::DefId>,
-    /// The top-level item whose body is currently being lowered — set for
-    /// the duration of `lower_function`/`lower_method`/`lower_const`, `None`
-    /// otherwise (e.g. while lowering `transform_comptime_request`'s own
-    /// synthetic probe, which has no enclosing top-level item of its own).
-    /// The only reader is `register_const_block_comptime_entry_direct`,
-    /// which uses it to record `const_block_owners` below.
-    current_lowering_def_id: Option<hir::DefId>,
-    /// See `mir::MirPackage::const_block_owners`'s doc comment — populated
-    /// here, at the one place a const block's enclosing item is actually
-    /// known, and drained by the driver via `take_const_block_owners`.
-    const_block_owners: HashMap<hir::DefId, hir::DefId>,
     opaque_types: HashMap<String, Ty>,
     /// Byte size for an opaque type minted for a *mismatched enum payload
     /// slot* (`enum_layout_for_instance`'s per-slot merge loop) — the
@@ -711,8 +700,6 @@ impl HirToMirLowerer {
             extra_items: Vec::new(),
             extra_bodies: Vec::new(),
             lowered_items: HashSet::new(),
-            current_lowering_def_id: None,
-            const_block_owners: HashMap::new(),
             opaque_types: HashMap::new(),
             opaque_ty_sizes: HashMap::new(),
             synthetic_runtime_functions: HashSet::new(),
@@ -800,151 +787,6 @@ impl HirToMirLowerer {
     /// every recursive expression operation an artificial future.
     pub async fn transform_async(&mut self, hir_program: hir::HirPackage) -> Result<mir::MirCodeUnit> {
         self.transform(hir_program)
-    }
-
-    /// Item-scoped lowering for exactly one pending `const { .. }` block,
-    /// answering a `fp_typing::ComptimeRequest` directly from its own
-    /// self-sufficient snapshot (see `ComptimeRequest`'s doc comment and
-    /// `CompilerDriver::resolve_comptime_request_with`). Unlike `transform`
-    /// (used for the real, whole-package compile, where every item's body
-    /// genuinely needs lowering), this never lowers any function, method,
-    /// or const body other than the one synthetic function built directly
-    /// from `request.block` — no walk of `main`'s or
-    /// any other item's own body at all. Whatever that one body actually
-    /// references (other consts, plain functions, generic methods)
-    /// resolves correctly and on demand via `register_const_value`/
-    /// `ensure_function_lowered`/`ensure_method_lowered`/
-    /// `ensure_function_specialization`'s existing lazy mechanisms.
-    pub fn transform_comptime_request(
-        &mut self,
-        hir_program: std::rc::Rc<hir::HirProgram>,
-        current_package: std::rc::Rc<hir::HirPackage>,
-        def_id: hir::DefId,
-    ) -> Result<mir::MirCodeUnit> {
-        // Sharing the caller's own `Rc`s instead of cloning `def_map`/
-        // `def_paths` out of them — every item, keyed by `DefId`, across
-        // the whole workspace — fresh on every single `const { .. }`
-        // block. `current_package` stays un-merged with `hir_program`'s
-        // dependency packages (see `hir_item`'s doc comment); only its
-        // own `DefId`s are used for the bookkeeping below.
-        self.hir_program = hir_program;
-        self.current_package = current_package;
-        self.current_package_id = self.current_package.id.clone();
-        // `current_package.items` only lists *top-level* items — a local
-        // `const` binding inside a function body (or any other nested
-        // item) gets a real `DefId` from the same monotonic counter but is
-        // only recorded in `def_map`, never in `.items`. Seeding from
-        // `.items` alone can collide with such a DefId (confirmed via
-        // lldb: for a single-function file, `.items.max()` lands exactly
-        // on the enclosing function's own id, one below a local const's).
-        self.next_synthetic_hir_def_id = self
-            .current_package
-            .def_map
-            .keys()
-            .cloned()
-            .max()
-            .unwrap_or(hir::DefId::local(0))
-            .saturating_add(1);
-
-        // Whole-program-safe, order-independent registration only — none
-        // of this requires any item's body to be typed (mirrors
-        // `lower_program`'s matching passes verbatim; deliberately stops
-        // short of that function's const-registration and per-item body
-        // loop, which is exactly the whole-package dependency this entry
-        // point exists to avoid).
-        // `current_package` cloned into a local first (an `Rc` clone,
-        // O(1)) so it can stay borrowed across the `&mut self` calls
-        // below with no conflict — the same trick as `hir_item`'s
-        // dispatch, just needed here because this loop calls back into
-        // `self` directly instead of only reading a field.
-        let current_package = self.current_package.clone();
-        for item in &current_package.items {
-            match &item.kind {
-                hir::ItemKind::Struct(def) => {
-                    self.register_struct(item.def_id.clone(), def, item.span);
-                }
-                hir::ItemKind::Enum(def) => {
-                    self.register_enum(item.def_id.clone(), def, item.span);
-                }
-                _ => {}
-            }
-        }
-        self.register_all_dependency_adts();
-        // `finalize_adt_definitions` unconditionally computes a *layout*
-        // for every non-generic struct/enum in the whole package — most of
-        // which have nothing to do with the one const block this request
-        // actually needs to evaluate. On this fresh, per-request
-        // `MirLowering` instance, a struct/enum that legitimately depends
-        // on state this instance never populated (e.g. a dependency
-        // package's own field types, only ever fully resolved by that
-        // package's *own* real `lower_program` run) can fail here even
-        // though the real compile never has a problem with it — exactly
-        // the same "diagnostics raised purely by this eager pre-pass are
-        // discarded" reasoning `register_all_dependency_adts` (just above)
-        // already applies for its own unconditional struct/enum sweep; a
-        // real failure still surfaces normally the moment this or any
-        // other comptime request's body actually uses the offending type,
-        // via the ordinary on-demand `struct_layout_for_instance`/
-        // `enum_layout_for_instance` paths inside body lowering below.
-        let diagnostics_before = self.diagnostics.len();
-        let had_errors_before = self.has_errors;
-        self.finalize_adt_definitions(&current_package);
-        self.diagnostics.truncate(diagnostics_before);
-        self.has_errors = had_errors_before;
-        // Deliberately *not* an eager `register_impl_signatures` sweep
-        // over every impl in the package (as this used to be) — that
-        // cloned every method's `hir::Function` body, for every impl,
-        // regardless of whether this one synthetic comptime body actually
-        // calls it, and repeated that on every single comptime request.
-        // `ensure_method_info`/`ensure_generic_method_def` already lazily
-        // call this same per-item registration (`try_lazily_register_method`
-        // -> `register_impl_signature_for_item`, the identical function
-        // the eager sweep called) on demand, off the same `hir_def_map` —
-        // exactly the "whole-program-safe... none of this requires any
-        // item's body to be typed" registration this function's own doc
-        // comment already scopes itself to, just reached lazily instead
-        // of unconditionally for methods this request never references.
-
-        // The exact HIR block, recorded onto this package under its own
-        // `def_id` once, unconditionally, at AST-to-HIR lowering time (see
-        // `HirPackage::const_block_defs`'s doc comment) — the request
-        // itself only names `package_id`/`def_id`, never carries its own
-        // block.
-        let block = current_package.const_block_def(def_id.clone()).ok_or_else(|| {
-            fp_core::error::Error::from(format!(
-                "internal compiler error: no const block recorded for {def_id:?}"
-            ))
-        })?;
-        let body = block.expr.as_ref().ok_or_else(|| {
-            fp_core::error::Error::from(
-                "internal compiler error: comptime request block has no body expression",
-            )
-        })?;
-        // The real, checked type already lives directly on `current_package`
-        // (`typeck_expr_type`), keyed by the block's own `hir_id`, exactly like
-        // `register_const_block_comptime_entry` reads it for the
-        // whole-package walk. The type checker unconditionally records
-        // this entry before ever building the request, so a missing entry
-        // here is an internal compiler error, not a normal "might not be
-        // there" case.
-        let ty = self.typeck_expr_type(block.hir_id.clone()).ok_or_else(|| {
-            fp_core::error::Error::from(format!(
-                "internal compiler error: comptime request for {:?} has no checked type",
-                block.hir_id
-            ))
-        })?;
-        self.register_const_block_comptime_entry_direct(block.hir_id.clone(), ty, body, body.span);
-
-        let mut mir_program = mir::MirCodeUnit::new();
-        self.flush_extra_items(&mut mir_program);
-        self.append_runtime_stubs(&mut mir_program);
-
-        if self.has_errors {
-            return Err(fp_core::error::Error::from(
-                "internal compiler error: HIR-to-MIR lowering reported an error",
-            ));
-        }
-        Ok(mir_program)
     }
 
     pub fn compute_adt_layout(&mut self, def_id: hir::DefId, substs: &[Ty], span: Span) {
@@ -1613,7 +1455,12 @@ impl HirToMirLowerer {
             return Ok(());
         }
         let Some(item) = self.hir_item(def_id.clone()).cloned() else {
-            return Ok(());
+            // Not a top-level item at all — check whether it's a
+            // `const { .. }` block's own synthetic `DefId` instead (see
+            // `ensure_const_block_lowered`'s doc comment). Nothing else
+            // is addressable by `DefId` here, so a miss on both is a
+            // silent no-op, same as before.
+            return self.ensure_const_block_lowered(def_id);
         };
         match &item.kind {
             hir::ItemKind::Struct(_)
@@ -1654,6 +1501,60 @@ impl HirToMirLowerer {
                 self.extra_items.push(mir_item);
             }
         }
+        Ok(())
+    }
+
+    /// `ensure_item_lowered`'s counterpart for a `const { .. }` block's own
+    /// `DefId` — a block is never in `current_package.items`/`def_map`
+    /// (`record_const_block_def` is its own side table, not `def_map`; see
+    /// `hir::HirPackage::const_block_defs`'s doc comment), so it can't be
+    /// dispatched on there directly, but lowering it is otherwise identical
+    /// to a top-level `const`'s own non-foldable path (`lower_const`'s
+    /// `lower_executable_const` call): build a synthetic zero-arg function
+    /// from the block's body and register it as a pending-comptime global
+    /// under this exact `def_id` — the same identity `fp_typing::
+    /// ComptimeRequest::def_id`/`LirProgram::find_function_by_def_id`
+    /// already use, so a driver-level comptime request resolves through
+    /// this one call, the same as any other item, with no separate
+    /// setup/entry point of its own.
+    fn ensure_const_block_lowered(&mut self, def_id: hir::DefId) -> Result<()> {
+        if self.lowered_items.contains(&def_id) {
+            return Ok(());
+        }
+        let Some(block) = self.current_package.const_block_def(def_id.clone()).or_else(|| {
+            self.hir_program
+                .package(&def_id.package_id)?
+                .const_block_def(def_id.clone())
+        }) else {
+            return Ok(());
+        };
+        self.lowered_items.insert(def_id.clone());
+        let Some(body) = block.expr.as_ref() else {
+            return Ok(());
+        };
+        let Some(ty) = self.typeck_expr_type(block.hir_id.clone()) else {
+            return Ok(());
+        };
+        let name = hir::Symbol::new(format!(
+            "__const_block_{}_{}",
+            def_id.package_id.0, def_id.index
+        ));
+        let konst = hir::Const {
+            name: name.clone(),
+            ty: hir::TypeExpr {
+                hir_id: block.hir_id.clone(),
+                kind: hir::TypeExprKind::Infer,
+                span: body.span,
+            },
+            body: hir::Body {
+                hir_id: block.hir_id.clone(),
+                params: Vec::new(),
+                value: (**body).clone(),
+            },
+        };
+        let key = self.const_key(name.as_str(), body.span);
+        let mir_item = self.lower_executable_const(def_id, &konst, ty, key, Some(block.hir_id))?;
+        self.extra_items.push(mir_item);
         Ok(())
     }
 
@@ -4350,125 +4251,6 @@ impl HirToMirLowerer {
         };
         self.next_mir_id += 1;
         Ok(mir_item)
-    }
-
-    /// Registers an expression-position `const { .. }` block as an extra
-    /// `ExecutableConst` MIR item (mirroring `lower_executable_const`, but
-    /// for an ad hoc block rather than a named top-level `const` item),
-    /// pushed onto `extra_items` so it becomes a real pending-comptime
-    /// `LirGlobal` once this package's own MIR/LIR is built. This is a
-    /// best-effort side channel purely for real (interpreter-backed)
-    /// comptime validation — the block's own operand lowering already
-    /// falls back to ordinary runtime code when no comptime value is
-    /// available (see `const_block_value_to_mir_constant`'s callers), so a
-    /// failure here is reported, not fatal.
-    fn register_const_block_comptime_entry(
-        &mut self,
-        expr_hir_id: hir::HirId,
-        const_block: &hir::ExprConstBlock,
-        span: Span,
-    ) {
-        // `hir::ExprConstBlock` carries no declared type of its own (see
-        // `hir::ExprConstBlock`'s doc comment) — the real, checked type is
-        // whatever the type checker recorded for this expression's own
-        // `hir_id`, read here via `typeck_expr_type`. Every `ConstBlock`
-        // expr *whose enclosing item's typecheck ran to completion* has its
-        // type recorded this way — but a top-level `const` item's own
-        // `check_body` can legitimately fail partway through (an earlier,
-        // unrelated statement in the *same* const's initializer hits one
-        // of this compiler's other known gaps) and bail out via `?` before
-        // ever reaching a later nested `const { .. }` block, the same
-        // fault-tolerant-per-item architecture this whole pipeline already
-        // relies on elsewhere (confirmed via a real reproduction: this
-        // used to panic here with a real corpus const item). A missing
-        // entry is therefore a legitimate, expected case, not a compiler
-        // bug — treat it exactly like `register_const_block_comptime_
-        // entry_direct`'s own lowering-failure branch and the caller's own
-        // "no comptime value available" fallback: skip creating an entry
-        // and let the const block get lowered as ordinary runtime code
-        // instead of precomputed.
-        let Some(lowered_ty) = self.typeck_expr_type(expr_hir_id.clone()) else {
-            self.emit_warning(
-                span,
-                format!(
-                    "const block {expr_hir_id:?} has no checked type in TypeckResults \
-                     (its enclosing item's own typecheck likely failed before reaching \
-                     it) — falling back to runtime lowering"
-                ),
-            );
-            return;
-        };
-        self.register_const_block_comptime_entry_direct(
-            expr_hir_id,
-            lowered_ty,
-            &const_block.body,
-            span,
-        );
-    }
-
-    /// Shared by `register_const_block_comptime_entry` (found incidentally
-    /// while walking a body that contains a `const { .. }` block, `ty`
-    /// already resolved via `typeck_expr_type`) and `transform_comptime_
-    /// request` (fed directly from a `fp_typing::ComptimeRequest`'s own
-    /// `typeck_results`/`block.expr`, with no body walk at all) — both just
-    /// need the already-checked `ty`/`body` unboxed, not an `hir::
-    /// ExprConstBlock` specifically.
-    fn register_const_block_comptime_entry_direct(
-        &mut self,
-        expr_hir_id: hir::HirId,
-        ty: Ty,
-        body: &hir::Expr,
-        span: Span,
-    ) {
-        let name = hir::Symbol::new(format!(
-            "__const_block_{}_{}",
-            expr_hir_id.package_id.0, expr_hir_id.index
-        ));
-        let konst = hir::Const {
-            name: name.clone(),
-            // No real declared `TypeExpr` exists for this synthetic item —
-            // the real type is `ty` above, already threaded straight into
-            // `mir::FunctionSig`/`mir::ExecutableConst` by
-            // `lower_executable_const`, not read back off this field.
-            ty: hir::TypeExpr {
-                hir_id: expr_hir_id.clone(),
-                kind: hir::TypeExprKind::Infer,
-                span,
-            },
-            body: hir::Body {
-                hir_id: expr_hir_id.clone(),
-                params: Vec::new(),
-                value: body.clone(),
-            },
-        };
-        let key = self.const_key(name.as_str(), span);
-        let def_id = self.next_synthetic_def_id();
-        match self.lower_executable_const(def_id, &konst, ty, key, Some(expr_hir_id)) {
-            Ok(mir_item) => self.extra_items.push(mir_item),
-            Err(error) => {
-                // This warning previously went straight into `self.
-                // diagnostics`, which no caller of `transform_comptime_
-                // request` ever reads back for the *warning* severity
-                // (only real errors get surfaced, via `has_errors`/the
-                // typing-diagnostic dump) — so a const block that fails to
-                // lower here failed completely silently, and the caller
-                // only ever saw the misleading generic "did not produce a
-                // comptime value" (`resolve_one_comptime_request`'s own
-                // fallback once `block_values` has no entry for this
-                // request, since no `ExecutableConst` item — and so no
-                // `LirComptimeEntry` — was ever created). Print the real
-                // cause too, so a genuine per-block lowering failure is
-                // diagnosable instead of indistinguishable from every
-                // other "no value produced" case.
-                eprintln!(
-                    "warning: const block not lowerable for comptime validation: {error}"
-                );
-                self.emit_warning(
-                    span,
-                    format!("const block not lowerable for comptime validation: {error}"),
-                );
-            }
-        }
     }
 
     fn lower_type_expr(&mut self, ty_expr: &hir::TypeExpr) -> Ty {
@@ -17315,16 +17097,26 @@ impl<'a> BodyBuilder<'a> {
             }
             hir::ExprKind::ConstBlock(const_block) => {
                 // Real evaluation of this block (if any) happens later,
-                // once this package's own MIR/LIR exists — register it as
-                // a comptime entry now so `evaluate_comptime_lir` can run
-                // it for real through the actual interpreter, resolving
-                // arbitrary code (method calls, etc.), not a hand-rolled
-                // subset-of-Rust evaluator.
-                self.lowering.register_const_block_comptime_entry(
-                    expr.hir_id.clone(),
-                    const_block,
-                    expr.span,
-                );
+                // once this package's own MIR/LIR exists — lower it as a
+                // pending-comptime global now (the same on-demand path
+                // any other item goes through) so `evaluate_comptime_lir`
+                // can run it for real through the actual interpreter,
+                // resolving arbitrary code (method calls, etc.), not a
+                // hand-rolled subset-of-Rust evaluator. Best-effort: a
+                // failure here just falls back to the ordinary runtime
+                // lowering below, same as before.
+                if let Err(error) = self
+                    .lowering
+                    .ensure_const_block_lowered(const_block.def_id.clone())
+                {
+                    self.lowering.emit_warning(
+                        expr.span,
+                        format!(
+                            "const block {:?} failed to lower for comptime validation: {error}",
+                            const_block.def_id
+                        ),
+                    );
+                }
                 // The value was resolved eagerly during type checking (see
                 // `HirTypeChecker::check_expr`'s `ConstBlock` arm) and handed
                 // here keyed by this block's own `def_id` — no synthetic
