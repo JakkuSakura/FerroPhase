@@ -478,9 +478,16 @@ fn consume_fragment(
 
 /// The candidate slice a non-`tt`/`ident`/`block`/`literal` fragment may
 /// consume from: everything from `pos` up to (but not including) the next
-/// top-level literal comma, or the matcher's own next literal token if it
-/// appears first — both are always legal stopping points for these
-/// fragment kinds in real Rust grammar.
+/// top-level occurrence of one of real Rust's own macro-fragment
+/// "follow set" tokens, or the matcher's own next literal token if it
+/// appears first — always legal stopping points for these fragment kinds.
+/// `|` matters in practice for a `$x:ty`/`$x:expr` fragment immediately
+/// followed by a literal `|` closing a closure-style param list (real
+/// vendored std's own `impl_fn_for_zst!`, `|$arg: ident: $ArgTy: ty),*|`)
+/// — this parser's own type grammar treats a bare `|` as a union-type
+/// operator (`T | U`), so without stopping here first, greedily
+/// continuing into "everything after the `|`" fails the type parse
+/// entirely instead of cleanly ending the fragment right before it.
 fn fragment_window<'a>(
     invocation: &'a [MacroTokenTree],
     pos: usize,
@@ -489,9 +496,9 @@ fn fragment_window<'a>(
     let mut end = invocation.len();
     for (offset, tree) in invocation[pos..].iter().enumerate() {
         if let MacroTokenTree::Token(t) = tree {
-            let is_comma = t.text == ",";
+            let is_follow_set_stop = matches!(t.text.as_str(), "," | "|" | ";" | "=>");
             let is_stop = stop_at.is_some_and(|stop| stop.text == t.text);
-            if is_comma || is_stop {
+            if is_follow_set_stop || is_stop {
                 end = pos + offset;
                 break;
             }
