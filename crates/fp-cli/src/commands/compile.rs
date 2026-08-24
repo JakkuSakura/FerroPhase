@@ -411,7 +411,16 @@ async fn run_compile_pipeline(
         // Any op materialization the backend needs (e.g. Kotlin's
         // portable-op -> Kotlin-idiom pass) happens inside
         // emit_package_artifact itself, not here.
-        let mir_module = session.driver().state.borrow().mir_module(package_id);
+        let mir_module = {
+            let state = session.driver().state.borrow();
+            let mut unit = fp_core::mir::MirCodeUnit::new();
+            if let Some(package) = state.mir_program().package(package_id) {
+                unit.items.extend(package.items().cloned());
+                unit.bodies
+                    .extend(package.bodies().map(|(id, body)| (*id, body.clone())));
+            }
+            unit
+        };
         let lir_blob = {
             let state = session.driver().state.borrow();
             state.lir_program().merged_blob_for_package(package_id).ok()

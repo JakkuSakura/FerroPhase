@@ -62,6 +62,11 @@ pub struct MirToLirLowerer {
     /// `mir_struct_fields` into `adt_defs`/a local layout map up front (see
     /// `driver.rs`'s old `all_adt_defs`/`all_layouts`).
     dependency_packages: Vec<mir::MirPackage>,
+    /// This package's own lowered MIR, one `MirCodeUnit` per top-level
+    /// `DefId` — what `transform_unit` looks a `DefId` up in, so a driver
+    /// loop can hand this generator just the `DefId` it wants lowered
+    /// instead of first fetching the unit and its bodies itself.
+    own_units: HashMap<mir::DefId, mir::MirCodeUnit>,
     /// Lazy, on-demand fallback for a callee whose signature hasn't been
     /// predeclared yet — called from the one real miss site (a `FnDef`
     /// operand whose `def_id` isn't yet in `function_def_map`, see
@@ -149,6 +154,7 @@ impl MirToLirLowerer {
             function_package_ids: HashMap::new(),
             runtime_symbol_map,
             dependency_packages: Vec::new(),
+            own_units: HashMap::new(),
             resolve_signature: None,
         }
     }
@@ -183,6 +189,13 @@ impl MirToLirLowerer {
     /// there's no separate local map to check first.
     pub fn with_dependency_packages(mut self, packages: Vec<mir::MirPackage>) -> Self {
         self.dependency_packages = packages;
+        self
+    }
+
+    /// This package's own lowered units, keyed by `DefId` — see
+    /// `transform_unit`/`own_units`'s own doc comments.
+    pub fn with_own_units(mut self, units: HashMap<mir::DefId, mir::MirCodeUnit>) -> Self {
+        self.own_units = units;
         self
     }
 
@@ -344,6 +357,19 @@ impl MirToLirLowerer {
             lir_program.globals = extras;
         }
         Ok(lir_program)
+    }
+
+    /// Lowers `def_id`'s own unit (looked up in `own_units`, set via
+    /// `with_own_units`) straight to its independently publishable LIR
+    /// blobs — the def-id-only counterpart to `transform_items` a driver
+    /// loop can call with just the `DefId` it wants lowered, no separate
+    /// unit/bodies fetch of its own. A `DefId` with no unit (nothing lowered
+    /// for it, or already consumed) lowers to no blobs, not an error.
+    pub fn transform_unit(&mut self, def_id: mir::DefId) -> Result<Vec<lir::LirBlob>> {
+        let Some(unit) = self.own_units.get(&def_id).cloned() else {
+            return Ok(Vec::new());
+        };
+        self.transform_items(unit)
     }
 
     pub fn transform_items(&mut self, mir_program: mir::MirCodeUnit) -> Result<Vec<lir::LirBlob>> {

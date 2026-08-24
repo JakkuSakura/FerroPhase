@@ -327,14 +327,14 @@ pub struct FrontendBundle {
 pub struct MirBundle {
     pub frontend: FrontendBundle,
     pub hir_program: fp_core::hir::HirPackage,
-    pub mir_program: fp_core::mir::MirModule,
+    pub mir_program: fp_core::mir::MirCodeUnit,
 }
 
 #[derive(Debug, Clone)]
 pub struct LirBundle {
     pub frontend: FrontendBundle,
     pub hir_program: fp_core::hir::HirPackage,
-    pub mir_program: fp_core::mir::MirModule,
+    pub mir_program: fp_core::mir::MirCodeUnit,
     pub lir_program: fp_core::lir::LirBlob,
 }
 
@@ -480,8 +480,16 @@ impl LoweredProgram {
             })
     }
 
-    fn mir(&self) -> Result<fp_core::mir::MirModule> {
-        let mir = self.driver.state.borrow().mir_module(&self.package_id);
+    fn mir(&self) -> Result<fp_core::mir::MirCodeUnit> {
+        let mut mir = fp_core::mir::MirCodeUnit::new();
+        {
+            let state = self.driver.state.borrow();
+            if let Some(package) = state.mir_program().package(&self.package_id) {
+                mir.items.extend(package.items().cloned());
+                mir.bodies
+                    .extend(package.bodies().map(|(id, body)| (*id, body.clone())));
+            }
+        }
         if mir.items.is_empty() {
             return Err(CliError::Compilation(format!(
                 "compiled package `{}` contains no MIR program",

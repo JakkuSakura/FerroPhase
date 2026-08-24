@@ -18,8 +18,11 @@ pub struct CompilerState {
     /// `ast::package::PackageId`, since a `hir::Package`'s identity is
     /// always the former. Typed results (expr/pat types, resolutions,
     /// diagnostics, ...) live directly on each published `HirPackage` —
-    /// there's no separate typed-results table to keep in sync.
-    hir_program: hir::HirProgram,
+    /// there's no separate typed-results table to keep in sync. `Rc`-wrapped
+    /// so callers that need their own handle onto the whole program
+    /// (`HirToMirLowerer::new`, `hir_program_rc`) get a cheap pointer clone
+    /// instead of deep-cloning every published package's HIR on every call.
+    hir_program: Rc<hir::HirProgram>,
     /// The whole workspace `HirProgram` a package's `TypingShared` is
     /// checking against, published only for the duration of that package's
     /// typecheck (see `fp_typing::TypingShared::program_handle`) — this is
@@ -109,7 +112,7 @@ impl CompilerState {
         workspace: Rc<AstProgram>,
     ) -> Self {
         Self {
-            hir_program: hir::HirProgram::new(),
+            hir_program: Rc::new(hir::HirProgram::new()),
             in_progress_hir_program: None,
             mir_program: mir::MirProgram::new(),
             lir_program: Rc::new(lir::LirProgram::new()),
@@ -133,7 +136,7 @@ impl CompilerState {
     /// Publishes `package` under its own `id` — `HirProgram::add_package`
     /// already keys by that, so no separate id parameter is needed.
     pub fn insert_hir(&mut self, package: hir::HirPackage) {
-        self.hir_program.add_package(std::rc::Rc::new(package));
+        Rc::make_mut(&mut self.hir_program).add_package(std::rc::Rc::new(package));
     }
 
     /// Publishes `program` (every already-published dependency, plus the
@@ -205,20 +208,6 @@ impl CompilerState {
             .insert(package_id.clone(), lir::LirPackage::new(data_layout));
     }
 
-    /// Every `MirCodeUnit` this package has produced so far, folded into
-    /// one flat `mir::MirCodeUnit` — the view `MirToLirLowerer`/the
-    /// interpreter still need. Empty (not an error) if the package has no
-    /// units yet.
-    pub fn mir_module(&self, package_id: &PackageId) -> mir::MirCodeUnit {
-        let mut unit = mir::MirCodeUnit::new();
-        if let Some(package) = self.mir_program.package(package_id) {
-            unit.items.extend(package.items().cloned());
-            unit.bodies
-                .extend(package.bodies().map(|(id, body)| (*id, body.clone())));
-        }
-        unit
-    }
-
     /// Records one LIR artifact into `package_id`'s own unit table — the
     /// only way `lir_program` is ever written, mirroring `insert_mir_unit`.
     pub fn insert_lir_unit(
@@ -253,9 +242,22 @@ impl CompilerState {
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))
     }
 
+    /// Same as `insert_lir_blob`, for a caller with no meaningful module
+    /// path of its own (`CompilerDriver`'s per-`DefId` lowering, which
+    /// stores each unit under its own `DefId` — see `mir_unit`/
+    /// `insert_mir_unit` — and has no separate module-path concept to
+    /// thread through here).
+    pub fn insert_lir_blob_for_package(
+        &mut self,
+        package_id: &PackageId,
+        blob: lir::LirBlob,
+    ) -> Result<(), CompilerDriverError> {
+        self.insert_lir_blob(package_id, fp_core::ast::path::QualifiedPath::new(Vec::new()), blob)
+    }
+
     /// Every artifact `package_id` has produced so far, folded into one
-    /// flat `lir::LirBlob` — mirrors `mir_module`. Empty (not an error) if
-    /// the package has no artifacts yet.
+    /// flat `lir::LirBlob`. Empty (not an error) if the package has no
+    /// artifacts yet.
     pub fn lir_blob(&self, package_id: &PackageId) -> lir::LirBlob {
         self.lir_program
             .package(package_id)
@@ -286,6 +288,14 @@ impl CompilerState {
     /// carries HIR content itself.
     pub fn hir_program(&self) -> &hir::HirProgram {
         &self.hir_program
+    }
+
+    /// Cheap `Rc` clone of the whole session's `hir::HirProgram` — what
+    /// `HirToMirLowerer::new` needs its own handle onto (it resolves
+    /// `current_package` straight out of it), instead of deep-cloning every
+    /// published package's HIR on every lowering call.
+    pub fn hir_program_rc(&self) -> Rc<hir::HirProgram> {
+        self.hir_program.clone()
     }
 
     /// Records the one renamed entrypoint function `select_entrypoint`
@@ -356,5 +366,4 @@ impl CompilerState {
     pub fn all_packages(&self) -> impl Iterator<Item = &Rc<hir::HirPackage>> {
         self.hir_program.packages.values()
     }
-
 }

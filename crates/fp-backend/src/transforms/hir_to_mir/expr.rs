@@ -661,8 +661,8 @@ impl HirToMirLowerer {
     /// `current_package_id` are derived from them immediately; callers that
     /// need to lower a package not yet merged into `hir_program` (e.g. a
     /// single still-being-typechecked `const {}` snapshot) still overwrite
-    /// `current_package` afterward via `transform`/`seed_package`/
-    /// `transform_comptime_request`, same as before this required both
+    /// `current_package` afterward via `transform`/`transform_comptime_request`,
+    /// same as before this required both
     /// arguments up front.
     pub fn new(hir_program: std::rc::Rc<hir::HirProgram>, package_id: hir::PackageId) -> Self {
         let current_package = hir_program
@@ -1470,7 +1470,7 @@ impl HirToMirLowerer {
         mir_item
     }
 
-    fn append_runtime_stubs(&mut self, program: &mut mir::MirCodeUnit) {
+    pub fn append_runtime_stubs(&mut self, program: &mut mir::MirCodeUnit) {
         let span = Span::new(0, 0, 0);
         for name in self.synthetic_runtime_functions.clone() {
             // `printf` is only ever called through the dedicated
@@ -1546,30 +1546,37 @@ impl HirToMirLowerer {
         }
     }
 
-    /// Seeds this `HirToMirLowerer` instance for on-demand, per-`DefId` lowering
-    /// against `hir_program` — call once before any `ensure_item_lowered`
-    /// call, then `ensure_item_lowered` for each top-level `DefId` that
-    /// needs lowering (in any order — this is exactly what makes it usable
-    /// from a driver-level loop instead of requiring one eager whole-package
-    /// sweep), then `take_program` once at the end. Mirrors `lower_program`'s
-    /// own seeding prelude (everything before its per-item loop) verbatim,
-    /// plus the const-registration pass every item's body may depend on
-    /// regardless of lowering order — the only thing this doesn't do
-    /// up front is lower any function/method/const *body*.
-    pub fn seed_package(&mut self, hir_program: hir::HirPackage) {
-        let hir_program = std::rc::Rc::new(hir_program);
-        self.current_package = hir_program.clone();
-        self.current_package_id = hir_program.id.clone();
+    /// Cheap `Rc` clone of the package this instance is lowering — already
+    /// set by `new` (looked up straight off the shared `hir_program` it was
+    /// constructed with), so a driver-level loop that needs to iterate
+    /// `.items` while also calling `&mut self` methods (`ensure_item_lowered`)
+    /// can hold this handle instead of re-fetching/cloning a whole
+    /// `HirPackage` out of `CompilerState` separately.
+    pub fn current_package_handle(&self) -> std::rc::Rc<hir::HirPackage> {
+        self.current_package.clone()
+    }
+
+    /// Registers every top-level struct/enum/impl-signature/const in
+    /// `self.current_package` (already set by `new`) — call once before any
+    /// `ensure_item_lowered` call, then `ensure_item_lowered` for each
+    /// top-level `DefId` that needs lowering (in any order — this is
+    /// exactly what makes it usable from a driver-level loop instead of
+    /// requiring one eager whole-package sweep). Mirrors `lower_program`'s
+    /// own seeding prelude (everything before its per-item loop) verbatim —
+    /// the only thing this doesn't do up front is lower any
+    /// function/method/const *body*.
+    pub fn register_package_items(&mut self) {
+        let current_package = self.current_package.clone();
         // Same "seed from `.items` alone can collide with a local const's
         // own real DefId" fix as `lower_program`/`transform_comptime_request`.
-        self.next_synthetic_hir_def_id = hir_program
+        self.next_synthetic_hir_def_id = current_package
             .def_map
             .keys()
             .cloned()
             .max()
             .unwrap_or(hir::DefId::local(0))
             .saturating_add(1);
-        for item in &hir_program.items {
+        for item in &current_package.items {
             match &item.kind {
                 hir::ItemKind::Struct(def) => {
                     self.register_struct(item.def_id.clone(), def, item.span);
@@ -1581,13 +1588,13 @@ impl HirToMirLowerer {
             }
         }
         self.register_all_dependency_adts();
-        self.finalize_adt_definitions(&hir_program);
-        for item in &hir_program.items {
+        self.finalize_adt_definitions(&current_package);
+        for item in &current_package.items {
             if let hir::ItemKind::Impl(impl_block) = &item.kind {
                 self.register_impl_signatures(impl_block);
             }
         }
-        for item in &hir_program.items {
+        for item in &current_package.items {
             if let hir::ItemKind::Const(const_item) = &item.kind {
                 self.register_const_value(item.def_id.clone(), const_item);
             }
@@ -1595,11 +1602,11 @@ impl HirToMirLowerer {
     }
 
     /// On-demand, per-`DefId` counterpart to `lower_program`'s per-item
-    /// loop — call once per top-level `DefId` after `seed_package`.
+    /// loop — call once per top-level `DefId` after `register_package_items`.
     /// Idempotent (safe to call more than once for the same `def_id`,
     /// mirroring `ensure_function_lowered`/`ensure_method_lowered`, which
     /// this dispatches to for `Function`/`Impl` items). `Struct`/`Enum` are
-    /// already fully registered by `seed_package`; `Trait`/`Expr` are never
+    /// already fully registered by `register_package_items`; `Trait`/`Expr` are never
     /// lowered — both are no-ops here.
     pub fn ensure_item_lowered(&mut self, def_id: hir::DefId) -> Result<()> {
         if self.lowered_items.contains(&def_id) {
@@ -1619,7 +1626,7 @@ impl HirToMirLowerer {
                 if Self::is_unit_ty(&ty) {
                     // Unit consts don't need a static allocation; keep them
                     // as inline constants — already registered by
-                    // `seed_package`.
+                    // `register_package_items`.
                 } else {
                     let mir_item = self.lower_const(def_id, const_item)?;
                     self.extra_items.push(mir_item);
@@ -1650,19 +1657,8 @@ impl HirToMirLowerer {
         Ok(())
     }
 
-    /// Assembles everything `ensure_item_lowered` has pulled in so far into
-    /// a `mir::MirCodeUnit` — call once after the per-`DefId` loop finishes.
-    /// Mirrors `lower_program`'s own tail (`flush_extra_items` +
-    /// `append_runtime_stubs`) verbatim.
-    pub fn take_program(&mut self) -> mir::MirCodeUnit {
-        let mut mir_program = mir::MirCodeUnit::new();
-        self.flush_extra_items(&mut mir_program);
-        self.append_runtime_stubs(&mut mir_program);
-        mir_program
-    }
-
     /// Drains everything pushed to `extra_items`/`extra_bodies` since the
-    /// last `take_unit`/`take_program` call into one `MirCodeUnit` — call
+    /// last `take_unit` call into one `MirCodeUnit` — call
     /// right after `ensure_item_lowered(def_id)` returns, before the next
     /// `ensure_item_lowered` call for a different `DefId`, so the drained
     /// content is exactly what that one call produced (usually its own item
