@@ -1024,6 +1024,18 @@ impl AstToHirLowerer {
     /// same syntax — the same ambiguity real Rust resolves via name
     /// resolution, not parser syntax.
     fn resolve_global_value_symbol(&self, name: &str) -> Option<hir::Res> {
+        // Mirrors `resolve_global_type_symbol`'s identical guard: a
+        // primitive type name is never shadowable by a same-named module
+        // or re-export — real Rust's own rule (`u8::MAX` always means the
+        // primitive, even where vendored std's own crate-root `pub use
+        // legacy_int_modules::{u8, ..}` re-export makes a real, reachable
+        // module named `u8` exist too). Guarded here (the value
+        // namespace) too, not just the type namespace, since `u8::MAX` is
+        // itself a *value*-position type-relative access whose base
+        // segment resolves through this exact function.
+        if is_primitive_type_name(name) {
+            return None;
+        }
         let qualified = self.module_path.with_segment(name.to_string()).to_key();
         self.lookup_symbol(&qualified, hir::Namespace::Value)
             .or_else(|| {

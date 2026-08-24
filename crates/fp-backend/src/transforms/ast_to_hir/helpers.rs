@@ -389,7 +389,29 @@ impl AstToHirLowerer {
 
         let mut resolved = None;
 
-        if segments.len() == 1 {
+        // A primitive type name (`u8`, `bool`, ...) takes absolute
+        // priority over every other resolution tier below when it's the
+        // *entire* bare name being resolved — real Rust's own rule (a
+        // primitive is never shadowable by an import/re-export/module of
+        // the same name), and specifically what a type-relative value
+        // access (`u8::MAX`, built by resolving `u8` alone first and
+        // appending `::MAX` afterward) depends on: without this priority
+        // check, several *later* tiers below (e.g. `resolve_item_path`'s
+        // own independent item-existence scan) can still resolve a bare
+        // primitive name to an unrelated same-named item (vendored std's
+        // own crate-root `pub use legacy_int_modules::{u8, ..}`
+        // re-export) before ever reaching the primitive fallback that
+        // used to be the *last* resort at the bottom of this function.
+        if segments.len() == 1
+            && path_prefix == PathPrefix::Plain
+            && is_primitive_type_name(segments[0].name.as_str())
+        {
+            resolved = Some(hir::Res::Builtin(hir::BuiltinSelfType::Primitive(
+                segments[0].name.as_str().to_string(),
+            )));
+        }
+
+        if resolved.is_none() && segments.len() == 1 {
             if path_prefix == PathPrefix::Plain {
                 resolved = segments.last().and_then(|segment| match scope {
                     PathResolutionScope::Value => self.resolve_value_symbol(&segment.name),
