@@ -497,20 +497,14 @@ impl CompilerDriver {
         let package_exports = generator.exported_symbols();
         let type_alias_exports = generator.exported_type_aliases();
         package.borrow_mut().type_alias_exports.extend(type_alias_exports);
-        let mut hir_program_typed = self.type_check_program(hir_program).await.map_err(|error| {
-            CompilerDriverError::InternalCompilerError(format!(
-                "package HIR type checking failed: {error}"
-            ))
-        })?;
-        // `CallKind::Op` was retired, so `hir_normalization::normalize_program`
-        // no longer promotes anything here regardless of `promote_op_only` —
-        // portable-op recognition now belongs to target backends directly
-        // (temporarily, by bare name). The walk itself is kept (still needed
-        // for uniformity/future extension) rather than skipped outright.
         let promote_op_only = matches!(self.pipeline, PipelineMode::Transpile);
-        fp_backend::transforms::hir_normalization::normalize_program(&mut hir_program_typed, promote_op_only);
-        hir_program_typed.hir_exports.extend(package_exports);
-        self.state.borrow_mut().insert_hir(hir_program_typed);
+        self.type_check_program(hir_program, package_exports, promote_op_only)
+            .await
+            .map_err(|error| {
+                CompilerDriverError::InternalCompilerError(format!(
+                    "package HIR type checking failed: {error}"
+                ))
+            })?;
 
         // Transpile: lift typed HIR back to AST — this is what the Kotlin
         // backend actually reads, and doesn't depend on anything below
@@ -744,7 +738,9 @@ impl CompilerDriver {
     async fn type_check_program(
         &mut self,
         program: hir::HirPackage,
-    ) -> fp_core::Result<hir::HirPackage> {
+        package_exports: std::collections::HashMap<String, hir::Res>,
+        promote_op_only: bool,
+    ) -> fp_core::Result<()> {
         let comptime_resolver = self.state.borrow().comptime_resolver.clone();
         let dependency_program = self.state.borrow().hir_program_rc();
         let executor = self.state.borrow().tasks.clone();
@@ -792,12 +788,21 @@ impl CompilerDriver {
         let package = checker.borrow().finish();
         // `checker` is the last other strong owner of this `Rc<HirPackage>`
         // (via its own `program.packages` map) — dropping it here, before
-        // unwrapping, lets the caller take real ownership without ever
-        // deep-copying the package's own data.
+        // unwrapping, lets us take real ownership without ever deep-copying
+        // the package's own data.
         drop(checker);
-        Ok(Rc::try_unwrap(package).unwrap_or_else(|_| {
+        let mut package = Rc::try_unwrap(package).unwrap_or_else(|_| {
             unreachable!("no other strong reference to this package's HirPackage should outlive its own typecheck pass")
-        }))
+        });
+        // `CallKind::Op` was retired, so `hir_normalization::normalize_program`
+        // no longer promotes anything here regardless of `promote_op_only` —
+        // portable-op recognition now belongs to target backends directly
+        // (temporarily, by bare name). The walk itself is kept (still needed
+        // for uniformity/future extension) rather than skipped outright.
+        fp_backend::transforms::hir_normalization::normalize_program(&mut package, promote_op_only);
+        package.hir_exports.extend(package_exports);
+        self.state.borrow_mut().insert_hir(package);
+        Ok(())
     }
 
     /// Prints every diagnostic accumulated on `package` so far to stderr, one
