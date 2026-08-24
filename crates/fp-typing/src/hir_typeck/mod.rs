@@ -2888,7 +2888,39 @@ impl HirTypeChecker {
             && path.segments.len() >= 2
         {
             let trait_name = &path.segments[path.segments.len() - 2].name;
-            match self.program_rc().find_export_by_name(trait_name.as_str()) {
+            // `find_export_by_name` only ever sees already-published
+            // dependency packages' `hir_exports` (a table nothing in
+            // `ast_to_hir` actually populates for the package currently
+            // being lowered/checked) — a same-package qualified
+            // trait-method path like `core::fmt::Display::fmt`, checked
+            // while compiling `core` itself, needs to be found in this
+            // package's own module tree instead.
+            // Neither the workspace-wide export table
+            // (`find_export_by_name`, which only ever sees already-published
+            // dependency packages) nor this package's own `module_tree`
+            // (rebuilt from scratch per source file by
+            // `reset_file_context`, so only the last-lowered file's
+            // bindings survive to typecheck time) can answer an
+            // intra-package lookup by bare name. `def_paths` is the one
+            // package-scoped table that is populated once per `DefId` and
+            // never cleared — recorded across every file it's a
+            // `DefId -> DefPath` map, so scan it for an entry whose last
+            // segment is this trait name.
+            let found = self.program_rc().find_export_by_name(trait_name.as_str());
+            let found = found.or_else(|| {
+                let package = self.package();
+                package
+                    .def_paths
+                    .iter()
+                    .find(|(_, def_path)| {
+                        def_path
+                            .segments
+                            .last()
+                            .is_some_and(|seg| seg.as_str() == trait_name.as_str())
+                    })
+                    .map(|(def_id, _)| hir::Res::Def(def_id.clone()))
+            });
+            match found {
                 Some(hir::Res::Def(def_id))
                     if self
                         .program_rc()
