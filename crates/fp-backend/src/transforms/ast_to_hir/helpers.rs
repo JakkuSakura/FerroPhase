@@ -76,6 +76,25 @@ impl AstToHirLowerer {
     pub(super) fn convert_generic_args(&mut self, args: &[ast::Ty]) -> Result<hir::GenericArgs> {
         let mut hir_args = Vec::new();
         for arg in args {
+            // An explicit associated-type binding (`Iterator<Item = U>` —
+            // fp-lang's `parse_type_arg` turns `Item = U` into a
+            // `Ty::Expr(Assign { target: Item, value: U })` entry among a
+            // `ParameterPath` segment's own `args`, per this same crate's
+            // `items.rs`' `explicit_bindings` extraction, which already
+            // handles this shape on its own dedicated path) is not an
+            // ordinary positional type argument — passing it through to
+            // `transform_type_to_hir`/`ast_expr_to_hir_path` here (which
+            // has no notion of a binding, only plain type references)
+            // always fails as "not path-like" and produces a synthetic
+            // `__fp_error` placeholder. Every real trait-bound-with-
+            // binding reaches here as one of `args`, so skip it — the
+            // binding itself is recovered separately by whichever caller
+            // already extracts `explicit_bindings`.
+            if let ast::Ty::Expr(expr) = arg {
+                if matches!(expr.kind(), ast::ExprKind::Assign(_)) {
+                    continue;
+                }
+            }
             let ty = self.transform_type_to_hir(arg)?;
             hir_args.push(hir::GenericArg::Type(Box::new(ty)));
         }
