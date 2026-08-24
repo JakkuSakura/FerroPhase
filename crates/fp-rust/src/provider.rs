@@ -238,11 +238,14 @@ impl RustPackageProvider {
         let mut items = Vec::new();
         if let Some(source) = read(&root_file) {
             let root_items = parse(&root_file, &source)?;
+            let file_dir = root_file.parent().unwrap_or(&base_dir);
+            let children_base_dir = children_base_dir_for(&root_file);
             discover_items(
                 &read,
                 &mut parse,
                 &env,
-                &base_dir,
+                file_dir,
+                &children_base_dir,
                 &QualifiedPath::new(Vec::new()),
                 &root_items,
                 None,
@@ -566,34 +569,65 @@ fn mod_path_attr(attrs: &[Attribute], env: &TargetEnv) -> Option<String> {
 /// outside the vendored corpus entirely — e.g. real vendored std's own
 /// `stdarch`/`portable-simd`/`backtrace` sibling-crate redirects) — the
 /// caller treats that identically to a real empty module, no error.
+/// A `#[path]` value is always relative to the *declaring file's own*
+/// directory (`file_dir`) — never to `children_base_dir` (the directory
+/// this module's *un*-redirected, plain `mod name;` children resolve in,
+/// which for a non-`mod.rs` file is a subdirectory *named after that
+/// file*, one level down from `file_dir`). Conflating the two resolves a
+/// redirect like `core::io::error`'s `#[path = "error/repr_bitpacked.rs"]`
+/// (relative to `core/io/`, the directory containing `error.rs` itself)
+/// as if it were relative to `core/io/error/` (the directory `error.rs`'s
+/// *ordinary* children live in) instead — double-nesting the path and
+/// always failing to find the file.
 fn resolve_external_mod(
     read: &dyn Fn(&Path) -> Option<String>,
-    base_dir: &Path,
+    file_dir: &Path,
+    children_base_dir: &Path,
     mod_name: &str,
     attrs: &[Attribute],
     env: &TargetEnv,
-) -> Option<(PathBuf, PathBuf, String)> {
+) -> Option<(PathBuf, String)> {
     if let Some(redirect) = mod_path_attr(attrs, env) {
-        let target = normalize_path_components(&base_dir.join(redirect));
+        let target = normalize_path_components(&file_dir.join(redirect));
         if let Some(source) = read(&target) {
-            let child_base = target.parent().unwrap_or(base_dir).to_path_buf();
-            return Some((target, child_base, source));
+            return Some((target, source));
         }
+        // A directory-shaped redirect (real vendored std's own
+        // `std::sys::pal::teeos`'s `#[path = "../unix/sync"]`) — its own
+        // content is `target/mod.rs`, exactly like any other directory
+        // module.
         let mod_rs = target.join("mod.rs");
         if let Some(source) = read(&mod_rs) {
-            return Some((mod_rs, target, source));
+            return Some((mod_rs, source));
         }
         return None;
     }
-    let name_rs = base_dir.join(format!("{mod_name}.rs"));
+    let name_rs = children_base_dir.join(format!("{mod_name}.rs"));
     if let Some(source) = read(&name_rs) {
-        return Some((name_rs, base_dir.join(mod_name), source));
+        return Some((name_rs, source));
     }
-    let mod_rs = base_dir.join(mod_name).join("mod.rs");
+    let mod_rs = children_base_dir.join(mod_name).join("mod.rs");
     if let Some(source) = read(&mod_rs) {
-        return Some((mod_rs, base_dir.join(mod_name), source));
+        return Some((mod_rs, source));
     }
     None
+}
+
+/// The directory a file's *own* plain, unredirected `mod name;` children
+/// resolve in: the same directory the file itself lives in when the file
+/// is an "index" file (`mod.rs`, or a crate root `lib.rs`/`main.rs`), else
+/// a subdirectory named after the file's own stem — real rustc's file
+/// convention, applied uniformly regardless of *how* this file itself was
+/// reached (ordinary convention or a `#[path]` redirect).
+fn children_base_dir_for(file: &Path) -> PathBuf {
+    let dir = file.parent().unwrap_or(Path::new(""));
+    match file.file_name().and_then(|n| n.to_str()) {
+        Some("mod.rs") | Some("lib.rs") | Some("main.rs") => dir.to_path_buf(),
+        _ => match file.file_stem().and_then(|s| s.to_str()) {
+            Some(stem) => dir.join(stem),
+            None => dir.to_path_buf(),
+        },
+    }
 }
 
 /// Recursively resolves a module's item list — walking into every inline
@@ -610,7 +644,8 @@ fn discover_items(
     read: &dyn Fn(&Path) -> Option<String>,
     parse: &mut dyn FnMut(&Path, &str) -> ProviderResult<Vec<Item>>,
     env: &TargetEnv,
-    base_dir: &Path,
+    file_dir: &Path,
+    children_base_dir: &Path,
     module_path: &QualifiedPath,
     items: &[Item],
     descriptor_ctx: Option<(&PackageId, ModuleLanguage, &mut Vec<ModuleDescriptor>)>,
@@ -630,14 +665,16 @@ fn discover_items(
         };
         let child_path = module_path.with_segment(module.name.as_str().to_owned());
         if !module.items.is_empty() {
-            // An inline body still establishes `base_dir/name` for its
-            // *own* nested external mods — identical to a file-backed
-            // module's convention, just with no new file to parse here.
-            let child_base_dir = base_dir.join(module.name.as_str());
+            // An inline body isn't a new file at all — a `#[path]` on one
+            // of *its own* nested mods still resolves against `file_dir`
+            // unchanged, only its plain, unredirected children move one
+            // level deeper by name.
+            let child_base_dir = children_base_dir.join(module.name.as_str());
             discover_items(
                 read,
                 parse,
                 env,
+                file_dir,
                 &child_base_dir,
                 &child_path,
                 &module.items,
@@ -648,9 +685,14 @@ fn discover_items(
             )?;
             continue;
         }
-        let Some((target_file, child_base_dir, source)) =
-            resolve_external_mod(read, base_dir, module.name.as_str(), &module.attrs, env)
-        else {
+        let Some((target_file, source)) = resolve_external_mod(
+            read,
+            file_dir,
+            children_base_dir,
+            module.name.as_str(),
+            &module.attrs,
+            env,
+        ) else {
             continue;
         };
         let file_items = parse(&target_file, &source)?;
@@ -665,10 +707,13 @@ fn discover_items(
                 requires_features: Vec::new(),
             });
         }
+        let child_file_dir = target_file.parent().unwrap_or(file_dir).to_path_buf();
+        let child_base_dir = children_base_dir_for(&target_file);
         discover_items(
             read,
             parse,
             env,
+            &child_file_dir,
             &child_base_dir,
             &child_path,
             &file_items,
@@ -896,6 +941,7 @@ fn load_real_std_subcrate(crate_name: &'static str) -> ProviderResult<AstPackage
             &read,
             &mut parse,
             &env,
+            &base_dir,
             &base_dir,
             &root_module_path,
             &root_items,
