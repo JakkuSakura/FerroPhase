@@ -94,6 +94,28 @@ impl AstToHirLowerer {
                 if matches!(expr.kind(), ast::ExprKind::Assign(_)) {
                     continue;
                 }
+                // A const generic argument (`Simd<f32, 4>`, `[T; N]`'s own
+                // `N` reused as a generic arg elsewhere, ...) parses as a
+                // plain integer-literal `Ty::Expr`, not a type at all —
+                // passing it to `transform_type_to_hir`/`ast_expr_to_hir_path`
+                // (which only knows how to build a *type* path) always
+                // fails as "not path-like", producing a `__fp_error`
+                // placeholder that then cascades into unrelated
+                // "unresolved type path" noise downstream. `hir::
+                // GenericArg` already has a dedicated `Const` variant for
+                // exactly this shape (see `fp-typing`'s `check_type_expr`,
+                // which already reports a clean, accurate "const generic
+                // arguments are not supported" for it) — route it there
+                // instead of forcing it through the type-path builder.
+                if matches!(
+                    expr.kind(),
+                    ast::ExprKind::Value(value)
+                        if matches!(value.as_ref(), ast::Value::Int(_) | ast::Value::UInt(_))
+                ) {
+                    let hir_expr = self.transform_expr_to_hir(expr)?;
+                    hir_args.push(hir::GenericArg::Const(Box::new(hir_expr)));
+                    continue;
+                }
             }
             let ty = self.transform_type_to_hir(arg)?;
             hir_args.push(hir::GenericArg::Type(Box::new(ty)));
