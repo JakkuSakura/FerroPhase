@@ -951,9 +951,22 @@ impl HirTypeChecker {
                     // syntax already does, keyed off its concrete type.
                     if matches!(callee_ty.kind, TyKind::Error(_)) {
                         if let hir::ExprKind::Path(path) = &callee.kind {
-                            if path.segments.len() == 2 {
+                            // `path.segments.len() >= 2`, not `== 2`: the
+                            // trait name may itself be qualified
+                            // (`core::fmt::Display::fmt`/`fmt::Display::
+                            // fmt`, not just bare `Display::fmt`) —
+                            // `expr_path_ty`'s own recovery for this
+                            // shape already resolves `path.res`/this
+                            // deferred `Ty::Error` off the *second-to-
+                            // last* segment regardless of how many
+                            // segments precede it, so this call-site
+                            // re-dispatch needs to key off the *last*
+                            // segment as the method name the same way,
+                            // not assume the trait is always exactly
+                            // `segments[0]`.
+                            if path.segments.len() >= 2 {
                                 if let Some(receiver_ty) = arg_types.first().cloned() {
-                                    let method_name = path.segments[1].name.clone();
+                                    let method_name = path.segments.last().unwrap().name.clone();
                                     // The receiver may itself still be a
                                     // generic type parameter (`fn max<T:
                                     // Ord>(a: T, b: T) -> T { Ord::max(a,
@@ -980,7 +993,6 @@ impl HirTypeChecker {
                                     };
                                     if let Some(sig) = sig {
                                         tracing::debug!(
-                                            trait_name = %path.segments[0].name,
                                             method = %method_name,
                                             ?receiver_ty,
                                             "trait-qualified UFCS call resolved"
@@ -1005,7 +1017,7 @@ impl HirTypeChecker {
                     // priority when one exists.
                     if matches!(callee_ty.kind, TyKind::Error(_)) {
                         if let hir::ExprKind::Path(path) = &callee.kind {
-                            if path.segments.len() == 2 {
+                            if path.segments.len() >= 2 {
                                 // The ambient expected type is itself only
                                 // a real receiver to search with when it's
                                 // an actual type — if it's `TyKind::Error`
@@ -1019,7 +1031,7 @@ impl HirTypeChecker {
                                     .clone()
                                     .filter(|ty| !matches!(ty.kind, TyKind::Error(_)));
                                 if let Some(receiver_ty) = expected {
-                                    let method_name = path.segments[1].name.clone();
+                                    let method_name = path.segments.last().unwrap().name.clone();
                                     let sig = if let TyKind::Param(param) = &receiver_ty.kind {
                                         self.generic_param_bound_method_signature(
                                             &param.name,
@@ -1035,7 +1047,6 @@ impl HirTypeChecker {
                                     };
                                     if let Some(sig) = sig {
                                         tracing::debug!(
-                                            trait_name = %path.segments[0].name,
                                             method = %method_name,
                                             ?receiver_ty,
                                             "expected-type-qualified UFCS call resolved"
@@ -2786,22 +2797,58 @@ impl HirTypeChecker {
             let _ = local;
             return Ok(self.error_ty(format!("local `{local}` has no inferred type")));
         }
-        let Some(hir::Res::Def(ref def_id)) = path.res else {
-            if let Some(sig) = self.collection_constructor_signature(path) {
-                return sig;
+        // A fully- or partially-qualified trait-method value path
+        // (`core::fmt::Display::fmt`/`fmt::Debug::fmt`, real vendored
+        // std's own idiom for calling a trait method explicitly rather
+        // than through dot-call syntax) sometimes reaches here with
+        // `path.res` still `None` — `ast_to_hir`'s own multi-segment
+        // resolution only ever matches a *literal* absolute key or a
+        // bare (1-segment) import-relative name, neither of which covers
+        // an arbitrary-length qualified prefix ending in a trait name.
+        // Recover by looking the second-to-last segment (the presumed
+        // trait/type name, since the last segment is the method) up by
+        // its own bare name across every package's exports — the same
+        // "defining module unknown, search by suffix" fallback
+        // `ast_to_hir`'s own `resolve_ambiguous_type_export_by_name`
+        // already uses for the analogous type-position case.
+        let recovered_def_id = if path.res.is_none() && path.segments.len() >= 2 {
+            let trait_name = &path.segments[path.segments.len() - 2].name;
+            match self.program_rc().find_export_by_name(trait_name.as_str()) {
+                Some(hir::Res::Def(def_id))
+                    if self
+                        .program_rc()
+                        .item(def_id.clone())
+                        .is_some_and(|item| matches!(&item.kind, hir::ItemKind::Trait(_))) =>
+                {
+                    Some(def_id)
+                }
+                _ => None,
             }
-            // A value path can refer to a definition supplied by a loaded
-            // crate. It is resolved by HIR lowering, while this pass only
-            // needs a semantic value type for subsequent expression checks.
-            return Ok(self.error_ty(format!(
-                "unresolved value path `{}`",
-                path.segments
-                    .iter()
-                    .map(|segment| segment.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join("::")
-            )));
+        } else {
+            None
         };
+        let def_id = match (&path.res, &recovered_def_id) {
+            (Some(hir::Res::Def(def_id)), _) => def_id.clone(),
+            (_, Some(def_id)) => def_id.clone(),
+            _ => {
+                if let Some(sig) = self.collection_constructor_signature(path) {
+                    return sig;
+                }
+                // A value path can refer to a definition supplied by a
+                // loaded crate. It is resolved by HIR lowering, while
+                // this pass only needs a semantic value type for
+                // subsequent expression checks.
+                return Ok(self.error_ty(format!(
+                    "unresolved value path `{}`",
+                    path.segments
+                        .iter()
+                        .map(|segment| segment.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join("::")
+                )));
+            }
+        };
+        let def_id = &def_id;
         // Type-relative value path (`Map::new(..)`, `T::default()`) —
         // `ast_to_hir` resolves only the *base* segment (mirroring rustc's
         // `QPath::TypeRelative`: the resolver settles the type, typeck
