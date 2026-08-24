@@ -990,15 +990,30 @@ pub(crate) fn parse_type_bounds(input: &mut &[Token]) -> ModalResult<TypeBounds>
     Ok(TypeBounds { bounds })
 }
 
-// Nightly `[const] Trait` bound modifier (e.g. `impl [const] FnOnce(T) -> U`,
-// `T: [const] Destruct`) — FerroPhase doesn't model const-trait-ness, so the
-// modifier is accepted and dropped, leaving the plain trait bound.
+// Nightly `[const] Trait`/bare `const Trait` bound modifier (e.g. `impl
+// [const] FnOnce(T) -> U`, `T: [const] Destruct`, or real vendored std's
+// own `F: const FnOnce<ARG, Output = RET>` in a `where` clause) —
+// FerroPhase doesn't model const-trait-ness, so the modifier is accepted
+// and dropped, leaving the plain trait bound. The bare (non-bracketed)
+// `const` form is real, current unstable syntax (`const_trait_impl`),
+// distinct from `[const]`'s own older proposal spelling — both reach
+// here since either can appear in a bound position. Without this, `T:
+// const Trait` fails to parse as a bound at all (`const` isn't a valid
+// trait-name token), and — worse than just this one bound — real
+// vendored std's `core::intrinsics` uses this exact shape once, and an
+// unrecovered failure there was observed to fail this file's *entire*
+// parse, silently dropping every intrinsic it declares.
 fn skip_const_trait_modifier(input: &mut &[Token]) {
     let mut probe = *input;
     if skip_symbol(&mut probe, "[").is_ok()
         && skip_keyword(&mut probe, Keyword::Const).is_ok()
         && skip_symbol(&mut probe, "]").is_ok()
     {
+        *input = probe;
+        return;
+    }
+    let mut probe = *input;
+    if skip_keyword(&mut probe, Keyword::Const).is_ok() {
         *input = probe;
     }
 }
