@@ -1028,6 +1028,24 @@ impl AstToHirLowerer {
                         res: Some(hir::Res::Builtin(kind)),
                     })
                 }
+                // A multi-bound trait-object/`impl` type used in
+                // expression position (`Box<dyn Fn(..) -> X + Send>`,
+                // a closure cast, ...) — `+` (`TypeBinaryOpKind::Add`) is
+                // the same token this compiler's struct-composition `+`
+                // uses, just with no structural fields to merge here
+                // either (see `fp-typing`'s own identical `TypeBinaryOp`
+                // handling in `check_type_expr` for the type-position
+                // counterpart of this exact shape/rationale). No
+                // multi-trait `dyn`/`impl` representation exists to
+                // build a real path for regardless, so approximate it as
+                // its first bound rather than falling through to the
+                // generic "not path-like" `__fp_error` placeholder below.
+                ast::Value::Type(ast::Ty::TypeBinaryOp(op))
+                    if op.kind == fp_core::ast::TypeBinaryOpKind::Add =>
+                {
+                    let lhs = ast::Expr::value(ast::Value::Type((*op.lhs).clone()));
+                    self.ast_expr_to_hir_path(&lhs, scope)
+                }
                 _ => {
                     self.add_error(
                         Diagnostic::error(format!(
