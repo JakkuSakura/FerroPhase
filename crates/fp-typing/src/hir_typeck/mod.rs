@@ -2856,6 +2856,19 @@ impl HirTypeChecker {
                     )));
                 }
             }
+            // A bare primitive name used standalone as a value (e.g. a
+            // macro's own type parameter substituted directly into a
+            // generic-argument-as-value position, like real vendored
+            // std's `can_not_overflow::<$int_ty>(..)` pattern once
+            // `$int_ty` is a concrete primitive) — no method tail to
+            // resolve, so there's no callee/const to look up; its value
+            // is the type itself, the same meta-type every other bare
+            // type-as-value expression already checks to (see
+            // `transform_value_to_hir`'s `Value::Type` arm, lowered to
+            // the identical `IntrinsicCall(PrimitiveType)` this mirrors).
+            if path.segments.len() == 1 {
+                return Ok(Ty { kind: TyKind::Type });
+            }
         }
         if let Some(hir::Res::Local(ref local)) = path.res {
             if let Some(name) = path.segments.last().map(|segment| &segment.name) {
