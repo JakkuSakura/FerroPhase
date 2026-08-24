@@ -584,6 +584,28 @@ impl HirPackage {
         self.member_to_owning_item.get(&def_id).cloned()
     }
 
+    /// Point lookup into `def_map` — same-package counterpart of
+    /// `HirProgram::item`, for a caller that has already routed to this
+    /// specific package (e.g. by `def_id.package_id`) and has no reason to
+    /// reach into `def_map` directly.
+    pub fn item(&self, def_id: &DefId) -> Option<&Item> {
+        self.def_map.get(def_id)
+    }
+
+    /// Point lookup into `def_paths` — same-package counterpart of
+    /// `HirProgram::def_path`.
+    pub fn def_path(&self, def_id: &DefId) -> Option<&DefPath> {
+        self.def_paths.get(def_id)
+    }
+
+    /// Every definition this package knows about, including nested/local
+    /// ones only ever recorded in `def_map` (never in `items`, which only
+    /// lists top-level items) — distinct from `HirProgram::all_items`,
+    /// which iterates `items` only.
+    pub fn all_defs(&self) -> impl Iterator<Item = &Item> {
+        self.def_map.values()
+    }
+
     /// See `checked_impl_self_ty_cache`'s doc comment.
     pub fn checked_impl_self_ty(&self, hir_id: HirId) -> Option<Ty> {
         self.checked_impl_self_ty_cache.borrow().get(&hir_id).cloned()

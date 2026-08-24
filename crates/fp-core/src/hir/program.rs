@@ -37,6 +37,15 @@ impl HirProgram {
         self.packages.get(id).map(|package| package.as_ref())
     }
 
+    /// Same package, but the shared `Rc<HirPackage>` itself — for a caller
+    /// that wants to mutate one of `HirPackage`'s own interior-mutable
+    /// fields (e.g. `record_const_block_value`) in place and have that
+    /// visible to everyone else already holding the same `Rc`, with no
+    /// separate write-back step needed afterward.
+    pub fn package_rc(&self, id: &PackageId) -> Option<std::rc::Rc<HirPackage>> {
+        self.packages.get(id).cloned()
+    }
+
     /// Inserts `package`, merging its own `struct_defs_by_name` into this
     /// `HirProgram`'s direct lookup index in the same step — the
     /// incremental counterpart to re-deriving that index by scanning every

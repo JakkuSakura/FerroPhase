@@ -252,14 +252,15 @@ impl CompilerDriver {
         // the entrypoint's real value, but that alone never reaches the
         // executable blob — the block's owning item (e.g. a `const X =
         // const { .. };`) was already lowered to an `ExecutableConst`
-        // *before* its value was known, not a `LirGlobal`. Re-lowering
-        // HIR->MIR->LIR now that `apply_resolved_comptime_block_values`
-        // has recorded the answer lets `lower_const_expr` constant-fold
-        // the const item for real this time, materializing the missing
-        // global. Without this, the const item's global is simply absent,
-        // and running it fails at runtime with "missing global" — never a
-        // compile-time error, since nothing upstream of execution ever
-        // notices the gap.
+        // *before* its value was known, not a `LirGlobal`. Recording the
+        // answer directly onto the HIR package's own (interior-mutable)
+        // `const_block_values` here — via the same `Rc<HirPackage>`
+        // already published in `hir_program`, not a clone of it — is what
+        // lets a later relowering fold the const item for real, materializing
+        // the missing global. Without this, the const item's global is
+        // simply absent, and running it fails at runtime with "missing
+        // global" — never a compile-time error, since nothing upstream of
+        // execution ever notices the gap.
         let package = self
             .state
             .borrow()
@@ -267,10 +268,10 @@ impl CompilerDriver {
             .compiled_package(package_id)
             .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
         let hir_package_id = package.borrow().hir_package_id.clone();
-        let mut block_values = HashMap::new();
-        block_values.insert(entrypoint_def_id, value);
-        self.apply_resolved_comptime_block_values(hir_package_id.clone(), &block_values)?;
-        self.relower_cached_lir_units(package_id, hir_package_id).await?;
+        self.state
+            .borrow()
+            .hir_package_rc(hir_package_id)?
+            .record_const_block_value(entrypoint_def_id, value);
         let _ = lir_path;
         Ok(())
     }
@@ -720,94 +721,6 @@ impl CompilerDriver {
         Ok(())
     }
 
-    /// Writes `evaluate_comptime_lir`'s real, interpreter-computed values
-    /// back onto this package's own `HirPackage::const_block_values`
-    /// (keyed by each block's own `DefId`), before `relower_cached_lir_units`
-    /// re-lowers HIR->MIR a second time. That second lowering pass already
-    /// has a fast path (`typeck_const_block_value`, `hir_to_mir/expr.rs`'s
-    /// `ConstBlock` arm) that embeds a real constant
-    /// when a value is present there and otherwise falls back to lowering
-    /// the block as ordinary runtime code — this is what turns that
-    /// fallback into a real compile-time constant, without needing typing
-    /// itself to ever suspend on the value.
-    fn apply_resolved_comptime_block_values(
-        &mut self,
-        hir_package_id: hir::PackageId,
-        block_values: &HashMap<hir::DefId, Value>,
-    ) -> Result<(), CompilerDriverError> {
-        let package = self.state.borrow().hir(hir_package_id)?;
-        for (def_id, value) in block_values {
-            package.record_const_block_value(def_id.clone(), value.clone());
-        }
-        self.state.borrow_mut().insert_hir(package);
-        Ok(())
-    }
-
-    /// Re-runs the per-`DefId` HIR->MIR->LIR pipeline
-    /// (`lower_package_to_mir`/`lower_package_to_lir_with`) for `package_id`
-    /// now that `apply_resolved_comptime_block_values` has recorded a real
-    /// value for each `const { .. }` block — every `DefId` is re-lowered
-    /// against the now-resolved typeck results, replacing its previous unit
-    /// in place (`insert_mir_unit`); the resulting LIR blob(s) just get
-    /// pushed alongside the package's earlier ones, latest-wins on lookup
-    /// (see `lir::LirPackage`'s own doc comment).
-    async fn relower_cached_lir_units(
-        &mut self,
-        package_id: &PackageId,
-        hir_package_id: hir::PackageId,
-    ) -> Result<(), CompilerDriverError> {
-        let state = self.state.clone();
-        let hir_program = state.borrow().hir_program_rc();
-        let mut lowering = HirToMirLowerer::new(hir_program, hir_package_id.clone());
-        lowering.register_package_items();
-        let current_package = lowering.current_package_handle();
-        for item in &current_package.items {
-            Self::lower_package_to_mir(&state, package_id, &mut lowering, item.def_id.clone()).await?;
-        }
-        let sentinel = hir::DefId::new(hir_package_id, u32::MAX);
-        let mut leftover = lowering.take_unit(sentinel.clone());
-        lowering.append_runtime_stubs(&mut leftover);
-        if !leftover.items.is_empty() || !leftover.bodies.is_empty() {
-            lowering.walk_program_types_for_layouts(&leftover);
-            state.borrow_mut().insert_mir_unit(package_id, sentinel, leftover);
-        }
-        let (diagnostics, had_errors) = lowering.take_diagnostics();
-        if had_errors {
-            let details = diagnostics_summary(&diagnostics);
-            return Err(CompilerDriverError::InternalCompilerError(format!(
-                "HIR-to-MIR lowering reported diagnostics: {details}"
-            )));
-        }
-        let adt_defs = lowering.take_adt_defs();
-        let full_layouts = Self::collect_full_layouts(&lowering);
-        let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
-        {
-            let mut state_mut = state.borrow_mut();
-            let package = state_mut.mir_package_mut(package_id);
-            package.extend_full_layouts(full_layouts);
-            package.extend_opaque_payload_sizes(opaque_payload_sizes);
-            package.extend_adt_defs(adt_defs);
-        }
-
-        // --- MIR -> LIR: per-`DefId`, lazy signature resolution, no
-        // whole-program predeclare sweep — `MirToLirLowerer` reads
-        // `full_layouts`/`opaque_payload_sizes`/signatures straight off
-        // `mir_program_rc()` (just extended above); every blob this lowers
-        // gets pushed alongside any earlier one, never reset first (see
-        // `lir::LirPackage`'s own doc comment) ---
-        let def_ids: Vec<_> = state
-            .borrow()
-            .mir_program()
-            .package(package_id)
-            .map(|package| package.units.keys().cloned().collect())
-            .unwrap_or_default();
-        let mut lir_gen = Self::new_lir_generator(&state, package_id);
-        for def_id in def_ids {
-            Self::lower_package_to_lir_with(&state, package_id, &mut lir_gen, def_id).await?;
-        }
-        Ok(())
-    }
-
     /// Type-checks `program`. Each `const { .. }` block's `ComptimeRequest`
     /// (`hir_typeck.rs`'s two `ConstBlock` arms, both genuinely `.await` it)
     /// is answered with a *real* value computed by the interpreter, never a
@@ -923,8 +836,8 @@ impl CompilerDriver {
 
     /// Resolves exactly one comptime request. This is *not* a separate,
     /// isolated pipeline — it's the exact same per-`DefId` compile+store+
-    /// execute steps `compile_items_to_lir_units`/`relower_cached_lir_units`
-    /// use for a whole package, run for one specific `DefId` (the block's
+    /// execute steps `compile_items_to_lir_units` uses for a whole package,
+    /// run for one specific `DefId` (the block's
     /// own, real one — see `HirToMirLowerer::ensure_const_block_lowered`),
     /// touching the same shared `CompilerState` — so the result is
     /// cached/reused like any other compiled item, not recomputed the next
@@ -999,10 +912,10 @@ impl CompilerDriver {
 
     /// One `DefId`'s own MIR->LIR lowering — call once per `DefId` already
     /// stored under `package_id`, sharing the same `lir_gen` across a whole
-    /// package's own loop (see `compile_items_to_lir_units`/
-    /// `relower_cached_lir_units`) so its predeclared signatures/
-    /// `own_units` lookup stay populated. Every produced blob is stored
-    /// directly into `state` as it's produced (`insert_lir_blob_for_package`).
+    /// package's own loop (see `compile_items_to_lir_units`) so its lazily
+    /// resolved signatures stay cached across calls. Every produced blob is
+    /// stored directly into `state` as it's produced
+    /// (`insert_lir_blob_for_package`).
     async fn lower_package_to_lir_with(
         state: &Rc<RefCell<CompilerState>>,
         package_id: &PackageId,

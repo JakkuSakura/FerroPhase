@@ -278,6 +278,22 @@ impl CompilerState {
             .ok_or_else(|| CompilerDriverError::MissingHir(format!("{package_id:?}")))
     }
 
+    /// Same package `hir` reads, but the same shared `Rc<hir::HirPackage>`
+    /// already published in `hir_program` — not a deep clone of it. A
+    /// caller that only needs to record something onto one of `HirPackage`'s
+    /// own interior-mutable fields (e.g. `record_const_block_value`) can
+    /// just call straight through this `Rc`; the change is visible to
+    /// everyone already holding it, with no separate write-back
+    /// (`insert_hir`) step needed afterward.
+    pub fn hir_package_rc(
+        &self,
+        package_id: hir::PackageId,
+    ) -> Result<Rc<hir::HirPackage>, CompilerDriverError> {
+        self.hir_program
+            .package_rc(&package_id)
+            .ok_or_else(|| CompilerDriverError::MissingHir(format!("{package_id:?}")))
+    }
+
     /// Every package's own HIR compiled so far — used by `drain_driver` to
     /// report typing diagnostics, which live directly on each package
     /// (see `hir::HirPackage::diagnostics`'s doc comment), not on the

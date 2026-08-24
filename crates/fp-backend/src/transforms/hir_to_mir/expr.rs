@@ -733,23 +733,19 @@ impl HirToMirLowerer {
     /// `current_package` is deliberately *not* pre-merged with anything).
     /// Replaces every old direct `self.hir_def_map.get(def_id)` read.
     fn hir_item(&self, def_id: hir::DefId) -> Option<&hir::Item> {
-        self.current_package.def_map.get(&def_id).or_else(|| {
-            self.hir_program
-                .package(&def_id.package_id)?
-                .def_map
-                .get(&def_id)
-        })
+        self.current_package
+            .item(&def_id)
+            .or_else(|| self.hir_program.package(&def_id.package_id)?.item(&def_id))
     }
 
     /// Same dispatch order as `hir_item`, for `def_paths` — used by
     /// `def_path_str`, which every `register_struct`/`register_enum` call
     /// now goes through instead of being handed a whole `def_paths` map.
     fn hir_def_path(&self, def_id: hir::DefId) -> Option<&hir::DefPath> {
-        self.current_package.def_paths.get(&def_id).or_else(|| {
+        self.current_package.def_path(&def_id).or_else(|| {
             self.hir_program
                 .package(&def_id.package_id)?
-                .def_paths
-                .get(&def_id)
+                .def_path(&def_id)
         })
     }
 
@@ -758,11 +754,11 @@ impl HirToMirLowerer {
     /// every old `self.hir_def_map.values()`/`.iter()` full scan (used to
     /// build a one-time reverse index; never a per-lookup cost).
     fn hir_all_items(&self) -> impl Iterator<Item = &hir::Item> {
-        self.current_package.def_map.values().chain(
+        self.current_package.all_defs().chain(
             self.hir_program
                 .packages
                 .values()
-                .flat_map(|package| package.def_map.values()),
+                .flat_map(|package| package.all_defs()),
         )
     }
 
