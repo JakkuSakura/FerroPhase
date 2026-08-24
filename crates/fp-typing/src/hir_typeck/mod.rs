@@ -722,7 +722,35 @@ impl HirTypeChecker {
     fn check_expr<'a>(&'a mut self, expr: &'a hir::Expr) -> crate::BoxFuture<'a, Result<Ty>> {
         Box::pin(async move {
             let ty = match &expr.kind {
-                hir::ExprKind::Literal(lit) => self.literal_ty(lit),
+                hir::ExprKind::Literal(lit) => {
+                    // An untyped integer/float literal takes its expected
+                    // type when the ambient hint names a concrete numeric
+                    // type — the same override the `Call` arm's own
+                    // argument-checking loop already applies for a call
+                    // argument specifically, generalized to every other
+                    // position a literal can appear in (assignments,
+                    // binary operands, array/struct/tuple elements, ...).
+                    // `literal_ty`'s own fixed `i64`/`f64` default is only
+                    // ever right by coincidence outside of call arguments;
+                    // real Rust infers an untyped integer/float literal's
+                    // type from its surrounding context exactly this way.
+                    let default = self.literal_ty(lit);
+                    match (lit, self.expected_expr_type.as_ref()) {
+                        (
+                            hir::Lit::Integer(_),
+                            Some(Ty {
+                                kind: kind @ (TyKind::Int(_) | TyKind::Uint(_)),
+                            }),
+                        ) => Ty { kind: kind.clone() },
+                        (
+                            hir::Lit::Float(_),
+                            Some(Ty {
+                                kind: kind @ TyKind::Float(_),
+                            }),
+                        ) => Ty { kind: kind.clone() },
+                        _ => default,
+                    }
+                }
                 hir::ExprKind::Path(path) => self.expr_path_ty(path).await?,
                 hir::ExprKind::Binary(op, lhs, rhs) => {
                     let lhs_literal =
