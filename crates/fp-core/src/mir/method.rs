@@ -23,7 +23,7 @@ pub struct MethodLoweringInfo {
     pub struct_def: Option<hir::DefId>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MethodDefinition {
     pub def_id: hir::DefId,
     pub function: hir::Function,
@@ -34,7 +34,7 @@ pub struct MethodDefinition {
     pub assoc_types: HashMap<String, hir::TypeExpr>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MethodHirRef {
     pub function: hir::Function,
     pub span: Span,
@@ -70,7 +70,7 @@ pub struct MethodContext {
 /// method's own body included) once per method in that impl.
 pub type MethodOwnerIndex = HashMap<hir::DefId, (Rc<hir::Item>, usize)>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ConstInfo {
     pub ty: Ty,
     pub value: super::Constant,
