@@ -2999,7 +2999,23 @@ impl HirTypeChecker {
                 }
                 return Ok(enum_ty);
             }
-            return Ok(self.error_ty(format!("value definition `{def_id}` was not found")));
+            // Same root cause as `path_ty`'s identical fallback: a trait's
+            // own associated-item declaration (an associated const, most
+            // often) referenced directly by its declaring `DefId` with no
+            // concrete impl context to substitute through — HIR has no
+            // first-class item for the declaration itself. Approximate
+            // with a nominal placeholder instead of hard-erroring.
+            let name = path
+                .segments
+                .last()
+                .map(|segment| segment.name.clone())
+                .unwrap_or_else(|| hir::Symbol::new("_"));
+            return Ok(Ty {
+                kind: TyKind::Param(ty::ParamTy {
+                    index: u32::MAX,
+                    name,
+                }),
+            });
         };
         match &item.kind {
             // A tuple struct's name used in value position (`Wrapping(x)`,
