@@ -339,6 +339,23 @@ enum ImplShapeClass {
 /// self-type `Path` is simply unresolved, its first segment the primitive
 /// name); match `PRIMITIVE_SELF_TYPE_NAMES` directly for that case.
 fn classify_impl_shape(impl_item: &Impl) -> ImplShapeClass {
+    // A primitive self-type written where the parser recognizes it as a
+    // literal type expression (`ast::Value::Type(Ty::Primitive(_))`, e.g.
+    // real std's `impl Add for i64`) lowers straight to
+    // `TypeExprKind::Primitive` via `transform_type_to_hir`'s early
+    // `Value::Type` shortcut — bypassing the `Path`/`Res::Builtin`
+    // machinery entirely, so it never reached `PRIMITIVE_SELF_TYPE_NAMES`
+    // below at all. Without this arm every trait impl on a primitive
+    // (`Add`/`Sub`/`PartialOrd`/...) silently fails to index, and neither
+    // its methods nor its associated types (`<i64 as Add>::Output`) are
+    // ever discoverable by `method_declared_signature_at`/
+    // `assoc_type_for_self`.
+    if let TypeExprKind::Primitive(prim) = &impl_item.self_ty.kind {
+        if let Some(name) = primitive_shape_name(prim) {
+            return ImplShapeClass::Shape(name);
+        }
+        return ImplShapeClass::Unclassified;
+    }
     let TypeExprKind::Path(path) = &impl_item.self_ty.kind else {
         return ImplShapeClass::Unclassified;
     };
@@ -357,6 +374,22 @@ fn classify_impl_shape(impl_item: &Impl) -> ImplShapeClass {
         }
     }
     ImplShapeClass::Unclassified
+}
+
+/// `ast::TypePrimitive` -> the same canonical scalar name
+/// `PRIMITIVE_SELF_TYPE_NAMES` lists, mirroring `TypeInt`/`DecimalType`'s
+/// own `Display` impls (already exactly "i64"/"u8"/"f64"/...). `List` has
+/// no primitive self-type name of its own (never a real impl self-type
+/// shape) and returns `None`.
+fn primitive_shape_name(prim: &TypePrimitive) -> Option<String> {
+    match prim {
+        TypePrimitive::Int(int) => Some(int.to_string()),
+        TypePrimitive::Decimal(decimal) => Some(decimal.to_string()),
+        TypePrimitive::Bool => Some("bool".to_string()),
+        TypePrimitive::Char => Some("char".to_string()),
+        TypePrimitive::String => Some("str".to_string()),
+        TypePrimitive::List => None,
+    }
 }
 
 impl HirPackage {

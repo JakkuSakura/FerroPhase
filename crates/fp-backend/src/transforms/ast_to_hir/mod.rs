@@ -2283,6 +2283,17 @@ impl AstToHirLowerer {
         program
             .type_alias_targets
             .extend(self.package.type_alias_targets.clone());
+        // Every item above was appended straight to `program.items`, not
+        // through `add_item`, so the derived impl-candidate indices
+        // (`impls_by_self_did`/`impls_by_shape`/`blanket_impls`) are
+        // still empty at this point — see `HirPackage::
+        // index_derived_lookups`'s own doc comment for why this
+        // bulk-construction path needs this explicit rebuild call.
+        // Without it, every method/associated-type candidate search
+        // (`impls_for_adt`/`impls_for_shape`/`blanket_impls`,
+        // `fp-typing`'s `shape_and_blanket_candidates`) finds nothing,
+        // for every package this lowerer ever produces.
+        program.index_derived_lookups();
         Ok(program)
     }
 
@@ -2504,6 +2515,7 @@ impl AstToHirLowerer {
             .type_alias_targets
             .extend(self.package.type_alias_targets.clone());
 
+        program.index_derived_lookups();
         Ok(program)
     }
 
