@@ -109,19 +109,26 @@ impl<'de> serde::Deserialize<'de> for LirBlob {
 
 /// One compiled package's LIR content — pairs with `LirBlob` the same way
 /// `hir::HirPackage`/`mir::MirPackage` pair with their own layer's `Program`
-/// type. Just a `LirBlob`, built fresh from just this package's own
-/// compiled units — never merged with a dependency's (see
-/// `LirProgram::merged_blob_for_package` for the one place that merge
-/// actually happens, on demand).
+/// type. A plain `Vec<LirBlob>`, one entry per lowering pass
+/// (`CompilerState::insert_lir_blob_for_package` just pushes, never merges
+/// or resets) — a package re-lowered after a comptime value resolves
+/// (`CompilerDriver::relower_cached_lir_units`) ends up with more than one
+/// entry, and a lookup that cares about the latest one (`LirProgram::
+/// find_function`/`find_global`/`find_function_by_def_id`) searches from
+/// the end. `LirProgram::merged_blob_for_package` flattens every package's
+/// own blobs (and every dependency's) into the one combined `LirBlob` a
+/// `TargetBackend` actually needs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirPackage {
-    pub blob: LirBlob,
+    pub data_layout: LirDataLayout,
+    pub blobs: Vec<LirBlob>,
 }
 
 impl LirPackage {
     pub fn new(data_layout: LirDataLayout) -> Self {
         Self {
-            blob: LirBlob::new(data_layout),
+            data_layout,
+            blobs: Vec::new(),
         }
     }
 }
@@ -170,12 +177,6 @@ pub enum LirDataLayoutError {
     ExpectedStruct(LirType),
     #[error("the error type has no data layout")]
     ErrorTypeHasNoLayout,
-}
-
-#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
-pub enum LirBlobError {
-    #[error("cannot merge LIR programs with different data layouts")]
-    DataLayoutMismatch,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -792,17 +793,6 @@ impl LirBlob {
         self.globals.push(global);
     }
 
-    pub fn extend(&mut self, mut other: LirBlob) -> Result<(), LirBlobError> {
-        if self.data_layout != other.data_layout {
-            return Err(LirBlobError::DataLayoutMismatch);
-        }
-        self.functions.append(&mut other.functions);
-        self.globals.append(&mut other.globals);
-        self.type_definitions.append(&mut other.type_definitions);
-        self.queries.append(&mut other.queries);
-        Ok(())
-    }
-
     /// Return the only embedded query item in this LIR program.
     pub fn single_query(&self) -> std::result::Result<&LirQuery, crate::Error> {
         let mut queries = self.queries.iter();
@@ -1234,19 +1224,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn program_extend_rejects_layout_mismatch() {
-        let mut program = LirBlob::new(data_layout());
-        let other = LirBlob::new(
-            LirDataLayout::new(
-                32,
-                4,
-                vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
-            )
-            .expect("valid data layout"),
-        );
-        assert!(program.extend(other).is_err());
-    }
 }
 
 impl LirValue {

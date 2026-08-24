@@ -140,28 +140,26 @@ impl CompilerDriver {
         fp_bytecode::lower_program(&mir).map_err(CompilerDriverError::from)
     }
 
+    /// Runs `def_id`'s own function through the shared `LirInterpreter`
+    /// against the whole session's already-lowered LIR (`lir_program_rc`)
+    /// — no separate "selected entrypoint" blob/rename step (that's
+    /// `select_entrypoint`'s own, different concern: giving a *process*
+    /// entrypoint its required bare OS symbol name) — deferred:
+    /// `run_entrypoint` finds `def_id`'s function directly, under
+    /// whatever name it already has.
     pub fn execute_runtime(
         &mut self,
-        lir_path: &fp_core::lir::LirPath,
+        package_id: &PackageId,
+        def_id: &hir::DefId,
     ) -> Result<fp_core::ast::Value, CompilerDriverError> {
-        let entrypoint = self.state.borrow().runtime_entrypoint(lir_path)?;
-        // `LirPath` already carries the real package id directly (unlike
-        // the old string-keyed `LirId`, which needed parsing back out of
-        // `"lir:{package_id}:{path}"`) — recovering it is what lets calls
-        // to any function other than the entrypoint itself resolve; see
-        // `run_entrypoint_with_package`'s doc comment.
-        let lir = self
-            .state
-            .borrow()
-            .runtime_blob(&lir_path.package_id, lir_path, entrypoint.clone())?;
-        let program = fp_core::lir::LirProgram::from_single_blob(lir_path.package_id.clone(), lir);
         let mut state = self.state.borrow_mut();
+        let program = state.lir_program_rc();
         let interpreter = state.interpreter_mut();
         *interpreter = LirInterpreter::new();
         interpreter
-            .load_program(Rc::new(program))
+            .load_program(program)
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
-        let value = interpreter.run_entrypoint(&lir_path.package_id, &entrypoint)?;
+        let value = interpreter.run_entrypoint(package_id, def_id)?;
         Ok(value)
     }
 
@@ -452,9 +450,7 @@ impl CompilerDriver {
         blobs: &[fp_core::lir::LirBlob],
     ) -> Result<(), CompilerDriverError> {
         for blob in blobs {
-            state
-                .borrow_mut()
-                .insert_lir_blob_for_package(package_id, blob.clone())?;
+            state.borrow_mut().insert_lir_blob_for_package(package_id, blob.clone());
         }
         Ok(())
     }
@@ -632,23 +628,30 @@ impl CompilerDriver {
                     )));
                 }
                 let adt_defs = lowering.take_adt_defs();
-                let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
-                    lowering.all_adt_field_tys().into_iter().collect();
                 let full_layouts = Self::collect_full_layouts(&lowering);
                 let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
-                state.borrow_mut().extend_mir_package(&current_package_id, struct_layouts, adt_defs);
+                {
+                    let mut state_mut = state.borrow_mut();
+                    let package = state_mut.mir_package_mut(&current_package_id);
+                    package.extend_full_layouts(full_layouts);
+                    package.extend_opaque_payload_sizes(opaque_payload_sizes);
+                    package.extend_adt_defs(adt_defs);
+                }
 
                 // --- MIR -> LIR: per-`DefId`, lazy signature resolution, no
-                // whole-program predeclare sweep (see `MirToLirLowerer::
-                // with_signature_resolver`'s own doc comment) ---
-                state.borrow_mut().reset_lir_package(&current_package_id);
+                // whole-program predeclare sweep — `MirToLirLowerer` reads
+                // `full_layouts`/`opaque_payload_sizes`/signatures straight
+                // off `mir_program_rc()` (just extended above); every blob
+                // this lowers gets pushed alongside any earlier one for the
+                // same package, never reset first (see `lir::LirPackage`'s
+                // own doc comment) ---
                 let def_ids: Vec<_> = state
                     .borrow()
                     .mir_program()
                     .package(&current_package_id)
                     .map(|package| package.units.keys().cloned().collect())
                     .unwrap_or_default();
-                let mut lir_gen = Self::new_lir_generator(&state, &current_package_id, full_layouts, opaque_payload_sizes);
+                let mut lir_gen = Self::new_lir_generator(&state, &current_package_id);
                 for def_id in def_ids {
                     Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id).await?;
                 }
@@ -688,23 +691,29 @@ impl CompilerDriver {
             )));
         }
         let adt_defs = lowering.take_adt_defs();
-        let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
-            lowering.all_adt_field_tys().into_iter().collect();
         let full_layouts = Self::collect_full_layouts(&lowering);
         let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
-        state.borrow_mut().extend_mir_package(&current_package_id, struct_layouts, adt_defs);
+        {
+            let mut state_mut = state.borrow_mut();
+            let package = state_mut.mir_package_mut(&current_package_id);
+            package.extend_full_layouts(full_layouts);
+            package.extend_opaque_payload_sizes(opaque_payload_sizes);
+            package.extend_adt_defs(adt_defs);
+        }
 
         // --- MIR -> LIR: per-`DefId`, lazy signature resolution, no
-        // whole-program predeclare sweep (see `MirToLirLowerer::
-        // with_signature_resolver`'s own doc comment) ---
-        state.borrow_mut().reset_lir_package(&current_package_id);
+        // whole-program predeclare sweep — `MirToLirLowerer` reads
+        // `full_layouts`/`opaque_payload_sizes`/signatures straight off
+        // `mir_program_rc()` (just extended above); every blob this lowers
+        // gets pushed alongside any earlier one, never reset first (see
+        // `lir::LirPackage`'s own doc comment) ---
         let def_ids: Vec<_> = state
             .borrow()
             .mir_program()
             .package(&current_package_id)
             .map(|package| package.units.keys().cloned().collect())
             .unwrap_or_default();
-        let mut lir_gen = Self::new_lir_generator(&state, &current_package_id, full_layouts, opaque_payload_sizes);
+        let mut lir_gen = Self::new_lir_generator(&state, &current_package_id);
         for def_id in def_ids {
             Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id).await?;
         }
@@ -739,9 +748,9 @@ impl CompilerDriver {
     /// now that `apply_resolved_comptime_block_values` has recorded a real
     /// value for each `const { .. }` block — every `DefId` is re-lowered
     /// against the now-resolved typeck results, replacing its previous unit
-    /// in place (`insert_mir_unit`) and its previous LIR artifacts
-    /// (`reset_lir_package` runs first, so a repeat lowering never collides
-    /// with the stale one it's replacing).
+    /// in place (`insert_mir_unit`); the resulting LIR blob(s) just get
+    /// pushed alongside the package's earlier ones, latest-wins on lookup
+    /// (see `lir::LirPackage`'s own doc comment).
     async fn relower_cached_lir_units(
         &mut self,
         package_id: &PackageId,
@@ -770,23 +779,29 @@ impl CompilerDriver {
             )));
         }
         let adt_defs = lowering.take_adt_defs();
-        let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
-            lowering.all_adt_field_tys().into_iter().collect();
         let full_layouts = Self::collect_full_layouts(&lowering);
         let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
-        state.borrow_mut().extend_mir_package(package_id, struct_layouts, adt_defs);
+        {
+            let mut state_mut = state.borrow_mut();
+            let package = state_mut.mir_package_mut(package_id);
+            package.extend_full_layouts(full_layouts);
+            package.extend_opaque_payload_sizes(opaque_payload_sizes);
+            package.extend_adt_defs(adt_defs);
+        }
 
         // --- MIR -> LIR: per-`DefId`, lazy signature resolution, no
-        // whole-program predeclare sweep (see `MirToLirLowerer::
-        // with_signature_resolver`'s own doc comment) ---
-        state.borrow_mut().reset_lir_package(package_id);
+        // whole-program predeclare sweep — `MirToLirLowerer` reads
+        // `full_layouts`/`opaque_payload_sizes`/signatures straight off
+        // `mir_program_rc()` (just extended above); every blob this lowers
+        // gets pushed alongside any earlier one, never reset first (see
+        // `lir::LirPackage`'s own doc comment) ---
         let def_ids: Vec<_> = state
             .borrow()
             .mir_program()
             .package(package_id)
             .map(|package| package.units.keys().cloned().collect())
             .unwrap_or_default();
-        let mut lir_gen = Self::new_lir_generator(&state, package_id, full_layouts, opaque_payload_sizes);
+        let mut lir_gen = Self::new_lir_generator(&state, package_id);
         for def_id in def_ids {
             Self::lower_package_to_lir_with(&state, package_id, &mut lir_gen, def_id).await?;
         }
@@ -935,13 +950,17 @@ impl CompilerDriver {
         Self::lower_package_to_mir(state, &package_id, &mut lowering, request.def_id.clone()).await?;
 
         let adt_defs = lowering.take_adt_defs();
-        let struct_layouts: HashMap<fp_core::mir::DefId, Vec<fp_core::mir::Ty>> =
-            lowering.all_adt_field_tys().into_iter().collect();
         let full_layouts = Self::collect_full_layouts(&lowering);
         let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
-        state.borrow_mut().extend_mir_package(&package_id, struct_layouts, adt_defs);
+        {
+            let mut state_mut = state.borrow_mut();
+            let package = state_mut.mir_package_mut(&package_id);
+            package.extend_full_layouts(full_layouts);
+            package.extend_opaque_payload_sizes(opaque_payload_sizes);
+            package.extend_adt_defs(adt_defs);
+        }
 
-        let mut lir_gen = Self::new_lir_generator(state, &package_id, full_layouts, opaque_payload_sizes);
+        let mut lir_gen = Self::new_lir_generator(state, &package_id);
         Self::lower_package_to_lir_with(state, &package_id, &mut lir_gen, request.def_id.clone()).await?;
 
         Self::evaluate_comptime_lir(state, &request.def_id)
@@ -996,7 +1015,7 @@ impl CompilerDriver {
             ))
         })?;
         for blob in blobs {
-            state.borrow_mut().insert_lir_blob_for_package(package_id, blob)?;
+            state.borrow_mut().insert_lir_blob_for_package(package_id, blob);
         }
         Ok(())
     }
@@ -1024,21 +1043,14 @@ impl CompilerDriver {
         full_layouts
     }
 
-    /// Builds a `MirToLirLowerer` wired with a lazy, per-`DefId` signature
-    /// resolver (see `MirToLirLowerer::with_signature_resolver`'s own doc
-    /// comment) instead of a whole-program predeclare sweep: a callee's
-    /// signature is looked up first in `package_id`'s own
-    /// `mir::MirPackage::sigs` (a forward reference within the same
-    /// package), then in every other loaded package's (a cross-package
-    /// call) — exactly the same two-tier lookup `predeclare_dependency_
-    /// function_signatures` used to do eagerly, just resolved lazily and
-    /// cached on first reference.
-    fn new_lir_generator(
-        state: &Rc<RefCell<CompilerState>>,
-        package_id: &PackageId,
-        full_layouts: HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>>,
-        opaque_payload_sizes: HashMap<String, u64>,
-    ) -> MirToLirLowerer {
+    /// Builds a `MirToLirLowerer` that reads everything it needs —
+    /// `full_layouts`/`opaque_payload_sizes`/callee signatures (this
+    /// package's own `mir::MirPackage` first, then every other loaded
+    /// package's, for a cross-package call) — straight off `mir_program_rc()`
+    /// instead of being handed its own private copy at construction time.
+    /// No whole-program predeclare sweep: everything resolves lazily, on
+    /// first reference.
+    fn new_lir_generator(state: &Rc<RefCell<CompilerState>>, package_id: &PackageId) -> MirToLirLowerer {
         let state = state.borrow();
         MirToLirLowerer::new(
             state.data_layout.clone(),
@@ -1046,8 +1058,6 @@ impl CompilerDriver {
             state.lir_program_rc(),
         )
         .with_package_id(package_id.clone())
-        .with_full_layouts(full_layouts)
-        .with_opaque_payload_sizes(opaque_payload_sizes)
     }
 
     /// Runs `def_id`'s own comptime function through the shared

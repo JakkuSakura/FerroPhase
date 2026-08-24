@@ -19,8 +19,19 @@ pub struct MirPackage {
     /// partitioned instead of one flat blob. Use `items()`/`bodies()` for a
     /// whole-package view.
     pub units: HashMap<DefId, MirCodeUnit>,
-    /// Struct field types keyed by `DefId`, computed during MIR lowering.
-    pub struct_fields: HashMap<DefId, Vec<Ty>>,
+    /// Every concrete struct/enum instantiation's own field types, keyed by
+    /// `(DefId, generic args)` since two instantiations of the same generic
+    /// ADT need different field lists — computed once during HIR->MIR
+    /// lowering (`HirToMirLowerer::struct_layout_map`/`enum_layout_map`) and
+    /// read directly off here by `MirToLirLowerer` (`lookup_full_layout`),
+    /// instead of being handed a private copy of the same map at
+    /// construction time.
+    pub full_layouts: HashMap<(DefId, Vec<Ty>), Vec<Ty>>,
+    /// Byte size for an opaque enum-payload-slot placeholder (see
+    /// `HirToMirLowerer::opaque_ty_sizes`'s doc comment), keyed by the
+    /// placeholder's own synthetic variant name — same idea as
+    /// `full_layouts`.
+    pub opaque_payload_sizes: HashMap<String, u64>,
     pub adt_defs: HashMap<crate::hir::DefId, ty::AdtDef>,
     /// Each top-level function's own `mir::Function` (name/sig/substs/abi),
     /// keyed by the same `DefId` as `units` — maintained incrementally as
@@ -89,8 +100,15 @@ impl MirPackage {
         super::Span::union(self.items().map(super::Item::span))
     }
 
-    pub fn extend_struct_fields(&mut self, entries: impl IntoIterator<Item = (DefId, Vec<Ty>)>) {
-        self.struct_fields.extend(entries);
+    pub fn extend_full_layouts(
+        &mut self,
+        entries: impl IntoIterator<Item = ((DefId, Vec<Ty>), Vec<Ty>)>,
+    ) {
+        self.full_layouts.extend(entries);
+    }
+
+    pub fn extend_opaque_payload_sizes(&mut self, entries: impl IntoIterator<Item = (String, u64)>) {
+        self.opaque_payload_sizes.extend(entries);
     }
 
     pub fn extend_adt_defs(&mut self, entries: impl IntoIterator<Item = (crate::hir::DefId, ty::AdtDef)>) {

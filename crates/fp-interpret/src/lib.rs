@@ -144,7 +144,8 @@ impl LirInterpreter {
     /// on demand, via `LirProgram`'s own lookup APIs.
     pub fn load_program(&mut self, program: Rc<fp_core::lir::LirProgram>) -> LirResult<()> {
         for package in program.packages.values() {
-            self.populate_globals_batch(&[&package.blob])?;
+            let blobs: Vec<&LirBlob> = package.blobs.iter().collect();
+            self.populate_globals_batch(&blobs)?;
         }
         self.program = Some(program);
         Ok(())

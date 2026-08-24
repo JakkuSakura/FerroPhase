@@ -34,15 +34,6 @@ pub struct MirToLirLowerer {
     queued_instructions: Vec<lir::LirInstruction>,
     name_counters: HashMap<String, usize>,
     struct_layouts: RefCell<HashMap<(mir::DefId, Vec<mir::Ty>), Vec<Option<lir::LirType>>>>,
-    full_layouts: HashMap<(mir::DefId, Vec<mir::Ty>), Vec<mir::Ty>>,
-    /// Byte size for an opaque enum-payload-slot placeholder (see
-    /// `HirToMirLowerer::opaque_ty_sizes`'s doc comment) — a slot whose
-    /// per-variant types are heterogeneous has no real fields to lower
-    /// structurally, only a byte count for its runtime storage (sized to
-    /// fit whichever variant is actually active). Keyed by the
-    /// placeholder's name (its single synthetic variant's ident), the same
-    /// string `enum_layout_for_instance` used to mint it.
-    opaque_payload_sizes: HashMap<String, u64>,
     function_symbol_map: HashMap<String, String>,
     function_def_map: HashMap<(mir::DefId, mir::ty::SubstsRef), String>,
     function_signatures: HashMap<String, lir::LirFunctionSignature>,
@@ -131,8 +122,6 @@ impl MirToLirLowerer {
             queued_instructions: Vec::new(),
             name_counters: HashMap::new(),
             struct_layouts: RefCell::new(HashMap::new()),
-            full_layouts: HashMap::new(),
-            opaque_payload_sizes: HashMap::new(),
             function_symbol_map: HashMap::new(),
             function_def_map: HashMap::new(),
             function_signatures: HashMap::new(),
@@ -150,24 +139,33 @@ impl MirToLirLowerer {
         self
     }
 
-    pub fn with_full_layouts(
-        mut self,
-        layouts: HashMap<(mir::DefId, Vec<mir::Ty>), Vec<mir::Ty>>,
-    ) -> Self {
-        self.full_layouts = layouts;
-        self
-    }
-
-    pub fn with_opaque_payload_sizes(mut self, sizes: HashMap<String, u64>) -> Self {
-        self.opaque_payload_sizes = sizes;
-        self
-    }
-
     fn lookup_adt_def(&self, def_id: &mir::DefId) -> Option<mir::ty::AdtDef> {
         self.mir_program
             .packages
             .values()
             .find_map(|package| package.adt_defs.get(def_id).cloned())
+    }
+
+    /// A concrete struct/enum instantiation's own field types, by
+    /// `(DefId, generic args)` — read straight off `mir::MirPackage::
+    /// full_layouts` (this package's own first, then every other loaded
+    /// package's, same search order as `lookup_adt_def`), instead of a
+    /// private copy of the same map handed to this generator up front.
+    fn lookup_full_layout(&self, key: &(mir::DefId, Vec<mir::Ty>)) -> Option<Vec<mir::Ty>> {
+        self.mir_program
+            .packages
+            .values()
+            .find_map(|package| package.full_layouts.get(key).cloned())
+    }
+
+    /// Byte size for an opaque enum-payload-slot placeholder, by its own
+    /// synthetic variant name — same idea as `lookup_full_layout`, off
+    /// `mir::MirPackage::opaque_payload_sizes`.
+    fn lookup_opaque_payload_size(&self, name: &str) -> Option<u64> {
+        self.mir_program
+            .packages
+            .values()
+            .find_map(|package| package.opaque_payload_sizes.get(name).copied())
     }
 
     fn resolve_global_symbol(&self, path: &mir::Path) -> lir::Name {
@@ -308,7 +306,17 @@ impl MirToLirLowerer {
     /// `transform_items` a driver loop can call with just the `DefId` it
     /// wants lowered, no separate unit/bodies fetch of its own. A `DefId`
     /// with no unit (nothing lowered for it, or already consumed) lowers to
-    /// no blobs, not an error.
+    /// no blobs, not an error. Deliberately doesn't go through
+    /// `transform_items`: that predeclares every function in `unit` up
+    /// front (`prepare_program`), which for the real, per-`DefId` driver
+    /// path this serves is *already* redundant — `mir::MirPackage::
+    /// insert_unit` records this exact unit's own function signature into
+    /// `sigs` the moment it's stored, before this ever runs, and the lazy
+    /// callee-signature fallback (`transform_operand`'s `FnDef` arm)
+    /// already reads straight off `sigs` on first reference. Only the
+    /// legacy whole-module `transform`/`transform_items` path (test-only,
+    /// no shared `mir_program` to fall back to at all) still needs the
+    /// eager sweep.
     pub fn transform_unit(&mut self, def_id: mir::DefId) -> Result<Vec<lir::LirBlob>> {
         let Some(unit) = self
             .mir_program
@@ -318,7 +326,10 @@ impl MirToLirLowerer {
         else {
             return Ok(Vec::new());
         };
-        self.transform_items(unit)
+        unit.items
+            .into_iter()
+            .map(|item| self.transform_item(item, &unit.bodies))
+            .collect()
     }
 
     pub fn transform_items(&mut self, mir_program: mir::MirCodeUnit) -> Result<Vec<lir::LirBlob>> {
@@ -335,9 +346,11 @@ impl MirToLirLowerer {
         let mut lir_program = lir::LirBlob::new(self.data_layout.clone());
         self.prepare_program(&mir_program);
         for item in mir_program.items {
-            lir_program
-                .extend(self.transform_item(item, &mir_program.bodies)?)
-                .map_err(|error| fp_core::error::Error::from(error.to_string()))?;
+            let mut item_blob = self.transform_item(item, &mir_program.bodies)?;
+            lir_program.functions.append(&mut item_blob.functions);
+            lir_program.globals.append(&mut item_blob.globals);
+            lir_program.type_definitions.append(&mut item_blob.type_definitions);
+            lir_program.queries.append(&mut item_blob.queries);
         }
         Ok(lir_program)
     }
@@ -426,7 +439,9 @@ impl MirToLirLowerer {
                     .struct_layouts
                     .borrow()
                     .contains_key(&(adt.did.clone(), substs_types.clone()))
-                    || self.full_layouts.contains_key(&(adt.did.clone(), substs_types))
+                    || self
+                        .lookup_full_layout(&(adt.did.clone(), substs_types))
+                        .is_some()
                 {
                     return false;
                 }
@@ -6519,9 +6534,11 @@ impl MirToLirLowerer {
                 if adt
                     .variants
                     .first()
-                    .is_some_and(|variant| self.opaque_payload_sizes.contains_key(variant.ident.as_str())) =>
+                    .is_some_and(|variant| self.lookup_opaque_payload_size(variant.ident.as_str()).is_some()) =>
             {
-                let size = self.opaque_payload_sizes[adt.variants[0].ident.as_str()];
+                let size = self
+                    .lookup_opaque_payload_size(adt.variants[0].ident.as_str())
+                    .expect("checked by this arm's own guard");
                 lir::LirType::Array(Box::new(lir::LirType::I8), size)
             }
             TyKind::Adt(adt, substs)
@@ -6554,7 +6571,7 @@ impl MirToLirLowerer {
                 // `(DefId, substs)`, like `struct_layouts` above) — when
                 // this exact instantiation has already been computed
                 // elsewhere, reuse it directly.
-                if let Some(field_tys) = self.full_layouts.get(&key) {
+                if let Some(field_tys) = self.lookup_full_layout(&key) {
                     // Mirror the cache-miss guard below: a cached entry can
                     // only be poisoned this way if it was produced by a
                     // no-context fallback that deliberately manufactures

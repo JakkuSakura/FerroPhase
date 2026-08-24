@@ -166,56 +166,46 @@ impl CompilerState {
         self.mir_program.clone()
     }
 
-    /// Folds `struct_fields`/`adt_defs` produced while lowering
-    /// `package_id`'s HIR into its `mir::MirPackage` — the per-package
-    /// tables `MirToLirLowerer` reads alongside the package's lowered
-    /// units.
-    pub fn extend_mir_package(
-        &mut self,
-        package_id: &PackageId,
-        struct_fields: impl IntoIterator<Item = (mir::DefId, Vec<mir::Ty>)>,
-        adt_defs: impl IntoIterator<Item = (hir::DefId, mir::ty::AdtDef)>,
-    ) {
-        let package = Rc::make_mut(&mut self.mir_program).package_mut(package_id);
-        package.extend_struct_fields(struct_fields);
-        package.extend_adt_defs(adt_defs);
+    /// `package_id`'s own `mir::MirPackage`, mutably — callers (`CompilerDriver`,
+    /// once per package after HIR->MIR lowering) write `full_layouts`/
+    /// `opaque_payload_sizes`/`adt_defs` onto it directly via its own
+    /// `extend_*` methods instead of going through a dedicated wrapper here.
+    pub fn mir_package_mut(&mut self, package_id: &PackageId) -> &mut mir::MirPackage {
+        Rc::make_mut(&mut self.mir_program).package_mut(package_id)
     }
 
-    /// Resets `package_id`'s LIR back to empty — used when re-lowering a
-    /// whole package after a comptime value resolves
-    /// (`CompilerDriver::relower_cached_lir_units`), since
-    /// `LirBlob::extend` errors on a data-layout mismatch rather than
-    /// silently overwriting the previous lowering, and appending onto a
-    /// stale blob would just duplicate everything already in it.
-    pub fn reset_lir_package(&mut self, package_id: &PackageId) {
-        let data_layout = self.data_layout.clone();
-        Rc::make_mut(&mut self.lir_program)
-            .packages
-            .insert(package_id.clone(), lir::LirPackage::new(data_layout));
-    }
-
-    /// Merges `blob` into `package_id`'s own `LirBlob` — the only way
-    /// `lir_program` is ever written, mirroring `insert_mir_unit`.
-    pub fn insert_lir_blob_for_package(
-        &mut self,
-        package_id: &PackageId,
-        blob: lir::LirBlob,
-    ) -> Result<(), CompilerDriverError> {
+    /// Pushes `blob` onto `package_id`'s own list of blobs — the only way
+    /// `lir_program` is ever written, mirroring `insert_mir_unit`. Never
+    /// merged or reset first: a package re-lowered after a comptime value
+    /// resolves (`CompilerDriver::relower_cached_lir_units`) just ends up
+    /// with another entry, and a lookup that cares about the latest one
+    /// (`LirProgram::find_function`/`find_global`/`find_function_by_def_id`)
+    /// searches from the end (see `lir::LirPackage`'s own doc comment).
+    pub fn insert_lir_blob_for_package(&mut self, package_id: &PackageId, blob: lir::LirBlob) {
         let data_layout = self.data_layout.clone();
         Rc::make_mut(&mut self.lir_program)
             .package_mut(package_id, &data_layout)
-            .blob
-            .extend(blob)
-            .map_err(|error| CompilerDriverError::Core(error.to_string().into()))
+            .blobs
+            .push(blob);
     }
 
-    /// `package_id`'s own `lir::LirBlob`. Empty (not an error) if the
+    /// `package_id`'s own LIR, every one of its blobs (see `lir::LirPackage`'s
+    /// own doc comment) flattened into one. Empty (not an error) if the
     /// package hasn't produced any LIR yet.
     pub fn lir_blob(&self, package_id: &PackageId) -> lir::LirBlob {
-        self.lir_program
-            .package(package_id)
-            .map(|package| package.blob.clone())
-            .unwrap_or_else(|| lir::LirBlob::new(self.data_layout.clone()))
+        let Some(package) = self.lir_program.package(package_id) else {
+            return lir::LirBlob::new(self.data_layout.clone());
+        };
+        let mut combined = lir::LirBlob::new(package.data_layout.clone());
+        for blob in &package.blobs {
+            combined.functions.extend(blob.functions.iter().cloned());
+            combined.globals.extend(blob.globals.iter().cloned());
+            combined
+                .type_definitions
+                .extend(blob.type_definitions.iter().cloned());
+            combined.queries.extend(blob.queries.iter().cloned());
+        }
+        combined
     }
 
     /// The whole session's `lir::LirProgram` — used by callers (`fp-cli`'s
@@ -258,30 +248,6 @@ impl CompilerState {
     /// actually changed (the rename) needs its own storage.
     pub fn insert_runtime_program(&mut self, lir_path: lir::LirPath, unit: lir::LirCodeUnit) {
         self.runtime_programs.insert(lir_path, unit);
-    }
-
-    /// Assembles the full, executable `LirBlob` for a selected entrypoint:
-    /// `package_id`'s own flattened LIR (`lir_blob`), with `def_id`'s
-    /// original (mangled-named) function swapped out for the one renamed
-    /// `LirCodeUnit` `select_entrypoint` recorded under `lir_path`.
-    pub fn runtime_blob(
-        &self,
-        package_id: &PackageId,
-        lir_path: &lir::LirPath,
-        def_id: hir::DefId,
-    ) -> Result<lir::LirBlob, CompilerDriverError> {
-        let unit = self.runtime_programs.get(lir_path).ok_or_else(|| {
-            CompilerDriverError::MissingLir(format!("{lir_path:?}"))
-        })?;
-        let lir::LirCodeUnitKind::Function(renamed) = &unit.kind else {
-            return Err(CompilerDriverError::Interpreter(
-                "runtime entrypoint unit is not a function".to_string(),
-            ));
-        };
-        let mut blob = self.lir_blob(package_id);
-        blob.functions.retain(|function| function.def_id != Some(def_id.clone()));
-        blob.functions.push(renamed.clone());
-        Ok(blob)
     }
 
     pub fn insert_runtime_entrypoint(&mut self, lir_path: lir::LirPath, def_id: hir::DefId) {
