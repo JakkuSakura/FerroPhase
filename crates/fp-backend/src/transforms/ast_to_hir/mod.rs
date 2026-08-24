@@ -606,6 +606,31 @@ impl AstToHirLowerer {
     fn symbol_export_marker(&self, visibility: &ast::Visibility) -> hir::SymbolExport {
         if self.should_export(visibility) {
             hir::SymbolExport::Public
+        } else if matches!(visibility, ast::Visibility::Crate) {
+            // `pub(crate)` is visible to the *whole crate*, not just this
+            // item's own declaring module and its descendants (what a
+            // plain `Scoped(self.module_path)` means) — without this, a
+            // `pub(crate)` item declared in one module (e.g. real
+            // vendored std's `core::ops::index_range::IndexRange`,
+            // re-exported as `core::ops::IndexRange`) is invisible to
+            // every unrelated module elsewhere in the same crate that
+            // legitimately imports it (`core::array::iter::iter_inner`'s
+            // `use crate::ops::IndexRange;`), a real resolution failure
+            // this crate's own `SymbolExport::can_access`'s descendant-of
+            // check would otherwise silently produce. Scope to just the
+            // first module-path segment — real vendored std's one
+            // exception (bundling `core`/`alloc`/`std` as three separate
+            // real crates under one FerroPhase package) already uses
+            // this same single-segment convention as its own crate-root
+            // boundary elsewhere (`register_import_binding`'s `roots`).
+            hir::SymbolExport::Scoped(
+                self.module_path
+                    .segments
+                    .first()
+                    .cloned()
+                    .into_iter()
+                    .collect(),
+            )
         } else {
             hir::SymbolExport::Scoped(self.module_path.segments.clone())
         }
