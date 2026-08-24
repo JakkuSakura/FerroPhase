@@ -1465,8 +1465,20 @@ impl HirTypeChecker {
                         // reported elsewhere), so still fall through to
                         // the error in that case.
                         if let Some(expected) = &self.expected_expr_type {
-                            if matches!(&expected.kind, TyKind::Array(_, _) | TyKind::Slice(_)) {
-                                return Ok(expected.clone());
+                            // `&[T]`/`&[T; N]` (a reference to the
+                            // array/slice, not the bare shape itself) is
+                            // by far the more common expectation in
+                            // practice — an owned `[]` almost never
+                            // appears where a bare `Array`/`Slice` value
+                            // type is expected, but constantly appears
+                            // where a function parameter expects a
+                            // reference to one.
+                            let unwrapped = match &expected.kind {
+                                TyKind::Ref(_, inner, _) => inner.as_ref(),
+                                _ => expected,
+                            };
+                            if matches!(&unwrapped.kind, TyKind::Array(_, _) | TyKind::Slice(_)) {
+                                return Ok(unwrapped.clone());
                             }
                         }
                         return Ok(self.error_ty("empty array has no inferable element type"));
