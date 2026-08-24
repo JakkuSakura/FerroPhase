@@ -24,6 +24,13 @@ pub struct MirPackage {
     /// partitioned instead of one flat blob. Use `items()`/`bodies()` for a
     /// whole-package view.
     pub units: HashMap<DefId, MirCodeUnit>,
+    /// Runtime-support content with no owning `DefId` at all — currently
+    /// just the synthesized stub functions `HirToMirLowerer::append_runtime_stubs`
+    /// produces for whichever runtime support functions got referenced
+    /// during lowering (e.g. `fp_panic`). Deliberately separate from
+    /// `units`: `MirCodeUnit` is keyed by the `DefId` that produced it (see
+    /// its own doc comment), and this content has no such owner.
+    pub runtime_support: MirCodeUnit,
     /// Every concrete struct/enum instantiation's own field types, keyed by
     /// `(DefId, generic args)` since two instantiations of the same generic
     /// ADT need different field lists — computed once during HIR->MIR
@@ -200,6 +207,8 @@ impl MirPackage {
     /// lowering instance's private one).
     pub fn extend_from(&mut self, other: MirPackage) {
         self.units.extend(other.units);
+        self.runtime_support.items.extend(other.runtime_support.items);
+        self.runtime_support.bodies.extend(other.runtime_support.bodies);
         self.full_layouts.extend(other.full_layouts);
         self.opaque_payload_sizes.extend(other.opaque_payload_sizes);
         self.adt_defs.extend(other.adt_defs);

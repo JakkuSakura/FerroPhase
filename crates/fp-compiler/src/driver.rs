@@ -532,12 +532,15 @@ impl CompilerDriver {
             }
             Self::lower_package_to_mir(&state, &current_package_id, &mut lowering, item.def_id.clone()).await?;
         }
-        let sentinel = hir::DefId::new(hir_package_id.clone(), u32::MAX);
-        let mut leftover = lowering.take_unit(sentinel.clone());
-        lowering.append_runtime_stubs(&mut leftover);
-        if !leftover.items.is_empty() || !leftover.bodies.is_empty() {
-            lowering.walk_program_types_for_layouts(&leftover);
-            state.borrow_mut().insert_mir_unit(&current_package_id, sentinel, leftover);
+        lowering.append_runtime_stubs();
+        let runtime_support = state
+            .borrow_mut()
+            .mir_package_rc(&current_package_id)
+            .borrow()
+            .runtime_support
+            .clone();
+        if !runtime_support.items.is_empty() || !runtime_support.bodies.is_empty() {
+            lowering.walk_program_types_for_layouts(&runtime_support);
         }
         let (diagnostics, had_errors) = lowering.take_diagnostics();
         if had_errors {
@@ -572,6 +575,7 @@ impl CompilerDriver {
         for def_id in def_ids {
             Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id).await?;
         }
+        Self::lower_runtime_support_to_lir(&state, &current_package_id, &mut lir_gen).await?;
         Ok(())
     }
 
@@ -681,12 +685,15 @@ impl CompilerDriver {
                 }
                 Self::lower_package_to_mir(&state, &current_package_id, &mut lowering, item.def_id.clone()).await?;
             }
-            let sentinel = hir::DefId::new(hir_package_id.clone(), u32::MAX);
-            let mut leftover = lowering.take_unit(sentinel.clone());
-            lowering.append_runtime_stubs(&mut leftover);
-            if !leftover.items.is_empty() || !leftover.bodies.is_empty() {
-                lowering.walk_program_types_for_layouts(&leftover);
-                state.borrow_mut().insert_mir_unit(&current_package_id, sentinel, leftover);
+            lowering.append_runtime_stubs();
+            let runtime_support = state
+                .borrow_mut()
+                .mir_package_rc(&current_package_id)
+                .borrow()
+                .runtime_support
+                .clone();
+            if !runtime_support.items.is_empty() || !runtime_support.bodies.is_empty() {
+                lowering.walk_program_types_for_layouts(&runtime_support);
             }
             let (diagnostics, had_errors) = lowering.take_diagnostics();
             if had_errors {
@@ -729,6 +736,7 @@ impl CompilerDriver {
             for def_id in def_ids {
                 Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id).await?;
             }
+            Self::lower_runtime_support_to_lir(&state, &current_package_id, &mut lir_gen).await?;
             Ok(())
         })
         .await
@@ -935,7 +943,7 @@ impl CompilerDriver {
                 format!("HIR-to-MIR lowering failed: {error}; diagnostics: {details}")
             }));
         }
-        let unit = lowering.take_unit(def_id.clone());
+        let unit = lowering.take_unit();
         // Run *before* the diagnostics check below — `walk_program_types_for_layouts`
         // can itself report errors (e.g. an unregistered ADT layout), and
         // those must not be silently dropped when `lowering` goes out of
@@ -960,6 +968,36 @@ impl CompilerDriver {
         let blobs = lir_gen.transform_unit(def_id.clone()).map_err(|error| {
             CompilerDriverError::InternalCompilerError(format!(
                 "MIR-to-LIR lowering failed for {def_id}: {error}"
+            ))
+        })?;
+        for blob in blobs {
+            state.borrow_mut().insert_lir_blob_for_package(package_id, blob);
+        }
+        Ok(())
+    }
+
+    /// `runtime_support`'s counterpart to `lower_package_to_lir_with` — it
+    /// has no owning `DefId` at all (see `MirPackage::runtime_support`'s
+    /// own doc comment), so it's lowered once via `transform_items` (which
+    /// takes an owned `MirCodeUnit` directly, no `DefId` lookup) rather
+    /// than through `transform_unit`'s per-`DefId` path.
+    async fn lower_runtime_support_to_lir(
+        state: &Rc<RefCell<CompilerState>>,
+        package_id: &PackageId,
+        lir_gen: &mut MirToLirLowerer,
+    ) -> Result<(), CompilerDriverError> {
+        let runtime_support = state
+            .borrow()
+            .mir_program()
+            .package(package_id)
+            .map(|package| package.borrow().runtime_support.clone())
+            .unwrap_or_default();
+        if runtime_support.items.is_empty() {
+            return Ok(());
+        }
+        let blobs = lir_gen.transform_items(runtime_support).map_err(|error| {
+            CompilerDriverError::InternalCompilerError(format!(
+                "MIR-to-LIR lowering failed for runtime-support stubs: {error}"
             ))
         })?;
         for blob in blobs {

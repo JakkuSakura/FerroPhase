@@ -1014,7 +1014,17 @@ impl HirToMirLowerer {
         }
 
         self.flush_extra_items(&mut mir_program);
-        self.append_runtime_stubs(&mut mir_program);
+        self.append_runtime_stubs();
+        // `lower_program`'s own contract (unlike the driver's per-`DefId`
+        // decomposition) is "the whole compiled program in one unit" — so,
+        // unlike the driver, fold `runtime_support`'s content (which
+        // `append_runtime_stubs` just wrote onto the shared package,
+        // having no `DefId` of its own to be returned separately under)
+        // straight into the unit this returns instead of leaving it for a
+        // caller to fetch off `mir_package` on the side.
+        let runtime_support = std::mem::take(&mut self.mir_package.borrow_mut().runtime_support);
+        mir_program.items.extend(runtime_support.items);
+        mir_program.bodies.extend(runtime_support.bodies);
 
         Ok(mir_program)
     }
@@ -1032,7 +1042,13 @@ impl HirToMirLowerer {
         mir_item
     }
 
-    pub fn append_runtime_stubs(&mut self, program: &mut mir::MirCodeUnit) {
+    /// Synthesizes a stub `mir::Item`/body for every runtime support
+    /// function actually referenced during lowering (`synthetic_runtime_functions`)
+    /// straight onto `mir_package.runtime_support` — the shared package's
+    /// own dedicated home for content with no owning `DefId` at all (see
+    /// its doc comment), written in place rather than handed back as an
+    /// owned `MirCodeUnit` for a caller to store somewhere itself.
+    pub fn append_runtime_stubs(&mut self) {
         let span = Span::new(0, 0, 0);
         for name in self.synthetic_runtime_functions.clone() {
             // `printf` is only ever called through the dedicated
@@ -1042,10 +1058,16 @@ impl HirToMirLowerer {
             if self.is_extern_runtime_function(&name) {
                 continue;
             }
-            let exists = program.items.iter().any(|item| match &item.kind {
-                mir::ItemKind::Function(func) => func.name.as_str() == name,
-                _ => false,
-            });
+            let exists = self
+                .mir_package
+                .borrow()
+                .runtime_support
+                .items
+                .iter()
+                .any(|item| match &item.kind {
+                    mir::ItemKind::Function(func) => func.name.as_str() == name,
+                    _ => false,
+                });
             if exists {
                 continue;
             }
@@ -1057,7 +1079,6 @@ impl HirToMirLowerer {
             let body = self.stub_body(&sig, span);
             let body_id = mir::BodyId::new(self.next_body_id);
             self.next_body_id += 1;
-            program.bodies.insert(body_id, body);
 
             // `fp_panic` *is* called as a normal `ConstantKind::Fn` operand
             // (from `assert!`/`unwrap`/etc. lowering), so MIR→LIR's
@@ -1087,10 +1108,13 @@ impl HirToMirLowerer {
                 attrs: Vec::new(),
             };
 
-            program.items.push(mir::Item {
+            let mut mir_package = self.mir_package.borrow_mut();
+            mir_package.runtime_support.bodies.insert(body_id, body);
+            mir_package.runtime_support.items.push(mir::Item {
                 mir_id: self.next_mir_id,
                 kind: mir::ItemKind::Function(mir_function),
             });
+            drop(mir_package);
             self.next_mir_id += 1;
         }
     }
@@ -1286,17 +1310,13 @@ impl HirToMirLowerer {
     }
 
     /// Drains everything pushed to `extra_items`/`extra_bodies` since the
-    /// last `take_unit` call into one `MirCodeUnit` — call
-    /// right after `ensure_item_lowered(def_id)` returns, before the next
+    /// last `take_unit` call into one `MirCodeUnit` — call right after
+    /// `ensure_item_lowered(def_id)` returns, before the next
     /// `ensure_item_lowered` call for a different `DefId`, so the drained
     /// content is exactly what that one call produced (usually its own item
     /// plus one body, occasionally more when it pulled in something it
-    /// directly references). `def_id` itself isn't read here — it's the
-    /// caller's own key into wherever it stores the resulting unit — but is
-    /// still a required parameter so every call site states which `DefId`
-    /// it's collecting a unit for.
-    pub fn take_unit(&mut self, def_id: hir::DefId) -> mir::MirCodeUnit {
-        let _ = def_id;
+    /// directly references).
+    pub fn take_unit(&mut self) -> mir::MirCodeUnit {
         mir::MirCodeUnit {
             items: std::mem::take(&mut self.extra_items),
             bodies: self.extra_bodies.drain(..).collect(),
