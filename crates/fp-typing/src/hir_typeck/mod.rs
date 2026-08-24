@@ -2394,6 +2394,34 @@ impl HirTypeChecker {
                     })
                     .collect(),
             ),
+            // A bare reference to a *trait's* own `DefId` in type position
+            // (`&Error`/`&(dyn Error + 'static)` flattened down to just
+            // `Error` somewhere along the way, or a trait bound resolved
+            // straight to its `Res::Def` rather than going through the
+            // `dyn`/`impl Trait` multi-bound-approximation machinery this
+            // checker already has elsewhere) — HIR has no real trait-
+            // object type to build here, so approximate the same way
+            // `assoc_type_from_generic_param_bounds`/the `X::Residual::
+            // TryType` special case elsewhere in this file already do:
+            // a nominal placeholder keyed by the trait's own name, so
+            // every reference to it unifies consistently rather than
+            // hard-erroring "not a type" (which cascades into unrelated
+            // `HIR type mismatch`/`method not found` noise wherever a
+            // std trait like `Error` is referenced this way — the
+            // dominant real-corpus case).
+            hir::ItemKind::Trait(_) => {
+                let name = path
+                    .segments
+                    .last()
+                    .map(|segment| segment.name.clone())
+                    .unwrap_or_else(|| hir::Symbol::new("dyn"));
+                return Ok(Ty {
+                    kind: TyKind::Param(ty::ParamTy {
+                        index: u32::MAX,
+                        name,
+                    }),
+                });
+            }
             _ => return Ok(self.error_ty(format!("definition `{def_id}` is not a type"))),
         };
         let args = match path
