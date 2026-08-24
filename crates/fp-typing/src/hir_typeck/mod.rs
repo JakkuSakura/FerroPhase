@@ -2276,6 +2276,26 @@ impl HirTypeChecker {
                         return Ok(ty);
                     }
                 }
+                // `<bool as Not>::Output` flattens the same way to `bool::
+                // Output`, but `bool` also happens to name a *real* module
+                // at the crate root (`core::bool`, a handful of small
+                // bool-related helpers) — `ast_to_hir`'s absolute-crate-
+                // root-module resolution (used generally so a bare
+                // top-level module name resolves without an explicit
+                // `use`) doesn't know this position means the primitive,
+                // not the module, so it further expands the already-
+                // flattened path to `core::bool::Output` before this ever
+                // reaches type-checking. Retry treating the *middle*
+                // segment as the primitive base in exactly that 3-segment
+                // shape, rather than teaching `ast_to_hir` to special-case
+                // one primitive's own unlucky name collision.
+                if let [_first, middle, last] = path.segments.as_slice() {
+                    if let Some(base_ty) = primitive_path_ty(middle.name.as_str()) {
+                        if let Some(ty) = self.assoc_type_for_self(&base_ty, &last.name).await? {
+                            return Ok(ty);
+                        }
+                    }
+                }
                 // `T::AssocName` where `T` still names an in-scope generic
                 // parameter (real closures' `F::Output` for `F: FnOnce()
                 // -> R`, or `I::Item` for `I: Iterator<Item = U>`) — no
