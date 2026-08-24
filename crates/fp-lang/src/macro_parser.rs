@@ -424,6 +424,17 @@ fn consume_fragment(
             Some(MacroTokenTree::Group(g)) if g.delimiter == MacroDelimiter::Brace => Some(1),
             _ => None,
         },
+        // A lifetime (`'a`) tokenizes as a single ident-like token whose
+        // text starts with `'` (see `parse_receiver`'s identical check) —
+        // not alphabetic, so it fails `is_ident_like_text` and, being no
+        // valid expression on its own, also fails the generic
+        // expr-parse fallback below. Without this arm, any macro rule
+        // using `$lifetime:lifetime` (real vendored std's own
+        // `impl_fn_for_zst!`, among others) never matches at all.
+        "lifetime" => match invocation.get(pos) {
+            Some(MacroTokenTree::Token(t)) if t.text.starts_with('\'') => Some(1),
+            _ => None,
+        },
         // Real Rust grammar for this fragment specifier is `-?literal` —
         // a negative numeric literal (`Min = -128,`, common in exactly
         // this shape of const-table macro) tokenizes as a separate `-`
