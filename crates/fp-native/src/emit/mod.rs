@@ -406,7 +406,6 @@ fn default_lir_program() -> LirBlob {
         functions: vec![func],
         globals: Vec::new(),
         type_definitions: Vec::new(),
-        comptime_entries: Vec::new(),
         queries: Vec::new(),
     }
 }

@@ -706,7 +706,6 @@ mod tests {
             functions: vec![func],
             globals: Vec::new(),
             type_definitions: Vec::new(),
-            comptime_entries: Vec::new(),
             queries: Vec::new(),
         }
     }
@@ -814,7 +813,6 @@ mod tests {
             functions: vec![callee, caller],
             globals: Vec::new(),
             type_definitions: Vec::new(),
-            comptime_entries: Vec::new(),
             queries: Vec::new(),
         }
     }

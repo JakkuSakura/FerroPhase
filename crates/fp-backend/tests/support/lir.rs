@@ -14,7 +14,6 @@ pub fn empty_program() -> LirBlob {
         functions: Vec::new(),
         globals: Vec::new(),
         type_definitions: Vec::new(),
-        comptime_entries: Vec::new(),
         queries: Vec::new(),
     }
 }

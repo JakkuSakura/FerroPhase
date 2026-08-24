@@ -1,5 +1,5 @@
 use fp_backend::transformations::{
-    AstToHirLowerer, HirLoweringConfig, MirToLirLowerer, LirToMir, HirToMirLowerer, MirToHir,
+    AstToHirLowerer, HirLoweringConfig, MirToLirLowerer, HirToMirLowerer,
 };
 use fp_core::ast::{Expr, ExprKind, Item, ItemKind, Value};
 use fp_core::hir;
@@ -151,10 +151,6 @@ impl CompilerDriver {
             .borrow()
             .runtime_blob(&lir_path.package_id, lir_path, entrypoint.clone())?;
         self.interpreter = LirInterpreter::new();
-        let resolved = self.collect_resolved_const_values();
-        self.interpreter
-            .inject_globals(&resolved)
-            .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         let value = self.interpreter.run_entrypoint_with_package(
             &lir,
             entrypoint,
@@ -369,21 +365,6 @@ impl CompilerDriver {
                     // below — every target needs the resolved value, not just the block's
                     // type, so both pipeline modes handle a comptime failure identically.
                     self.compile_items_to_lir_units(&package).await?;
-                    let comptime_entries = self.state.borrow().lir_blob(package_id).comptime_entries;
-                    if !comptime_entries.is_empty() {
-                        let hir_package_id = package.borrow().hir_package_id.clone();
-                        // Both pipeline modes need the resolved value
-                        // relowered back into a real `LirGlobal` (see this
-                        // arm's own doc comment above) — a failed comptime
-                        // block is a genuine compile error in either mode,
-                        // not something to downgrade to a warning in one
-                        // and not the other.
-                        let block_values = self.evaluate_comptime_lir(package_id, &QualifiedPath::new(Vec::new())).await?;
-                        if !block_values.is_empty() {
-                            self.apply_resolved_comptime_block_values(hir_package_id.clone(), &block_values)?;
-                            self.relower_cached_lir_units(package_id, hir_package_id).await?;
-                        }
-                    }
                 }
                 Ok(package)
             }
@@ -855,9 +836,6 @@ impl CompilerDriver {
             .ok_or_else(|| CompilerDriverError::MissingHir(format!("{:?}", request.package_id)))?;
 
         let mut lowering = HirToMirLowerer::new(hir_program.clone(), request.package_id.clone());
-        for (key, value) in state.borrow().resolved_const_values() {
-            lowering.seed_resolved_const(key.to_string(), value.clone());
-        }
         let mir_module = match lowering.transform_comptime_request(hir_program, current_package, request.def_id.clone()) {
             Ok(module) => module,
             Err(error) => {
@@ -883,15 +861,7 @@ impl CompilerDriver {
             lowering.all_adt_field_tys().into_iter().collect();
         let full_layouts = Self::collect_full_layouts(&lowering);
         let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
-        let resolved_const_values = lowering.take_resolved_const_values();
-        let resolved_const_defs = lowering.take_resolved_const_defs();
-        state.borrow_mut().extend_mir_package(
-            &package_id,
-            struct_layouts,
-            adt_defs,
-            resolved_const_values,
-            resolved_const_defs,
-        );
+        state.borrow_mut().extend_mir_package(&package_id, struct_layouts, adt_defs);
 
         // Store this request's synthetic unit keyed by its own `DefId`,
         // into the shared `CompilerState` — a normal, cached compile, not
@@ -944,9 +914,6 @@ impl CompilerDriver {
         let hir = state.borrow().hir(hir_package_id.clone())?;
         let program_snapshot = Rc::new(state.borrow().hir_program().clone());
         let mut lowering = HirToMirLowerer::new(program_snapshot, hir_package_id.clone());
-        for (key, value) in state.borrow().resolved_const_values() {
-            lowering.seed_resolved_const(key.to_string(), value.clone());
-        }
         // Seed once, then lower every top-level item on demand by its own
         // `DefId` — the same `ensure_item_lowered` primitive a single
         // comptime request's item-scoped lowering already goes through,
@@ -1007,15 +974,7 @@ impl CompilerDriver {
             lowering.all_adt_field_tys().into_iter().collect();
         let full_layouts = Self::collect_full_layouts(&lowering);
         let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
-        let resolved_const_values = lowering.take_resolved_const_values();
-        let resolved_const_defs = lowering.take_resolved_const_defs();
-        state.borrow_mut().extend_mir_package(
-            package_id,
-            struct_layouts,
-            adt_defs,
-            resolved_const_values,
-            resolved_const_defs,
-        );
+        state.borrow_mut().extend_mir_package(package_id, struct_layouts, adt_defs);
 
         // --- MIR -> LIR: per-`DefId`, lazy signature resolution, no
         // whole-program predeclare sweep (see `MirToLirLowerer::
@@ -1151,130 +1110,15 @@ impl CompilerDriver {
         package_id: &PackageId,
         module_path: &QualifiedPath,
     ) -> Result<HashMap<hir::DefId, Value>, CompilerDriverError> {
-        let comptime_entries = state.borrow().lir_blob(package_id).comptime_entries;
-
+        // Real comptime interpretation (running an `ExecutableConst`'s
+        // function through `LirInterpreter`) was ripped out along with
+        // `LirComptimeEntry`/`comptime_entries`/`MirPackage::
+        // resolved_const_values` — nothing resolves here anymore.
+        let _ = package_id;
         let value_id = ConstValueId::new(format!("const_value:{}", module_path.to_key()));
-        if comptime_entries.is_empty() {
-            // No comptime entry needed the real interpreter, but that
-            // doesn't mean nothing was computed for this package — a
-            // directly-foldable top-level const (e.g. `const X = 1 + 2 *
-            // 3;`, no `let` needed — see `HirToMirLowerer::lower_const`'s
-            // constant-folding fast path) resolves its value without ever
-            // becoming a comptime entry. Surface the last one the same way
-            // an interpreted entry's value already is (`insert_const_value`,
-            // keyed by this package's own id) instead of unconditionally
-            // substituting a unit placeholder that looks exactly like a
-            // real "this evaluates to nothing" result.
-            let mut last_value = None;
-            if let Some(mir_package) = state.borrow().mir_program().package(package_id) {
-                for key in mir_package.resolved_const_values.keys() {
-                    let Some(value) = mir_package
-                        .resolved_const(key)
-                        .and_then(MirToHir::constant_to_value)
-                    else {
-                        continue;
-                    };
-                    last_value = Some(value);
-                }
-            }
-            state
-                .borrow_mut()
-                .insert_const_value(value_id.clone(), last_value.unwrap_or_else(Value::unit));
-            return Ok(HashMap::new());
-        }
-        // Query each package's own LIR directly instead of cloning every
-        // artifact from every dependency into one throwaway combined
-        // workspace first — `run_function_named_in_workspace` accepts a
-        // chain and checks each in turn.
-        let mir_packages: Vec<mir::MirPackage> =
-            state.borrow().mir_program().packages.values().cloned().collect();
-        let lir_to_mir = LirToMir::new(mir_packages);
-        let lir_unit_tables: Vec<fp_core::lir::LirUnitTable> = state
-            .borrow()
-            .lir_program()
-            .packages
-            .values()
-            .map(|package| package.own_artifacts.clone())
-            .collect();
-        let workspaces: Vec<&fp_core::lir::LirUnitTable> = lir_unit_tables.iter().collect();
-
-        let mut interpreter = LirInterpreter::new();
-        let already_resolved = Self::resolved_const_values_snapshot(state);
-        interpreter
-            .inject_globals(&already_resolved)
-            .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
-
-        let mut count = 0usize;
-        let mut last = Value::unit();
-        let mut block_values: HashMap<hir::DefId, Value> = HashMap::new();
-        for entry in &comptime_entries {
-            let result = interpreter.run_function_named_in_workspace(
-                &workspaces,
-                package_id,
-                &entry.function,
-            );
-            let mut value =
-                result.map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
-            let entry_lir_ty = workspaces
-                .iter()
-                .find_map(|ws| ws.find_function(package_id.clone(), &entry.function))
-                .map(|function| function.signature.return_type.clone())
-                .ok_or_else(|| {
-                    CompilerDriverError::UnsupportedWork(format!(
-                        "missing LIR result type for comptime entry {}",
-                        entry.function
-                    ))
-                })?;
-            value = interpreter
-                .read_typed_const_value(value, &entry_lir_ty)
-                .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
-            let constant = lir_to_mir.value_to_mir_constant(&value, &entry.ty).ok_or_else(|| {
-                CompilerDriverError::UnsupportedWork(format!(
-                    "unsupported comptime result for {}",
-                    entry.key
-                ))
-            })?;
-            state
-                .borrow_mut()
-                .insert_resolved_const_value(entry.key.clone(), constant);
-            if entry.const_block_hir_id.is_some() {
-                block_values.insert(entry.def_id.clone(), value.clone());
-            }
-            let mut newly_resolved = HashMap::new();
-            newly_resolved.insert(entry.key.clone(), value.clone());
-            interpreter
-                .inject_globals(&newly_resolved)
-                .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
-            last = value;
-            count += 1;
-        }
-
-        // Store the final value for const evaluation purposes
-        let _ = count;
-        state.borrow_mut().insert_const_value(value_id.clone(), last);
-        Ok(block_values)
+        state.borrow_mut().insert_const_value(value_id, Value::unit());
+        Ok(HashMap::new())
     }
-
-    fn collect_resolved_const_values(&self) -> HashMap<String, Value> {
-        Self::resolved_const_values_snapshot(&self.state)
-    }
-
-    /// Same as `collect_resolved_const_values`, but against a bare
-    /// `Rc<RefCell<CompilerState>>` for compiler hooks that do not hold a
-    /// driver. Derives each name's `Value` from `CompilerState`'s own
-    /// MIR-level, string-keyed `resolved_const_values` (folded/interpreted
-    /// constants recorded during MIR lowering/comptime evaluation) rather
-    /// than a separate typing-owned cache.
-    fn resolved_const_values_snapshot(state: &Rc<RefCell<CompilerState>>) -> HashMap<String, Value> {
-        state
-            .borrow()
-            .resolved_const_values()
-            .filter_map(|(key, constant)| {
-                MirToHir::constant_to_value(constant).map(|value| (key.to_string(), value))
-            })
-            .collect()
-    }
-
 }
 
 /// The name an `ast::Item` is registered under during AST→HIR lowering

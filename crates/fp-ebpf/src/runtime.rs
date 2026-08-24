@@ -641,7 +641,6 @@ mod tests {
             globals: Vec::new(),
             type_definitions: Vec::new(),
             data_layout: layout(),
-            comptime_entries: Vec::new(),
             queries: Vec::new(),
         }
     }

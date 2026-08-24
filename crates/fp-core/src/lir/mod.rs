@@ -90,7 +90,6 @@ pub struct LirBlob {
     pub functions: Vec<LirFunction>,
     pub globals: Vec<LirGlobal>,
     pub type_definitions: Vec<LirTypeDefinition>,
-    pub comptime_entries: Vec<LirComptimeEntry>,
     pub queries: Vec<LirQuery>,
 }
 
@@ -134,7 +133,6 @@ pub enum LirCodeUnitKind {
     Function(LirFunction),
     Global(LirGlobal),
     TypeDefinition(LirTypeDefinition),
-    ComptimeEntry(LirComptimeEntry),
     Query(LirQuery),
 }
 
@@ -157,7 +155,6 @@ pub struct LirUnitTable {
     functions: HashMap<(crate::ast::package::PackageId, Name), usize>,
     globals: HashMap<(crate::ast::package::PackageId, Name), usize>,
     types: HashMap<(crate::ast::package::PackageId, Name), usize>,
-    comptime_entries: HashMap<(crate::ast::package::PackageId, Name), usize>,
 }
 
 impl LirUnitTable {
@@ -168,7 +165,6 @@ impl LirUnitTable {
             functions: HashMap::new(),
             globals: HashMap::new(),
             types: HashMap::new(),
-            comptime_entries: HashMap::new(),
         }
     }
 
@@ -185,9 +181,6 @@ impl LirUnitTable {
             LirCodeUnitKind::TypeDefinition(definition) => {
                 self.types.insert((key, definition.name.clone()), index)
             }
-            LirCodeUnitKind::ComptimeEntry(entry) => self
-                .comptime_entries
-                .insert((key, entry.function.clone()), index),
             LirCodeUnitKind::Query(query) => self
                 .types
                 .insert((key, Name::new(format!("query:{}", query.query_id))), index),
@@ -232,14 +225,6 @@ impl LirUnitTable {
                 package_id: package_id.clone(),
                 module_path: module_path.clone(),
                 kind: LirCodeUnitKind::TypeDefinition(ty),
-            })
-            .map_err(LirBlobError::Workspace)?;
-        }
-        for entry in program.comptime_entries {
-            self.add_artifact(LirCodeUnit {
-                package_id: package_id.clone(),
-                module_path: module_path.clone(),
-                kind: LirCodeUnitKind::ComptimeEntry(entry),
             })
             .map_err(LirBlobError::Workspace)?;
         }
@@ -301,19 +286,6 @@ impl LirUnitTable {
             })
     }
 
-    pub fn find_comptime_entry(
-        &self,
-        package_id: crate::ast::package::PackageId,
-        function: &Name,
-    ) -> Option<&LirComptimeEntry> {
-        self.comptime_entries
-            .get(&(package_id, function.clone()))
-            .and_then(|index| match &self.artifacts[*index].kind {
-                LirCodeUnitKind::ComptimeEntry(entry) => Some(entry),
-                _ => None,
-            })
-    }
-
     pub fn to_blob(&self) -> LirBlob {
         let mut program = LirBlob::new(self.data_layout.clone());
         for artifact in &self.artifacts {
@@ -321,9 +293,6 @@ impl LirUnitTable {
                 LirCodeUnitKind::Function(function) => program.functions.push(function.clone()),
                 LirCodeUnitKind::Global(global) => program.globals.push(global.clone()),
                 LirCodeUnitKind::TypeDefinition(ty) => program.type_definitions.push(ty.clone()),
-                LirCodeUnitKind::ComptimeEntry(entry) => {
-                    program.comptime_entries.push(entry.clone())
-                }
                 LirCodeUnitKind::Query(query) => program.queries.push(query.clone()),
             }
         }
@@ -398,26 +367,10 @@ fn artifact_name(kind: &LirCodeUnitKind) -> Name {
         LirCodeUnitKind::Function(function) => function.name.clone(),
         LirCodeUnitKind::Global(global) => global.name.clone(),
         LirCodeUnitKind::TypeDefinition(definition) => definition.name.clone(),
-        LirCodeUnitKind::ComptimeEntry(entry) => entry.function.clone(),
         LirCodeUnitKind::Query(query) => Name::new(format!("query:{}", query.query_id)),
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct LirComptimeEntry {
-    pub function: Name,
-    pub key: String,
-    pub ty: crate::mir::Ty,
-    /// When true, this entry represents a quote token stream whose items
-    /// must be extracted from the typed AST and stored in splice_results.
-    pub token_stream: bool,
-    /// See `mir::ExecutableConst::const_block_hir_id`'s doc comment —
-    /// carried through unchanged from MIR lowering.
-    pub const_block_hir_id: Option<crate::hir::HirId>,
-    /// See `mir::ExecutableConst::def_id`'s doc comment — carried through
-    /// unchanged from MIR lowering.
-    pub def_id: crate::hir::DefId,
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirQuery {
@@ -1021,7 +974,6 @@ impl LirBlob {
             functions: Vec::new(),
             globals: Vec::new(),
             type_definitions: Vec::new(),
-            comptime_entries: Vec::new(),
             queries: Vec::new(),
         }
     }
@@ -1041,7 +993,6 @@ impl LirBlob {
         self.functions.append(&mut other.functions);
         self.globals.append(&mut other.globals);
         self.type_definitions.append(&mut other.type_definitions);
-        self.comptime_entries.append(&mut other.comptime_entries);
         self.queries.append(&mut other.queries);
         Ok(())
     }

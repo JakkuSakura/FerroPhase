@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::{ty, Constant, DefId, Function, ItemKind, MirCodeUnit, MirModule, Ty};
+use super::{ty, DefId, Function, ItemKind, MirCodeUnit, MirModule, Ty};
 
 /// A package's MIR-level identity — the same `hir::PackageId` a `DefId`
 /// embeds, reused directly (not a separate namespace) since MIR items are
@@ -23,25 +23,6 @@ pub struct MirPackage {
     /// Struct field types keyed by `DefId`, computed during MIR lowering.
     pub struct_fields: HashMap<DefId, Vec<Ty>>,
     pub adt_defs: HashMap<crate::hir::DefId, ty::AdtDef>,
-    /// Top-level consts resolved by direct constant-folding during MIR
-    /// lowering (see `HirToMirLowerer::lower_const`'s fast path) — a
-    /// directly-foldable const (no `let`, no side effects requiring the
-    /// real interpreter) never becomes a comptime entry, so without this,
-    /// nothing would ever surface its value to a caller that only knows
-    /// how to ask "what did evaluating this package's comptime entries
-    /// produce" (e.g. `evaluate_comptime_lir`'s "no comptime entries at
-    /// all" case, which otherwise has nothing to fall back to but an
-    /// arbitrary placeholder).
-    pub resolved_const_values: HashMap<String, Constant>,
-    /// The originating `hir::DefId` of each `resolved_const_values` entry,
-    /// keyed by the same name — populated only at the entry's true origin
-    /// (`HirToMirLowerer::lower_const`'s fold fast path, which always has the
-    /// const item's own `DefId` in scope), not by `seed_resolved_const`'s
-    /// cross-pass reseeding (which only needs the value, not its identity).
-    /// Lets the driver record a folded const's value onto
-    /// `hir::HirPackage::const_values` (DefId-keyed) without re-deriving
-    /// identity from the name string.
-    pub resolved_const_defs: HashMap<String, DefId>,
     /// For a `const { .. }` block found incidentally while lowering some
     /// other item's body, maps that block's own synthetic comptime probe
     /// `DefId` (`mir::ExecutableConst::def_id`/`lir::LirComptimeEntry::
@@ -108,28 +89,7 @@ impl MirPackage {
         self.adt_defs.extend(entries);
     }
 
-    pub fn extend_resolved_const_values(&mut self, entries: impl IntoIterator<Item = (String, Constant)>) {
-        self.resolved_const_values.extend(entries);
-    }
-
-    pub fn extend_resolved_const_defs(&mut self, entries: impl IntoIterator<Item = (String, DefId)>) {
-        self.resolved_const_defs.extend(entries);
-    }
-
     pub fn extend_const_block_owners(&mut self, entries: impl IntoIterator<Item = (DefId, DefId)>) {
         self.const_block_owners.extend(entries);
-    }
-
-    /// A single folded const's value, by name — see `resolved_const_values`'s
-    /// doc comment. Read this in place off an already-borrowed package
-    /// rather than cloning the whole map.
-    pub fn resolved_const(&self, key: &str) -> Option<&Constant> {
-        self.resolved_const_values.get(key)
-    }
-
-    /// The originating `DefId` of a single folded const, by the same name
-    /// `resolved_const` uses — see `resolved_const_defs`'s doc comment.
-    pub fn resolved_const_def(&self, key: &str) -> Option<DefId> {
-        self.resolved_const_defs.get(key).cloned()
     }
 }

@@ -53,8 +53,6 @@ pub struct CompilerState {
     runtime_programs: std::collections::HashMap<lir::LirPath, lir::LirCodeUnit>,
     runtime_entrypoints: std::collections::HashMap<lir::LirPath, hir::DefId>,
     const_values: BTreeMap<ConstValueId, Value>,
-    /// MIR-level const values for HIR→MIR lowering seed.
-    resolved_const_values: BTreeMap<String, mir::Constant>,
     /// This package's comptime resolver, wired up by the driver
     /// (`make_comptime_resolver`) before `TypingShared` exists — a
     /// package's HIR isn't generated yet at that point, so there's nowhere
@@ -108,7 +106,6 @@ impl CompilerState {
             runtime_programs: std::collections::HashMap::new(),
             runtime_entrypoints: std::collections::HashMap::new(),
             const_values: BTreeMap::new(),
-            resolved_const_values: BTreeMap::new(),
             comptime_resolver: None,
             workspace,
             data_layout,
@@ -165,23 +162,19 @@ impl CompilerState {
         &self.mir_program
     }
 
-    /// Folds `struct_fields`/`adt_defs`/`resolved_const_values`/
-    /// `resolved_const_defs` produced while lowering `package_id`'s HIR into
-    /// its `mir::MirPackage` — the per-package tables `MirToLirLowerer`/
-    /// `evaluate_comptime_lir` read alongside the package's lowered units.
+    /// Folds `struct_fields`/`adt_defs` produced while lowering
+    /// `package_id`'s HIR into its `mir::MirPackage` — the per-package
+    /// tables `MirToLirLowerer` reads alongside the package's lowered
+    /// units.
     pub fn extend_mir_package(
         &mut self,
         package_id: &PackageId,
         struct_fields: impl IntoIterator<Item = (mir::DefId, Vec<mir::Ty>)>,
         adt_defs: impl IntoIterator<Item = (hir::DefId, mir::ty::AdtDef)>,
-        resolved_const_values: impl IntoIterator<Item = (String, mir::Constant)>,
-        resolved_const_defs: impl IntoIterator<Item = (String, mir::DefId)>,
     ) {
         let package = self.mir_program.package_mut(package_id);
         package.extend_struct_fields(struct_fields);
         package.extend_adt_defs(adt_defs);
-        package.extend_resolved_const_values(resolved_const_values);
-        package.extend_resolved_const_defs(resolved_const_defs);
     }
 
     /// Resets `package_id`'s LIR artifacts back to empty — used when
@@ -314,10 +307,6 @@ impl CompilerState {
         self.const_values.insert(value_id, value);
     }
 
-    pub fn insert_resolved_const_value(&mut self, key: impl Into<String>, value: mir::Constant) {
-        self.resolved_const_values.insert(key.into(), value);
-    }
-
     pub fn set_backend_capabilities(&mut self, capabilities: fp_core::capabilities::LanguageCapabilities) {
         self.backend_capabilities = capabilities;
     }
@@ -345,12 +334,6 @@ impl CompilerState {
         self.const_values
             .get(value_id)
             .ok_or_else(|| CompilerDriverError::MissingConstValue(value_id.clone()))
-    }
-
-    pub fn resolved_const_values(&self) -> impl Iterator<Item = (&str, &mir::Constant)> {
-        self.resolved_const_values
-            .iter()
-            .map(|(key, value)| (key.as_str(), value))
     }
 
     pub fn const_value_len(&self) -> usize {

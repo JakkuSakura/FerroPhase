@@ -50,7 +50,6 @@ fn sample_program() -> LirBlob {
             vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
         )
         .unwrap(),
-        comptime_entries: Vec::new(),
         queries: Vec::new(),
     }
 }
@@ -119,7 +118,6 @@ fn compare_program() -> LirBlob {
             vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
         )
         .unwrap(),
-        comptime_entries: Vec::new(),
         queries: Vec::new(),
     }
 }

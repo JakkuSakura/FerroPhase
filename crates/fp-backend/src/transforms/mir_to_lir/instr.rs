@@ -315,11 +315,11 @@ impl MirToLirLowerer {
             mir::ItemKind::ExecutableConst(konst) => {
                 let mir_func = mir::Function {
                     name: konst.function_name,
-                    def_id: None,
+                    def_id: Some(konst.def_id),
                     substs: Vec::new(),
                     sig: mir::FunctionSig {
                         inputs: Vec::new(),
-                        output: konst.ty.clone(),
+                        output: konst.ty,
                     },
                     body_id: konst.body_id,
                     abi: mir::ty::Abi::Rust,
@@ -327,16 +327,7 @@ impl MirToLirLowerer {
                     attrs: Vec::new(),
                 };
                 let lir_func = self.transform_function_with_bodies(mir_func, bodies)?;
-                let function_name = lir_func.name.clone();
                 lir_program.functions.push(lir_func);
-                lir_program.comptime_entries.push(lir::LirComptimeEntry {
-                    function: function_name,
-                    key: konst.key,
-                    ty: konst.ty,
-                    token_stream: false,
-                    const_block_hir_id: konst.const_block_hir_id,
-                    def_id: konst.def_id,
-                });
             }
             mir::ItemKind::Query(query) => {
                 lir_program.queries.push(lir::LirQuery {

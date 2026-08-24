@@ -2978,7 +2978,6 @@ mod tests {
             globals: vec![],
             type_definitions: vec![],
             queries: vec![],
-            comptime_entries: vec![],
         }
     }
 
@@ -3220,7 +3219,6 @@ mod tests {
             globals: vec![],
             type_definitions: vec![],
             queries: vec![],
-            comptime_entries: vec![],
         });
 
         assert_eq!(value.unwrap(), Value::int(i64::from(std::process::id())));

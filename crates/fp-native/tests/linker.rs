@@ -163,7 +163,6 @@ fn minimal_program() -> LirBlob {
         functions: vec![func],
         globals: Vec::new(),
         type_definitions: Vec::new(),
-        comptime_entries: Vec::new(),
         queries: Vec::new(),
     }
 }
@@ -240,7 +239,6 @@ fn program_with_many_call_args() -> LirBlob {
         functions: vec![main, callee],
         globals: Vec::new(),
         type_definitions: Vec::new(),
-        comptime_entries: Vec::new(),
         queries: Vec::new(),
     }
 }
@@ -285,7 +283,6 @@ fn program_with_print() -> LirBlob {
         functions: vec![func],
         globals: Vec::new(),
         type_definitions: Vec::new(),
-        comptime_entries: Vec::new(),
         queries: Vec::new(),
     }
 }
@@ -393,7 +390,6 @@ fn program_with_shifts_and_casts() -> LirBlob {
         functions: vec![func],
         globals: Vec::new(),
         type_definitions: Vec::new(),
-        comptime_entries: Vec::new(),
         queries: Vec::new(),
     }
 }
@@ -449,7 +445,6 @@ fn program_with_switch() -> LirBlob {
         functions: vec![func],
         globals: Vec::new(),
         type_definitions: Vec::new(),
-        comptime_entries: Vec::new(),
         queries: Vec::new(),
     }
 }
@@ -500,7 +495,6 @@ fn program_with_format_intrinsic() -> LirBlob {
         functions: vec![func],
         globals: Vec::new(),
         type_definitions: Vec::new(),
-        comptime_entries: Vec::new(),
         queries: Vec::new(),
     }
 }

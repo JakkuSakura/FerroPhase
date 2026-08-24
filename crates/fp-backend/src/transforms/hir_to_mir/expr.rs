@@ -474,8 +474,6 @@ pub struct HirToMirLowerer {
     enum_variant_names: HashMap<String, hir::DefId>,
     const_values: HashMap<hir::DefId, ConstInfo>,
     executable_consts: HashMap<hir::DefId, (mir::Symbol, Ty)>,
-    resolved_const_values: HashMap<String, mir::Constant>,
-    resolved_const_defs: HashMap<String, hir::DefId>,
     function_sigs: HashMap<hir::DefId, mir::FunctionSig>,
     generic_function_defs: HashMap<hir::DefId, hir::Function>,
     runtime_functions: HashMap<String, mir::FunctionSig>,
@@ -694,8 +692,6 @@ impl HirToMirLowerer {
             enum_variant_names: HashMap::new(),
             const_values: HashMap::new(),
             executable_consts: HashMap::new(),
-            resolved_const_values: HashMap::new(),
-            resolved_const_defs: HashMap::new(),
             function_sigs: HashMap::new(),
             generic_function_defs: HashMap::new(),
             runtime_functions: Self::default_runtime_signatures(),
@@ -1254,21 +1250,6 @@ impl HirToMirLowerer {
         std::mem::take(&mut self.adt_defs)
     }
 
-    /// Every top-level const resolved by direct folding this pass (see
-    /// `lower_const`'s fast path) — a directly-foldable const never
-    /// becomes a comptime entry requiring the real interpreter, so its
-    /// value would otherwise never reach `driver.rs`'s own
-    /// `HirPackage::const_values` the way an interpreted const's value
-    /// already does.
-    pub fn take_resolved_const_values(&mut self) -> HashMap<String, mir::Constant> {
-        std::mem::take(&mut self.resolved_const_values)
-    }
-
-    /// See `mir::MirPackage::resolved_const_defs`'s doc comment.
-    pub fn take_resolved_const_defs(&mut self) -> HashMap<String, hir::DefId> {
-        std::mem::take(&mut self.resolved_const_defs)
-    }
-
     /// Struct field types only — enums are exported separately via
     /// `enum_layout_map` (keyed by `(DefId, args)`, since two different
     /// instantiations of a generic enum need different field lists, unlike
@@ -1279,10 +1260,6 @@ impl HirToMirLowerer {
             map.insert(key.def_id.clone(), layout.field_tys.clone());
         }
         map
-    }
-
-    pub fn seed_resolved_const(&mut self, key: impl Into<String>, value: mir::Constant) {
-        self.resolved_const_values.insert(key.into(), value);
     }
 
     /// `fp_typing`'s checked type for `hir_id`, read straight off
@@ -4235,7 +4212,6 @@ impl HirToMirLowerer {
             }
             ty => ty,
         };
-        let key = self.const_key(konst.name.as_str(), konst.body.value.span);
         let container_args = self.container_args_from_type_expr(&konst.ty);
         let folded = self
             .lower_const_expr(&konst.body.value, Some(&ty), container_args.as_ref())
@@ -4288,15 +4264,6 @@ impl HirToMirLowerer {
                 value: init_constant.clone(),
             },
         );
-        // A const resolved this way (directly foldable — no `let`, no
-        // side effects requiring the real interpreter) never becomes a
-        // comptime entry, so nothing else would ever surface its value to
-        // the driver's `HirPackage::const_values` the way an interpreted
-        // const's value already does — see `take_resolved_const_values`/
-        // `take_resolved_const_defs`, the exporters this feeds.
-        self.resolved_const_values.insert(key.clone(), init_constant);
-        self.resolved_const_defs.insert(key, def_id);
-
         let mir_static = mir::Static {
             name: konst.name.clone().into(),
             ty,
@@ -4392,8 +4359,8 @@ impl HirToMirLowerer {
     /// Registers an expression-position `const { .. }` block as an extra
     /// `ExecutableConst` MIR item (mirroring `lower_executable_const`, but
     /// for an ad hoc block rather than a named top-level `const` item),
-    /// pushed onto `extra_items` so it becomes a real `lir.comptime_entries`
-    /// entry once this package's own MIR/LIR is built. This is a
+    /// pushed onto `extra_items` so it becomes a real pending-comptime
+    /// `LirGlobal` once this package's own MIR/LIR is built. This is a
     /// best-effort side channel purely for real (interpreter-backed)
     /// comptime validation — the block's own operand lowering already
     /// falls back to ordinary runtime code when no comptime value is
