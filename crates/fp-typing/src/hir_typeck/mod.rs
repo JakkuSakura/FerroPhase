@@ -4053,6 +4053,19 @@ impl HirTypeChecker {
             TyKind::Ref(_, inner, _) => inner.as_ref(),
             _ => receiver,
         };
+        // A plain (non-`Adt`) tuple type has no struct fields, but its own
+        // numeric field-access syntax (`.0`, `.1`, ...) reaches this same
+        // `field_ty` call — HIR apparently has no separate "tuple index"
+        // expression kind, just an ordinary `FieldAccess` whose `field`
+        // happens to be a digit-string `Symbol`. Index into the tuple's
+        // own element types directly rather than requiring a struct.
+        if let TyKind::Tuple(elements) = &receiver.kind {
+            if let Ok(index) = field.as_str().parse::<usize>() {
+                if let Some(element) = elements.get(index) {
+                    return Ok((**element).clone());
+                }
+            }
+        }
         let TyKind::Adt(adt, args) = &receiver.kind else {
             return Ok(self.error_ty(format!(
                 "field access `{field}` requires a struct, found {:?}",
