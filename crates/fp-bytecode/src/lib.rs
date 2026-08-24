@@ -470,7 +470,7 @@ pub fn parse_program(text: &str) -> Result<BytecodeProgram, BytecodeError> {
     Ok(program)
 }
 
-pub fn lower_program(program: &mir::MirModule) -> Result<BytecodeProgram, BytecodeError> {
+pub fn lower_program(program: &mir::MirCodeUnit) -> Result<BytecodeProgram, BytecodeError> {
     let mut const_pool = Vec::new();
     let mut functions = Vec::new();
 

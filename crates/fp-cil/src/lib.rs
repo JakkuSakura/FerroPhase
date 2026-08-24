@@ -32,7 +32,7 @@ impl fp_core::backend::TargetBackend for CilBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
-        mir: &fp_core::mir::MirModule,
+        mir: &fp_core::mir::MirCodeUnit,
         lir: Option<&fp_core::lir::LirBlob>,
     ) -> fp_core::error::Result<()> {
         let _ = lir;

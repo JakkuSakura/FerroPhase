@@ -67,7 +67,9 @@ fn sql_query_document_lowers_to_hir_and_mir_query_items() {
     ));
 
     let mut lir_generator = MirToLirLowerer::new(test_layout());
-    let lir_program = lir_generator.transform(mir_program).expect("lir program");
+    let lir_program = lir_generator
+        .transform(mir_program)
+        .expect("lir program");
     assert_eq!(lir_program.queries.len(), 1);
     let lir_query = &lir_program.queries[0];
     assert_eq!(lir_query.ir.name.as_deref(), Some("query.sql"));
@@ -134,7 +136,9 @@ fn prql_query_document_lowers_to_hir_and_mir_query_items() {
     ));
 
     let mut lir_generator = MirToLirLowerer::new(test_layout());
-    let lir_program = lir_generator.transform(mir_program).expect("lir program");
+    let lir_program = lir_generator
+        .transform(mir_program)
+        .expect("lir program");
     assert_eq!(lir_program.queries.len(), 1);
     assert!(matches!(
         lir_program.queries[0].ir.statements.first(),
@@ -177,7 +181,9 @@ fn fp_query_feature_lowers_in_ast_to_hir_pass() {
     ));
 
     let mut lir_generator = MirToLirLowerer::new(test_layout());
-    let lir_program = lir_generator.transform(mir_program).expect("lir program");
+    let lir_program = lir_generator
+        .transform(mir_program)
+        .expect("lir program");
     assert_eq!(lir_program.queries.len(), 1);
     assert!(matches!(
         lir_program.queries[0].ir.statements.first(),

@@ -6,7 +6,7 @@ use super::{Body, BodyId, Item};
 /// its one body, occasionally more when lowering that item pulled in
 /// something it directly references (e.g. a synthetic comptime probe's
 /// item, or a nested item discovered along the way). Distinct from
-/// `MirModule` (a whole package's *flattened* content): a `MirCodeUnit` is
+/// a whole `MirPackage`'s combined content: a `MirCodeUnit` is
 /// deliberately partial and keyed by the `DefId` that produced it (see
 /// `MirPackage::units`), so re-lowering one item after a comptime value
 /// resolves means replacing its one unit, not rebuilding the whole

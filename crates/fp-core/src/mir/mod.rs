@@ -5,7 +5,6 @@ use crate::query::{QueryIrDocument, QueryOrigin};
 
 pub mod code_unit;
 pub mod ident;
-pub mod module;
 pub mod package;
 pub mod path;
 pub mod pretty;
@@ -14,7 +13,6 @@ pub mod ty;
 
 pub use code_unit::MirCodeUnit;
 pub use ident::{Path, Symbol};
-pub use module::MirModule;
 pub use package::MirPackage;
 pub use path::MirPath;
 pub use program::MirProgram;

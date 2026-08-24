@@ -96,7 +96,7 @@ pub struct OptimizationReport {
 
 pub trait MirPass {
     fn name(&self) -> MirPassName;
-    fn run(&self, program: &mut mir::MirModule, engine: &mut MirQueryEngine) -> Result<usize, Error>;
+    fn run(&self, program: &mut mir::MirPackage, engine: &mut MirQueryEngine) -> Result<usize, Error>;
 }
 
 #[derive(Default)]
@@ -125,7 +125,7 @@ impl MirOptimizer {
 
     pub fn apply_plan(
         &self,
-        program: &mut mir::MirModule,
+        program: &mut mir::MirPackage,
         plan: &OptimizationPlan,
     ) -> Result<OptimizationReport, Error> {
         let mut report = OptimizationReport::default();
@@ -181,13 +181,12 @@ impl MirQueryEngine {
 
     pub(crate) fn propagation(
         &mut self,
-        program: &mir::MirModule,
+        program: &mir::MirPackage,
         body_id: mir::BodyId,
     ) -> Result<&BodyPropagation, Error> {
         if !self.propagation.contains_key(&body_id) {
             let body = program
-                .bodies
-                .get(&body_id)
+                .body(body_id)
                 .ok_or_else(|| optimization_error(format!("missing MIR body for {body_id:?}")))?;
             let analysis = compute_propagation(body);
             self.propagation.insert(body_id, analysis);
@@ -197,13 +196,12 @@ impl MirQueryEngine {
 
     pub(crate) fn liveness(
         &mut self,
-        program: &mir::MirModule,
+        program: &mir::MirPackage,
         body_id: mir::BodyId,
     ) -> Result<&BodyLiveness, Error> {
         if !self.liveness.contains_key(&body_id) {
             let body = program
-                .bodies
-                .get(&body_id)
+                .body(body_id)
                 .ok_or_else(|| optimization_error(format!("missing MIR body for {body_id:?}")))?;
             let analysis = compute_liveness(body);
             self.liveness.insert(body_id, analysis);
@@ -640,12 +638,12 @@ impl MirPass for ConstFoldPass {
 
     fn run(
         &self,
-        program: &mut mir::MirModule,
+        program: &mut mir::MirPackage,
         _engine: &mut MirQueryEngine,
     ) -> Result<usize, Error> {
         let mut changes = 0;
 
-        for body in program.bodies.values_mut() {
+        for (_, body) in program.bodies_mut() {
             for block in &mut body.basic_blocks {
                 for stmt in &mut block.statements {
                     let mir::StatementKind::Assign(_, rvalue) = &mut stmt.kind else {
@@ -671,15 +669,14 @@ impl MirPass for ConstPropagatePass {
         MirPassName::ConstPropagate
     }
 
-    fn run(&self, program: &mut mir::MirModule, engine: &mut MirQueryEngine) -> Result<usize, Error> {
+    fn run(&self, program: &mut mir::MirPackage, engine: &mut MirQueryEngine) -> Result<usize, Error> {
         let mut changes = 0;
 
-        let body_ids: Vec<_> = program.bodies.keys().copied().collect();
+        let body_ids: Vec<_> = program.bodies().map(|(id, _)| *id).collect();
         for body_id in body_ids {
             let analysis = engine.propagation(program, body_id)?;
             let body = program
-                .bodies
-                .get_mut(&body_id)
+                .body_mut(body_id)
                 .ok_or_else(|| optimization_error("missing MIR body for propagation"))?;
             for (block_idx, block) in body.basic_blocks.iter_mut().enumerate() {
                 let mut state = analysis.in_states[block_idx].clone();
@@ -707,15 +704,14 @@ impl MirPass for CopyPropagatePass {
         MirPassName::CopyPropagate
     }
 
-    fn run(&self, program: &mut mir::MirModule, engine: &mut MirQueryEngine) -> Result<usize, Error> {
+    fn run(&self, program: &mut mir::MirPackage, engine: &mut MirQueryEngine) -> Result<usize, Error> {
         let mut changes = 0;
 
-        let body_ids: Vec<_> = program.bodies.keys().copied().collect();
+        let body_ids: Vec<_> = program.bodies().map(|(id, _)| *id).collect();
         for body_id in body_ids {
             let analysis = engine.propagation(program, body_id)?;
             let body = program
-                .bodies
-                .get_mut(&body_id)
+                .body_mut(body_id)
                 .ok_or_else(|| optimization_error("missing MIR body for propagation"))?;
             for (block_idx, block) in body.basic_blocks.iter_mut().enumerate() {
                 let mut state = analysis.in_states[block_idx].clone();
@@ -743,15 +739,14 @@ impl MirPass for SimplifyBranchesPass {
         MirPassName::SimplifyBranches
     }
 
-    fn run(&self, program: &mut mir::MirModule, engine: &mut MirQueryEngine) -> Result<usize, Error> {
+    fn run(&self, program: &mut mir::MirPackage, engine: &mut MirQueryEngine) -> Result<usize, Error> {
         let mut changes = 0;
 
-        let body_ids: Vec<_> = program.bodies.keys().copied().collect();
+        let body_ids: Vec<_> = program.bodies().map(|(id, _)| *id).collect();
         for body_id in body_ids {
             let analysis = engine.propagation(program, body_id)?;
             let body = program
-                .bodies
-                .get_mut(&body_id)
+                .body_mut(body_id)
                 .ok_or_else(|| optimization_error("missing MIR body for propagation"))?;
             for (block_idx, block) in body.basic_blocks.iter_mut().enumerate() {
                 let state = &analysis.in_states[block_idx];
@@ -807,15 +802,14 @@ impl MirPass for DeadStorePass {
         MirPassName::DeadStore
     }
 
-    fn run(&self, program: &mut mir::MirModule, engine: &mut MirQueryEngine) -> Result<usize, Error> {
+    fn run(&self, program: &mut mir::MirPackage, engine: &mut MirQueryEngine) -> Result<usize, Error> {
         let mut changes = 0;
 
-        let body_ids: Vec<_> = program.bodies.keys().copied().collect();
+        let body_ids: Vec<_> = program.bodies().map(|(id, _)| *id).collect();
         for body_id in body_ids {
             let analysis = engine.liveness(program, body_id)?;
             let body = program
-                .bodies
-                .get_mut(&body_id)
+                .body_mut(body_id)
                 .ok_or_else(|| optimization_error("missing MIR body for liveness"))?;
             let arg_count = body.arg_count;
             let local_count = body.locals.len();
@@ -894,12 +888,12 @@ impl MirPass for RemoveStoragePass {
 
     fn run(
         &self,
-        program: &mut mir::MirModule,
+        program: &mut mir::MirPackage,
         _engine: &mut MirQueryEngine,
     ) -> Result<usize, Error> {
         let mut changes = 0;
 
-        for body in program.bodies.values_mut() {
+        for (_, body) in program.bodies_mut() {
             for block in &mut body.basic_blocks {
                 let before = block.statements.len();
                 block.statements.retain(|stmt| {
@@ -925,12 +919,12 @@ impl MirPass for RemoveNopPass {
 
     fn run(
         &self,
-        program: &mut mir::MirModule,
+        program: &mut mir::MirPackage,
         _engine: &mut MirQueryEngine,
     ) -> Result<usize, Error> {
         let mut changes = 0;
 
-        for body in program.bodies.values_mut() {
+        for (_, body) in program.bodies_mut() {
             for block in &mut body.basic_blocks {
                 let before = block.statements.len();
                 block

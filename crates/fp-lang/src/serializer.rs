@@ -372,7 +372,7 @@ impl fp_core::backend::TargetBackend for RustBackend {
         &self,
         workspace: &fp_core::ast::program::AstProgram,
         package_id: &fp_core::ast::package::PackageId,
-    mir: &fp_core::mir::MirModule,
+    mir: &fp_core::mir::MirCodeUnit,
         lir: Option<&fp_core::lir::LirBlob>,
     ) -> Result<(), fp_core::Error> {
         let package = workspace.package_source(package_id)?;

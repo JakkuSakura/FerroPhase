@@ -31,7 +31,7 @@ fn plan_from_sql(source: &str) -> OptimizationPlan {
     OptimizationPlan::from_sql(source).expect("plan should parse")
 }
 
-fn build_program(statements: Vec<mir::Statement>) -> mir::MirModule {
+fn build_program(statements: Vec<mir::Statement>) -> mir::MirPackage {
     let mut bodies = HashMap::new();
     let return_ty = Ty::int(IntTy::I32);
     let temp_ty = Ty::int(IntTy::I32);
@@ -52,32 +52,37 @@ fn build_program(statements: Vec<mir::Statement>) -> mir::MirModule {
 
     bodies.insert(mir::BodyId::new(0), body);
 
-    mir::MirModule {
-        items: vec![mir::Item {
-            mir_id: 0,
-            kind: mir::ItemKind::Function(mir::Function {
-                name: mir::Symbol::new("test_fn"),
-                def_id: None,
-                substs: Vec::new(),
-                sig: mir::FunctionSig {
-                    inputs: Vec::new(),
-                    output: return_ty,
-                },
-                body_id: mir::BodyId::new(0),
-                abi: mir::ty::Abi::Rust,
-                is_extern: false,
-                attrs: Vec::new(),
-            }),
-        }],
-        bodies,
-    }
+    let mut package = mir::MirPackage::default();
+    package.insert_unit(
+        mir::DefId::local(0),
+        mir::MirCodeUnit {
+            items: vec![mir::Item {
+                mir_id: 0,
+                kind: mir::ItemKind::Function(mir::Function {
+                    name: mir::Symbol::new("test_fn"),
+                    def_id: None,
+                    substs: Vec::new(),
+                    sig: mir::FunctionSig {
+                        inputs: Vec::new(),
+                        output: return_ty,
+                    },
+                    body_id: mir::BodyId::new(0),
+                    abi: mir::ty::Abi::Rust,
+                    is_extern: false,
+                    attrs: Vec::new(),
+                }),
+            }],
+            bodies,
+        },
+    );
+    package
 }
 
 fn build_program_with_locals(
     statements: Vec<mir::Statement>,
     locals: Vec<mir::LocalDecl>,
     terminator: mir::Terminator,
-) -> mir::MirModule {
+) -> mir::MirPackage {
     let mut bodies = HashMap::new();
     let return_ty = locals
         .get(0)
@@ -91,25 +96,30 @@ fn build_program_with_locals(
     body.return_local = 0;
     bodies.insert(mir::BodyId::new(0), body);
 
-    mir::MirModule {
-        items: vec![mir::Item {
-            mir_id: 0,
-            kind: mir::ItemKind::Function(mir::Function {
-                name: mir::Symbol::new("test_fn"),
-                def_id: None,
-                substs: Vec::new(),
-                sig: mir::FunctionSig {
-                    inputs: Vec::new(),
-                    output: return_ty,
-                },
-                body_id: mir::BodyId::new(0),
-                abi: mir::ty::Abi::Rust,
-                is_extern: false,
-                attrs: Vec::new(),
-            }),
-        }],
-        bodies,
-    }
+    let mut package = mir::MirPackage::default();
+    package.insert_unit(
+        mir::DefId::local(0),
+        mir::MirCodeUnit {
+            items: vec![mir::Item {
+                mir_id: 0,
+                kind: mir::ItemKind::Function(mir::Function {
+                    name: mir::Symbol::new("test_fn"),
+                    def_id: None,
+                    substs: Vec::new(),
+                    sig: mir::FunctionSig {
+                        inputs: Vec::new(),
+                        output: return_ty,
+                    },
+                    body_id: mir::BodyId::new(0),
+                    abi: mir::ty::Abi::Rust,
+                    is_extern: false,
+                    attrs: Vec::new(),
+                }),
+            }],
+            bodies,
+        },
+    );
+    package
 }
 
 #[test]
@@ -133,7 +143,7 @@ fn const_fold_rewrites_binary_op() {
         .apply_plan(&mut program, &plan)
         .expect("optimizer should succeed");
 
-    let body = program.bodies.get(&mir::BodyId::new(0)).unwrap();
+    let body = program.body(mir::BodyId::new(0)).unwrap();
     let stmt = &body.basic_blocks[0].statements[0];
     let mir::StatementKind::Assign(_, rvalue) = &stmt.kind else {
         panic!("expected assign");
@@ -167,7 +177,7 @@ fn remove_nop_eliminates_empty_statements() {
         .apply_plan(&mut program, &plan)
         .expect("optimizer should succeed");
 
-    let body = program.bodies.get(&mir::BodyId::new(0)).unwrap();
+    let body = program.body(mir::BodyId::new(0)).unwrap();
     assert_eq!(body.basic_blocks[0].statements.len(), 1);
 }
 
@@ -206,7 +216,7 @@ fn const_propagate_rewrites_copy_to_constant() {
         .apply_plan(&mut program, &plan)
         .expect("optimizer should succeed");
 
-    let body = program.bodies.get(&mir::BodyId::new(0)).unwrap();
+    let body = program.body(mir::BodyId::new(0)).unwrap();
     let stmt = &body.basic_blocks[0].statements[1];
     let mir::StatementKind::Assign(_, rvalue) = &stmt.kind else {
         panic!("expected assign");
@@ -253,7 +263,7 @@ fn copy_propagate_rewrites_alias_copy() {
         .apply_plan(&mut program, &plan)
         .expect("optimizer should succeed");
 
-    let body = program.bodies.get(&mir::BodyId::new(0)).unwrap();
+    let body = program.body(mir::BodyId::new(0)).unwrap();
     let stmt = &body.basic_blocks[0].statements[1];
     let mir::StatementKind::Assign(_, rvalue) = &stmt.kind else {
         panic!("expected assign");
@@ -290,7 +300,7 @@ fn dead_store_marks_unused_temp_assignments() {
         .apply_plan(&mut program, &plan)
         .expect("optimizer should succeed");
 
-    let body = program.bodies.get(&mir::BodyId::new(0)).unwrap();
+    let body = program.body(mir::BodyId::new(0)).unwrap();
     assert!(matches!(
         body.basic_blocks[0].statements[0].kind,
         mir::StatementKind::Nop
@@ -332,32 +342,36 @@ fn simplify_branches_rewrites_constant_switch() {
     body.return_local = 0;
     bodies.insert(mir::BodyId::new(0), body);
 
-    let mut program = mir::MirModule {
-        items: vec![mir::Item {
-            mir_id: 0,
-            kind: mir::ItemKind::Function(mir::Function {
-                name: mir::Symbol::new("test_fn"),
-                def_id: None,
-                substs: Vec::new(),
-                sig: mir::FunctionSig {
-                    inputs: Vec::new(),
-                    output: Ty::int(IntTy::I32),
-                },
-                body_id: mir::BodyId::new(0),
-                abi: mir::ty::Abi::Rust,
-                is_extern: false,
-                attrs: Vec::new(),
-            }),
-        }],
-        bodies,
-    };
+    let mut program = mir::MirPackage::default();
+    program.insert_unit(
+        mir::DefId::local(0),
+        mir::MirCodeUnit {
+            items: vec![mir::Item {
+                mir_id: 0,
+                kind: mir::ItemKind::Function(mir::Function {
+                    name: mir::Symbol::new("test_fn"),
+                    def_id: None,
+                    substs: Vec::new(),
+                    sig: mir::FunctionSig {
+                        inputs: Vec::new(),
+                        output: Ty::int(IntTy::I32),
+                    },
+                    body_id: mir::BodyId::new(0),
+                    abi: mir::ty::Abi::Rust,
+                    is_extern: false,
+                    attrs: Vec::new(),
+                }),
+            }],
+            bodies,
+        },
+    );
     let plan = plan_from_sql("SELECT simplify_branches FROM mir");
     let optimizer = MirOptimizer::new();
     optimizer
         .apply_plan(&mut program, &plan)
         .expect("optimizer should succeed");
 
-    let body = program.bodies.get(&mir::BodyId::new(0)).unwrap();
+    let body = program.body(mir::BodyId::new(0)).unwrap();
     let term = body.basic_blocks[0].terminator.as_ref().unwrap();
     let mir::TerminatorKind::Goto { target } = term.kind else {
         panic!("expected goto");
@@ -392,6 +406,6 @@ fn remove_storage_drops_storage_markers() {
         .apply_plan(&mut program, &plan)
         .expect("optimizer should succeed");
 
-    let body = program.bodies.get(&mir::BodyId::new(0)).unwrap();
+    let body = program.body(mir::BodyId::new(0)).unwrap();
     assert_eq!(body.basic_blocks[0].statements.len(), 1);
 }

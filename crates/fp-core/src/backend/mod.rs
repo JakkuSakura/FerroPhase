@@ -203,7 +203,7 @@ pub trait TargetBackend: Send + Sync {
         &self,
         workspace: &AstProgram,
         package_id: &PackageId,
-        mir: &crate::mir::MirModule,
+        mir: &crate::mir::MirCodeUnit,
         lir: Option<&crate::lir::LirBlob>,
     ) -> Result<()>;
 

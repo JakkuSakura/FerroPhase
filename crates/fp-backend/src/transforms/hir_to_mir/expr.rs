@@ -779,7 +779,7 @@ impl HirToMirLowerer {
         )
     }
 
-    pub fn transform(&mut self, hir_program: hir::HirPackage) -> Result<mir::MirModule> {
+    pub fn transform(&mut self, hir_program: hir::HirPackage) -> Result<mir::MirCodeUnit> {
         let hir_program = std::rc::Rc::new(hir_program);
         self.current_package = hir_program.clone();
         self.current_package_id = hir_program.id.clone();
@@ -798,7 +798,7 @@ impl HirToMirLowerer {
     /// cached by their typed `(DefId, SubstsRef)` identity. Keeping this boundary
     /// async lets the compiler driver own executor progress without making
     /// every recursive expression operation an artificial future.
-    pub async fn transform_async(&mut self, hir_program: hir::HirPackage) -> Result<mir::MirModule> {
+    pub async fn transform_async(&mut self, hir_program: hir::HirPackage) -> Result<mir::MirCodeUnit> {
         self.transform(hir_program)
     }
 
@@ -820,7 +820,7 @@ impl HirToMirLowerer {
         hir_program: std::rc::Rc<hir::HirProgram>,
         current_package: std::rc::Rc<hir::HirPackage>,
         def_id: hir::DefId,
-    ) -> Result<mir::MirModule> {
+    ) -> Result<mir::MirCodeUnit> {
         // Sharing the caller's own `Rc`s instead of cloning `def_map`/
         // `def_paths` out of them — every item, keyed by `DefId`, across
         // the whole workspace — fresh on every single `const { .. }`
@@ -935,7 +935,7 @@ impl HirToMirLowerer {
         })?;
         self.register_const_block_comptime_entry_direct(block.hir_id.clone(), ty, body, body.span);
 
-        let mut mir_program = mir::MirModule::new();
+        let mut mir_program = mir::MirCodeUnit::new();
         self.flush_extra_items(&mut mir_program);
         self.append_runtime_stubs(&mut mir_program);
 
@@ -1077,7 +1077,7 @@ impl HirToMirLowerer {
         }
     }
 
-    fn compute_body_locals(&mut self, program: &mir::MirModule, body_id: mir::BodyId) {
+    fn compute_body_locals(&mut self, program: &mir::MirCodeUnit, body_id: mir::BodyId) {
         if let Some(body) = program.bodies.get(&body_id) {
             for local in &body.locals {
                 self.compute_ty_layout(&local.ty, Span::null());
@@ -1206,7 +1206,7 @@ impl HirToMirLowerer {
         }
     }
 
-    pub fn walk_program_types_for_layouts(&mut self, program: &mir::MirModule) {
+    pub fn walk_program_types_for_layouts(&mut self, program: &mir::MirCodeUnit) {
         for item in &program.items {
             match &item.kind {
                 mir::ItemKind::Function(func) => {
@@ -1349,10 +1349,10 @@ impl HirToMirLowerer {
         format!("__fp_comptime_const_{}_{}", name.as_str(), hash)
     }
 
-    fn lower_program(&mut self, program: &hir::HirPackage) -> Result<mir::MirModule> {
+    fn lower_program(&mut self, program: &hir::HirPackage) -> Result<mir::MirCodeUnit> {
         // `self.current_package`/`current_package_id` are already set by
         // `transform` (the only caller) before this runs.
-        let mut mir_program = mir::MirModule::new();
+        let mut mir_program = mir::MirCodeUnit::new();
         // Same "seed from `.items` alone can collide with a local const's
         // own real DefId" fix as `transform_comptime_request` — see that
         // function's own comment for the full rationale.
@@ -1470,7 +1470,7 @@ impl HirToMirLowerer {
         mir_item
     }
 
-    fn append_runtime_stubs(&mut self, program: &mut mir::MirModule) {
+    fn append_runtime_stubs(&mut self, program: &mut mir::MirCodeUnit) {
         let span = Span::new(0, 0, 0);
         for name in self.synthetic_runtime_functions.clone() {
             // `printf` is only ever called through the dedicated
@@ -1537,7 +1537,7 @@ impl HirToMirLowerer {
         matches!(name, "printf")
     }
 
-    fn flush_extra_items(&mut self, program: &mut mir::MirModule) {
+    fn flush_extra_items(&mut self, program: &mut mir::MirCodeUnit) {
         for item in self.extra_items.drain(..) {
             program.items.push(item);
         }
@@ -1651,11 +1651,11 @@ impl HirToMirLowerer {
     }
 
     /// Assembles everything `ensure_item_lowered` has pulled in so far into
-    /// a `mir::MirModule` — call once after the per-`DefId` loop finishes.
+    /// a `mir::MirCodeUnit` — call once after the per-`DefId` loop finishes.
     /// Mirrors `lower_program`'s own tail (`flush_extra_items` +
     /// `append_runtime_stubs`) verbatim.
-    pub fn take_program(&mut self) -> mir::MirModule {
-        let mut mir_program = mir::MirModule::new();
+    pub fn take_program(&mut self) -> mir::MirCodeUnit {
+        let mut mir_program = mir::MirCodeUnit::new();
         self.flush_extra_items(&mut mir_program);
         self.append_runtime_stubs(&mut mir_program);
         mir_program
@@ -6811,13 +6811,13 @@ impl HirToMirLowerer {
         &mut self,
         item: &hir::Item,
         impl_block: &hir::Impl,
-        output: Option<&mut mir::MirModule>,
+        output: Option<&mut mir::MirCodeUnit>,
     ) -> Result<()> {
         let mut output = output;
         let mut emit_function =
             |this: &mut Self, mir_item: mir::Item, body_id: mir::BodyId, body: mir::Body| {
                 if let Some(program_ref) = output.as_mut() {
-                    let program: &mut mir::MirModule = &mut **program_ref;
+                    let program: &mut mir::MirCodeUnit = &mut **program_ref;
                     program.items.push(mir_item);
                     program.bodies.insert(body_id, body);
                 } else {

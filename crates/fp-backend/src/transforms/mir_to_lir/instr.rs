@@ -292,7 +292,7 @@ impl MirToLirLowerer {
         Ok(call_id)
     }
 
-    pub fn prepare_program(&mut self, mir_program: &mir::MirModule) {
+    pub fn prepare_program(&mut self, mir_program: &mir::MirCodeUnit) {
         self.predeclare_function_signatures(mir_program);
     }
 
@@ -346,7 +346,7 @@ impl MirToLirLowerer {
         Ok(lir_program)
     }
 
-    pub fn transform_items(&mut self, mir_program: mir::MirModule) -> Result<Vec<lir::LirBlob>> {
+    pub fn transform_items(&mut self, mir_program: mir::MirCodeUnit) -> Result<Vec<lir::LirBlob>> {
         self.prepare_program(&mir_program);
         mir_program
             .items
@@ -356,7 +356,7 @@ impl MirToLirLowerer {
     }
 
     /// Transform MIR to a flat LIR program for legacy backend callers.
-    pub fn transform(&mut self, mir_program: mir::MirModule) -> Result<lir::LirBlob> {
+    pub fn transform(&mut self, mir_program: mir::MirCodeUnit) -> Result<lir::LirBlob> {
         let mut lir_program = lir::LirBlob::new(self.data_layout.clone());
         self.prepare_program(&mir_program);
         for item in mir_program.items {
@@ -374,7 +374,7 @@ impl MirToLirLowerer {
         );
     }
 
-    fn predeclare_function_signatures(&mut self, program: &mir::MirModule) {
+    fn predeclare_function_signatures(&mut self, program: &mir::MirCodeUnit) {
         self.predeclare_function_signatures_impl(program, None);
     }
 
@@ -389,7 +389,7 @@ impl MirToLirLowerer {
     /// (caller's) one.
     pub fn predeclare_dependency_function_signatures(
         &mut self,
-        program: &mir::MirModule,
+        program: &mir::MirCodeUnit,
         package_id: fp_core::ast::package::PackageId,
     ) {
         self.predeclare_function_signatures_impl(program, Some(package_id));
@@ -470,7 +470,7 @@ impl MirToLirLowerer {
 
     fn predeclare_function_signatures_impl(
         &mut self,
-        program: &mir::MirModule,
+        program: &mir::MirCodeUnit,
         package_id: Option<fp_core::ast::package::PackageId>,
     ) {
         for item in &program.items {
