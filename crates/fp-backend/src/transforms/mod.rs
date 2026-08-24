@@ -1,6 +1,5 @@
 pub mod ast_to_hir;
 pub mod hir_materialization;
-pub mod hir_normalization;
 pub mod hir_to_ast;
 pub mod hir_to_mir;
 pub mod lir_to_mir;
@@ -21,10 +20,7 @@ pub use mir_to_lir::*;
 /// `ast_to_hir` lowering) — resolved here by the callee's real `DefId`,
 /// never by re-deriving it from the call site's own name/path, which
 /// can't tell a builtin/portable-op declaration apart from a same-named
-/// real user function. Shared by every POST-typecheck consumer of this
-/// identity — currently just `hir_normalization::normalize_program`, the
-/// single pass that reclassifies `Call`/`Struct`/`Path`/`MethodCall` nodes
-/// for both pipelines — so the lookup itself lives in exactly one place.
+/// real user function.
 pub fn resolve_call_kind(
     _op_defs: &std::collections::HashMap<fp_core::hir::DefId, fp_core::intrinsics::PortableOp>,
     intrinsic_defs: &std::collections::HashMap<fp_core::hir::DefId, fp_core::intrinsics::CallKind>,

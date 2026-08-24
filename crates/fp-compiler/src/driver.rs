@@ -493,8 +493,7 @@ impl CompilerDriver {
         let package_exports = generator.exported_symbols();
         let type_alias_exports = generator.exported_type_aliases();
         package.borrow_mut().type_alias_exports.extend(type_alias_exports);
-        let promote_op_only = matches!(self.pipeline, PipelineMode::Transpile);
-        self.type_check_program(hir_program, package_exports, promote_op_only)
+        self.type_check_program(hir_program, package_exports)
             .await
             .map_err(|error| {
                 CompilerDriverError::InternalCompilerError(format!(
@@ -741,7 +740,6 @@ impl CompilerDriver {
         &mut self,
         program: hir::HirPackage,
         package_exports: std::collections::HashMap<String, hir::Res>,
-        promote_op_only: bool,
     ) -> fp_core::Result<()> {
         let comptime_resolver = self.state.borrow().comptime_resolver.clone();
         let dependency_program = self.state.borrow().hir_program_rc();
@@ -796,12 +794,6 @@ impl CompilerDriver {
         let mut package = Rc::try_unwrap(package).unwrap_or_else(|_| {
             unreachable!("no other strong reference to this package's HirPackage should outlive its own typecheck pass")
         });
-        // `CallKind::Op` was retired, so `hir_normalization::normalize_program`
-        // no longer promotes anything here regardless of `promote_op_only` —
-        // portable-op recognition now belongs to target backends directly
-        // (temporarily, by bare name). The walk itself is kept (still needed
-        // for uniformity/future extension) rather than skipped outright.
-        fp_backend::transforms::hir_normalization::normalize_program(&mut package, promote_op_only);
         package.hir_exports.extend(package_exports);
         self.state.borrow_mut().insert_hir(package);
         Ok(())

@@ -177,13 +177,12 @@ impl<'a> HirToAstLifter<'a> {
     /// `lift_items_by_path` treats an `hir::ItemKind::Impl` as an opaque,
     /// un-lifted placeholder (real per-target impl-block emission happens
     /// downstream, per-backend) — so a typed-splice consumer keyed only by
-    /// `lift_items_by_path`'s map never sees any impl *method*'s typed,
-    /// `hir_normalization`-promoted body at all, and permanently falls
-    /// back to that method's original, untyped, pre-typecheck source
-    /// form (confirmed: this is why `hir_normalization`'s correctly
-    /// promoted `Ok(...)`/`Some(...)` calls inside impl methods never
-    /// reached `KotlinMaterializer` — the promoted HIR was real, but
-    /// nothing ever spliced it back in). This method fills that gap:
+    /// `lift_items_by_path`'s map never sees any impl *method*'s typed
+    /// body at all, and permanently falls back to that method's original,
+    /// untyped, pre-typecheck source form (confirmed: this is why
+    /// `Ok(...)`/`Some(...)` calls inside impl methods never reached
+    /// `KotlinMaterializer` — the typed HIR was real, but nothing ever
+    /// spliced it back in). This method fills that gap:
     /// each `Method` inside every `impl` block, keyed by its own
     /// `DefId`'s qualified path (already recorded — see
     /// `ast_to_hir::transform_package`'s predeclare pass, which calls
@@ -1524,12 +1523,7 @@ impl<'a> HirToAstLifter<'a> {
         }
         if let Some(hir::Res::Def(def_id)) = &path.res {
             // `Some`/`None`/`Ok`/`Err` already have dedicated, correct
-            // handling (`program.op_defs`, promoted to
-            // `IntrinsicCall(CallKind::Op(..))` earlier by
-            // `hir_normalization::normalize_program`, which materializes
-            // them away entirely before this lifter ever runs — this
-            // function is only reached for paths that were never an op to
-            // begin with). A known, pre-existing `DefId`/`package_id` collision
+            // handling elsewhere. A known, pre-existing `DefId`/`package_id` collision
             // (confirmed: cross-package `DefId`s aren't always unique)
             // means `find_hir_enum_for_variant` can otherwise match one of
             // these against a real but unrelated enum sharing a numeric

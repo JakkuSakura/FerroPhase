@@ -12,12 +12,10 @@
 //! invoked from `fp-cli`'s `compile_emit_target`/`compile_project` (see
 //! `crates/fp-cli/src/commands/compile.rs` — the single-file path calls it
 //! at line ~778, the multi-file `--target` path at line ~954). The AST it
-//! materializes over is produced by `HirToAstLifter` from the shared,
-//! `hir_normalization`-promoted HIR (`promote_op_only: true` for
-//! `Transpile`, which Kotlin transpilation always uses), so by
-//! the time `KotlinMaterializer::materialize_call` sees an
-//! `ExprIntrinsicCall`, its `kind` is already the promoted `CallKind::Op`
-//! (or a genuine `CallKind::Intrinsic`) — no logic change needed here.
+//! materializes over is produced by `HirToAstLifter` from the shared HIR,
+//! so by the time `KotlinMaterializer::materialize_call` sees an
+//! `ExprIntrinsicCall`, its `kind` is a genuine `CallKind::Intrinsic` —
+//! `CallKind::Op` was retired, so no promoted-op case reaches here anymore.
 //!
 //! ## Shell
 //!
@@ -49,25 +47,11 @@
 //! `emit_error`/`emit_warning` plus a unit/error value — never a silent
 //! wrong answer or a panic.
 //!
-//! Given that, `Native` is deliberately configured with
-//! `promote_op_only: false` in the driver (`hir_normalization::normalize_program`
-//! call in `crates/fp-compiler/src/driver.rs`): pure-`Op`-only calls (an
-//! `#[op(...)]`-tagged enum variant or method with no real intrinsic
-//! equivalent, e.g. `Option::Some`/`Vec::new`/`Result::Ok`) are left as
-//! ordinary `hir::ExprKind::Call`/`MethodCall`/`Struct` nodes, which then
-//! flow through `hir_to_mir`'s normal lowering as ordinary calls to the
-//! real (stub) function/struct-literal bodies already declared for those
-//! types in `std`. This is correct and lower-risk: Native has no
-//! target-shape mapping for an arbitrary `Op` (unlike Kotlin/Shell, which
-//! map every op to a real target-language literal/call form in their
-//! materializers), so promoting it to `IntrinsicCall(CallKind::Op(..))`
-//! here would just relocate the "unimplemented op" failure from an
-//! ordinary (and already working) call-to-stub-body path to a new,
-//! untested `hir_to_mir` fallback path with no compensating benefit.
-//!
-//! This was not changed speculatively: a smoke-compile of a small program
-//! using `Vec::new()`/`Option`/`Result` through the Native pipeline was
-//! not run as part of this change (no reachable Native smoke-test harness
-//! was set up in this pass); if a concrete Native regression involving an
-//! `#[op(...)]`-tagged construct surfaces, re-evaluate `promote_op_only`
-//! for `Native` rather than assuming this reasoning covers every case.
+//! Given that, pure-`Op`-only calls (an `#[op(...)]`-tagged enum variant
+//! or method with no real intrinsic equivalent, e.g.
+//! `Option::Some`/`Vec::new`/`Result::Ok`) are left as ordinary
+//! `hir::ExprKind::Call`/`MethodCall`/`Struct` nodes for both pipelines
+//! now that `CallKind::Op` is retired, and `Native` flows them through
+//! `hir_to_mir`'s normal lowering as ordinary calls to the real (stub)
+//! function/struct-literal bodies already declared for those types in
+//! `std`.
