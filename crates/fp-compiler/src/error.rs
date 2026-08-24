@@ -1,7 +1,5 @@
 use thiserror::Error;
 
-use crate::ConstValueId;
-
 impl From<fp_interpret::VmError> for CompilerDriverError {
     fn from(e: fp_interpret::VmError) -> Self {
         CompilerDriverError::Interpreter(e.to_string())
@@ -24,8 +22,6 @@ pub enum CompilerDriverError {
     MissingHir(String),
     #[error("missing LIR {0}")]
     MissingLir(String),
-    #[error("missing const value {0}")]
-    MissingConstValue(ConstValueId),
     #[error("unsupported compiler work: {0}")]
     UnsupportedWork(String),
     #[error("internal compiler error: {0}")]

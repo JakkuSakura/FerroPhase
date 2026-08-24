@@ -3,14 +3,12 @@
 pub mod common;
 pub mod compile;
 pub mod completions;
-pub mod eval;
 pub mod inspect;
 pub mod interpret;
 
 // Re-export command functions
 pub use compile::compile_command;
 pub use completions::completions_command;
-pub use eval::eval_command;
 pub use inspect::inspect_command;
 pub use interpret::interpret_command;
 // Re-export shared helpers for convenience

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::ast::package::PackageId;
 
-use super::{LirDataLayout, LirPackage};
+use super::{LirBlobError, LirCodeUnitKind, LirDataLayout, LirFunction, LirGlobal, LirPackage, Name};
 
 /// The whole compiled result across every package this compilation session
 /// has produced LIR for, keyed by `PackageId` — mirrors `mir::MirProgram`/
@@ -23,6 +23,64 @@ impl LirProgram {
 
     pub fn package(&self, id: &PackageId) -> Option<&LirPackage> {
         self.packages.get(id)
+    }
+
+    /// Wraps a single already-lowered `LirBlob` as a one-package
+    /// `LirProgram` — for callers (e.g. the LIR interpreter's own
+    /// `--target interpret` backend) that only ever get handed one
+    /// package's flat, already-merged blob and have no other package to
+    /// look anything up in.
+    pub fn from_single_blob(
+        package_id: PackageId,
+        module_path: crate::ast::path::QualifiedPath,
+        blob: super::LirBlob,
+    ) -> Result<Self, LirBlobError> {
+        let mut table = super::LirUnitTable::new(blob.data_layout.clone());
+        table.add_program(package_id.clone(), module_path, blob)?;
+        let mut packages = HashMap::new();
+        packages.insert(package_id, LirPackage { own_artifacts: table });
+        Ok(Self { packages })
+    }
+
+    /// Looks a function up by name within one specific package — the
+    /// direct on-demand replacement for pre-populating a lookup cache
+    /// from that package's own artifacts.
+    pub fn find_function(&self, package_id: &PackageId, name: &Name) -> Option<&LirFunction> {
+        self.package(package_id)?
+            .own_artifacts
+            .find_function(package_id.clone(), name)
+    }
+
+    /// Same as `find_function`, but searches every loaded package for a
+    /// match — the on-demand replacement for a flattened, bare-name
+    /// function cache spanning the whole program.
+    pub fn find_function_any_package(&self, name: &Name) -> Option<&LirFunction> {
+        self.packages
+            .iter()
+            .find_map(|(package_id, package)| package.own_artifacts.find_function(package_id.clone(), name))
+    }
+
+    /// Looks a function up by its own `DefId` — `def_id` already carries
+    /// its owning package's id, so no separate package lookup is needed.
+    pub fn find_function_by_def_id(&self, def_id: &crate::hir::DefId) -> Option<&LirFunction> {
+        let package_id = PackageId::new(def_id.package_id.as_str());
+        self.package(&package_id)?
+            .own_artifacts
+            .artifacts()
+            .iter()
+            .find_map(|artifact| match &artifact.kind {
+                LirCodeUnitKind::Function(function) if function.def_id.as_ref() == Some(def_id) => {
+                    Some(function)
+                }
+                _ => None,
+            })
+    }
+
+    /// Looks a global up by name within one specific package.
+    pub fn find_global(&self, package_id: &PackageId, name: &Name) -> Option<&LirGlobal> {
+        self.package(package_id)?
+            .own_artifacts
+            .find_global(package_id.clone(), name)
     }
 
     /// Every package holds its own target `LirDataLayout` (`LirPackage::new`

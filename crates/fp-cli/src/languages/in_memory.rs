@@ -1,7 +1,6 @@
-//! Wraps an already-in-memory, non-file-backed `File` (e.g. `eval_script`'s
-//! synthetic `"<eval>"` script, which has no path to lazily read) as a
-//! one-member package — there's no file to parse lazily, just an AST that
-//! already exists.
+//! Wraps an already-in-memory, non-file-backed `File` (no path to lazily
+//! read) as a one-member package — there's no file to parse lazily, just
+//! an AST that already exists.
 
 use std::path::Path;
 use std::sync::Arc;

@@ -1,14 +1,13 @@
-//! Interpret FerroPhase source or bytecode files.
+//! Interpret bytecode files.
 
-use crate::{CliError, Result, cli::CliConfig, compiler};
+use crate::{CliError, Result, cli::CliConfig};
 use clap::Args;
-use fp_jit::JitOptions;
 use std::path::{Path, PathBuf};
 
 /// Arguments for bytecode interpretation.
 #[derive(Debug, Clone, Args)]
 pub struct InterpretArgs {
-    /// Input file to interpret (.fp, .ftbc, .fbc)
+    /// Input file to interpret (.ftbc, .fbc)
     #[arg(required = true)]
     pub input: PathBuf,
     /// Path to a workspace graph (JSON) for dependency resolution
@@ -33,27 +32,13 @@ pub async fn interpret_command(args: InterpretArgs, _config: &CliConfig) -> Resu
     let path = &args.input;
     let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
     match ext {
-        "fp" => interpret_source(path, &args).await,
         "ftbc" => interpret_text_bytecode(path),
         "fbc" => interpret_binary_bytecode(path),
         _ => Err(CliError::InvalidInput(format!(
-            "Unsupported input extension: {} (expected .fp, .ftbc, or .fbc)",
+            "Unsupported input extension: {} (expected .ftbc or .fbc)",
             path.display()
         ))),
     }
-}
-
-async fn interpret_source(path: &Path, args: &InterpretArgs) -> Result<()> {
-    if args.jit {
-        let _ = JitOptions::default();
-        let _ = args.jit_hot_threshold;
-        return Err(CliError::InvalidInput(
-            "--jit is not yet supported on the fp-compiler interpret path".to_string(),
-        ));
-    }
-
-    let _ = compiler::interpret_file(path, &args.package)?;
-    Ok(())
 }
 
 fn interpret_text_bytecode(path: &Path) -> Result<()> {

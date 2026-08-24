@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use crate::{CompilerDriverError, CompilerState, ConstValueId, ExecutorHandle};
+use crate::{CompilerDriverError, CompilerState, ExecutorHandle};
 
 /// Real Rust source over an entire vendored `std`/`core`/`alloc` package
 /// legitimately produces tens of thousands of "skipping unresolvable
@@ -54,7 +54,6 @@ pub struct CompilerDriver {
     /// — those aren't needed by anything spawned as a task) keeps the rest
     /// of `CompilerDriver` an ordinary `&mut self`-based type.
     pub state: Rc<RefCell<CompilerState>>,
-    interpreter: LirInterpreter,
     building_packages: HashSet<PackageId>,
     compiled_packages: HashMap<PackageId, Rc<RefCell<fp_core::ast::package::AstPackage>>>,
     next_hir_def_id: u32,
@@ -107,7 +106,6 @@ impl CompilerDriver {
         state.borrow_mut().comptime_resolver = Some(resolver);
         Self {
             state,
-            interpreter: LirInterpreter::new(),
             building_packages: HashSet::new(),
             compiled_packages: HashMap::new(),
             next_hir_def_id: 0,
@@ -150,12 +148,19 @@ impl CompilerDriver {
             .state
             .borrow()
             .runtime_blob(&lir_path.package_id, lir_path, entrypoint.clone())?;
-        self.interpreter = LirInterpreter::new();
-        let value = self.interpreter.run_entrypoint_with_package(
-            &lir,
-            entrypoint,
+        let program = fp_core::lir::LirProgram::from_single_blob(
             lir_path.package_id.clone(),
-        )?;
+            lir_path.module_path.clone(),
+            lir,
+        )
+        .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
+        let mut state = self.state.borrow_mut();
+        let interpreter = state.interpreter_mut();
+        *interpreter = LirInterpreter::new();
+        interpreter
+            .load_program(Rc::new(program))
+            .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
+        let value = interpreter.run_entrypoint(&lir_path.package_id, &entrypoint)?;
         Ok(value)
     }
 
@@ -240,31 +245,33 @@ impl CompilerDriver {
         function_name: &str,
     ) -> Result<(), CompilerDriverError> {
         let lir_path = self.select_entrypoint(package_id, module_path, function_name)?;
-        let block_values = self.evaluate_comptime_lir(package_id, module_path).await?;
+        let entrypoint_def_id =
+            self.resolve_entrypoint_def_id(package_id, module_path, function_name)?;
+        let value = Self::evaluate_comptime_lir(&self.state, &entrypoint_def_id)?;
         // Mirrors `compile_package`'s dependency-loading branch (see its
         // identical three-call sequence): `evaluate_comptime_lir` computes
-        // each `const { .. }` block's real value into `block_values`, but
-        // that alone never reaches the executable blob — the block's
-        // owning item (e.g. a `const X = const { .. };`) was already
-        // lowered to an `ExecutableConst`/`LirComptimeEntry` *before* its
-        // value was known, not a `LirGlobal`. Re-lowering HIR->MIR->LIR now
-        // that `apply_resolved_comptime_block_values` has recorded the
-        // answer lets `lower_const_expr` constant-fold the const item for
-        // real this time, materializing the missing global. Without this,
-        // the const item's global is simply absent, and running it fails
-        // at runtime with "missing global" — never a compile-time error,
-        // since nothing upstream of execution ever notices the gap.
-        if !block_values.is_empty() {
-            let package = self
-                .state
-                .borrow()
-                .workspace
-                .compiled_package(package_id)
-                .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
-            let hir_package_id = package.borrow().hir_package_id.clone();
-            self.apply_resolved_comptime_block_values(hir_package_id.clone(), &block_values)?;
-            self.relower_cached_lir_units(package_id, hir_package_id).await?;
-        }
+        // the entrypoint's real value, but that alone never reaches the
+        // executable blob — the block's owning item (e.g. a `const X =
+        // const { .. };`) was already lowered to an `ExecutableConst`
+        // *before* its value was known, not a `LirGlobal`. Re-lowering
+        // HIR->MIR->LIR now that `apply_resolved_comptime_block_values`
+        // has recorded the answer lets `lower_const_expr` constant-fold
+        // the const item for real this time, materializing the missing
+        // global. Without this, the const item's global is simply absent,
+        // and running it fails at runtime with "missing global" — never a
+        // compile-time error, since nothing upstream of execution ever
+        // notices the gap.
+        let package = self
+            .state
+            .borrow()
+            .workspace
+            .compiled_package(package_id)
+            .ok_or_else(|| CompilerDriverError::UnresolvablePackage(package_id.to_string()))?;
+        let hir_package_id = package.borrow().hir_package_id.clone();
+        let mut block_values = HashMap::new();
+        block_values.insert(entrypoint_def_id, value);
+        self.apply_resolved_comptime_block_values(hir_package_id.clone(), &block_values)?;
+        self.relower_cached_lir_units(package_id, hir_package_id).await?;
         let _ = lir_path;
         Ok(())
     }
@@ -885,13 +892,7 @@ impl CompilerDriver {
                 .insert_lir_blob(&package_id, module_path.clone(), blob)?;
         }
 
-        let values = Self::evaluate_comptime_lir_with(state, &package_id, &module_path)?;
-        values.get(&request.def_id).cloned().ok_or_else(|| {
-            CompilerDriverError::UnresolvableComptime(format!(
-                "expression {} did not produce a comptime value",
-                request.def_id
-            ))
-        })
+        Self::evaluate_comptime_lir(state, &request.def_id)
     }
 
     /// Per-package HIR->MIR->LIR lowering, one `DefId` in, one unit out for
@@ -1079,45 +1080,40 @@ impl CompilerDriver {
             .with_signature_resolver(resolve_signature)
     }
 
-    /// Interprets every comptime entry in `package_id`'s own LIR for real
-    /// and returns each const block's resolved value keyed by its own
-    /// `DefId` (`LirComptimeEntry::def_id`, threaded through structurally
-    /// from `register_const_block_comptime_entry`/`lower_const` via
-    /// `mir::ExecutableConst`). Two callers: `resolve_comptime_request_with`
-    /// (mid-typing-pass, to answer pending `ComptimeRequest`s for real) and
-    /// `compile_package`'s post-typing pass (to embed real constants via
-    /// `apply_resolved_comptime_block_values` + `relower_cached_lir_units`,
-    /// for whichever entries the mid-pass attempts hadn't already resolved).
-    async fn evaluate_comptime_lir(
-        &mut self,
-        package_id: &PackageId,
-        module_path: &QualifiedPath,
-    ) -> Result<HashMap<hir::DefId, Value>, CompilerDriverError> {
-        Self::evaluate_comptime_lir_with(&self.state, package_id, module_path)
-    }
-
-    /// Same as `evaluate_comptime_lir`, but against a bare
-    /// `Rc<RefCell<CompilerState>>` and its own fresh, local
-    /// `LirInterpreter` (not `CompilerDriver.interpreter` — every call site
-    /// already resets that field unconditionally before use, so it never
-    /// carried state across calls anyway). `module_path` isn't used to find
-    /// anything (`package_id`'s own already-lowered LIR, read via
-    /// `state.lir_blob`, is) — only to key the resulting `ConstValueId` the
-    /// same way `insert_const_value`'s caller (e.g. `fp-cli`'s
-    /// `eval_script`/`execute_ast`) looks it back up by.
-    fn evaluate_comptime_lir_with(
+    /// Runs `def_id`'s own comptime function through the shared
+    /// `LirInterpreter` (`CompilerState::interpreter_mut`) for real and
+    /// returns its resolved value directly — a bare `Rc<RefCell<
+    /// CompilerState>>`, not `&mut self`, since this is reached both from
+    /// `compile_package_module_native` and from
+    /// `resolve_comptime_request_with`'s free-standing, mid-typing-pass
+    /// context.
+    fn evaluate_comptime_lir(
         state: &Rc<RefCell<CompilerState>>,
-        package_id: &PackageId,
-        module_path: &QualifiedPath,
-    ) -> Result<HashMap<hir::DefId, Value>, CompilerDriverError> {
-        // Real comptime interpretation (running an `ExecutableConst`'s
-        // function through `LirInterpreter`) was ripped out along with
-        // `LirComptimeEntry`/`comptime_entries`/`MirPackage::
-        // resolved_const_values` — nothing resolves here anymore.
-        let _ = package_id;
-        let value_id = ConstValueId::new(format!("const_value:{}", module_path.to_key()));
-        state.borrow_mut().insert_const_value(value_id, Value::unit());
-        Ok(HashMap::new())
+        def_id: &hir::DefId,
+    ) -> Result<Value, CompilerDriverError> {
+        // `def_id` already carries its own owning package's id — the same
+        // identity `lower_executable_const`/`LirProgram::
+        // find_function_by_def_id` use to name/find this exact entry's
+        // LIR function, so no separate `package_id` parameter is needed.
+        let package_id = PackageId::new(def_id.package_id.as_str());
+        let mut state_mut = state.borrow_mut();
+        // The whole session's `LirProgram`, not just `package_id`'s own
+        // blob — a comptime function can call into a dependency package,
+        // and `LirInterpreter::run_entrypoint`'s own lookups
+        // (`LirProgram::find_function`/`find_function_any_package`) only
+        // ever see what `load_program` handed it. `lir_program_rc` clones
+        // the shared `Rc`, not the program itself.
+        let program = state_mut.lir_program_rc();
+        let return_ty = program
+            .find_function_by_def_id(def_id)
+            .map(|function| function.signature.return_type.clone());
+        let interpreter = state_mut.interpreter_mut();
+        interpreter.load_program(program)?;
+        let mut value = interpreter.run_entrypoint(&package_id, def_id)?;
+        if let Some(ty) = return_ty {
+            value = interpreter.read_typed_const_value(value, &ty)?;
+        }
+        Ok(value)
     }
 }
 

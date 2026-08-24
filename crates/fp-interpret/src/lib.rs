@@ -12,7 +12,7 @@ use fp_core::lir::{
     BasicBlockId, CallingConvention, ComptimeOp, LirCodeUnitKind, LirBasicBlock, LirConstant,
     LirConstantAggregate, LirConstantData, LirConstantExpr, LirConstantKind, LirDataLayout,
     LirFloat, LirFunction, LirFunctionRef, LirInstruction, LirInstructionKind, LirInteger,
-    LirLocal, LirBlob, LirTerminator, LirType, LirValue, LirValueKind, LirUnitTable, RegisterId,
+    LirLocal, LirBlob, LirTerminator, LirType, LirValue, LirValueKind, Name, RegisterId,
 };
 use fp_core::ast::package::PackageId;
 use fp_ffi::{FfiRuntime, FfiSignature, FfiType};
@@ -108,16 +108,12 @@ pub struct LirInterpreter {
     extern_sigs: HashMap<String, FfiSignature>,
     /// Tracks the predecessor block ID for correct Phi resolution.
     last_predecessor: Option<BasicBlockId>,
-    /// All LIR functions keyed by name, for cross-module call resolution.
-    /// Populated from a flat program for legacy runtime entrypoints.
-    /// `Rc`-wrapped so every call site's `.get(..).cloned()` (once per
-    /// function call the interpreter makes) is a cheap pointer clone
-    /// instead of deep-cloning the whole function body (every basic
-    /// block/instruction) on every call.
-    program_functions: HashMap<String, Rc<LirFunction>>,
-    package_functions: HashMap<(PackageId, String), Rc<LirFunction>>,
-    workspace_functions: HashMap<(fp_core::ast::package::PackageId, String), Rc<LirFunction>>,
-    definition_functions: HashMap<fp_core::hir::DefId, Rc<LirFunction>>,
+    /// Every package's own LIR, loaded once via `load_program` — function
+    /// lookups (`handle_call_named`/`handle_call`/`invoke_function_ref_with_string`)
+    /// query this directly on demand (`LirProgram::find_function`/
+    /// `find_function_any_package`/`find_function_by_def_id`) instead of a
+    /// separately maintained lookup cache.
+    program: Option<Rc<fp_core::lir::LirProgram>>,
 }
 
 impl LirInterpreter {
@@ -136,106 +132,77 @@ impl LirInterpreter {
             ffi: FfiRuntime::new().ok(),
             extern_sigs: HashMap::new(),
             last_predecessor: None,
-            program_functions: HashMap::new(),
-            package_functions: HashMap::new(),
-            workspace_functions: HashMap::new(),
-            definition_functions: HashMap::new(),
+            program: None,
         }
     }
 
-    pub fn run_main(&mut self, program: &LirBlob) -> LirResult<Value> {
+    /// Loads every package's own LIR from `program` — the one place
+    /// globals get materialized into interpreter memory (`global_values`)
+    /// before anything can reference them. Function lookups need no
+    /// separate population step: `handle_call`/`handle_call_named`/
+    /// `invoke_function_ref_with_string` query `self.program` directly,
+    /// on demand, via `LirProgram`'s own lookup APIs.
+    pub fn load_program(&mut self, program: Rc<fp_core::lir::LirProgram>) -> LirResult<()> {
+        for package in program.packages.values() {
+            let blob = package.own_artifacts.to_blob();
+            self.populate_globals_batch(&[&blob])?;
+        }
+        self.program = Some(program);
+        Ok(())
+    }
+
+    /// Test-only convenience: wraps a single flat `LirBlob` as a
+    /// one-package program, loads it, and runs its `main` function by
+    /// name. Not exposed publicly — a real caller always knows its own
+    /// package id and entry `DefId` and should use `run_entrypoint`.
+    #[cfg(test)]
+    fn run_main(&mut self, program: &LirBlob) -> LirResult<Value> {
         self.run_main_with_package(program, PackageId::new(""))
     }
 
-    /// Like `run_main`, but registers this program's functions under the
-    /// real compiling package's id — see `run_entrypoint_with_package`'s
-    /// doc comment for why `run_main`'s hardcoded empty id is wrong for
-    /// any program that calls a function other than `main` itself.
-    pub fn run_main_with_package(
-        &mut self,
-        program: &LirBlob,
-        package_id: PackageId,
-    ) -> LirResult<Value> {
-        self.populate_functions_from_program(program);
-        self.populate_functions_for_package(program, package_id);
-        self.populate_globals_batch(&[program])?;
-        let entry = program.functions.iter().find(|f| f.name.as_str() == "main");
-        let func = entry.ok_or(VmError::Runtime("no entry point".into()))?;
-        self.run_function(program, func, &[])
-    }
-
-    pub fn run_entrypoint(
-        &mut self,
-        program: &LirBlob,
-        def_id: fp_core::hir::DefId,
-    ) -> LirResult<Value> {
-        self.run_entrypoint_with_package(program, def_id, PackageId::new(""))
-    }
-
-    /// Like `run_entrypoint`, but registers this program's functions
-    /// under the real compiling package's id.
-    ///
-    /// `populate_functions_for_package` registers every function it finds
-    /// into `self.package_functions` keyed by `(package_id, name)`.
-    /// Ordinary calls are lowered (`mir_to_lir::instr::function_value`) to
-    /// reference `LirFunctionRef::Package { package_id, .. }` using the
-    /// *real* compiling package's id — never an empty one — so
-    /// `handle_call_named`'s lookup against that real id can never hit
-    /// anything registered under a hardcoded empty id. `run_main`/
-    /// `run_entrypoint` locate their own entry function by scanning
-    /// `program.functions` directly (never going through
-    /// `package_functions`), so this bug is invisible for a program with
-    /// only one function, and only surfaces once a second, separately
-    /// called top-level function exists.
-    pub fn run_entrypoint_with_package(
-        &mut self,
-        program: &LirBlob,
-        def_id: fp_core::hir::DefId,
-        package_id: PackageId,
-    ) -> LirResult<Value> {
-        self.populate_functions_from_program(program);
-        self.populate_functions_for_package(program, package_id);
-        self.populate_globals_batch(&[program])?;
+    #[cfg(test)]
+    fn run_main_with_package(&mut self, program: &LirBlob, package_id: PackageId) -> LirResult<Value> {
+        let lir_program = fp_core::lir::LirProgram::from_single_blob(
+            package_id,
+            fp_core::ast::path::QualifiedPath::new(Vec::new()),
+            program.clone(),
+        )
+        .map_err(|error| VmError::Runtime(error.to_string()))?;
+        self.load_program(Rc::new(lir_program))?;
         let func = program
             .functions
             .iter()
-            .find(|function| function.def_id == Some(def_id.clone()))
-            .ok_or(VmError::Runtime(format!(
-                "entrypoint {def_id} was not emitted"
-            )))?;
+            .find(|f| f.name.as_str() == "main")
+            .ok_or(VmError::Runtime("no entry point".into()))?;
         let func = func.clone();
-        self.run_function(program, &func, &[])
+        self.run_function(&func, &[])
     }
 
-    /// Run a named function that may live in any of `workspaces` (the
-    /// current package's own, plus each dependency's own, in order) —
-    /// queried directly against each one's own artifacts instead of
-    /// requiring the caller to first clone every workspace's artifacts
-    /// into one throwaway combined `LirUnitTable`.
-    pub fn run_function_named_in_workspace(
+    /// Runs `package_id`'s own `def_id` entry function — `self.program`
+    /// (`load_program`) must already hold `package_id`'s own LIR.
+    pub fn run_entrypoint(
         &mut self,
-        workspaces: &[&LirUnitTable],
-        package_id: &fp_core::ast::package::PackageId,
-        name: &fp_core::lir::Name,
+        package_id: &PackageId,
+        def_id: &fp_core::hir::DefId,
     ) -> LirResult<Value> {
-        let data_layout = workspaces
-            .first()
-            .map(|ws| ws.data_layout.clone())
-            .ok_or_else(|| VmError::Runtime("no workspace to run a function from".to_string()))?;
-        self.data_layout = data_layout.clone();
-        for workspace in workspaces {
-            self.populate_functions_from_workspace(workspace);
-            self.populate_globals_from_workspace(workspace)?;
-        }
-        let function = workspaces
-            .iter()
-            .find_map(|workspace| workspace.find_function(package_id.clone(), name))
-            .cloned()
-            .ok_or_else(|| {
-                VmError::Runtime(format!("missing function {name} in package {package_id}"))
-            })?;
-        let program = LirBlob::new(data_layout);
-        self.run_function(&program, &function, &[])
+        let function = self
+            .program
+            .as_ref()
+            .and_then(|program| program.package(package_id))
+            .and_then(|package| {
+                package.own_artifacts.artifacts().iter().find_map(|artifact| {
+                    match &artifact.kind {
+                        LirCodeUnitKind::Function(function)
+                            if function.def_id.as_ref() == Some(def_id) =>
+                        {
+                            Some(function.clone())
+                        }
+                        _ => None,
+                    }
+                })
+            })
+            .ok_or_else(|| VmError::Runtime(format!("entrypoint {def_id} was not emitted")))?;
+        self.run_function(&function, &[])
     }
 
     /// Read a compile-time result using the result's declared LIR layout.
@@ -285,64 +252,7 @@ impl LirInterpreter {
         Ok(Value::string(text))
     }
 
-    fn populate_functions_from_workspace(&mut self, workspace: &LirUnitTable) {
-        for artifact in workspace.artifacts() {
-            if let LirCodeUnitKind::Function(function) = &artifact.kind {
-                // One real deep clone here (unavoidable — `function` is
-                // borrowed from `artifact`), then only cheap `Rc` clones
-                // into each lookup map below.
-                let function = Rc::new(function.clone());
-                if let Some(ref def_id) = function.def_id {
-                    self.definition_functions.insert(def_id.clone(), function.clone());
-                }
-                self.workspace_functions.insert(
-                    (
-                        artifact.package_id.clone(),
-                        function.name.as_str().to_string(),
-                    ),
-                    function.clone(),
-                );
-                self.package_functions.insert(
-                    (
-                        artifact.package_id.clone(),
-                        function.name.as_str().to_string(),
-                    ),
-                    function.clone(),
-                );
-                self.program_functions
-                    .insert(function.name.as_str().to_string(), function);
-            }
-        }
-    }
-
-    fn populate_globals_from_workspace(&mut self, workspace: &LirUnitTable) -> LirResult<()> {
-        let program = workspace.to_blob();
-        self.populate_globals_batch(&[&program])
-    }
-
-    fn populate_functions_from_program(&mut self, program: &LirBlob) {
-        for func in &program.functions {
-            self.program_functions
-                .insert(func.name.as_str().to_string(), Rc::new(func.clone()));
-        }
-    }
-
-    fn populate_functions_for_package(&mut self, program: &LirBlob, package_id: PackageId) {
-        for function in &program.functions {
-            self.package_functions.insert(
-                (package_id.clone(), function.name.as_str().to_string()),
-                Rc::new(function.clone()),
-            );
-        }
-    }
-
-    pub fn run_function(
-        &mut self,
-        program: &LirBlob,
-        func: &LirFunction,
-        args: &[Value],
-    ) -> LirResult<Value> {
-        self.data_layout = program.data_layout.clone();
+    pub fn run_function(&mut self, func: &LirFunction, args: &[Value]) -> LirResult<Value> {
         let saved_registers = self.state.regs.gpr.clone();
         let saved_register_values = self.register_values.clone();
         self.state.push_frame(func.name.as_str().to_string());
@@ -2005,13 +1915,13 @@ impl LirInterpreter {
             ));
         };
         let function = self
-            .definition_functions
-            .get(def_id)
+            .program
+            .as_ref()
+            .and_then(|program| program.find_function_by_def_id(def_id))
             .cloned()
             .ok_or(VmError::Runtime(format!(
                 "missing function definition {def_id}"
             )))?;
-        let program = LirBlob::new(self.data_layout.clone());
         // `&str` (`Ptr<I8>`) parameters are managed-object pointers, not
         // bare `Value::String`s (see `render_typed_value`'s `Ptr<I8>` arm) —
         // push the argument onto the object heap and pass a pointer to it,
@@ -2020,7 +1930,7 @@ impl LirInterpreter {
         let handle = self.state.objects.len() as u64;
         self.state.objects.push(Value::string(arg.to_string()));
         let arg_value = Value::Pointer(fp_core::ast::ValuePointer::managed(handle as i64));
-        let result = self.run_function(&program, &function, &[arg_value])?;
+        let result = self.run_function(&function, &[arg_value])?;
         let result_value = match result {
             Value::Pointer(pointer) => {
                 let handle = usize::try_from(pointer.value)
@@ -2069,13 +1979,14 @@ impl LirInterpreter {
                 result_ty,
             ),
             LirFunctionRef::Definition(def_id) => {
-                let function =
-                    self.definition_functions
-                        .get(def_id)
-                        .cloned()
-                        .ok_or(VmError::Runtime(format!(
-                            "missing function definition {def_id}"
-                        )))?;
+                let function = self
+                    .program
+                    .as_ref()
+                    .and_then(|program| program.find_function_by_def_id(def_id))
+                    .cloned()
+                    .ok_or(VmError::Runtime(format!(
+                        "missing function definition {def_id}"
+                    )))?;
                 let resolved_args: Vec<Value> = args
                     .iter()
                     .enumerate()
@@ -2093,8 +2004,7 @@ impl LirInterpreter {
                         Ok(value.value)
                     })
                     .collect::<LirResult<Vec<_>>>()?;
-                let program = LirBlob::new(self.data_layout.clone());
-                let value = self.run_function(&program, &function, &resolved_args)?;
+                let value = self.run_function(&function, &resolved_args)?;
                 let Some(ty) = result_ty else {
                     return Ok(());
                 };
@@ -2115,7 +2025,7 @@ impl LirInterpreter {
         name: &str,
         args: &[LirValue],
         package_id: Option<PackageId>,
-        definition: Option<Rc<LirFunction>>,
+        definition: Option<LirFunction>,
         result_ty: Option<&LirType>,
     ) -> LirResult<()> {
         let typed_args: Vec<TypedValue> = args
@@ -2145,13 +2055,12 @@ impl LirInterpreter {
         let function = if definition.is_some() {
             definition
         } else {
-            match package_id {
-                Some(package_id) => self
-                    .package_functions
-                    .get(&(package_id, name.to_string()))
-                    .cloned(),
-                None => self.program_functions.get(name).cloned(),
-            }
+            let name = Name::new(name);
+            self.program.as_ref().and_then(|program| match &package_id {
+                Some(package_id) => program.find_function(package_id, &name),
+                None => program.find_function_any_package(&name),
+            })
+            .cloned()
         }
         .ok_or_else(|| VmError::Runtime(format!("missing function {name}")))?;
         let resolved_args: Vec<Value> = args
@@ -2179,8 +2088,7 @@ impl LirInterpreter {
                 args.len()
             )));
         }
-        let prog = LirBlob::new(self.data_layout.clone());
-        let value = self.run_function(&prog, &function, &resolved_args)?;
+        let value = self.run_function(&function, &resolved_args)?;
         let Some(ty) = result_ty else {
             return Ok(());
         };
@@ -2945,12 +2853,30 @@ impl fp_core::backend::TargetBackend for InterpreterBackend {
         lir: Option<&fp_core::lir::LirBlob>,
     ) -> fp_core::error::Result<()> {
         let _ = mir;
+        let _ = workspace;
         let lir = lir
             .ok_or_else(|| fp_core::error::Error::from(format!("package `{package_id}` has no compiled LIR")))?
             .clone();
+        let def_id = lir
+            .functions
+            .iter()
+            .find(|function| function.name.as_str() == "main")
+            .and_then(|function| function.def_id.clone())
+            .ok_or_else(|| {
+                fp_core::error::Error::from(format!("package `{package_id}` has no `main` entrypoint"))
+            })?;
+        let program = fp_core::lir::LirProgram::from_single_blob(
+            package_id.clone(),
+            fp_core::ast::path::QualifiedPath::new(Vec::new()),
+            lir,
+        )
+        .map_err(|error| fp_core::error::Error::from(error.to_string()))?;
         let mut interpreter = LirInterpreter::new();
+        interpreter
+            .load_program(Rc::new(program))
+            .map_err(|error| fp_core::error::Error::from(error.to_string()))?;
         let value = interpreter
-            .run_main_with_package(&lir, package_id.clone())
+            .run_entrypoint(package_id, &def_id)
             .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
         println!("{value:?}");
         Ok(())
@@ -3545,9 +3471,13 @@ mod tests {
         };
 
         let mut interpreter = LirInterpreter::new();
-        interpreter
-            .definition_functions
-            .insert(shout_def_id.clone(), Rc::new(shout_fn));
+        let program = fp_core::lir::LirProgram::from_single_blob(
+            PackageId::new(""),
+            fp_core::ast::path::QualifiedPath::new(Vec::new()),
+            make(shout_fn),
+        )
+        .unwrap();
+        interpreter.load_program(Rc::new(program)).unwrap();
 
         // Register 1: the closure `unionify(shout)` would have produced.
         interpreter.register_values.insert(

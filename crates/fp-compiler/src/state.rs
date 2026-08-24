@@ -1,17 +1,15 @@
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use fp_core::{
-    ast::Value,
     ast::package::PackageId,
     ast::program::AstProgram,
     executor::ExecutorHandle,
     hir, lir, mir,
 };
+use fp_interpret::LirInterpreter;
 use fp_typing::ComptimeResolver;
 
 use crate::error::CompilerDriverError;
-use crate::ConstValueId;
 
 pub struct CompilerState {
     /// Every package's own HIR published so far this session — mirrors
@@ -38,8 +36,14 @@ pub struct CompilerState {
     mir_program: mir::MirProgram,
     /// Mirrors `mir_program` for LIR — one `lir::LirProgram`, a collection
     /// of `LirPackage`s, each already a collection of `LirCodeUnit`s (via
-    /// its own `own_artifacts: LirUnitTable`, keyed by `Name`).
-    lir_program: lir::LirProgram,
+    /// its own `own_artifacts: LirUnitTable`, keyed by `Name`). `Rc`-wrapped
+    /// so `evaluate_comptime_lir`'s `LirInterpreter::load_program` (which
+    /// needs its own `Rc<lir::LirProgram>`) can clone the handle instead of
+    /// deep-cloning the whole program on every comptime evaluation; mutating
+    /// methods below go through `Rc::make_mut` (a real clone only if some
+    /// other `Rc` clone — e.g. one still loaded into `interpreter` — is
+    /// outstanding).
+    lir_program: Rc<lir::LirProgram>,
     /// The one renamed entrypoint function `select_entrypoint` builds per
     /// selection (the resolved entrypoint, renamed to its bare linkage
     /// name) — just that one `LirCodeUnit`, not a whole duplicated
@@ -52,7 +56,6 @@ pub struct CompilerState {
     /// doesn't fit the `lir_program` hierarchy above.
     runtime_programs: std::collections::HashMap<lir::LirPath, lir::LirCodeUnit>,
     runtime_entrypoints: std::collections::HashMap<lir::LirPath, hir::DefId>,
-    const_values: BTreeMap<ConstValueId, Value>,
     /// This package's comptime resolver, wired up by the driver
     /// (`make_comptime_resolver`) before `TypingShared` exists — a
     /// package's HIR isn't generated yet at that point, so there's nowhere
@@ -80,6 +83,13 @@ pub struct CompilerState {
     /// task can reentrantly `spawn`/`contains`-check it from within its own
     /// poll).
     pub(crate) tasks: ExecutorHandle,
+    /// The one `LirInterpreter` real comptime evaluation runs through
+    /// (`evaluate_comptime_lir`) — lives here, not on `CompilerDriver`,
+    /// since `evaluate_comptime_lir` is a free-standing fn taking only
+    /// `&Rc<RefCell<CompilerState>>` (it's reached both from `&mut self`
+    /// driver methods and from `resolve_comptime_request_with`'s
+    /// mid-typing-pass, free-standing context).
+    interpreter: LirInterpreter,
 }
 
 impl CompilerState {
@@ -102,16 +112,22 @@ impl CompilerState {
             hir_program: hir::HirProgram::new(),
             in_progress_hir_program: None,
             mir_program: mir::MirProgram::new(),
-            lir_program: lir::LirProgram::new(),
+            lir_program: Rc::new(lir::LirProgram::new()),
             runtime_programs: std::collections::HashMap::new(),
             runtime_entrypoints: std::collections::HashMap::new(),
-            const_values: BTreeMap::new(),
             comptime_resolver: None,
             workspace,
             data_layout,
             backend_capabilities: fp_core::capabilities::LanguageCapabilities::NATIVE,
             tasks,
+            interpreter: LirInterpreter::new(),
         }
+    }
+
+    /// The shared `LirInterpreter` real comptime evaluation runs through —
+    /// see the field's own doc comment for why it lives here.
+    pub fn interpreter_mut(&mut self) -> &mut LirInterpreter {
+        &mut self.interpreter
     }
 
     /// Publishes `package` under its own `id` — `HirProgram::add_package`
@@ -183,19 +199,24 @@ impl CompilerState {
     /// `LirUnitTable::add_program` errors on a duplicate artifact name
     /// rather than silently overwriting the previous lowering.
     pub fn reset_lir_package(&mut self, package_id: &PackageId) {
-        self.lir_program
+        let data_layout = self.data_layout.clone();
+        Rc::make_mut(&mut self.lir_program)
             .packages
-            .insert(package_id.clone(), lir::LirPackage::new(self.data_layout.clone()));
+            .insert(package_id.clone(), lir::LirPackage::new(data_layout));
     }
 
     /// Every `MirCodeUnit` this package has produced so far, folded into
-    /// one flat `mir::MirModule` — the view `MirToLirLowerer`/the interpreter
-    /// still need. Empty (not an error) if the package has no units yet.
-    pub fn mir_module(&self, package_id: &PackageId) -> mir::MirModule {
-        self.mir_program
-            .package(package_id)
-            .map(|package| package.flatten())
-            .unwrap_or_default()
+    /// one flat `mir::MirCodeUnit` — the view `MirToLirLowerer`/the
+    /// interpreter still need. Empty (not an error) if the package has no
+    /// units yet.
+    pub fn mir_module(&self, package_id: &PackageId) -> mir::MirCodeUnit {
+        let mut unit = mir::MirCodeUnit::new();
+        if let Some(package) = self.mir_program.package(package_id) {
+            unit.items.extend(package.items().cloned());
+            unit.bodies
+                .extend(package.bodies().map(|(id, body)| (*id, body.clone())));
+        }
+        unit
     }
 
     /// Records one LIR artifact into `package_id`'s own unit table — the
@@ -205,8 +226,9 @@ impl CompilerState {
         package_id: &PackageId,
         unit: lir::LirCodeUnit,
     ) -> Result<(), CompilerDriverError> {
-        self.lir_program
-            .package_mut(package_id, &self.data_layout)
+        let data_layout = self.data_layout.clone();
+        Rc::make_mut(&mut self.lir_program)
+            .package_mut(package_id, &data_layout)
             .own_artifacts
             .add_artifact(unit)
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))
@@ -223,8 +245,9 @@ impl CompilerState {
         module_path: fp_core::ast::path::QualifiedPath,
         blob: lir::LirBlob,
     ) -> Result<(), CompilerDriverError> {
-        self.lir_program
-            .package_mut(package_id, &self.data_layout)
+        let data_layout = self.data_layout.clone();
+        Rc::make_mut(&mut self.lir_program)
+            .package_mut(package_id, &data_layout)
             .own_artifacts
             .add_program(package_id.clone(), module_path, blob)
             .map_err(|error| CompilerDriverError::Core(error.to_string().into()))
@@ -246,6 +269,14 @@ impl CompilerState {
     /// before handing it to a `TargetBackend`.
     pub fn lir_program(&self) -> &lir::LirProgram {
         &self.lir_program
+    }
+
+    /// Cheap `Rc` clone of the whole session's `lir::LirProgram` — what
+    /// `evaluate_comptime_lir` hands to `LirInterpreter::load_program`
+    /// (which needs to own its own `Rc`), instead of deep-cloning the
+    /// program on every comptime evaluation.
+    pub fn lir_program_rc(&self) -> Rc<lir::LirProgram> {
+        self.lir_program.clone()
     }
 
     /// The whole session's `hir::HirProgram` — used by callers
@@ -303,10 +334,6 @@ impl CompilerState {
             })
     }
 
-    pub fn insert_const_value(&mut self, value_id: ConstValueId, value: Value) {
-        self.const_values.insert(value_id, value);
-    }
-
     pub fn set_backend_capabilities(&mut self, capabilities: fp_core::capabilities::LanguageCapabilities) {
         self.backend_capabilities = capabilities;
     }
@@ -328,16 +355,6 @@ impl CompilerState {
     /// driver's scratch, per-package `TypingShared`.
     pub fn all_packages(&self) -> impl Iterator<Item = &Rc<hir::HirPackage>> {
         self.hir_program.packages.values()
-    }
-
-    pub fn const_value(&self, value_id: &ConstValueId) -> Result<&Value, CompilerDriverError> {
-        self.const_values
-            .get(value_id)
-            .ok_or_else(|| CompilerDriverError::MissingConstValue(value_id.clone()))
-    }
-
-    pub fn const_value_len(&self) -> usize {
-        self.const_values.len()
     }
 
 }

@@ -12,9 +12,6 @@
 //! # Cross-compile a binary for a target triple
 //! fp compile hello.fp --target native --target-triple x86_64-unknown-linux-gnu
 //!
-//! # Run const evaluation with interpretation
-//! fp eval "1 + 2 * 3"
-//!
 //! # Initialize a new FerroPhase project
 //! magnet init my-project --template basic
 //!
@@ -27,8 +24,8 @@ use fp_cli::{
     Result,
     cli::CliConfig,
     commands::{
-        self, compile::CompileArgs, completions::CompletionsArgs, eval::EvalArgs,
-        inspect::InspectArgs, interpret::InterpretArgs,
+        self, compile::CompileArgs, completions::CompletionsArgs, inspect::InspectArgs,
+        interpret::InterpretArgs,
     },
     diagnostics::setup_error_reporting,
 };
@@ -46,7 +43,6 @@ while supporting multi-language interoperability and advanced compile-time compu
 
 EXAMPLES:
     fp interpret hello.fp                 # Interpret a FerroPhase file
-    fp eval "1 + 2 * 3"                  # Evaluate a ScriptBlock
     fp compile hello.fp --target rust     # Compile to Rust
     magnet init my-project                # Create new project
     "#
@@ -100,9 +96,6 @@ enum Commands {
     /// Compile FerroPhase code to various targets
     Compile(CompileArgs),
 
-    /// Evaluate expressions using the interpreter
-    Eval(EvalArgs),
-
     /// Interpret bytecode produced by `compile --target bytecode`
     Interpret(InterpretArgs),
 
@@ -150,7 +143,6 @@ async fn async_main() -> Result<()> {
     // Execute command
     let result = match cli.command {
         Commands::Compile(args) => commands::compile_command(args, &config).await,
-        Commands::Eval(args) => commands::eval_command(args, &config).await,
         Commands::Interpret(args) => commands::interpret_command(args, &config).await,
         Commands::Inspect(args) => commands::inspect_command(args, &config).await,
         Commands::Completions(args) => commands::completions_command(args, &config).await,

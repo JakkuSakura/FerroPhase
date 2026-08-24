@@ -2,17 +2,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fp_compiler::{
-    CompilerDriver, CompilerExecutor, CompilerSession, ConstValueId, FullyQualifiedPath,
-    PipelineMode,
+    CompilerDriver, CompilerExecutor, CompilerSession, FullyQualifiedPath, PipelineMode,
 };
 use fp_core::ast::path::QualifiedPath;
 use fp_core::ast::package::provider::PackageProvider;
 use fp_core::ast::package::PackageId;
 use fp_core::{
-    ast::{
-        Expr, ExprBlock, File, Ident, Item, ItemDefConst, ItemDefFunction, ItemKind, ScriptBlock,
-        Value, Visibility,
-    },
+    ast::File,
     diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager},
     frontend::{FrontendParseMode, FrontendResult, LanguageFrontend},
     lir::LirDataLayout,
@@ -31,100 +27,6 @@ pub(crate) fn data_layout() -> LirDataLayout {
         vec![(1, 1), (8, 1), (16, 2), (32, 4), (64, 8), (128, 16)],
     )
     .expect("valid CLI data layout")
-}
-
-pub fn eval_script(script: ScriptBlock) -> Result<Value> {
-    let body = ExprBlock::new_stmts(script.stmts);
-    let eval_const = ItemDefConst {
-        attrs: Vec::new(),
-        mutable: None,
-        ty_annotation: None,
-        visibility: Visibility::Private,
-        name: Ident::new("__eval_result"),
-        ty: None,
-        value: Expr::block(body.clone()).into(),
-    };
-    let main = ItemDefFunction::new_simple(Ident::new("main"), ExprBlock::new_expr(Expr::unit()));
-    let ast = File {
-        path: PathBuf::from("<eval>"),
-        attrs: Vec::new(),
-        collected_items: Vec::new(),
-        items: vec![
-            Item::new(ItemKind::DefFunction(main)),
-            Item::new(ItemKind::DefConst(eval_const)),
-        ],
-    };
-    let identity = CompilerIdentity::for_script();
-    let executor = CompilerExecutor::new();
-    let mut driver = compile_source_file(
-        SourceInput::InMemory(ast),
-        languages::FERROPHASE,
-        &identity,
-        &executor,
-        PipelineMode::Native,
-    )?;
-    drain_driver(&mut driver)?;
-    // This script's `File` has exactly one const item (`__eval_result`
-    // above), so `evaluate_comptime_lir_with`'s own last-resolved-value
-    // bookkeeping (`insert_const_value`, keyed by this script's own path —
-    // see `ConstValueId`'s construction here) always ends up holding this
-    // const's value, whichever of its two resolution paths (direct
-    // constant-folding or real interpretation) it took.
-    driver
-        .state
-        .borrow()
-        .const_value(&ConstValueId::new(format!(
-            "const_value:{}",
-            identity.path.to_key()
-        )))
-        .map(|value| value.clone())
-        .map_err(|error| CliError::Compilation(error.to_string()))
-}
-
-pub fn interpret_file(path: &Path, package: &str) -> Result<Value> {
-    let language = resolve_source_language(path, None)?;
-    execute_ast(
-        SourceInput::Path(path.to_path_buf()),
-        &language,
-        CompilerIdentity::for_file(package, path),
-        fp_core::context::ExecutionMode::Runtime,
-    )
-}
-
-fn execute_ast(
-    input: SourceInput,
-    language: &str,
-    identity: CompilerIdentity,
-    mode: fp_core::context::ExecutionMode,
-) -> Result<Value> {
-    let value_key = identity.path.to_key();
-    let executor = CompilerExecutor::new();
-    let mut driver = compile_source_file(
-        input,
-        language,
-        &identity,
-        &executor,
-        PipelineMode::Native,
-    )?;
-    drain_driver(&mut driver)?;
-
-    match mode {
-        fp_core::context::ExecutionMode::CompileTime => driver
-            .state
-            .borrow()
-            .const_value(&ConstValueId::new(format!("const_value:{value_key}")))
-            .map(|value| value.clone())
-            .map_err(|err| CliError::Compilation(err.to_string())),
-        fp_core::context::ExecutionMode::Runtime => {
-            let package_id = PackageId::new(identity.path.path().head().ok_or_else(|| {
-                CliError::Compilation("source file has no package identity".to_string())
-            })?);
-            let lir_path = fp_core::lir::LirPath::new(package_id.clone(), identity.path.path().clone());
-            driver
-                .execute_runtime(&lir_path)
-                .map_err(|err| CliError::Compilation(err.to_string()))
-        }
-    }
 }
 
 /// `"std"`/`"libc"` resolve against different providers depending on the
@@ -274,9 +176,9 @@ fn module_path_for_typescript(_package_root: &Path, _input: &Path) -> Result<Qua
 
 /// A single compiler input: either a real on-disk file (the common case —
 /// parsed lazily, once a `PackageProvider` actually asks for its source), or
-/// an already-built in-memory `File` with no path to read from (e.g.
-/// `eval_script`'s synthetic `"<eval>"` script). Two genuinely different
-/// kinds of input, not one file-focused path with a bolted-on exception.
+/// an already-built in-memory `File` with no path to read from. Two
+/// genuinely different kinds of input, not one file-focused path with a
+/// bolted-on exception.
 enum SourceInput {
     Path(PathBuf),
     InMemory(File),
@@ -655,10 +557,6 @@ impl LoweredProgram {
 }
 
 impl CompilerIdentity {
-    fn for_script() -> Self {
-        Self::new(vec!["cli".to_string(), "eval_script".to_string()])
-    }
-
     fn for_file(package: &str, path: &Path) -> Self {
         let module = path
             .file_stem()
