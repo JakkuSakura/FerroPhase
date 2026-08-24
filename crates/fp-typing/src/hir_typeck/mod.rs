@@ -2264,6 +2264,20 @@ impl HirTypeChecker {
                 if let Some(ty) = scope.and_then(|scope| scope.get(&assoc_segment.name)) {
                     return Ok(ty.clone());
                 }
+                // `Self` is still a generic parameter here (a blanket
+                // impl's own `Self = I`, or a trait default method's
+                // implicit `Self: Trait`) — there is no concrete impl to
+                // have populated `assoc_types` from, so fall back to the
+                // same trait-bound-derived resolution `T::AssocType`
+                // already uses for an explicit generic parameter.
+                if let TyKind::Param(param) = &self_type.kind {
+                    if let Some(ty) = self
+                        .assoc_type_from_generic_param_bounds(&param.name, &assoc_segment.name)
+                        .await?
+                    {
+                        return Ok(ty);
+                    }
+                }
                 tracing::debug!(
                     assoc = %assoc_segment.name,
                     ?self_type,
