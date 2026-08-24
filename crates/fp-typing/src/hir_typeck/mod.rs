@@ -1445,7 +1445,7 @@ impl HirTypeChecker {
                     // so it's pushed/popped here rather than delegated to
                     // `check_block`, which only scopes the body itself.
                     let iter_ty = self.check_expr(iter).await?;
-                    let elem_ty = self.for_loop_element_ty(&iter_ty);
+                    let elem_ty = self.for_loop_element_ty(&iter_ty).await;
                     let mut scope = self.with_fresh_block_scope();
                     scope.bind_pattern(pat, elem_ty).await?;
                     scope.check_block(body).await?;
@@ -2658,18 +2658,24 @@ impl HirTypeChecker {
     /// Element type a `hir::ExprKind::For`'s loop pattern binds to, given
     /// the already-checked type of its iterator expression. Handles the
     /// shapes an un-desugared `for` loop's `iter` can actually resolve to:
-    /// a real `Array`/`Slice`, or `Vec<T>` (a real struct with a generic
+    /// a real `Array`/`Slice`, `Vec<T>` (a real struct with a generic
     /// argument, not `TyKind::Array`/`Slice` — see the `Index` arm above
     /// for why `Vec` needs its own case here rather than falling out of
-    /// the array/slice shapes). Anything else (a custom iterator-returning
-    /// method chain this compiler doesn't model the `Iterator`/`IntoIterator`
-    /// trait for) records a diagnostic and yields an error type rather
+    /// the array/slice shapes), or any other type with a real `Iterator`
+    /// impl reachable by its own declared `type Item = ..;` (looked up the
+    /// same way any other associated-type projection is, via
+    /// `assoc_type_for_self` — real vendored std's own iterator adapters
+    /// declare `Item` directly on themselves, so this needs no actual
+    /// `next()`-calling iteration protocol modeled, just the same impl
+    /// search every other associated-type/method lookup already does).
+    /// Anything else records a diagnostic and yields an error type rather
     /// than hard-failing the whole item.
-    fn for_loop_element_ty(&self, iter_ty: &Ty) -> Ty {
+    async fn for_loop_element_ty(&mut self, iter_ty: &Ty) -> Ty {
         let iter_ty = match &iter_ty.kind {
             TyKind::Ref(_, inner, _) => inner.as_ref(),
             _ => iter_ty,
-        };
+        }
+        .clone();
         match &iter_ty.kind {
             TyKind::Array(elem, _) | TyKind::Slice(elem) => (**elem).clone(),
             TyKind::Adt(adt, args)
@@ -2680,10 +2686,22 @@ impl HirTypeChecker {
                     _ => self.error_ty("`Vec` for-loop iterator missing its element type argument"),
                 }
             }
-            _ => self.error_ty(format!(
-                "`for` loop iterator must be Vec/array/slice-shaped, found `{iter_ty}`"
-            )),
+            _ => {
+                if let Ok(Some(item_ty)) = self
+                    .assoc_type_for_self(&iter_ty, &hir::Symbol::new("Item"))
+                    .await
+                {
+                    return item_ty;
+                }
+                self.for_loop_element_ty_fallback_error(&iter_ty)
+            }
         }
+    }
+
+    fn for_loop_element_ty_fallback_error(&self, iter_ty: &Ty) -> Ty {
+        self.error_ty(format!(
+            "`for` loop iterator must be Vec/array/slice-shaped, found `{iter_ty}`"
+        ))
     }
 
     /// Finds a real struct definition by name, searching this package first
