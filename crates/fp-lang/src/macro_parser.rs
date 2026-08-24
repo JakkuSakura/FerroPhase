@@ -128,8 +128,13 @@ pub fn parse_macro_rules_def(name: String, body: &[MacroTokenTree]) -> MacroRule
             matcher: parse_matcher_tokens(&matcher_group.tokens),
             transcriber: transcriber_group.tokens.clone(),
         });
-        if let Some(MacroTokenTree::Token(semi)) = body.get(i) {
-            if semi.text == ";" {
+        // A real `macro_rules!` body always separates rules with `;`, but
+        // the declarative "macro 2.0" `macro Name { matcher => transcriber,
+        // .. }` shape (parsed into this identical rule-token form by
+        // `parse_macro_2_def`) uses `,` instead — accept either so both
+        // shapes' rules all get collected, not just the first.
+        if let Some(MacroTokenTree::Token(sep)) = body.get(i) {
+            if sep.text == ";" || sep.text == "," {
                 i += 1;
             }
         }
