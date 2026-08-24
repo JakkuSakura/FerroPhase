@@ -646,7 +646,15 @@ impl CompilerDriver {
                     .package(&current_package_id)
                     .map(|package| package.borrow().units.keys().cloned().collect())
                     .unwrap_or_default();
-                let mut lir_gen = Self::new_lir_generator(&state, &current_package_id);
+                let mut lir_gen = {
+                    let borrowed = state.borrow();
+                    MirToLirLowerer::new(
+                        borrowed.data_layout.clone(),
+                        borrowed.mir_program_rc(),
+                        borrowed.lir_program_rc(),
+                    )
+                    .with_package_id(current_package_id.clone())
+                };
                 for def_id in def_ids {
                     Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id).await?;
                 }
@@ -700,7 +708,15 @@ impl CompilerDriver {
             .package(&current_package_id)
             .map(|package| package.borrow().units.keys().cloned().collect())
             .unwrap_or_default();
-        let mut lir_gen = Self::new_lir_generator(&state, &current_package_id);
+        let mut lir_gen = {
+            let borrowed = state.borrow();
+            MirToLirLowerer::new(
+                borrowed.data_layout.clone(),
+                borrowed.mir_program_rc(),
+                borrowed.lir_program_rc(),
+            )
+            .with_package_id(current_package_id.clone())
+        };
         for def_id in def_ids {
             Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id).await?;
         }
@@ -862,7 +878,15 @@ impl CompilerDriver {
 
         lowering.sync_layout_exports();
 
-        let mut lir_gen = Self::new_lir_generator(state, &package_id);
+        let mut lir_gen = {
+            let borrowed = state.borrow();
+            MirToLirLowerer::new(
+                borrowed.data_layout.clone(),
+                borrowed.mir_program_rc(),
+                borrowed.lir_program_rc(),
+            )
+            .with_package_id(package_id.clone())
+        };
         Self::lower_package_to_lir_with(state, &package_id, &mut lir_gen, request.def_id.clone()).await?;
 
         Self::evaluate_comptime_lir(state, &request.def_id)
@@ -920,23 +944,6 @@ impl CompilerDriver {
             state.borrow_mut().insert_lir_blob_for_package(package_id, blob);
         }
         Ok(())
-    }
-
-    /// Builds a `MirToLirLowerer` that reads everything it needs —
-    /// `full_layouts`/`opaque_payload_sizes`/callee signatures (this
-    /// package's own `mir::MirPackage` first, then every other loaded
-    /// package's, for a cross-package call) — straight off `mir_program_rc()`
-    /// instead of being handed its own private copy at construction time.
-    /// No whole-program predeclare sweep: everything resolves lazily, on
-    /// first reference.
-    fn new_lir_generator(state: &Rc<RefCell<CompilerState>>, package_id: &PackageId) -> MirToLirLowerer {
-        let state = state.borrow();
-        MirToLirLowerer::new(
-            state.data_layout.clone(),
-            state.mir_program_rc(),
-            state.lir_program_rc(),
-        )
-        .with_package_id(package_id.clone())
     }
 
     /// Runs `def_id`'s own comptime function through the shared
