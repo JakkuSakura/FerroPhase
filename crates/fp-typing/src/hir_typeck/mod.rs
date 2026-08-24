@@ -2909,15 +2909,22 @@ impl HirTypeChecker {
             let found = self.program_rc().find_export_by_name(trait_name.as_str());
             let found = found.or_else(|| {
                 let package = self.package();
+                // `HashMap` iteration order isn't stable across runs (its
+                // default hasher is seeded per-process), so picking the
+                // first match by iteration order would make which
+                // same-named item gets recovered here nondeterministic —
+                // pick the lowest `DefId` index instead (first declared)
+                // for a reproducible result regardless of hash seed.
                 package
                     .def_paths
                     .iter()
-                    .find(|(_, def_path)| {
+                    .filter(|(_, def_path)| {
                         def_path
                             .segments
                             .last()
                             .is_some_and(|seg| seg.as_str() == trait_name.as_str())
                     })
+                    .min_by_key(|(def_id, _)| def_id.index)
                     .map(|(def_id, _)| hir::Res::Def(def_id.clone()))
             });
             match found {

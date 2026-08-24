@@ -656,6 +656,38 @@ fn discover_items(
         if !item_enabled_by_cfg(item, env) {
             continue;
         }
+        // `cfg_select! { pred => { #[path = ".."] mod repr; } .. }` hides a
+        // `mod` declaration (and its `#[path]` redirect) inside an
+        // item-position macro invocation this walk otherwise never looks
+        // inside — unlike `expand_item_macros_in_item`'s later, ast_to_hir-
+        // side expansion of the same macro, this walk is the only place
+        // that ever resolves a `mod name;`'s *file*, so a `mod` revealed
+        // only after that later expansion runs would find no body at all
+        // (see `core::io::io_slice`'s own `mod repr;`, hidden this way).
+        // Expand right here, before the `ItemKind::Module` check below, so
+        // any `mod` items it reveals still get their files resolved.
+        if let ItemKind::Macro(item_macro) = item.kind() {
+            if item_macro.declared_name.is_none() {
+                if let Some(expanded) =
+                    fp_lang::expand_item_macro_invocation(&item_macro.invocation, &HashMap::new())
+                {
+                    discover_items(
+                        read,
+                        parse,
+                        env,
+                        file_dir,
+                        children_base_dir,
+                        module_path,
+                        &expanded,
+                        descriptor_ctx
+                            .as_mut()
+                            .map(|(id, lang, descs)| (*id, lang.clone(), &mut **descs)),
+                        items_out,
+                    )?;
+                    continue;
+                }
+            }
+        }
         let ItemKind::Module(module) = item.kind() else {
             items_out.push(PackageItem {
                 module_path: module_path.clone(),
