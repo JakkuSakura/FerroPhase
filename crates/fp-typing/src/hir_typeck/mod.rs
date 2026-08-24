@@ -2055,6 +2055,43 @@ impl HirTypeChecker {
                 return Ok(primitive);
             }
         }
+        // `ast_to_hir` tags a non-nominal self-type shape (`&T`, `[T]`,
+        // `fn(..) -> ..`, ...) with `Res::Builtin` instead of a `DefId`
+        // (mirrors rustc's `SimplifiedType` fast-reject bucketing — see
+        // `BuiltinSelfType`'s own doc comment) — reachable here whenever
+        // one of these gets approximated down to a bare path (e.g. the
+        // first bound of a multi-bound `dyn Fn(..) -> X + Send` type).
+        // The real element/signature type behind the tag was already
+        // discarded by that point, so this can only ever produce the
+        // same arity-blind approximation `BuiltinSelfType` itself already
+        // commits to, not a precise reconstruction.
+        match &path.res {
+            Some(hir::Res::Builtin(hir::BuiltinSelfType::Function)) => {
+                return Ok(Ty {
+                    kind: TyKind::FnPtr(ty::PolyFnSig {
+                        binder: ty::Binder {
+                            value: ty::FnSig {
+                                inputs: Vec::new(),
+                                output: Box::new(Ty { kind: TyKind::Tuple(Vec::new()) }),
+                                c_variadic: false,
+                                unsafety: ty::Unsafety::Normal,
+                                abi: ty::Abi::Rust,
+                            },
+                            bound_vars: Vec::new(),
+                        },
+                    }),
+                });
+            }
+            Some(hir::Res::Builtin(hir::BuiltinSelfType::Unit | hir::BuiltinSelfType::Never | hir::BuiltinSelfType::Tuple)) => {
+                return Ok(Ty { kind: TyKind::Tuple(Vec::new()) });
+            }
+            Some(hir::Res::Builtin(kind)) => {
+                return Ok(self.error_ty(format!(
+                    "type path resolved to an unsupported builtin shape: {kind:?}"
+                )));
+            }
+            _ => {}
+        }
         if let Some(hir::Res::Def(ref def_id)) = path.res {
             // A local `type X = const { .. };` (`ast_to_hir`'s
             // `comptime_type_alias_rhs` lowering) binds `X` to the const
