@@ -797,6 +797,21 @@ impl HirTypeChecker {
                         | hir::BinOp::Ge
                         | hir::BinOp::And
                         | hir::BinOp::Or => Ty::bool(),
+                        // An untyped integer literal takes the *other*
+                        // side's real type, not its own bare `i64`
+                        // default — `integer_literal` above deliberately
+                        // skips unification for this exact pairing (a
+                        // literal already trivially "fits" any integer
+                        // type, so there's nothing to unify), but the
+                        // arithmetic result still needs to be the
+                        // concrete side's type, matching real Rust's own
+                        // literal-takes-context-type inference. Blindly
+                        // returning `lhs` here previously reported the
+                        // whole expression as `i64` whenever the literal
+                        // happened to be on the left (`1 + some_u8`), so
+                        // every caller expecting the real operand's type
+                        // (`u8`, `usize`, ...) saw a spurious mismatch.
+                        _ if lhs_literal && !rhs_literal => rhs,
                         _ => lhs,
                     }
                 }
