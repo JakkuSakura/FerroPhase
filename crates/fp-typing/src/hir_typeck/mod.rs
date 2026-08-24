@@ -2922,20 +2922,33 @@ impl HirTypeChecker {
             let found = self.program_rc().find_export_by_name(trait_name.as_str());
             let found = found.or_else(|| {
                 let package = self.package();
+                let program = self.program_rc();
                 // `HashMap` iteration order isn't stable across runs (its
                 // default hasher is seeded per-process), so picking the
                 // first match by iteration order would make which
                 // same-named item gets recovered here nondeterministic —
                 // pick the lowest `DefId` index instead (first declared)
-                // for a reproducible result regardless of hash seed.
+                // for a reproducible result regardless of hash seed. Also
+                // filter to items that are actually traits *before*
+                // picking the minimum: some names are reused by an
+                // unrelated non-trait item too (e.g. `core::mem::
+                // type_info::Pointer`, a plain struct, alongside the real
+                // `core::fmt::Pointer` trait this recovery is meant to
+                // find for `Pointer::fmt`) — picking the lowest index
+                // without this filter could land on the wrong one and
+                // reject it for not being a trait, even though a real
+                // trait with this name does exist.
                 package
                     .def_paths
                     .iter()
-                    .filter(|(_, def_path)| {
+                    .filter(|(def_id, def_path)| {
                         def_path
                             .segments
                             .last()
                             .is_some_and(|seg| seg.as_str() == trait_name.as_str())
+                            && program
+                                .item((*def_id).clone())
+                                .is_some_and(|item| matches!(&item.kind, hir::ItemKind::Trait(_)))
                     })
                     .min_by_key(|(def_id, _)| def_id.index)
                     .map(|(def_id, _)| hir::Res::Def(def_id.clone()))
