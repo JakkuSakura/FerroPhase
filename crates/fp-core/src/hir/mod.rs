@@ -115,6 +115,20 @@ impl DefId {
             ..self
         }
     }
+
+    /// A deterministic string identity for this `DefId`, for the one
+    /// place a `DefId` still needs to be addressed by a plain string (the
+    /// LIR interpreter's own global table, which is string-keyed) —
+    /// computed purely from the `DefId`'s own fields, never from a
+    /// source span or a surface name. Every site that needs to name the
+    /// same comptime-pending const (building its `LirComptimeEntry`/
+    /// `mir::ExecutableConst` key, and building a `Global` operand that
+    /// references it elsewhere) calls this on the same `def_id`, so
+    /// there is only ever one name because there is only ever one
+    /// function producing it from the one real identity.
+    pub fn comptime_const_symbol(&self) -> String {
+        format!("__fp_const_{}_{}", self.package_id.0, self.index)
+    }
 }
 
 impl fmt::Display for DefId {

@@ -1151,8 +1151,7 @@ impl CompilerDriver {
         package_id: &PackageId,
         module_path: &QualifiedPath,
     ) -> Result<HashMap<hir::DefId, Value>, CompilerDriverError> {
-        let lir = state.borrow().lir_blob(package_id);
-        let comptime_entries = lir.comptime_entries.clone();
+        let comptime_entries = state.borrow().lir_blob(package_id).comptime_entries;
 
         let value_id = ConstValueId::new(format!("const_value:{}", module_path.to_key()));
         if comptime_entries.is_empty() {
@@ -1187,26 +1186,27 @@ impl CompilerDriver {
         // artifact from every dependency into one throwaway combined
         // workspace first — `run_function_named_in_workspace` accepts a
         // chain and checks each in turn.
-        let dependency_packages: Vec<mir::MirPackage> =
+        let mir_packages: Vec<mir::MirPackage> =
             state.borrow().mir_program().packages.values().cloned().collect();
-        let lir_to_mir = LirToMir::new(dependency_packages);
-        let workspaces_owned: Vec<fp_core::lir::LirUnitTable> = state
+        let lir_to_mir = LirToMir::new(mir_packages);
+        let lir_unit_tables: Vec<fp_core::lir::LirUnitTable> = state
             .borrow()
             .lir_program()
             .packages
             .values()
             .map(|package| package.own_artifacts.clone())
             .collect();
-        let workspaces: Vec<&fp_core::lir::LirUnitTable> = workspaces_owned.iter().collect();
+        let workspaces: Vec<&fp_core::lir::LirUnitTable> = lir_unit_tables.iter().collect();
+
+        let mut interpreter = LirInterpreter::new();
+        let already_resolved = Self::resolved_const_values_snapshot(state);
+        interpreter
+            .inject_globals(&already_resolved)
+            .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
 
         let mut count = 0usize;
         let mut last = Value::unit();
         let mut block_values: HashMap<hir::DefId, Value> = HashMap::new();
-        let mut interpreter = LirInterpreter::new();
-        let resolved = Self::resolved_const_values_snapshot(state);
-        interpreter
-            .inject_globals(&resolved)
-            .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
         for entry in &comptime_entries {
             let result = interpreter.run_function_named_in_workspace(
                 &workspaces,

@@ -4237,12 +4237,47 @@ impl HirToMirLowerer {
         };
         let key = self.const_key(konst.name.as_str(), konst.body.value.span);
         let container_args = self.container_args_from_type_expr(&konst.ty);
-        let Some(init_constant) = self.lower_const_expr(
-            &konst.body.value,
-            Some(&ty),
-            container_args.as_ref(),
-        ) else {
-            return self.lower_executable_const(def_id, konst, ty, key, None);
+        let folded = self
+            .lower_const_expr(&konst.body.value, Some(&ty), container_args.as_ref())
+            .or_else(|| {
+                // On a relower pass (after `CompilerDriver::evaluate_
+                // comptime_lir` has run this const's own `ExecutableConst`
+                // comptime entry through the real interpreter and
+                // recorded its answer via `record_const_block_value`),
+                // this is now foldable after all — without this check,
+                // `lower_const` would keep producing the same
+                // `ExecutableConst` placeholder forever, and this const
+                // would never actually become a real global.
+                let value = self.current_package.const_block_value(def_id.clone())?;
+                self.const_block_value_to_mir_constant(&value, konst.body.value.span)
+            });
+        let Some(init_constant) = folded else {
+            // Not the same `key` as the foldable path below — this const
+            // isn't folding inline, it becomes a real `Global` reference
+            // elsewhere in the program until a relower pass replaces it,
+            // and a `Global` operand must be addressed by exactly the
+            // same string the interpreter later publishes its resolved
+            // value under. Source-span/surface-name strings (`const_key`)
+            // aren't a stable identity for that; `def_id` already is —
+            // see `DefId::comptime_const_symbol`'s own doc comment. Every
+            // reference site (`lower_operand`'s `executable_consts.
+            // get(def_id)` branches) derives the exact same string fresh
+            // from this same `def_id`, so there's only ever one name.
+            //
+            // `Some(..)` for the last argument (not `None`) is what makes
+            // `CompilerDriver::evaluate_comptime_lir_with` feed this
+            // entry's interpreted result back via `record_const_block_
+            // value` at all (it gates on `entry.const_block_hir_id.
+            // is_some()`, `driver.rs:1240`) — without it, this const's
+            // `ExecutableConst` placeholder never gets a chance to become
+            // a real folded global on the relower pass above.
+            return self.lower_executable_const(
+                def_id.clone(),
+                konst,
+                ty,
+                def_id.comptime_const_symbol(),
+                Some(konst.body.hir_id.clone()),
+            );
         };
         let init = mir::Operand::Constant(init_constant.clone());
 
@@ -4286,8 +4321,15 @@ impl HirToMirLowerer {
         key: String,
         const_block_hir_id: Option<hir::HirId>,
     ) -> Result<mir::Item> {
+        // Not `konst.name` (its bare surface name) — a `Global` operand
+        // referencing this const elsewhere must be addressed by exactly
+        // the same string the interpreter later publishes its resolved
+        // value under (see `lower_const`'s own comment on this same
+        // point). `DefId::comptime_const_symbol` is that one shared
+        // identity, called fresh from `def_id` at every site that needs
+        // to name this same entity.
         self.executable_consts
-            .insert(def_id.clone(), (mir::Symbol::from(&konst.name), ty.clone()));
+            .insert(def_id.clone(), (mir::Symbol::new(def_id.comptime_const_symbol()), ty.clone()));
         let body_id = mir::BodyId::new(self.next_body_id);
         self.next_body_id += 1;
 
@@ -6441,76 +6483,19 @@ impl HirToMirLowerer {
         }
     }
 
-    fn register_const_value(
-        &mut self,
-        def_id: hir::DefId,
-        konst: &hir::Const,
-    ) {
-        if self.const_values.contains_key(&def_id) {
-            return;
-        }
-        let ty = self.lower_type_expr(&konst.ty);
-        let key = self.const_key(konst.name.as_str(), konst.body.value.span);
-        if let Some(constant) = self.resolved_const_values.get(&key).cloned() {
-            self.const_values.insert(
-                def_id,
-                ConstInfo {
-                    ty,
-                    value: constant,
-                },
-            );
-            return;
-        }
-        let container_args = self.container_args_from_type_expr(&konst.ty);
-        if let Some(constant) = self.lower_const_expr(
-            &konst.body.value,
-            Some(&ty),
-            container_args.as_ref(),
-        ) {
-            self.const_values.insert(
-                def_id,
-                ConstInfo {
-                    ty,
-                    value: constant,
-                },
-            );
-            return;
-        }
-        // `lower_const_expr` only folds a fixed, directly-computable set
-        // of shapes (literals, arrays, structs, plain paths, ...) — an
-        // arbitrary call (to an ordinary function, or a `#[intrinsic =
-        // "..."]`-tagged one like `std::intrinsics::primitive_type`) needs
-        // real execution, the same way an expression-position `const {
-        // .. }` block already does (`register_const_block_comptime_entry`
-        // just above `lower_type_expr`). Reuse that exact two-pass
-        // protocol, keyed by this const item's own `def_id` instead of a
-        // fresh synthetic one: on relower (after `CompilerDriver::
-        // evaluate_comptime_lir` has run this package's own comptime
-        // entries through the real interpreter and `apply_resolved_
-        // comptime_block_values` fed the answer back onto the package
-        // directly), the resolved value is already sitting on
-        // `self.current_package`'s own `const_block_values` under this same
-        // `def_id` — consult it here, the same way an inline `ConstBlock`
-        // operand does (`lower_operand`'s `ConstBlock` arm) — before
-        // falling back to registering a comptime entry for the *next* pass
-        // to resolve. Without this, a non-foldable top-level const's
-        // initializer is silently dropped: no MIR item, no LIR global, no
-        // compile-time error — only a runtime "missing global" once
-        // something actually reads it.
-        if let Some(value) = self.current_package.const_block_value(def_id.clone()) {
-            if let Some(constant) = self.const_block_value_to_mir_constant(&value, konst.body.value.span) {
-                self.const_values.insert(def_id, ConstInfo { ty, value: constant });
-                return;
-            }
-        }
-        // Don't reimplement const registration here — `ensure_item_
-        // lowered`'s `ItemKind::Const` arm already calls `lower_const`,
-        // which falls back to `lower_executable_const` using this const's
-        // own real `def_id` when its initializer isn't directly
-        // foldable. A synthetic id here (the previous approach) would
-        // record the comptime-resolved value under an identity nothing
-        // ever reads back, leaving this const's global permanently
-        // missing.
+    /// A plain, unconditional delegate — no independent checks of its
+    /// own. `ensure_item_lowered`'s `ItemKind::Const` arm already calls
+    /// `lower_const`, the one canonical place that decides "foldable
+    /// literal, already-resolved-via-comptime, or needs a fresh
+    /// `ExecutableConst` entry" — re-checking `const_values`/
+    /// `resolved_const_values`/`lower_const_expr`/`const_block_value`
+    /// here first would just be a second, redundant implementation of
+    /// that same decision (a fallback chain in substance, even with
+    /// `ensure_item_lowered` as its last step). Every caller already
+    /// reads `const_values`/`executable_consts` back afterward for the
+    /// actual value — `ensure_item_lowered`'s own `lowered_items` guard
+    /// makes repeat calls here cheap.
+    fn register_const_value(&mut self, def_id: hir::DefId, _konst: &hir::Const) {
         let _ = self.ensure_item_lowered(def_id);
     }
 
