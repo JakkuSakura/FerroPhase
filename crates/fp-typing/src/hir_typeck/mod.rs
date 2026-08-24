@@ -1046,6 +1046,26 @@ impl HirTypeChecker {
                             }
                         }
                     }
+                    // A tuple struct's own name (or `Self`, once resolved
+                    // to that struct's `Adt` type) called like a function
+                    // is real Rust's tuple-struct constructor call
+                    // (`Wrapper(x)`, `Self(value)` from within its own
+                    // inherent impl — real vendored std's own idiom
+                    // throughout for newtype wrappers). `instantiate_call`
+                    // only knows genuine callable (`FnPtr`) types, so this
+                    // always reached the generic "not a function" error
+                    // below otherwise. The constructor's result is simply
+                    // the struct type itself; real field-arity/type
+                    // checking against the struct's own declared fields
+                    // isn't attempted here (no field list is in scope at
+                    // this call site) — same "tolerate what's broken,
+                    // keep what isn't" policy as elsewhere, rather than
+                    // erroring the whole enclosing expression over it.
+                    if let TyKind::Adt(adt, _) = &callee_ty.kind {
+                        if adt.flags.contains(AdtFlags::IS_STRUCT) {
+                            return Ok(callee_ty);
+                        }
+                    }
                     let Some((mut substitutions, _)) =
                         self.instantiate_call(&callee_ty, &arg_types)?
                     else {
