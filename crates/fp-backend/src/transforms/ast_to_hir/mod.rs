@@ -2680,6 +2680,27 @@ impl AstToHirLowerer {
                 self.normalize_span(ty.span()),
             )),
             ast::Ty::Expr(expr) => {
+                // `_` in type position (`Vec<_>`, a turbofish arg, ...) —
+                // real inference-placeholder syntax, not a real path to
+                // resolve. Reaches here as a bare `Name::Ident("_")`
+                // expression (fp-lang parses it as an ordinary identifier,
+                // not a dedicated `ast::Ty::Wildcard` node, in every
+                // position this crate's own `parse_type_arg` builds a
+                // `Ty::Expr` from) — without this check it falls all the
+                // way through to `ast_expr_to_hir_path`, which has no
+                // declaration named `_` to resolve, producing a genuine
+                // "unresolved type path `_`" error for what should just
+                // silently infer.
+                if matches!(
+                    expr.kind(),
+                    ast::ExprKind::Name(fp_core::ast::Name::Ident(ident)) if ident.name.as_str() == "_"
+                ) {
+                    return Ok(hir::TypeExpr::new(
+                        self.next_id(),
+                        hir::TypeExprKind::Infer,
+                        self.normalize_span(ty.span()),
+                    ));
+                }
                 if let ast::ExprKind::Value(value) = expr.kind() {
                     match value.as_ref() {
                         ast::Value::Type(ty) => {
