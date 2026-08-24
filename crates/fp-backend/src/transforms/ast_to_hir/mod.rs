@@ -632,30 +632,77 @@ impl AstToHirLowerer {
                     .collect(),
             )
         } else if let ast::Visibility::Restricted(path) = visibility {
-            // `pub(super)` — same scoping bug as `pub(crate)` above, one
-            // level up: visible to the *parent* module (and everything
-            // under it), not just this item's own declaring module. A
-            // plain `Scoped(self.module_path)` would make it invisible
-            // even to the one module `pub(super)` explicitly grants
-            // access to, since the parent is this module's *ancestor*,
-            // never one of its descendants (real vendored std's
-            // `core::io::error::repr_bitpacked::Repr`/`repr_unpacked::
-            // Repr`, `pub(super)`, referenced from the parent
-            // `core::io::error` itself). `pub(in some::path)`/`pub(self)`
-            // aren't given their own scope here — rare enough in real
-            // std to not be worth it yet — and keep today's
-            // Scoped(this module) behavior (correct for `pub(self)`,
-            // conservatively narrow but not wrong for `pub(in ..)`).
-            if matches!(path.segments.as_slice(), [fp_core::ast::ItemImportTree::SuperMod]) {
-                let mut parent = self.module_path.segments.clone();
-                parent.pop();
-                hir::SymbolExport::Scoped(parent)
-            } else {
-                hir::SymbolExport::Scoped(self.module_path.segments.clone())
-            }
+            // `pub(super)`/`pub(in some::path)` — same scoping bug as
+            // `pub(crate)` above, generalized: visible starting from
+            // whatever *ancestor* module the restriction names (the
+            // parent, for `pub(super)`; an arbitrary explicit ancestor —
+            // real vendored std's own `pub(in crate::num)`, granting
+            // every module under `core::num` access to a helper declared
+            // several levels deeper in `core::num::imp::overflow_panic`
+            // — for `pub(in ..)`), not just this item's own declaring
+            // module and its descendants. A plain `Scoped(self.
+            // module_path)` makes such an item invisible to every module
+            // the restriction explicitly grants access to except its own
+            // declaring subtree, since the named ancestor is never a
+            // descendant of it.
+            hir::SymbolExport::Scoped(self.resolve_restricted_visibility_scope(path))
         } else {
             hir::SymbolExport::Scoped(self.module_path.segments.clone())
         }
+    }
+
+    /// Resolves a `pub(super)`/`pub(in path)` restriction's own path
+    /// (`super`, `crate::num`, `self`, ...) to the absolute module path
+    /// segments it names, relative to this item's own declaring module —
+    /// the same handful of path-prefix keywords a plain `use` path
+    /// recognizes, just walked directly here since a visibility
+    /// restriction is never itself re-exported/aliased the way an import
+    /// target can be.
+    fn resolve_restricted_visibility_scope(&self, path: &ast::ItemImportPath) -> Vec<String> {
+        let mut scope: Vec<String> = Vec::new();
+        let mut started = false;
+        for segment in &path.segments {
+            match segment {
+                ast::ItemImportTree::Crate => {
+                    scope = self.module_path.segments.first().cloned().into_iter().collect();
+                    started = true;
+                }
+                ast::ItemImportTree::Root => {
+                    scope = Vec::new();
+                    started = true;
+                }
+                ast::ItemImportTree::SelfMod => {
+                    scope = self.module_path.segments.clone();
+                    started = true;
+                }
+                ast::ItemImportTree::SuperMod => {
+                    if !started {
+                        scope = self.module_path.segments.clone();
+                        started = true;
+                    }
+                    scope.pop();
+                }
+                ast::ItemImportTree::Ident(ident) => {
+                    if !started {
+                        // A restriction path with no leading `crate`/
+                        // `self`/`super`/`::` keyword (uncommon; every
+                        // real vendored std case seen so far starts with
+                        // `crate::` or is a bare `super`) — treat as
+                        // relative to this item's own declaring module,
+                        // the same convention an ordinary relative `use`
+                        // path uses.
+                        scope = self.module_path.segments.clone();
+                        started = true;
+                    }
+                    scope.push(ident.name.to_string());
+                }
+                _ => {}
+            }
+        }
+        if !started {
+            scope = self.module_path.segments.clone();
+        }
+        scope
     }
 
     fn canonical_type_path(
