@@ -631,6 +631,28 @@ impl AstToHirLowerer {
                     .into_iter()
                     .collect(),
             )
+        } else if let ast::Visibility::Restricted(path) = visibility {
+            // `pub(super)` — same scoping bug as `pub(crate)` above, one
+            // level up: visible to the *parent* module (and everything
+            // under it), not just this item's own declaring module. A
+            // plain `Scoped(self.module_path)` would make it invisible
+            // even to the one module `pub(super)` explicitly grants
+            // access to, since the parent is this module's *ancestor*,
+            // never one of its descendants (real vendored std's
+            // `core::io::error::repr_bitpacked::Repr`/`repr_unpacked::
+            // Repr`, `pub(super)`, referenced from the parent
+            // `core::io::error` itself). `pub(in some::path)`/`pub(self)`
+            // aren't given their own scope here — rare enough in real
+            // std to not be worth it yet — and keep today's
+            // Scoped(this module) behavior (correct for `pub(self)`,
+            // conservatively narrow but not wrong for `pub(in ..)`).
+            if matches!(path.segments.as_slice(), [fp_core::ast::ItemImportTree::SuperMod]) {
+                let mut parent = self.module_path.segments.clone();
+                parent.pop();
+                hir::SymbolExport::Scoped(parent)
+            } else {
+                hir::SymbolExport::Scoped(self.module_path.segments.clone())
+            }
         } else {
             hir::SymbolExport::Scoped(self.module_path.segments.clone())
         }
