@@ -76,9 +76,8 @@ impl MirToHir {
                     .collect::<Option<Vec<_>>>()?;
                 Some(hir::Value::List(fp_core::ast::ValueList::new(values)))
             }
-            // No `Value::Map` constructor exists to convert into (see
-            // `all_adt_field_tys`'s neighbors) — an honest "can't convert
-            // this" rather than a placeholder.
+            // No `Value::Map` constructor exists to convert into — an
+            // honest "can't convert this" rather than a placeholder.
             mir::ConstValue::Map { .. } => None,
             // A function reference has no meaningful runtime `Value`
             // representation outside actual execution.

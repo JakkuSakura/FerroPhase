@@ -824,18 +824,6 @@ impl HirToMirLowerer {
         mir_package.opaque_payload_sizes = opaque_payload_sizes;
     }
 
-    /// Struct field types only — enums are exported separately via
-    /// `sync_layout_exports`'s `full_layouts` (keyed by `(DefId, args)`,
-    /// since two different instantiations of a generic enum need different
-    /// field lists, unlike this bare-`DefId`-keyed map).
-    pub fn all_adt_field_tys(&self) -> HashMap<hir::DefId, Vec<Ty>> {
-        let mut map = HashMap::new();
-        for (key, layout) in &self.mir_package.borrow().struct_layouts {
-            map.insert(key.def_id.clone(), layout.field_tys.clone());
-        }
-        map
-    }
-
     /// `fp_typing`'s checked type for `hir_id`, read straight off
     /// `self.current_package` (the same `Rc<HirPackage>` it wrote it onto —
     /// no separate copy-and-lower-everything-up-front pass here anymore,
