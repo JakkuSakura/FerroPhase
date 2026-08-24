@@ -56,12 +56,6 @@ pub struct CompilerDriver {
     pub state: Rc<RefCell<CompilerState>>,
     building_packages: HashSet<PackageId>,
     compiled_packages: HashMap<PackageId, Rc<RefCell<fp_core::ast::package::AstPackage>>>,
-    /// Per-`hir_package_id`, not a single driver-wide counter: `hir::DefId`
-    /// is already `{package_id, index}` (see `AstToHirLowerer::next_def_id`),
-    /// so two packages minting indices from independently-reset counters
-    /// can never collide — there's no reason for one package's item count
-    /// to push another, unrelated package's indices upward.
-    next_hir_def_id: HashMap<hir::PackageId, u32>,
     pub pipeline: PipelineMode,
 }
 
@@ -113,7 +107,6 @@ impl CompilerDriver {
             state,
             building_packages: HashSet::new(),
             compiled_packages: HashMap::new(),
-            next_hir_def_id: HashMap::new(),
             pipeline: PipelineMode::Native,
         }
     }
@@ -484,10 +477,8 @@ impl CompilerDriver {
         // the already-resolved, already-per-language provider rather than a
         // separate frontend dependency of this crate.
         let normalizer = self.state.borrow().workspace.provider().intrinsic_normalizer();
-        let def_id_start = *self.next_hir_def_id.get(&hir_package_id).unwrap_or(&0);
         let mut generator = AstToHirLowerer::new(hir_package_id.clone())
             .with_intrinsic_normalizer(normalizer)
-            .with_def_id_start(def_id_start)
             .with_lowering_config(HirLoweringConfig {
                 // The active `TargetBackend`'s own capabilities (see
                 // `fp_core::backend::TargetBackend::capabilities`), set by
@@ -499,8 +490,6 @@ impl CompilerDriver {
             })
             .with_workspace(self.state.borrow().workspace.clone());
         let hir_program = generator.transform_package(&package_source)?;
-        self.next_hir_def_id
-            .insert(hir_package_id.clone(), def_id_start.max(generator.next_def_id_value()));
         let package_exports = generator.exported_symbols();
         let type_alias_exports = generator.exported_type_aliases();
         package.borrow_mut().type_alias_exports.extend(type_alias_exports);

@@ -89,7 +89,6 @@ fn query_origin(document: &QueryDocument) -> QueryOrigin {
 pub struct AstToHirLowerer {
     package_id: hir::PackageId,
     next_hir_id: u32,
-    next_def_id: u32,
     current_file: FileId,
     current_position: u32,
     type_scopes: Vec<HashMap<String, hir::Res>>,
@@ -729,7 +728,6 @@ impl AstToHirLowerer {
         Self {
             package_id: package_id.clone(),
             next_hir_id: 0,
-            next_def_id: 0,
             current_file: 0, // Default file ID
             current_position: 0,
             type_scopes: vec![HashMap::new()],
@@ -763,15 +761,6 @@ impl AstToHirLowerer {
             pending_type_aliases: Vec::new(),
             resolved_import_aliases: HashSet::new(),
         }
-    }
-
-    pub fn with_def_id_start(mut self, start: u32) -> Self {
-        self.next_def_id = start;
-        self
-    }
-
-    pub fn next_def_id_value(&self) -> u32 {
-        self.next_def_id
     }
 
     pub fn with_lowering_config(mut self, config: HirLoweringConfig) -> Self {

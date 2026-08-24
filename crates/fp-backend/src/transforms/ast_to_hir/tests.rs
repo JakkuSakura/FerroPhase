@@ -340,7 +340,7 @@ fn cfg_target_os_attr(value: &str) -> ast::Attribute {
 fn test_hir_generator_creation() {
     let generator = AstToHirLowerer::new(hir::PackageId::new("test"));
     assert_eq!(generator.next_hir_id, 0);
-    assert_eq!(generator.next_def_id, 0);
+    assert_eq!(generator.package.next_def_id, 0);
 }
 
 #[test]

@@ -495,9 +495,7 @@ impl AstToHirLowerer {
 
     /// Generate next definition ID
     pub(super) fn next_def_id(&mut self) -> hir::DefId {
-        let id = self.next_def_id;
-        self.next_def_id += 1;
-        hir::DefId::new(self.package_id.clone(), id)
+        self.package.next_def_id()
     }
 
     // transform_function moved to items.rs
