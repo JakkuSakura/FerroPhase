@@ -6503,12 +6503,15 @@ impl HirToMirLowerer {
                 return;
             }
         }
-        self.register_const_block_comptime_entry_direct(
-            konst.body.hir_id.clone(),
-            ty,
-            &konst.body.value,
-            konst.body.value.span,
-        );
+        // Don't reimplement const registration here — `ensure_item_
+        // lowered`'s `ItemKind::Const` arm already calls `lower_const`,
+        // which falls back to `lower_executable_const` using this const's
+        // own real `def_id` when its initializer isn't directly
+        // foldable. A synthetic id here (the previous approach) would
+        // record the comptime-resolved value under an identity nothing
+        // ever reads back, leaving this const's global permanently
+        // missing.
+        let _ = self.ensure_item_lowered(def_id);
     }
 
     fn struct_name_from_type(&self, ty: &hir::TypeExpr) -> Option<String> {
@@ -16256,6 +16259,27 @@ impl<'a> BodyBuilder<'a> {
                             return Ok(OperandInfo {
                                 operand: mir::Operand::Constant(const_info.typed_value()),
                                 ty: const_info.ty.clone(),
+                            });
+                        }
+                        // `register_const_value`'s non-foldable fallback
+                        // (a call-shaped initializer) registers this
+                        // const's real global via `executable_consts`,
+                        // not `const_values` — check that too before
+                        // giving up and inlining the body as ordinary
+                        // code, which would silently bypass the real
+                        // global this const's own top-level declaration
+                        // needs to exist as.
+                        if let Some((name, ty)) = self.lowering.executable_consts.get(def_id) {
+                            return Ok(OperandInfo {
+                                operand: mir::Operand::Constant(mir::Constant {
+                                    span: expr.span,
+                                    ty: ty.clone(),
+                                    user_ty: None,
+                                    literal: mir::ConstantKind::Global(mir::Path::from_symbol(
+                                        name.clone(),
+                                    )),
+                                }),
+                                ty: ty.clone(),
                             });
                         }
                         let ty = self.lower_type_expr(&konst.ty);
