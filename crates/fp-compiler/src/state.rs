@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use fp_core::{
@@ -143,13 +144,8 @@ impl CompilerState {
         def_id: hir::DefId,
         unit: mir::MirCodeUnit,
     ) {
-        Rc::make_mut(&mut self.mir_program)
-            .package_mut(package_id)
-            .insert_unit(def_id, unit);
-    }
-
-    pub fn mir_unit(&self, package_id: &PackageId, def_id: hir::DefId) -> Option<&mir::MirCodeUnit> {
-        self.mir_program.package(package_id)?.unit(def_id)
+        let package = Rc::make_mut(&mut self.mir_program).package_rc(package_id);
+        package.borrow_mut().insert_unit(def_id, unit);
     }
 
     /// Read-only view of every package's MIR compiled so far this session.
@@ -166,12 +162,14 @@ impl CompilerState {
         self.mir_program.clone()
     }
 
-    /// `package_id`'s own `mir::MirPackage`, mutably — callers (`CompilerDriver`,
-    /// once per package after HIR->MIR lowering) write `full_layouts`/
-    /// `opaque_payload_sizes`/`adt_defs` onto it directly via its own
-    /// `extend_*` methods instead of going through a dedicated wrapper here.
-    pub fn mir_package_mut(&mut self, package_id: &PackageId) -> &mut mir::MirPackage {
-        Rc::make_mut(&mut self.mir_program).package_mut(package_id)
+    /// `package_id`'s own shared `mir::MirPackage` handle, creating an empty
+    /// one on first reference — this is what `HirToMirLowerer::new` is
+    /// handed directly (see `mir::MirProgram`'s own doc comment), so every
+    /// struct/enum layout, method table entry, and const value it computes
+    /// while lowering lands straight into the session's real package, with
+    /// no separate merge step needed once lowering finishes.
+    pub fn mir_package_rc(&mut self, package_id: &PackageId) -> Rc<RefCell<mir::MirPackage>> {
+        Rc::make_mut(&mut self.mir_program).package_rc(package_id)
     }
 
     /// Pushes `blob` onto `package_id`'s own list of blobs — the only way

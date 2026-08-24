@@ -1,6 +1,11 @@
 use std::collections::HashMap;
 
-use super::{ty, DefId, Function, ItemKind, MirCodeUnit, Ty};
+use super::{
+    ty, ConstInfo, DefId, EnumDefinition, EnumLayout, EnumLayoutKey, EnumVariantInfo,
+    FunctionSpecializationInfo, FunctionSig, Function, ItemKind, MethodDefinition, MethodHirRef,
+    MethodLoweringInfo, MethodOwnerIndex, MirCodeUnit, StructDefinition, StructLayout,
+    StructLayoutKey, StructuralLayoutKey, Symbol, Ty,
+};
 
 /// A package's MIR-level identity — the same `hir::PackageId` a `DefId`
 /// embeds, reused directly (not a separate namespace) since MIR items are
@@ -12,7 +17,7 @@ pub type PackageId = crate::hir::PackageId;
 /// `HirToMirLowerer` produces alongside them. Pairs with `MirProgram` the same
 /// way `hir::HirPackage` pairs with `hir::HirProgram`; several of these
 /// live on `CompiledPackage`'s `mir` field, one per package.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 pub struct MirPackage {
     /// This package's lowered content, one `MirCodeUnit` per top-level
     /// `DefId` — see `MirCodeUnit`'s own doc comment for why this is
@@ -41,6 +46,74 @@ pub struct MirPackage {
     /// instead of requiring every function in the package to be predeclared
     /// up front before any body is lowered.
     pub sigs: HashMap<DefId, Function>,
+
+    // --- Struct/enum/method/const bookkeeping `HirToMirLowerer` (fp-backend)
+    // computes while lowering this package — lives here, not as private
+    // fields on the lowerer itself, so a struct/enum layout or method
+    // signature computed during one lowering call survives past it (merged
+    // in via `CompilerState::mir_package_mut` once lowering finishes),
+    // instead of being thrown away and possibly recomputed on a later
+    // re-lowering of the same package. ---
+    pub struct_defs: HashMap<DefId, StructDefinition>,
+    /// Reverse index from a struct's name's tail segment (the part after
+    /// its final `::`, or the whole name if unqualified) to every
+    /// registered `DefId` sharing that tail — see `HirToMirLowerer::
+    /// struct_def_from_ty`'s doc comment for why this exists.
+    pub struct_defs_by_tail_name: HashMap<String, Vec<DefId>>,
+    pub struct_layouts: HashMap<StructLayoutKey, StructLayout>,
+    pub struct_layouts_by_ty: HashMap<Ty, StructLayoutKey>,
+    pub structural_defs: HashMap<StructuralLayoutKey, DefId>,
+    pub enum_defs: HashMap<DefId, EnumDefinition>,
+    /// Reverse index from an enum's exact name to its `DefId` — see
+    /// `HirToMirLowerer::enum_defs_by_name`'s doc comment.
+    pub enum_defs_by_name: HashMap<String, DefId>,
+    pub enum_layouts: HashMap<EnumLayoutKey, EnumLayout>,
+    /// Exact reverse index from a flattened-tuple enum representation back
+    /// to the `EnumLayoutKey` that produced it — mirrors
+    /// `struct_layouts_by_ty`.
+    pub enum_layouts_by_ty: HashMap<Ty, EnumLayoutKey>,
+    pub enum_variants: HashMap<DefId, EnumVariantInfo>,
+    pub enum_variant_names: HashMap<String, DefId>,
+    pub const_values: HashMap<DefId, ConstInfo>,
+    pub executable_consts: HashMap<DefId, (Symbol, Ty)>,
+    /// Pre-substitution `mir::FunctionSig` for a top-level function, keyed
+    /// by its HIR `DefId` — distinct from `sigs` (keyed the same way but
+    /// storing the fully-lowered `mir::Function`, only populated once a
+    /// unit is actually inserted): this is populated by signature-only
+    /// registration, before the function's own body is necessarily lowered.
+    pub function_sigs: HashMap<DefId, FunctionSig>,
+    pub generic_function_defs: HashMap<DefId, crate::hir::Function>,
+    pub struct_methods: HashMap<String, HashMap<String, MethodLoweringInfo>>,
+    /// For each bare method name, `Some(ty)` if every method registered
+    /// under that name (across every struct) so far agrees on the same
+    /// declared output type, or `None` once any two disagree.
+    pub method_name_output_consensus: HashMap<String, Option<Ty>>,
+    pub method_lookup_by_def: HashMap<DefId, MethodLoweringInfo>,
+    pub method_lookup: HashMap<String, MethodLoweringInfo>,
+    pub method_defs: HashMap<String, MethodDefinition>,
+    pub method_defs_by_def: HashMap<DefId, MethodDefinition>,
+    /// Raw HIR for every non-generic method, keyed by `impl_item.def_id` —
+    /// see `MethodHirRef`'s own doc comment.
+    pub method_hir_defs: HashMap<DefId, MethodHirRef>,
+    /// Reverse index from a method's own `impl_item.def_id` to its owning
+    /// `Impl` item (and that item's index within it) — see
+    /// `MethodOwnerIndex`'s own doc comment for why this is `Rc`-valued.
+    pub method_owner_index: Option<MethodOwnerIndex>,
+    /// Reverse index from `(self_def, method_name)` to the method's key in
+    /// `method_defs_by_def`.
+    pub method_defs_by_self_and_name: HashMap<(DefId, String), DefId>,
+    pub method_specializations: HashMap<(DefId, ty::SubstsRef), MethodLoweringInfo>,
+    pub function_specializations: HashMap<(DefId, ty::SubstsRef), FunctionSpecializationInfo>,
+    /// Pre-substitution memo, keyed directly on a call site's own raw
+    /// argument/return types rather than the `substs` derived from them.
+    pub function_specialization_call_cache:
+        HashMap<(DefId, Vec<Ty>, Vec<Ty>, Option<Ty>), FunctionSpecializationInfo>,
+    pub method_specialization_call_cache:
+        HashMap<(DefId, Vec<Ty>, Vec<Ty>, Option<Ty>), MethodLoweringInfo>,
+    pub opaque_types: HashMap<String, Ty>,
+    /// Byte size for an opaque type minted for a *mismatched enum payload
+    /// slot* — see `HirToMirLowerer::opaque_ty_sizes`'s doc comment.
+    pub opaque_ty_sizes: HashMap<String, u64>,
 }
 
 impl MirPackage {
@@ -113,5 +186,59 @@ impl MirPackage {
 
     pub fn extend_adt_defs(&mut self, entries: impl IntoIterator<Item = (crate::hir::DefId, ty::AdtDef)>) {
         self.adt_defs.extend(entries);
+    }
+
+    /// Merges `other` (typically `HirToMirLowerer::take_mir_package`'s
+    /// output, once a lowering call finishes) into `self` field-by-field —
+    /// the one thing that lets a struct/enum layout, method table entry, or
+    /// const value computed during one lowering call survive past it, for
+    /// reuse the next time this package is (re-)lowered. `units`/`sigs`
+    /// extend the same way as every other field here: harmless, since
+    /// `HirToMirLowerer` never writes its own `units`/`sigs` (those are only
+    /// ever populated by `CompilerState::insert_mir_unit`'s `insert_unit`
+    /// call, on the session's own persistent `MirPackage`, not on the
+    /// lowering instance's private one).
+    pub fn extend_from(&mut self, other: MirPackage) {
+        self.units.extend(other.units);
+        self.full_layouts.extend(other.full_layouts);
+        self.opaque_payload_sizes.extend(other.opaque_payload_sizes);
+        self.adt_defs.extend(other.adt_defs);
+        self.sigs.extend(other.sigs);
+        self.struct_defs.extend(other.struct_defs);
+        self.struct_defs_by_tail_name.extend(other.struct_defs_by_tail_name);
+        self.struct_layouts.extend(other.struct_layouts);
+        self.struct_layouts_by_ty.extend(other.struct_layouts_by_ty);
+        self.structural_defs.extend(other.structural_defs);
+        self.enum_defs.extend(other.enum_defs);
+        self.enum_defs_by_name.extend(other.enum_defs_by_name);
+        self.enum_layouts.extend(other.enum_layouts);
+        self.enum_layouts_by_ty.extend(other.enum_layouts_by_ty);
+        self.enum_variants.extend(other.enum_variants);
+        self.enum_variant_names.extend(other.enum_variant_names);
+        self.const_values.extend(other.const_values);
+        self.executable_consts.extend(other.executable_consts);
+        self.function_sigs.extend(other.function_sigs);
+        self.generic_function_defs.extend(other.generic_function_defs);
+        for (name, methods) in other.struct_methods {
+            self.struct_methods.entry(name).or_default().extend(methods);
+        }
+        self.method_name_output_consensus.extend(other.method_name_output_consensus);
+        self.method_lookup_by_def.extend(other.method_lookup_by_def);
+        self.method_lookup.extend(other.method_lookup);
+        self.method_defs.extend(other.method_defs);
+        self.method_defs_by_def.extend(other.method_defs_by_def);
+        self.method_hir_defs.extend(other.method_hir_defs);
+        if other.method_owner_index.is_some() {
+            self.method_owner_index = other.method_owner_index;
+        }
+        self.method_defs_by_self_and_name.extend(other.method_defs_by_self_and_name);
+        self.method_specializations.extend(other.method_specializations);
+        self.function_specializations.extend(other.function_specializations);
+        self.function_specialization_call_cache
+            .extend(other.function_specialization_call_cache);
+        self.method_specialization_call_cache
+            .extend(other.method_specialization_call_cache);
+        self.opaque_types.extend(other.opaque_types);
+        self.opaque_ty_sizes.extend(other.opaque_ty_sizes);
     }
 }

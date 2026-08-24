@@ -5,6 +5,8 @@ use crate::query::{QueryIrDocument, QueryOrigin};
 
 pub mod code_unit;
 pub mod ident;
+pub mod layout;
+pub mod method;
 pub mod package;
 pub mod path;
 pub mod pretty;
@@ -13,6 +15,14 @@ pub mod ty;
 
 pub use code_unit::MirCodeUnit;
 pub use ident::{Path, Symbol};
+pub use layout::{
+    EnumDefinition, EnumLayout, EnumLayoutKey, EnumVariantDef, EnumVariantInfo, StructDefinition,
+    StructFieldDef, StructLayout, StructLayoutKey, StructuralLayoutKey,
+};
+pub use method::{
+    ConstInfo, FunctionSpecializationInfo, MethodContext, MethodDefinition, MethodHirRef,
+    MethodLoweringInfo, MethodOwnerIndex,
+};
 pub use package::MirPackage;
 pub use path::MirPath;
 pub use program::MirProgram;

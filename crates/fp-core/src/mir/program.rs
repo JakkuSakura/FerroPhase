@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::ast::package::PackageId;
 
@@ -8,12 +10,15 @@ use super::MirPackage;
 /// has produced MIR for, keyed by `PackageId` — mirrors `hir::HirProgram`'s
 /// own shape one layer further down (a `MirPackage` is itself keyed by
 /// `DefId`, see `MirPackage::units`). Lives on `CompilerState` as the one
-/// place MIR lowering results accumulate; `CompiledPackage.mir` holds a
-/// single package's own `MirPackage` once that package's compile finishes
-/// (mirroring how `CompiledPackage.hir_program` holds one `HirPackage`).
-#[derive(Debug, Clone, Default, PartialEq)]
+/// place MIR lowering results accumulate. Each package is `Rc<RefCell<_>>`
+/// (not owned by value) so `HirToMirLowerer` can hold the exact same handle
+/// `CompilerState` stores and write struct/enum layouts, method tables, and
+/// const values directly into it as it lowers — no separate "compute
+/// locally, then merge into the session's real package" step, and no risk
+/// of losing work a re-lowering call would otherwise have to recompute.
+#[derive(Debug, Clone, Default)]
 pub struct MirProgram {
-    pub packages: HashMap<PackageId, MirPackage>,
+    pub packages: HashMap<PackageId, Rc<RefCell<MirPackage>>>,
 }
 
 impl MirProgram {
@@ -23,11 +28,16 @@ impl MirProgram {
         }
     }
 
-    pub fn package(&self, id: &PackageId) -> Option<&MirPackage> {
-        self.packages.get(id)
+    pub fn package(&self, id: &PackageId) -> Option<Rc<RefCell<MirPackage>>> {
+        self.packages.get(id).cloned()
     }
 
-    pub fn package_mut(&mut self, id: &PackageId) -> &mut MirPackage {
-        self.packages.entry(id.clone()).or_default()
+    /// This package's shared handle, creating an empty one on first
+    /// reference — every caller that wants to read or write `id`'s own
+    /// `MirPackage` goes through this (or `package`, for a caller that
+    /// tolerates "not compiled yet" as `None`), never `self.packages`
+    /// directly.
+    pub fn package_rc(&mut self, id: &PackageId) -> Rc<RefCell<MirPackage>> {
+        self.packages.entry(id.clone()).or_default().clone()
     }
 }

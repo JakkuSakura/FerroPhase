@@ -143,7 +143,7 @@ impl MirToLirLowerer {
         self.mir_program
             .packages
             .values()
-            .find_map(|package| package.adt_defs.get(def_id).cloned())
+            .find_map(|package| package.borrow().adt_defs.get(def_id).cloned())
     }
 
     /// A concrete struct/enum instantiation's own field types, by
@@ -155,7 +155,7 @@ impl MirToLirLowerer {
         self.mir_program
             .packages
             .values()
-            .find_map(|package| package.full_layouts.get(key).cloned())
+            .find_map(|package| package.borrow().full_layouts.get(key).cloned())
     }
 
     /// Byte size for an opaque enum-payload-slot placeholder, by its own
@@ -165,7 +165,7 @@ impl MirToLirLowerer {
         self.mir_program
             .packages
             .values()
-            .find_map(|package| package.opaque_payload_sizes.get(name).copied())
+            .find_map(|package| package.borrow().opaque_payload_sizes.get(name).copied())
     }
 
     fn resolve_global_symbol(&self, path: &mir::Path) -> lir::Name {
@@ -321,8 +321,7 @@ impl MirToLirLowerer {
         let Some(unit) = self
             .mir_program
             .package(&self.package_id)
-            .and_then(|package| package.unit(def_id))
-            .cloned()
+            .and_then(|package| package.borrow().unit(def_id).cloned())
         else {
             return Ok(Vec::new());
         };
@@ -3264,17 +3263,19 @@ impl MirToLirLowerer {
                             let resolved = self
                                 .mir_program
                                 .package(&self.package_id)
-                                .and_then(|package| package.sigs.get(def_id))
-                                .map(|func| (func.clone(), None))
+                                .and_then(|package| package.borrow().sigs.get(def_id).cloned())
+                                .map(|func| (func, None))
                                 .or_else(|| {
                                     self.mir_program.packages.iter().find_map(|(dep_id, dep_package)| {
                                         if dep_id == &self.package_id {
                                             return None;
                                         }
                                         dep_package
+                                            .borrow()
                                             .sigs
                                             .get(def_id)
-                                            .map(|func| (func.clone(), Some(dep_id.clone())))
+                                            .cloned()
+                                            .map(|func| (func, Some(dep_id.clone())))
                                     })
                                 });
                             let (func, package_id) = resolved.ok_or_else(|| {

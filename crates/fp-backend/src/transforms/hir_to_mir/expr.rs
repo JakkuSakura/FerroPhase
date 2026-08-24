@@ -22,7 +22,12 @@ use fp_core::mir::ty::{
     Mutability, ReprFlags, ReprOptions, Scalar, ScalarInt, Ty, TyKind, TypeAndMut, UintTy,
     VariantDef, VariantDiscr,
 };
-use fp_core::mir::{self, Symbol};
+use fp_core::mir::{
+    self, ConstInfo, EnumDefinition, EnumLayout, EnumLayoutKey, EnumVariantDef, EnumVariantInfo,
+    FunctionSpecializationInfo, MethodContext, MethodDefinition, MethodHirRef,
+    MethodLoweringInfo, StructDefinition, StructFieldDef, StructLayout, StructLayoutKey,
+    StructuralLayoutKey, Symbol,
+};
 use fp_core::ops::format_value_with_spec;
 use fp_core::span::Span;
 use std::collections::{HashMap, HashSet, hash_map::DefaultHasher};
@@ -258,109 +263,6 @@ fn lower_hir_ty(ty: &hir::ty::Ty) -> Result<Ty> {
 /// This currently produces skeletal MIR that is sufficient to feed the
 /// downstream MIR→LIR/LLVM pipeline. Unsupported constructs surface diagnostics
 /// so callers can decide whether to abort or continue.
-#[derive(Clone, Debug)]
-struct MethodLoweringInfo {
-    def_id: Option<hir::DefId>,
-    substs: mir::ty::SubstsRef,
-    sig: mir::FunctionSig,
-    fn_name: String,
-    fn_ty: Ty,
-    struct_def: Option<hir::DefId>,
-}
-
-/// Raw HIR for a generic method (`impl<T> Vec<T> { .. }`), cached here by
-/// `register_generic_method_definition` and specialized on demand per call
-/// site by `ensure_method_specialization*`, which build a concrete
-/// `MethodLoweringInfo`/MIR body for the call's own substs and cache the
-/// result in `method_specializations` keyed by `(DefId, SubstsRef)`.
-#[derive(Clone)]
-struct MethodDefinition {
-    def_id: hir::DefId,
-    function: hir::Function,
-    impl_generics: hir::Generics,
-    self_ty: hir::TypeExpr,
-    self_def: Option<hir::DefId>,
-    method_name: String,
-    assoc_types: HashMap<String, hir::TypeExpr>,
-}
-
-/// Raw HIR needed to lower a *non-generic* method's body on demand
-/// (`ensure_method_lowered`), keyed by the method's own `impl_item.def_id`.
-/// Populated only by `register_impl_signatures`'s signature-only pre-pass —
-/// the counterpart to `MethodDefinition`/`register_generic_method_definition`,
-/// which does the same job for generic methods (those get lowered per-call
-/// via specialization instead, keyed by substs, not by this map). The
-/// pre-pass itself needs no typed bodies, so this is safe to populate
-/// unconditionally for a whole, possibly mid-typecheck package.
-#[derive(Clone)]
-struct MethodHirRef {
-    function: hir::Function,
-    span: Span,
-    method_context: Option<MethodContext>,
-}
-
-#[derive(Clone, Debug)]
-struct FunctionSpecializationInfo {
-    def_id: hir::DefId,
-    substs: mir::ty::SubstsRef,
-    name: String,
-    sig: mir::FunctionSig,
-    fn_ty: Ty,
-}
-
-#[derive(Clone, Debug)]
-pub struct EnumLayout {
-    pub def_id: hir::DefId,
-    pub args: Vec<Ty>,
-    pub tag_ty: Ty,
-    pub payload_tys: Vec<Ty>,
-    pub enum_ty: Ty,
-    pub variant_payloads: HashMap<hir::DefId, Vec<Ty>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct EnumLayoutKey {
-    pub def_id: hir::DefId,
-    pub args: Vec<Ty>,
-}
-
-#[derive(Clone, Debug)]
-struct EnumDefinition {
-    def_id: hir::DefId,
-    name: String,
-    generics: Vec<String>,
-    variants: Vec<EnumVariantDef>,
-}
-
-#[derive(Clone, Debug)]
-struct EnumVariantDef {
-    def_id: hir::DefId,
-    name: String,
-    discriminant: i64,
-    payload: Option<hir::TypeExpr>,
-}
-
-#[derive(Clone, Debug)]
-struct EnumVariantInfo {
-    def_id: hir::DefId,
-    enum_def: hir::DefId,
-    discriminant: i64,
-    payload_def: Option<hir::DefId>,
-}
-
-#[derive(Clone, Debug)]
-struct MethodContext {
-    def_id: Option<hir::DefId>,
-    path: Vec<hir::PathSegment>,
-    mir_self_ty: Ty,
-    /// This impl's own `type Name = ...;` bindings (e.g. `impl<T> Index<usize>
-    /// for Vec<T> { type Output = T; ... }` → `{"Output": T's TypeExpr}`),
-    /// so a method signature's `Self::Output` resolves to the *bound*
-    /// type (here, the impl's own `T`) rather than collapsing to `Self`
-    /// itself — see `lower_type_expr_with_context`/`_and_substs`.
-    assoc_types: HashMap<String, hir::TypeExpr>,
-}
-
 fn assoc_types_from_impl_items(items: &[hir::ImplItem]) -> HashMap<String, hir::TypeExpr> {
     items
         .iter()
@@ -373,55 +275,10 @@ fn assoc_types_from_impl_items(items: &[hir::ImplItem]) -> HashMap<String, hir::
         .collect()
 }
 
-#[derive(Clone, Debug)]
-struct StructDefinition {
-    name: String,
-    generics: Vec<String>,
-    fields: Vec<StructFieldDef>,
-    field_index: HashMap<String, usize>,
-}
-
-#[derive(Clone, Debug)]
-struct StructFieldDef {
-    name: String,
-    ty: hir::TypeExpr,
-}
-
-#[derive(Clone, Debug)]
-pub struct StructLayout {
-    pub ty: Ty,
-    pub field_tys: Vec<Ty>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct StructuralLayoutKey {
-    fields: Vec<(String, Ty)>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct StructLayoutKey {
-    pub def_id: hir::DefId,
-    pub args: Vec<Ty>,
-}
-
 #[derive(Clone)]
 struct StructFieldInfo {
     name: String,
     ty: Ty,
-}
-
-#[derive(Clone)]
-struct ConstInfo {
-    ty: Ty,
-    value: mir::Constant,
-}
-
-impl ConstInfo {
-    fn typed_value(&self) -> mir::Constant {
-        let mut value = self.value.clone();
-        value.ty = self.ty.clone();
-        value
-    }
 }
 
 #[derive(Clone)]
@@ -437,109 +294,19 @@ pub struct HirToMirLowerer {
     next_synthetic_def_id: mir::ty::DefId,
     diagnostics: Vec<Diagnostic>,
     has_errors: bool,
-    struct_defs: HashMap<hir::DefId, StructDefinition>,
-    /// Reverse index from a struct's name's tail segment (the part after
-    /// its final `::`, or the whole name if unqualified) to every
-    /// registered `DefId` sharing that tail — lets `struct_def_from_ty`'s
-    /// name-based fallback narrow straight to the (usually one-element)
-    /// candidate set sharing a receiver's short name, instead of scanning
-    /// every struct definition in the program with a `format!` allocation
-    /// per iteration. Provably safe as a pre-filter: `struct_def_from_ty`'s
-    /// own match condition (`def.name == name || def.name.ends_with("::"
-    /// + name)`) can only hold when `def.name`'s tail segment equals
-    /// `name`'s tail segment, so this never excludes a true match.
-    struct_defs_by_tail_name: HashMap<String, Vec<hir::DefId>>,
-    struct_layouts: HashMap<StructLayoutKey, StructLayout>,
-    struct_layouts_by_ty: HashMap<Ty, StructLayoutKey>,
+    /// Every struct/enum definition, layout, method table, specialization
+    /// cache, const value, and ADT def this instance computes while lowering
+    /// `current_package` — the *exact same* shared handle
+    /// `CompilerState`/`MirToLirLowerer` read (`CompilerState::mir_package_rc`),
+    /// not a private local copy: every insert here lands directly in the
+    /// session's real package as it happens, so a struct/enum layout
+    /// computed once is visible immediately (no separate "merge when
+    /// lowering finishes" step, and nothing computed here is ever lost or
+    /// redundantly recomputed by a later re-lowering of the same package).
+    mir_package: std::rc::Rc<std::cell::RefCell<mir::MirPackage>>,
     struct_layouts_in_progress: HashSet<StructLayoutKey>,
-    structural_defs: HashMap<StructuralLayoutKey, hir::DefId>,
-    enum_defs: HashMap<hir::DefId, EnumDefinition>,
-    /// Reverse index from an enum's exact name to its `DefId` — lets
-    /// `lower_let_expr`'s unresolved-type-annotation fallback (a bare
-    /// enum name with no `Res::Def` yet, e.g. before full path resolution)
-    /// look it up in O(1) instead of scanning every registered enum
-    /// definition. Built alongside `enum_defs`'s two insertion sites.
-    enum_defs_by_name: HashMap<String, hir::DefId>,
-    enum_layouts: HashMap<EnumLayoutKey, EnumLayout>,
-    /// Exact reverse index from a flattened-tuple enum representation back
-    /// to the `EnumLayoutKey` that produced it — mirrors
-    /// `struct_layouts_by_ty`, which structs already had. Without this,
-    /// recovering an enum's concrete generic args from a flattened value
-    /// (e.g. during generic specialization) fell back to a fuzzy,
-    /// `Infer`-as-wildcard linear scan (`enum_layout_for_ty`) that could
-    /// silently fail to bind a type parameter.
-    enum_layouts_by_ty: HashMap<Ty, EnumLayoutKey>,
     enum_layouts_in_progress: HashSet<EnumLayoutKey>,
-    enum_variants: HashMap<hir::DefId, EnumVariantInfo>,
-    enum_variant_names: HashMap<String, hir::DefId>,
-    const_values: HashMap<hir::DefId, ConstInfo>,
-    executable_consts: HashMap<hir::DefId, (mir::Symbol, Ty)>,
-    function_sigs: HashMap<hir::DefId, mir::FunctionSig>,
-    generic_function_defs: HashMap<hir::DefId, hir::Function>,
     runtime_functions: HashMap<String, mir::FunctionSig>,
-    struct_methods: HashMap<String, HashMap<String, MethodLoweringInfo>>,
-    /// For each bare method name, `Some(ty)` if every method registered
-    /// under that name (across every struct) so far agrees on the same
-    /// declared output type, or `None` once any two disagree — maintained
-    /// incrementally as each method is registered
-    /// (`register_method_lowering_info`, the single insertion point for
-    /// `struct_methods`) instead of being recomputed by scanning every
-    /// struct's whole method table on every `MethodCall` whose receiver
-    /// type isn't otherwise known. Registration fully completes (via the
-    /// signature-only pre-pass) before any body is lowered, so this is
-    /// already in its final state by the time any `MethodCall` reads it —
-    /// equivalent to a lazy per-call scan over the complete map, just
-    /// computed once instead of on every such call.
-    method_name_output_consensus: HashMap<String, Option<Ty>>,
-    method_lookup_by_def: HashMap<hir::DefId, MethodLoweringInfo>,
-    method_lookup: HashMap<String, MethodLoweringInfo>,
-    method_defs: HashMap<String, MethodDefinition>,
-    method_defs_by_def: HashMap<hir::DefId, MethodDefinition>,
-    /// Raw HIR for every non-generic method, keyed by `impl_item.def_id` —
-    /// see `MethodHirRef`'s own doc comment.
-    method_hir_defs: HashMap<hir::DefId, MethodHirRef>,
-    /// Reverse index from a method's own `impl_item.def_id` to its owning
-    /// `Impl` item (and that item's index within it) — built once, lazily,
-    /// on first need by `try_lazily_register_method`. Unlike structs,
-    /// enums, consts, and top-level functions, an individual method's own
-    /// `DefId` is never a key in `hir_def_map` (only the *owning* `Impl`
-    /// item's own top-level `DefId` is), so resolving one requires this
-    /// one-time scan first — mirrors `hir_def_map` itself being a
-    /// one-time whole-workspace snapshot.
-    /// `Rc`, not owned — the index is built by iterating an impl's own
-    /// `items` once per *method*, so a naive owned clone here would
-    /// re-clone the same enclosing `Item` (every method's own body
-    /// included) once per method in that impl, an O(methods^2)-bytes-
-    /// copied blowup for any impl with more than one method. One `Rc`
-    /// clone per method key instead, sharing the single real clone the
-    /// index's build loop makes once per distinct impl.
-    method_owner_index: Option<HashMap<hir::DefId, (std::rc::Rc<hir::Item>, usize)>>,
-    /// Reverse index from `(self_def, method_name)` to the method's key in
-    /// `method_defs_by_def` — lets `real_indexable_struct_def_id`/
-    /// `call_real_method_into_place` find a struct's `index`/`index_set`
-    /// method in O(1) instead of each doing its own
-    /// `method_defs_by_def.values().find(...)` linear scan over every
-    /// method in the whole program (the two used to scan twice combined,
-    /// once per `x[i]` in the program).
-    method_defs_by_self_and_name: HashMap<(hir::DefId, String), hir::DefId>,
-    method_specializations: HashMap<(hir::DefId, mir::ty::SubstsRef), MethodLoweringInfo>,
-    function_specializations: HashMap<(hir::DefId, mir::ty::SubstsRef), FunctionSpecializationInfo>,
-    /// Pre-substitution memo, keyed directly on a call site's own raw
-    /// arguments rather than the `substs` derived from them — lets repeat
-    /// calls to the same generic function/method with the same concrete
-    /// argument types skip the whole substitution-inference walk
-    /// (`build_substs_from_args` and its `infer_generic_from_type_expr`
-    /// fallback chain) instead of only benefiting from the cache *after*
-    /// paying for that walk. Safe because struct/enum registration
-    /// finishes in a pre-pass (`finalize_adt_definitions`) before any
-    /// function body is lowered, so the walk's inputs-to-output mapping is
-    /// pure for the remainder of the lowering pass. `Span` is deliberately
-    /// excluded — two distinct call sites with identical types must share
-    /// a cache entry.
-    function_specialization_call_cache:
-        HashMap<(hir::DefId, Vec<Ty>, Vec<Ty>, Option<Ty>), FunctionSpecializationInfo>,
-    method_specialization_call_cache:
-        HashMap<(hir::DefId, Vec<Ty>, Vec<Ty>, Option<Ty>), MethodLoweringInfo>,
     extra_items: Vec<mir::Item>,
     extra_bodies: Vec<(mir::BodyId, mir::Body)>,
     /// Marks a function/method `DefId` whose body has already been lowered
@@ -551,18 +318,8 @@ pub struct HirToMirLowerer {
     /// call-site lazy fallback, the impl signature pre-pass) with no body
     /// ever lowered.
     lowered_items: HashSet<hir::DefId>,
-    opaque_types: HashMap<String, Ty>,
-    /// Byte size for an opaque type minted for a *mismatched enum payload
-    /// slot* (`enum_layout_for_instance`'s per-slot merge loop) — the
-    /// largest size among the concrete per-variant types that share that
-    /// slot, since the slot's real runtime storage must fit whichever
-    /// variant is actually active (a tagged union, not a merged/uniform
-    /// field). Not populated for other opaque types (e.g. plain
-    /// `impl Trait` existentials), which have no such "size" concept.
-    opaque_ty_sizes: HashMap<String, u64>,
     synthetic_runtime_functions: HashSet<String>,
     next_synthetic_hir_def_id: hir::DefId,
-    adt_defs: HashMap<hir::DefId, mir::ty::AdtDef>,
     /// Snapshot of the whole-workspace `hir::HirPackage.def_map`/`def_paths`
     /// (local items + every dependency's, via `seed_workspace_definitions`),
     /// taken once at the top of `lower_program`/`transform`. Lets
@@ -653,7 +410,11 @@ impl HirToMirLowerer {
     /// `current_package` afterward via `transform`/`transform_comptime_request`,
     /// same as before this required both
     /// arguments up front.
-    pub fn new(hir_program: std::rc::Rc<hir::HirProgram>, package_id: hir::PackageId) -> Self {
+    pub fn new(
+        hir_program: std::rc::Rc<hir::HirProgram>,
+        package_id: hir::PackageId,
+        mir_package: std::rc::Rc<std::cell::RefCell<mir::MirPackage>>,
+    ) -> Self {
         let current_package = hir_program
             .packages
             .get(&package_id)
@@ -666,45 +427,15 @@ impl HirToMirLowerer {
             next_synthetic_def_id: mir::ty::DefId::local(1),
             diagnostics: Vec::new(),
             has_errors: false,
-            struct_defs: HashMap::new(),
-            struct_defs_by_tail_name: HashMap::new(),
-            struct_layouts: HashMap::new(),
-            struct_layouts_by_ty: HashMap::new(),
+            mir_package,
             struct_layouts_in_progress: HashSet::new(),
-            structural_defs: HashMap::new(),
-            enum_defs: HashMap::new(),
-            enum_defs_by_name: HashMap::new(),
-            enum_layouts: HashMap::new(),
-            enum_layouts_by_ty: HashMap::new(),
             enum_layouts_in_progress: HashSet::new(),
-            enum_variants: HashMap::new(),
-            enum_variant_names: HashMap::new(),
-            const_values: HashMap::new(),
-            executable_consts: HashMap::new(),
-            function_sigs: HashMap::new(),
-            generic_function_defs: HashMap::new(),
             runtime_functions: Self::default_runtime_signatures(),
-            struct_methods: HashMap::new(),
-            method_name_output_consensus: HashMap::new(),
-            method_lookup_by_def: HashMap::new(),
-            method_lookup: HashMap::new(),
-            method_defs: HashMap::new(),
-            method_defs_by_def: HashMap::new(),
-            method_hir_defs: HashMap::new(),
-            method_owner_index: None,
-            method_defs_by_self_and_name: HashMap::new(),
-            method_specializations: HashMap::new(),
-            function_specializations: HashMap::new(),
-            function_specialization_call_cache: HashMap::new(),
-            method_specialization_call_cache: HashMap::new(),
             extra_items: Vec::new(),
             extra_bodies: Vec::new(),
             lowered_items: HashSet::new(),
-            opaque_types: HashMap::new(),
-            opaque_ty_sizes: HashMap::new(),
             synthetic_runtime_functions: HashSet::new(),
             next_synthetic_hir_def_id: hir::DefId::local(1),
-            adt_defs: HashMap::new(),
             hir_program,
             current_package,
             current_package_id: package_id,
@@ -786,16 +517,16 @@ impl HirToMirLowerer {
     }
 
     pub fn compute_adt_layout(&mut self, def_id: hir::DefId, substs: &[Ty], span: Span) {
-        if !self.struct_defs.contains_key(&def_id) && !self.enum_defs.contains_key(&def_id) {
+        if !self.mir_package.borrow().struct_defs.contains_key(&def_id) && !self.mir_package.borrow().enum_defs.contains_key(&def_id) {
             self.try_lazily_register_adt(def_id.clone(), span);
         }
         // `def_id` is either a struct or an enum, never both — calling both
         // layout functions regardless of which one it actually is makes the
         // non-matching call spuriously report "definition not registered"
         // for a perfectly valid, correctly-registered type.
-        if self.struct_defs.contains_key(&def_id) {
+        if self.mir_package.borrow().struct_defs.contains_key(&def_id) {
             let _ = self.struct_layout_for_instance(def_id, substs, span);
-        } else if self.enum_defs.contains_key(&def_id) {
+        } else if self.mir_package.borrow().enum_defs.contains_key(&def_id) {
             let _ = self.enum_layout_for_instance(def_id, substs, span);
         }
     }
@@ -1066,12 +797,12 @@ impl HirToMirLowerer {
         }
     }
 
-    pub fn struct_layout_map(&self) -> &HashMap<StructLayoutKey, StructLayout> {
-        &self.struct_layouts
+    pub fn struct_layout_map(&self) -> HashMap<StructLayoutKey, StructLayout> {
+        self.mir_package.borrow().struct_layouts.clone()
     }
 
-    pub fn enum_layout_map(&self) -> &HashMap<EnumLayoutKey, EnumLayout> {
-        &self.enum_layouts
+    pub fn enum_layout_map(&self) -> HashMap<EnumLayoutKey, EnumLayout> {
+        self.mir_package.borrow().enum_layouts.clone()
     }
 
     /// Byte size for every opaque type minted for a mismatched/union enum
@@ -1080,12 +811,8 @@ impl HirToMirLowerer {
     /// buffer big enough for whichever variant is actually active)
     /// without needing to resolve the opaque placeholder's (nonexistent)
     /// field structure.
-    pub fn opaque_payload_sizes(&self) -> &HashMap<String, u64> {
-        &self.opaque_ty_sizes
-    }
-
-    pub fn take_adt_defs(&mut self) -> HashMap<hir::DefId, mir::ty::AdtDef> {
-        std::mem::take(&mut self.adt_defs)
+    pub fn opaque_payload_sizes(&self) -> HashMap<String, u64> {
+        self.mir_package.borrow().opaque_ty_sizes.clone()
     }
 
     /// Struct field types only — enums are exported separately via
@@ -1094,7 +821,7 @@ impl HirToMirLowerer {
     /// this bare-`DefId`-keyed map).
     pub fn all_adt_field_tys(&self) -> HashMap<hir::DefId, Vec<Ty>> {
         let mut map = HashMap::new();
-        for (key, layout) in &self.struct_layouts {
+        for (key, layout) in &self.mir_package.borrow().struct_layouts {
             map.insert(key.def_id.clone(), layout.field_tys.clone());
         }
         map
@@ -1394,15 +1121,23 @@ impl HirToMirLowerer {
         self.current_package.clone()
     }
 
-    /// Registers every top-level struct/enum/impl-signature/const in
+    /// Registers every top-level struct/enum and impl signature in
     /// `self.current_package` (already set by `new`) — call once before any
     /// `ensure_item_lowered` call, then `ensure_item_lowered` for each
     /// top-level `DefId` that needs lowering (in any order — this is
     /// exactly what makes it usable from a driver-level loop instead of
-    /// requiring one eager whole-package sweep). Mirrors `lower_program`'s
-    /// own seeding prelude (everything before its per-item loop) verbatim —
-    /// the only thing this doesn't do up front is lower any
-    /// function/method/const *body*.
+    /// requiring one eager whole-package sweep).
+    ///
+    /// Struct/enum layouts and method signatures still need this eager
+    /// pass: `finalize_adt_definitions`'s layout computation and
+    /// `register_impl_signatures`'s signature table both assume every
+    /// nominal type in reach (including cross-package dependencies, via
+    /// `register_all_dependency_adts`) is already registered by the time
+    /// they run — see `register_all_dependency_adts`'s doc comment for the
+    /// ordering bug that guarantee exists to prevent. Consts have no such
+    /// coupling (each one lowers independently), so they need no eager
+    /// pass at all: `ensure_const_info`, used by every `const_values` read
+    /// site, lazily triggers `ensure_item_lowered` on a cache miss.
     pub fn register_package_items(&mut self) {
         let current_package = self.current_package.clone();
         // Same "seed from `.items` alone can collide with a local const's
@@ -1432,11 +1167,10 @@ impl HirToMirLowerer {
                 self.register_impl_signatures(impl_block);
             }
         }
-        for item in &current_package.items {
-            if let hir::ItemKind::Const(const_item) = &item.kind {
-                self.register_const_value(item.def_id.clone(), const_item);
-            }
-        }
+        // Consts are the one part of this sweep that's genuinely lazy:
+        // `ensure_const_info` (used by every `const_values` read site)
+        // triggers `ensure_item_lowered` on a cache miss itself, so no
+        // eager per-const pass is needed here at all.
     }
 
     /// On-demand, per-`DefId` counterpart to `lower_program`'s per-item
@@ -1616,7 +1350,7 @@ impl HirToMirLowerer {
             // `predeclare_dependency_function_signatures` reading that
             // package's own compiled MIR.
             let sig = self.lower_function_sig(&function.sig, None);
-            self.function_sigs.insert(def_id, sig);
+            self.mir_package.borrow_mut().function_sigs.insert(def_id, sig);
             return Ok(());
         }
         if !function.sig.generics.params.is_empty() {
@@ -1656,7 +1390,7 @@ impl HirToMirLowerer {
         // function, by far the common case), which correctly leaves
         // `lowered_items` untouched on its own miss so this function still
         // gets a real chance afterwards.
-        let Some(method_ref) = self.method_hir_defs.get(&def_id).cloned() else {
+        let Some(method_ref) = self.mir_package.borrow().method_hir_defs.get(&def_id).cloned() else {
             return Ok(());
         };
         self.lowered_items.insert(def_id.clone());
@@ -1668,7 +1402,7 @@ impl HirToMirLowerer {
                 &method_ref.function.sig,
                 method_ref.method_context.as_ref(),
             );
-            self.function_sigs.insert(def_id, sig);
+            self.mir_package.borrow_mut().function_sigs.insert(def_id, sig);
             return Ok(());
         }
         let previous_item_path = self.current_item_path.take();
@@ -1695,7 +1429,7 @@ impl HirToMirLowerer {
         self.next_body_id += 1;
 
         let sig = self.lower_function_sig(&function.sig, None);
-        self.function_sigs.insert(item.def_id.clone(), sig.clone());
+        self.mir_package.borrow_mut().function_sigs.insert(item.def_id.clone(), sig.clone());
         let span = function
             .body
             .as_ref()
@@ -1758,12 +1492,12 @@ impl HirToMirLowerer {
     }
 
     fn register_generic_function(&mut self, def_id: hir::DefId, function: &hir::Function) {
-        if self.generic_function_defs.contains_key(&def_id) {
+        if self.mir_package.borrow().generic_function_defs.contains_key(&def_id) {
             return;
         }
         let sig = self.lower_function_sig(&function.sig, None);
-        self.function_sigs.insert(def_id.clone(), sig);
-        self.generic_function_defs.insert(def_id, function.clone());
+        self.mir_package.borrow_mut().function_sigs.insert(def_id.clone(), sig);
+        self.mir_package.borrow_mut().generic_function_defs.insert(def_id, function.clone());
     }
 
     fn lower_function_with_substs(
@@ -1822,7 +1556,7 @@ impl HirToMirLowerer {
             arg_types.to_vec(),
             expected_return.cloned(),
         );
-        if let Some(info) = self.function_specialization_call_cache.get(&pre_key) {
+        if let Some(info) = self.mir_package.borrow().function_specialization_call_cache.get(&pre_key).cloned() {
             return Ok(info.clone());
         }
         let info = self.ensure_function_specialization_uncached(
@@ -1833,7 +1567,7 @@ impl HirToMirLowerer {
             expected_return,
             span,
         )?;
-        self.function_specialization_call_cache
+        self.mir_package.borrow_mut().function_specialization_call_cache
             .insert(pre_key, info.clone());
         Ok(info)
     }
@@ -2023,7 +1757,7 @@ impl HirToMirLowerer {
             .collect::<mir::ty::SubstsRef>();
         let key = (def_id.clone(), function_substs.clone());
 
-        if let Some(info) = self.function_specializations.get(&key) {
+        if let Some(info) = self.mir_package.borrow().function_specializations.get(&key).cloned() {
             return Ok(info.clone());
         }
 
@@ -2055,7 +1789,7 @@ impl HirToMirLowerer {
             sig: sig.clone(),
             fn_ty: fn_ty.clone(),
         };
-        self.function_specializations.insert(key, info.clone());
+        self.mir_package.borrow_mut().function_specializations.insert(key, info.clone());
         Ok(info)
     }
 
@@ -2085,7 +1819,7 @@ impl HirToMirLowerer {
             .collect::<mir::ty::SubstsRef>();
         let key = (def_id.clone(), function_substs.clone());
 
-        if let Some(info) = self.function_specializations.get(&key) {
+        if let Some(info) = self.mir_package.borrow().function_specializations.get(&key).cloned() {
             return Ok(info.clone());
         }
 
@@ -2117,7 +1851,7 @@ impl HirToMirLowerer {
             sig: sig.clone(),
             fn_ty: fn_ty.clone(),
         };
-        self.function_specializations.insert(key, info.clone());
+        self.mir_package.borrow_mut().function_specializations.insert(key, info.clone());
         Ok(info)
     }
 
@@ -2135,7 +1869,7 @@ impl HirToMirLowerer {
             arg_types.to_vec(),
             expected_return.cloned(),
         );
-        if let Some(info) = self.method_specialization_call_cache.get(&pre_key) {
+        if let Some(info) = self.mir_package.borrow().method_specialization_call_cache.get(&pre_key).cloned() {
             return Ok(info.clone());
         }
         let info = self.ensure_method_specialization_uncached(
@@ -2145,7 +1879,7 @@ impl HirToMirLowerer {
             expected_return,
             span,
         )?;
-        self.method_specialization_call_cache
+        self.mir_package.borrow_mut().method_specialization_call_cache
             .insert(pre_key, info.clone());
         Ok(info)
     }
@@ -2350,7 +2084,7 @@ impl HirToMirLowerer {
     ) -> Result<MethodLoweringInfo> {
         let key = (def.def_id.clone(), method_substs.clone());
 
-        if let Some(info) = self.method_specializations.get(&key) {
+        if let Some(info) = self.mir_package.borrow().method_specializations.get(&key).cloned() {
             return Ok(info.clone());
         }
 
@@ -2421,7 +2155,7 @@ impl HirToMirLowerer {
             fn_ty,
             struct_def: def.self_def.clone(),
         };
-        self.method_specializations.insert(key, info.clone());
+        self.mir_package.borrow_mut().method_specializations.insert(key, info.clone());
         Ok(info)
     }
 
@@ -2720,15 +2454,14 @@ impl HirToMirLowerer {
                     .enum_layout_for_ty_exact(expected_return)
                     .or_else(|| self.enum_layout_for_ty(expected_return));
                 if let Some(layout) = layout {
-                    let is_result_layout = self
-                        .enum_defs
+                    let is_result_layout = self.mir_package.borrow().enum_defs
                         .get(&layout.def_id)
                         .map(|def| {
                             def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
                         })
                         .unwrap_or(false);
                     if is_result_layout && generics.len() >= 2 {
-                        if let Some(def) = self.enum_defs.get(&layout.def_id) {
+                        if let Some(def) = self.mir_package.borrow().enum_defs.get(&layout.def_id).cloned() {
                             let mut ok_payload = None;
                             let mut err_payload = None;
                             for variant in &def.variants {
@@ -2861,8 +2594,7 @@ impl HirToMirLowerer {
                     .enum_layout_for_ty_exact(self_arg_ty)
                     .or_else(|| self.enum_layout_for_ty(self_arg_ty));
                 if let Some(layout) = layout {
-                    let is_result_layout = self
-                        .enum_defs
+                    let is_result_layout = self.mir_package.borrow().enum_defs
                         .get(&layout.def_id)
                         .map(|def| {
                             def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
@@ -3240,8 +2972,7 @@ impl HirToMirLowerer {
             TyKind::Opaque(def_id, substs) => (def_id, substs),
             _ => {
                 let layout = self.enum_layout_for_ty(expected_ty)?;
-                let is_result = self
-                    .enum_defs
+                let is_result = self.mir_package.borrow().enum_defs
                     .get(&layout.def_id)
                     .map(|def| {
                         def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
@@ -3260,20 +2991,18 @@ impl HirToMirLowerer {
                 return Some(args);
             }
         };
-        let is_result = self
-            .enum_defs
+        let is_result = self.mir_package.borrow().enum_defs
             .get(adt)
             .map(|def| def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result"))
             .or_else(|| {
-                self.struct_defs.get(adt).map(|def| {
+                self.mir_package.borrow().struct_defs.get(adt).cloned().map(|def| {
                     def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
                 })
             })
             .unwrap_or(false);
         if !is_result {
             if let Some(layout) = self.enum_layout_for_ty(expected_ty) {
-                let is_result_layout = self
-                    .enum_defs
+                let is_result_layout = self.mir_package.borrow().enum_defs
                     .get(&layout.def_id)
                     .map(|def| {
                         def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
@@ -3304,8 +3033,7 @@ impl HirToMirLowerer {
         }
         if args.len() < 2 {
             if let Some(layout) = self.enum_layout_for_ty(expected_ty) {
-                let is_result_layout = self
-                    .enum_defs
+                let is_result_layout = self.mir_package.borrow().enum_defs
                     .get(&layout.def_id)
                     .map(|def| {
                         def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
@@ -3329,7 +3057,7 @@ impl HirToMirLowerer {
                         }
                     }
                     if args.len() < 2 {
-                        if let Some(def) = self.enum_defs.get(&layout.def_id) {
+                        if let Some(def) = self.mir_package.borrow().enum_defs.get(&layout.def_id).cloned() {
                             let mut ok_payload = None;
                             let mut err_payload = None;
                             for variant in &def.variants {
@@ -3376,8 +3104,7 @@ impl HirToMirLowerer {
         }
         if args.is_empty() {
             if let Some(layout) = self.enum_layout_for_ty(expected_ty) {
-                let is_result_layout = self
-                    .enum_defs
+                let is_result_layout = self.mir_package.borrow().enum_defs
                     .get(&layout.def_id)
                     .map(|def| {
                         def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
@@ -3423,13 +3150,11 @@ impl HirToMirLowerer {
             TyKind::Opaque(def_id, substs) => (def_id.clone(), substs),
             _ => return None,
         };
-        let is_expr = self
-            .struct_defs
+        let is_expr = self.mir_package.borrow().struct_defs
             .get(&def_id)
             .map(|def| def.name.as_str() == "Expr" || def.name.as_str().ends_with("::Expr"))
             .unwrap_or(false)
-            || self
-                .enum_defs
+            || self.mir_package.borrow().enum_defs
                 .get(&def_id)
                 .map(|def| def.name.as_str() == "Expr" || def.name.as_str().ends_with("::Expr"))
                 .unwrap_or(false)
@@ -3508,7 +3233,7 @@ impl HirToMirLowerer {
             hir::TypeExprKind::Path(path) => {
                 let variant_enum_def = path.res.as_ref().and_then(|res| {
                     if let hir::Res::Def(def_id) = res {
-                        self.enum_variants
+                        self.mir_package.borrow().enum_variants
                             .get(def_id)
                             .map(|variant| variant.enum_def.clone())
                     } else {
@@ -3531,8 +3256,7 @@ impl HirToMirLowerer {
                         if !matches_def {
                             if let Some(name) = path.segments.last().map(|seg| seg.name.as_str()) {
                                 if let Some(actual_def_id) = actual_def_id {
-                                    matches_def = self
-                                        .enum_defs
+                                    matches_def = self.mir_package.borrow().enum_defs
                                         .get(&actual_def_id)
                                         .map(|def| {
                                             def.name.as_str() == name
@@ -3542,8 +3266,7 @@ impl HirToMirLowerer {
                                                     .ends_with(&format!("::{}", name))
                                         })
                                         .unwrap_or(false)
-                                        || self
-                                            .struct_defs
+                                        || self.mir_package.borrow().struct_defs
                                             .get(&actual_def_id)
                                             .map(|def| {
                                                 def.name.as_str() == name
@@ -3558,16 +3281,14 @@ impl HirToMirLowerer {
                         }
                     } else if let Some(name) = path.segments.last().map(|seg| seg.name.as_str()) {
                         if let Some(actual_def_id) = actual_def_id {
-                            matches_def = self
-                                .enum_defs
+                            matches_def = self.mir_package.borrow().enum_defs
                                 .get(&actual_def_id)
                                 .map(|def| {
                                     def.name.as_str() == name
                                         || def.name.as_str().ends_with(&format!("::{}", name))
                                 })
                                 .unwrap_or(false)
-                                || self
-                                    .struct_defs
+                                || self.mir_package.borrow().struct_defs
                                     .get(&actual_def_id)
                                     .map(|def| {
                                         def.name.as_str() == name
@@ -3758,21 +3479,24 @@ impl HirToMirLowerer {
                 if let (Some(path_args), Some(hir::Res::Def(def_id))) =
                     (path_args, path.res.as_ref())
                 {
-                    let enum_def_id = if self.enum_defs.contains_key(def_id) {
+                    let enum_def_id = if self.mir_package.borrow().enum_defs.contains_key(def_id) {
                         Some(def_id.clone())
                     } else {
                         variant_enum_def
                     };
                     if let Some(enum_def_id) = enum_def_id {
-                        let mut candidates: Vec<&EnumLayout> = self
+                        let mut candidates: Vec<EnumLayout> = self
+                            .mir_package
+                            .borrow()
                             .enum_layouts
                             .values()
                             .filter(|layout| layout.def_id == enum_def_id)
+                            .cloned()
                             .collect();
                         if !candidates.is_empty() {
-                            let exact: Vec<&EnumLayout> = candidates
+                            let exact: Vec<EnumLayout> = candidates
                                 .iter()
-                                .copied()
+                                .cloned()
                                 .filter(|layout| layout.enum_ty == *actual_ty)
                                 .collect();
                             if !exact.is_empty() {
@@ -3780,7 +3504,7 @@ impl HirToMirLowerer {
                             }
                         }
                         if !candidates.is_empty() {
-                            let mut scored: Vec<(&EnumLayout, usize, usize, String)> = candidates
+                            let mut scored: Vec<(EnumLayout, usize, usize, String)> = candidates
                                 .into_iter()
                                 .map(|layout| {
                                     let mut mismatch: usize = 0;
@@ -3820,8 +3544,7 @@ impl HirToMirLowerer {
                                 })
                                 .collect();
                             scored.sort_by(|a, b| (a.1, a.2, &a.3).cmp(&(b.1, b.2, &b.3)));
-                            let layout = scored[0].0;
-                            let layout_args = layout.args.clone();
+                            let layout_args = scored[0].0.args.clone();
                             let mut actual_iter = layout_args.iter();
                             for arg in &path_args.args {
                                 let hir::GenericArg::Type(type_arg) = arg else {
@@ -3843,7 +3566,7 @@ impl HirToMirLowerer {
                 }
 
                 if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
-                    if let Some(struct_def) = self.struct_defs.get(def_id).cloned() {
+                    if let Some(struct_def) = self.mir_package.borrow().struct_defs.get(def_id).cloned() {
                         if let TyKind::Tuple(elements) = &actual_ty.kind {
                             for (field, actual_field_ty) in
                                 struct_def.fields.iter().zip(elements.iter())
@@ -3947,7 +3670,7 @@ impl HirToMirLowerer {
                         return Ok(());
                     }
                     TyKind::FnDef(def_id, _) => {
-                        let sig = match self.function_sigs.get(def_id).cloned() {
+                        let sig = match self.mir_package.borrow().function_sigs.get(def_id).cloned() {
                             Some(sig) => sig,
                             None => return Ok(()),
                         };
@@ -4150,7 +3873,7 @@ impl HirToMirLowerer {
         };
         let init = mir::Operand::Constant(init_constant.clone());
 
-        self.const_values.insert(
+        self.mir_package.borrow_mut().const_values.insert(
             def_id.clone(),
             ConstInfo {
                 ty: ty.clone(),
@@ -4188,7 +3911,7 @@ impl HirToMirLowerer {
         // point). `DefId::comptime_const_symbol` is that one shared
         // identity, called fresh from `def_id` at every site that needs
         // to name this same entity.
-        self.executable_consts
+        self.mir_package.borrow_mut().executable_consts
             .insert(def_id.clone(), (mir::Symbol::new(def_id.comptime_const_symbol()), ty.clone()));
         let body_id = mir::BodyId::new(self.next_body_id);
         self.next_body_id += 1;
@@ -4401,7 +4124,7 @@ impl HirToMirLowerer {
             hir::ExprKind::Literal(hir::Lit::Integer(value)) => Some(*value as u64),
             hir::ExprKind::Path(path) => {
                 if let Some(hir::Res::Def(def_id)) = &path.res {
-                    self.const_values
+                    self.mir_package.borrow().const_values
                         .get(def_id)
                         .and_then(|info| match &info.value.literal {
                             mir::ConstantKind::Int(value) => Some(*value as u64),
@@ -4541,7 +4264,7 @@ impl HirToMirLowerer {
             .collect::<Vec<_>>();
         let key = StructuralLayoutKey { fields: key_fields };
 
-        let def_id = if let Some(def_id) = self.structural_defs.get(&key).cloned() {
+        let def_id = if let Some(def_id) = self.mir_package.borrow().structural_defs.get(&key).cloned() {
             def_id
         } else {
             let def_id = self.next_synthetic_def_id();
@@ -4553,11 +4276,11 @@ impl HirToMirLowerer {
             }
 
             let name = format!("__structural_{}", def_id);
-            self.struct_defs_by_tail_name
+            self.mir_package.borrow_mut().struct_defs_by_tail_name
                 .entry(Self::name_tail(&name).to_string())
                 .or_default()
                 .push(def_id.clone());
-            self.struct_defs.insert(
+            self.mir_package.borrow_mut().struct_defs.insert(
                 def_id.clone(),
                 StructDefinition {
                     name,
@@ -4566,7 +4289,7 @@ impl HirToMirLowerer {
                     field_index,
                 },
             );
-            self.structural_defs.insert(key, def_id.clone());
+            self.mir_package.borrow_mut().structural_defs.insert(key, def_id.clone());
             def_id
         };
 
@@ -4625,7 +4348,7 @@ impl HirToMirLowerer {
             ),
             hir::TypeExprKind::Path(path) => {
                 if let Some(hir::Res::Def(def_id)) = &path.res {
-                    if let Some(def) = self.struct_defs.get(def_id) {
+                    if let Some(def) = self.mir_package.borrow().struct_defs.get(def_id).cloned() {
                         return Some(def.fields.clone());
                     }
                 }
@@ -4871,8 +4594,7 @@ impl HirToMirLowerer {
                 .filter(|name| !name.is_empty())
                 .unwrap_or_else(|| fallback.to_string()),
             hir::TypeExprKind::Structural(structural) => {
-                let mut matches = self
-                    .struct_defs
+                let mut matches = self.mir_package.borrow().struct_defs
                     .values()
                     .filter(|def| def.fields.len() == structural.fields.len())
                     .filter(|def| {
@@ -4915,7 +4637,7 @@ impl HirToMirLowerer {
         variants: Vec<EnumVariantDef>,
         span: Span,
     ) {
-        if self.enum_defs.contains_key(&def_id) {
+        if self.mir_package.borrow().enum_defs.contains_key(&def_id) {
             return;
         }
 
@@ -4928,7 +4650,7 @@ impl HirToMirLowerer {
                 }
                 None
             });
-            self.enum_variants.insert(
+            self.mir_package.borrow_mut().enum_variants.insert(
                 variant.def_id.clone(),
                 EnumVariantInfo {
                     def_id: variant.def_id.clone(),
@@ -4939,17 +4661,17 @@ impl HirToMirLowerer {
             );
 
             let qualified_name = format!("{}::{}", name, variant.name);
-            self.enum_variant_names
+            self.mir_package.borrow_mut().enum_variant_names
                 .insert(qualified_name.clone(), variant.def_id.clone());
-            self.enum_variant_names
+            self.mir_package.borrow_mut().enum_variant_names
                 .entry(variant.name.clone())
                 .or_insert(variant.def_id.clone());
         }
 
-        self.enum_defs_by_name
+        self.mir_package.borrow_mut().enum_defs_by_name
             .entry(name.clone())
             .or_insert(def_id.clone());
-        self.enum_defs.insert(
+        self.mir_package.borrow_mut().enum_defs.insert(
             def_id.clone(),
             EnumDefinition {
                 def_id: def_id.clone(),
@@ -5043,7 +4765,7 @@ impl HirToMirLowerer {
 
     fn lower_path_type(&mut self, path: &hir::Path, span: Span) -> Ty {
         if let Some(def_id) = self.resolve_path_def_id(path) {
-            if self.struct_defs.contains_key(&def_id) {
+            if self.mir_package.borrow().struct_defs.contains_key(&def_id) {
                 let args = path
                     .segments
                     .last()
@@ -5055,7 +4777,7 @@ impl HirToMirLowerer {
                 }
                 return self.error_ty();
             }
-            if self.enum_defs.contains_key(&def_id) {
+            if self.mir_package.borrow().enum_defs.contains_key(&def_id) {
                 let args = path
                     .segments
                     .last()
@@ -5067,7 +4789,7 @@ impl HirToMirLowerer {
                 }
                 return self.error_ty();
             }
-            if let Some(sig) = self.function_sigs.get(&def_id) {
+            if let Some(sig) = self.mir_package.borrow().function_sigs.get(&def_id).cloned() {
                 return Ty {
                     kind: TyKind::FnPtr(mir::ty::PolyFnSig {
                         binder: mir::ty::Binder {
@@ -5125,7 +4847,7 @@ impl HirToMirLowerer {
 
         if let Some(res) = &path.res {
             if let hir::Res::Def(def_id) = res {
-                if self.struct_defs.contains_key(def_id) {
+                if self.mir_package.borrow().struct_defs.contains_key(def_id) {
                     let args = path
                         .segments
                         .last()
@@ -5137,7 +4859,7 @@ impl HirToMirLowerer {
                     }
                     return self.error_ty();
                 }
-                if self.enum_defs.contains_key(def_id) {
+                if self.mir_package.borrow().enum_defs.contains_key(def_id) {
                     let args = path
                         .segments
                         .last()
@@ -5149,7 +4871,7 @@ impl HirToMirLowerer {
                     }
                     return self.error_ty();
                 }
-                if let Some(sig) = self.function_sigs.get(def_id) {
+                if let Some(sig) = self.mir_package.borrow().function_sigs.get(def_id).cloned() {
                     // Treat function types as function pointers when referenced as types
                     return Ty {
                         kind: TyKind::FnPtr(mir::ty::PolyFnSig {
@@ -5314,7 +5036,7 @@ impl HirToMirLowerer {
         strukt: &hir::Struct,
         _span: Span,
     ) {
-        if self.struct_defs.contains_key(&def_id) {
+        if self.mir_package.borrow().struct_defs.contains_key(&def_id) {
             return;
         }
 
@@ -5337,11 +5059,11 @@ impl HirToMirLowerer {
             .collect::<Vec<_>>();
 
         let name = self.def_path_str(def_id.clone(), strukt.name.as_str());
-        self.struct_defs_by_tail_name
+        self.mir_package.borrow_mut().struct_defs_by_tail_name
             .entry(Self::name_tail(&name).to_string())
             .or_default()
             .push(def_id.clone());
-        self.struct_defs.insert(
+        self.mir_package.borrow_mut().struct_defs.insert(
             def_id,
             StructDefinition {
                 name,
@@ -5358,7 +5080,7 @@ impl HirToMirLowerer {
         enm: &hir::Enum,
         _span: Span,
     ) {
-        if self.enum_defs.contains_key(&def_id) {
+        if self.mir_package.borrow().enum_defs.contains_key(&def_id) {
             return;
         }
 
@@ -5413,7 +5135,7 @@ impl HirToMirLowerer {
                 payload: variant.payload.clone(),
             });
 
-            self.enum_variants.insert(
+            self.mir_package.borrow_mut().enum_variants.insert(
                 variant.def_id.clone(),
                 EnumVariantInfo {
                     def_id: variant.def_id.clone(),
@@ -5424,17 +5146,17 @@ impl HirToMirLowerer {
             );
 
             let qualified_name = format!("{}::{}", enum_qualified_name, variant.name.as_str());
-            self.enum_variant_names
+            self.mir_package.borrow_mut().enum_variant_names
                 .insert(qualified_name.clone(), variant.def_id.clone());
-            self.enum_variant_names
+            self.mir_package.borrow_mut().enum_variant_names
                 .entry(variant.name.as_str().to_string())
                 .or_insert(variant.def_id.clone());
         }
 
-        self.enum_defs_by_name
+        self.mir_package.borrow_mut().enum_defs_by_name
             .entry(enum_qualified_name.clone())
             .or_insert(def_id.clone());
-        self.enum_defs.insert(
+        self.mir_package.borrow_mut().enum_defs.insert(
             def_id.clone(),
             EnumDefinition {
                 def_id,
@@ -5471,7 +5193,7 @@ impl HirToMirLowerer {
                         ctor_kind: mir::ty::CtorKind::Fn,
                         is_recovered: false,
                     };
-                    self.adt_defs.insert(
+                    self.mir_package.borrow_mut().adt_defs.insert(
                         item.def_id.clone(),
                         mir::ty::AdtDef {
                             did: item.def_id.clone(),
@@ -5494,7 +5216,7 @@ impl HirToMirLowerer {
                     let _ = self.enum_layout_for_instance(item.def_id.clone(), &[], item.span);
                     // Register a real, nominal `AdtDef` for this enum too
                     // (structs already get one above) — this is what lets
-                    // `take_adt_defs()` export enums to mir_to_lir at all.
+                    // `mir_package.adt_defs` export enums to mir_to_lir at all.
                     // Reuses `adt_shell_ty`'s construction (real variant
                     // idents/discriminants, empty per-variant `fields` —
                     // payload types are supplied separately via the
@@ -5504,7 +5226,7 @@ impl HirToMirLowerer {
                         kind: TyKind::Adt(adt, _),
                     }) = self.adt_shell_ty(item.def_id.clone(), &[])
                     {
-                        self.adt_defs.insert(item.def_id.clone(), adt);
+                        self.mir_package.borrow_mut().adt_defs.insert(item.def_id.clone(), adt);
                     }
                 }
                 _ => {}
@@ -5524,11 +5246,11 @@ impl HirToMirLowerer {
             args: args.to_vec(),
         };
 
-        if let Some(layout) = self.struct_layouts.get(&key) {
+        if let Some(layout) = self.mir_package.borrow().struct_layouts.get(&key).cloned() {
             return Some(layout.clone());
         }
 
-        let Some(struct_def) = self.struct_defs.get(&def_id).cloned() else {
+        let Some(struct_def) = self.mir_package.borrow().struct_defs.get(&def_id).cloned() else {
             self.emit_error(span, "struct definition not registered");
             return None;
         };
@@ -5582,15 +5304,15 @@ impl HirToMirLowerer {
             field_tys,
         };
 
-        self.struct_layouts.insert(key.clone(), layout.clone());
-        self.struct_layouts_by_ty.insert(struct_ty, key.clone());
+        self.mir_package.borrow_mut().struct_layouts.insert(key.clone(), layout.clone());
+        self.mir_package.borrow_mut().struct_layouts_by_ty.insert(struct_ty, key.clone());
         self.struct_layouts_in_progress.remove(&key);
 
         let field_tys = layout.field_tys.clone();
         for field_ty in &field_tys {
             if let TyKind::Adt(adt, substs) = &field_ty.kind {
-                let is_struct = self.struct_defs.contains_key(&adt.did);
-                let is_enum = !is_struct && self.enum_defs.contains_key(&adt.did);
+                let is_struct = self.mir_package.borrow().struct_defs.contains_key(&adt.did);
+                let is_enum = !is_struct && self.mir_package.borrow().enum_defs.contains_key(&adt.did);
                 if !is_struct && !is_enum {
                     continue;
                 }
@@ -5616,8 +5338,8 @@ impl HirToMirLowerer {
     }
 
     fn struct_layout_for_ty(&self, ty: &Ty) -> Option<StructLayout> {
-        let key = self.struct_layouts_by_ty.get(ty)?;
-        self.struct_layouts.get(key).cloned()
+        let key = self.mir_package.borrow().struct_layouts_by_ty.get(ty).cloned()?;
+        self.mir_package.borrow().struct_layouts.get(key).cloned()
     }
 
     /// Exact-match counterpart to `enum_layout_for_ty`'s fuzzy scan — an
@@ -5625,9 +5347,9 @@ impl HirToMirLowerer {
     /// `EnumLayout` (which carries the original generic args in
     /// `EnumLayout.args`). Prefer this everywhere a concrete instantiation
     /// is expected; fall back to the fuzzy scan only when this misses.
-    fn enum_layout_for_ty_exact(&self, ty: &Ty) -> Option<&EnumLayout> {
-        let key = self.enum_layouts_by_ty.get(ty)?;
-        self.enum_layouts.get(key)
+    fn enum_layout_for_ty_exact(&self, ty: &Ty) -> Option<EnumLayout> {
+        let key = self.mir_package.borrow().enum_layouts_by_ty.get(ty).cloned()?;
+        self.mir_package.borrow().enum_layouts.get(key).cloned()
     }
 
     fn enum_payload_types(
@@ -5680,7 +5402,7 @@ impl HirToMirLowerer {
         // variant's own `payload` are actually needed below — clone just
         // those instead of the whole `EnumDefinition` (every variant of
         // the enum, needed or not).
-        let enum_def = self.enum_defs.get(&variant.enum_def)?;
+        let enum_def = self.mir_package.borrow().enum_defs.get(&variant.enum_def).cloned()?;
         if enum_def.generics.len() != args.len() {
             let name = enum_def.name.clone();
             let generics_len = enum_def.generics.len();
@@ -5721,11 +5443,11 @@ impl HirToMirLowerer {
             args: args.to_vec(),
         };
 
-        if let Some(layout) = self.enum_layouts.get(&key) {
+        if let Some(layout) = self.mir_package.borrow().enum_layouts.get(&key).cloned() {
             return Some(layout.clone());
         }
 
-        let Some(enum_def) = self.enum_defs.get(&def_id).cloned() else {
+        let Some(enum_def) = self.mir_package.borrow().enum_defs.get(&def_id).cloned() else {
             self.emit_error(span, "enum definition not registered");
             return None;
         };
@@ -5864,7 +5586,7 @@ impl HirToMirLowerer {
                 if self.is_opaque_ty(&payload_layout[idx]) {
                     let opaque_name = format!("{}::payload{}", enum_def.name, idx);
                     let size = payload_slot_sizes[idx];
-                    self.opaque_ty_sizes.insert(opaque_name, size);
+                    self.mir_package.borrow_mut().opaque_ty_sizes.insert(opaque_name, size);
                 }
             }
             variant_payloads.insert(variant.def_id.clone(), payload_tys);
@@ -5890,15 +5612,15 @@ impl HirToMirLowerer {
             variant_payloads,
         };
 
-        self.enum_layouts.insert(key.clone(), layout.clone());
-        self.enum_layouts_by_ty.insert(enum_ty.clone(), key.clone());
+        self.mir_package.borrow_mut().enum_layouts.insert(key.clone(), layout.clone());
+        self.mir_package.borrow_mut().enum_layouts_by_ty.insert(enum_ty.clone(), key.clone());
         self.enum_layouts_in_progress.remove(&key);
 
         let payload_tys = layout.payload_tys.clone();
         for field_ty in &payload_tys {
             if let TyKind::Adt(adt, substs) = &field_ty.kind {
-                let is_struct = self.struct_defs.contains_key(&adt.did);
-                let is_enum = !is_struct && self.enum_defs.contains_key(&adt.did);
+                let is_struct = self.mir_package.borrow().struct_defs.contains_key(&adt.did);
+                let is_enum = !is_struct && self.mir_package.borrow().enum_defs.contains_key(&adt.did);
                 if !is_struct && !is_enum {
                     continue;
                 }
@@ -5922,7 +5644,7 @@ impl HirToMirLowerer {
 
         if !has_payload {
             for variant in &enum_def.variants {
-                if self.const_values.contains_key(&variant.def_id) {
+                if self.mir_package.borrow().const_values.contains_key(&variant.def_id) {
                     continue;
                 }
                 let constant = mir::Constant {
@@ -5931,7 +5653,7 @@ impl HirToMirLowerer {
                     user_ty: None,
                     literal: mir::ConstantKind::Int(variant.discriminant),
                 };
-                self.const_values.insert(
+                self.mir_package.borrow_mut().const_values.insert(
                     variant.def_id.clone(),
                     ConstInfo {
                         ty: enum_ty.clone(),
@@ -6037,7 +5759,7 @@ impl HirToMirLowerer {
                 }
 
                 if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
-                    if self.enum_defs.contains_key(def_id) {
+                    if self.mir_package.borrow().enum_defs.contains_key(def_id) {
                         let args = path
                             .segments
                             .last()
@@ -6067,7 +5789,7 @@ impl HirToMirLowerer {
                         }
                         return self.error_ty();
                     }
-                    if self.struct_defs.contains_key(def_id) {
+                    if self.mir_package.borrow().struct_defs.contains_key(def_id) {
                         let args = path
                             .segments
                             .last()
@@ -6206,7 +5928,7 @@ impl HirToMirLowerer {
             }
             hir::ExprKind::Path(path) => {
                 if let Some(hir::Res::Def(def_id)) = &path.res {
-                    if let Some(info) = self.const_values.get(def_id) {
+                    if let Some(info) = self.ensure_const_info(def_id.clone()) {
                         match &info.value.literal {
                             mir::ConstantKind::Int(value) => Some(*value),
                             mir::ConstantKind::UInt(value) => Some(*value as i64),
@@ -6238,6 +5960,20 @@ impl HirToMirLowerer {
     /// makes repeat calls here cheap.
     fn register_const_value(&mut self, def_id: hir::DefId, _konst: &hir::Const) {
         let _ = self.ensure_item_lowered(def_id);
+    }
+
+    /// The const-value counterpart to `ensure_method_info`/
+    /// `compute_adt_layout`'s "check the cache; lazily register on a miss;
+    /// proceed" shape. Every `const_values` read should go through this
+    /// rather than reading the map directly, so a const referenced by an
+    /// item lowered before it in `program.items` order resolves exactly
+    /// the same as one referenced after it, with no eager pre-pass needed.
+    pub fn ensure_const_info(&mut self, def_id: hir::DefId) -> Option<ConstInfo> {
+        if let Some(info) = self.mir_package.borrow().const_values.get(&def_id).cloned() {
+            return Some(info);
+        }
+        let _ = self.ensure_item_lowered(def_id.clone());
+        self.mir_package.borrow().const_values.get(&def_id).cloned()
     }
 
     fn struct_name_from_type(&self, ty: &hir::TypeExpr) -> Option<String> {
@@ -6345,7 +6081,7 @@ impl HirToMirLowerer {
             .as_ref()
             .map(|body| body.span())
             .unwrap_or_else(Span::null);
-        self.method_hir_defs.insert(
+        self.mir_package.borrow_mut().method_hir_defs.insert(
             impl_item.def_id.clone(),
             MethodHirRef {
                 function: function.clone(),
@@ -6368,7 +6104,7 @@ impl HirToMirLowerer {
     /// (this package's own, plus every workspace dependency's) exactly
     /// once — before it can do its own point lookup.
     fn try_lazily_register_method(&mut self, def_id: hir::DefId) {
-        if self.method_owner_index.is_none() {
+        if self.mir_package.borrow().method_owner_index.is_none() {
             let mut index = HashMap::new();
             for item in self.hir_all_items() {
                 if let hir::ItemKind::Impl(impl_block) = &item.kind {
@@ -6385,10 +6121,9 @@ impl HirToMirLowerer {
                     }
                 }
             }
-            self.method_owner_index = Some(index);
+            self.mir_package.borrow_mut().method_owner_index = Some(index);
         }
-        let Some((owning_item, item_idx)) = self
-            .method_owner_index
+        let Some((owning_item, item_idx)) = self.mir_package.borrow().method_owner_index
             .as_ref()
             .and_then(|index| index.get(&def_id))
             .cloned()
@@ -6420,11 +6155,11 @@ impl HirToMirLowerer {
     /// method defined in this package or any dependency's resolves the
     /// same way, with no caller-visible distinction between the two.
     fn ensure_method_info(&mut self, def_id: hir::DefId) -> Option<MethodLoweringInfo> {
-        if let Some(info) = self.method_lookup_by_def.get(&def_id) {
+        if let Some(info) = self.mir_package.borrow().method_lookup_by_def.get(&def_id).cloned() {
             return Some(info.clone());
         }
         self.try_lazily_register_method(def_id.clone());
-        self.method_lookup_by_def.get(&def_id).cloned()
+        self.mir_package.borrow().method_lookup_by_def.get(&def_id).cloned()
     }
 
     /// Generic counterpart to `ensure_method_info` — same "check the
@@ -6435,11 +6170,11 @@ impl HirToMirLowerer {
     /// `method_lookup_by_def`. `try_lazily_register_method` itself
     /// already dispatches to whichever of the two a given method needs.
     fn ensure_generic_method_def(&mut self, def_id: hir::DefId) -> Option<MethodDefinition> {
-        if let Some(def) = self.method_defs_by_def.get(&def_id) {
+        if let Some(def) = self.mir_package.borrow().method_defs_by_def.get(&def_id).cloned() {
             return Some(def.clone());
         }
         self.try_lazily_register_method(def_id.clone());
-        self.method_defs_by_def.get(&def_id).cloned()
+        self.mir_package.borrow().method_defs_by_def.get(&def_id).cloned()
     }
 
     /// Shared by `register_impl_signatures` (order-independent pre-pass)
@@ -6478,14 +6213,14 @@ impl HirToMirLowerer {
             assoc_types: assoc_types_from_impl_items(&impl_block.items),
         };
         if let Some(ref self_def) = def.self_def {
-            self.method_defs_by_self_and_name
+            self.mir_package.borrow_mut().method_defs_by_self_and_name
                 .entry((self_def.clone(), def.function.sig.name.as_str().to_string()))
                 .or_insert(impl_item.def_id.clone());
         }
-        self.method_defs_by_def
+        self.mir_package.borrow_mut().method_defs_by_def
             .entry(impl_item.def_id.clone())
             .or_insert_with(|| def.clone());
-        self.method_defs.entry(qualified_name).or_insert(def);
+        self.mir_package.borrow_mut().method_defs.entry(qualified_name).or_insert(def);
     }
 
     /// Disambiguating suffix for a method's qualified/mangled name, when
@@ -6560,14 +6295,14 @@ impl HirToMirLowerer {
             struct_def,
         };
 
-        self.method_lookup_by_def
+        self.mir_package.borrow_mut().method_lookup_by_def
             .insert(impl_item.def_id.clone(), info.clone());
-        self.method_lookup.insert(fn_name, info.clone());
-        self.method_lookup
+        self.mir_package.borrow_mut().method_lookup.insert(fn_name, info.clone());
+        self.mir_package.borrow_mut().method_lookup
             .insert(format!("{}::{}", struct_name, method_name), info.clone());
-        self.method_lookup
+        self.mir_package.borrow_mut().method_lookup
             .insert(format!("{}::{}", struct_name, impl_item_name), info.clone());
-        self.method_name_output_consensus
+        self.mir_package.borrow_mut().method_name_output_consensus
             .entry(method_name.clone())
             .and_modify(|existing| {
                 if existing.as_ref() != Some(&info.sig.output) {
@@ -6575,7 +6310,7 @@ impl HirToMirLowerer {
                 }
             })
             .or_insert_with(|| Some(info.sig.output.clone()));
-        self.struct_methods
+        self.mir_package.borrow_mut().struct_methods
             .entry(struct_name.to_string())
             .or_default()
             .insert(method_name, info);
@@ -6752,7 +6487,7 @@ impl HirToMirLowerer {
         name: &str,
         span: Span,
     ) -> Option<(usize, StructFieldInfo)> {
-        let def = self.struct_defs.get(&def_id)?;
+        let def = self.mir_package.borrow().struct_defs.get(&def_id).cloned()?;
         let idx = *def.field_index.get(name)?;
         let layout = self
             .struct_layout_for_ty(struct_ty)
@@ -6940,7 +6675,7 @@ impl HirToMirLowerer {
                 let hir::Res::Def(def_id) = path.res.as_ref()? else {
                     return None;
                 };
-                if let Some(const_info) = self.const_values.get(def_id) {
+                if let Some(const_info) = self.ensure_const_info(def_id.clone()) {
                     return Some(const_info.typed_value());
                 }
                 let const_item = self.hir_item(def_id.clone()).and_then(|item| {
@@ -6951,7 +6686,7 @@ impl HirToMirLowerer {
                 });
                 if let Some(konst) = const_item {
                     self.register_const_value(def_id.clone(), &konst);
-                    if let Some(const_info) = self.const_values.get(def_id) {
+                    if let Some(const_info) = self.ensure_const_info(def_id.clone()) {
                         return Some(const_info.typed_value());
                     }
                 }
@@ -7143,7 +6878,7 @@ impl HirToMirLowerer {
             }
             hir::ExprKind::Struct(path, fields) => {
                 let def_id = self.resolve_path_def_id(path)?;
-                let struct_def = self.struct_defs.get(&def_id)?.clone();
+                let struct_def = self.mir_package.borrow().struct_defs.get(&def_id).cloned()?.clone();
                 let mut args = path
                     .segments
                     .last()
@@ -7236,7 +6971,7 @@ impl HirToMirLowerer {
                 // Check const_values first — function-local consts are
                 // registered here by lower_const but may not be in
                 // program.def_map.
-                if let Some(const_info) = self.const_values.get(&def_id) {
+                if let Some(const_info) = self.ensure_const_info(def_id.clone()) {
                     return match &const_info.value.literal {
                         mir::ConstantKind::Int(v) => Some(mir::ConstValue::Int(*v)),
                         mir::ConstantKind::UInt(v) => Some(mir::ConstValue::UInt(*v)),
@@ -7261,7 +6996,7 @@ impl HirToMirLowerer {
                         )))
                     }
                     hir::ItemKind::Const(_) => {
-                        let const_info = self.const_values.get(&def_id)?;
+                        let const_info = self.ensure_const_info(def_id.clone())?;
                         match &const_info.value.literal {
                             mir::ConstantKind::Int(v) => Some(mir::ConstValue::Int(*v)),
                             mir::ConstantKind::UInt(v) => Some(mir::ConstValue::UInt(*v)),
@@ -7384,8 +7119,7 @@ impl HirToMirLowerer {
             def_id.clone()
         } else {
             let name = path.segments.last()?.name.as_str();
-            let mut matches = self
-                .struct_defs
+            let mut matches = self.mir_package.borrow().struct_defs
                 .iter()
                 .filter_map(|(def_id, info)| (info.name == name).then_some(def_id.clone()))
                 .collect::<Vec<_>>();
@@ -7394,7 +7128,7 @@ impl HirToMirLowerer {
             }
             matches.pop()?
         };
-        let struct_info = self.struct_defs.get(&struct_def_id)?;
+        let struct_info = self.mir_package.borrow().struct_defs.get(&struct_def_id).cloned()?;
         match field {
             "fields" => {
                 let names = struct_info
@@ -7405,8 +7139,7 @@ impl HirToMirLowerer {
                 Some(self.string_list_constant(span, names))
             }
             "methods" => {
-                let method_names = self
-                    .struct_methods
+                let method_names = self.mir_package.borrow().struct_methods
                     .get(&struct_info.name)
                     .map(|methods| methods.keys().cloned().collect::<Vec<_>>())
                     .unwrap_or_default();
@@ -7442,14 +7175,13 @@ impl HirToMirLowerer {
                 Some(self.const_value_to_constant(span, field_value, &field_info.ty))
             }
             TyKind::Tuple(field_tys) => {
-                if let Some(key) = self.struct_layouts_by_ty.get(ty) {
-                    let field_index = self
-                        .struct_defs
+                if let Some(key) = self.mir_package.borrow().struct_layouts_by_ty.get(ty).cloned() {
+                    let field_index = self.mir_package.borrow().struct_defs
                         .get(&key.def_id)?
                         .field_index
                         .get(field)
                         .copied()?;
-                    let layout = self.struct_layouts.get(key)?;
+                    let layout = self.mir_package.borrow().struct_layouts.get(key).cloned()?;
                     let field_ty = layout.field_tys.get(field_index)?;
                     let field_value = values.get(field_index)?;
                     return Some(self.const_value_to_constant(span, field_value, field_ty));
@@ -8011,7 +7743,7 @@ impl HirToMirLowerer {
     }
 
     fn opaque_ty(&mut self, name: &str) -> Ty {
-        if let Some(existing) = self.opaque_types.get(name) {
+        if let Some(existing) = self.mir_package.borrow().opaque_types.get(name).cloned() {
             return existing.clone();
         }
         let adt_def_id = self.next_synthetic_def_id.clone();
@@ -8046,7 +7778,7 @@ impl HirToMirLowerer {
         let ty = Ty {
             kind: TyKind::Adt(adt, Vec::new()),
         };
-        self.opaque_types.insert(name.to_string(), ty.clone());
+        self.mir_package.borrow_mut().opaque_types.insert(name.to_string(), ty.clone());
         ty
     }
 
@@ -8062,7 +7794,7 @@ impl HirToMirLowerer {
             .cloned()
             .map(mir::ty::GenericArg::Type)
             .collect();
-        if let Some(enum_def) = self.enum_defs.get(&def_id).cloned() {
+        if let Some(enum_def) = self.mir_package.borrow().enum_defs.get(&def_id).cloned() {
             let variants = enum_def
                 .variants
                 .iter()
@@ -8099,7 +7831,7 @@ impl HirToMirLowerer {
                 kind: TyKind::Adt(adt, generic_args),
             });
         }
-        if self.struct_defs.contains_key(&def_id) {
+        if self.mir_package.borrow().struct_defs.contains_key(&def_id) {
             // Structs carry an *empty* `variants` list (only enums populate
             // it) — see `display_type_name`'s doc comment. A dummy variant
             // here would shadow the `struct_defs` name lookup with an empty
@@ -8183,7 +7915,7 @@ impl HirToMirLowerer {
             TyKind::Adt(adt, substs) => {
                 if let Some(size) = self
                     .display_type_name(ty)
-                    .and_then(|name| self.opaque_ty_sizes.get(&name).copied())
+                    .and_then(|name| self.mir_package.borrow().opaque_ty_sizes.get(&name).copied())
                 {
                     return Some(size);
                 }
@@ -8194,7 +7926,7 @@ impl HirToMirLowerer {
                         _ => None,
                     })
                     .collect();
-                if self.struct_defs.contains_key(&adt.did) {
+                if self.mir_package.borrow().struct_defs.contains_key(&adt.did) {
                     let layout = self
                         .struct_layout_for_ty(ty)
                         .or_else(|| self.struct_layout_for_instance(adt.did.clone(), &args, span))?;
@@ -8204,7 +7936,7 @@ impl HirToMirLowerer {
                     }
                     return Some(total);
                 }
-                if self.enum_defs.contains_key(&adt.did) {
+                if self.mir_package.borrow().enum_defs.contains_key(&adt.did) {
                     let layout = self.enum_layout_for_instance(adt.did.clone(), &args, span)?;
                     let mut total = self.size_of_ty(&layout.tag_ty, span)?;
                     for payload in &layout.payload_tys {
@@ -8240,7 +7972,7 @@ impl HirToMirLowerer {
     /// `EnumLayout::variant_payloads` rather than a type annotation that
     /// would otherwise resolve nominally via `struct_def_from_ty`.
     fn nominalize_struct_ty(&mut self, ty: Ty) -> Ty {
-        let Some(key) = self.struct_layouts_by_ty.get(&ty).cloned() else {
+        let Some(key) = self.mir_package.borrow().struct_layouts_by_ty.get(&ty).cloned() else {
             return ty;
         };
         self.adt_shell_ty(key.def_id, &key.args).unwrap_or(ty)
@@ -8263,7 +7995,7 @@ impl HirToMirLowerer {
     ) -> Ty {
         if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
             if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
-                if self.struct_defs.contains_key(def_id) || self.enum_defs.contains_key(def_id) {
+                if self.mir_package.borrow().struct_defs.contains_key(def_id) || self.mir_package.borrow().enum_defs.contains_key(def_id) {
                     let nested_args: Vec<Ty> = path
                         .segments
                         .last()
@@ -8300,7 +8032,7 @@ impl HirToMirLowerer {
                 .variants
                 .first()
                 .map(|variant| variant.ident.as_str().to_string())
-                .or_else(|| self.struct_defs.get(&adt.did).map(|def| def.name.clone())),
+                .or_else(|| self.mir_package.borrow().struct_defs.get(&adt.did).cloned().map(|def| def.name.clone())),
             TyKind::Ref(_, inner, _) => self.display_type_name(inner),
             TyKind::RawPtr(type_and_mut) => self.display_type_name(&type_and_mut.ty),
             _ => None,
@@ -8309,7 +8041,7 @@ impl HirToMirLowerer {
 
     fn is_opaque_ty(&self, ty: &Ty) -> bool {
         self.display_type_name(ty)
-            .map(|name| self.opaque_types.contains_key(&name))
+            .map(|name| self.mir_package.borrow().opaque_types.contains_key(&name))
             .unwrap_or(false)
     }
 
@@ -8497,7 +8229,7 @@ impl HirToMirLowerer {
     }
 
     fn enum_layout_for_def(&mut self, def_id: hir::DefId, span: Span) -> Option<EnumLayout> {
-        let Some(definition) = self.enum_defs.get(&def_id) else {
+        let Some(definition) = self.mir_package.borrow().enum_defs.get(&def_id).cloned() else {
             return None;
         };
         if !definition.generics.is_empty() {
@@ -8514,11 +8246,11 @@ impl HirToMirLowerer {
         self.enum_layout_for_instance(def_id, &[], span)
     }
 
-    fn enum_layout_for_ty(&self, ty: &Ty) -> Option<&EnumLayout> {
+    fn enum_layout_for_ty(&self, ty: &Ty) -> Option<EnumLayout> {
         match &ty.kind {
             TyKind::Ref(_, inner, _) => self.enum_layout_for_ty(inner),
             TyKind::RawPtr(type_and_mut) => self.enum_layout_for_ty(&type_and_mut.ty),
-            TyKind::Adt(adt, substs) if self.enum_defs.contains_key(&adt.did) => {
+            TyKind::Adt(adt, substs) if self.mir_package.borrow().enum_defs.contains_key(&adt.did) => {
                 let args: Vec<Ty> = substs
                     .iter()
                     .filter_map(|arg| match arg {
@@ -8530,7 +8262,7 @@ impl HirToMirLowerer {
                     def_id: adt.did.clone(),
                     args,
                 };
-                self.enum_layouts.get(&key)
+                self.mir_package.borrow().enum_layouts.get(&key).cloned()
             }
             // A tuple-shaped `ty` (a generic enum's already-flattened
             // `(discriminant, ...payload)` layout shape) can't be
@@ -8562,14 +8294,15 @@ impl HirToMirLowerer {
     /// Deterministically prefer a genuinely concrete instantiation (no
     /// unresolved arg) over a still-generic template, then break any
     /// remaining tie by `def_id` — never by hash order.
-    fn enum_layout_for_ty_fuzzy(&self, ty: &Ty) -> Option<&EnumLayout> {
-        self.enum_layouts
+    fn enum_layout_for_ty_fuzzy(&self, ty: &Ty) -> Option<EnumLayout> {
+        self.mir_package.borrow().enum_layouts
             .values()
             .filter(|layout| Self::enum_layout_ty_matches(&layout.enum_ty, ty))
             .min_by_key(|layout| {
                 let is_template = layout.args.iter().any(|arg| self.has_unresolved_ty(arg));
                 (is_template, layout.def_id.clone())
             })
+            .cloned()
     }
 
     fn enum_layout_ty_matches(layout_ty: &Ty, requested_ty: &Ty) -> bool {
@@ -8593,7 +8326,7 @@ impl HirToMirLowerer {
                 self.enum_layout_for_concrete_ty(&type_and_mut.ty, span)
             }
             TyKind::Adt(adt, substs) => {
-                if !self.enum_defs.contains_key(&adt.did) {
+                if !self.mir_package.borrow().enum_defs.contains_key(&adt.did) {
                     return None;
                 }
                 let mut args = Vec::new();
@@ -9726,10 +9459,10 @@ impl<'a> BodyBuilder<'a> {
             // `struct_defs_by_tail_name` to already have an entry, i.e. the
             // very registration we're trying to trigger).
             TyKind::Adt(adt, _) => {
-                if !self.lowering.struct_defs.contains_key(&adt.did) {
+                if !self.lowering.mir_package.borrow().struct_defs.contains_key(&adt.did) {
                     self.lowering.try_lazily_register_adt(adt.did.clone(), Span::null());
                 }
-                if self.lowering.struct_defs.contains_key(&adt.did) {
+                if self.lowering.mir_package.borrow().struct_defs.contains_key(&adt.did) {
                     Some(adt.did.clone())
                 } else {
                     Self::struct_def_from_ty_by_name(self.lowering, ty)
@@ -9740,8 +9473,7 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn struct_def_from_ty_by_name(lowering: &HirToMirLowerer, ty: &Ty) -> Option<hir::DefId> {
-        lowering
-            .struct_layouts_by_ty
+        lowering.mir_package.borrow().struct_layouts_by_ty
             .get(ty)
             .map(|key| key.def_id.clone())
             .or_else(|| {
@@ -9754,13 +9486,12 @@ impl<'a> BodyBuilder<'a> {
                 // field's doc comment) — instead of scanning every
                 // struct definition in the program with a `format!`
                 // allocation per iteration.
-                let candidates = lowering
-                    .struct_defs_by_tail_name
+                let candidates = lowering.mir_package.borrow().struct_defs_by_tail_name
                     .get(HirToMirLowerer::name_tail(&name))?;
                 let matches: Vec<hir::DefId> = candidates
                     .iter()
                     .filter_map(|def_id| {
-                        let def = lowering.struct_defs.get(def_id)?;
+                        let def = lowering.mir_package.borrow().struct_defs.get(def_id).cloned()?;
                         if def.name == name || def.name.ends_with(&format!("::{}", name)) {
                             Some(def_id.clone())
                         } else {
@@ -9806,12 +9537,10 @@ impl<'a> BodyBuilder<'a> {
             // resolved generic argument (`adt_shell_ty`) carries the real
             // `DefId` directly, so it's checked before falling back to the
             // by-value `enum_layouts` scan below.
-            TyKind::Adt(adt, _) if self.lowering.enum_defs.contains_key(&adt.did) => {
+            TyKind::Adt(adt, _) if self.lowering.mir_package.borrow().enum_defs.contains_key(&adt.did) => {
                 Some(adt.did.clone())
             }
-            _ => self
-                .lowering
-                .enum_layouts
+            _ => self.lowering.mir_package.borrow().enum_layouts
                 .iter()
                 .find_map(|(key, layout)| (layout.enum_ty == *ty).then_some(key.def_id.clone())),
         }
@@ -9823,7 +9552,7 @@ impl<'a> BodyBuilder<'a> {
         }
         self.lowering
             .enum_layout_for_concrete_ty(ty, span)
-            .or_else(|| self.lowering.enum_layout_for_ty(ty).cloned())
+            .or_else(|| self.lowering.enum_layout_for_ty(ty))
     }
 
     fn enum_layout_for_variant(
@@ -9971,7 +9700,7 @@ impl<'a> BodyBuilder<'a> {
         if self.type_substs.is_empty() {
             return None;
         }
-        let generics = self.lowering.enum_defs.get(&variant.enum_def)?.generics.clone();
+        let generics = self.lowering.mir_package.borrow().enum_defs.get(&variant.enum_def).cloned()?.generics.clone();
         if generics.is_empty() {
             return None;
         }
@@ -10013,9 +9742,7 @@ impl<'a> BodyBuilder<'a> {
             ty = type_and_mut.ty.as_ref();
         }
         if layout.def_id != variant.enum_def {
-            let matching_layout = self
-                .lowering
-                .enum_layouts
+            let matching_layout = self.lowering.mir_package.borrow().enum_layouts
                 .iter()
                 .find(|(key, layout)| {
                     key.def_id == variant.enum_def
@@ -10414,7 +10141,7 @@ impl<'a> BodyBuilder<'a> {
             None
         } else if let hir::TypeExprKind::Path(path) = &ty.kind {
             if let Some(hir::Res::Def(def_id)) = &path.res {
-                if self.lowering.enum_defs.contains_key(def_id) {
+                if self.lowering.mir_package.borrow().enum_defs.contains_key(def_id) {
                     Some(def_id.clone())
                 } else {
                     None
@@ -10422,7 +10149,7 @@ impl<'a> BodyBuilder<'a> {
             } else {
                 if let Some(seg) = path.segments.last() {
                     let name = seg.name.as_str();
-                    self.lowering.enum_defs_by_name.get(name).cloned()
+                    self.lowering.mir_package.borrow().enum_defs_by_name.get(name).cloned()
                 } else {
                     None
                 }
@@ -10433,7 +10160,7 @@ impl<'a> BodyBuilder<'a> {
         if !ty_is_infer {
             if let hir::TypeExprKind::Path(path) = &ty.kind {
                 if let Some(hir::Res::Def(def_id)) = &path.res {
-                    if self.lowering.enum_defs.contains_key(def_id) {
+                    if self.lowering.mir_package.borrow().enum_defs.contains_key(def_id) {
                         let args = path
                             .segments
                             .last()
@@ -11741,13 +11468,12 @@ impl<'a> BodyBuilder<'a> {
                 return None;
             };
             if let Some(hir::Res::Def(def_id)) = &path.res {
-                if self.lowering.enum_defs.contains_key(def_id) {
+                if self.lowering.mir_package.borrow().enum_defs.contains_key(def_id) {
                     return Some(def_id.clone());
                 }
             }
             let name = path.segments.last()?.name.as_str();
-            self.lowering
-                .enum_defs
+            self.lowering.mir_package.borrow().enum_defs
                 .values()
                 .find(|enm| enm.name == name)
                 .map(|enm| enm.def_id.clone())
@@ -11755,7 +11481,7 @@ impl<'a> BodyBuilder<'a> {
         if let Some(ty_expr) = local.ty.as_ref() {
             if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
                 if let Some(hir::Res::Def(def_id)) = &path.res {
-                    if self.lowering.enum_defs.contains_key(def_id) {
+                    if self.lowering.mir_package.borrow().enum_defs.contains_key(def_id) {
                         let args = path
                             .segments
                             .last()
@@ -12224,10 +11950,10 @@ impl<'a> BodyBuilder<'a> {
 
     fn enum_variant_info_from_path(&self, path: &hir::Path) -> Option<EnumVariantInfo> {
         if let Some(hir::Res::Def(def_id)) = &path.res {
-            if let Some(info) = self.lowering.enum_variants.get(def_id) {
+            if let Some(info) = self.lowering.mir_package.borrow().enum_variants.get(def_id).cloned() {
                 return Some(info.clone());
             }
-            if self.lowering.generic_function_defs.contains_key(def_id) {
+            if self.lowering.mir_package.borrow().generic_function_defs.contains_key(def_id) {
                 return None;
             }
         }
@@ -12241,15 +11967,14 @@ impl<'a> BodyBuilder<'a> {
             .map(|seg| seg.name.as_str())
             .collect::<Vec<_>>()
             .join("::");
-        self.lowering
-            .enum_variant_names
+        self.lowering.mir_package.borrow().enum_variant_names
             .get(&name)
             .or_else(|| {
                 path.segments
                     .last()
-                    .and_then(|seg| self.lowering.enum_variant_names.get(seg.name.as_str()))
+                    .and_then(|seg| self.lowering.mir_package.borrow().enum_variant_names.get(seg.name.as_str()))
             })
-            .and_then(|def_id| self.lowering.enum_variants.get(def_id))
+            .and_then(|def_id| self.lowering.mir_package.borrow().enum_variants.get(def_id).cloned())
             .cloned()
     }
 
@@ -12266,15 +11991,13 @@ impl<'a> BodyBuilder<'a> {
             .map(|seg| seg.name.as_str())
             .collect::<Vec<_>>()
             .join("::");
-        let def_id = self
-            .lowering
-            .enum_variant_names
+        let def_id = self.lowering.mir_package.borrow().enum_variant_names
             .get(&name)
             .cloned()
             .or_else(|| {
                 path.segments
                     .last()
-                    .and_then(|seg| self.lowering.enum_variant_names.get(seg.name.as_str()))
+                    .and_then(|seg| self.lowering.mir_package.borrow().enum_variant_names.get(seg.name.as_str()))
                     .cloned()
             });
 
@@ -12315,7 +12038,7 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let Some(def_id) = def_id {
-            if let Some(info) = self.lowering.enum_variants.get(&def_id).cloned() {
+            if let Some(info) = self.lowering.mir_package.borrow().enum_variants.get(&def_id).cloned() {
                 if expected_contains_enum(info.enum_def.clone(), expected_ty) {
                     return Some(info);
                 }
@@ -12331,12 +12054,12 @@ impl<'a> BodyBuilder<'a> {
         enum_def: hir::DefId,
         variant_name: &str,
     ) -> Option<EnumVariantInfo> {
-        let def = self.lowering.enum_defs.get(&enum_def)?;
+        let def = self.lowering.mir_package.borrow().enum_defs.get(&enum_def).cloned()?;
         let variant = def
             .variants
             .iter()
             .find(|variant| variant.name == variant_name)?;
-        self.lowering.enum_variants.get(&variant.def_id).cloned()
+        self.lowering.mir_package.borrow().enum_variants.get(&variant.def_id).cloned()
     }
 
     fn enum_variant_from_expected_ty_by_name(
@@ -12403,8 +12126,7 @@ impl<'a> BodyBuilder<'a> {
                 TyKind::Ref(_, inner, _) => find_result_def(lowering, inner.as_ref()),
                 TyKind::RawPtr(type_and_mut) => find_result_def(lowering, type_and_mut.ty.as_ref()),
                 TyKind::Adt(adt, substs) => {
-                    let is_result = lowering
-                        .enum_defs
+                    let is_result = lowering.mir_package.borrow().enum_defs
                         .get(&adt.did)
                         .map(|def| {
                             def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
@@ -12423,8 +12145,7 @@ impl<'a> BodyBuilder<'a> {
                     None
                 }
                 TyKind::Opaque(def_id, substs) => {
-                    let is_result = lowering
-                        .enum_defs
+                    let is_result = lowering.mir_package.borrow().enum_defs
                         .get(def_id)
                         .map(|def| {
                             def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
@@ -12443,7 +12164,7 @@ impl<'a> BodyBuilder<'a> {
                     None
                 }
                 _ => lowering.enum_layout_for_ty(ty).and_then(|layout| {
-                    lowering.enum_defs.get(&layout.def_id).and_then(|def| {
+                    lowering.mir_package.borrow().enum_defs.get(&layout.def_id).cloned().and_then(|def| {
                         let is_result = def.name.as_str() == "Result"
                             || def.name.as_str().ends_with("::Result");
                         is_result.then_some(layout.def_id.clone())
@@ -12468,9 +12189,7 @@ impl<'a> BodyBuilder<'a> {
             TyKind::Opaque(def_id, substs) => (def_id, substs),
             _ => {
                 let layout = self.lowering.enum_layout_for_ty(expected_ty)?;
-                let is_result = self
-                    .lowering
-                    .enum_defs
+                let is_result = self.lowering.mir_package.borrow().enum_defs
                     .get(&layout.def_id)
                     .map(|def| {
                         def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
@@ -12489,22 +12208,18 @@ impl<'a> BodyBuilder<'a> {
                 return Some(args);
             }
         };
-        let is_result = self
-            .lowering
-            .enum_defs
+        let is_result = self.lowering.mir_package.borrow().enum_defs
             .get(adt)
             .map(|def| def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result"))
             .or_else(|| {
-                self.lowering.struct_defs.get(adt).map(|def| {
+                self.lowering.mir_package.borrow().struct_defs.get(adt).cloned().map(|def| {
                     def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
                 })
             })
             .unwrap_or(false);
         if !is_result {
             if let Some(layout) = self.lowering.enum_layout_for_ty(expected_ty) {
-                let is_result_layout = self
-                    .lowering
-                    .enum_defs
+                let is_result_layout = self.lowering.mir_package.borrow().enum_defs
                     .get(&layout.def_id)
                     .map(|def| {
                         def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
@@ -12535,9 +12250,7 @@ impl<'a> BodyBuilder<'a> {
         }
         if args.len() < 2 {
             if let Some(layout) = self.lowering.enum_layout_for_ty(expected_ty) {
-                let is_result_layout = self
-                    .lowering
-                    .enum_defs
+                let is_result_layout = self.lowering.mir_package.borrow().enum_defs
                     .get(&layout.def_id)
                     .map(|def| {
                         def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
@@ -12561,7 +12274,7 @@ impl<'a> BodyBuilder<'a> {
                         }
                     }
                     if args.len() < 2 {
-                        if let Some(def) = self.lowering.enum_defs.get(&layout.def_id) {
+                        if let Some(def) = self.lowering.mir_package.borrow().enum_defs.get(&layout.def_id).cloned() {
                             let mut ok_payload = None;
                             let mut err_payload = None;
                             for variant in &def.variants {
@@ -12608,9 +12321,7 @@ impl<'a> BodyBuilder<'a> {
         }
         if args.is_empty() {
             if let Some(layout) = self.lowering.enum_layout_for_ty(expected_ty) {
-                let is_result_layout = self
-                    .lowering
-                    .enum_defs
+                let is_result_layout = self.lowering.mir_package.borrow().enum_defs
                     .get(&layout.def_id)
                     .map(|def| {
                         def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
@@ -12657,14 +12368,14 @@ impl<'a> BodyBuilder<'a> {
             };
 
             if matches {
-                if let Some(info) = self.lowering.enum_variants.get(def_id) {
+                if let Some(info) = self.lowering.mir_package.borrow().enum_variants.get(def_id).cloned() {
                     return Some((info.clone(), layout));
                 }
             }
         }
         let payload_struct_def = payload_def.or_else(|| self.struct_def_from_ty(payload_ty));
         if let (Some(enum_def), Some(payload_struct_def)) = (enum_def, payload_struct_def) {
-            if let Some(info) = self.lowering.enum_variants.values().find(|info| {
+            if let Some(info) = self.lowering.mir_package.borrow().enum_variants.values().find(|info| {
                 info.enum_def == enum_def && info.payload_def == Some(payload_struct_def.clone())
             }) {
                 return Some((info.clone(), layout));
@@ -12944,7 +12655,7 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let Some(def_id) = def_id {
-            if let Some(info) = self.lowering.struct_defs.get(&def_id).cloned() {
+            if let Some(info) = self.lowering.mir_package.borrow().struct_defs.get(&def_id).cloned() {
                 if generic_args.is_empty() && !info.generics.is_empty() {
                     // No explicit turbofish — read `fp-typing`'s own
                     // already-resolved generic args for this literal
@@ -12982,7 +12693,7 @@ impl<'a> BodyBuilder<'a> {
                 }
             }
 
-            if let Some(variant) = self.lowering.enum_variants.get(&def_id).cloned() {
+            if let Some(variant) = self.lowering.mir_package.borrow().enum_variants.get(&def_id).cloned() {
                 let layout = annotated_ty
                     .and_then(|ty| self.enum_layout_for_ty(ty, span))
                     .or_else(|| self.lowering.enum_layout_for_def(variant.enum_def.clone(), span));
@@ -13005,7 +12716,7 @@ impl<'a> BodyBuilder<'a> {
                 return Ok(());
             }
 
-            if let Some(const_info) = self.lowering.const_values.get(&def_id).cloned() {
+            if let Some(const_info) = self.lowering.ensure_const_info(def_id.clone()) {
                 if !fields.is_empty() {
                     self.lowering.emit_warning(
                         span,
@@ -13051,7 +12762,7 @@ impl<'a> BodyBuilder<'a> {
 
         if let Some(expected_ty) = annotated_ty {
             if let Some(def_id) = self.struct_def_from_ty(expected_ty) {
-                if let Some(info) = self.lowering.struct_defs.get(&def_id).cloned() {
+                if let Some(info) = self.lowering.mir_package.borrow().struct_defs.get(&def_id).cloned() {
                     if let Some(layout) = self
                         .lowering
                         .struct_layout_for_ty(expected_ty)
@@ -13126,9 +12837,7 @@ impl<'a> BodyBuilder<'a> {
                 .ok_or_else(|| {
                     fp_core::error::Error::from("struct-like enum payload definition is unavailable")
                 })?;
-            let payload_info = self
-                .lowering
-                .struct_defs
+            let payload_info = self.lowering.mir_package.borrow().struct_defs
                 .get(&payload_def)
                 .cloned()
                 .ok_or_else(|| fp_core::error::Error::from("struct-like enum payload fields are unavailable"))?;
@@ -13277,10 +12986,10 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let (Some(expected_ty), Some(struct_info)) =
-            (annotated_ty, self.lowering.struct_defs.get(&def_id).cloned())
+            (annotated_ty, self.lowering.mir_package.borrow().struct_defs.get(&def_id).cloned())
         {
             let enum_layout = match &expected_ty.kind {
-                TyKind::Adt(adt, substs) if self.lowering.enum_defs.contains_key(&adt.did) => {
+                TyKind::Adt(adt, substs) if self.lowering.mir_package.borrow().enum_defs.contains_key(&adt.did) => {
                     let args: Vec<Ty> = substs
                         .iter()
                         .filter_map(|arg| match arg {
@@ -13295,7 +13004,7 @@ impl<'a> BodyBuilder<'a> {
                 _ => None,
             };
             if let Some((enum_def_id, layout)) = enum_layout {
-                if let Some(enum_def) = self.lowering.enum_defs.get(&enum_def_id) {
+                if let Some(enum_def) = self.lowering.mir_package.borrow().enum_defs.get(&enum_def_id).cloned() {
                     if let Some(variant_def) = enum_def
                         .variants
                         .iter()
@@ -13468,17 +13177,14 @@ impl<'a> BodyBuilder<'a> {
                         .last()
                         .map(|seg| seg.name.as_str())
                         .map(|name| {
-                            self.lowering
-                                .enum_defs
+                            self.lowering.mir_package.borrow().enum_defs
                                 .get(&expected_def_id)
                                 .map(|def| {
                                     def.name.as_str() == name
                                         || def.name.as_str().ends_with(&format!("::{}", name))
                                 })
                                 .unwrap_or(false)
-                                || self
-                                    .lowering
-                                    .struct_defs
+                                || self.lowering.mir_package.borrow().struct_defs
                                     .get(&expected_def_id)
                                     .map(|def| {
                                         def.name.as_str() == name
@@ -13570,17 +13276,13 @@ impl<'a> BodyBuilder<'a> {
             || function.sig.name.as_str().ends_with("::Err");
         if is_result_constructor {
             let is_result_ty = match &expected_return.kind {
-                TyKind::Adt(adt, _) => self
-                    .lowering
-                    .enum_defs
+                TyKind::Adt(adt, _) => self.lowering.mir_package.borrow().enum_defs
                     .get(&adt.did)
                     .map(|def| {
                         def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
                     })
                     .unwrap_or(false),
-                TyKind::Opaque(def_id, _) => self
-                    .lowering
-                    .enum_defs
+                TyKind::Opaque(def_id, _) => self.lowering.mir_package.borrow().enum_defs
                     .get(def_id)
                     .map(|def| {
                         def.name.as_str() == "Result" || def.name.as_str().ends_with("::Result")
@@ -13800,7 +13502,7 @@ impl<'a> BodyBuilder<'a> {
                     let mut const_info = None;
                     let mut const_body_len = None;
                     if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
-                        if let Some(info) = self.lowering.const_values.get(def_id) {
+                        if let Some(info) = self.lowering.ensure_const_info(def_id.clone()) {
                             const_info = Some(info.clone());
                         } else if let Some(konst) =
                             self.lowering.hir_item(def_id.clone()).and_then(|item| {
@@ -13814,7 +13516,7 @@ impl<'a> BodyBuilder<'a> {
                                 const_body_len = Some(elements.len() as u64);
                             }
                             self.lowering.register_const_value(def_id.clone(), &konst);
-                            if let Some(info) = self.lowering.const_values.get(def_id) {
+                            if let Some(info) = self.lowering.ensure_const_info(def_id.clone()) {
                                 const_info = Some(info.clone());
                             }
                         }
@@ -13833,7 +13535,7 @@ impl<'a> BodyBuilder<'a> {
                                 const_body_len = Some(elements.len() as u64);
                             }
                             self.lowering.register_const_value(def_id.clone(), &konst);
-                            if let Some(info) = self.lowering.const_values.get(&def_id) {
+                            if let Some(info) = self.lowering.ensure_const_info(def_id.clone()) {
                                 const_info = Some(info.clone());
                             }
                         }
@@ -14186,7 +13888,7 @@ impl<'a> BodyBuilder<'a> {
                     self.lowering
                         .emit_error(expr.span, "enum variant does not accept payload values");
                 }
-                if let Some(const_info) = self.lowering.const_values.get(&variant.def_id).cloned() {
+                if let Some(const_info) = self.lowering.ensure_const_info(variant.def_id.clone()) {
                     if let Some((place, _)) = destination {
                         self.push_statement(mir::Statement {
                             source_info: expr.span,
@@ -14250,7 +13952,7 @@ impl<'a> BodyBuilder<'a> {
                 }
             }
             if let Some(hir::Res::Def(def_id)) = &path.res {
-                if self.lowering.generic_function_defs.contains_key(def_id) {
+                if self.lowering.mir_package.borrow().generic_function_defs.contains_key(def_id) {
                     generic_def_id = Some(def_id.clone());
                 }
             }
@@ -14266,9 +13968,7 @@ impl<'a> BodyBuilder<'a> {
         }
 
         let (mut func_operand, mut sig, mut callee_name) = if let Some(ref def_id) = generic_def_id {
-            let function = self
-                .lowering
-                .generic_function_defs
+            let function = self.lowering.mir_package.borrow().generic_function_defs
                 .get(&def_id)
                 .cloned()
                 .ok_or_else(|| crate::error::optimization_error("missing generic function def"))?;
@@ -14304,7 +14004,7 @@ impl<'a> BodyBuilder<'a> {
                 .res
                 .as_ref()
                 .and_then(|res| match res {
-                    hir::Res::Def(def_id) => self.lowering.method_lookup_by_def.get(def_id),
+                    hir::Res::Def(def_id) => self.lowering.mir_package.borrow().method_lookup_by_def.get(def_id).cloned(),
                     _ => None,
                 })
                 .and_then(|info| info.struct_def.clone()),
@@ -14725,7 +14425,7 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let Some(def_id) = generic_def_id {
-            if let Some(function) = self.lowering.generic_function_defs.get(&def_id).cloned() {
+            if let Some(function) = self.lowering.mir_package.borrow().generic_function_defs.get(&def_id).cloned() {
                 let is_result_ctor = matches!(callee_tail, Some("Ok" | "Err"));
                 if explicit_args.is_empty() {
                     if let Some(inferred) = self.infer_explicit_args_from_expected_return(
@@ -15308,8 +15008,7 @@ impl<'a> BodyBuilder<'a> {
     fn param_names_for_callee(&self, path: &hir::Path) -> Option<Vec<hir::Symbol>> {
         match &path.res {
             Some(hir::Res::Def(def_id)) => self.param_names_for_def_id(def_id.clone()).or_else(|| {
-                self.lowering
-                    .method_defs_by_def
+                self.lowering.mir_package.borrow().method_defs_by_def
                     .get(def_id)
                     .and_then(|def| self.param_names_from_params(&def.function.sig.inputs))
             }),
@@ -15566,7 +15265,7 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
-            if self.lowering.function_sigs.get(def_id).is_none() {
+            if self.lowering.mir_package.borrow().function_sigs.get(def_id).cloned().is_none() {
                 // Not yet lowered/registered — e.g. a same-package function
                 // this MIR-lowering pass hasn't proactively reached yet
                 // (out-of-order cross-module reference), or one deliberately
@@ -15577,7 +15276,7 @@ impl<'a> BodyBuilder<'a> {
                 // existing lazy pattern for the same reason.
                 self.lowering.ensure_function_lowered(def_id.clone())?;
             }
-            if let Some(sig) = self.lowering.function_sigs.get(def_id).cloned() {
+            if let Some(sig) = self.lowering.mir_package.borrow().function_sigs.get(def_id).cloned() {
                 let name = self
                     .lowering
                     .hir_item(def_id.clone())
@@ -15610,9 +15309,7 @@ impl<'a> BodyBuilder<'a> {
                 .expect("segments len checked")
                 .name
                 .clone();
-            if let Some(info) = self
-                .lowering
-                .struct_methods
+            if let Some(info) = self.lowering.mir_package.borrow().struct_methods
                 .get(&String::from(struct_name.clone()))
                 .and_then(|methods| methods.get(&String::from(method_name.clone())))
             {
@@ -15886,7 +15583,7 @@ impl<'a> BodyBuilder<'a> {
                 if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
                     if has_explicit_args {
                         if let Some(function) =
-                            self.lowering.generic_function_defs.get(def_id).cloned()
+                            self.lowering.mir_package.borrow().generic_function_defs.get(def_id).cloned()
                         {
                             let info = self
                                 .lowering
@@ -15912,7 +15609,7 @@ impl<'a> BodyBuilder<'a> {
                     }
                     if let Some(expected_sig) = expected_sig.as_ref() {
                         if let Some(function) =
-                            self.lowering.generic_function_defs.get(def_id).cloned()
+                            self.lowering.mir_package.borrow().generic_function_defs.get(def_id).cloned()
                         {
                             let expected_has_opaque = expected_sig
                                 .inputs
@@ -15954,13 +15651,13 @@ impl<'a> BodyBuilder<'a> {
                             });
                         }
                     }
-                    if let Some(const_info) = self.lowering.const_values.get(def_id).cloned() {
+                    if let Some(const_info) = self.lowering.ensure_const_info(def_id.clone()) {
                         return Ok(OperandInfo {
                             operand: mir::Operand::Constant(const_info.typed_value()),
                             ty: const_info.ty,
                         });
                     }
-                    if let Some((name, ty)) = self.lowering.executable_consts.get(def_id) {
+                    if let Some((name, ty)) = self.lowering.mir_package.borrow().executable_consts.get(def_id).cloned() {
                         return Ok(OperandInfo {
                             operand: mir::Operand::Constant(mir::Constant {
                                 span: expr.span,
@@ -15981,7 +15678,7 @@ impl<'a> BodyBuilder<'a> {
                     });
                     if let Some(konst) = const_def_item {
                         self.lowering.register_const_value(def_id.clone(), &konst);
-                        if let Some(const_info) = self.lowering.const_values.get(def_id) {
+                        if let Some(const_info) = self.lowering.ensure_const_info(def_id.clone()) {
                             return Ok(OperandInfo {
                                 operand: mir::Operand::Constant(const_info.typed_value()),
                                 ty: const_info.ty.clone(),
@@ -15995,7 +15692,7 @@ impl<'a> BodyBuilder<'a> {
                         // code, which would silently bypass the real
                         // global this const's own top-level declaration
                         // needs to exist as.
-                        if let Some((name, ty)) = self.lowering.executable_consts.get(def_id) {
+                        if let Some((name, ty)) = self.lowering.mir_package.borrow().executable_consts.get(def_id).cloned() {
                             return Ok(OperandInfo {
                                 operand: mir::Operand::Constant(mir::Constant {
                                     span: expr.span,
@@ -16032,7 +15729,7 @@ impl<'a> BodyBuilder<'a> {
                             ty,
                         });
                     }
-                    if let Some(variant) = self.lowering.enum_variants.get(def_id).cloned() {
+                    if let Some(variant) = self.lowering.mir_package.borrow().enum_variants.get(def_id).cloned() {
                         let mut layout = expected.and_then(|ty| {
                             self.enum_layout_for_variant(&variant, Some(ty), expr.span)
                         });
@@ -16167,7 +15864,7 @@ impl<'a> BodyBuilder<'a> {
                 if has_explicit_args {
                     let method_def = match resolved_path.res.as_ref() {
                         Some(hir::Res::Def(def_id)) => {
-                            self.lowering.method_defs_by_def.get(def_id).cloned()
+                            self.lowering.mir_package.borrow().method_defs_by_def.get(def_id).cloned()
                         }
                         _ => None,
                     };
@@ -16260,7 +15957,7 @@ impl<'a> BodyBuilder<'a> {
                 let mut resolved_const_base = None;
                 if let hir::ExprKind::Path(path) = &base.kind {
                     if let Some(hir::Res::Def(def_id)) = &path.res {
-                        if let Some(const_info) = self.lowering.const_values.get(def_id).cloned() {
+                        if let Some(const_info) = self.lowering.ensure_const_info(def_id.clone()) {
                             if let Some((constant, ty)) = self.lowering.const_index_value(
                                 expr.span,
                                 &const_info.typed_value(),
@@ -17596,7 +17293,7 @@ impl<'a> BodyBuilder<'a> {
                     }
                 };
 
-                let field_count = match self.lowering.struct_defs.get(&struct_ref.def_id) {
+                let field_count = match self.lowering.mir_package.borrow().struct_defs.get(&struct_ref.def_id).cloned() {
                     Some(info) => info.fields.len() as u64,
                     None => {
                         self.lowering
@@ -17633,7 +17330,7 @@ impl<'a> BodyBuilder<'a> {
                     None => return None,
                 };
 
-                let has_field = match self.lowering.struct_defs.get(&struct_ref.def_id) {
+                let has_field = match self.lowering.mir_package.borrow().struct_defs.get(&struct_ref.def_id).cloned() {
                     Some(info) => info.field_index.contains_key(&field_name),
                     None => {
                         self.lowering
@@ -17666,7 +17363,7 @@ impl<'a> BodyBuilder<'a> {
                     }
                 };
 
-                let struct_name = match self.lowering.struct_defs.get(&struct_ref.def_id) {
+                let struct_name = match self.lowering.mir_package.borrow().struct_defs.get(&struct_ref.def_id).cloned() {
                     Some(info) => info.name.clone(),
                     None => {
                         self.lowering
@@ -17675,9 +17372,7 @@ impl<'a> BodyBuilder<'a> {
                     }
                 };
 
-                let method_count = self
-                    .lowering
-                    .struct_methods
+                let method_count = self.lowering.mir_package.borrow().struct_methods
                     .get(&struct_name)
                     .map(|methods| methods.len() as u64)
                     .unwrap_or(0);
@@ -18817,7 +18512,7 @@ impl<'a> BodyBuilder<'a> {
         let Some(hir::Res::Def(def_id)) = &path.res else {
             return None;
         };
-        let const_info = self.lowering.const_values.get(def_id)?;
+        let const_info = self.lowering.ensure_const_info(def_id.clone())?;
         let mir::ConstantKind::Val(value) = &const_info.value.literal else {
             return None;
         };
@@ -18977,9 +18672,7 @@ impl<'a> BodyBuilder<'a> {
 
         if let Some(segment) = path.segments.last() {
             let name = segment.name.as_str();
-            let mut matches = self
-                .lowering
-                .struct_defs
+            let mut matches = self.lowering.mir_package.borrow().struct_defs
                 .iter()
                 .filter_map(|(def_id, info)| (info.name == name).then_some(def_id.clone()))
                 .collect::<Vec<_>>();
@@ -19094,7 +18787,7 @@ impl<'a> BodyBuilder<'a> {
                     if let Some(size) = self
                         .lowering
                         .display_type_name(ty)
-                        .and_then(|name| self.lowering.opaque_ty_sizes.get(&name).copied())
+                        .and_then(|name| self.lowering.mir_package.borrow().opaque_ty_sizes.get(&name).copied())
                     {
                         return Some(size);
                     }
@@ -19114,7 +18807,7 @@ impl<'a> BodyBuilder<'a> {
                     // computes and caches the layout on demand from the
                     // struct's own `DefId` + concrete generic args, exactly
                     // as a struct-literal use of this same type would.
-                    if self.lowering.struct_defs.contains_key(&adt.did) {
+                    if self.lowering.mir_package.borrow().struct_defs.contains_key(&adt.did) {
                         let layout = self
                             .lowering
                             .struct_layout_for_ty(ty)
@@ -19137,7 +18830,7 @@ impl<'a> BodyBuilder<'a> {
                     // `enum_layout_for_instance` — mirror that shape's own
                     // size (tag plus every payload slot) rather than trying
                     // `struct_layout_for_instance` against an enum `DefId`.
-                    if self.lowering.enum_defs.contains_key(&adt.did) {
+                    if self.lowering.mir_package.borrow().enum_defs.contains_key(&adt.did) {
                         if let Some(layout) =
                             self.lowering.enum_layout_for_instance(adt.did.clone(), &args, span)
                         {
@@ -20297,7 +19990,7 @@ impl<'a> BodyBuilder<'a> {
                         let mut const_info = None;
                         let mut const_body_len = None;
                         if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
-                            if let Some(info) = self.lowering.const_values.get(def_id) {
+                            if let Some(info) = self.lowering.ensure_const_info(def_id.clone()) {
                                 const_info = Some(info.clone());
                             } else if let Some(konst) =
                                 self.lowering.hir_item(def_id.clone()).and_then(|item| {
@@ -20311,7 +20004,7 @@ impl<'a> BodyBuilder<'a> {
                                     const_body_len = Some(elements.len() as u64);
                                 }
                                 self.lowering.register_const_value(def_id.clone(), &konst);
-                                if let Some(info) = self.lowering.const_values.get(def_id) {
+                                if let Some(info) = self.lowering.ensure_const_info(def_id.clone()) {
                                     const_info = Some(info.clone());
                                 }
                             }
@@ -20329,7 +20022,7 @@ impl<'a> BodyBuilder<'a> {
                                     const_body_len = Some(elements.len() as u64);
                                 }
                                 self.lowering.register_const_value(def_id.clone(), &konst);
-                                if let Some(info) = self.lowering.const_values.get(&def_id) {
+                                if let Some(info) = self.lowering.ensure_const_info(def_id.clone()) {
                                     const_info = Some(info.clone());
                                 }
                             }
@@ -20722,11 +20415,11 @@ impl<'a> BodyBuilder<'a> {
                         .struct_def
                         .or_else(|| self.struct_def_from_ty(&place_info.ty))
                     {
-                        if let Some(_struct_entry) = self.lowering.struct_defs.get(&def_id) {
+                        if let Some(_struct_entry) = self.lowering.mir_package.borrow().struct_defs.get(&def_id).cloned() {
                             let method_def = self
                                 .lowering
                                 .typeck_method_resolution(expr.hir_id.clone())
-                                .and_then(|def_id| self.lowering.method_defs_by_def.get(&def_id).cloned());
+                                .and_then(|def_id| self.lowering.mir_package.borrow().method_defs_by_def.get(&def_id).cloned());
                             if let Some(def) = method_def {
                                 let method_ctx = self.lowering.make_method_context(&def.self_ty, &def.assoc_types);
                                 let tentative_sig = self
@@ -20816,11 +20509,11 @@ impl<'a> BodyBuilder<'a> {
                             }
                         }
                     } else if let Some(enum_def) = self.enum_def_from_ty(&place_info.ty) {
-                        if let Some(_enum_entry) = self.lowering.enum_defs.get(&enum_def) {
+                        if let Some(_enum_entry) = self.lowering.mir_package.borrow().enum_defs.get(&enum_def).cloned() {
                             let method_def = self
                                 .lowering
                                 .typeck_method_resolution(expr.hir_id.clone())
-                                .and_then(|def_id| self.lowering.method_defs_by_def.get(&def_id).cloned());
+                                .and_then(|def_id| self.lowering.mir_package.borrow().method_defs_by_def.get(&def_id).cloned());
                             if let Some(def) = method_def {
                                 let method_ctx = self.lowering.make_method_context(&def.self_ty, &def.assoc_types);
                                 let tentative_sig = self
@@ -21074,7 +20767,7 @@ impl<'a> BodyBuilder<'a> {
                     }
                     if let hir::ExprKind::Path(path) = &receiver.kind {
                         if let Some(hir::Res::Def(def_id)) = &path.res {
-                            if let Some(const_info) = self.lowering.const_values.get(def_id) {
+                            if let Some(const_info) = self.lowering.ensure_const_info(def_id.clone()) {
                                 if let Some(len) =
                                     self.lowering.const_len_from_constant(&const_info.value)
                                 {
@@ -21231,9 +20924,7 @@ impl<'a> BodyBuilder<'a> {
                 // `method_name_output_consensus` is maintained incrementally
                 // at registration time (see its doc comment) instead of
                 // rescanning every struct's whole method table here.
-                if let Some(Some(output)) = self
-                    .lowering
-                    .method_name_output_consensus
+                if let Some(Some(output)) = self.lowering.mir_package.borrow().method_name_output_consensus
                     .get(method_name.as_str())
                 {
                     result_ty = output.clone();
@@ -21707,9 +21398,7 @@ impl<'a> BodyBuilder<'a> {
         let TyKind::Adt(adt, _) = &ty.kind else {
             return None;
         };
-        let has_index_method = self
-            .lowering
-            .method_defs_by_self_and_name
+        let has_index_method = self.lowering.mir_package.borrow().method_defs_by_self_and_name
             .contains_key(&(adt.did.clone(), "index".to_string()));
         has_index_method.then_some(adt.did.clone())
     }
@@ -21740,11 +21429,9 @@ impl<'a> BodyBuilder<'a> {
         expected_return: Option<&Ty>,
         span: Span,
     ) -> Result<Ty> {
-        let def = self
-            .lowering
-            .method_defs_by_self_and_name
+        let def = self.lowering.mir_package.borrow().method_defs_by_self_and_name
             .get(&(struct_def_id.clone(), method_name.to_string()))
-            .and_then(|def_id| self.lowering.method_defs_by_def.get(def_id))
+            .and_then(|def_id| self.lowering.mir_package.borrow().method_defs_by_def.get(def_id).cloned())
             .cloned()
             .ok_or_else(|| {
                 crate::error::optimization_error(format!(
@@ -21812,12 +21499,12 @@ impl<'a> BodyBuilder<'a> {
             .and_then(|seg| self.fallback_locals.get(seg.name.as_str()).copied())
     }
 
-    fn evaluate_array_length(&self, expr: &hir::Expr) -> Option<u64> {
+    fn evaluate_array_length(&mut self, expr: &hir::Expr) -> Option<u64> {
         match &expr.kind {
             hir::ExprKind::Literal(hir::Lit::Integer(value)) => Some(*value as u64),
             hir::ExprKind::Path(path) => {
                 if let Some(hir::Res::Def(ref def_id)) = path.res {
-                    if let Some(const_info) = self.lowering.const_values.get(&def_id) {
+                    if let Some(const_info) = self.lowering.ensure_const_info(def_id.clone()) {
                         match &const_info.value.literal {
                             mir::ConstantKind::Int(value) => Some(*value as u64),
                             mir::ConstantKind::UInt(value) => Some(*value),

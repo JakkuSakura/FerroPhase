@@ -65,6 +65,7 @@ fn mir_lowering() -> HirToMirLowerer {
     HirToMirLowerer::new(
         std::rc::Rc::new(fp_core::hir::HirProgram::new()),
         fp_core::hir::PackageId::new("test"),
+        std::rc::Rc::new(std::cell::RefCell::new(fp_core::mir::MirPackage::default())),
     )
 }
 

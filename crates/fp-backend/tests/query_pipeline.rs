@@ -43,7 +43,7 @@ fn sql_query_document_lowers_to_hir_and_mir_query_items() {
         Some(QueryIrStmt::Query(_))
     ));
 
-    let mut mir_lowering = HirToMirLowerer::new(std::rc::Rc::new(hir::HirProgram::new()), hir::PackageId::new("test"));
+    let mut mir_lowering = HirToMirLowerer::new(std::rc::Rc::new(hir::HirProgram::new()), hir::PackageId::new("test"), std::rc::Rc::new(std::cell::RefCell::new(mir::MirPackage::default())));
     let mir_program = mir_lowering.transform(hir_program).expect("mir program");
     let (diagnostics, had_errors) = mir_lowering.take_diagnostics();
     assert!(!had_errors, "{diagnostics:?}");
@@ -114,7 +114,7 @@ fn prql_query_document_lowers_to_hir_and_mir_query_items() {
         Some(QueryIrStmt::Query(_))
     ));
 
-    let mut mir_lowering = HirToMirLowerer::new(std::rc::Rc::new(hir::HirProgram::new()), hir::PackageId::new("test"));
+    let mut mir_lowering = HirToMirLowerer::new(std::rc::Rc::new(hir::HirProgram::new()), hir::PackageId::new("test"), std::rc::Rc::new(std::cell::RefCell::new(mir::MirPackage::default())));
     let mir_program = mir_lowering.transform(hir_program).expect("mir program");
     let (diagnostics, had_errors) = mir_lowering.take_diagnostics();
     assert!(!had_errors, "{diagnostics:?}");
@@ -167,7 +167,7 @@ fn fp_query_feature_lowers_in_ast_to_hir_pass() {
         Some(QueryIrStmt::Query(_))
     ));
 
-    let mut mir_lowering = HirToMirLowerer::new(std::rc::Rc::new(hir::HirProgram::new()), hir::PackageId::new("test"));
+    let mut mir_lowering = HirToMirLowerer::new(std::rc::Rc::new(hir::HirProgram::new()), hir::PackageId::new("test"), std::rc::Rc::new(std::cell::RefCell::new(mir::MirPackage::default())));
     let mir_program = mir_lowering.transform(hir_program).expect("mir program");
     let (diagnostics, had_errors) = mir_lowering.take_diagnostics();
     assert!(!had_errors, "{diagnostics:?}");

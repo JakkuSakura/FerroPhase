@@ -128,6 +128,7 @@ impl CompilerDriver {
         let state = self.state.borrow();
         let mut mir = mir::MirCodeUnit::new();
         if let Some(package) = state.mir_program().package(package_id) {
+            let package = package.borrow();
             mir.items.extend(package.items().cloned());
             mir.bodies
                 .extend(package.bodies().map(|(id, body)| (*id, body.clone())));
@@ -608,7 +609,8 @@ impl CompilerDriver {
             let state = self.state.clone();
             if let Err(error) = (async {
                 let hir_program = state.borrow().hir_program_rc();
-                let mut lowering = HirToMirLowerer::new(hir_program, hir_package_id.clone());
+                let mir_package = state.borrow_mut().mir_package_rc(&current_package_id);
+                let mut lowering = HirToMirLowerer::new(hir_program, hir_package_id.clone(), mir_package);
                 lowering.register_package_items();
                 let current_package = lowering.current_package_handle();
                 for item in &current_package.items {
@@ -628,15 +630,19 @@ impl CompilerDriver {
                         "HIR-to-MIR lowering reported diagnostics: {details}"
                     )));
                 }
-                let adt_defs = lowering.take_adt_defs();
+                // Every struct/enum/method/const `lowering` computed already
+                // landed directly in the session's own package as it was
+                // produced (shared `Rc<RefCell<MirPackage>>` — see
+                // `HirToMirLowerer::mir_package`'s own doc comment); only
+                // `full_layouts`/`opaque_payload_sizes` are a folded view
+                // computed after the fact, so those alone need writing here.
                 let full_layouts = Self::collect_full_layouts(&lowering);
-                let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
+                let opaque_payload_sizes = lowering.opaque_payload_sizes();
                 {
-                    let mut state_mut = state.borrow_mut();
-                    let package = state_mut.mir_package_mut(&current_package_id);
-                    package.extend_full_layouts(full_layouts);
-                    package.extend_opaque_payload_sizes(opaque_payload_sizes);
-                    package.extend_adt_defs(adt_defs);
+                    let mut package = state.borrow_mut().mir_package_rc(&current_package_id);
+                    let mut package = package.borrow_mut();
+                    package.full_layouts = full_layouts;
+                    package.opaque_payload_sizes = opaque_payload_sizes;
                 }
 
                 // --- MIR -> LIR: per-`DefId`, lazy signature resolution, no
@@ -650,7 +656,7 @@ impl CompilerDriver {
                     .borrow()
                     .mir_program()
                     .package(&current_package_id)
-                    .map(|package| package.units.keys().cloned().collect())
+                    .map(|package| package.borrow().units.keys().cloned().collect())
                     .unwrap_or_default();
                 let mut lir_gen = Self::new_lir_generator(&state, &current_package_id);
                 for def_id in def_ids {
@@ -671,7 +677,8 @@ impl CompilerDriver {
 
         let state = self.state.clone();
         let hir_program = state.borrow().hir_program_rc();
-        let mut lowering = HirToMirLowerer::new(hir_program, hir_package_id.clone());
+        let mir_package = state.borrow_mut().mir_package_rc(&current_package_id);
+        let mut lowering = HirToMirLowerer::new(hir_program, hir_package_id.clone(), mir_package);
         lowering.register_package_items();
         let current_package = lowering.current_package_handle();
         for item in &current_package.items {
@@ -691,15 +698,13 @@ impl CompilerDriver {
                 "HIR-to-MIR lowering reported diagnostics: {details}"
             )));
         }
-        let adt_defs = lowering.take_adt_defs();
         let full_layouts = Self::collect_full_layouts(&lowering);
-        let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
+        let opaque_payload_sizes = lowering.opaque_payload_sizes();
         {
-            let mut state_mut = state.borrow_mut();
-            let package = state_mut.mir_package_mut(&current_package_id);
-            package.extend_full_layouts(full_layouts);
-            package.extend_opaque_payload_sizes(opaque_payload_sizes);
-            package.extend_adt_defs(adt_defs);
+            let package = state.borrow_mut().mir_package_rc(&current_package_id);
+            let mut package = package.borrow_mut();
+            package.full_layouts = full_layouts;
+            package.opaque_payload_sizes = opaque_payload_sizes;
         }
 
         // --- MIR -> LIR: per-`DefId`, lazy signature resolution, no
@@ -712,7 +717,7 @@ impl CompilerDriver {
             .borrow()
             .mir_program()
             .package(&current_package_id)
-            .map(|package| package.units.keys().cloned().collect())
+            .map(|package| package.borrow().units.keys().cloned().collect())
             .unwrap_or_default();
         let mut lir_gen = Self::new_lir_generator(&state, &current_package_id);
         for def_id in def_ids {
@@ -858,19 +863,18 @@ impl CompilerDriver {
         // just to recover an id it already has.
         let package_id = PackageId::new(request.def_id.package_id.as_str());
         let hir_program = state.borrow().hir_program_rc();
-        let mut lowering = HirToMirLowerer::new(hir_program, request.package_id.clone());
+        let mir_package = state.borrow_mut().mir_package_rc(&package_id);
+        let mut lowering = HirToMirLowerer::new(hir_program, request.package_id.clone(), mir_package);
         lowering.register_package_items();
         Self::lower_package_to_mir(state, &package_id, &mut lowering, request.def_id.clone()).await?;
 
-        let adt_defs = lowering.take_adt_defs();
         let full_layouts = Self::collect_full_layouts(&lowering);
-        let opaque_payload_sizes = lowering.opaque_payload_sizes().clone();
+        let opaque_payload_sizes = lowering.opaque_payload_sizes();
         {
-            let mut state_mut = state.borrow_mut();
-            let package = state_mut.mir_package_mut(&package_id);
-            package.extend_full_layouts(full_layouts);
-            package.extend_opaque_payload_sizes(opaque_payload_sizes);
-            package.extend_adt_defs(adt_defs);
+            let package = state.borrow_mut().mir_package_rc(&package_id);
+            let mut package = package.borrow_mut();
+            package.full_layouts = full_layouts;
+            package.opaque_payload_sizes = opaque_payload_sizes;
         }
 
         let mut lir_gen = Self::new_lir_generator(state, &package_id);
