@@ -517,165 +517,9 @@ impl CompilerDriver {
         // backend actually reads, and doesn't depend on anything below
         // succeeding.
         if self.pipeline == PipelineMode::Transpile {
-            // Scoped narrowly — `lift_items_by_path`/`referenced_paths_by_path`
-            // return owned data, so nothing here needs to outlive this block.
-            let (lifted_items_by_path, referenced_paths_by_path) = {
-                let state = self.state.borrow();
-                let hir = state.hir(hir_package_id.clone())?;
-                let lifter = fp_backend::transforms::HirToAstLifter::new(
-                    &hir,
-                    Some(state.hir_program()),
-                );
-                // `lift_items_by_path` treats an `impl` block as an opaque
-                // placeholder — merge in each impl *method*'s own lifted
-                // body too (keyed by its own qualified path, disjoint from
-                // any top-level item's), or typed/normalized impl method
-                // bodies never get spliced back in at all.
-                let mut lifted_items_by_path = lifter.lift_items_by_path();
-                lifted_items_by_path.extend(lifter.lift_impl_methods_by_path());
-                lifter.publish_resolved_expr_types();
-                (lifted_items_by_path, lifter.referenced_paths_by_path())
-            };
-            if let Some(pkg) = self
-                .state.borrow()
-                .workspace
-                .compiled_package(&current_package_id)
-            {
-                let mut pkg = pkg.borrow_mut();
-                // Splice typed/normalized content back onto the original
-                // untyped source items by qualified-path identity — the
-                // single, canonical reconciliation point.
-                for pkg_item in &mut pkg.items {
-                    if let ItemKind::Impl(imp) = pkg_item.item.kind_mut() {
-                        // Trait impls aren't in `lifted_items_by_path` at
-                        // all (`lift_impl_methods_by_path` skips them) —
-                        // only attempt this for inherent impls, matching
-                        // what was actually lifted.
-                        if imp.trait_ty.is_some() {
-                            continue;
-                        }
-                        let mut base_path = pkg_item.module_path.segments.clone();
-                        let Some(self_ty_name) = impl_self_type_name(&imp.self_ty) else {
-                            continue;
-                        };
-                        base_path.push(self_ty_name.to_string());
-                        for method_item in imp.items.iter_mut() {
-                            let ItemKind::DefFunction(function) = method_item.kind() else {
-                                continue;
-                            };
-                            let mut path = base_path.clone();
-                            path.push(function.name.name.clone());
-                            let key = fp_core::hir::DefPath::new(
-                                path.into_iter().map(fp_core::hir::Symbol::new).collect(),
-                            );
-                            if let Some(typed) = lifted_items_by_path.get(&key) {
-                                *method_item = typed.clone();
-                            }
-                        }
-                        continue;
-                    }
-                    let Some(name) = item_own_name(&pkg_item.item) else {
-                        continue;
-                    };
-                    let mut path = pkg_item.module_path.segments.clone();
-                    path.push(name.to_string());
-                    let key = fp_core::hir::DefPath::new(
-                        path.into_iter().map(fp_core::hir::Symbol::new).collect(),
-                    );
-                    if let Some(typed) = lifted_items_by_path.get(&key) {
-                        pkg_item.item = typed.clone();
-                    }
-                }
-                pkg.referenced_paths = referenced_paths_by_path
-                    .into_iter()
-                    .map(|(key, values)| {
-                        let key: Vec<String> = key.segments.iter().map(|s| s.as_str().to_string()).collect();
-                        let values: Vec<Vec<String>> = values
-                            .into_iter()
-                            .map(|path| path.segments.iter().map(|s| s.as_str().to_string()).collect())
-                            .collect();
-                        (key, values)
-                    })
-                    .collect();
-            }
-            // Best-effort HIR->MIR->LIR lowering, purely so any
-            // `const { .. }` blocks get validated later through the real
-            // interpreter (`evaluate_comptime_lir`) instead of a hand-rolled
-            // one. MIR lowering was built for the Native pipeline and may
-            // not yet cover every construct real vendored std/workspace
-            // code exercises — a failure here is reported and this package
-            // simply produces no LIR (comptime validation is skipped for
-            // it), matching this pipeline's prior behavior; the lifted AST
-            // above is already complete regardless.
-            let state = self.state.clone();
-            if let Err(error) = (async {
-                let hir_program = state.borrow().hir_program_rc();
-                let mir_package = state.borrow_mut().mir_package_rc(&current_package_id);
-                let mut lowering = HirToMirLowerer::new(hir_program, hir_package_id.clone(), mir_package);
-                lowering.register_package_items();
-                let current_package = lowering.current_package_handle();
-                for item in &current_package.items {
-                    Self::lower_package_to_mir(&state, &current_package_id, &mut lowering, item.def_id.clone()).await?;
-                }
-                let sentinel = hir::DefId::new(hir_package_id.clone(), u32::MAX);
-                let mut leftover = lowering.take_unit(sentinel.clone());
-                lowering.append_runtime_stubs(&mut leftover);
-                if !leftover.items.is_empty() || !leftover.bodies.is_empty() {
-                    lowering.walk_program_types_for_layouts(&leftover);
-                    state.borrow_mut().insert_mir_unit(&current_package_id, sentinel, leftover);
-                }
-                let (diagnostics, had_errors) = lowering.take_diagnostics();
-                if had_errors {
-                    let details = diagnostics_summary(&diagnostics);
-                    return Err(CompilerDriverError::InternalCompilerError(format!(
-                        "HIR-to-MIR lowering reported diagnostics: {details}"
-                    )));
-                }
-                // Every struct/enum/method/const `lowering` computed already
-                // landed directly in the session's own package as it was
-                // produced (shared `Rc<RefCell<MirPackage>>` — see
-                // `HirToMirLowerer::mir_package`'s own doc comment); only
-                // `full_layouts`/`opaque_payload_sizes` are a folded view
-                // computed after the fact, written in place on that same
-                // shared package by `sync_layout_exports` itself.
-                lowering.sync_layout_exports();
-
-                // --- MIR -> LIR: per-`DefId`, lazy signature resolution, no
-                // whole-program predeclare sweep — `MirToLirLowerer` reads
-                // `full_layouts`/`opaque_payload_sizes`/signatures straight
-                // off `mir_program_rc()` (just extended above); every blob
-                // this lowers gets pushed alongside any earlier one for the
-                // same package, never reset first (see `lir::LirPackage`'s
-                // own doc comment) ---
-                let def_ids: Vec<_> = state
-                    .borrow()
-                    .mir_program()
-                    .package(&current_package_id)
-                    .map(|package| package.borrow().units.keys().cloned().collect())
-                    .unwrap_or_default();
-                let mut lir_gen = {
-                    let borrowed = state.borrow();
-                    MirToLirLowerer::new(
-                        borrowed.data_layout.clone(),
-                        borrowed.mir_program_rc(),
-                        borrowed.lir_program_rc(),
-                    )
-                    .with_package_id(current_package_id.clone())
-                };
-                for def_id in def_ids {
-                    Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id).await?;
-                }
-                Ok(())
-            }).await
-            {
-                fp_core::diagnostics::report_warning_with_context(
-                    "const-eval".to_string(),
-                    format!(
-                        "HIR->MIR/LIR lowering failed, skipping comptime validation for this package: {error}"
-                    ),
-                );
-            }
-            return Ok(());
+            return self
+                .transpile_lift_and_validate(current_package_id, hir_package_id)
+                .await;
         }
 
         let state = self.state.clone();
@@ -726,6 +570,165 @@ impl CompilerDriver {
         };
         for def_id in def_ids {
             Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id).await?;
+        }
+        Ok(())
+    }
+
+    /// `compile_items_to_lir_units`'s `PipelineMode::Transpile` path: lifts
+    /// the just-typechecked HIR back to AST (what the Kotlin backend
+    /// actually reads), splices it onto the original untyped source items
+    /// by qualified-path identity, then does a best-effort HIR->MIR->LIR
+    /// lowering purely so any `const { .. }` blocks get validated later
+    /// through the real interpreter (`evaluate_comptime_lir`) instead of a
+    /// hand-rolled one. MIR lowering was built for the Native pipeline and
+    /// may not yet cover every construct real vendored std/workspace code
+    /// exercises — a failure here is reported and this package simply
+    /// produces no LIR (comptime validation is skipped for it), matching
+    /// this pipeline's prior behavior; the lifted AST above is already
+    /// complete regardless.
+    async fn transpile_lift_and_validate(
+        &mut self,
+        current_package_id: PackageId,
+        hir_package_id: hir::PackageId,
+    ) -> Result<(), CompilerDriverError> {
+        // Scoped narrowly — `lift_items_by_path`/`referenced_paths_by_path`
+        // return owned data, so nothing here needs to outlive this block.
+        let (lifted_items_by_path, referenced_paths_by_path) = {
+            let state = self.state.borrow();
+            let hir = state.hir(hir_package_id.clone())?;
+            let lifter = fp_backend::transforms::HirToAstLifter::new(&hir, Some(state.hir_program()));
+            // `lift_items_by_path` treats an `impl` block as an opaque
+            // placeholder — merge in each impl *method*'s own lifted
+            // body too (keyed by its own qualified path, disjoint from
+            // any top-level item's), or typed/normalized impl method
+            // bodies never get spliced back in at all.
+            let mut lifted_items_by_path = lifter.lift_items_by_path();
+            lifted_items_by_path.extend(lifter.lift_impl_methods_by_path());
+            lifter.publish_resolved_expr_types();
+            (lifted_items_by_path, lifter.referenced_paths_by_path())
+        };
+        if let Some(pkg) = self.state.borrow().workspace.compiled_package(&current_package_id) {
+            let mut pkg = pkg.borrow_mut();
+            // Splice typed/normalized content back onto the original
+            // untyped source items by qualified-path identity — the
+            // single, canonical reconciliation point.
+            for pkg_item in &mut pkg.items {
+                if let ItemKind::Impl(imp) = pkg_item.item.kind_mut() {
+                    // Trait impls aren't in `lifted_items_by_path` at
+                    // all (`lift_impl_methods_by_path` skips them) —
+                    // only attempt this for inherent impls, matching
+                    // what was actually lifted.
+                    if imp.trait_ty.is_some() {
+                        continue;
+                    }
+                    let mut base_path = pkg_item.module_path.segments.clone();
+                    let Some(self_ty_name) = impl_self_type_name(&imp.self_ty) else {
+                        continue;
+                    };
+                    base_path.push(self_ty_name.to_string());
+                    for method_item in imp.items.iter_mut() {
+                        let ItemKind::DefFunction(function) = method_item.kind() else {
+                            continue;
+                        };
+                        let mut path = base_path.clone();
+                        path.push(function.name.name.clone());
+                        let key = fp_core::hir::DefPath::new(
+                            path.into_iter().map(fp_core::hir::Symbol::new).collect(),
+                        );
+                        if let Some(typed) = lifted_items_by_path.get(&key) {
+                            *method_item = typed.clone();
+                        }
+                    }
+                    continue;
+                }
+                let Some(name) = item_own_name(&pkg_item.item) else {
+                    continue;
+                };
+                let mut path = pkg_item.module_path.segments.clone();
+                path.push(name.to_string());
+                let key = fp_core::hir::DefPath::new(path.into_iter().map(fp_core::hir::Symbol::new).collect());
+                if let Some(typed) = lifted_items_by_path.get(&key) {
+                    pkg_item.item = typed.clone();
+                }
+            }
+            pkg.referenced_paths = referenced_paths_by_path
+                .into_iter()
+                .map(|(key, values)| {
+                    let key: Vec<String> = key.segments.iter().map(|s| s.as_str().to_string()).collect();
+                    let values: Vec<Vec<String>> = values
+                        .into_iter()
+                        .map(|path| path.segments.iter().map(|s| s.as_str().to_string()).collect())
+                        .collect();
+                    (key, values)
+                })
+                .collect();
+        }
+        let state = self.state.clone();
+        if let Err(error) = (async {
+            let hir_program = state.borrow().hir_program_rc();
+            let mir_package = state.borrow_mut().mir_package_rc(&current_package_id);
+            let mut lowering = HirToMirLowerer::new(hir_program, hir_package_id.clone(), mir_package);
+            lowering.register_package_items();
+            let current_package = lowering.current_package_handle();
+            for item in &current_package.items {
+                Self::lower_package_to_mir(&state, &current_package_id, &mut lowering, item.def_id.clone()).await?;
+            }
+            let sentinel = hir::DefId::new(hir_package_id.clone(), u32::MAX);
+            let mut leftover = lowering.take_unit(sentinel.clone());
+            lowering.append_runtime_stubs(&mut leftover);
+            if !leftover.items.is_empty() || !leftover.bodies.is_empty() {
+                lowering.walk_program_types_for_layouts(&leftover);
+                state.borrow_mut().insert_mir_unit(&current_package_id, sentinel, leftover);
+            }
+            let (diagnostics, had_errors) = lowering.take_diagnostics();
+            if had_errors {
+                let details = diagnostics_summary(&diagnostics);
+                return Err(CompilerDriverError::InternalCompilerError(format!(
+                    "HIR-to-MIR lowering reported diagnostics: {details}"
+                )));
+            }
+            // Every struct/enum/method/const `lowering` computed already
+            // landed directly in the session's own package as it was
+            // produced (shared `Rc<RefCell<MirPackage>>` — see
+            // `HirToMirLowerer::mir_package`'s own doc comment); only
+            // `full_layouts`/`opaque_payload_sizes` are a folded view
+            // computed after the fact, written in place on that same
+            // shared package by `sync_layout_exports` itself.
+            lowering.sync_layout_exports();
+
+            // --- MIR -> LIR: per-`DefId`, lazy signature resolution, no
+            // whole-program predeclare sweep — `MirToLirLowerer` reads
+            // `full_layouts`/`opaque_payload_sizes`/signatures straight
+            // off `mir_program_rc()` (just extended above); every blob
+            // this lowers gets pushed alongside any earlier one for the
+            // same package, never reset first (see `lir::LirPackage`'s
+            // own doc comment) ---
+            let def_ids: Vec<_> = state
+                .borrow()
+                .mir_program()
+                .package(&current_package_id)
+                .map(|package| package.borrow().units.keys().cloned().collect())
+                .unwrap_or_default();
+            let mut lir_gen = {
+                let borrowed = state.borrow();
+                MirToLirLowerer::new(
+                    borrowed.data_layout.clone(),
+                    borrowed.mir_program_rc(),
+                    borrowed.lir_program_rc(),
+                )
+                .with_package_id(current_package_id.clone())
+            };
+            for def_id in def_ids {
+                Self::lower_package_to_lir_with(&state, &current_package_id, &mut lir_gen, def_id).await?;
+            }
+            Ok(())
+        })
+        .await
+        {
+            fp_core::diagnostics::report_warning_with_context(
+                "const-eval".to_string(),
+                format!("HIR->MIR/LIR lowering failed, skipping comptime validation for this package: {error}"),
+            );
         }
         Ok(())
     }
