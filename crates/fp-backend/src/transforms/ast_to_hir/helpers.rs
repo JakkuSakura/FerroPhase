@@ -486,6 +486,43 @@ impl AstToHirLowerer {
             });
         }
 
+        // `char::EscapeUnicode` (and `EscapeDefault`/`EscapeDebug`) — real
+        // vendored std's `core::char` module doubles as both the `char`
+        // primitive's own name *and* a real module declaring sibling
+        // struct types, an ambiguity the primitive-priority skip just
+        // below can't tell apart from `isize::Output`-style UFCS
+        // flattening by shape alone (both are a 2-segment type path with
+        // a primitive-named first segment). Resolve this narrower,
+        // unambiguous case first: only when a real crate-root module is
+        // literally named after the primitive *and* that module directly
+        // declares a type by the trailing name — `Output` is never such
+        // a member of any real `core::isize`-named module (it only ever
+        // exists via a trait impl), so this can't misfire into that case.
+        if scope == PathResolutionScope::Type
+            && segments.len() == 2
+            && path_prefix == PathPrefix::Plain
+            && is_primitive_type_name(segments[0].name.as_str())
+        {
+            let tree = &self.package.module_tree;
+            if let Some(root_module) = self
+                .module_path
+                .segments
+                .first()
+                .and_then(|root| tree.child(tree.root(), root))
+            {
+                if let Some(prim_module) = tree.child(root_module, segments[0].name.as_str()) {
+                    if let Some(res) =
+                        tree.lookup_res(prim_module, hir::Namespace::Type, segments[1].name.as_str())
+                    {
+                        return Ok(hir::Path {
+                            segments,
+                            res: Some(res.clone()),
+                        });
+                    }
+                }
+            }
+        }
+
         // A primitive-named first segment (`isize::Output`, from a UFCS-
         // flattened `<isize as Not>::Output`) must never be treated as a
         // module-relative or absolute path lookup, even where a real,
