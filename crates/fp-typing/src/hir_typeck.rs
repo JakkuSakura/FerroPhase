@@ -2785,19 +2785,28 @@ impl HirTypeChecker {
             {
                 self.check_type_expr(&constant.ty).await
             }
-            hir::ItemKind::Const(constant) if def_id.package_id != self.current_package() => {
-                // `program.def_map` is pre-seeded with every dependency
-                // package's own merged definitions (`seed_workspace_
-                // definitions`), so a foreign const's item is found here
-                // directly — but `ensure_item_checked`/`typecheck_item`
+            hir::ItemKind::Const(constant)
+                if !self.package().def_map.contains_key(&def_id) =>
+            {
+                // A `DefId`'s own `package_id` field is not a reliable
+                // "which package is this really in" signal on its own —
+                // e.g. `hir::DefId::local(..)` always uses a generic
+                // placeholder `package_id`, regardless of which real
+                // package its item was actually registered under (see
+                // several `hir_typeck` unit tests below, which construct
+                // same-package items this way). Check real membership in
+                // *this* package's own `def_map` instead: `item` above was
+                // found via `program_rc().item(..)`, the merged cross-
+                // package view (a dependency's const genuinely is found
+                // there too) — but `ensure_item_checked`/`typecheck_item`
                 // (below, the same-package arm) only ever spawn a task
-                // against *this* package's own `program`/`results`,
-                // which a foreign `def_id` never populates: awaiting it
-                // would just hang or silently no-op, and `const_types`
-                // never gets an entry, surfacing as "constant type was
-                // not recorded" downstream. Check it fresh instead — the
-                // same fallback `expr_path_ty`'s cross-package branch
-                // above uses for a foreign impl method's signature.
+                // against *this* package's own `program`/`results`, which
+                // a foreign `def_id` never populates: awaiting it would
+                // just hang or silently no-op, and `const_types` never
+                // gets an entry, surfacing as "constant type was not
+                // recorded" downstream. Check it fresh instead — the same
+                // fallback `expr_path_ty`'s cross-package branch above
+                // uses for a foreign impl method's signature.
                 let declared_ty = self.check_type_expr(&constant.ty).await?;
                 self.with_expected_expr_type(declared_ty)
                     .check_body(&constant.body)
