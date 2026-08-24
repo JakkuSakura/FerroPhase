@@ -3899,7 +3899,18 @@ impl HirTypeChecker {
         // calls below.
         let program = self.program_rc();
         let candidates: Box<dyn Iterator<Item = &hir::Item> + '_> = match &receiver_def {
-            Some(def_id) => Box::new(program.impls_for_adt(def_id.clone())),
+            // A blanket impl (`impl<I: Iterator> IntoIterator for I { .. }`
+            // — real vendored std's own idiom bridging `Iterator` into
+            // `IntoIterator` for every concrete iterator adaptor struct)
+            // applies to a concrete ADT receiver exactly as much as a
+            // non-ADT one; excluding it here (as this branch previously
+            // did unconditionally) meant a concrete Iterator-implementing
+            // struct's `.into_iter()` — along with any other method only
+            // ever provided through a blanket impl — could never resolve
+            // at all.
+            Some(def_id) => {
+                Box::new(program.impls_for_adt(def_id.clone()).chain(program.blanket_impls()))
+            }
             None => Box::new(shape_and_blanket_candidates(&program, &receiver_ty.kind)),
         };
         for item in candidates {
@@ -3928,6 +3939,16 @@ impl HirTypeChecker {
                     impl_receiver.did == receiver_def
                         && scope.generic_args_compatible(impl_args, receiver_args)
                 }
+                // A blanket impl's self-type is its own generic parameter
+                // (`impl<I: Iterator> IntoIterator for I` checks to
+                // `TyKind::Param`, never `TyKind::Adt`) — it structurally
+                // matches any concrete ADT receiver, the same permissive
+                // "no further shape to mismatch against" treatment the
+                // `Vec<T>`-style still-generic-impl case above already
+                // gets. `I`'s own trait bound (`Iterator`) isn't verified
+                // here, matching how a blanket impl already isn't bound-
+                // checked in the non-ADT branch below either.
+                (Some(_), TyKind::Adt(_, _), TyKind::Param(_)) => true,
                 (None, TyKind::Adt(_, _), _) => false,
                 // General unification instead of strict structural
                 // equality — a generic non-ADT impl (`impl<T> [T] { .. }`,
