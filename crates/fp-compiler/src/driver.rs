@@ -154,12 +154,7 @@ impl CompilerDriver {
             .state
             .borrow()
             .runtime_blob(&lir_path.package_id, lir_path, entrypoint.clone())?;
-        let program = fp_core::lir::LirProgram::from_single_blob(
-            lir_path.package_id.clone(),
-            lir_path.module_path.clone(),
-            lir,
-        )
-        .map_err(|error| CompilerDriverError::Core(error.to_string().into()))?;
+        let program = fp_core::lir::LirProgram::from_single_blob(lir_path.package_id.clone(), lir);
         let mut state = self.state.borrow_mut();
         let interpreter = state.interpreter_mut();
         *interpreter = LirInterpreter::new();
@@ -349,17 +344,11 @@ impl CompilerDriver {
                 // instead of running it through `AstToHirLowerer` (which has no
                 // arm for an already-compiled item and would just record a
                 // spurious "unimplemented" diagnostic for it).
-                let precompiled_lir_units: Vec<fp_core::lir::LirCompileUnit> = source
+                let precompiled_lir_blobs: Vec<fp_core::lir::LirBlob> = source
                     .items
                     .iter()
                     .filter_map(|pkg_item| match pkg_item.item.kind() {
-                        fp_core::ast::ItemKind::PrecompiledLir(lir) => {
-                            Some(fp_core::lir::LirCompileUnit {
-                                package_id: fp_core::hir::PackageId::default(),
-                                module_path: pkg_item.module_path.clone(),
-                                blob: lir.clone(),
-                            })
-                        }
+                        fp_core::ast::ItemKind::PrecompiledLir(lir) => Some(lir.clone()),
                         _ => None,
                     })
                     .collect();
@@ -368,8 +357,8 @@ impl CompilerDriver {
                     source,
                     self.state.borrow().data_layout.clone(),
                 );
-                if !precompiled_lir_units.is_empty() {
-                    Self::publish_precompiled_lir(&self.state, package_id, &precompiled_lir_units)?;
+                if !precompiled_lir_blobs.is_empty() {
+                    Self::publish_precompiled_lir(&self.state, package_id, &precompiled_lir_blobs)?;
                 } else if matches!(self.pipeline, PipelineMode::Native | PipelineMode::Transpile) {
                     // `Transpile` needs HIR generation + typing too (it lifts the
                     // typed HIR back to AST inside `compile_items_to_lir_units`) — it now also
@@ -460,12 +449,12 @@ impl CompilerDriver {
     fn publish_precompiled_lir(
         state: &Rc<RefCell<CompilerState>>,
         package_id: &PackageId,
-        units: &[fp_core::lir::LirCompileUnit],
+        blobs: &[fp_core::lir::LirBlob],
     ) -> Result<(), CompilerDriverError> {
-        for unit in units {
+        for blob in blobs {
             state
                 .borrow_mut()
-                .insert_lir_blob(package_id, unit.module_path.clone(), unit.blob.clone())?;
+                .insert_lir_blob_for_package(package_id, blob.clone())?;
         }
         Ok(())
     }
@@ -828,14 +817,6 @@ impl CompilerDriver {
         let executor = self.state.borrow().tasks.clone();
         let checker =
             fp_typing::HirTypeChecker::new(program, Some(dependency_program), comptime_resolver, executor);
-        // Published for the duration of this package's typecheck so a
-        // mid-typecheck `ComptimeRequest` (which only names its own
-        // `package_id`/`def_id`, see `fp_typing::ComptimeRequest`'s doc
-        // comment) can resolve this still-unpublished package back by id —
-        // cleared below regardless of how this function returns.
-        self.state
-            .borrow_mut()
-            .set_in_progress_hir_program(Some(checker.borrow().program_handle()));
         let item_ids: Vec<_> = checker
             .borrow()
             .package()
@@ -850,7 +831,6 @@ impl CompilerDriver {
         for handle in handles {
             handle.await;
         }
-        self.state.borrow_mut().set_in_progress_hir_program(None);
         // rustc-style `tcx.sess.has_errors()` gate: a per-item task that hit
         // a real typecheck error still resolves its own `TaskHandle`
         // successfully (see `typecheck_item`'s deliberate per-item isolation
@@ -949,17 +929,7 @@ impl CompilerDriver {
         // id — no need to look the compiled package up in the workspace
         // just to recover an id it already has.
         let package_id = PackageId::new(request.def_id.package_id.as_str());
-
-        let hir_program = state
-            .borrow()
-            .in_progress_hir_program()
-            .ok_or_else(|| {
-                CompilerDriverError::MissingHir(format!(
-                    "no in-progress HIR program for comptime request {:?}",
-                    request.def_id
-                ))
-            })?;
-
+        let hir_program = state.borrow().hir_program_rc();
         let mut lowering = HirToMirLowerer::new(hir_program, request.package_id.clone());
         lowering.register_package_items();
         Self::lower_package_to_mir(state, &package_id, &mut lowering, request.def_id.clone()).await?;

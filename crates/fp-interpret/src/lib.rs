@@ -9,7 +9,7 @@ use fp_core::ast::{
     ValueTuple,
 };
 use fp_core::lir::{
-    BasicBlockId, CallingConvention, ComptimeOp, LirCodeUnitKind, LirBasicBlock, LirConstant,
+    BasicBlockId, CallingConvention, ComptimeOp, LirBasicBlock, LirConstant,
     LirConstantAggregate, LirConstantData, LirConstantExpr, LirConstantKind, LirDataLayout,
     LirFloat, LirFunction, LirFunctionRef, LirInstruction, LirInstructionKind, LirInteger,
     LirLocal, LirBlob, LirTerminator, LirType, LirValue, LirValueKind, Name, RegisterId,
@@ -144,8 +144,7 @@ impl LirInterpreter {
     /// on demand, via `LirProgram`'s own lookup APIs.
     pub fn load_program(&mut self, program: Rc<fp_core::lir::LirProgram>) -> LirResult<()> {
         for package in program.packages.values() {
-            let blob = package.own_artifacts.to_blob();
-            self.populate_globals_batch(&[&blob])?;
+            self.populate_globals_batch(&[&package.blob])?;
         }
         self.program = Some(program);
         Ok(())
@@ -162,12 +161,7 @@ impl LirInterpreter {
 
     #[cfg(test)]
     fn run_main_with_package(&mut self, program: &LirBlob, package_id: PackageId) -> LirResult<Value> {
-        let lir_program = fp_core::lir::LirProgram::from_single_blob(
-            package_id,
-            fp_core::ast::path::QualifiedPath::new(Vec::new()),
-            program.clone(),
-        )
-        .map_err(|error| VmError::Runtime(error.to_string()))?;
+        let lir_program = fp_core::lir::LirProgram::from_single_blob(package_id, program.clone());
         self.load_program(Rc::new(lir_program))?;
         let func = program
             .functions
@@ -188,20 +182,10 @@ impl LirInterpreter {
         let function = self
             .program
             .as_ref()
-            .and_then(|program| program.package(package_id))
-            .and_then(|package| {
-                package.own_artifacts.artifacts().iter().find_map(|artifact| {
-                    match &artifact.kind {
-                        LirCodeUnitKind::Function(function)
-                            if function.def_id.as_ref() == Some(def_id) =>
-                        {
-                            Some(function.clone())
-                        }
-                        _ => None,
-                    }
-                })
-            })
+            .and_then(|program| program.find_function_by_def_id(def_id))
+            .cloned()
             .ok_or_else(|| VmError::Runtime(format!("entrypoint {def_id} was not emitted")))?;
+        let _ = package_id;
         self.run_function(&function, &[])
     }
 
@@ -2865,12 +2849,7 @@ impl fp_core::backend::TargetBackend for InterpreterBackend {
             .ok_or_else(|| {
                 fp_core::error::Error::from(format!("package `{package_id}` has no `main` entrypoint"))
             })?;
-        let program = fp_core::lir::LirProgram::from_single_blob(
-            package_id.clone(),
-            fp_core::ast::path::QualifiedPath::new(Vec::new()),
-            lir,
-        )
-        .map_err(|error| fp_core::error::Error::from(error.to_string()))?;
+        let program = fp_core::lir::LirProgram::from_single_blob(package_id.clone(), lir);
         let mut interpreter = LirInterpreter::new();
         interpreter
             .load_program(Rc::new(program))
@@ -3471,12 +3450,7 @@ mod tests {
         };
 
         let mut interpreter = LirInterpreter::new();
-        let program = fp_core::lir::LirProgram::from_single_blob(
-            PackageId::new(""),
-            fp_core::ast::path::QualifiedPath::new(Vec::new()),
-            make(shout_fn),
-        )
-        .unwrap();
+        let program = fp_core::lir::LirProgram::from_single_blob(PackageId::new(""), make(shout_fn));
         interpreter.load_program(Rc::new(program)).unwrap();
 
         // Register 1: the closure `unionify(shout)` would have produced.

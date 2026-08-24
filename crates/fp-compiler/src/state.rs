@@ -23,27 +23,19 @@ pub struct CompilerState {
     /// (`HirToMirLowerer::new`, `hir_program_rc`) get a cheap pointer clone
     /// instead of deep-cloning every published package's HIR on every call.
     hir_program: Rc<hir::HirProgram>,
-    /// The whole workspace `HirProgram` a package's `TypingShared` is
-    /// checking against, published only for the duration of that package's
-    /// typecheck (see `fp_typing::TypingShared::program_handle`) — this is
-    /// what lets a mid-typecheck `ComptimeRequest` (which only carries
-    /// `package_id`/`def_id`, not its own `Rc<HirPackage>`) resolve its own
-    /// still-unpublished package back by id.
-    in_progress_hir_program: Option<Rc<hir::HirProgram>>,
     /// Every package's MIR content produced so far this session, one
     /// `mir::MirCodeUnit` per top-level `DefId` (see `mir::MirPackage`'s
     /// own doc comment) — replaces the old `BTreeMap<MirId, MirModule>`,
     /// which stored one whole flattened program per artifact-id and had no
     /// way to update just the one item a resolved comptime value actually
     /// affects. `Rc`-wrapped for the same reason as `lir_program` below —
-    /// `MirToLirLowerer` owns a cloned handle directly (`with_mir_program`)
-    /// instead of the driver cloning `dependency_packages`/`own_units` out
-    /// of it on every call.
+    /// `MirToLirLowerer` owns a cloned handle directly (`MirToLirLowerer::new`)
+    /// instead of the driver cloning dependency packages/own units out of
+    /// it on every call.
     mir_program: Rc<mir::MirProgram>,
     /// Mirrors `mir_program` for LIR — one `lir::LirProgram`, a collection
-    /// of `LirPackage`s, each already a collection of `LirCodeUnit`s (via
-    /// its own `own_artifacts: LirUnitTable`, keyed by `Name`). `Rc`-wrapped
-    /// so `evaluate_comptime_lir`'s `LirInterpreter::load_program` (which
+    /// of `LirPackage`s, each just a `LirBlob`. `Rc`-wrapped so
+    /// `evaluate_comptime_lir`'s `LirInterpreter::load_program` (which
     /// needs its own `Rc<lir::LirProgram>`) can clone the handle instead of
     /// deep-cloning the whole program on every comptime evaluation; mutating
     /// methods below go through `Rc::make_mut` (a real clone only if some
@@ -116,7 +108,6 @@ impl CompilerState {
     ) -> Self {
         Self {
             hir_program: Rc::new(hir::HirProgram::new()),
-            in_progress_hir_program: None,
             mir_program: Rc::new(mir::MirProgram::new()),
             lir_program: Rc::new(lir::LirProgram::new()),
             runtime_programs: std::collections::HashMap::new(),
@@ -140,22 +131,6 @@ impl CompilerState {
     /// already keys by that, so no separate id parameter is needed.
     pub fn insert_hir(&mut self, package: hir::HirPackage) {
         Rc::make_mut(&mut self.hir_program).add_package(std::rc::Rc::new(package));
-    }
-
-    /// Publishes `program` (every already-published dependency, plus the
-    /// package currently being type-checked) for the duration of that
-    /// package's typecheck — see `in_progress_hir_program`'s doc comment.
-    pub fn set_in_progress_hir_program(&mut self, program: Option<Rc<hir::HirProgram>>) {
-        self.in_progress_hir_program = program;
-    }
-
-    /// The whole workspace `HirProgram` a package's typecheck is currently
-    /// in progress against, if any — the mid-typecheck counterpart of
-    /// `hir_program`'s already-published packages, for resolving a
-    /// `ComptimeRequest` whose own package hasn't finished typechecking
-    /// (and so isn't in `hir_program` yet).
-    pub fn in_progress_hir_program(&self) -> Option<Rc<hir::HirProgram>> {
-        self.in_progress_hir_program.clone()
     }
 
     /// Records `def_id`'s own lowered content — the only way `mir_program`
@@ -183,11 +158,10 @@ impl CompilerState {
     }
 
     /// Cheap `Rc` clone of the whole session's `mir::MirProgram` — what
-    /// `MirToLirLowerer::with_mir_program` owns directly (its lazy
-    /// callee-signature/ADT-def lookups read straight off this, in this
-    /// package first and then every other loaded package, without
-    /// requiring a whole-program predeclare sweep or the driver cloning
-    /// `dependency_packages`/`own_units` out on every call).
+    /// `MirToLirLowerer::new` owns directly (its lazy callee-signature/
+    /// ADT-def lookups read straight off this, in this package first and
+    /// then every other loaded package, without requiring a whole-program
+    /// predeclare sweep).
     pub fn mir_program_rc(&self) -> Rc<mir::MirProgram> {
         self.mir_program.clone()
     }
@@ -207,11 +181,12 @@ impl CompilerState {
         package.extend_adt_defs(adt_defs);
     }
 
-    /// Resets `package_id`'s LIR artifacts back to empty — used when
-    /// re-lowering a whole package after a comptime value resolves
+    /// Resets `package_id`'s LIR back to empty — used when re-lowering a
+    /// whole package after a comptime value resolves
     /// (`CompilerDriver::relower_cached_lir_units`), since
-    /// `LirUnitTable::add_program` errors on a duplicate artifact name
-    /// rather than silently overwriting the previous lowering.
+    /// `LirBlob::extend` errors on a data-layout mismatch rather than
+    /// silently overwriting the previous lowering, and appending onto a
+    /// stale blob would just duplicate everything already in it.
     pub fn reset_lir_package(&mut self, package_id: &PackageId) {
         let data_layout = self.data_layout.clone();
         Rc::make_mut(&mut self.lir_program)
@@ -219,60 +194,27 @@ impl CompilerState {
             .insert(package_id.clone(), lir::LirPackage::new(data_layout));
     }
 
-    /// Records one LIR artifact into `package_id`'s own unit table — the
-    /// only way `lir_program` is ever written, mirroring `insert_mir_unit`.
-    pub fn insert_lir_unit(
-        &mut self,
-        package_id: &PackageId,
-        unit: lir::LirCodeUnit,
-    ) -> Result<(), CompilerDriverError> {
-        let data_layout = self.data_layout.clone();
-        Rc::make_mut(&mut self.lir_program)
-            .package_mut(package_id, &data_layout)
-            .own_artifacts
-            .add_artifact(unit)
-            .map_err(|error| CompilerDriverError::Core(error.to_string().into()))
-    }
-
-    /// Splits a whole flat `lir::LirBlob` (e.g. `MirToLirLowerer::transform`'s
-    /// output) back into its individual artifacts and records each one via
-    /// `insert_lir_unit` — `LirUnitTable::add_program` already does exactly
-    /// this splitting, so this just routes to it instead of duplicating
-    /// the per-`LirCodeUnitKind` match here.
-    pub fn insert_lir_blob(
-        &mut self,
-        package_id: &PackageId,
-        module_path: fp_core::ast::path::QualifiedPath,
-        blob: lir::LirBlob,
-    ) -> Result<(), CompilerDriverError> {
-        let data_layout = self.data_layout.clone();
-        Rc::make_mut(&mut self.lir_program)
-            .package_mut(package_id, &data_layout)
-            .own_artifacts
-            .add_program(package_id.clone(), module_path, blob)
-            .map_err(|error| CompilerDriverError::Core(error.to_string().into()))
-    }
-
-    /// Same as `insert_lir_blob`, for a caller with no meaningful module
-    /// path of its own (`CompilerDriver`'s per-`DefId` lowering, which
-    /// stores each unit under its own `DefId` — see `mir_unit`/
-    /// `insert_mir_unit` — and has no separate module-path concept to
-    /// thread through here).
+    /// Merges `blob` into `package_id`'s own `LirBlob` — the only way
+    /// `lir_program` is ever written, mirroring `insert_mir_unit`.
     pub fn insert_lir_blob_for_package(
         &mut self,
         package_id: &PackageId,
         blob: lir::LirBlob,
     ) -> Result<(), CompilerDriverError> {
-        self.insert_lir_blob(package_id, fp_core::ast::path::QualifiedPath::new(Vec::new()), blob)
+        let data_layout = self.data_layout.clone();
+        Rc::make_mut(&mut self.lir_program)
+            .package_mut(package_id, &data_layout)
+            .blob
+            .extend(blob)
+            .map_err(|error| CompilerDriverError::Core(error.to_string().into()))
     }
 
-    /// Every artifact `package_id` has produced so far, folded into one
-    /// flat `lir::LirBlob`. Empty (not an error) if the package has no
-    /// artifacts yet.
+    /// `package_id`'s own `lir::LirBlob`. Empty (not an error) if the
+    /// package hasn't produced any LIR yet.
     pub fn lir_blob(&self, package_id: &PackageId) -> lir::LirBlob {
         self.lir_program
             .package(package_id)
-            .map(|package| package.own_artifacts.to_blob())
+            .map(|package| package.blob.clone())
             .unwrap_or_else(|| lir::LirBlob::new(self.data_layout.clone()))
     }
 
