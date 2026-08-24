@@ -1442,6 +1442,22 @@ impl HirTypeChecker {
                 }
                 hir::ExprKind::Array(values) => {
                     if values.is_empty() {
+                        // No element to infer from — fall back to the
+                        // ambient expected-type hint (a `let` binding's
+                        // own type annotation, a function's declared
+                        // return type, ...), the same hint threaded
+                        // through everywhere else in this checker
+                        // (`with_expected_expr_type`). Only an array/slice
+                        // expectation is a legitimate answer here; any
+                        // other expected type just means this `[]` isn't
+                        // actually in array position yet (mismatch is
+                        // reported elsewhere), so still fall through to
+                        // the error in that case.
+                        if let Some(expected) = &self.expected_expr_type {
+                            if matches!(&expected.kind, TyKind::Array(_, _) | TyKind::Slice(_)) {
+                                return Ok(expected.clone());
+                            }
+                        }
                         return Ok(self.error_ty("empty array has no inferable element type"));
                     }
                     let mut value_types = Vec::with_capacity(values.len());
