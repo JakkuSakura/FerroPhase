@@ -3450,6 +3450,36 @@ impl AstToHirLowerer {
             }
             return Some((qualified, alias.clone()));
         }
+        // A multi-segment reference to a *sibling* alias (`c_char_definition
+        // ::c_char`, from within `core::ffi::primitives`, referencing
+        // `pub(super) type c_char` inside its own nested `mod
+        // c_char_definition`) is registered under its *fully* qualified
+        // key (`core::ffi::primitives::c_char_definition::c_char` — see
+        // `register_type_alias`'s own `self.qualify_name`, always run
+        // relative to the *declaring* module). The plain segments-joined
+        // key above never carries that module prefix, so it can never
+        // match here — walk the same current-module/ancestor prefixes
+        // `qualify_name_in_ancestor` already uses for the single-segment
+        // case, just with the *entire* multi-segment tail appended instead
+        // of one name.
+        if segments.len() > 1 {
+            let mut prefix = self.module_path.segments.clone();
+            loop {
+                let candidate = fp_core::ast::path::QualifiedPath::new(prefix.clone())
+                    .join(segments)
+                    .to_key();
+                if let Some(alias) = self.type_aliases.get(&candidate) {
+                    if self.ty_is_simple_path(alias, segments) {
+                        return None;
+                    }
+                    return Some((candidate, alias.clone()));
+                }
+                if prefix.is_empty() {
+                    break;
+                }
+                prefix.pop();
+            }
+        }
         if segments.len() == 1 {
             if let Some(ancestor_key) = self.qualify_name_in_ancestor(&segments[0]) {
                 if let Some(alias) = self.type_aliases.get(&ancestor_key) {
