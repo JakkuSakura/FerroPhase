@@ -2884,7 +2884,9 @@ impl HirTypeChecker {
         // "defining module unknown, search by suffix" fallback
         // `ast_to_hir`'s own `resolve_ambiguous_type_export_by_name`
         // already uses for the analogous type-position case.
-        let recovered_def_id = if path.res.is_none() && path.segments.len() >= 2 {
+        let recovered_def_id = if !matches!(path.res, Some(hir::Res::Def(_)))
+            && path.segments.len() >= 2
+        {
             let trait_name = &path.segments[path.segments.len() - 2].name;
             match self.program_rc().find_export_by_name(trait_name.as_str()) {
                 Some(hir::Res::Def(def_id))
