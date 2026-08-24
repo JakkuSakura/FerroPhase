@@ -629,15 +629,9 @@ impl CompilerDriver {
                 // produced (shared `Rc<RefCell<MirPackage>>` — see
                 // `HirToMirLowerer::mir_package`'s own doc comment); only
                 // `full_layouts`/`opaque_payload_sizes` are a folded view
-                // computed after the fact, so those alone need writing here.
-                let full_layouts = Self::collect_full_layouts(&lowering);
-                let opaque_payload_sizes = lowering.opaque_payload_sizes();
-                {
-                    let mut package = state.borrow_mut().mir_package_rc(&current_package_id);
-                    let mut package = package.borrow_mut();
-                    package.full_layouts = full_layouts;
-                    package.opaque_payload_sizes = opaque_payload_sizes;
-                }
+                // computed after the fact, written in place on that same
+                // shared package by `sync_layout_exports` itself.
+                lowering.sync_layout_exports();
 
                 // --- MIR -> LIR: per-`DefId`, lazy signature resolution, no
                 // whole-program predeclare sweep — `MirToLirLowerer` reads
@@ -692,14 +686,7 @@ impl CompilerDriver {
                 "HIR-to-MIR lowering reported diagnostics: {details}"
             )));
         }
-        let full_layouts = Self::collect_full_layouts(&lowering);
-        let opaque_payload_sizes = lowering.opaque_payload_sizes();
-        {
-            let package = state.borrow_mut().mir_package_rc(&current_package_id);
-            let mut package = package.borrow_mut();
-            package.full_layouts = full_layouts;
-            package.opaque_payload_sizes = opaque_payload_sizes;
-        }
+        lowering.sync_layout_exports();
 
         // --- MIR -> LIR: per-`DefId`, lazy signature resolution, no
         // whole-program predeclare sweep — `MirToLirLowerer` reads
@@ -873,14 +860,7 @@ impl CompilerDriver {
         lowering.register_package_items();
         Self::lower_package_to_mir(state, &package_id, &mut lowering, request.def_id.clone()).await?;
 
-        let full_layouts = Self::collect_full_layouts(&lowering);
-        let opaque_payload_sizes = lowering.opaque_payload_sizes();
-        {
-            let package = state.borrow_mut().mir_package_rc(&package_id);
-            let mut package = package.borrow_mut();
-            package.full_layouts = full_layouts;
-            package.opaque_payload_sizes = opaque_payload_sizes;
-        }
+        lowering.sync_layout_exports();
 
         let mut lir_gen = Self::new_lir_generator(state, &package_id);
         Self::lower_package_to_lir_with(state, &package_id, &mut lir_gen, request.def_id.clone()).await?;
@@ -940,29 +920,6 @@ impl CompilerDriver {
             state.borrow_mut().insert_lir_blob_for_package(package_id, blob);
         }
         Ok(())
-    }
-
-    /// Folds `struct_layout_map`/`enum_layout_map` into the one combined
-    /// `(DefId, args) -> field types` view `MirToLirLowerer` expects — enums
-    /// share the same channel as structs (`mir_to_lir`'s `lir_type_from_ty`
-    /// reconstructs an enum's runtime shape as `{tag, ...payload slots}`,
-    /// exactly mirroring `EnumLayout::tag_ty`/`payload_tys` here).
-    fn collect_full_layouts(
-        lowering: &HirToMirLowerer,
-    ) -> HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>> {
-        let mut full_layouts: HashMap<(fp_core::mir::DefId, Vec<fp_core::mir::Ty>), Vec<fp_core::mir::Ty>> =
-            lowering
-                .struct_layout_map()
-                .iter()
-                .map(|(key, layout)| ((key.def_id.clone(), key.args.clone()), layout.field_tys.clone()))
-                .collect();
-        for (key, layout) in lowering.enum_layout_map() {
-            let mut fields = Vec::with_capacity(1 + layout.payload_tys.len());
-            fields.push(layout.tag_ty.clone());
-            fields.extend(layout.payload_tys.iter().cloned());
-            full_layouts.insert((key.def_id.clone(), key.args.clone()), fields);
-        }
-        full_layouts
     }
 
     /// Builds a `MirToLirLowerer` that reads everything it needs —

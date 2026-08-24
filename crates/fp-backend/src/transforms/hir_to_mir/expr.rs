@@ -797,28 +797,37 @@ impl HirToMirLowerer {
         }
     }
 
-    pub fn struct_layout_map(&self) -> HashMap<StructLayoutKey, StructLayout> {
-        self.mir_package.borrow().struct_layouts.clone()
-    }
-
-    pub fn enum_layout_map(&self) -> HashMap<EnumLayoutKey, EnumLayout> {
-        self.mir_package.borrow().enum_layouts.clone()
-    }
-
-    /// Byte size for every opaque type minted for a mismatched/union enum
-    /// payload slot (see `opaque_ty_sizes`'s own doc comment) — exported so
-    /// `mir_to_lir` can size that slot's runtime storage (a raw byte
-    /// buffer big enough for whichever variant is actually active)
-    /// without needing to resolve the opaque placeholder's (nonexistent)
-    /// field structure.
-    pub fn opaque_payload_sizes(&self) -> HashMap<String, u64> {
-        self.mir_package.borrow().opaque_ty_sizes.clone()
+    /// Folds `struct_layouts`/`enum_layouts` into the one combined
+    /// `(DefId, args) -> field Tys` shape `mir_to_lir` actually looks
+    /// layouts up by, and mirrors `opaque_ty_sizes` into its export-facing
+    /// field name — both written straight onto the shared `mir_package`
+    /// (the exact same `Rc<RefCell<MirPackage>>` `CompilerState`/
+    /// `MirToLirLowerer` already read), so there's no separate owned copy
+    /// for a caller to re-fetch the package and reassign afterward.
+    pub fn sync_layout_exports(&self) {
+        let mut full_layouts = HashMap::new();
+        for (key, layout) in self.mir_package.borrow().struct_layouts.iter() {
+            full_layouts.insert(
+                (key.def_id.clone(), key.args.clone()),
+                layout.field_tys.clone(),
+            );
+        }
+        for (key, layout) in self.mir_package.borrow().enum_layouts.iter() {
+            let mut fields = Vec::with_capacity(1 + layout.payload_tys.len());
+            fields.push(layout.tag_ty.clone());
+            fields.extend(layout.payload_tys.iter().cloned());
+            full_layouts.insert((key.def_id.clone(), key.args.clone()), fields);
+        }
+        let opaque_payload_sizes = self.mir_package.borrow().opaque_ty_sizes.clone();
+        let mut mir_package = self.mir_package.borrow_mut();
+        mir_package.full_layouts = full_layouts;
+        mir_package.opaque_payload_sizes = opaque_payload_sizes;
     }
 
     /// Struct field types only — enums are exported separately via
-    /// `enum_layout_map` (keyed by `(DefId, args)`, since two different
-    /// instantiations of a generic enum need different field lists, unlike
-    /// this bare-`DefId`-keyed map).
+    /// `sync_layout_exports`'s `full_layouts` (keyed by `(DefId, args)`,
+    /// since two different instantiations of a generic enum need different
+    /// field lists, unlike this bare-`DefId`-keyed map).
     pub fn all_adt_field_tys(&self) -> HashMap<hir::DefId, Vec<Ty>> {
         let mut map = HashMap::new();
         for (key, layout) in &self.mir_package.borrow().struct_layouts {
