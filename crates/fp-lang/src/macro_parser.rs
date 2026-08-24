@@ -691,6 +691,24 @@ pub fn expand_item_macro_invocation(
     defs: &HashMap<String, MacroRulesDef>,
 ) -> Option<Vec<Item>> {
     let macro_name = invocation.path.segments.last()?.name.as_str();
+    // `cfg_select! { pred => { items... } _ => { items... } }` used at item
+    // position (real vendored std's own `mod c_char_definition { crate::
+    // cfg_select! { .. } }`) — this is a `#[rustc_builtin_macro]` with no
+    // real `macro_rules!`/`macro` body to look up in `defs` at all (see
+    // `parse_macro_2_def`'s doc comment: every such body is just a marker
+    // comment). `normalization.rs`'s `select_cfg_select_arm` already
+    // handles the identical *expression*-position case; every platform
+    // branch there is cfg-gated on real target predicates that never hold
+    // for this transpiler's host-evaluated cfg (see its own doc comment),
+    // so without this arm the whole invocation — and everything it would
+    // have defined — is silently dropped, same root cause behind the
+    // "unresolved type path" family for e.g. `c_char_definition::c_char`.
+    if macro_name == "cfg_select" {
+        let arm_tokens = crate::normalization::select_cfg_select_arm(&invocation.token_trees)?;
+        let file_id = macro_tokens_file_id(&arm_tokens);
+        let flat = macro_token_trees_to_tokens(&arm_tokens);
+        return crate::ast::parse_items_tokens(&flat, file_id).ok();
+    }
     let def = defs.get(macro_name)?;
     let file_id = macro_rules_def_file_id(def);
     for rule in &def.rules {

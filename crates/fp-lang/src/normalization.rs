@@ -809,7 +809,7 @@ fn flatten_or_literal_pattern(expr: &Expr) -> Option<Vec<Expr>> {
 /// The caller always wraps the returned tokens in `{ }` before parsing,
 /// which is semantically identical to the bare form in expression
 /// position, so both shapes return the same way.
-fn select_cfg_select_arm(token_trees: &[MacroTokenTree]) -> Option<Vec<MacroTokenTree>> {
+pub(crate) fn select_cfg_select_arm(token_trees: &[MacroTokenTree]) -> Option<Vec<MacroTokenTree>> {
     let mut iter = token_trees.iter().peekable();
     loop {
         iter.peek()?;
