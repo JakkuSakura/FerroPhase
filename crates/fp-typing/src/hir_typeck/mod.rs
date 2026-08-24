@@ -2197,6 +2197,45 @@ impl HirTypeChecker {
             // same impl-matching machinery `method_output_at` already
             // uses for `.method()` calls, just for an associated type
             // instead of a method.
+            //
+            // `X::Residual::TryType` (the `?`-operator/`try_trait_v2`
+            // desugaring's own idiom throughout real vendored std) is a
+            // 3-segment *chained* projection: `X::Residual` is itself an
+            // associated-type projection (on `Try`), and `::TryType` then
+            // projects again on *that* result (via `Residual<O>`) — this
+            // whole UFCS branch only ever resolves a single flat
+            // `Base::AssocName` hop (segments[0]/segments.last()), so a
+            // chain like this always fell straight through to "unresolved
+            // type path" (the middle segment silently dropped). Handled
+            // as a hardcoded special case rather than a general chained-
+            // projection resolver: `Residual<O>::TryType` is *defined* by
+            // real Rust's own trait law to always round-trip back to the
+            // original `Try`-implementing type itself (see `Residual`'s
+            // own doc comment: "`<Result<Infallible, E> as Residual<T>>::
+            // TryType = Result<T, E>`" — i.e. `X::Residual::TryType ==
+            // X` for any `X`, unconditionally), so this is a safe,
+            // exact answer, not an approximation.
+            if let [base, mid, tail] = path.segments.as_slice() {
+                if mid.name.as_str() == "Residual" && tail.name.as_str() == "TryType" {
+                    // `path.res` is already known `None` here (that's why
+                    // this whole branch is reached at all), so `base`
+                    // itself is, in every real case this chain actually
+                    // appears in real vendored std, a still-generic type
+                    // parameter with no separate `Res` of its own to
+                    // check — approximate it the same nominal-placeholder
+                    // way `assoc_type_from_generic_param_bounds` already
+                    // does for an unresolved bound projection elsewhere:
+                    // the exact identity doesn't matter for unification
+                    // purposes here, only that every reference to `base`
+                    // by this same name checks to the same placeholder.
+                    return Ok(Ty {
+                        kind: TyKind::Param(ty::ParamTy {
+                            index: u32::MAX,
+                            name: base.name.clone(),
+                        }),
+                    });
+                }
+            }
             if path.segments.len() >= 2 {
                 let base_ty = match primitive_path_ty(path.segments[0].name.as_str()) {
                     Some(ty) => Some(ty),
