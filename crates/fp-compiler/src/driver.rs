@@ -516,7 +516,20 @@ impl CompilerDriver {
         let mut lowering = HirToMirLowerer::new(hir_program, hir_package_id.clone(), mir_package);
         lowering.register_package_items();
         let current_package = lowering.current_package_handle();
+        // Only the package's own public surface (plus `main`, conventionally
+        // private — see `resolve_entrypoint_def_id`'s doc comment) needs an
+        // explicit root here: every already-established lazy path
+        // (`ensure_function_lowered`/`ensure_method_lowered`/
+        // `ensure_const_info`/`try_lazily_register_adt`/
+        // `try_lazily_register_method`, all triggered from within
+        // `lower_package_to_mir` itself as a lowered body actually
+        // references them) pulls in whatever a root item transitively
+        // needs. A private item unreached from any root is genuinely dead
+        // code and no longer gets a MIR unit at all.
         for item in &current_package.items {
+            if !Self::is_lowering_root(item) {
+                continue;
+            }
             Self::lower_package_to_mir(&state, &current_package_id, &mut lowering, item.def_id.clone()).await?;
         }
         let sentinel = hir::DefId::new(hir_package_id.clone(), u32::MAX);
@@ -658,7 +671,14 @@ impl CompilerDriver {
             let mut lowering = HirToMirLowerer::new(hir_program, hir_package_id.clone(), mir_package);
             lowering.register_package_items();
             let current_package = lowering.current_package_handle();
+            // Same public-surface-plus-`main`-only roots as the Native
+            // pipeline's own loop (`is_lowering_root`'s doc comment) — the
+            // same lazy on-demand paths pull in whatever a root actually
+            // references, transitively.
             for item in &current_package.items {
+                if !Self::is_lowering_root(item) {
+                    continue;
+                }
                 Self::lower_package_to_mir(&state, &current_package_id, &mut lowering, item.def_id.clone()).await?;
             }
             let sentinel = hir::DefId::new(hir_package_id.clone(), u32::MAX);
@@ -881,6 +901,17 @@ impl CompilerDriver {
         Self::lower_package_to_lir_with(state, &package_id, &mut lir_gen, request.def_id.clone()).await?;
 
         Self::evaluate_comptime_lir(state, &request.def_id)
+    }
+
+    /// Whether `item` needs an explicit HIR->MIR lowering root — the
+    /// package's own public surface, plus `main` (conventionally declared
+    /// without `pub` — see `resolve_entrypoint_def_id`'s doc comment, so a
+    /// bare `Visibility::Public` check alone would miss it). Every other
+    /// item, if actually used, is pulled in transitively by whichever root
+    /// (or root's transitive dependency) references it.
+    fn is_lowering_root(item: &hir::Item) -> bool {
+        item.visibility == hir::Visibility::Public
+            || matches!(&item.kind, hir::ItemKind::Function(function) if function.sig.name.as_str() == "main")
     }
 
     /// One `DefId`'s own HIR->MIR lowering — call once per top-level `DefId`
