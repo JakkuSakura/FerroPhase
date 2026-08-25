@@ -1,4 +1,3 @@
-use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicKind;
 use fp_core::mir::ty::{
@@ -89,8 +88,6 @@ enum PlaceAccess {
 }
 
 impl MirToLirLowerer {
-    const DIAGNOSTIC_CONTEXT: &'static str = "mir→lir";
-
     /// Create a new LIR generator, owning `mir_program`/`lir_program`
     /// directly (see their own doc comments) — the caller (`driver.rs`'s
     /// `new_lir_generator`) supplies the whole session's current
@@ -352,13 +349,6 @@ impl MirToLirLowerer {
             lir_program.queries.append(&mut item_blob.queries);
         }
         Ok(lir_program)
-    }
-
-    #[allow(dead_code)]
-    fn emit_warning(&self, message: impl Into<String>) {
-        diagnostic_manager().add_diagnostic(
-            Diagnostic::warning(message.into()).with_source_context(Self::DIAGNOSTIC_CONTEXT),
-        );
     }
 
     fn predeclare_function_signatures(&mut self, program: &mir::MirCodeUnit) {

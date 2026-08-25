@@ -88,14 +88,16 @@ impl KtDecl {
 }
 
 /// Parses declarations, reporting any skipped/unparseable declaration as a
-/// warning through `fp_core::diagnostics` (context `"kt_parser"`) rather
-/// than a bespoke return-value list — callers that want a per-file count
-/// (e.g. a coverage measurement) can snapshot
-/// `fp_core::diagnostics::diagnostic_manager()` before/after the call.
-pub fn parse_declarations(source: &str) -> Result<Vec<KtDecl>, KtParseError> {
+/// warning on `diagnostics` (context `"kt_parser"`) rather than a bespoke
+/// return-value list — callers that want a per-file count (e.g. a coverage
+/// measurement) can snapshot `diagnostics` before/after the call.
+pub fn parse_declarations(
+    source: &str,
+    diagnostics: &fp_core::diagnostics::DiagnosticManager,
+) -> Result<Vec<KtDecl>, KtParseError> {
     let tokens = tokenize(source)?;
     let mut cur = Cursor { tokens: &tokens, pos: 0 };
-    Ok(parse_body(&mut cur, /* top_level */ true))
+    Ok(parse_body(&mut cur, /* top_level */ true, diagnostics))
 }
 
 const MODIFIER_KEYWORDS: &[&str] = &[
@@ -161,7 +163,11 @@ impl<'a> Cursor<'a> {
 
 /// Parses declarations until end of input (top level) or a matching `}`
 /// (nested member list) — the closing brace itself is consumed by the caller.
-fn parse_body(cur: &mut Cursor, top_level: bool) -> Vec<KtDecl> {
+fn parse_body(
+    cur: &mut Cursor,
+    top_level: bool,
+    diagnostics: &fp_core::diagnostics::DiagnosticManager,
+) -> Vec<KtDecl> {
     let mut decls = Vec::new();
     loop {
         match cur.peek() {
@@ -175,11 +181,14 @@ fn parse_body(cur: &mut Cursor, top_level: bool) -> Vec<KtDecl> {
             }
             _ => {
                 let start = cur.pos;
-                match parse_one_declaration(cur) {
+                match parse_one_declaration(cur, diagnostics) {
                     Ok(Some(decl)) => decls.push(decl),
                     Ok(None) => {}
                     Err(err) => {
-                        fp_core::diagnostics::report_warning_with_context("kt_parser", err);
+                        diagnostics.add_diagnostic(
+                            fp_core::diagnostics::Diagnostic::warning(err)
+                                .with_source_context("kt_parser"),
+                        );
                         if cur.pos == start {
                             cur.bump();
                         }
@@ -385,13 +394,18 @@ fn skip_balanced(cur: &mut Cursor, open: &str, close: &str) {
     }
 }
 
-fn parse_one_declaration(cur: &mut Cursor) -> Result<Option<KtDecl>, String> {
+fn parse_one_declaration(
+    cur: &mut Cursor,
+    diagnostics: &fp_core::diagnostics::DiagnosticManager,
+) -> Result<Option<KtDecl>, String> {
     let mods = skip_annotations_and_modifiers(cur);
     let decl = match cur.peek() {
         Some("fun") => Some(parse_fun_decl(cur)?),
-        Some("class") => Some(parse_class_like(cur, KtDeclKind::Class, mods.is_enum)?),
-        Some("interface") => Some(parse_class_like(cur, KtDeclKind::Interface, false)?),
-        Some("object") => Some(parse_class_like(cur, KtDeclKind::Object, false)?),
+        Some("class") => Some(parse_class_like(cur, KtDeclKind::Class, mods.is_enum, diagnostics)?),
+        Some("interface") => {
+            Some(parse_class_like(cur, KtDeclKind::Interface, false, diagnostics)?)
+        }
+        Some("object") => Some(parse_class_like(cur, KtDeclKind::Object, false, diagnostics)?),
         Some("val") | Some("var") => Some(parse_property_decl(cur)?),
         Some("typealias") => Some(parse_typealias_decl(cur)?),
         _ => None,
@@ -676,7 +690,12 @@ fn skip_expression_statement(cur: &mut Cursor) {
     }
 }
 
-fn parse_class_like(cur: &mut Cursor, kind: KtDeclKind, is_enum: bool) -> Result<KtDecl, String> {
+fn parse_class_like(
+    cur: &mut Cursor,
+    kind: KtDeclKind,
+    is_enum: bool,
+    diagnostics: &fp_core::diagnostics::DiagnosticManager,
+) -> Result<KtDecl, String> {
     cur.bump(); // class | interface | object
     let name = if kind == KtDeclKind::Object && !matches!(cur.peek_kind(), Some(TokenKind::Ident)) {
         // Anonymous companion object.
@@ -711,7 +730,7 @@ fn parse_class_like(cur: &mut Cursor, kind: KtDeclKind, is_enum: bool) -> Result
         if is_enum {
             members.extend(parse_enum_constants(cur));
         }
-        members.extend(parse_body(cur, false));
+        members.extend(parse_body(cur, false, diagnostics));
         let _ = cur.expect("}");
     }
 

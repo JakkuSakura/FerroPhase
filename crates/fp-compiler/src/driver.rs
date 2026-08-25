@@ -739,7 +739,7 @@ impl CompilerDriver {
         })
         .await
         {
-            fp_core::diagnostics::report_warning_with_context(
+            fp_core::diagnostics::DiagnosticManager::report_warning_with_context(
                 "const-eval".to_string(),
                 format!("HIR->MIR/LIR lowering failed, skipping comptime validation for this package: {error}"),
             );

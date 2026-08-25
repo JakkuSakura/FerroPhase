@@ -402,11 +402,6 @@ async fn run_compile_pipeline(
 
     // Phase 2: serialize + write every package now that the workspace-wide
     // mutability set (and any other cross-package info) is complete.
-    // Snapshotted so codegen-time diagnostics (e.g. a Kotlin function that
-    // couldn't be transpiled — see `fp_kotlin`'s `report_untranspilable`)
-    // get surfaced below instead of silently accumulating in the global
-    // `DiagnosticManager` with nothing ever reading them back.
-    let diagnostics_snapshot = fp_core::diagnostics::diagnostic_manager().snapshot();
     for package_id in &packages {
         // Any op materialization the backend needs (e.g. Kotlin's
         // portable-op -> Kotlin-idiom pass) happens inside
@@ -459,14 +454,6 @@ async fn run_compile_pipeline(
             .exec()
             .map_err(|e| CliError::Compilation(e.to_string()))?;
     }
-
-    let codegen_diagnostics =
-        fp_core::diagnostics::diagnostic_manager().diagnostics_since(diagnostics_snapshot);
-    fp_core::diagnostics::DiagnosticManager::emit(
-        &codegen_diagnostics,
-        Some(input.display().to_string().as_str()),
-        &fp_core::diagnostics::DiagnosticDisplayOptions::default(),
-    );
 
     info!(
         "Compiled {} package(s) to {}",

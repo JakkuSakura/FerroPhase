@@ -15,21 +15,12 @@ pub use decl::{KtDecl, KtDeclKind, KtParam, KtParseError, KtType, parse_declarat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fp_core::diagnostics::diagnostic_manager;
-
-    // `diagnostic_manager()` is a process-wide singleton — since
-    // `cargo test` runs a crate's tests concurrently on multiple threads by
-    // default, two tests snapshotting/checking it at the same time would
-    // otherwise see each other's diagnostics. Serialize just the tests that
-    // touch it.
-    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    use fp_core::diagnostics::DiagnosticManager;
 
     fn parse_and_count_warnings(src: &str) -> (Vec<KtDecl>, usize) {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mgr = diagnostic_manager();
-        let start = mgr.snapshot();
-        let decls = parse_declarations(src).unwrap();
-        let warnings = mgr.diagnostics_since(start).len();
+        let mgr = DiagnosticManager::new();
+        let decls = parse_declarations(src, &mgr).unwrap();
+        let warnings = mgr.get_diagnostics().len();
         (decls, warnings)
     }
 
@@ -179,7 +170,6 @@ mod tests {
     /// recovered. Run with `-- --nocapture` to see the summary.
     #[test]
     fn measures_vendored_stdlib_parse_coverage() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let std_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("std/kotlin");
         if !std_root.exists() {
             eprintln!("skipping: {std_root:?} not present");
@@ -189,13 +179,12 @@ mod tests {
         collect_kt_files(&std_root, &mut files);
         files.sort();
 
-        let mgr = diagnostic_manager();
+        let mgr = DiagnosticManager::new();
         let mut clean = 0usize;
         let mut with_warnings = 0usize;
         let mut hard_errors = 0usize;
         let mut total_decls = 0usize;
 
-        let start_total = mgr.snapshot();
         for path in &files {
             let src = match std::fs::read_to_string(path) {
                 Ok(s) => s,
@@ -205,7 +194,7 @@ mod tests {
                 }
             };
             let before = mgr.snapshot();
-            match parse_declarations(&src) {
+            match parse_declarations(&src, &mgr) {
                 Ok(decls) => {
                     total_decls += decls.len();
                     if mgr.diagnostics_since(before).is_empty() {
@@ -217,7 +206,7 @@ mod tests {
                 Err(_) => hard_errors += 1,
             }
         }
-        let total_warnings = mgr.diagnostics_since(start_total).len();
+        let total_warnings = mgr.get_diagnostics().len();
 
         eprintln!(
             "kt_parser coverage: {} files ({} clean, {} with warnings, {} hard errors); {} decls parsed, {} warnings",

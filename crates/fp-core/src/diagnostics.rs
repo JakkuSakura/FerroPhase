@@ -294,7 +294,7 @@ impl DiagnosticManager {
                 }
             }
 
-            emit_tracing(&diagnostic.level, context, &full_message);
+            Self::emit_tracing(&diagnostic.level, context, &full_message);
         }
     }
 }
@@ -315,94 +315,60 @@ pub fn set_diagnostics_tracing(enabled: bool) {
     EMIT_TRACING.store(enabled, Ordering::Relaxed);
 }
 
-static GLOBAL_DIAGNOSTIC_MANAGER: Lazy<Arc<DiagnosticManager>> =
-    Lazy::new(|| Arc::new(DiagnosticManager::new()));
-
-pub fn diagnostic_manager() -> Arc<DiagnosticManager> {
-    GLOBAL_DIAGNOSTIC_MANAGER.clone()
-}
-
-pub fn report_error(message: impl Into<String>) -> crate::error::Error {
-    report_diagnostic_impl(None, message.into(), DiagnosticLevel::Error)
-}
-
-pub fn report_error_with_context(
-    context: impl Into<String>,
-    message: impl Into<String>,
-) -> crate::error::Error {
-    report_diagnostic_impl(Some(context.into()), message.into(), DiagnosticLevel::Error)
-}
-
-pub fn report_warning(message: impl Into<String>) {
-    report_diagnostic_trace(None, message.into(), DiagnosticLevel::Warning);
-}
-
-pub fn report_warning_with_context(context: impl Into<String>, message: impl Into<String>) {
-    report_diagnostic_trace(
-        Some(context.into()),
-        message.into(),
-        DiagnosticLevel::Warning,
-    );
-}
-
-pub fn report_info(message: impl Into<String>) {
-    report_diagnostic_trace(None, message.into(), DiagnosticLevel::Info);
-}
-
-pub fn report_info_with_context(context: impl Into<String>, message: impl Into<String>) {
-    report_diagnostic_trace(Some(context.into()), message.into(), DiagnosticLevel::Info);
-}
-
-fn report_diagnostic_impl(
-    context: Option<String>,
-    message: String,
-    level: DiagnosticLevel,
-) -> crate::error::Error {
-    let mut diagnostic = match level {
-        DiagnosticLevel::Error => Diagnostic::error(message.clone()),
-        DiagnosticLevel::Warning => Diagnostic::warning(message.clone()),
-        DiagnosticLevel::Info => Diagnostic::info(message.clone()),
-    };
-
-    if let Some(ctx) = context.as_ref() {
-        diagnostic = diagnostic.with_source_context(ctx.clone());
+impl DiagnosticManager {
+    pub fn report_error(message: impl Into<String>) -> crate::error::Error {
+        let message = message.into();
+        Self::emit_tracing(&DiagnosticLevel::Error, None, &message);
+        crate::error::Error::diagnostic(Diagnostic::error(message))
     }
 
-    emit_tracing(&level, context.as_deref(), &message);
-
-    diagnostic_manager().error(diagnostic.clone());
-    crate::error::Error::diagnostic(diagnostic)
-}
-
-fn report_diagnostic_trace(context: Option<String>, message: String, level: DiagnosticLevel) {
-    let mut diagnostic = match level {
-        DiagnosticLevel::Error => Diagnostic::error(message.clone()),
-        DiagnosticLevel::Warning => Diagnostic::warning(message.clone()),
-        DiagnosticLevel::Info => Diagnostic::info(message.clone()),
-    };
-
-    if let Some(ctx) = context.as_ref() {
-        diagnostic = diagnostic.with_source_context(ctx.clone());
+    pub fn report_error_with_context(
+        context: impl Into<String>,
+        message: impl Into<String>,
+    ) -> crate::error::Error {
+        let context = context.into();
+        let message = message.into();
+        Self::emit_tracing(&DiagnosticLevel::Error, Some(&context), &message);
+        crate::error::Error::diagnostic(Diagnostic::error(message).with_source_context(context))
     }
 
-    emit_tracing(&level, context.as_deref(), &message);
-    diagnostic_manager().add_diagnostic(diagnostic);
-}
-
-fn emit_tracing(level: &DiagnosticLevel, context: Option<&str>, message: &str) {
-    if !EMIT_TRACING.load(Ordering::Relaxed) {
-        return;
+    pub fn report_warning(message: impl Into<String>) {
+        let message = message.into();
+        Self::emit_tracing(&DiagnosticLevel::Warning, None, &message);
     }
-    let msg = if let Some(ctx) = context {
-        format!("[{}] {}", ctx, message)
-    } else {
-        message.to_string()
-    };
 
-    match level {
-        DiagnosticLevel::Error => tracing::error!("{}", msg),
-        DiagnosticLevel::Warning => tracing::warn!("{}", msg),
-        DiagnosticLevel::Info => tracing::info!("{}", msg),
+    pub fn report_warning_with_context(context: impl Into<String>, message: impl Into<String>) {
+        let context = context.into();
+        let message = message.into();
+        Self::emit_tracing(&DiagnosticLevel::Warning, Some(&context), &message);
+    }
+
+    pub fn report_info(message: impl Into<String>) {
+        let message = message.into();
+        Self::emit_tracing(&DiagnosticLevel::Info, None, &message);
+    }
+
+    pub fn report_info_with_context(context: impl Into<String>, message: impl Into<String>) {
+        let context = context.into();
+        let message = message.into();
+        Self::emit_tracing(&DiagnosticLevel::Info, Some(&context), &message);
+    }
+
+    fn emit_tracing(level: &DiagnosticLevel, context: Option<&str>, message: &str) {
+        if !EMIT_TRACING.load(Ordering::Relaxed) {
+            return;
+        }
+        let msg = if let Some(ctx) = context {
+            format!("[{}] {}", ctx, message)
+        } else {
+            message.to_string()
+        };
+
+        match level {
+            DiagnosticLevel::Error => tracing::error!("{}", msg),
+            DiagnosticLevel::Warning => tracing::warn!("{}", msg),
+            DiagnosticLevel::Info => tracing::info!("{}", msg),
+        }
     }
 }
 

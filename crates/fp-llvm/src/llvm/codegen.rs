@@ -1,6 +1,6 @@
 use crate::context::LlvmContext;
 use crate::intrinsics::{CRuntimeIntrinsics, IntrinsicSignature};
-use fp_core::diagnostics::report_error_with_context;
+use fp_core::diagnostics::DiagnosticManager;
 use fp_core::tracing::debug;
 use fp_core::{
     error::{Error, Result},
@@ -242,7 +242,7 @@ impl<'a> LirCodegen<'a> {
     fn define_global_initializer(&mut self, global: lir::LirGlobal) -> Result<()> {
         let llvm_name = self.llvm_symbol_for(&global.name);
         let gvar = self.llvm_ctx.module.get_global(&llvm_name).ok_or_else(|| {
-            report_error_with_context(LOG_AREA, format!("Global '{}' was not declared", llvm_name))
+            DiagnosticManager::report_error_with_context(LOG_AREA, format!("Global '{}' was not declared", llvm_name))
         })?;
 
         if let Some(init) = global.initializer {
@@ -337,7 +337,7 @@ impl<'a> LirCodegen<'a> {
 
     fn generate_basic_block(&mut self, lir_block: lir::LirBasicBlock) -> Result<()> {
         let bb = *self.block_map.get(&lir_block.id).ok_or_else(|| {
-            report_error_with_context(
+            DiagnosticManager::report_error_with_context(
                 LOG_AREA,
                 format!("Missing basic block for id {}", lir_block.id),
             )
@@ -494,7 +494,7 @@ impl<'a> LirCodegen<'a> {
                 let true_value = self.convert_lir_value_to_basic_value(if_true)?;
                 let false_value = self.convert_lir_value_to_basic_value(if_false)?;
                 if true_value.get_type() != false_value.get_type() {
-                    return Err(report_error_with_context(
+                    return Err(DiagnosticManager::report_error_with_context(
                         LOG_AREA,
                         "Select operands must have identical types",
                     ));
@@ -567,7 +567,7 @@ impl<'a> LirCodegen<'a> {
                 let entry_block = self
                     .current_function
                     .and_then(|func| func.get_first_basic_block())
-                    .ok_or_else(|| report_error_with_context(LOG_AREA, "missing entry block"))?;
+                    .ok_or_else(|| DiagnosticManager::report_error_with_context(LOG_AREA, "missing entry block"))?;
                 if let Some(first_inst) = entry_block.get_first_instruction() {
                     self.llvm_ctx.builder.position_at(entry_block, &first_inst);
                 } else {
@@ -809,7 +809,7 @@ impl<'a> LirCodegen<'a> {
                 let raw_element_value = self.convert_lir_value_to_basic_value(element)?;
 
                 let index = indices.get(0).copied().ok_or_else(|| {
-                    report_error_with_context(LOG_AREA, "InsertValue missing index")
+                    DiagnosticManager::report_error_with_context(LOG_AREA, "InsertValue missing index")
                 })?;
 
                 let element_value = match aggregate_value {
@@ -821,7 +821,7 @@ impl<'a> LirCodegen<'a> {
                         let struct_ty = strct.get_type();
                         let field_ty =
                             struct_ty.get_field_type_at_index(index).ok_or_else(|| {
-                                report_error_with_context(LOG_AREA, "InsertValue missing field")
+                                DiagnosticManager::report_error_with_context(LOG_AREA, "InsertValue missing field")
                             })?;
                         self.coerce_insert_element(raw_element_value, field_ty, instr_id)?
                     }
@@ -850,7 +850,7 @@ impl<'a> LirCodegen<'a> {
                         )
                         .map_err(|e| fp_core::error::Error::from(e.to_string()))?,
                     _ => {
-                        return Err(report_error_with_context(
+                        return Err(DiagnosticManager::report_error_with_context(
                             LOG_AREA,
                             "InsertValue requires aggregate operand",
                         ));
@@ -867,7 +867,7 @@ impl<'a> LirCodegen<'a> {
             lir::LirInstructionKind::ExtractValue { aggregate, indices } => {
                 let aggregate_value = self.convert_lir_value_to_basic_value(aggregate)?;
                 let index = indices.get(0).copied().ok_or_else(|| {
-                    report_error_with_context(LOG_AREA, "ExtractValue missing index")
+                    DiagnosticManager::report_error_with_context(LOG_AREA, "ExtractValue missing index")
                 })?;
 
                 let result = match aggregate_value {
@@ -882,7 +882,7 @@ impl<'a> LirCodegen<'a> {
                         .build_extract_value(strct, index, &format!("extractvalue_{}", instr_id))
                         .map_err(|e| fp_core::error::Error::from(e.to_string()))?,
                     _ => {
-                        return Err(report_error_with_context(
+                        return Err(DiagnosticManager::report_error_with_context(
                             LOG_AREA,
                             "ExtractValue requires aggregate operand",
                         ));
@@ -1065,7 +1065,7 @@ impl<'a> LirCodegen<'a> {
                     match callee {
                         Callee::Direct(func) => func,
                         Callee::Indirect(_, _) => {
-                            return Err(report_error_with_context(
+                            return Err(DiagnosticManager::report_error_with_context(
                                 LOG_AREA,
                                 "landingpad personality must be a direct function".to_string(),
                             ));
@@ -1092,7 +1092,7 @@ impl<'a> LirCodegen<'a> {
                             for value in values {
                                 let basic = self.convert_lir_value_to_basic_value(value)?;
                                 if !basic.is_pointer_value() {
-                                    return Err(report_error_with_context(
+                                    return Err(DiagnosticManager::report_error_with_context(
                                         LOG_AREA,
                                         "landingpad filter expects pointer values".to_string(),
                                     ));
@@ -1158,7 +1158,7 @@ impl<'a> LirCodegen<'a> {
             }
             lir::LirTerminator::Br(target) => {
                 let target_bb = self.block_map.get(&target).ok_or_else(|| {
-                    report_error_with_context(LOG_AREA, format!("Unknown branch target {}", target))
+                    DiagnosticManager::report_error_with_context(LOG_AREA, format!("Unknown branch target {}", target))
                 })?;
                 self.llvm_ctx
                     .builder
@@ -1174,13 +1174,13 @@ impl<'a> LirCodegen<'a> {
                 let bool_value = self.cast_condition_to_bool(condition_value)?;
 
                 let true_bb = self.block_map.get(&if_true).ok_or_else(|| {
-                    report_error_with_context(
+                    DiagnosticManager::report_error_with_context(
                         LOG_AREA,
                         format!("Unknown branch target {}", if_true),
                     )
                 })?;
                 let false_bb = self.block_map.get(&if_false).ok_or_else(|| {
-                    report_error_with_context(
+                    DiagnosticManager::report_error_with_context(
                         LOG_AREA,
                         format!("Unknown branch target {}", if_false),
                     )
@@ -1206,13 +1206,13 @@ impl<'a> LirCodegen<'a> {
                 }
 
                 let normal_bb = self.block_map.get(&normal_dest).ok_or_else(|| {
-                    report_error_with_context(
+                    DiagnosticManager::report_error_with_context(
                         LOG_AREA,
                         format!("Unknown invoke target {}", normal_dest),
                     )
                 })?;
                 let unwind_bb = self.block_map.get(&unwind_dest).ok_or_else(|| {
-                    report_error_with_context(
+                    DiagnosticManager::report_error_with_context(
                         LOG_AREA,
                         format!("Unknown invoke unwind target {}", unwind_dest),
                     )
@@ -1242,7 +1242,7 @@ impl<'a> LirCodegen<'a> {
                     .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
             }
             term => {
-                return Err(report_error_with_context(
+                return Err(DiagnosticManager::report_error_with_context(
                     LOG_AREA,
                     format!("Unimplemented LIR terminator: {:?}", term),
                 ));
@@ -1334,7 +1334,7 @@ impl<'a> LirCodegen<'a> {
                     return Ok(Callee::Direct(func));
                 }
 
-                Err(report_error_with_context(
+                Err(DiagnosticManager::report_error_with_context(
                     LOG_AREA,
                     format!(
                         "Unknown function reference '{}' encountered during codegen",
@@ -1353,7 +1353,7 @@ impl<'a> LirCodegen<'a> {
                             .map(|(val, ty)| (*val, ty.clone()))
                     })
                     .ok_or_else(|| {
-                        report_error_with_context(
+                        DiagnosticManager::report_error_with_context(
                             LOG_AREA,
                             format!("Unknown call target register/local {}", local_id),
                         )
@@ -1361,7 +1361,7 @@ impl<'a> LirCodegen<'a> {
 
                 let ptr = self.coerce_to_pointer(value)?;
                 let fn_ty = self.function_type_from_lir_type(&lir_ty).ok_or_else(|| {
-                    report_error_with_context(
+                    DiagnosticManager::report_error_with_context(
                         LOG_AREA,
                         format!(
                             "Value {} is not a callable function pointer (type={:?})",
@@ -1371,7 +1371,7 @@ impl<'a> LirCodegen<'a> {
                 })?;
                 Ok(Callee::Indirect(ptr, fn_ty))
             }
-            other => Err(report_error_with_context(
+            other => Err(DiagnosticManager::report_error_with_context(
                 LOG_AREA,
                 format!("Unsupported call target in LLVM lowering: {:?}", other),
             )),
@@ -1402,7 +1402,7 @@ impl<'a> LirCodegen<'a> {
         for local in locals {
             if local.is_argument {
                 let param = param_iter.next().ok_or_else(|| {
-                    report_error_with_context(
+                    DiagnosticManager::report_error_with_context(
                         LOG_AREA,
                         format!(
                             "Not enough LLVM parameters to map local argument {} in '{}'",
@@ -1587,7 +1587,7 @@ impl<'a> LirCodegen<'a> {
                 .builder
                 .build_is_not_null(ptr_val, "cond_bool")
                 .map_err(|e| fp_core::error::Error::from(e.to_string())),
-            _ => Err(report_error_with_context(
+            _ => Err(DiagnosticManager::report_error_with_context(
                 LOG_AREA,
                 "Unsupported condition type for branch",
             )),
@@ -1608,7 +1608,7 @@ impl<'a> LirCodegen<'a> {
                     .get(&reg_id)
                     .map(|(value, _)| *value)
                     .ok_or_else(|| {
-                        report_error_with_context(
+                        DiagnosticManager::report_error_with_context(
                             LOG_AREA,
                             format!("Unknown register {} encountered during codegen", reg_id),
                         )
@@ -1659,7 +1659,7 @@ impl<'a> LirCodegen<'a> {
                     return Ok(ptr.into());
                 }
 
-                Err(report_error_with_context(
+                Err(DiagnosticManager::report_error_with_context(
                     LOG_AREA,
                     format!(
                         "Global variable '{}' of type {:?} not found",
@@ -1711,7 +1711,7 @@ impl<'a> LirCodegen<'a> {
                         })
                     })
                     .ok_or_else(|| {
-                        report_error_with_context(
+                        DiagnosticManager::report_error_with_context(
                             LOG_AREA,
                             format!(
                                 "Unknown function reference '{}' encountered during codegen",
@@ -1723,7 +1723,7 @@ impl<'a> LirCodegen<'a> {
                 Ok(function.as_global_value().as_pointer_value().into())
             }
             lir::LirValueKind::Function(lir::LirFunctionRef::Package { package_id, name }) => {
-                Err(report_error_with_context(
+                Err(DiagnosticManager::report_error_with_context(
                     LOG_AREA,
                     format!(
                         "Package-qualified function `{:?}::{}` is not supported by LLVM lowering",
@@ -1732,7 +1732,7 @@ impl<'a> LirCodegen<'a> {
                 ))
             }
             lir::LirValueKind::Function(lir::LirFunctionRef::Definition(def_id)) => {
-                Err(report_error_with_context(
+                Err(DiagnosticManager::report_error_with_context(
                     LOG_AREA,
                     format!("Function definition `{def_id}` is not supported by LLVM lowering"),
                 ))
@@ -1742,14 +1742,14 @@ impl<'a> LirCodegen<'a> {
                 .get(&local_id)
                 .copied()
                 .ok_or_else(|| {
-                    report_error_with_context(LOG_AREA, format!("Unknown local: {}", local_id))
+                    DiagnosticManager::report_error_with_context(LOG_AREA, format!("Unknown local: {}", local_id))
                 }),
             lir::LirValueKind::StackSlot(slot_id) => self
                 .stack_slot_map
                 .get(&slot_id)
                 .map(|(ptr, _)| (*ptr).into())
                 .ok_or_else(|| {
-                    report_error_with_context(LOG_AREA, format!("Unknown stack slot: {}", slot_id))
+                    DiagnosticManager::report_error_with_context(LOG_AREA, format!("Unknown stack slot: {}", slot_id))
                 }),
         }
     }
@@ -1883,7 +1883,7 @@ impl<'a> LirCodegen<'a> {
                 let struct_ty = match self.llvm_basic_type(&ty)? {
                     BasicTypeEnum::StructType(strct) => strct,
                     _ => {
-                        return Err(report_error_with_context(
+                        return Err(DiagnosticManager::report_error_with_context(
                             LOG_AREA,
                             "Expected struct type for struct constant",
                         ))
@@ -1932,7 +1932,7 @@ impl<'a> LirCodegen<'a> {
             lir::LirConstant::GlobalRef(name, ty, indices) => {
                 let llvm_name = self.llvm_symbol_for(&name);
                 let global = self.llvm_ctx.module.get_global(&llvm_name).ok_or_else(|| {
-                    report_error_with_context(
+                    DiagnosticManager::report_error_with_context(
                         LOG_AREA,
                         format!("Unknown global referenced in constant: {}", name),
                     )
@@ -1953,7 +1953,7 @@ impl<'a> LirCodegen<'a> {
                         AnyTypeEnum::VectorType(ty) => ty.as_basic_type_enum(),
                         AnyTypeEnum::ScalableVectorType(ty) => ty.as_basic_type_enum(),
                         AnyTypeEnum::FunctionType(_) | AnyTypeEnum::VoidType(_) => {
-                            return Err(report_error_with_context(
+                            return Err(DiagnosticManager::report_error_with_context(
                                 LOG_AREA,
                                 "global reference GEP expects a basic value type".to_string(),
                             ))
@@ -1978,7 +1978,7 @@ impl<'a> LirCodegen<'a> {
                     .module
                     .get_function(&llvm_name)
                     .ok_or_else(|| {
-                        report_error_with_context(
+                        DiagnosticManager::report_error_with_context(
                             LOG_AREA,
                             format!("Unknown function referenced in constant: {}", name),
                         )
@@ -2123,7 +2123,7 @@ impl<'a> LirCodegen<'a> {
                     .struct_layout(ty)
                     .map_err(|error| Error::from(error.to_string()))?
                     .ok_or_else(|| {
-                        report_error_with_context(LOG_AREA, "missing LIR struct layout")
+                        DiagnosticManager::report_error_with_context(LOG_AREA, "missing LIR struct layout")
                     })?;
                 let mut values = Vec::with_capacity(fields.len());
                 for (index, field_ty) in fields.iter().enumerate() {
@@ -2144,7 +2144,7 @@ impl<'a> LirCodegen<'a> {
                 Ok(llvm_ty.const_zero())
             }
             lir::LirType::Error => Ok(self.llvm_ctx.i64_type().const_zero().into()),
-            lir::LirType::Vector(..) => Err(report_error_with_context(
+            lir::LirType::Vector(..) => Err(DiagnosticManager::report_error_with_context(
                 LOG_AREA,
                 "vector-typed global initializers are not yet supported by fp-llvm",
             )),
@@ -2161,7 +2161,7 @@ impl<'a> LirCodegen<'a> {
         let target_ptr_ty = match self.llvm_basic_type(ty)? {
             BasicTypeEnum::PointerType(ptr_ty) => ptr_ty,
             _ => {
-                return Err(report_error_with_context(
+                return Err(DiagnosticManager::report_error_with_context(
                     LOG_AREA,
                     "expected pointer type for global relocation decoding",
                 ));
@@ -2173,7 +2173,7 @@ impl<'a> LirCodegen<'a> {
             .find(|reloc| reloc.offset as usize == base)
         {
             if reloc.addend != 0 {
-                return Err(report_error_with_context(
+                return Err(DiagnosticManager::report_error_with_context(
                     LOG_AREA,
                     "non-zero global relocation addends are not yet supported by fp-llvm",
                 ));
@@ -2182,7 +2182,7 @@ impl<'a> LirCodegen<'a> {
                 lir::LirRelocationTarget::Global(name) => {
                     let llvm_name = self.llvm_symbol_for(name);
                     let global = self.llvm_ctx.module.get_global(&llvm_name).ok_or_else(|| {
-                        report_error_with_context(
+                        DiagnosticManager::report_error_with_context(
                             LOG_AREA,
                             format!("Unknown global referenced in relocation: {}", name),
                         )
@@ -2196,7 +2196,7 @@ impl<'a> LirCodegen<'a> {
                             .module
                             .get_function(&llvm_name)
                             .ok_or_else(|| {
-                                report_error_with_context(
+                                DiagnosticManager::report_error_with_context(
                                     LOG_AREA,
                                     format!("Unknown function referenced in relocation: {}", name),
                                 )
@@ -2220,7 +2220,7 @@ impl<'a> LirCodegen<'a> {
             return Ok(target_ptr_ty.const_null().into());
         }
 
-        Err(report_error_with_context(
+        Err(DiagnosticManager::report_error_with_context(
             LOG_AREA,
             "non-null raw pointer bytes without relocation are not supported by fp-llvm",
         ))
@@ -2228,7 +2228,7 @@ impl<'a> LirCodegen<'a> {
 
     fn read_le_u128(bytes: &[u8], offset: usize, size: usize) -> Result<u128> {
         if size > 16 || offset.saturating_add(size) > bytes.len() {
-            return Err(report_error_with_context(
+            return Err(DiagnosticManager::report_error_with_context(
                 LOG_AREA,
                 "global byte initializer read out of bounds",
             ));
@@ -2283,12 +2283,12 @@ impl<'a> LirCodegen<'a> {
                     .into())
             }
             lir::LirType::Function { .. } => Ok(self.llvm_ctx.ptr_type().into()),
-            lir::LirType::Void => Err(report_error_with_context(
+            lir::LirType::Void => Err(DiagnosticManager::report_error_with_context(
                 LOG_AREA,
                 "Void type cannot be used as a basic type",
             )),
             lir::LirType::Error => Ok(self.llvm_ctx.i64_type().into()),
-            other => Err(report_error_with_context(
+            other => Err(DiagnosticManager::report_error_with_context(
                 LOG_AREA,
                 format!("unsupported LIR type in LLVM lowering: {:?}", other),
             )),
@@ -2367,7 +2367,7 @@ impl<'a> LirCodegen<'a> {
         let entry_block = self
             .current_function
             .and_then(|func| func.get_first_basic_block())
-            .ok_or_else(|| report_error_with_context(LOG_AREA, "missing entry block"))?;
+            .ok_or_else(|| DiagnosticManager::report_error_with_context(LOG_AREA, "missing entry block"))?;
         if let Some(first_inst) = entry_block.get_first_instruction() {
             self.llvm_ctx.builder.position_at(entry_block, &first_inst);
         } else {
@@ -2471,7 +2471,7 @@ impl<'a> LirCodegen<'a> {
                 .builder
                 .build_float_to_unsigned_int(float_val, target, "fptoui")
                 .map_err(|e| fp_core::error::Error::from(e.to_string())),
-            _ => Err(report_error_with_context(
+            _ => Err(DiagnosticManager::report_error_with_context(
                 LOG_AREA,
                 "Unable to coerce value to integer",
             )),
@@ -2533,7 +2533,7 @@ impl<'a> LirCodegen<'a> {
                 .builder
                 .build_unsigned_int_to_float(int_val, target, "uitofp")
                 .map_err(|e| fp_core::error::Error::from(e.to_string())),
-            _ => Err(report_error_with_context(
+            _ => Err(DiagnosticManager::report_error_with_context(
                 LOG_AREA,
                 "Unable to coerce value to float",
             )),
@@ -2548,7 +2548,7 @@ impl<'a> LirCodegen<'a> {
                 .builder
                 .build_int_to_ptr(int_val, self.llvm_ctx.ptr_type(), "inttoptr")
                 .map_err(|e| fp_core::error::Error::from(e.to_string())),
-            _ => Err(report_error_with_context(
+            _ => Err(DiagnosticManager::report_error_with_context(
                 LOG_AREA,
                 "Unable to coerce value to pointer",
             )),
@@ -2568,7 +2568,7 @@ impl<'a> LirCodegen<'a> {
 
     fn zero_value_for_type(&self, ty: &lir::LirType) -> Result<BasicValueEnum<'static>> {
         match ty {
-            lir::LirType::Void => Err(report_error_with_context(
+            lir::LirType::Void => Err(DiagnosticManager::report_error_with_context(
                 LOG_AREA,
                 "Cannot build zero value for void type",
             )),

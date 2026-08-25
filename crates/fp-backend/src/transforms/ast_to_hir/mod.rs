@@ -41,7 +41,7 @@ mod patterns; // pattern lowering // shared path/name helpers
 #[cfg(test)]
 mod tests;
 
-use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
+use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 
 const DIAGNOSTIC_CONTEXT: &str = "ast_to_hir";
 
@@ -218,6 +218,7 @@ pub struct AstToHirLowerer {
     /// upfront import worklist already ran) is a guaranteed no-op instead
     /// of an assumed-safe duplicate.
     resolved_import_aliases: HashSet<(fp_core::ast::path::QualifiedPath, String)>,
+    diagnostics: DiagnosticManager,
 }
 
 enum MaterializedTypeAlias {
@@ -278,7 +279,11 @@ struct ImportBinding {
 
 impl AstToHirLowerer {
     fn add_error(&mut self, diag: Diagnostic) {
-        diagnostic_manager().add_diagnostic(diag);
+        self.diagnostics.add_diagnostic(diag);
+    }
+
+    pub fn take_diagnostics(&mut self) -> DiagnosticManager {
+        std::mem::replace(&mut self.diagnostics, DiagnosticManager::new())
     }
 
     fn item_enabled_by_cfg(&self, item: &ast::Item) -> bool {
@@ -760,6 +765,7 @@ impl AstToHirLowerer {
             pending_impls: Vec::new(),
             pending_type_aliases: Vec::new(),
             resolved_import_aliases: HashSet::new(),
+            diagnostics: DiagnosticManager::new(),
         }
     }
 
@@ -1991,7 +1997,7 @@ impl AstToHirLowerer {
     pub fn transform_expr(&mut self, ast_expr: &ast::Expr) -> Result<hir::HirPackage> {
         let mut lowered_expr = ast_expr.clone();
         let (generated_items, closure_diagnostics) = lower_closures_in_expr(&mut lowered_expr)?;
-        diagnostic_manager().add_diagnostics(closure_diagnostics);
+        self.diagnostics.add_diagnostics(closure_diagnostics);
         if let Some(query) = lower_fp_expr_to_query(&lowered_expr, None) {
             return self.transform_query_document(&query);
         }

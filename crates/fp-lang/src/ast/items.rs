@@ -2144,13 +2144,11 @@ fn parse_attrs(input: &mut &[Token], file: FileId, inner: bool) -> ModalResult<V
                 if depth != 0 {
                     return Err(err);
                 }
-                fp_core::diagnostics::diagnostic_manager().add_diagnostic(
-                    fp_core::diagnostics::Diagnostic::warning(format!(
-                        "attribute did not parse as a structured attribute ({err}); \
-                         skipping just this one — any `#[op(...)]`/`#[intrinsic = \"...\"]` \
-                         marker on it is lost"
-                    )),
-                );
+                fp_core::diagnostics::DiagnosticManager::report_warning(format!(
+                    "attribute did not parse as a structured attribute ({err}); \
+                     skipping just this one — any `#[op(...)]`/`#[intrinsic = \"...\"]` \
+                     marker on it is lost"
+                ));
                 *input = skip;
             }
         }

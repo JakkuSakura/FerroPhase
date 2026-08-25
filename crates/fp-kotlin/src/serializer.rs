@@ -13,7 +13,7 @@ use fp_core::ast::{
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::intrinsics::calls::{CallKind, KnownClass, KnownPackage};
 use fp_core::ast::package::{PackageItem, AstPackage};
-use fp_core::diagnostics::report_warning_with_context;
+use fp_core::diagnostics::DiagnosticManager;
 use fp_core::backend::{BackendConfig, PackageWriter, TargetBackend};
 use fp_core::writer::{IndentStyle, StyledWriter, WriterConfig};
 use eyre::Result;
@@ -1530,7 +1530,7 @@ fn untranspilable_reason(f: &ItemDefFunction) -> Option<&'static str> {
 /// of only surfacing much later as a Gradle compile error nobody connects
 /// back to this specific, already-known cause.
 fn report_untranspilable(context: &str, reason: &str) {
-    report_warning_with_context(context.to_string(), format!("Kotlin codegen: {reason}"));
+    DiagnosticManager::report_warning_with_context(context.to_string(), format!("Kotlin codegen: {reason}"));
 }
 
 /// Emits `throw NotImplementedError(reason)` as a function's body and

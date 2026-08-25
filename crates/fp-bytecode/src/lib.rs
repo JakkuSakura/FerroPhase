@@ -1,4 +1,4 @@
-use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
+use fp_core::diagnostics::DiagnosticManager;
 pub use fp_core::intrinsics::IntrinsicKind;
 use fp_core::mir;
 use serde::{Deserialize, Serialize};
@@ -2002,12 +2002,12 @@ fn lower_constant(constant: &mir::Constant) -> Result<BytecodeConst, BytecodeErr
             ),
         }),
         mir::ConstantKind::TokenStream { kind, .. } => {
-            diagnostic_manager().add_diagnostic(
-                Diagnostic::error(format!(
+            let _ = DiagnosticManager::report_error_with_context(
+                BYTECODE_LOWERING_CONTEXT,
+                format!(
                     "token stream constant ({:?}) should not appear in bytecode — must be resolved at comptime",
                     kind
-                ))
-                .with_source_context(BYTECODE_LOWERING_CONTEXT),
+                ),
             );
             Err(BytecodeError::Lowering {
                 message: "token stream in bytecode".into(),

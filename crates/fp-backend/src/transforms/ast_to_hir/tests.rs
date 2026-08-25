@@ -1538,18 +1538,17 @@ fn expect_lowering_error<T: std::fmt::Debug>(result: Result<T>, expected: &str) 
 /// succeeds (producing a placeholder node, `AstToHirLowerer::
 /// error_placeholder_expr_kind`) so one unsupported construct doesn't
 /// poison the whole surrounding item, but a real error diagnostic is
-/// recorded via `fp_core::diagnostics::diagnostic_manager()` — this
-/// checks for that recorded diagnostic instead of a hard `Err`.
+/// recorded on the lowerer's own `DiagnosticManager` — this checks for
+/// that recorded diagnostic instead of a hard `Err`.
 fn expect_lowering_diagnostic<T: std::fmt::Debug>(
-    call: impl FnOnce() -> Result<T>,
+    generator: &mut AstToHirLowerer,
+    call: impl FnOnce(&mut AstToHirLowerer) -> Result<T>,
     expected: &str,
 ) {
-    use fp_core::diagnostics::{DiagnosticLevel, diagnostic_manager};
-    let mgr = diagnostic_manager();
-    let start = mgr.snapshot();
-    let result = call();
+    use fp_core::diagnostics::DiagnosticLevel;
+    let result = call(generator);
     result.expect("lowering should recover with a placeholder, not fail outright");
-    let diagnostics = mgr.diagnostics_since(start);
+    let diagnostics = generator.take_diagnostics().get_diagnostics();
     assert!(
         diagnostics.iter().any(|d| d.level == DiagnosticLevel::Error
             && d.message.to_string().contains(expected)),
@@ -1568,7 +1567,8 @@ fn transform_expr_rejects_dynamic_import() {
     }));
 
     expect_lowering_diagnostic(
-        || generator.transform_expr_to_hir(&expr),
+        &mut generator,
+        |g| g.transform_expr_to_hir(&expr),
         "dynamic import is only supported in interpret mode",
     );
 }
@@ -1618,7 +1618,8 @@ fn transform_expr_rejects_for_loop_non_binding_pattern() {
     }));
 
     expect_lowering_diagnostic(
-        || generator.transform_expr_to_hir(&expr),
+        &mut generator,
+        |g| g.transform_expr_to_hir(&expr),
         "`for` loop pattern must be a simple binding",
     );
 }
