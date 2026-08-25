@@ -622,7 +622,7 @@ pub(super) fn lower_const_struct_field_from_constant(
                     .field_index
                     .get(field)
                     .copied()?;
-                let layout = self.mir_package.borrow().struct_layouts.get(key).cloned()?;
+                let layout = self.mir_package.borrow().struct_layouts.get(&key).cloned()?;
                 let field_ty = layout.field_tys.get(field_index)?;
                 let field_value = values.get(field_index)?;
                 return Some(self.const_value_to_constant(span, field_value, field_ty));

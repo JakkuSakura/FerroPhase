@@ -1527,13 +1527,7 @@ impl<'a> BodyBuilder<'a> {
                         .struct_def
                         .or_else(|| self.struct_def_from_ty(&place_info.ty))
                     {
-                        if let Some(_struct_entry) = self
-                            .lowering
-                            .mir_package
-                            .borrow()
-                            .struct_defs
-                            .get(&def_id)
-                            .cloned()
+                        if self.lowering.struct_def(&def_id).is_some()
                         {
                             let method_def = self
                                 .lowering
@@ -1637,13 +1631,7 @@ impl<'a> BodyBuilder<'a> {
                             }
                         }
                     } else if let Some(enum_def) = self.enum_def_from_ty(&place_info.ty) {
-                        if let Some(_enum_entry) = self
-                            .lowering
-                            .mir_package
-                            .borrow()
-                            .enum_defs
-                            .get(&enum_def)
-                            .cloned()
+                        if self.lowering.has_enum_def(&enum_def)
                         {
                             let method_def = self
                                 .lowering

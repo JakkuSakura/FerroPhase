@@ -1,13 +1,13 @@
 use super::*;
 
-struct EnumerateLoopSpec {
+pub(super) struct EnumerateLoopSpec {
     base_prefix: PathPrefix,
     base_segments: Vec<ast::Ident>,
     index_ident: ast::Ident,
     value_ident: ast::Ident,
 }
 
-struct IterLoopSpec {
+pub(super) struct IterLoopSpec {
     base_prefix: PathPrefix,
     base_segments: Vec<ast::Ident>,
     value_pat: ast::Pattern,

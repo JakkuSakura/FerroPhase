@@ -173,9 +173,7 @@ impl AstToHirLowerer {
             // Cross-package export (e.g. `libc::macos::getenv`), looked
             // up lazily against the workspace on a local-lookup miss —
             // see `lookup_global_res`'s identical fallback.
-            self.hir_program
-                .as_ref()
-                .is_some_and(|hir_program| hir_program.find_export(&key).is_some())
+            self.hir_program.find_export(&key).is_some()
         };
         let scope_contains = |name: &str| match scope {
             PathResolutionScope::Value => self.resolve_value_symbol(name).is_some(),
@@ -560,9 +558,9 @@ impl AstToHirLowerer {
                         // `hir::HirPackage::def_paths` instead — fall back to
                         // scanning those when the local map has nothing.
                         if type_paths.is_empty() {
-                            if let Some(ref hir_program) = self.hir_program {
+                            {
                                 for (_module_path, hir_program, _exports) in
-                                    hir_program.hir_definitions()
+                                    self.hir_program.hir_definitions()
                                 {
                                     if let Some(def_path) = hir_program.def_paths.get(&type_def_id)
                                     {

@@ -417,7 +417,8 @@ impl<'a> BodyBuilder<'a> {
                     .mir_package
                     .borrow()
                     .struct_defs_by_tail_name
-                    .get(HirToMirLowerer::name_tail(&name))?;
+                    .get(HirToMirLowerer::name_tail(&name))
+                    .cloned()?;
                 let matches: Vec<hir::DefId> = candidates
                     .iter()
                     .filter_map(|def_id| {
@@ -2032,13 +2033,7 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let Some(def_id) = generic_def_id {
-            if let Some(function) = self
-                .lowering
-                .mir_package
-                .borrow()
-                .generic_function_defs
-                .get(&def_id)
-                .cloned()
+            if let Some(function) = self.lowering.generic_function_def(&def_id)
             {
                 let is_result_ctor = matches!(callee_tail, Some("Ok" | "Err"));
                 if explicit_args.is_empty() {
@@ -3138,13 +3133,7 @@ impl<'a> BodyBuilder<'a> {
                 });
                 if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
                     if has_explicit_args {
-                        if let Some(function) = self
-                            .lowering
-                            .mir_package
-                            .borrow()
-                            .generic_function_defs
-                            .get(def_id)
-                            .cloned()
+                        if let Some(function) = self.lowering.generic_function_def(def_id)
                         {
                             let info = self
                                 .lowering
@@ -3169,13 +3158,7 @@ impl<'a> BodyBuilder<'a> {
                         }
                     }
                     if let Some(expected_sig) = expected_sig.as_ref() {
-                        if let Some(function) = self
-                            .lowering
-                            .mir_package
-                            .borrow()
-                            .generic_function_defs
-                            .get(def_id)
-                            .cloned()
+                        if let Some(function) = self.lowering.generic_function_def(def_id)
                         {
                             let expected_has_opaque = expected_sig
                                 .inputs
@@ -3310,13 +3293,7 @@ impl<'a> BodyBuilder<'a> {
                             ty,
                         });
                     }
-                    if let Some(variant) = self
-                        .lowering
-                        .mir_package
-                        .borrow()
-                        .enum_variants
-                        .get(def_id)
-                        .cloned()
+                    if let Some(variant) = self.lowering.enum_variant_def(def_id)
                     {
                         let mut layout = expected.and_then(|ty| {
                             self.enum_layout_for_variant(&variant, Some(ty), expr.span)

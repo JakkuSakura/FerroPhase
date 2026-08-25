@@ -208,14 +208,7 @@ impl<'a> BodyBuilder<'a> {
                     }
                 };
 
-                let field_count = match self
-                    .lowering
-                    .mir_package
-                    .borrow()
-                    .struct_defs
-                    .get(&struct_ref.def_id)
-                    .cloned()
-                {
+                let field_count = match self.lowering.struct_def(&struct_ref.def_id) {
                     Some(info) => info.fields.len() as u64,
                     None => {
                         self.lowering
@@ -252,14 +245,7 @@ impl<'a> BodyBuilder<'a> {
                     None => return None,
                 };
 
-                let has_field = match self
-                    .lowering
-                    .mir_package
-                    .borrow()
-                    .struct_defs
-                    .get(&struct_ref.def_id)
-                    .cloned()
-                {
+                let has_field = match self.lowering.struct_def(&struct_ref.def_id) {
                     Some(info) => info.field_index.contains_key(&field_name),
                     None => {
                         self.lowering
@@ -292,14 +278,7 @@ impl<'a> BodyBuilder<'a> {
                     }
                 };
 
-                let struct_name = match self
-                    .lowering
-                    .mir_package
-                    .borrow()
-                    .struct_defs
-                    .get(&struct_ref.def_id)
-                    .cloned()
-                {
+                let struct_name = match self.lowering.struct_def(&struct_ref.def_id) {
                     Some(info) => info.name.clone(),
                     None => {
                         self.lowering

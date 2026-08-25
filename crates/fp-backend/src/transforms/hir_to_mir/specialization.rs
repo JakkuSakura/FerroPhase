@@ -1155,7 +1155,9 @@ impl HirToMirLowerer {
                     TyKind::Adt(_, substs) | TyKind::Opaque(_, substs) => substs
                         .iter()
                         .filter_map(|arg| match arg {
-                            mir::ty::GenericArg::Type(ty) => Some(self.unwrap_expr_actual_ty(ty)),
+                            mir::ty::GenericArg::Type(ty) => {
+                                Some(self.unwrap_expr_actual_ty(ty).clone())
+                            }
                             _ => None,
                         })
                         .collect::<Vec<_>>(),
@@ -1169,7 +1171,7 @@ impl HirToMirLowerer {
                         actual_type_args = layout
                             .args
                             .iter()
-                            .map(|ty| self.unwrap_expr_actual_ty(ty))
+                            .map(|ty| self.unwrap_expr_actual_ty(ty).clone())
                             .collect::<Vec<_>>();
                     }
                 }

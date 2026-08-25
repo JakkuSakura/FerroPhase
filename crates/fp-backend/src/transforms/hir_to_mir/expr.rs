@@ -352,6 +352,29 @@ pub struct HirToMirLowerer {
 }
 
 impl HirToMirLowerer {
+    pub(super) fn generic_function_def(&self, def_id: &hir::DefId) -> Option<hir::Function> {
+        self.mir_package
+            .borrow()
+            .generic_function_defs
+            .get(def_id)
+            .cloned()
+    }
+
+    pub(super) fn enum_variant_def(&self, def_id: &hir::DefId) -> Option<EnumVariantInfo> {
+        self.mir_package.borrow().enum_variants.get(def_id).cloned()
+    }
+
+    pub(super) fn struct_def(&self, def_id: &hir::DefId) -> Option<StructDefinition> {
+        self.mir_package.borrow().struct_defs.get(def_id).cloned()
+    }
+
+    pub(super) fn has_enum_def(&self, def_id: &hir::DefId) -> bool {
+        self.mir_package.borrow().enum_defs.contains_key(def_id)
+    }
+
+    pub(super) fn enum_def(&self, def_id: &hir::DefId) -> Option<EnumDefinition> {
+        self.mir_package.borrow().enum_defs.get(def_id).cloned()
+    }
     /// `hir_program`/`package_id` are required, not filled in later via a
     /// `with_*` builder or left as an empty/default placeholder — every
     /// real caller already has both on hand at construction time (the
@@ -1140,7 +1163,8 @@ impl HirToMirLowerer {
         }
         let Some(block) = self
             .hir_program
-            .package(&def_id.package_id)?
+            .package(&def_id.package_id)
+            .ok_or_else(|| crate::error::optimization_error("missing HIR package"))?
             .const_block_def(def_id.clone())
         else {
             return Ok(());
@@ -2030,7 +2054,7 @@ impl HirToMirLowerer {
 
                 if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
                     if let Some(struct_def) =
-                        self.mir_package.borrow().struct_defs.get(def_id).cloned()
+                        self.struct_def(def_id)
                     {
                         if let TyKind::Tuple(elements) = &actual_ty.kind {
                             for (field, actual_field_ty) in
@@ -2409,7 +2433,7 @@ impl HirToMirLowerer {
             return Some(layout.clone());
         }
 
-        let Some(struct_def) = self.mir_package.borrow().struct_defs.get(&def_id).cloned() else {
+        let Some(struct_def) = self.struct_def(&def_id) else {
             self.emit_error(span, "struct definition not registered");
             return None;
         };
@@ -2507,7 +2531,7 @@ impl HirToMirLowerer {
             .struct_layouts_by_ty
             .get(ty)
             .cloned()?;
-        self.mir_package.borrow().struct_layouts.get(key).cloned()
+        self.mir_package.borrow().struct_layouts.get(&key).cloned()
     }
 
     /// Exact-match counterpart to `enum_layout_for_ty`'s fuzzy scan — an
@@ -2522,7 +2546,7 @@ impl HirToMirLowerer {
             .enum_layouts_by_ty
             .get(ty)
             .cloned()?;
-        self.mir_package.borrow().enum_layouts.get(key).cloned()
+        self.mir_package.borrow().enum_layouts.get(&key).cloned()
     }
 
     pub(super) fn enum_payload_types(
