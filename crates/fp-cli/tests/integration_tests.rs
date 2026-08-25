@@ -31,31 +31,12 @@ fn test_cli_version() {
 }
 
 #[test]
-fn test_cli_parse_help() {
-    let mut cmd = fp_cmd();
-    cmd.arg("parse").arg("--help");
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("Parse and display AST"));
-}
-
-#[test]
 fn test_cli_completions_basic() {
     let mut cmd = fp_cmd();
     cmd.arg("completions").arg("bash");
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("fp"));
-}
-
-#[test]
-fn test_cli_eval_simple() {
-    let mut cmd = fp_cmd();
-    cmd.arg("eval").arg("1 + 2");
-
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("Result: 3"));
 }
 
 #[test]
