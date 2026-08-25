@@ -517,31 +517,10 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span, kind,
             )));
         };
-
-        // Keep the exact language-item registry as the source of truth for
-        // operations exposed by loaded std modules. This also preserves the
-        // call-specific argument shaping used by print and filesystem ops.
-        if let Some(call) = fp_core::ast::intrinsic_call_from_invoke(&invoke) {
-            return self.normalize_call(Expr::from_parts(id, span,
-                ExprKind::IntrinsicCall(call),
-            ));
-        }
-
-        let Some(intrinsic_kind) = resolve_lang_intrinsic(&invoke) else {
-            return Ok(NormalizeOutcome::Ignored(Expr::from_parts(id, span,
-                ExprKind::Invoke(invoke),
-            )));
-        };
-
-        // `CallKind::Op` was retired, so `resolve_lang_intrinsic` only ever
-        // returns a genuine intrinsic kind here.
-        let kind = intrinsic_kind;
-        Ok(NormalizeOutcome::Normalized(Expr::from_parts(id, span,
-            ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                kind,
-                invoke.args,
-                invoke.kwargs,
-            )),
+        Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+            id,
+            span,
+            ExprKind::Invoke(invoke),
         )))
     }
 
