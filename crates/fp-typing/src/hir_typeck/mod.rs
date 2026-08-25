@@ -4264,7 +4264,6 @@ impl HirTypeChecker {
                     }
                 }
             }
-            return Ok(None);
         }
         let receiver_def = match &receiver_ty.kind {
             TyKind::Adt(receiver, _) => Some(receiver.did.clone()),
