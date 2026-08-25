@@ -2885,6 +2885,9 @@ impl HirTypeChecker {
             }
         }
         if let Some(hir::Res::Local(ref local)) = path.res {
+            if let Some(ty) = self.program_rc().pat_type(local.clone()) {
+                return Ok(ty);
+            }
             if let Some(name) = path.segments.last().map(|segment| &segment.name) {
                 if let Some(ty) = self.locals.get(name) {
                     return Ok(ty.clone());
