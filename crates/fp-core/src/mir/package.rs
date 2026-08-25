@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::{
     ty, ConstInfo, DefId, EnumDefinition, EnumLayout, EnumLayoutKey, EnumVariantInfo,
     FunctionSpecializationInfo, FunctionSig, Function, ItemKind, MethodDefinition, MethodHirRef,
-    MethodLoweringInfo, MethodOwnerIndex, MirCodeUnit, MirId, StructDefinition, StructLayout,
+    MethodLoweringInfo, MirCodeUnit, MirId, StructDefinition, StructLayout,
     StructLayoutKey, StructuralLayoutKey, Symbol, Ty,
 };
 
@@ -127,10 +127,6 @@ pub struct MirPackage {
     /// Raw HIR for every non-generic method, keyed by `impl_item.def_id` —
     /// see `MethodHirRef`'s own doc comment.
     pub method_hir_defs: HashMap<DefId, MethodHirRef>,
-    /// Reverse index from a method's own `impl_item.def_id` to its owning
-    /// `Impl` item (and that item's index within it) — see
-    /// `MethodOwnerIndex`'s own doc comment for why this is `Rc`-valued.
-    pub method_owner_index: Option<MethodOwnerIndex>,
     /// Reverse index from `(self_def, method_name)` to the method's key in
     /// `method_defs_by_def`.
     pub method_defs_by_self_and_name: HashMap<(DefId, String), DefId>,
@@ -307,9 +303,6 @@ impl MirPackage {
         self.method_defs.extend(other.method_defs);
         self.method_defs_by_def.extend(other.method_defs_by_def);
         self.method_hir_defs.extend(other.method_hir_defs);
-        if other.method_owner_index.is_some() {
-            self.method_owner_index = other.method_owner_index;
-        }
         self.method_defs_by_self_and_name.extend(other.method_defs_by_self_and_name);
         self.method_specializations.extend(other.method_specializations);
         self.function_specializations.extend(other.function_specializations);

@@ -11,7 +11,6 @@ use super::FunctionSig;
 use crate::hir;
 use crate::span::Span;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 #[derive(Clone, Debug)]
 pub struct MethodLoweringInfo {
@@ -62,13 +61,6 @@ pub struct MethodContext {
     /// itself.
     pub assoc_types: HashMap<String, hir::TypeExpr>,
 }
-
-/// Reverse index from a method's own `impl_item.def_id` to its owning
-/// `Impl` item (and that item's index within it) — `Rc`, not owned, since
-/// it's built by iterating an impl's own `items` once per *method*; a naive
-/// owned clone here would re-clone the same enclosing `Item` (every
-/// method's own body included) once per method in that impl.
-pub type MethodOwnerIndex = HashMap<hir::DefId, (Rc<hir::Item>, usize)>;
 
 #[derive(Clone, Debug)]
 pub struct ConstInfo {

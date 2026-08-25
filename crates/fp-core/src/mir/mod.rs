@@ -21,7 +21,7 @@ pub use layout::{
 };
 pub use method::{
     ConstInfo, FunctionSpecializationInfo, MethodContext, MethodDefinition, MethodHirRef,
-    MethodLoweringInfo, MethodOwnerIndex,
+    MethodLoweringInfo,
 };
 pub use package::MirPackage;
 pub use path::MirPath;
